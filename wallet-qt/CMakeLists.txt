@@ -278,10 +278,9 @@ add_compile_definitions(
 # otherwise install fails with "install TARGETS given no BUNDLE DESTINATION".
 # On other platforms, it's a regular executable installed to bin.
 if(APPLE)
+    # On macOS, install as bundle. RUNTIME DESTINATION is not needed for bundles.
     install(TARGETS animica-wallet
         BUNDLE DESTINATION "."
-        # RUNTIME is included for compatibility but ignored when BUNDLE is used
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
 else()
     install(TARGETS animica-wallet
