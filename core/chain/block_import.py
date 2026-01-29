@@ -856,8 +856,12 @@ class BlockImporter:
                 try:
                     from mining.orchestrator import notify_all_template_feeders_block_found
                     notify_all_template_feeders_block_found()
-                except Exception:
-                    pass  # Best effort notification
+                except Exception as e:
+                    # Best effort notification, don't fail block import
+                    import logging
+                    logging.getLogger("core.chain.block_import").debug(
+                        "Failed to notify template feeders: %s", e, exc_info=True
+                    )
 
                 return ImportResult(ImportErrorCode.ACCEPTED, 0, h, True, None)
 
@@ -916,8 +920,13 @@ class BlockImporter:
             try:
                 from mining.orchestrator import notify_all_template_feeders_block_found
                 notify_all_template_feeders_block_found()
-            except Exception:
-                pass  # Best effort notification, don't fail block import
+            except Exception as e:
+                # Best effort notification, don't fail block import
+                # Use a local logger since we don't have one in scope
+                import logging
+                logging.getLogger("core.chain.block_import").debug(
+                    "Failed to notify template feeders: %s", e, exc_info=True
+                )
 
             return ImportResult(ImportErrorCode.ACCEPTED, height, h, head_changed, None)
 
