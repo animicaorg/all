@@ -42,7 +42,8 @@ except Exception:  # pragma: no cover
     ZERO32 = b"\x00" * 32  # type: ignore[assignment]
 
 # Fallback Θ (µ-nats) if nothing else is available
-_DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "3000000"))
+# Lowered from 3000000 (3.0 nats) to 1000000 (1.0 nat) for easier local/devnet mining
+_DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "1000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
 _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 
@@ -949,13 +950,14 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
                 # Theta is capped at THETA_HARD_CAP_MICRO (3B µ-nats = 3,000 nats)
                 # to maintain network stability and prevent runaway values
                 # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
+                # Adjusted parameters for gentler difficulty increases in devnet/testing scenarios
                 target_block_time_s = _target_block_time_s()
                 params = RetargetParams(
                     target_block_time_s=target_block_time_s,
-                    half_life_blocks=8.0,            # Faster adaptation for mining (vs 24 for consensus)
-                    gain_beta=0.9,                   # More aggressive response (vs 0.75 for consensus)
-                    step_clamp_micro=2_000_000,      # Allow larger steps (~2.0 nats per update)
-                    theta_min_micro=100_000,         # Lower minimum for easier mining (~0.1 nats)
+                    half_life_blocks=12.0,           # Slower adaptation (was 8.0)
+                    gain_beta=0.75,                  # Less aggressive response (was 0.9)
+                    step_clamp_micro=1_000_000,      # Smaller steps (~1.0 nats per update, was 2.0)
+                    theta_min_micro=50_000,          # Even lower minimum (~0.05 nats, was 0.1)
                     theta_max_micro=None,            # None = use hard cap (3B µ-nats)
                 )
 
