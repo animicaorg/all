@@ -1,0 +1,63 @@
+cmake_minimum_required(VERSION 3.16)
+
+# Test configuration
+enable_testing()
+
+# Find Qt6 Test module
+find_package(Qt6 COMPONENTS Test REQUIRED)
+
+# Common include directories
+set(TEST_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/wallet
+    ${CMAKE_SOURCE_DIR}/src/platform
+    ${CMAKE_SOURCE_DIR}/src/rpc
+    ${CMAKE_SOURCE_DIR}/src/node
+)
+
+# Helper function to add Qt tests
+function(add_wallet_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    
+    target_link_libraries(${TEST_NAME}
+        Qt6::Test
+        Qt6::Core
+        Qt6::Network
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+    
+    target_include_directories(${TEST_NAME} PRIVATE ${TEST_INCLUDE_DIRS})
+    
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    
+    # Set working directory to build dir
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endfunction()
+
+# Add wallet tests
+add_wallet_test(test_keystore_security test_keystore_security.cpp)
+add_wallet_test(test_wallet_engine test_wallet_engine.cpp)
+
+# Link wallet sources to tests (needed for testing)
+target_sources(test_keystore_security PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
+)
+
+target_sources(test_wallet_engine PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletEngine.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletAccount.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AccountManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AddressBook.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/BalanceTracker.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+)
+
+# Test discovery for CTest
+include(CTest)
+
+message(STATUS "Wallet tests configured - use 'make test' or 'ctest' to run")
