@@ -4,7 +4,7 @@ import type { RichListEntry, RichListResponse, RichListSummary } from '@animica/
 import ErrorDisplay from '../components/ErrorDisplay'
 import Skeleton from '../components/Skeleton'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8081'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://144.126.133.21:8081'
 
 interface RichListState {
   data: RichListResponse | null
