@@ -156,7 +156,7 @@ class BlocksDownloader:
         Fetch and commit the blocks for `order` (oldest→newest).
         Returns the number of blocks committed.
         
-        Enhanced with logging for P2P rewrite and batch optimizations for 5000+ blocks.
+        Uses batch operations for efficient block checking when handling large lists (100+ blocks).
         """
         if not order:
             return 0

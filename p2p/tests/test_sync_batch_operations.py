@@ -5,7 +5,6 @@ These tests verify that the batch has_blocks_batch and has_headers_batch
 methods work correctly and provide performance benefits over sequential checks.
 """
 import pytest
-import asyncio
 from typing import Optional, Sequence, Tuple
 from dataclasses import dataclass
 
