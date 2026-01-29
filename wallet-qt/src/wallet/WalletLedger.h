@@ -26,8 +26,8 @@ struct WalletLedger {
     
     WalletLedger()
         : ledgerId(0)
-        , amountAtomic(0)
         , asset("ANM")
+        , amountAtomic(0)
         , blockHeight(-1)
     {
     }

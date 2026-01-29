@@ -1,6 +1,5 @@
 #include "TransactionMonitor.h"
 #include "WalletDatabase.h"
-#include "WalletLedger.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include <QDebug>
 #include <QMutexLocker>
@@ -623,20 +622,22 @@ void TransactionMonitor::creditPending(const QString& txHash, const QString& acc
     qDebug() << "Credit pending:" << accountId << "amount:" << amount << "tx:" << txHash;
     
     // Check if already credited
-    QList<WalletLedger> entries = m_database->listLedgerEntries();
-    for (const WalletLedger& entry : entries) {
-        if (entry.txid == txHash && entry.category == "PENDING_IN") {
+    QList<LedgerEntry> entries = m_database->listLedgerEntries();
+    for (const LedgerEntry& entry : entries) {
+        if (entry.txid == txHash && entry.type == "PENDING_IN") {
             qDebug() << "Already credited as pending";
             return;
         }
     }
     
-    WalletLedger entry;
-    entry.ledgerId = QString("%1-%2").arg(txHash).arg(QDateTime::currentMSecsSinceEpoch());
+    LedgerEntry entry;
+    entry.entryId = 0; // Auto-increment
     entry.accountId = accountId;
-    entry.category = "PENDING_IN";
-    entry.amount = amount;
+    entry.type = "PENDING_IN";
+    entry.delta = amount; // Positive for credit
     entry.txid = txHash;
+    entry.asset = "ANM";
+    entry.stateVersion = m_database->nextStateVersion();
     entry.createdAt = QDateTime::currentMSecsSinceEpoch();
     
     if (!m_database->addLedgerEntry(entry)) {
@@ -653,21 +654,23 @@ void TransactionMonitor::creditConfirmed(const QString& txHash, const QString& a
     qDebug() << "Credit confirmed:" << accountId << "amount:" << amount << "tx:" << txHash;
     
     // Remove PENDING_IN entry
-    QList<WalletLedger> entries = m_database->listLedgerEntries();
-    for (const WalletLedger& entry : entries) {
-        if (entry.txid == txHash && entry.category == "PENDING_IN") {
-            m_database->deleteLedgerEntry(entry.ledgerId);
+    QList<LedgerEntry> entries = m_database->listLedgerEntries();
+    for (const LedgerEntry& entry : entries) {
+        if (entry.txid == txHash && entry.type == "PENDING_IN") {
+            m_database->deleteLedgerEntry(entry.entryId);
             break;
         }
     }
     
     // Add AVAILABLE entry
-    WalletLedger entry;
-    entry.ledgerId = QString("%1-confirmed-%2").arg(txHash).arg(QDateTime::currentMSecsSinceEpoch());
+    LedgerEntry entry;
+    entry.entryId = 0; // Auto-increment
     entry.accountId = accountId;
-    entry.category = "AVAILABLE";
-    entry.amount = amount;
+    entry.type = "AVAILABLE";
+    entry.delta = amount; // Positive for credit
     entry.txid = txHash;
+    entry.asset = "ANM";
+    entry.stateVersion = m_database->nextStateVersion();
     entry.createdAt = QDateTime::currentMSecsSinceEpoch();
     
     if (!m_database->addLedgerEntry(entry)) {
@@ -684,25 +687,17 @@ void TransactionMonitor::revertCredit(const QString& txHash, const QString& acco
     qDebug() << "Reverting credit for tx:" << txHash << "account:" << accountId;
     
     // Remove all ledger entries for this transaction
-    QList<WalletLedger> entries = m_database->listLedgerEntries();
-    for (const WalletLedger& entry : entries) {
+    QList<LedgerEntry> entries = m_database->listLedgerEntries();
+    for (const LedgerEntry& entry : entries) {
         if (entry.txid == txHash) {
-            qDebug() << "Removing ledger entry:" << entry.ledgerId 
-                     << "category:" << entry.category << "amount:" << entry.amount;
-            m_database->deleteLedgerEntry(entry.ledgerId);
+            qDebug() << "Removing ledger entry:" << entry.entryId 
+                     << "type:" << entry.type << "delta:" << entry.delta;
+            m_database->deleteLedgerEntry(entry.entryId);
         }
     }
     
-    // Add reversal entry
-    WalletLedger reversal;
-    reversal.ledgerId = QString("%1-reversal-%2").arg(txHash).arg(QDateTime::currentMSecsSinceEpoch());
-    reversal.accountId = accountId;
-    reversal.category = "REVERSAL";
-    reversal.amount = 0; // Amount already removed
-    reversal.txid = txHash;
-    reversal.createdAt = QDateTime::currentMSecsSinceEpoch();
-    
-    m_database->addLedgerEntry(reversal);
+    // Note: No need to add a separate reversal entry since we're removing the original entries
+    // The deletion of entries already reverses the balance effect
 }
 
 void TransactionMonitor::subscribeToEvents() {

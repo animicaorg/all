@@ -56,8 +56,8 @@ void ReconciliationJob::start()
     emit started(m_runId);
     emit progress(0, "Starting reconciliation...");
     
-    // Run in background thread
-    QtConcurrent::run([this]() {
+    // Run in background thread (ignore the future since we handle completion via signals)
+    (void)QtConcurrent::run([this]() {
         runReconciliation();
     });
 }
