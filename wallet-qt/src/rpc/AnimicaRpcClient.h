@@ -159,6 +159,20 @@ public:
      */
     QNetworkReply* getPeerCount();
 
+    /**
+     * @brief Get chain parameters.
+     * @return Network reply (expect: {"result": {params object}})
+     */
+    QNetworkReply* getChainParams();
+
+    /**
+     * @brief Execute custom RPC call.
+     * @param method RPC method name
+     * @param params Parameters (array or object)
+     * @return Network reply
+     */
+    QNetworkReply* call(const QString& method, const QJsonValue& params = QJsonArray());
+
 signals:
     /**
      * @brief Emitted when successfully connected to node.
@@ -176,7 +190,8 @@ signals:
      */
     void error(const QString& message);
 
-private:
+    // ==================== RPC Call Methods ====================
+    
     /**
      * @brief Execute JSON-RPC call.
      * @param method RPC method name
