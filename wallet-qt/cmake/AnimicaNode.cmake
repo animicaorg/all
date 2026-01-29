@@ -179,10 +179,63 @@ function(animica_build_node OUT_VAR)
         endif()
     endif()
     
+    # Copy repository modules into venv for bundled execution
+    # The RPC module and others (core, consensus, execution, etc.) are not installed packages
+    # but are meant to be imported from the repo root. We need to make them accessible.
+    message(STATUS "Copying repository modules into venv")
+    set(REPO_MODULES
+        rpc
+        core
+        consensus
+        execution
+        mempool
+        p2p
+        mining
+        proofs
+        da
+        randomness
+        pq
+        capabilities
+        aicf
+        queue
+        chains
+        genesis
+        services
+        billing
+        relayer
+    )
+    
+    set(VENV_SITE_PACKAGES "${NODE_VENV_DIR}/lib")
+    if(WIN32)
+        set(VENV_SITE_PACKAGES "${NODE_VENV_DIR}/Lib/site-packages")
+    else()
+        # Find the correct python version in lib/
+        file(GLOB PYTHON_DIRS "${NODE_VENV_DIR}/lib/python*")
+        if(PYTHON_DIRS)
+            list(GET PYTHON_DIRS 0 PYTHON_DIR)
+            set(VENV_SITE_PACKAGES "${PYTHON_DIR}/site-packages")
+        endif()
+    endif()
+    
+    foreach(MODULE ${REPO_MODULES})
+        if(EXISTS "${ANIMICA_REPO_ROOT}/${MODULE}")
+            message(STATUS "  Copying ${MODULE}")
+            file(COPY "${ANIMICA_REPO_ROOT}/${MODULE}"
+                 DESTINATION "${VENV_SITE_PACKAGES}"
+                 PATTERN "*.pyc" EXCLUDE
+                 PATTERN "__pycache__" EXCLUDE
+                 PATTERN ".git" EXCLUDE
+                 PATTERN "*.egg-info" EXCLUDE
+            )
+        endif()
+    endforeach()
+    
+    message(STATUS "Repository modules copied to ${VENV_SITE_PACKAGES}")
+    
     # Verify installation
     message(STATUS "Verifying node installation")
     execute_process(
-        COMMAND ${NODE_PYTHON} -c "import rpc; import animica"
+        COMMAND ${NODE_PYTHON} -c "import rpc; import animica; import core"
         RESULT_VARIABLE VERIFY_RESULT
         ERROR_VARIABLE VERIFY_ERROR
     )

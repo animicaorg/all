@@ -1,0 +1,76 @@
+[
+  {
+    "job_id": "jai_demo_0001",
+    "task_id": "task_ai_demo_0001",
+    "kind": "ai",
+    "spec": {
+      "model": "demo-llm-1",
+      "prompt": "Summarize the Animica acceptance rule and its intuition in 3 sentences.",
+      "max_tokens": 128,
+      "temperature": 0.2,
+      "top_p": 0.9
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp0demo",
+    "fee": 25000,
+    "ai_units": 1200,
+    "priority": 0.58,
+    "status": "queued",
+    "submitted_at": 1710003000,
+    "expires_at": 1710006600,
+    "notes": "Freshly enqueued; waiting for eligible provider."
+  },
+  {
+    "job_id": "jai_demo_0002",
+    "task_id": "task_ai_demo_0002",
+    "kind": "ai",
+    "spec": {
+      "model": "demo-llm-2",
+      "prompt": "Generate a bullet list of 5 invariants for a deterministic Python smart-contract VM.",
+      "max_tokens": 180,
+      "temperature": 0.0,
+      "top_p": 1.0
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqql2demo",
+    "fee": 42000,
+    "ai_units": 2200,
+    "priority": 0.73,
+    "status": "assigned",
+    "assigned_to": "prov_demo_hybrid_01",
+    "lease": {
+      "issued_at": 1710003600,
+      "ttl_seconds": 900,
+      "renewals": 0
+    },
+    "submitted_at": 1710003200,
+    "expires_at": 1710007700,
+    "notes": "Lease active; provider working on completion."
+  },
+  {
+    "job_id": "jai_demo_0003",
+    "task_id": "task_ai_demo_0003",
+    "kind": "ai",
+    "spec": {
+      "model": "demo-llm-1",
+      "prompt": "Write a one-paragraph explainer of Namespaced Merkle Trees for DA.",
+      "max_tokens": 160,
+      "temperature": 0.1,
+      "top_p": 0.95
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq7rdemo",
+    "fee": 31000,
+    "ai_units": 1800,
+    "priority": 0.69,
+    "status": "completed",
+    "assigned_to": "prov_demo_ai_01",
+    "submitted_at": 1710002500,
+    "completed_at": 1710003655,
+    "result_digest": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "proof_claim": {
+      "height": 123456,
+      "nullifier": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "task_id": "task_ai_demo_0003"
+    },
+    "estimated_reward": 345000,
+    "notes": "Output and proof received; pending settlement in next epoch."
+  }
+]

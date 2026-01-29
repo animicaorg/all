@@ -1,0 +1,195 @@
+{
+  "domain": "animica/proofs/storage-v0",
+  "version": 1,
+  "notes": "Focused vectors for StorageHeartbeat v0. These check time-window acceptance, redundancy, optional retrieval bonus, and QoS → ψ inputs mapping. Values are illustrative but internally consistent.",
+  "policy_assumptions": {
+    "min_redundancy": 2,
+    "min_qos_score": 0.90,
+    "max_window_skew_secs": 60,
+    "retrieval_bonus_enabled": true
+  },
+  "vectors": [
+    {
+      "name": "accept_basic_heartbeat_ok",
+      "headerHash": "0x6a7b8c9ddeeff00112233445566778899aabbccddeeff0011223344556677889",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:alpha", "region": "us-east-1" },
+          "window": { "start": 1730000000, "end": 1730000600 },
+          "timestamp": 1730000300,
+          "sectors": [
+            { "sector_id": "alpha-001", "commitment": "0x1111...aaaa" },
+            { "sector_id": "alpha-002", "commitment": "0x2222...bbbb" },
+            { "sector_id": "alpha-003", "commitment": "0x3333...cccc" }
+          ],
+          "redundancy": 3,
+          "qos": { "uptime_7d": 0.995, "p95_get_ms": 180 },
+          "retrieval_ticket": null
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000001"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "redundancy": 3,
+          "qos_score": 0.97,
+          "retrieval_bonus": 0.0
+        },
+        "psi_micro": 120000,
+        "reason": "Heartbeat inside window; redundancy≥2; QoS above threshold."
+      }
+    },
+    {
+      "name": "accept_with_retrieval_bonus",
+      "headerHash": "0x777788889999aaaabbbbccccddddeeeeffff0000111122223333444455556666",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:beta", "region": "eu-central-1" },
+          "window": { "start": 1730100000, "end": 1730100600 },
+          "timestamp": 1730100045,
+          "sectors": [
+            { "sector_id": "beta-101", "commitment": "0xaaaa...1111" },
+            { "sector_id": "beta-102", "commitment": "0xbbbb...2222" }
+          ],
+          "redundancy": 2,
+          "qos": { "uptime_7d": 0.992, "p95_get_ms": 150 },
+          "retrieval_ticket": {
+            "kind": "on-demand",
+            "sector_id": "beta-101",
+            "request_ts": 1730100030,
+            "fulfilled_ts": 1730100039,
+            "success": true
+          }
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000002"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "redundancy": 2,
+          "qos_score": 0.95,
+          "retrieval_bonus": 0.05
+        },
+        "psi_micro": 130000,
+        "reason": "Meets minimums and includes a successful, timely retrieval ticket → small ψ bonus."
+      }
+    },
+    {
+      "name": "reject_window_missed_too_late",
+      "headerHash": "0x1234123412341234123412341234123412341234123412341234123412341234",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:gamma", "region": "ap-southeast-1" },
+          "window": { "start": 1730200000, "end": 1730200600 },
+          "timestamp": 1730200701,
+          "sectors": [
+            { "sector_id": "gamma-7", "commitment": "0x7777...eeee" },
+            { "sector_id": "gamma-8", "commitment": "0x8888...ffff" }
+          ],
+          "redundancy": 2,
+          "qos": { "uptime_7d": 0.996, "p95_get_ms": 140 },
+          "retrieval_ticket": null
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000003"
+      },
+      "expected": {
+        "accept": false,
+        "error": "HeartbeatOutsideWindow",
+        "metrics": {
+          "redundancy": 2,
+          "qos_score": 0.96
+        },
+        "reason": "timestamp > window.end + max_window_skew_secs."
+      }
+    },
+    {
+      "name": "reject_low_redundancy",
+      "headerHash": "0xffffeeee1111222233334444555566667777888899990000aaaabbbbccccdddd",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:delta", "region": "us-west-2" },
+          "window": { "start": 1730300000, "end": 1730300600 },
+          "timestamp": 1730300005,
+          "sectors": [
+            { "sector_id": "delta-42", "commitment": "0x4242...4242" }
+          ],
+          "redundancy": 1,
+          "qos": { "uptime_7d": 0.999, "p95_get_ms": 110 },
+          "retrieval_ticket": null
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000004"
+      },
+      "expected": {
+        "accept": false,
+        "error": "RedundancyTooLow",
+        "metrics": {
+          "redundancy": 1,
+          "qos_score": 0.98
+        },
+        "reason": "redundancy 1 < min_redundancy 2."
+      }
+    },
+    {
+      "name": "reject_qos_below_threshold",
+      "headerHash": "0x0aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa00aa0",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:epsilon", "region": "eu-west-1" },
+          "window": { "start": 1730400000, "end": 1730400600 },
+          "timestamp": 1730400030,
+          "sectors": [
+            { "sector_id": "eps-01", "commitment": "0x0e0e...0e0e" },
+            { "sector_id": "eps-02", "commitment": "0x0f0f...0f0f" }
+          ],
+          "redundancy": 2,
+          "qos": { "uptime_7d": 0.955, "p95_get_ms": 950 },
+          "retrieval_ticket": null
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000005"
+      },
+      "expected": {
+        "accept": false,
+        "error": "QoSTooLow",
+        "metrics": {
+          "redundancy": 2,
+          "qos_score": 0.82
+        },
+        "reason": "QoS score below policy threshold (slow p95 & lower uptime)."
+      }
+    },
+    {
+      "name": "reject_commitment_mismatch",
+      "headerHash": "0x9999aaaabbbbccccddddeeeeffff000011112222333344445555666677778888",
+      "envelope": {
+        "type_id": "storage_v0",
+        "body": {
+          "provider": { "id": "stor:provider:zeta", "region": "us-central-1" },
+          "window": { "start": 1730500000, "end": 1730500600 },
+          "timestamp": 1730500015,
+          "sectors": [
+            { "sector_id": "zeta-9", "commitment": "0xdeadbeefdeadbeef...wrong" },
+            { "sector_id": "zeta-10", "commitment": "0xaaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999" }
+          ],
+          "redundancy": 2,
+          "qos": { "uptime_7d": 0.993, "p95_get_ms": 160 },
+          "retrieval_ticket": null
+        },
+        "nullifier": "0x0abcde0000000000000000000000000000000000000000000000000000000006"
+      },
+      "expected": {
+        "accept": false,
+        "error": "CommitmentMismatch",
+        "metrics": {
+          "redundancy": 2,
+          "qos_score": 0.94
+        },
+        "reason": "One or more sector commitments do not match registered commitments."
+      }
+    }
+  ]
+}

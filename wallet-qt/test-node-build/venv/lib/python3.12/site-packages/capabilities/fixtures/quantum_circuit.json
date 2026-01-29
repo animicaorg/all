@@ -1,0 +1,30 @@
+{
+  "kind": "Quantum",
+  "version": 1,
+  "metadata": {
+    "comment": "Deterministic tiny circuit for tests"
+  },
+  "caps": {
+    "max_qubits": 8,
+    "max_depth": 32,
+    "max_shots": 1024
+  },
+  "circuit": {
+    "format": "animica-qasm-v0",
+    "qubits": 2,
+    "gates": [
+      { "op": "H",  "q": [0] },
+      { "op": "CX", "q": [0, 1] },
+      { "op": "MEASURE", "q": [0] },
+      { "op": "MEASURE", "q": [1] }
+    ]
+  },
+  "shots": 64,
+  "traps": {
+    "ratio": 0.125,
+    "seed": "0x000102030405060708090a0b0c0d0e0f"
+  },
+  "policy": {
+    "timeout_ms": 1000
+  }
+}

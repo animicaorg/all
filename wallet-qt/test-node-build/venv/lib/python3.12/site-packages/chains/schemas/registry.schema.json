@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.dev/chains/registry.schema.json",
+  "title": "Animica Chains Registry",
+  "description": "Schema for chains/registry.json, indexing all chain metadata files.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": ["schemaVersion", "generatedAt", "entries"],
+
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semver of this schema that the file conforms to.",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the registry was generated."
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/registryEntry" },
+      "description": "List of chain descriptors."
+    }
+  },
+
+  "$defs": {
+    "icons": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "svg":      { "type": "string" },
+        "svgDark":  { "type": "string" },
+        "png64":    { "type": "string" },
+        "png128":   { "type": "string" }
+      },
+      "required": ["svg"]
+    },
+
+    "registryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "name",
+        "chainId",
+        "network",
+        "status",
+        "testnet",
+        "path",
+        "checksum"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable identifier (kebab-case)."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "chainId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "network": {
+          "type": "string",
+          "enum": ["mainnet", "testnet", "localnet"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["planned", "active", "dev", "deprecated"]
+        },
+        "testnet": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^chains\\/[^\\n]+\\.json$",
+          "description": "Relative path to the chain JSON."
+        },
+        "checksum": {
+          "type": "string",
+          "description": "SHA-256 hex of the target JSON file.",
+          "pattern": "^(<sha256-to-be-generated>|[0-9a-f]{64})$"
+        },
+        "icons": { "$ref": "#/$defs/icons" }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "schemaVersion": "1.0.0",
+      "generatedAt": "2025-10-31T00:00:00Z",
+      "entries": [
+        {
+          "key": "animica-testnet",
+          "name": "Animica Testnet",
+          "chainId": 2,
+          "network": "testnet",
+          "status": "active",
+          "testnet": true,
+          "path": "chains/animica.testnet.json",
+          "checksum": "<sha256-to-be-generated>",
+          "icons": {
+            "svg": "chains/icons/animica.svg",
+            "svgDark": "chains/icons/animica@dark.svg",
+            "png64": "chains/icons/animica-64.png",
+            "png128": "chains/icons/animica-128.png"
+          }
+        }
+      ]
+    }
+  ]
+}

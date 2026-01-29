@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animica-chains"
+version = "0.1.0"
+description = "Animica chain metadata bindings with Pydantic models, loaders, and checksum verification."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "Animica Maintainers", email = "maintainers@animica.dev" }
+]
+keywords = ["animica", "blockchain", "metadata", "json", "pydantic", "chains"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+
+dependencies = [
+  "pydantic>=2,<3"
+]
+
+[project.optional-dependencies]
+validate = ["jsonschema>=4,<5"]
+
+[project.scripts]
+animica-chains = "animica_chains.__init__:_cli"
+
+[tool.setuptools]
+# We're packaging directly from this monorepo path.
+# The package lives under chains/bindings/python/animica_chains
+packages = ["animica_chains"]
+
+[tool.setuptools.package-dir]
+"" = "chains/bindings/python"
+
+[tool.setuptools.package-data]
+# Ship nothing extra by default (models are code). Add schema paths if you want them vendored.
+animica_chains = []
+
+[tool.setuptools.exclude-package-data]
+animica_chains = ["*.pyc", "__pycache__"]
+
+# --- Developer notes ----------------------------------------------------------
+# Build (from repo root):
+#   python -m build  (if you have 'build' installed)  OR
+#   python -m pip install .[validate]
+#
+# Install in editable mode for local development:
+#   pip install -e .[validate]
+#
+# CLI examples:
+#   animica-chains check chains/checksums.txt
+#   animica-chains show animica-testnet
+#
+# The CLI entrypoint calls _cli() in animica_chains/__init__.py.

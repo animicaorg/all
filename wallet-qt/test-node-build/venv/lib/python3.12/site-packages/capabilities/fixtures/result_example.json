@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "0x4c0f4b9a9f0a7f7d2b1a3d8c4e5f66778899aabbccddeeff0011223344556677",
+  "kind": "AI",
+  "chain_id": 1337,
+  "caller": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp6amhs",
+  "submitted_height": 1024,
+  "available_height": 1025,
+  "timestamp_ms": 1726905600000,
+
+  "request": {
+    "digest_sha3_256": "0x0c9f2b6f4d15e0a3b1c2d3e4f5061728394a5b6c7d8e9f001122334455667788",
+    "model": "ai.tiny.demo",
+    "prompt_preview": "Classify: \"hello, animica\"",
+    "caps": { "max_input_bytes": 4096, "timeout_ms": 2000 }
+  },
+
+  "status": "completed",
+  "success": true,
+
+  "units": {
+    "ai_units": 128,
+    "estimated_ms": 1800
+  },
+
+  "result": {
+    "output_digest_sha3_256": "0x5a825a1d9c6b7f4e3a210fedcba98765432100112233445566778899aabbccdd",
+    "output_preview": "label=GREETING confidence=0.992",
+    "blob_ref": {
+      "commitment": "0x3f9b2c1d0e4a7b8c9d6e5f4a3b2c1d0e4f6a7b8c9d0e1f2a3b4c5d6e7f8090a1",
+      "namespace": 24,
+      "size_bytes": 512
+    }
+  },
+
+  "proof_refs": [
+    {
+      "type": "AIProof",
+      "nullifier": "0x77e1b4c3a2d5f6e7098a1b2c3d4e5f60718293a4b5c6d7e8f901223344556677",
+      "height_included": 1025,
+      "metrics": {
+        "qos": 0.987,
+        "redundancy": 2,
+        "traps_ratio": 0.125
+      }
+    }
+  ]
+}

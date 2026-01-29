@@ -1,0 +1,65 @@
+{
+  "$schema": "animica://proofs/quantum_attestation.schema.json#provider-cert-v1",
+  "version": 1,
+  "provider_id": "quantinuum:h2-1:dev",
+  "name": "Quantinuum Demo (Dev)",
+  "website": "https://example.dev/quantum",
+  "hardware": {
+    "vendor": "Quantinuum",
+    "model": "H2-1",
+    "architecture": "TrappedIon",
+    "qubits": 32,
+    "gate_set": ["Rz", "Rx", "MS(XX)"],
+    "topology": "all-to-all",
+    "revision": "2025Q1"
+  },
+  "facility": {
+    "region": "us-central-1",
+    "city": "Broomfield",
+    "country": "US",
+    "time_zone": "America/Denver"
+  },
+  "endpoints": {
+    "api": "https://dev.quantum.example/api",
+    "jobs": "https://dev.quantum.example/jobs",
+    "attest": "https://dev.quantum.example/attest",
+    "status": "https://dev.quantum.example/status"
+  },
+  "keys": {
+    "ed25519": {
+      "kid": "ed25519-2025-dev",
+      "public_key_b64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+    /* PQ key optional in dev fixture; add dilithium3 when you have a real pk */
+  },
+  "x509_chain_pem": [
+    "-----BEGIN CERTIFICATE-----\nMIIBxTCCAWugAwIBAgIUERDevDevDevDevDevDevDevDev4wBQYDK2VwMDUxCzAJ\nBgNVBAYTAlVTMRowGAYDVQQKDBFBbmltaWNhIERldiBRUFUgUm9vdDEQMA4GA1UE\nAwwHQW5pbVJvb3QwHhcNMjUwMTAxMDAwMDAwWhcNMjYwMTAxMDAwMDAwWjA1MQsw\nCQYDVQQGEwJVUzEaMBgGA1UECgwRQW5pbWljYSBEZXYgUVBVIENBMRMwEQYDVQQD\nDApBbmltQ0EtRGV2MCowBQYDK2VwAyEAKy2t5v8n3w8fAAAAAAAAAAAAAAAAAAAA\nAAAAAAAAAAAAAAAAAAAAAAAAo1MwUTAdBgNVHQ4EFgQUq5V8m7k8v7mCw4w3mQ8P\nmzzb2E0wHwYDVR0jBBgwFoAUF3D3YpQmLkz9yK2j8kH2mQ0r6cMwDwYDVR0TAQH/\nBAUwAwEB/zAFBgMrZXADQQC1l3mYc3o5xwF0P4mQH9kTQe3X3xK3Jg3a8yLw6g7s\n4r88q8f8ZJ7k3z2fKc4M8qQWcHk6cQF0QmO8c2Wc1pG7iN7S7pKfYlGz\n-----END CERTIFICATE-----"
+  ],
+  "constraints": {
+    "max_depth": 64,
+    "max_width": 40,
+    "max_shots": 20000,
+    "trap_family": "rigetti-xeb-v1",
+    "trap_alpha": 0.02
+  },
+  "alg_policy_root": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "validity": {
+    "not_before": "2025-01-01T00:00:00Z",
+    "not_after": "2026-01-01T00:00:00Z"
+  },
+  "contacts": {
+    "security_email": "secops@example.dev",
+    "ops_email": "qpu-ops@example.dev"
+  },
+  "signature": {
+    "alg": "EdDSA-Ed25519",
+    "kid": "ed25519-2025-dev",
+    "sig_b64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "dev_null_signature": true,
+    "signed_fields": [
+      "version","provider_id","name","website","hardware","facility",
+      "endpoints","keys","x509_chain_pem","constraints","alg_policy_root","validity","contacts"
+    ]
+  }
+}

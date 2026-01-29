@@ -1,0 +1,85 @@
+[
+  {
+    "job_id": "jqpu_demo_0001",
+    "task_id": "task_qpu_demo_0001",
+    "kind": "quantum",
+    "spec": {
+      "backend_hint": "demo-qpu-1",
+      "language": "openqasm3",
+      "circuit": "OPENQASM 3.0; qubit[2] q; bit[2] c; h q[0]; cx q[0], q[1]; measure q[0] -> c[0]; measure q[1] -> c[1];",
+      "shots": 2048,
+      "depth": 12,
+      "width": 2,
+      "traps": 128,
+      "trap_seed": "0x0000000000000000000000000000000000000000000000000000000000001234"
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0qdemo",
+    "fee": 50000,
+    "quantum_units": 1800,
+    "priority": 0.64,
+    "status": "queued",
+    "submitted_at": 1710003000,
+    "expires_at": 1710007800,
+    "notes": "Awaiting eligible QPU provider with sufficient stake and health."
+  },
+  {
+    "job_id": "jqpu_demo_0002",
+    "task_id": "task_qpu_demo_0002",
+    "kind": "quantum",
+    "spec": {
+      "backend_hint": "demo-qpu-2",
+      "language": "openqasm3",
+      "circuit": "OPENQASM 3.0; qubit[3] q; bit[3] c; x q[1]; h q[0]; cx q[0], q[2]; measure q[0] -> c[0]; measure q[1] -> c[1]; measure q[2] -> c[2];",
+      "shots": 4096,
+      "depth": 22,
+      "width": 3,
+      "traps": 256,
+      "trap_seed": "0x000000000000000000000000000000000000000000000000000000000000beef"
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3xdemo",
+    "fee": 78000,
+    "quantum_units": 3200,
+    "priority": 0.78,
+    "status": "assigned",
+    "assigned_to": "prov_demo_hybrid_01",
+    "lease": {
+      "issued_at": 1710003600,
+      "ttl_seconds": 1200,
+      "renewals": 0
+    },
+    "submitted_at": 1710003300,
+    "expires_at": 1710009000,
+    "notes": "Lease active; provider running circuit with trap inserts."
+  },
+  {
+    "job_id": "jqpu_demo_0003",
+    "task_id": "task_qpu_demo_0003",
+    "kind": "quantum",
+    "spec": {
+      "backend_hint": "demo-qpu-1",
+      "language": "openqasm3",
+      "circuit": "OPENQASM 3.0; qubit[2] q; bit[2] c; h q[0]; cx q[0], q[1]; rz(0.125*pi) q[1]; measure q[0] -> c[0]; measure q[1] -> c[1];",
+      "shots": 1024,
+      "depth": 18,
+      "width": 2,
+      "traps": 96,
+      "trap_seed": "0x000000000000000000000000000000000000000000000000000000000000c0de"
+    },
+    "requester": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9ademo",
+    "fee": 46000,
+    "quantum_units": 1500,
+    "priority": 0.71,
+    "status": "completed",
+    "assigned_to": "prov_demo_qpu_01",
+    "submitted_at": 1710002500,
+    "completed_at": 1710003705,
+    "result_digest": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "proof_claim": {
+      "height": 123457,
+      "nullifier": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "task_id": "task_qpu_demo_0003"
+    },
+    "estimated_reward": 298000,
+    "notes": "Output and attested trap receipts verified; queued for epoch settlement."
+  }
+]
