@@ -71,6 +71,7 @@ set(SOURCES
     src/wallet/CreateAccountDialog.cpp
     src/wallet/WalletWidget.cpp
     src/wallet/WalletDatabase.cpp
+    src/wallet/TransactionMonitor.cpp
 )
 
 set(HEADERS
@@ -90,6 +91,7 @@ set(HEADERS
     src/wallet/CreateAccountDialog.h
     src/wallet/WalletWidget.h
     src/wallet/WalletDatabase.h
+    src/wallet/TransactionMonitor.h
 )
 
 # Create executable
