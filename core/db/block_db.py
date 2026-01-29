@@ -356,17 +356,39 @@ class BlockDB:
         calling has_block/get_block_by_hash individually for each hash when
         syncing thousands of blocks.
         
+        This implementation uses batch reads where possible for optimal performance.
+        
         Args:
             block_hashes: List of block hashes to check
             
         Returns:
             Set of block hashes that exist in the database
         """
+        if not block_hashes:
+            return set()
+        
         existing = set()
-        for h in block_hashes:
-            # Check if either full block or header exists
-            if self.kv.get(k_blk(h)) is not None or self.kv.get(k_hdr(h)) is not None:
-                existing.add(h)
+        # Check if KV supports batch operations for even better performance
+        if hasattr(self.kv, 'get_batch'):
+            # Build keys to check
+            block_keys = [k_blk(h) for h in block_hashes]
+            header_keys = [k_hdr(h) for h in block_hashes]
+            all_keys = block_keys + header_keys
+            
+            # Batch fetch all keys at once
+            results = self.kv.get_batch(all_keys)
+            
+            # Check which hashes had either block or header
+            for i, h in enumerate(block_hashes):
+                # Check if block or header exists for this hash
+                if results[i] is not None or results[i + len(block_hashes)] is not None:
+                    existing.add(h)
+        else:
+            # Fallback to individual checks (still faster than async individual calls)
+            for h in block_hashes:
+                # Check if either full block or header exists
+                if self.kv.get(k_blk(h)) is not None or self.kv.get(k_hdr(h)) is not None:
+                    existing.add(h)
         return existing
 
     def has_headers_batch(self, header_hashes: list[bytes]) -> set[bytes]:
@@ -377,16 +399,35 @@ class BlockDB:
         calling has_header/get_header_by_hash individually for each hash when
         syncing thousands of headers.
         
+        This implementation uses batch reads where possible for optimal performance.
+        
         Args:
             header_hashes: List of header hashes to check
             
         Returns:
             Set of header hashes that exist in the database
         """
+        if not header_hashes:
+            return set()
+        
         existing = set()
-        for h in header_hashes:
-            if self.kv.get(k_hdr(h)) is not None:
-                existing.add(h)
+        # Check if KV supports batch operations for even better performance
+        if hasattr(self.kv, 'get_batch'):
+            # Build keys to check
+            keys = [k_hdr(h) for h in header_hashes]
+            
+            # Batch fetch all keys at once
+            results = self.kv.get_batch(keys)
+            
+            # Check which hashes exist
+            for i, h in enumerate(header_hashes):
+                if results[i] is not None:
+                    existing.add(h)
+        else:
+            # Fallback to individual checks (still faster than async individual calls)
+            for h in header_hashes:
+                if self.kv.get(k_hdr(h)) is not None:
+                    existing.add(h)
         return existing
 
     # --- Receipt lookup by tx_hash ---
