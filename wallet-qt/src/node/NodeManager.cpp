@@ -519,8 +519,44 @@ void NodeManager::stopSyncMonitoring()
     m_syncCheckTimer->stop();
 }
 
+QString NodeManager::findBundledPython()
+{
+    // Get the application directory
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString bundledPython;
+    
+#ifdef Q_OS_MACOS
+    // macOS: AnimicaWallet.app/Contents/Resources/node/venv/bin/python
+    bundledPython = appDir + "/../Resources/node/venv/bin/python";
+#elif defined(Q_OS_WIN)
+    // Windows: <exe_dir>/node/venv/Scripts/python.exe
+    bundledPython = appDir + "/node/venv/Scripts/python.exe";
+#else
+    // Linux: <exe_dir>/node/venv/bin/python
+    bundledPython = appDir + "/node/venv/bin/python";
+#endif
+    
+    QFileInfo bundledInfo(bundledPython);
+    if (bundledInfo.exists() && bundledInfo.isExecutable()) {
+        qDebug() << "Found bundled Python:" << bundledPython;
+        return bundledInfo.absoluteFilePath();
+    }
+    
+    qDebug() << "Bundled Python not found at:" << bundledPython;
+    return QString();
+}
+
 QString NodeManager::findPython()
 {
+    // First, try to find bundled Python
+    QString bundled = findBundledPython();
+    if (!bundled.isEmpty()) {
+        return bundled;
+    }
+    
+    // Fall back to system Python
+    qDebug() << "Falling back to system Python";
+    
     // Try to find Python 3 in common locations
     QStringList candidates = {
         "python3",

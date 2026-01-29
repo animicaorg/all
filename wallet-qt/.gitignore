@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+test-node-build/
 *.o
 *.obj
 *.so
@@ -22,6 +23,7 @@ cmake_install.cmake
 Makefile
 *.cmake
 !CMakeLists.txt
+!cmake/*.cmake
 
 # IDE
 .vscode/
