@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+test-node-build/
 *.o
 *.obj
 *.so
