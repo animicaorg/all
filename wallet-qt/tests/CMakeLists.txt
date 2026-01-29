@@ -43,6 +43,8 @@ endfunction()
 add_wallet_test(test_keystore_security test_keystore_security.cpp)
 add_wallet_test(test_wallet_engine test_wallet_engine.cpp)
 add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
+add_wallet_test(test_datadirmanager test_datadirmanager.cpp)
+add_wallet_test(test_walletimporter test_walletimporter.cpp)
 
 # Add diagnostics tests
 add_wallet_test(test_redactor diagnostics/test_redactor.cpp)
@@ -90,3 +92,12 @@ target_sources(test_executor PRIVATE
 include(CTest)
 
 message(STATUS "Wallet tests configured - use 'make test' or 'ctest' to run")
+
+# Link new test sources
+target_sources(test_datadirmanager PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
+)
+
+target_sources(test_walletimporter PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletImporter.cpp
+)
