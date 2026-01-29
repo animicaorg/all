@@ -3552,12 +3552,88 @@ class P2PService:
                 },
             )
 
+    def _discard_blocks_from_ineligible_peers(self) -> dict[str, int]:
+        """
+        Discard blocks from ineligible peers in the sync buffer and inflight blocks.
+        This prevents stalls when peers become ineligible (e.g., handshake_pending).
+        Returns counts of discarded blocks by source.
+        """
+        now = time.time()
+        eligible_block_peers, ineligible_block_peers = self._eligible_block_peers()
+        eligible_remotes = {peer.remote for peer in eligible_block_peers}
+        
+        discarded_buffer = 0
+        discarded_inflight = 0
+        discarded_cache = 0
+        
+        # Discard blocks from ineligible peers in the buffer
+        for h, blk in list(self._sync_block_buffer.items()):
+            if blk.origin_peer and blk.origin_peer not in eligible_remotes:
+                self._sync_block_buffer.pop(h, None)
+                discarded_buffer += 1
+                # Re-queue the block to be fetched from an eligible peer
+                if not self._has_block(h) and h not in self._sync_block_queue_set:
+                    self._sync_block_queue.append(h)
+                    self._sync_block_queue_set.add(h)
+                    height_hint = self._block_height_hint(h)
+                    if height_hint is not None:
+                        self._sync_block_queue_heights[h] = height_hint
+        
+        # Discard inflight blocks from ineligible peers
+        for h in list(self._sync_inflight_blocks.keys()):
+            peer_remote = self._sync_inflight_peers.get(h)
+            if peer_remote and peer_remote not in eligible_remotes:
+                self._sync_inflight_blocks.pop(h, None)
+                self._sync_inflight_peers.pop(h, None)
+                self._sync_inflight_block_requests.pop(h, None)
+                discarded_inflight += 1
+                # Re-queue the block to be fetched from an eligible peer
+                if not self._has_block(h) and h not in self._sync_block_queue_set:
+                    self._sync_block_queue.appendleft(h)
+                    self._sync_block_queue_set.add(h)
+                    height_hint = self._block_height_hint(h)
+                    if height_hint is not None:
+                        self._sync_block_queue_heights[h] = height_hint
+        
+        # Invalidate cache entries if the cache has blocks from peers with errors
+        if self._sync_cache is not None and self._sync_last_block_error_peer:
+            if self._sync_last_block_error_peer not in eligible_remotes:
+                # Clear cache if the error peer is ineligible
+                self._sync_cache.clear()
+                discarded_cache = 1
+        
+        result = {
+            "buffer": discarded_buffer,
+            "inflight": discarded_inflight,
+            "cache": discarded_cache,
+            "ineligible_peers": len(ineligible_block_peers),
+            "eligible_peers": len(eligible_remotes),
+        }
+        
+        if discarded_buffer or discarded_inflight or discarded_cache:
+            log.info(
+                "Discarded blocks from ineligible peers",
+                extra={
+                    "discarded_buffer": discarded_buffer,
+                    "discarded_inflight": discarded_inflight,
+                    "discarded_cache": discarded_cache,
+                    "ineligible_peers": list(ineligible_block_peers.keys()),
+                    "eligible_peers": list(eligible_remotes),
+                },
+            )
+        
+        return result
+
     def _handle_sync_stall(self, *, reason: str) -> None:
         now = time.time()
         # Allow stall handling even when _sync_best_header is None or equals local height
         # This handles the case where headers == blocks and we're stuck
         if self._last_rotation_at and now - self._last_rotation_at < 5.0:
             return
+        
+        # Discard blocks from ineligible peers before attempting recovery
+        discarded = self._discard_blocks_from_ineligible_peers()
+        
         old_peer = None
         if self._sync_active_block_peer:
             old_peer = self._peer_by_remote(self._sync_active_block_peer)
@@ -3615,6 +3691,7 @@ class P2PService:
                 "best_header_height": best_header_height,
                 "queued_blocks": len(self._sync_block_queue),
                 "eligible_block_peers": [p.remote for p in eligible_block_peers],
+                "discarded_blocks": discarded,
             },
         )
 
@@ -9288,6 +9365,12 @@ class P2PService:
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
+                
+                # Periodically discard blocks from ineligible peers to prevent stalls
+                # This is especially important when peers have handshake_pending status
+                if now - self._sync_last_progress_at > self._sync_stall_timeout / 2:
+                    self._discard_blocks_from_ineligible_peers()
+                
                 self._maybe_mark_block_stalled(now)
                 self._sync_watchdog_check(
                     now=now, head_height=best_block_height, head_hash=head_hash
@@ -9976,6 +10059,14 @@ class P2PService:
             if anchored:
                 eligible = anchored
         avoid_remotes = avoid_remotes or set()
+        
+        # Prioritize force peers (those in FORCE_SYNC_HEADER_PEERS)
+        force_peers = [p for p in eligible if p.remote in FORCE_SYNC_HEADER_PEERS and p.remote not in avoid_remotes]
+        if force_peers:
+            # Always prefer force peers - return the first available one
+            # These are trusted verifier nodes (like 144.126.133.21:30333)
+            return force_peers[0]
+        
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
         for p in eligible:
@@ -10049,6 +10140,29 @@ class P2PService:
                 eligible = anchored
         if not eligible:
             return None
+        
+        # Prioritize force peers (those in FORCE_SYNC_HEADER_PEERS)
+        force_peers = [p for p in eligible if p.remote in FORCE_SYNC_HEADER_PEERS]
+        if force_peers:
+            # Check if any force peer has the needed height
+            now = time.time()
+            for peer in force_peers:
+                info = self._sync_peer_heads.get(peer.remote)
+                if (
+                    info is not None
+                    and now - info.updated_at <= self._sync_peer_head_stale_sec
+                    and (not info.cooldown_until or info.cooldown_until <= now)
+                ):
+                    head_height = int(info.height)
+                else:
+                    try:
+                        head_height = int((peer.hello or {}).get("head_height") or 0)
+                    except Exception:
+                        head_height = 0
+                # If force peer has sufficient height, use it
+                if head_height > 0 and (needed_height is None or head_height >= needed_height):
+                    return peer
+        
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
         for peer in eligible:
