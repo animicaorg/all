@@ -97,7 +97,7 @@ def test_theta_adjustment_block_time_tracking():
     
     assert block_times is not None
     assert len(block_times) > 0
-    assert len(block_times) <= 1000  # Should be limited to last 1000 (deque maxlen)
+    assert len(block_times) <= 20  # Should be limited to last 20 (deque maxlen)
     
     # Most recent times should match our test times
     # Convert deque to list for comparison
