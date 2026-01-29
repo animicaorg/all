@@ -47,6 +47,11 @@ _DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "1000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
 _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 
+# Job cache timeout: how long to keep mining jobs before marking them stale
+# Should be at least as long as ANIMICA_MAX_BLOCK_TIME_S to avoid premature eviction
+# Default: 3600 seconds (1 hour) - aligns with max block time
+_JOB_CACHE_TIMEOUT_S = float(os.getenv("ANIMICA_JOB_CACHE_TIMEOUT_S", "3600"))
+
 log = logging.getLogger("animica.rpc.miner")
 
 # Constants for address and gas calculations
@@ -3761,7 +3766,7 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     for cached_job_id, cached in list(_JOB_CACHE.items()):
         created_at = float(cached.get("created_at") or 0)
         if (
-            created_at < now - 120
+            created_at < now - _JOB_CACHE_TIMEOUT_S
             or cached.get("head_generation") != head_snapshot.get("generation")
         ):
             _JOB_CACHE.pop(cached_job_id, None)
