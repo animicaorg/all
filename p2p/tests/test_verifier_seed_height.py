@@ -1,8 +1,8 @@
 """
 Test verifier seed height validation.
 
-This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209)
-are treated as authoritative for determining the highest block height, with other
+This ensures that the trusted verifier seed node (144.126.133.21)
+is treated as authoritative for determining the highest block height, with other
 nodes only allowed to be max 1 block ahead (e.g., a miner who just found a block).
 """
 
@@ -50,8 +50,7 @@ def test_verifier_seed_identification(tmp_path: Path) -> None:
     )
 
     # Test verifier seeds
-    assert node._is_verifier_seed_peer("62.169.17.132:30333") is True
-    assert node._is_verifier_seed_peer("82.208.20.209:30333") is True
+    assert node._is_verifier_seed_peer("144.126.133.21:30333") is True
     
     # Test non-verifier seeds
     assert node._is_verifier_seed_peer("192.168.1.1:30333") is False
@@ -73,8 +72,7 @@ def test_verifier_seeds_disabled(tmp_path: Path) -> None:
         )
 
         # Even verifier IPs should return False when disabled
-        assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
-        assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", None)
 
@@ -97,8 +95,7 @@ def test_custom_verifier_seeds(tmp_path: Path) -> None:
         assert node._is_verifier_seed_peer("10.4.5.6:30333") is True
         
         # Default verifier seeds should not be recognized
-        assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
-        assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_VERIFIER_SEED_IPS", None)
 
@@ -115,7 +112,7 @@ def test_verifier_seeds_constrain_network_height_one_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -153,7 +150,7 @@ def test_verifier_seeds_constrain_network_height_two_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -191,7 +188,7 @@ def test_verifier_seeds_constrain_network_height_far_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer claiming very high height
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -218,50 +215,55 @@ def test_verifier_seeds_constrain_network_height_far_ahead(tmp_path: Path) -> No
 
 
 def test_multiple_verifier_seeds_highest_used(tmp_path: Path) -> None:
-    """Test that when multiple verifier seeds exist, the highest is used."""
-    deps_sync, deps = _make_deps(tmp_path, "multi-verifier")
-    node = P2PService(
-        listen_addrs=[tcp_multiaddr(free_port())],
-        seeds=[],
-        chain_id=deps_sync.chain_id,
-        deps=deps,
-        peerstore_path=str(tmp_path / "multi-verifier" / "p2p"),
-    )
+    """Test that when multiple custom verifier seeds exist, the highest is used."""
+    # Use custom verifier IPs for this test to simulate multiple verifiers
+    os.environ["ANIMICA_P2P_VERIFIER_SEED_IPS"] = "10.1.2.3,10.4.5.6"
+    try:
+        deps_sync, deps = _make_deps(tmp_path, "multi-verifier")
+        node = P2PService(
+            listen_addrs=[tcp_multiaddr(free_port())],
+            seeds=[],
+            chain_id=deps_sync.chain_id,
+            deps=deps,
+            peerstore_path=str(tmp_path / "multi-verifier" / "p2p"),
+        )
 
-    # Register both verifier seeds
-    peer_verifier1 = _register_peer(node, "62.169.17.132:30333")
-    peer_verifier2 = _register_peer(node, "82.208.20.209:30333")
-    peer_regular = _register_peer(node, "192.168.1.1:30333")
+        # Register both verifier seeds
+        peer_verifier1 = _register_peer(node, "10.1.2.3:30333")
+        peer_verifier2 = _register_peer(node, "10.4.5.6:30333")
+        peer_regular = _register_peer(node, "192.168.1.1:30333")
 
-    now = time.time()
-    
-    # First verifier at height 100
-    node._sync_peer_heads[peer_verifier1.remote] = _PeerHeadInfo(
-        height=100,
-        updated_at=now,
-        source="test",
-    )
-    peer_verifier1.hello = {"head_height": 100}
+        now = time.time()
+        
+        # First verifier at height 100
+        node._sync_peer_heads[peer_verifier1.remote] = _PeerHeadInfo(
+            height=100,
+            updated_at=now,
+            source="test",
+        )
+        peer_verifier1.hello = {"head_height": 100}
 
-    # Second verifier at height 110 (higher)
-    node._sync_peer_heads[peer_verifier2.remote] = _PeerHeadInfo(
-        height=110,
-        updated_at=now,
-        source="test",
-    )
-    peer_verifier2.hello = {"head_height": 110}
+        # Second verifier at height 110 (higher)
+        node._sync_peer_heads[peer_verifier2.remote] = _PeerHeadInfo(
+            height=110,
+            updated_at=now,
+            source="test",
+        )
+        peer_verifier2.hello = {"head_height": 110}
 
-    # Regular peer at 115 (more than 1 ahead of highest verifier)
-    node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
-        height=115,
-        updated_at=now,
-        source="test",
-    )
-    peer_regular.hello = {"head_height": 115}
+        # Regular peer at 115 (more than 1 ahead of highest verifier)
+        node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
+            height=115,
+            updated_at=now,
+            source="test",
+        )
+        peer_regular.hello = {"head_height": 115}
 
-    # Network best should be 111 (max verifier 110 + 1)
-    network_best = node._network_best_height()
-    assert network_best == 111, f"Expected 111 (max verifier+1), got {network_best}"
+        # Network best should be 111 (max verifier 110 + 1)
+        network_best = node._network_best_height()
+        assert network_best == 111, f"Expected 111 (max verifier+1), got {network_best}"
+    finally:
+        os.environ.pop("ANIMICA_P2P_VERIFIER_SEED_IPS", None)
 
 
 def test_no_verifier_seeds_present_no_constraint(tmp_path: Path) -> None:
@@ -312,7 +314,7 @@ def test_verifier_behind_regular_peers(tmp_path: Path) -> None:
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -350,7 +352,7 @@ def test_verifier_network_best_height_propagation(tmp_path: Path) -> None:
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -382,48 +384,53 @@ def test_verifier_network_best_height_propagation(tmp_path: Path) -> None:
 
 def test_get_max_verifier_height(tmp_path: Path) -> None:
     """Test _get_max_verifier_height returns the highest verifier height."""
-    deps_sync, deps = _make_deps(tmp_path, "max-verifier")
-    node = P2PService(
-        listen_addrs=[tcp_multiaddr(free_port())],
-        seeds=[],
-        chain_id=deps_sync.chain_id,
-        deps=deps,
-        peerstore_path=str(tmp_path / "max-verifier" / "p2p"),
-    )
+    # Use custom verifier IPs for this test to simulate multiple verifiers
+    os.environ["ANIMICA_P2P_VERIFIER_SEED_IPS"] = "10.1.2.3,10.4.5.6"
+    try:
+        deps_sync, deps = _make_deps(tmp_path, "max-verifier")
+        node = P2PService(
+            listen_addrs=[tcp_multiaddr(free_port())],
+            seeds=[],
+            chain_id=deps_sync.chain_id,
+            deps=deps,
+            peerstore_path=str(tmp_path / "max-verifier" / "p2p"),
+        )
 
-    # Register verifier seeds
-    peer_verifier1 = _register_peer(node, "62.169.17.132:30333")
-    peer_verifier2 = _register_peer(node, "82.208.20.209:30333")
-    peer_regular = _register_peer(node, "192.168.1.1:30333")
+        # Register verifier seeds
+        peer_verifier1 = _register_peer(node, "10.1.2.3:30333")
+        peer_verifier2 = _register_peer(node, "10.4.5.6:30333")
+        peer_regular = _register_peer(node, "192.168.1.1:30333")
 
-    now = time.time()
-    
-    # Set verifier heights
-    node._sync_peer_heads[peer_verifier1.remote] = _PeerHeadInfo(
-        height=100,
-        updated_at=now,
-        source="test",
-    )
-    peer_verifier1.hello = {"head_height": 100}
+        now = time.time()
+        
+        # Set verifier heights
+        node._sync_peer_heads[peer_verifier1.remote] = _PeerHeadInfo(
+            height=100,
+            updated_at=now,
+            source="test",
+        )
+        peer_verifier1.hello = {"head_height": 100}
 
-    node._sync_peer_heads[peer_verifier2.remote] = _PeerHeadInfo(
-        height=110,
-        updated_at=now,
-        source="test",
-    )
-    peer_verifier2.hello = {"head_height": 110}
+        node._sync_peer_heads[peer_verifier2.remote] = _PeerHeadInfo(
+            height=110,
+            updated_at=now,
+            source="test",
+        )
+        peer_verifier2.hello = {"head_height": 110}
 
-    # Regular peer height should not affect max verifier height
-    node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
-        height=200,
-        updated_at=now,
-        source="test",
-    )
-    peer_regular.hello = {"head_height": 200}
+        # Regular peer height should not affect max verifier height
+        node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
+            height=200,
+            updated_at=now,
+            source="test",
+        )
+        peer_regular.hello = {"head_height": 200}
 
-    # Max verifier height should be 110 (highest verifier)
-    max_verifier = node._get_max_verifier_height()
-    assert max_verifier == 110, f"Expected 110, got {max_verifier}"
+        # Max verifier height should be 110 (highest verifier)
+        max_verifier = node._get_max_verifier_height()
+        assert max_verifier == 110, f"Expected 110, got {max_verifier}"
+    finally:
+        os.environ.pop("ANIMICA_P2P_VERIFIER_SEED_IPS", None)
 
 
 def test_get_max_verifier_height_no_verifiers(tmp_path: Path) -> None:
@@ -468,7 +475,7 @@ def test_get_max_verifier_height_disabled(tmp_path: Path) -> None:
         )
 
         # Register verifier seed
-        peer_verifier = _register_peer(node, "62.169.17.132:30333")
+        peer_verifier = _register_peer(node, "144.126.133.21:30333")
 
         now = time.time()
         
@@ -498,7 +505,7 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_behind(tmp_path:
     )
 
     # Register verifier seed
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
 
     now = time.time()
     
@@ -532,7 +539,7 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_equal(tmp_path: 
     )
 
     # Register verifier seed
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "144.126.133.21:30333")
 
     now = time.time()
     

@@ -47,9 +47,8 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
         peerstore_path=str(tmp_path / "get-verifier-status" / "p2p"),
     )
     
-    # Register verifier seed peers
-    verifier1 = _register_peer(node, "62.169.17.132:30333")
-    verifier2 = _register_peer(node, "82.208.20.209:30333")
+    # Register verifier seed peer
+    verifier1 = _register_peer(node, "144.126.133.21:30333")
     
     # Register non-verifier peer
     regular = _register_peer(node, "192.168.1.1:30333")
@@ -57,10 +56,7 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     now = time.time()
     
     # Set heights
-    node._sync_peer_heads["62.169.17.132:30333"] = _PeerHeadInfo(
-        height=100, hash=b"\x00" * 32, last_seen=now
-    )
-    node._sync_peer_heads["82.208.20.209:30333"] = _PeerHeadInfo(
+    node._sync_peer_heads["144.126.133.21:30333"] = _PeerHeadInfo(
         height=105, hash=b"\x00" * 32, last_seen=now
     )
     node._sync_peer_heads["192.168.1.1:30333"] = _PeerHeadInfo(
@@ -76,8 +72,8 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     # Validate response structure
     assert isinstance(status, dict)
     assert status["enabled"] is True
-    assert set(status["configured_ips"]) == {"62.169.17.132", "82.208.20.209"}
-    assert len(status["connected_verifiers"]) == 2
+    assert set(status["configured_ips"]) == {"144.126.133.21"}
+    assert len(status["connected_verifiers"]) == 1
     assert status["max_verifier_height"] == 105  # Highest verifier
     assert status["max_allowed_height"] == 106  # Verifier + 1
     assert status["local_height"] == 103
@@ -85,8 +81,7 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     
     # Verify connected verifiers details
     verifier_remotes = [v["remote"] for v in status["connected_verifiers"]]
-    assert "62.169.17.132:30333" in verifier_remotes
-    assert "82.208.20.209:30333" in verifier_remotes
+    assert "144.126.133.21:30333" in verifier_remotes
     assert "192.168.1.1:30333" not in verifier_remotes  # Not a verifier
 
 
@@ -102,12 +97,12 @@ def test_get_verifier_seed_status_cannot_mine(tmp_path: Path) -> None:
     )
     
     # Register verifier seed peer
-    verifier1 = _register_peer(node, "62.169.17.132:30333")
+    verifier1 = _register_peer(node, "144.126.133.21:30333")
     
     now = time.time()
     
     # Set verifier at height 100
-    node._sync_peer_heads["62.169.17.132:30333"] = _PeerHeadInfo(
+    node._sync_peer_heads["144.126.133.21:30333"] = _PeerHeadInfo(
         height=100, hash=b"\x00" * 32, last_seen=now
     )
     
@@ -136,12 +131,12 @@ def test_get_verifier_seed_status_at_boundary(tmp_path: Path) -> None:
     )
     
     # Register verifier seed peer
-    verifier1 = _register_peer(node, "62.169.17.132:30333")
+    verifier1 = _register_peer(node, "144.126.133.21:30333")
     
     now = time.time()
     
     # Set verifier at height 100
-    node._sync_peer_heads["62.169.17.132:30333"] = _PeerHeadInfo(
+    node._sync_peer_heads["144.126.133.21:30333"] = _PeerHeadInfo(
         height=100, hash=b"\x00" * 32, last_seen=now
     )
     
