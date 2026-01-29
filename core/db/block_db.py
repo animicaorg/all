@@ -346,6 +346,49 @@ class BlockDB:
         hh = self.get_canonical_hash(height)
         return None if hh is None else self.get_block_by_hash(hh)
 
+    # --- Batch lookups for sync performance ---
+
+    def has_blocks_batch(self, block_hashes: list[bytes]) -> set[bytes]:
+        """
+        Check which blocks exist in the database from a list of block hashes.
+        
+        Returns a set of hashes that exist in the DB. This is much faster than
+        calling has_block/get_block_by_hash individually for each hash when
+        syncing thousands of blocks.
+        
+        Args:
+            block_hashes: List of block hashes to check
+            
+        Returns:
+            Set of block hashes that exist in the database
+        """
+        existing = set()
+        for h in block_hashes:
+            # Check if either full block or header exists
+            if self.kv.get(k_blk(h)) is not None or self.kv.get(k_hdr(h)) is not None:
+                existing.add(h)
+        return existing
+
+    def has_headers_batch(self, header_hashes: list[bytes]) -> set[bytes]:
+        """
+        Check which headers exist in the database from a list of header hashes.
+        
+        Returns a set of hashes that exist in the DB. This is much faster than
+        calling has_header/get_header_by_hash individually for each hash when
+        syncing thousands of headers.
+        
+        Args:
+            header_hashes: List of header hashes to check
+            
+        Returns:
+            Set of header hashes that exist in the database
+        """
+        existing = set()
+        for h in header_hashes:
+            if self.kv.get(k_hdr(h)) is not None:
+                existing.add(h)
+        return existing
+
     # --- Receipt lookup by tx_hash ---
 
     def get_receipt_loc_by_hash(self, tx_hash: bytes) -> Optional[dict]:
