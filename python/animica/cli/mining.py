@@ -91,9 +91,11 @@ def _mine_header(
     *,
     workers: int | None = None,
 ) -> tuple[int | None, bytes | None]:
-    max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "1000000")))
+    # Increased from 1000000 to 10000000 for better PoW success rate
+    max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000")))
     retry_windows = max(1, int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4")))
-    default_total = max(max_nonce * retry_windows, 5_000_000)
+    # Increased from 5000000 to 50000000 for extended search space
+    default_total = max(max_nonce * retry_windows, 50_000_000)
     max_total_nonce = max(
         1,
         int(os.getenv("ANIMICA_MINER_MAX_TOTAL_NONCE", str(default_total))),
