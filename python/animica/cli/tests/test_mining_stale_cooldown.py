@@ -80,10 +80,10 @@ def test_cooldown_after_stale_template_exhaustion():
             return {"hash": "0x" + f"{stale_count:064x}", "height": 100 + stale_count}
         
         elif method == "miner.submitBlock":
-            # Always reject as stale for first 3 attempts, then accept
-            if stale_count < 4:
+            # Always reject as stale for first attempt, then accept on retry
+            if stale_count < 2:
                 raise Exception("Block rejected: stale_template")
-            return {"accepted": True, "new_head": 104, "credited_amount": 300000000000}
+            return {"accepted": True, "new_head": 102, "credited_amount": 300000000000}
         
         return {}
     
