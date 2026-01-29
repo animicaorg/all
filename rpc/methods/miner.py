@@ -1004,6 +1004,21 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             )
             return int(state.theta_micro)
         
+        # Clamp dt_seconds to prevent extreme difficulty increases during rapid mining
+        # When mining blocks very quickly (e.g., local devnet, testing), dt_seconds can be < 1s
+        # This causes ln(dt/T) to be very negative, leading to exponential theta growth
+        # Clamp to 10% of target to prevent runaway difficulty while still allowing adjustment
+        target_time = state.params.target_block_time_s
+        min_dt_threshold = max(1.0, target_time * 0.1)  # At least 1s or 10% of target
+        
+        if dt_seconds < min_dt_threshold:
+            original_dt = dt_seconds
+            dt_seconds = min_dt_threshold
+            log.debug(
+                f"Clamped dt_seconds for theta adjustment: {original_dt:.3f}s → {dt_seconds:.1f}s "
+                f"(min threshold: {min_dt_threshold:.1f}s) to prevent extreme difficulty increases"
+            )
+        
         # Apply retargeting update
         new_state = update_theta(state, dt_seconds, blocks_skipped=1)
         _MINING_STATE["theta_state"] = new_state
