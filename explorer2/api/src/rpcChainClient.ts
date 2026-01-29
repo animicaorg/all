@@ -46,13 +46,35 @@ export class RpcChainClient implements ChainClient {
       this.rpc.call('state.getTotalSupply', [])
     ])
 
+    // Helper to check if a method is truly available
+    // A method is available if:
+    // 1. The call succeeded (fulfilled), OR
+    // 2. The call failed but NOT due to "method not found" (meaning the method exists but failed for other reasons like invalid params)
+    const isMethodAvailable = (result: PromiseSettledResult<unknown>): boolean => {
+      if (result.status === 'fulfilled') {
+        return true
+      }
+      
+      // For rejected calls, check if it's a "method not found" error
+      // If it IS a "method not found" error, the method is NOT available
+      // If it's any other error, the method exists but failed (so it IS available)
+      const errorMsg = result.reason?.message?.toLowerCase() || ''
+      const isMethodNotFoundError = 
+        errorMsg.includes('method not found') ||
+        errorMsg.includes('unknown method') ||
+        errorMsg.includes('not implemented')
+      
+      // Return true (available) if it's NOT a "method not found" error
+      return !isMethodNotFoundError
+    }
+
     this.capabilities = {
-      hasMempool: checks[0].status === 'fulfilled' || (checks[0].status === 'rejected' && !checks[0].reason?.message?.includes('not found')),
-      hasPeers: checks[1].status === 'fulfilled' || (checks[1].status === 'rejected' && !checks[1].reason?.message?.includes('not found')),
-      hasReceipts: checks[2].status === 'fulfilled' || (checks[2].status === 'rejected' && !checks[2].reason?.message?.includes('not found')),
-      hasStateBalance: checks[3].status === 'fulfilled' || (checks[3].status === 'rejected' && !checks[3].reason?.message?.includes('not found')),
-      hasRichList: checks[4].status === 'fulfilled' || (checks[4].status === 'rejected' && !checks[4].reason?.message?.includes('not found')),
-      hasTotalSupply: checks[5].status === 'fulfilled' || (checks[5].status === 'rejected' && !checks[5].reason?.message?.includes('not found'))
+      hasMempool: isMethodAvailable(checks[0]),
+      hasPeers: isMethodAvailable(checks[1]),
+      hasReceipts: isMethodAvailable(checks[2]),
+      hasStateBalance: isMethodAvailable(checks[3]),
+      hasRichList: isMethodAvailable(checks[4]),
+      hasTotalSupply: isMethodAvailable(checks[5])
     }
 
     log.info({ capabilities: this.capabilities }, 'Capabilities detected')
