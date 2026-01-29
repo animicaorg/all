@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 from p2p import version as p2p_version
 from core.config import DEFAULT_DB_FILENAME
+from p2p.config import VERIFIER_SEED_IPS
 from p2p.crypto import keys as keys_mod
 from p2p.crypto import peer_id as peer_id_mod
 from p2p.peer import peerstore as pstore
@@ -1123,7 +1124,7 @@ class P2PService:
         # Verifier seed nodes for height validation
         # These nodes are considered authoritative for determining the highest block height
         self._enable_verifier_seeds = _env_flag("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", default=True)
-        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "62.169.17.132,82.208.20.209,3.12.224.189")
+        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", ",".join(VERIFIER_SEED_IPS))
         self._verifier_seed_ips = {
             ip.strip() for ip in verifier_ips_env.split(",") if ip.strip()
         }

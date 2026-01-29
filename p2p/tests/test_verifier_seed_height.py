@@ -1,9 +1,9 @@
 """
 Test verifier seed height validation.
 
-This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209)
-are treated as authoritative for determining the highest block height, with other
-nodes only allowed to be max 1 block ahead (e.g., a miner who just found a block).
+This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209, 3.12.224.189)
+anchor the network's best height, preventing malicious or misconfigured peers from
+claiming excessively high block heights.
 """
 
 import asyncio
