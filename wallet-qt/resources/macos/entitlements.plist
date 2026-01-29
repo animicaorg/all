@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened Runtime Entitlements for Animica Wallet -->
+    
+    <!-- Allow network access for embedded node -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    
+    <!-- Allow execution of embedded Python interpreter -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    
+    <!-- JIT compilation for Python (if needed) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    
+    <!-- Disable App Sandbox (required for full node functionality) -->
+    <!-- Note: Sandboxing would restrict network and filesystem access needed by the node -->
+    
+    <!-- Allow access to user-selected files (for keystore import/export) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    
+    <!-- No Camera/Microphone access needed -->
+    
+    <!-- No Calendar/Contacts access needed -->
+</dict>
+</plist>
