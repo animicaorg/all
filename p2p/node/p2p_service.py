@@ -1123,7 +1123,7 @@ class P2PService:
         # Verifier seed nodes for height validation
         # These nodes are considered authoritative for determining the highest block height
         self._enable_verifier_seeds = _env_flag("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", default=True)
-        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "62.169.17.132,82.208.20.209,144.126.133.21")
+        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "3.12.224.189,144.126.133.21")
         self._verifier_seed_ips = {
             ip.strip() for ip in verifier_ips_env.split(",") if ip.strip()
         }
@@ -10242,7 +10242,7 @@ class P2PService:
         Check if a peer is one of the trusted verifier seed nodes.
         
         Args:
-            peer_remote: The peer's remote address (e.g., "62.169.17.132:30333")
+            peer_remote: The peer's remote address (e.g., "3.12.224.189:30333")
             
         Returns:
             True if the peer is a verifier seed, False otherwise
@@ -10457,7 +10457,7 @@ class P2PService:
                         connected_verifiers.append({
                             "remote": peer.remote,
                             "height": int(info.height),
-                            "head_hash": "0x" + info.hash.hex() if info.hash else None,
+                            "head_hash": "0x" + info.head_hash.hex() if info.head_hash else None,
                         })
         
         max_allowed = None if max_verifier is None else max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER
