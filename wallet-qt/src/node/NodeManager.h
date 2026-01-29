@@ -44,7 +44,9 @@ public:
     enum class State {
         Stopped,
         Starting,
-        Running,
+        RpcReady,      // RPC is responding but may not be fully synced
+        Healthy,       // RPC + P2P working normally
+        Degraded,      // RPC works but P2P/sync issues detected
         Stopping,
         Error
     };
@@ -96,9 +98,13 @@ public:
     NodeInfo nodeInfo() const { return m_nodeInfo; }
 
     /**
-     * @brief Check if node is running.
+     * @brief Check if node is running (any active state).
      */
-    bool isRunning() const { return m_state == State::Running; }
+    bool isRunning() const { 
+        return m_state == State::RpcReady || 
+               m_state == State::Healthy || 
+               m_state == State::Degraded; 
+    }
 
     /**
      * @brief Get last error message.
@@ -132,6 +138,26 @@ public:
      * @param dataDirManager Data directory manager instance
      */
     void setDataDirManager(DataDirManager* dataDirManager);
+    
+    /**
+     * @brief Reset chain data directory (requires user confirmation).
+     * @param chainId Chain ID to reset
+     * @return true if reset successful
+     */
+    bool resetChainData(int chainId);
+    
+    /**
+     * @brief Get recent log lines with deduplication.
+     * @param maxLines Maximum number of lines to return
+     * @return Deduplicated log lines
+     */
+    QStringList getDeduplicatedLogs(int maxLines = 100);
+    
+    /**
+     * @brief Check if node is in degraded state.
+     * @return true if degraded
+     */
+    bool isDegraded() const { return m_state == State::Degraded; }
 
 signals:
     /**
@@ -171,6 +197,12 @@ signals:
      * @param lines New log lines
      */
     void logLinesAvailable(const QStringList& lines);
+    
+    /**
+     * @brief Emitted when degraded state is detected.
+     * @param reason Reason for degradation
+     */
+    void nodeDegraded(const QString& reason);
 
 private slots:
     void onProcessStarted();
@@ -179,6 +211,7 @@ private slots:
     void onProcessOutput();
     void onHealthCheckTimeout();
     void onSyncCheckTimeout();
+    void onRestartBackoffTimeout();
 
 private:
     void setState(State state);
@@ -245,6 +278,42 @@ private:
      * @return Path to bundled python executable, or empty if not bundled
      */
     QString findBundledPython();
+    
+    /**
+     * @brief Detect problematic patterns in log output.
+     * @param line Log line to check
+     * @return true if degradation pattern detected
+     */
+    bool detectDegradationPattern(const QString& line);
+    
+    /**
+     * @brief Add line to log buffer with deduplication.
+     * @param line Log line to add
+     */
+    void addLogLine(const QString& line);
+    
+    /**
+     * @brief Calculate restart delay with exponential backoff.
+     * @return Delay in milliseconds
+     */
+    int calculateRestartDelay();
+    
+    /**
+     * @brief Schedule restart with backoff.
+     */
+    void scheduleRestart();
+    
+    /**
+     * @brief Perform enhanced health check.
+     */
+    void performHealthCheck();
+    
+    /**
+     * @brief Ensure data directory exists and is valid.
+     * @param chainId Chain ID
+     * @return true if valid
+     */
+    bool ensureDataDirValid(int chainId);
 
     State m_state;
     QString m_lastError;
@@ -258,15 +327,30 @@ private:
     
     QTimer* m_healthCheckTimer;
     QTimer* m_syncCheckTimer;
+    QTimer* m_restartTimer;
     int m_healthCheckAttempts;
+    int m_restartAttempts;
     
     QFile* m_lockFile;
     
-    static constexpr int DEFAULT_RPC_PORT = 8545;
+    // Log management
+    QStringList m_logBuffer;  // Ring buffer for last 5000 lines
+    QMap<QString, QPair<int, QDateTime>> m_logDedupeMap;  // line -> (count, last seen)
+    
+    // Degradation tracking
+    bool m_degradationDetected;
+    QString m_degradationReason;
+    
+    static constexpr int DEFAULT_RPC_PORT = 8548;  // mainnet default from problem statement
     static constexpr int DEFAULT_P2P_PORT = 30333;
-    static constexpr int HEALTH_CHECK_TIMEOUT = 1000;  // 1 second
-    static constexpr int HEALTH_CHECK_MAX_ATTEMPTS = 30;  // 30 seconds total
+    static constexpr int HEALTH_CHECK_INITIAL_INTERVAL = 250;  // 250ms initially
+    static constexpr int HEALTH_CHECK_BACKOFF_INTERVAL = 2000;  // 2s after initial attempts
+    static constexpr int HEALTH_CHECK_MAX_ATTEMPTS = 120;  // 30 seconds initially (250ms * 120), then keep trying with backoff
     static constexpr int SYNC_CHECK_INTERVAL = 5000;  // 5 seconds
+    static constexpr int SYNC_CHECK_DEGRADED_INTERVAL = 15000;  // 15 seconds when degraded
+    static constexpr int MAX_LOG_BUFFER_SIZE = 5000;
+    static constexpr int LOG_DEDUPE_WINDOW_MS = 2000;  // 2 second deduplication window
+    static constexpr int MAX_RESTART_DELAY_MS = 60000;  // 60 seconds max backoff
 };
 
 #endif // NODEMANAGER_H

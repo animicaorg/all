@@ -20,8 +20,11 @@ NodeManager::NodeManager(QObject* parent)
     , m_dataDirManager(nullptr)
     , m_healthCheckTimer(new QTimer(this))
     , m_syncCheckTimer(new QTimer(this))
+    , m_restartTimer(new QTimer(this))
     , m_healthCheckAttempts(0)
+    , m_restartAttempts(0)
     , m_lockFile(nullptr)
+    , m_degradationDetected(false)
 {
     // Configure process
     m_process->setProcessChannelMode(QProcess::MergedChannels);
@@ -35,12 +38,15 @@ NodeManager::NodeManager(QObject* parent)
     
     // Configure timers
     m_healthCheckTimer->setSingleShot(false);
-    m_healthCheckTimer->setInterval(HEALTH_CHECK_TIMEOUT);
+    m_healthCheckTimer->setInterval(HEALTH_CHECK_INITIAL_INTERVAL);
     connect(m_healthCheckTimer, &QTimer::timeout, this, &NodeManager::onHealthCheckTimeout);
     
     m_syncCheckTimer->setSingleShot(false);
     m_syncCheckTimer->setInterval(SYNC_CHECK_INTERVAL);
     connect(m_syncCheckTimer, &QTimer::timeout, this, &NodeManager::onSyncCheckTimeout);
+    
+    m_restartTimer->setSingleShot(true);
+    connect(m_restartTimer, &QTimer::timeout, this, &NodeManager::onRestartBackoffTimeout);
     
     // Ensure directories exist
     AppPaths::ensureDirectoriesExist();
@@ -68,6 +74,8 @@ bool NodeManager::startNode(const QString& network)
     }
     
     m_currentNetwork = network;
+    m_degradationDetected = false;
+    m_degradationReason.clear();
     setState(State::Starting);
     
     // Determine chain ID from network
@@ -91,6 +99,13 @@ bool NodeManager::startNode(const QString& network)
         m_dataDirManager->setStoredNetworkId(network);
     }
     
+    // Ensure data directory is valid
+    if (!ensureDataDirValid(chainId)) {
+        setError("Failed to initialize data directory");
+        setState(State::Error);
+        return false;
+    }
+    
     // Check for existing lock
     if (!acquireLock()) {
         setError("Node is already running (lock file exists)");
@@ -98,7 +113,7 @@ bool NodeManager::startNode(const QString& network)
         return false;
     }
     
-    // Find available ports
+    // Find available ports (use mainnet port 8548 as default)
     int rpcPort = findAvailablePort(DEFAULT_RPC_PORT);
     if (rpcPort < 0) {
         setError("No available RPC ports in range");
@@ -164,6 +179,9 @@ bool NodeManager::startNode(const QString& network)
     qDebug() << "RPC port:" << rpcPort << "P2P port:" << p2pPort;
     qDebug() << "Network:" << network << "Chain ID:" << chainId;
     qDebug() << "Data dir:" << dataDir;
+    
+    // Reset restart attempts on successful start
+    m_restartAttempts = 0;
     
     // Start process
     m_process->start(python, args);
@@ -363,15 +381,30 @@ void NodeManager::onProcessOutput()
     QByteArray output = m_process->readAllStandardOutput();
     QString text = QString::fromUtf8(output);
     
-    // Split into lines and emit
+    // Split into lines
     QStringList lines = text.split('\n', Qt::SkipEmptyParts);
-    if (!lines.isEmpty()) {
-        emit logLinesAvailable(lines);
+    
+    for (const QString& line : lines) {
+        // Add to buffer with deduplication
+        addLogLine(line);
+        
+        // Check for degradation patterns
+        if (detectDegradationPattern(line) && !m_degradationDetected) {
+            m_degradationDetected = true;
+            if (m_state == State::RpcReady || m_state == State::Healthy) {
+                setState(State::Degraded);
+                emit nodeDegraded(m_degradationReason);
+                
+                // Slow down sync checks when degraded
+                m_syncCheckTimer->setInterval(SYNC_CHECK_DEGRADED_INTERVAL);
+            }
+        }
     }
     
-    // Log to console
-    for (const QString& line : lines) {
-        qDebug().noquote() << "[Node]" << line;
+    // Emit deduplicated logs
+    QStringList deduped = getDeduplicatedLogs(50);  // Last 50 deduplicated lines
+    if (!deduped.isEmpty()) {
+        emit logLinesAvailable(deduped);
     }
 }
 
@@ -379,33 +412,8 @@ void NodeManager::onHealthCheckTimeout()
 {
     m_healthCheckAttempts++;
     
-    // Send ping request
-    QNetworkReply* reply = m_rpcClient->ping();
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-        
-        if (reply->error() == QNetworkReply::NoError) {
-            // Parse response
-            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-            QJsonObject obj = doc.object();
-            
-            if (obj.contains("result") && obj["result"].toString() == "pong") {
-                qDebug() << "Node is ready (ping successful)";
-                stopHealthCheck();
-                setState(State::Running);
-                emit nodeReady();
-                
-                // Start sync monitoring
-                startSyncMonitoring();
-            } else {
-                qWarning() << "Unexpected ping response:" << obj;
-            }
-        } else if (m_healthCheckAttempts >= HEALTH_CHECK_MAX_ATTEMPTS) {
-            qWarning() << "Health check failed after" << HEALTH_CHECK_MAX_ATTEMPTS << "attempts";
-            setError("Node failed to become ready (timeout)");
-            stopNode();
-        }
-    });
+    // Perform enhanced health check
+    performHealthCheck();
 }
 
 void NodeManager::onSyncCheckTimeout()
@@ -436,6 +444,11 @@ void NodeManager::setState(State state)
     if (m_state != state) {
         m_state = state;
         qDebug() << "Node state changed to:" << static_cast<int>(state);
+        
+        // Map old "Running" references to appropriate new states
+        // For backwards compatibility, any external code checking for "Running"
+        // should now check for RpcReady, Healthy, or Degraded
+        
         emit stateChanged(state);
     }
 }
@@ -620,6 +633,268 @@ QString NodeManager::findPython()
     
     qWarning() << "Python 3 not found in common locations";
     return QString();
+}
+
+// ==================== New Helper Methods ====================
+
+bool NodeManager::detectDegradationPattern(const QString& line)
+{
+    // Detect known problematic patterns
+    if (line.contains("UnboundLocalError: cannot access local variable 'asyncio'")) {
+        m_degradationReason = "Node Python error: asyncio variable issue";
+        qWarning() << "Detected degradation pattern:" << m_degradationReason;
+        return true;
+    }
+    
+    if (line.contains("NoneType") && line.contains("'>='")) {
+        m_degradationReason = "Node snapshot orchestrator error: NoneType comparison";
+        qWarning() << "Detected degradation pattern:" << m_degradationReason;
+        return true;
+    }
+    
+    if (line.contains("sync: reset cursor due to missing head_hash in db")) {
+        m_degradationReason = "P2P sync error: missing head_hash (DB may be corrupt)";
+        qWarning() << "Detected degradation pattern:" << m_degradationReason;
+        return true;
+    }
+    
+    if (line.contains("Connection refused") && line.contains("seed")) {
+        // Don't mark as degraded for connection refused - it's expected if no seeds available
+        qDebug() << "Seed connection failed (this is not critical)";
+        return false;
+    }
+    
+    return false;
+}
+
+void NodeManager::addLogLine(const QString& line)
+{
+    QDateTime now = QDateTime::currentDateTime();
+    
+    // Check if this line is a duplicate within the dedupe window
+    if (m_logDedupeMap.contains(line)) {
+        auto& entry = m_logDedupeMap[line];
+        qint64 msSinceLastSeen = entry.second.msecsTo(now);
+        
+        if (msSinceLastSeen < LOG_DEDUPE_WINDOW_MS) {
+            // Increment count
+            entry.first++;
+            entry.second = now;
+            return;  // Don't add duplicate
+        } else {
+            // Outside dedupe window, reset
+            entry.first = 1;
+            entry.second = now;
+        }
+    } else {
+        // New line
+        m_logDedupeMap[line] = qMakePair(1, now);
+    }
+    
+    // Add to ring buffer
+    m_logBuffer.append(line);
+    
+    // Maintain buffer size
+    while (m_logBuffer.size() > MAX_LOG_BUFFER_SIZE) {
+        m_logBuffer.removeFirst();
+    }
+    
+    // Clean up old dedupe entries (older than window)
+    QStringList toRemove;
+    for (auto it = m_logDedupeMap.begin(); it != m_logDedupeMap.end(); ++it) {
+        if (it.value().second.msecsTo(now) > LOG_DEDUPE_WINDOW_MS * 2) {
+            toRemove.append(it.key());
+        }
+    }
+    for (const QString& key : toRemove) {
+        m_logDedupeMap.remove(key);
+    }
+}
+
+QStringList NodeManager::getDeduplicatedLogs(int maxLines)
+{
+    QStringList result;
+    int count = qMin(maxLines, m_logBuffer.size());
+    int start = qMax(0, m_logBuffer.size() - count);
+    
+    for (int i = start; i < m_logBuffer.size(); i++) {
+        const QString& line = m_logBuffer[i];
+        
+        // Check if this line has been repeated
+        if (m_logDedupeMap.contains(line)) {
+            int repeatCount = m_logDedupeMap[line].first;
+            if (repeatCount > 1) {
+                result.append(QString("%1 (repeated %2 times)").arg(line).arg(repeatCount));
+            } else {
+                result.append(line);
+            }
+        } else {
+            result.append(line);
+        }
+    }
+    
+    return result;
+}
+
+int NodeManager::calculateRestartDelay()
+{
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s (max)
+    int baseDelay = 1000 * (1 << qMin(m_restartAttempts, 5));  // Cap at 2^5 = 32 seconds
+    if (baseDelay > MAX_RESTART_DELAY_MS) {
+        baseDelay = MAX_RESTART_DELAY_MS;
+    }
+    
+    // Add jitter (±20%)
+    int jitter = (qrand() % (baseDelay / 5)) - (baseDelay / 10);
+    int delay = baseDelay + jitter;
+    
+    qDebug() << "Restart delay calculated:" << delay << "ms (attempt" << m_restartAttempts << ")";
+    return delay;
+}
+
+void NodeManager::scheduleRestart()
+{
+    if (m_restartTimer->isActive()) {
+        qDebug() << "Restart already scheduled";
+        return;
+    }
+    
+    int delay = calculateRestartDelay();
+    m_restartAttempts++;
+    
+    qDebug() << "Scheduling restart in" << delay << "ms";
+    m_restartTimer->start(delay);
+}
+
+void NodeManager::onRestartBackoffTimeout()
+{
+    qDebug() << "Restart backoff timeout, restarting node";
+    startNode(m_currentNetwork);
+}
+
+void NodeManager::performHealthCheck()
+{
+    // Try to get chain head as a more robust health check
+    QNetworkReply* reply = m_rpcClient->getHead();
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            QJsonObject obj = doc.object();
+            
+            if (obj.contains("result")) {
+                QJsonObject result = obj["result"].toObject();
+                
+                // Check if we can read basic chain info
+                bool hasHeight = result.contains("height") || result.contains("number");
+                
+                if (hasHeight) {
+                    qDebug() << "Node RPC is ready (chain head accessible)";
+                    stopHealthCheck();
+                    
+                    // Transition to RpcReady, then check if fully healthy
+                    setState(State::RpcReady);
+                    emit nodeReady();
+                    
+                    // If no degradation detected, move to Healthy
+                    if (!m_degradationDetected) {
+                        setState(State::Healthy);
+                    }
+                    
+                    // Start sync monitoring
+                    startSyncMonitoring();
+                    return;
+                }
+            }
+        }
+        
+        // Still waiting for RPC readiness
+        if (m_healthCheckAttempts < HEALTH_CHECK_MAX_ATTEMPTS) {
+            // Continue checking
+            if (m_healthCheckAttempts > 30) {
+                // After 30 attempts (7.5s), slow down checks
+                m_healthCheckTimer->setInterval(HEALTH_CHECK_BACKOFF_INTERVAL);
+            }
+        } else {
+            // After max attempts, mark as degraded but keep trying
+            qWarning() << "RPC not ready after" << m_healthCheckAttempts << "attempts, marking as degraded";
+            m_degradationDetected = true;
+            m_degradationReason = "RPC endpoint not responding within 30 seconds";
+            setState(State::Degraded);
+            emit nodeDegraded(m_degradationReason);
+            
+            // Keep checking with slower interval
+            m_healthCheckTimer->setInterval(HEALTH_CHECK_BACKOFF_INTERVAL);
+        }
+    });
+}
+
+bool NodeManager::ensureDataDirValid(int chainId)
+{
+    QString dataDir;
+    if (m_dataDirManager) {
+        dataDir = m_dataDirManager->getChainDataDir(chainId);
+    } else {
+        dataDir = AppPaths::nodeChainDir(chainId);
+    }
+    
+    // Ensure directory exists
+    QDir dir(dataDir);
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            qWarning() << "Failed to create data directory:" << dataDir;
+            return false;
+        }
+        qDebug() << "Created data directory:" << dataDir;
+    }
+    
+    // Check write permissions
+    QFileInfo dirInfo(dataDir);
+    if (!dirInfo.isWritable()) {
+        qWarning() << "Data directory not writable:" << dataDir;
+        return false;
+    }
+    
+    qDebug() << "Data directory valid:" << dataDir;
+    return true;
+}
+
+bool NodeManager::resetChainData(int chainId)
+{
+    if (m_state != State::Stopped) {
+        qWarning() << "Cannot reset chain data while node is running";
+        return false;
+    }
+    
+    QString dataDir;
+    if (m_dataDirManager) {
+        dataDir = m_dataDirManager->getChainDataDir(chainId);
+    } else {
+        dataDir = AppPaths::nodeChainDir(chainId);
+    }
+    
+    QDir dir(dataDir);
+    if (!dir.exists()) {
+        qDebug() << "Data directory does not exist, nothing to reset";
+        return true;
+    }
+    
+    // Remove all files in the directory
+    qDebug() << "Resetting chain data in:" << dataDir;
+    if (!dir.removeRecursively()) {
+        qWarning() << "Failed to remove data directory";
+        return false;
+    }
+    
+    // Recreate the directory
+    if (!dir.mkpath(".")) {
+        qWarning() << "Failed to recreate data directory";
+        return false;
+    }
+    
+    qDebug() << "Chain data reset successfully";
+    return true;
 }
 
 // ==================== NodeInfo Methods ====================
