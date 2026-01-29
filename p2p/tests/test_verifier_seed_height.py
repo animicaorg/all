@@ -1,7 +1,7 @@
 """
 Test verifier seed height validation.
 
-This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209, 144.126.133.21)
+This ensures that the trusted verifier seed nodes (3.12.224.189, 144.126.133.21)
 are treated as authoritative for determining the highest block height, with other
 nodes only allowed to be max 1 block ahead (e.g., a miner who just found a block).
 """
@@ -50,8 +50,7 @@ def test_verifier_seed_identification(tmp_path: Path) -> None:
     )
 
     # Test verifier seeds
-    assert node._is_verifier_seed_peer("62.169.17.132:30333") is True
-    assert node._is_verifier_seed_peer("82.208.20.209:30333") is True
+    assert node._is_verifier_seed_peer("3.12.224.189:30333") is True
     assert node._is_verifier_seed_peer("144.126.133.21:30333") is True
     
     # Test non-verifier seeds
@@ -74,8 +73,7 @@ def test_verifier_seeds_disabled(tmp_path: Path) -> None:
         )
 
         # Even verifier IPs should return False when disabled
-        assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
-        assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("3.12.224.189:30333") is False
         assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", None)
@@ -99,8 +97,7 @@ def test_custom_verifier_seeds(tmp_path: Path) -> None:
         assert node._is_verifier_seed_peer("10.4.5.6:30333") is True
         
         # Default verifier seeds should not be recognized
-        assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
-        assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("3.12.224.189:30333") is False
         assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_VERIFIER_SEED_IPS", None)
@@ -118,7 +115,7 @@ def test_verifier_seeds_constrain_network_height_one_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -156,7 +153,7 @@ def test_verifier_seeds_constrain_network_height_two_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -194,7 +191,7 @@ def test_verifier_seeds_constrain_network_height_far_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer claiming very high height
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -232,8 +229,8 @@ def test_multiple_verifier_seeds_highest_used(tmp_path: Path) -> None:
     )
 
     # Register both verifier seeds
-    peer_verifier1 = _register_peer(node, "62.169.17.132:30333")
-    peer_verifier2 = _register_peer(node, "82.208.20.209:30333")
+    peer_verifier1 = _register_peer(node, "3.12.224.189:30333")
+    peer_verifier2 = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -315,7 +312,7 @@ def test_verifier_behind_regular_peers(tmp_path: Path) -> None:
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -353,7 +350,7 @@ def test_verifier_network_best_height_propagation(tmp_path: Path) -> None:
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -395,8 +392,8 @@ def test_get_max_verifier_height(tmp_path: Path) -> None:
     )
 
     # Register verifier seeds
-    peer_verifier1 = _register_peer(node, "62.169.17.132:30333")
-    peer_verifier2 = _register_peer(node, "82.208.20.209:30333")
+    peer_verifier1 = _register_peer(node, "3.12.224.189:30333")
+    peer_verifier2 = _register_peer(node, "144.126.133.21:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
@@ -471,7 +468,7 @@ def test_get_max_verifier_height_disabled(tmp_path: Path) -> None:
         )
 
         # Register verifier seed
-        peer_verifier = _register_peer(node, "62.169.17.132:30333")
+        peer_verifier = _register_peer(node, "3.12.224.189:30333")
 
         now = time.time()
         
@@ -501,7 +498,7 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_behind(tmp_path:
     )
 
     # Register verifier seed
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
 
     now = time.time()
     
@@ -535,7 +532,7 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_equal(tmp_path: 
     )
 
     # Register verifier seed
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
 
     now = time.time()
     
