@@ -697,6 +697,20 @@ class P2PDeps:
             return None
         return self._block_db.get_block_by_hash(h)
 
+    def has_blocks_batch(self, block_hashes: list[bytes]) -> set[bytes]:
+        """
+        Batch check which blocks exist in the database.
+        Much faster than individual lookups for large lists (5000+ blocks).
+        """
+        return self._block_db.has_blocks_batch(block_hashes)
+
+    def has_headers_batch(self, header_hashes: list[bytes]) -> set[bytes]:
+        """
+        Batch check which headers exist in the database.
+        Much faster than individual lookups for large lists (5000+ headers).
+        """
+        return self._block_db.has_headers_batch(header_hashes)
+
     def import_block(self, block: "Block") -> Tuple[bool, Optional[str]]:
         """
         Import a fully-formed block via core.chain.block_import.
@@ -1098,6 +1112,20 @@ class AsyncP2PDeps:
         loop = self._executor_loop()
         return await loop.run_in_executor(
             None, self._sync.block_by_number, height
+        )
+
+    async def has_blocks_batch(self, block_hashes: list[bytes]) -> set[bytes]:
+        """Async batch check which blocks exist in the database."""
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
+            None, self._sync.has_blocks_batch, block_hashes
+        )
+
+    async def has_headers_batch(self, header_hashes: list[bytes]) -> set[bytes]:
+        """Async batch check which headers exist in the database."""
+        loop = self._executor_loop()
+        return await loop.run_in_executor(
+            None, self._sync.has_headers_batch, header_hashes
         )
 
     async def import_block(self, block: "Block") -> Tuple[bool, Optional[str]]:
