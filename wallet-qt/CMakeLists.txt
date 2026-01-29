@@ -19,6 +19,9 @@ else()
     set(QT_VERSION_MAJOR 6)
 endif()
 
+# Find OpenSSL (required for wallet crypto)
+find_package(OpenSSL REQUIRED)
+
 # Set Qt version for source code
 add_compile_definitions(QT_VERSION_MAJOR=${QT_VERSION_MAJOR})
 
@@ -56,6 +59,17 @@ set(SOURCES
     src/rpc/AnimicaRpcClient.cpp
     src/node/NodeManager.cpp
     src/ui/NodeControlWidget.cpp
+    src/wallet/WalletAccount.cpp
+    src/wallet/EncryptedKeystore.cpp
+    src/wallet/AccountManager.cpp
+    src/wallet/AddressBook.cpp
+    src/wallet/BalanceTracker.cpp
+    src/wallet/WalletEngine.cpp
+    src/wallet/UnlockDialog.cpp
+    src/wallet/AccountsWidget.cpp
+    src/wallet/AddressBookWidget.cpp
+    src/wallet/CreateAccountDialog.cpp
+    src/wallet/WalletWidget.cpp
 )
 
 set(HEADERS
@@ -63,6 +77,17 @@ set(HEADERS
     src/rpc/AnimicaRpcClient.h
     src/node/NodeManager.h
     src/ui/NodeControlWidget.h
+    src/wallet/WalletAccount.h
+    src/wallet/EncryptedKeystore.h
+    src/wallet/AccountManager.h
+    src/wallet/AddressBook.h
+    src/wallet/BalanceTracker.h
+    src/wallet/WalletEngine.h
+    src/wallet/UnlockDialog.h
+    src/wallet/AccountsWidget.h
+    src/wallet/AddressBookWidget.h
+    src/wallet/CreateAccountDialog.h
+    src/wallet/WalletWidget.h
 )
 
 # Create executable
@@ -84,12 +109,16 @@ if(QT_VERSION_MAJOR EQUAL 6)
         Qt6::Core
         Qt6::Widgets
         Qt6::Network
+        OpenSSL::SSL
+        OpenSSL::Crypto
     )
 else()
     target_link_libraries(animica-wallet
         Qt5::Core
         Qt5::Widgets
         Qt5::Network
+        OpenSSL::SSL
+        OpenSSL::Crypto
     )
 endif()
 
@@ -185,6 +214,13 @@ install(TARGETS animica-wallet
 )
 
 # Print build information
+# Add tests subdirectory (optional, enable with -DBUILD_TESTING=ON)
+option(BUILD_TESTING "Build tests" ON)
+if(BUILD_TESTING)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
 message(STATUS "")
 message(STATUS "========================================")
 message(STATUS "Animica Wallet Configuration")
@@ -194,5 +230,6 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Qt version: ${Qt6_VERSION}")
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "Build tests: ${BUILD_TESTING}")
 message(STATUS "========================================")
 message(STATUS "")
