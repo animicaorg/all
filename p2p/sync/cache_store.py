@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,6 +13,94 @@ from typing import Any, Dict, Optional
 from core.utils.hash import sha3_256
 
 log = logging.getLogger("animica.p2p.sync.cache")
+
+
+class BlockHeaderExistenceCache:
+    """
+    Simple LRU cache for tracking which blocks/headers exist in the database.
+    Dramatically improves sync performance when checking 5000+ hashes by avoiding
+    repeated database lookups for the same hashes.
+    
+    This cache only stores existence (True/False), not the actual data.
+    """
+    
+    def __init__(self, max_size: int = 10000):
+        """
+        Args:
+            max_size: Maximum number of hashes to cache. Default 10000 is enough
+                     for typical sync batches while keeping memory usage low (~320KB).
+        """
+        self.max_size = max_size
+        self._block_cache: OrderedDict[bytes, bool] = OrderedDict()
+        self._header_cache: OrderedDict[bytes, bool] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+    
+    def get_block(self, block_hash: bytes) -> Optional[bool]:
+        """Check if we know whether this block exists. Returns None if not cached."""
+        result = self._block_cache.get(block_hash)
+        if result is not None:
+            self.hits += 1
+            # Move to end (most recently used)
+            self._block_cache.move_to_end(block_hash)
+        else:
+            self.misses += 1
+        return result
+    
+    def put_block(self, block_hash: bytes, exists: bool) -> None:
+        """Record whether a block exists."""
+        self._block_cache[block_hash] = exists
+        self._block_cache.move_to_end(block_hash)
+        # Evict oldest if over limit
+        while len(self._block_cache) > self.max_size:
+            self._block_cache.popitem(last=False)
+    
+    def get_header(self, header_hash: bytes) -> Optional[bool]:
+        """Check if we know whether this header exists. Returns None if not cached."""
+        result = self._header_cache.get(header_hash)
+        if result is not None:
+            self.hits += 1
+            # Move to end (most recently used)
+            self._header_cache.move_to_end(header_hash)
+        else:
+            self.misses += 1
+        return result
+    
+    def put_header(self, header_hash: bytes, exists: bool) -> None:
+        """Record whether a header exists."""
+        self._header_cache[header_hash] = exists
+        self._header_cache.move_to_end(header_hash)
+        # Evict oldest if over limit
+        while len(self._header_cache) > self.max_size:
+            self._header_cache.popitem(last=False)
+    
+    def invalidate_block(self, block_hash: bytes) -> None:
+        """Remove a block from cache (e.g., after a reorg)."""
+        self._block_cache.pop(block_hash, None)
+    
+    def invalidate_header(self, header_hash: bytes) -> None:
+        """Remove a header from cache (e.g., after a reorg)."""
+        self._header_cache.pop(header_hash, None)
+    
+    def clear(self) -> None:
+        """Clear all cached data."""
+        self._block_cache.clear()
+        self._header_cache.clear()
+        self.hits = 0
+        self.misses = 0
+    
+    def stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate_pct": round(hit_rate, 2),
+            "block_cache_size": len(self._block_cache),
+            "header_cache_size": len(self._header_cache),
+            "max_size": self.max_size,
+        }
 
 
 @dataclass(slots=True)
