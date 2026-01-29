@@ -160,6 +160,10 @@ class OrchestratorConfig:
 class TemplateFeeder:
     """
     Async iterator that yields the latest template whenever it changes.
+    
+    Re-yields stale templates periodically (after stale_after_sec) to keep
+    the scanner active even when the blockchain head doesn't advance.
+    This prevents mining from stopping after missing a block.
     """
 
     def __init__(
@@ -259,6 +263,16 @@ class TemplateFeeder:
                             self._last_job_id = job_id or "genesis"
                             self._last_ts = time.time()
                             if tpl:
+                                yield tpl
+                        else:
+                            # Re-yield stale template to keep scanner active
+                            # This prevents the scanner from stopping when the head doesn't change
+                            # The scanner will continue mining on the same template
+                            if self._last_ts and (time.time() - self._last_ts) >= self._stale_after:
+                                log.debug(
+                                    "Re-yielding stale template (age=%.1fs) to keep scanner active",
+                                    time.time() - self._last_ts,
+                                )
                                 yield tpl
                     await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
                 else:
