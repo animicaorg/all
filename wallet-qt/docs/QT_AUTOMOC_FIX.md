@@ -109,4 +109,3 @@ For future reference, Qt's MOC has strict rules:
 ## References
 - Qt Documentation: [Signals & Slots](https://doc.qt.io/qt-6/signalsandslots.html)
 - Qt Documentation: [Using the Meta-Object Compiler (moc)](https://doc.qt.io/qt-6/moc.html)
-- Issue: [AnimicaRpcClient.h MOC error at line 217](https://github.com/animicaorg/all/issues/XXX)

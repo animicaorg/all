@@ -63,7 +63,8 @@ private slots:
             }
         }
         
-        // Should have exactly 3 signals: connected(), disconnected(), error(QString)
+        // Should have at least 3 signals: connected(), disconnected(), error(QString)
+        // (may have more if inherited from QObject)
         QVERIFY(signalCount >= 3);
     }
 
