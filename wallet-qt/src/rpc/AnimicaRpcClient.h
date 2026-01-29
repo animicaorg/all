@@ -190,16 +190,11 @@ signals:
      */
     void error(const QString& message);
 
-    // ==================== RPC Call Methods ====================
+private:
+    // ==================== Private Methods ====================
+    // Note: These methods were moved out of signals: section to fix MOC compilation.
+    // MOC requires signals: sections to contain only signal (function) declarations.
     
-    /**
-     * @brief Execute JSON-RPC call.
-     * @param method RPC method name
-     * @param params Parameters (array or object)
-     * @return Network reply
-     */
-    QNetworkReply* call(const QString& method, const QJsonValue& params = QJsonArray());
-
     /**
      * @brief Build JSON-RPC request.
      * @param method RPC method name
@@ -214,6 +209,8 @@ signals:
      */
     int nextId();
 
+    // ==================== Member Variables ====================
+    
     QNetworkAccessManager* m_network;
     QUrl m_endpoint;
     int m_timeout;
