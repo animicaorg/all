@@ -1,0 +1,82 @@
+name: Wallet Qt Build Test
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'wallet-qt/**'
+      - '.github/workflows/wallet-qt-build.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'wallet-qt/**'
+      - '.github/workflows/wallet-qt-build.yml'
+
+jobs:
+  build-wallet:
+    permissions:
+      contents: read
+    
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        qt-version: ['6.5.0']
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: ${{ matrix.qt-version }}
+        modules: 'qtnetworkauth'
+        cache: true
+    
+    - name: Install system dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          libssl-dev \
+          libgl1-mesa-dev
+    
+    - name: Install system dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake ninja openssl@3
+    
+    - name: Set up Python (for bundled node)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Configure CMake
+      run: |
+        cd wallet-qt
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_TESTING=ON
+    
+    - name: Build
+      run: |
+        cd wallet-qt
+        cmake --build build --config Release
+    
+    - name: Run MOC syntax test
+      run: |
+        cd wallet-qt/build
+        ctest -R test_rpc_moc_syntax --output-on-failure
+    
+    - name: Verify binary exists
+      run: |
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          ls -la wallet-qt/build/bin/AnimicaWallet.app/Contents/MacOS/
+        else
+          ls -la wallet-qt/build/bin/
+        fi
