@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { RichListEntry, RichListResponse, RichListSummary } from '@animica/explorer2-shared'
+import { api } from '../lib/api'
 import ErrorDisplay from '../components/ErrorDisplay'
 import Skeleton from '../components/Skeleton'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://144.126.133.21:8081'
 
 interface RichListState {
   data: RichListResponse | null
@@ -33,24 +32,10 @@ export function RichListPage() {
         setState(prev => ({ ...prev, loading: true, error: null }))
 
         // Fetch rich list and summary in parallel
-        const [listRes, summaryRes] = await Promise.all([
-          fetch(`${API_BASE}/api/richlist?limit=${limit}&offset=${offset}`),
-          offset === 0 ? fetch(`${API_BASE}/api/richlist/summary`) : Promise.resolve(null)
+        const [listData, summaryData] = await Promise.all([
+          api.getRichList(limit, offset),
+          offset === 0 ? api.getRichListSummary() : Promise.resolve(null)
         ])
-
-        if (cancelled) return
-
-        if (!listRes.ok) {
-          const errorData = await listRes.json().catch(() => ({ message: 'Failed to fetch rich list' }))
-          throw new Error(errorData.message || 'Failed to fetch rich list')
-        }
-
-        const listData: RichListResponse = await listRes.json()
-        let summaryData: RichListSummary | null = null
-
-        if (summaryRes && summaryRes.ok) {
-          summaryData = await summaryRes.json()
-        }
 
         if (cancelled) return
 
