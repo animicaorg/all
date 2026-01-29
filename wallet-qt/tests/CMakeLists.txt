@@ -23,6 +23,7 @@ function(add_wallet_test TEST_NAME TEST_SOURCE)
         Qt6::Test
         Qt6::Core
         Qt6::Network
+        Qt6::Sql
         OpenSSL::SSL
         OpenSSL::Crypto
     )
@@ -40,6 +41,7 @@ endfunction()
 # Add wallet tests
 add_wallet_test(test_keystore_security test_keystore_security.cpp)
 add_wallet_test(test_wallet_engine test_wallet_engine.cpp)
+add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 
 # Link wallet sources to tests (needed for testing)
 target_sources(test_keystore_security PRIVATE
@@ -55,6 +57,10 @@ target_sources(test_wallet_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/BalanceTracker.cpp
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+)
+
+target_sources(test_walletdatabase PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletDatabase.cpp
 )
 
 # Test discovery for CTest

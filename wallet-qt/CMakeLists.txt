@@ -10,10 +10,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Find Qt6 packages (Qt5 fallback for older systems)
-find_package(Qt6 COMPONENTS Core Widgets Network)
+find_package(Qt6 COMPONENTS Core Widgets Network Sql)
 if(NOT Qt6_FOUND)
     message(STATUS "Qt6 not found, trying Qt5...")
-    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Widgets Network)
+    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Widgets Network Sql)
     set(QT_VERSION_MAJOR 5)
 else()
     set(QT_VERSION_MAJOR 6)
@@ -70,6 +70,7 @@ set(SOURCES
     src/wallet/AddressBookWidget.cpp
     src/wallet/CreateAccountDialog.cpp
     src/wallet/WalletWidget.cpp
+    src/wallet/WalletDatabase.cpp
 )
 
 set(HEADERS
@@ -88,6 +89,7 @@ set(HEADERS
     src/wallet/AddressBookWidget.h
     src/wallet/CreateAccountDialog.h
     src/wallet/WalletWidget.h
+    src/wallet/WalletDatabase.h
 )
 
 # Create executable
@@ -109,6 +111,7 @@ if(QT_VERSION_MAJOR EQUAL 6)
         Qt6::Core
         Qt6::Widgets
         Qt6::Network
+        Qt6::Sql
         OpenSSL::SSL
         OpenSSL::Crypto
     )
@@ -117,6 +120,7 @@ else()
         Qt5::Core
         Qt5::Widgets
         Qt5::Network
+        Qt5::Sql
         OpenSSL::SSL
         OpenSSL::Crypto
     )
