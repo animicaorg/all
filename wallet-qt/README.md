@@ -59,10 +59,89 @@ See [docs/architecture.md](docs/architecture.md) for detailed architecture decis
 
 ## Building
 
-### 1. Install Dependencies
+The wallet uses a **cross-platform CMake build system** that automatically builds and bundles the Animica node. You don't need to install the node separately.
 
-#### Ubuntu/Debian
+### Quick Start
 
+Use the platform-specific build scripts for the easiest experience:
+
+#### Linux
+
+```bash
+cd wallet-qt
+./scripts/build-linux.sh
+```
+
+#### macOS
+
+```bash
+cd wallet-qt
+./scripts/build-mac.sh
+```
+
+#### Windows
+
+```powershell
+cd wallet-qt
+.\scripts\build-windows.ps1
+```
+
+The build scripts will:
+1. Check for all prerequisites (Qt, CMake, Python, compiler)
+2. Provide actionable error messages if anything is missing
+3. Build the wallet Qt application
+4. Build and bundle the Animica node automatically
+5. Create a complete, runnable distribution
+
+### Build Options
+
+All scripts support the following options:
+
+- `--debug` (or `-Debug` on Windows): Build in Debug mode instead of Release
+- `--clean` (or `-Clean`): Delete the build directory before building
+- `--qt <path>` (or `-QtPath`): Override Qt installation path
+- `--jobs <n>` (or `-Jobs`): Set number of parallel build jobs
+
+Example:
+```bash
+./scripts/build-linux.sh --clean --jobs 8
+```
+
+### Manual CMake Build
+
+If you prefer to use CMake directly:
+
+```bash
+cd wallet-qt
+mkdir -p build && cd build
+
+# Configure (Qt will be auto-detected or set CMAKE_PREFIX_PATH)
+cmake .. -DCMAKE_BUILD_TYPE=Release
+
+# Or specify Qt location
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/qt6
+
+# Build
+cmake --build . -j $(nproc)
+
+# Output will be in build/bin/
+```
+
+### Prerequisites
+
+The build requires:
+
+- **CMake 3.16+**
+- **Qt 6.2+** (or Qt 5.15+)
+- **Python 3.10+** with venv module
+- **C++17 compiler**:
+  - Linux: GCC 9+ or Clang 10+
+  - macOS: Xcode Command Line Tools
+  - Windows: Visual Studio 2019+ or MinGW-w64
+
+#### Installing Prerequisites
+
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
@@ -71,66 +150,58 @@ sudo apt-get install -y \
     qt6-base-dev \
     qt6-tools-dev \
     libqt6network6 \
-    python3 \
+    python3.11 \
+    python3.11-venv \
     python3-pip
 ```
 
-#### macOS
-
+**macOS:**
 ```bash
 brew install qt@6 cmake python@3.11
-export PATH="/usr/local/opt/qt@6/bin:$PATH"
+export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 ```
 
-#### Windows
+**Windows:**
+- Qt 6: https://www.qt.io/download
+- CMake: https://cmake.org/download/
+- Python 3.11+: https://www.python.org/downloads/
+- Visual Studio 2019+: https://visualstudio.microsoft.com/downloads/
 
-- Install Qt 6 from https://www.qt.io/download
-- Install CMake from https://cmake.org/download/
-- Install Python 3.11+ from https://www.python.org/downloads/
-- Install Visual Studio 2019+ or MinGW
+### What Gets Built
 
-### 2. Set Up Animica Node
+The build system creates:
 
-From the repository root:
+1. **Wallet executable**:
+   - Linux: `build/linux/bin/animica-wallet`
+   - macOS: `build/mac/bin/AnimicaWallet.app`
+   - Windows: `build/windows/bin/Release/animica-wallet.exe`
 
+2. **Bundled node** (automatically included):
+   - Complete Python virtual environment with all dependencies
+   - All Animica node modules (rpc, core, consensus, execution, etc.)
+   - Platform-specific wrapper scripts
+
+The wallet will automatically use the bundled node at runtime.
+
+## Running
+
+After building, you can run the wallet:
+
+**Linux:**
 ```bash
-# Install Animica Python package and dependencies
-./setup.sh --with-pq
-source .venv/bin/activate
-
-# Verify Python installation
-python -m rpc --help
+./build/linux/bin/animica-wallet
 ```
 
-### 3. Build Wallet
-
+**macOS:**
 ```bash
-cd wallet-qt
-mkdir build && cd build
-
-# Configure
-cmake ..
-
-# Or with specific Qt path (if not in PATH)
-cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt6
-
-# Build
-cmake --build .
-
-# Or with ninja (faster)
-cmake .. -G Ninja
-ninja
+open ./build/mac/bin/AnimicaWallet.app
+# or
+./build/mac/bin/AnimicaWallet.app/Contents/MacOS/AnimicaWallet
 ```
 
-### 4. Run
-
-```bash
-# From build directory
-./bin/animica-wallet
-
-# Or from project root
-cd wallet-qt
-./build/bin/animica-wallet
+**Windows:**
+```powershell
+.\build\windows\bin\Release\animica-wallet.exe
 ```
 
 ## Usage
@@ -190,10 +261,14 @@ AnimicaWallet/
 **Symptom**: "Failed to start node process" error
 
 **Solutions**:
-1. Check Python installation: `python3 --version` (must be 3.11+)
-2. Verify Animica is installed: `python -m rpc --help`
+1. The wallet should use the bundled node automatically. Check diagnostics to see which Python is being used.
+2. If using system Python, ensure it's 3.10+ or rebuild the wallet to use the bundled node.
 3. Check if port is in use: `lsof -i :8545` (Linux/macOS) or `netstat -ano | findstr :8545` (Windows)
 4. View diagnostics: Click "Diagnostics" button
+5. Check that the bundled node exists:
+   - Linux: `ls -la build/linux/bin/node/venv/bin/python`
+   - macOS: `ls -la build/mac/bin/AnimicaWallet.app/Contents/Resources/node/venv/bin/python`
+   - Windows: `dir build\windows\bin\node\venv\Scripts\python.exe`
 
 ### Node Crashes on Startup
 
@@ -273,6 +348,36 @@ Future: Unit tests using Qt Test framework.
 - Health check timeout is fixed (should be configurable)
 - Log viewer doesn't handle very large logs efficiently
 - No automatic node restart on crash (requires manual restart)
+
+## Documentation
+
+- **[Build and Bundle Guide](docs/build_and_bundle.md)**: Complete guide to the build system and node bundling
+- **[CI Build Guide](docs/ci_build.md)**: CI/CD integration and automated builds
+- **[Architecture](docs/architecture.md)**: Technical architecture and design decisions
+- **[RPC Interface](docs/interface.md)**: Node RPC communication interface
+- **[Node Integration Report](docs/node_integration_report.md)**: Details on node integration
+
+## Testing
+
+### Smoke Test (No Qt Required)
+
+To test that the node can be built and run without building the full wallet:
+
+```bash
+cd wallet-qt
+./scripts/test-node-build.sh
+```
+
+This script:
+- Creates a test Python venv
+- Installs all node dependencies
+- Copies repository modules
+- Verifies imports work correctly
+- Starts and stops the node to ensure it runs
+
+### Manual Testing
+
+See [README.md § Usage](#usage) for wallet testing procedures.
 
 ## Contributing
 
