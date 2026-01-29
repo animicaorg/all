@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
     });
     
     QAction* changeDataDirAction = settingsMenu->addAction("&Change Data Directory...");
-    QObject::connect(changeDataDirAction, &QAction::triggered, [&window, &dataDirManager, &nodeManager]() {
+    QObject::connect(changeDataDirAction, &QAction::triggered, [&window, &dataDirManager, &nodeManager, &app]() {
         // Warn to stop node first
         if (nodeManager.isRunning()) {
             QMessageBox::warning(&window, "Node Running",

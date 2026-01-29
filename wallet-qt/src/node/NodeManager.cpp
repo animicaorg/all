@@ -1,6 +1,7 @@
 #include "NodeManager.h"
 #include "../platform/AppPaths.h"
 #include "../platform/DataDirManager.h"
+#include <QCoreApplication>
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
