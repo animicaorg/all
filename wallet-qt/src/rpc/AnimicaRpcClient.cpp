@@ -120,6 +120,11 @@ QNetworkReply* AnimicaRpcClient::getPeerCount()
     return call("p2p.peerCount", QJsonArray());
 }
 
+QNetworkReply* AnimicaRpcClient::getChainParams()
+{
+    return call("chain.getParams", QJsonArray());
+}
+
 // ==================== Private Methods ====================
 
 QNetworkReply* AnimicaRpcClient::call(const QString& method, const QJsonValue& params)

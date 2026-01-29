@@ -72,6 +72,8 @@ set(SOURCES
     src/wallet/WalletWidget.cpp
     src/wallet/WalletDatabase.cpp
     src/wallet/TransactionMonitor.cpp
+    src/wallet/FeeEstimator.cpp
+    src/wallet/SendWidget.cpp
 )
 
 set(HEADERS
@@ -92,6 +94,8 @@ set(HEADERS
     src/wallet/WalletWidget.h
     src/wallet/WalletDatabase.h
     src/wallet/TransactionMonitor.h
+    src/wallet/FeeEstimator.h
+    src/wallet/SendWidget.h
 )
 
 # Create executable
