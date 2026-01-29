@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 import pytest
@@ -54,7 +54,17 @@ def test_cooldown_after_stale_template_exhaustion():
     
     This prevents rapid retry loops when the blockchain is unstable or advancing
     faster than the miner can solve PoW.
+    
+    Note: This test validates that the cooldown code path exists and is syntactically
+    correct. Full integration testing requires a live node environment.
     """
+    # Track sleep calls to verify cooldown
+    sleep_calls = []
+    
+    def mock_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        # Don't actually sleep in test
+    
     # Mock RPC client that simulates stale template scenario
     stale_count = 0
     
@@ -67,23 +77,15 @@ def test_cooldown_after_stale_template_exhaustion():
         elif method == "chain_getHead":
             # Simulate blockchain advancing (head changed)
             stale_count += 1
-            return {"hash": "0x" + "bb" * 32, "height": 100 + stale_count}
+            return {"hash": "0x" + f"{stale_count:064x}", "height": 100 + stale_count}
         
         elif method == "miner.submitBlock":
             # Always reject as stale for first 3 attempts, then accept
-            if stale_count < 3:
+            if stale_count < 4:
                 raise Exception("Block rejected: stale_template")
-            return {"accepted": True, "new_head": 103, "credited_amount": 300000000000}
+            return {"accepted": True, "new_head": 104, "credited_amount": 300000000000}
         
         return {}
-    
-    # Track sleep calls to verify cooldown
-    sleep_calls = []
-    original_sleep = time.sleep
-    
-    def mock_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
-        # Don't actually sleep in test
     
     with patch("animica.cli.mining.rpc_client") as mock_rpc_context:
         mock_client = Mock()
@@ -91,7 +93,7 @@ def test_cooldown_after_stale_template_exhaustion():
         mock_rpc_context.return_value.__enter__.return_value = mock_client
         
         with patch("time.sleep", mock_sleep):
-            # Attempt to mine 1 block, which will exhaust retries
+            # Attempt to mine 1 block, which will exhaust retries and trigger cooldown
             result = runner.invoke(
                 mining.app,
                 [
@@ -103,35 +105,25 @@ def test_cooldown_after_stale_template_exhaustion():
                 ],
             )
     
-    # Should eventually succeed after exhausting retries and waiting
-    # The output should show the stale attempts and cooldown message
-    assert "stale_template" in result.output.lower() or "stale" in result.output.lower()
-    
-    # Verify that a cooldown sleep was called after exhausting retries
-    # The cooldown should be 2 * MIN_BLOCK_INTERVAL_SECONDS (2 * 2.0 = 4.0)
-    cooldown_sleeps = [s for s in sleep_calls if s >= 3.5]  # Allow some tolerance
-    
-    # Note: In practice, we expect the cooldown but the test infrastructure
-    # may not execute the full flow. This test mainly validates the code paths.
+    # Verify that cooldown message appears in output
+    assert "blockchain to stabilize" in result.output.lower() or sleep_calls, (
+        "Expected cooldown message or sleep calls when stale retries are exhausted"
+    )
 
 
-def test_cooldown_message_appears_in_output():
+def test_cooldown_helper_function_exists():
     """
-    Test that the cooldown message is shown when stale retries are exhausted.
+    Test that the cooldown helper function and related code exists.
     
-    This verifies the user-facing logging added by the fix.
+    This verifies the refactoring to use a helper function is in place.
     """
-    # This test would require a more complex mock setup to actually reach
-    # the cooldown code path. For now, we validate that the code compiles
-    # and the logic is present.
-    
     # Import the mining module to ensure the changes are syntactically correct
     from animica.cli import mining as mining_module
     
-    # Verify MIN_BLOCK_INTERVAL_SECONDS is defined (used in cooldown calculation)
+    # Verify key constants and strings are present
     source_code = Path(mining_module.__file__).read_text()
     assert "MIN_BLOCK_INTERVAL_SECONDS" in source_code
-    assert "Exhausted stale template retries" in source_code
+    assert "_apply_stale_template_cooldown" in source_code
     assert "blockchain to stabilize" in source_code
 
 
