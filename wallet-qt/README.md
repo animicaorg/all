@@ -21,11 +21,15 @@ This Qt-based wallet application bundles and controls an Animica node, providing
 - ✅ Port conflict detection and auto-increment
 - ✅ Lock file to prevent multiple instances
 - ✅ Cross-platform path management
+- ✅ **Configurable data directory** (macOS/Windows/Linux)
+- ✅ **Wallet import/export** (wallets.json)
+- ✅ **Network isolation** (prevents mixing mainnet/testnet data)
+- ✅ **Automatic backups** (timestamped)
+- ✅ **Atomic file operations** (safe wallet imports)
 
 ### Planned (Future Releases)
 
-- ⏳ Key management and wallet creation
-- ⏳ Account import/export
+- ⏳ Key management and wallet creation (UI)
 - ⏳ Send/receive transactions
 - ⏳ Balance display
 - ⏳ Transaction history
@@ -394,3 +398,76 @@ See [LICENSE.txt](../LICENSE.txt) in the repository root.
 - **Node Integration**: [docs/node_integration_report.md](docs/node_integration_report.md)
 - **Qt Documentation**: https://doc.qt.io/qt-6/
 - **Animica Repository**: https://github.com/animicaorg/all
+
+## Data Directory Management
+
+The wallet stores all data in a configurable data directory. See [docs/data_directory.md](docs/data_directory.md) for complete documentation.
+
+### Default Locations
+
+- **macOS**: `~/Library/Application Support/Animica/`
+- **Windows**: `%APPDATA%\Animica\`
+- **Linux**: `~/.animica/` (backward compatible with CLI)
+
+### Changing Data Directory
+
+1. Open **Settings → Change Data Directory**
+2. Choose a folder
+3. Restart the wallet
+
+Or set environment variable:
+
+```bash
+export ANIMICA_DATA_DIR=/path/to/custom/dir
+animica-wallet
+```
+
+### What's Stored
+
+```
+<data_dir>/
+├── wallets.json       # Wallet keys
+├── chain-1/           # Mainnet data
+├── chain-2/           # Testnet data
+├── chain-1337/        # Devnet data
+├── logs/              # Node logs
+└── snapshots/         # Chain snapshots
+```
+
+## Wallet Import/Export
+
+### Importing Wallets
+
+1. **Wallet → Import wallets.json**
+2. Select file
+3. Choose: Replace, Merge, or Cancel
+4. Automatic backup created
+
+Features:
+- JSON validation
+- Duplicate detection (merge mode)
+- Atomic writes
+- Timestamped backups
+
+### Exporting Wallets
+
+1. **Wallet → Export wallets.json**
+2. Choose destination
+3. ⚠️ Keep file secure (contains private keys!)
+
+### Security
+
+- Restrictive file permissions (0600 on Unix)
+- Warnings before sensitive operations
+- Automatic backups before overwrites
+- No logging of private keys
+
+## Network Isolation
+
+The wallet prevents mixing data from different networks:
+
+- Network marker file (`.network_id`) tracks current network
+- Attempting to start wrong network shows error
+- Separate `chain-*` directories per network
+- Safe to switch networks by changing data directory
+
