@@ -1479,6 +1479,13 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        typer.secho(
+                            f"  Exhausted stale template retries. Waiting {MIN_BLOCK_INTERVAL_SECONDS * 2}s for blockchain to stabilize...",
+                            fg=typer.colors.YELLOW,
+                        )
+                        time.sleep(MIN_BLOCK_INTERVAL_SECONDS * 2)
                         stale_attempts = 0
                         break
 
@@ -1574,6 +1581,14 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        if is_stale:
+                            typer.secho(
+                                f"  Exhausted stale template retries. Waiting {MIN_BLOCK_INTERVAL_SECONDS * 2}s for blockchain to stabilize...",
+                                fg=typer.colors.YELLOW,
+                            )
+                            time.sleep(MIN_BLOCK_INTERVAL_SECONDS * 2)
                         stale_attempts = 0
                         break
 
@@ -1593,6 +1608,14 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason:
+                            typer.secho(
+                                f"  Exhausted stale template retries. Waiting {MIN_BLOCK_INTERVAL_SECONDS * 2}s for blockchain to stabilize...",
+                                fg=typer.colors.YELLOW,
+                            )
+                            time.sleep(MIN_BLOCK_INTERVAL_SECONDS * 2)
                         stale_attempts = 0
                         break
                     
