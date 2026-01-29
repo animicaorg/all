@@ -122,13 +122,8 @@ bool WalletEngine::unlockWallet(const QString& password)
         return false;
     }
     
-    // Read keystore info to get public accounts
-    KeystoreInfo info = m_keystore->readInfo();
-    QJsonObject keystoreData = m_keystore->readInfo().kdfParams;
-    
-    // Load accounts (merge secret + public data)
-    // Note: public_accounts is not directly available from readInfo()
-    // We'll parse it from the keystore data
+    // TODO: Load public accounts metadata from keystore
+    // For now, pass empty array - accounts will have minimal metadata
     QJsonArray publicAccounts;
     m_accountManager->loadAccounts(payload, publicAccounts);
     
@@ -355,19 +350,6 @@ QString WalletEngine::signTransaction(const QJsonObject& txJson, const QString& 
     // 2. Call pq.py.sign.sign_detached with domain="tx/sign", chain_id, etc.
     // 3. Build SignedTransaction envelope (see omni_sdk for format)
     // 4. Return hex-encoded signed transaction
-    
-    // For now, use a placeholder Python call
-    QJsonDocument txDoc(txJson);
-    QByteArray txBytes = txDoc.toJson(QJsonDocument::Compact);
-    
-    QString pythonCode = QString(
-        "from pq.py.sign import sign_detached; "
-        "import json; "
-        "tx = json.loads('%1'); "
-        "sk = bytes.fromhex('%2'); "
-        "# TODO: Proper tx signing implementation; "
-        "print('not_implemented')"
-    ).arg(QString::fromUtf8(txBytes)).arg(QString::fromLatin1(account.secretKey.toHex()));
     
     // Update last used timestamp
     m_accountManager->updateLastUsed(fromAccountId);

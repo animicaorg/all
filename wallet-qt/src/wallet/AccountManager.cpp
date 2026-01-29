@@ -3,6 +3,7 @@
 #include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QDebug>
 
 AccountManager::AccountManager(QObject* parent)
@@ -195,6 +196,12 @@ bool AccountManager::generateKeypair(int algId, QByteArray& outPublicKey, QByteA
         return false;
     }
     
+    // Validate algName to prevent injection (should only be from our whitelist)
+    if (!algName.contains(QRegularExpression("^[a-z0-9_]+$"))) {
+        qWarning() << "Invalid algorithm name:" << algName;
+        return false;
+    }
+    
     // Call Python: python -c "from pq.py.keygen import keygen_sig; import json; kp = keygen_sig('dilithium3'); print(json.dumps({'public_key': kp.public_key.hex(), 'secret_key': kp.secret_key.hex()}))"
     QString pythonCode = QString(
         "from pq.py.keygen import keygen_sig; "
@@ -211,7 +218,7 @@ bool AccountManager::generateKeypair(int algId, QByteArray& outPublicKey, QByteA
         return false;
     }
     
-    if (!process.waitForFinished(30000)) {
+    if (!process.waitForFinished(15000)) {
         qWarning() << "Python keygen process timeout";
         process.kill();
         return false;
@@ -239,11 +246,18 @@ bool AccountManager::generateKeypair(int algId, QByteArray& outPublicKey, QByteA
 
 QString AccountManager::deriveAddress(const QByteArray& publicKey, int algId)
 {
+    // Validate hex encoding
+    QString pubkeyHex = QString::fromLatin1(publicKey.toHex());
+    if (!pubkeyHex.contains(QRegularExpression("^[0-9a-f]*$"))) {
+        qWarning() << "Invalid public key hex encoding";
+        return QString();
+    }
+    
     // Call Python: python -c "from pq.py.address import address_from_pubkey; print(address_from_pubkey(bytes.fromhex('...'), 0x1001))"
     QString pythonCode = QString(
         "from pq.py.address import address_from_pubkey; "
         "print(address_from_pubkey(bytes.fromhex('%1'), %2))"
-    ).arg(QString::fromLatin1(publicKey.toHex())).arg(algId);
+    ).arg(pubkeyHex).arg(algId);
     
     QProcess process;
     process.start("python", QStringList() << "-c" << pythonCode);

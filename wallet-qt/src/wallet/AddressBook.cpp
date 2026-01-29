@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QDebug>
 
 QJsonObject Contact::toJson() const
@@ -188,16 +189,17 @@ bool AddressBook::validateAddress(const QString& address) const
         return false;
     }
     
+    // Validate bech32 characters only (alphanumeric lowercase, no uppercase i, o)
+    if (!address.contains(QRegularExpression("^anim1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+$"))) {
+        return false;
+    }
+    
     // Use Python subprocess for full bech32m validation
-    // python -c "from pq.py.address import validate_address; validate_address('anim1...'); print('valid')"
-    QString pythonCode = QString(
-        "from pq.py.address import validate_address; "
-        "validate_address('%1'); "
-        "print('valid')"
-    ).arg(address);
+    // Use QProcess arguments to avoid injection
+    QString pythonCode = "from pq.py.address import validate_address; import sys; validate_address(sys.argv[1]); print('valid')";
     
     QProcess process;
-    process.start("python", QStringList() << "-c" << pythonCode);
+    process.start("python", QStringList() << "-c" << pythonCode << address);
     
     if (!process.waitForStarted()) {
         qWarning() << "Failed to start Python address validation";

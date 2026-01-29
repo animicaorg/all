@@ -10,7 +10,6 @@ BalanceTracker::BalanceTracker(AnimicaRpcClient* rpcClient, QObject* parent)
     , m_rpcClient(rpcClient)
     , m_tracking(false)
     , m_syncing(false)
-    , m_pendingRequests(0)
 {
     connect(&m_pollTimer, &QTimer::timeout, this, &BalanceTracker::pollBalances);
     m_pollTimer.setInterval(5000);
@@ -91,7 +90,6 @@ void BalanceTracker::fetchBalance(const QString& address)
     reply->setProperty("address", address);
     
     connect(reply, &QNetworkReply::finished, this, &BalanceTracker::handleBalanceReply);
-    m_pendingRequests++;
 }
 
 void BalanceTracker::fetchSyncStatus()
@@ -111,7 +109,6 @@ void BalanceTracker::handleBalanceReply()
         return;
     }
     
-    m_pendingRequests--;
     QString address = reply->property("address").toString();
     
     if (reply->error() != QNetworkReply::NoError) {

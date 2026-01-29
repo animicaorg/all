@@ -68,6 +68,8 @@ void WalletAccount::clearSecrets()
     if (!secretKey.isEmpty()) {
 #ifdef Q_OS_WIN
         SecureZeroMemory(secretKey.data(), secretKey.size());
+#elif defined(Q_OS_MACOS)
+        memset_s(secretKey.data(), secretKey.size(), 0, secretKey.size());
 #else
         explicit_bzero(secretKey.data(), secretKey.size());
 #endif
