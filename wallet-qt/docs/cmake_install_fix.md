@@ -17,11 +17,11 @@ Modified the install rules to be platform-conditional:
 ```cmake
 install(TARGETS animica-wallet
     BUNDLE DESTINATION "."
-    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 ```
 - `BUNDLE DESTINATION "."` installs the `.app` bundle at the install prefix root
 - This is the standard macOS convention for application bundles
+- RUNTIME DESTINATION is not needed for bundle targets
 
 ### On Linux/Windows
 ```cmake
