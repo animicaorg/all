@@ -115,7 +115,7 @@ def test_verifier_seeds_constrain_network_height_one_ahead(tmp_path: Path) -> No
     )
 
     # Register verifier seed and regular peer
-    peer_verifier = _register_peer(node, "62.169.17.132:30333")
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
     peer_regular = _register_peer(node, "192.168.1.1:30333")
 
     now = time.time()
