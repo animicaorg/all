@@ -13,6 +13,7 @@ set(TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/src/platform
     ${CMAKE_SOURCE_DIR}/src/rpc
     ${CMAKE_SOURCE_DIR}/src/node
+    ${CMAKE_SOURCE_DIR}/src/diagnostics
 )
 
 # Helper function to add Qt tests
@@ -43,6 +44,11 @@ add_wallet_test(test_keystore_security test_keystore_security.cpp)
 add_wallet_test(test_wallet_engine test_wallet_engine.cpp)
 add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 
+# Add diagnostics tests
+add_wallet_test(test_redactor diagnostics/test_redactor.cpp)
+add_wallet_test(test_allowlist diagnostics/test_allowlist.cpp)
+add_wallet_test(test_executor diagnostics/test_executor.cpp)
+
 # Link wallet sources to tests (needed for testing)
 target_sources(test_keystore_security PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
@@ -61,6 +67,23 @@ target_sources(test_wallet_engine PRIVATE
 
 target_sources(test_walletdatabase PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/WalletDatabase.cpp
+)
+
+# Link diagnostics sources to tests
+target_sources(test_redactor PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/diagnostics/Redactor.cpp
+)
+
+target_sources(test_allowlist PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/diagnostics/CommandAllowlist.cpp
+    ${CMAKE_SOURCE_DIR}/src/diagnostics/RoleManager.cpp
+)
+
+target_sources(test_executor PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/diagnostics/ConsoleExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/src/diagnostics/Redactor.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
 )
 
 # Test discovery for CTest
