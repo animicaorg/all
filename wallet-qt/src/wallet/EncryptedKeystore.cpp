@@ -11,6 +11,10 @@
 #include <openssl/rand.h>
 #include <cstring>
 
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+
 EncryptedKeystore::EncryptedKeystore()
     : m_loaded(false)
 {
@@ -215,8 +219,25 @@ QByteArray EncryptedKeystore::deriveKey(const QString& password, const QByteArra
                           iterations,
                           EVP_sha3_256(),
                           key.size(), reinterpret_cast<unsigned char*>(key.data())) != 1) {
+        // Clear password from memory before returning
+#ifdef Q_OS_WIN
+        SecureZeroMemory(passwordBytes.data(), passwordBytes.size());
+#elif defined(Q_OS_MACOS)
+        memset_s(passwordBytes.data(), passwordBytes.size(), 0, passwordBytes.size());
+#else
+        explicit_bzero(passwordBytes.data(), passwordBytes.size());
+#endif
         return QByteArray();
     }
+    
+    // Clear password from memory
+#ifdef Q_OS_WIN
+    SecureZeroMemory(passwordBytes.data(), passwordBytes.size());
+#elif defined(Q_OS_MACOS)
+    memset_s(passwordBytes.data(), passwordBytes.size(), 0, passwordBytes.size());
+#else
+    explicit_bzero(passwordBytes.data(), passwordBytes.size());
+#endif
     
     return key;
 }
@@ -268,6 +289,12 @@ bool EncryptedKeystore::encryptAES256GCM(const QByteArray& plaintext, const QByt
         success = true;
     } while (false);
     
+    // Clear sensitive data on failure
+    if (!success) {
+        outCiphertext.fill(0);
+        outTag.fill(0);
+    }
+    
     EVP_CIPHER_CTX_free(ctx);
     return success;
 }
@@ -303,8 +330,9 @@ bool EncryptedKeystore::decryptAES256GCM(const QByteArray& ciphertext, const QBy
         int plaintext_len = len;
         
         // Set expected tag
-        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, tag.size(),
-                                const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(tag.constData()))) != 1) {
+        QByteArray tagCopy = tag;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, tagCopy.size(),
+                                reinterpret_cast<unsigned char*>(tagCopy.data())) != 1) {
             break;
         }
         
@@ -325,13 +353,16 @@ bool EncryptedKeystore::decryptAES256GCM(const QByteArray& ciphertext, const QBy
 QByteArray EncryptedKeystore::randomBytes(int size)
 {
     QByteArray bytes(size, 0);
-    RAND_bytes(reinterpret_cast<unsigned char*>(bytes.data()), size);
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(bytes.data()), size) != 1) {
+        return QByteArray();
+    }
     return bytes;
 }
 
 bool EncryptedKeystore::atomicWrite(const QString& path, const QJsonObject& json)
 {
     QString tmpPath = path + ".tmp." + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString backupPath = path + ".backup";
     
     QFile tmp(tmpPath);
     if (!tmp.open(QIODevice::WriteOnly)) {
@@ -355,15 +386,28 @@ bool EncryptedKeystore::atomicWrite(const QString& path, const QJsonObject& json
     
     setRestrictivePermissions(tmpPath);
     
-    // Atomic rename
-#ifdef Q_OS_WIN
-    QFile::remove(path);
-#endif
+    // Safer atomic rename with backup
+    if (QFile::exists(path)) {
+        // Create backup of existing file
+        QFile::remove(backupPath);
+        if (!QFile::rename(path, backupPath)) {
+            QFile::remove(tmpPath);
+            return false;
+        }
+    }
     
+    // Rename temp to target
     if (!QFile::rename(tmpPath, path)) {
+        // Restore backup on failure
+        if (QFile::exists(backupPath)) {
+            QFile::rename(backupPath, path);
+        }
         QFile::remove(tmpPath);
         return false;
     }
+    
+    // Remove backup on success
+    QFile::remove(backupPath);
     
     return true;
 }

@@ -104,7 +104,6 @@ private:
     QMap<QString, Balance> m_balances;
     bool m_tracking;
     bool m_syncing;
-    int m_pendingRequests;
 };
 
 #endif // BALANCETRACKER_H
