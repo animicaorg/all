@@ -53,6 +53,31 @@ class ChainAdapter(Protocol):
         ...
 
     async def get_block(self, h: Hash) -> Optional[BlockLike]: ...
+    
+    # Batch methods for performance optimization (optional, with fallback)
+    async def has_blocks_batch(self, hashes: Sequence[Hash]) -> set[Hash]:
+        """
+        Batch check which blocks exist. Returns set of hashes that exist.
+        Default implementation falls back to individual checks.
+        Implementations should override for better performance with 1000+ hashes.
+        """
+        existing = set()
+        for h in hashes:
+            if await self.has_block(h):
+                existing.add(h)
+        return existing
+    
+    async def has_headers_batch(self, hashes: Sequence[Hash]) -> set[Hash]:
+        """
+        Batch check which headers exist. Returns set of hashes that exist.
+        Default implementation falls back to individual checks.
+        Implementations should override for better performance with 1000+ hashes.
+        """
+        existing = set()
+        for h in hashes:
+            if await self.has_header(h):
+                existing.add(h)
+        return existing
 
 
 @runtime_checkable
@@ -131,17 +156,26 @@ class BlocksDownloader:
         Fetch and commit the blocks for `order` (oldest→newest).
         Returns the number of blocks committed.
         
-        Enhanced with logging for P2P rewrite.
+        Enhanced with logging for P2P rewrite and batch optimizations for 5000+ blocks.
         """
         if not order:
             return 0
 
         self._log.info(f"Starting block download for {len(order)} blocks")
         
-        # Fast path: drop any prefix that is already persisted.
-        next_idx = 0
-        while next_idx < len(order) and await self.chain.has_block(order[next_idx]):
-            next_idx += 1
+        # Fast path: Use batch check to skip already-persisted blocks (huge speedup for 5000+)
+        # Check if the adapter supports batch operations
+        if hasattr(self.chain, 'has_blocks_batch') and len(order) > 100:
+            # Use batch check for better performance with large lists
+            existing_set = await self.chain.has_blocks_batch(list(order))
+            next_idx = 0
+            while next_idx < len(order) and order[next_idx] in existing_set:
+                next_idx += 1
+        else:
+            # Fallback to sequential checks for small lists or adapters without batch support
+            next_idx = 0
+            while next_idx < len(order) and await self.chain.has_block(order[next_idx]):
+                next_idx += 1
 
         if next_idx >= len(order):
             self._log.debug(f"All {len(order)} blocks already synced")
