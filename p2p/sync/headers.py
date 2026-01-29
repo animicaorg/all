@@ -65,6 +65,19 @@ class ChainAdapter(Protocol):
         """Return True if candidate should become the canonical tip over current_head."""
         ...
 
+    # Batch methods for performance optimization (optional, with fallback)
+    async def has_headers_batch(self, hashes: Sequence[Hash]) -> set[Hash]:
+        """
+        Batch check which headers exist. Returns set of hashes that exist.
+        Default implementation falls back to individual checks.
+        Implementations should override for better performance with 1000+ hashes.
+        """
+        existing = set()
+        for h in hashes:
+            if await self.has_header(h):
+                existing.add(h)
+        return existing
+
 
 @runtime_checkable
 class ConsensusView(Protocol):
@@ -236,9 +249,31 @@ class HeaderSync:
 
         # Sanity: require linkage and known parent for the first header unless explicitly allowed.
         first = headers[0]
+        
+        # Batch optimization: If we have many headers, check which parent hashes exist in one batch call
+        # This is much faster than individual checks for large header lists (1000+)
+        existing_parents_set = set()
+        used_batch_check = False
+        if hasattr(self.chain, 'has_headers_batch') and len(headers) > 100:
+            # Collect all parent hashes we need to check
+            parent_hashes_to_check = set()
+            parent_hashes_to_check.add(first.parent_hash)
+            for idx in range(len(headers)):
+                h = headers[idx]
+                if idx > 0:
+                    prev = headers[idx - 1]
+                    if h.parent_hash != prev.hash:
+                        parent_hashes_to_check.add(h.parent_hash)
+            # Batch check all at once
+            existing_parents_set = await self.chain.has_headers_batch(list(parent_hashes_to_check))
+            first_parent_known = first.parent_hash in existing_parents_set
+            used_batch_check = True
+        else:
+            # Fallback to individual check
+            first_parent_known = await self.chain.has_header(first.parent_hash)
+        
         if self.cfg.sanity_parent_required:
-            parent_known = await self.chain.has_header(first.parent_hash)
-            if not parent_known:
+            if not first_parent_known:
                 # No known parent yet—likely mid-fork; tighten by increasing locator depth next time.
                 # We still *may* accept if the parent is also within this batch (rare); check contiguous tail below.
                 pass
@@ -250,18 +285,26 @@ class HeaderSync:
             # Validate basic parent linkage
             if idx == 0:
                 # Parent is either known locally or appears later in the batch — allow batch-internal linkage.
-                if (
-                    not await self.chain.has_header(h.parent_hash)
-                    and h.parent_hash not in known_or_batched
-                ):
+                # Use cached batch result if available
+                parent_exists = (
+                    first_parent_known 
+                    if used_batch_check
+                    else await self.chain.has_header(h.parent_hash)
+                )
+                if not parent_exists and h.parent_hash not in known_or_batched:
                     break
             else:
                 # Enforce contiguous linkage inside the batch
                 prev = headers[idx - 1]
-                if h.parent_hash != prev.hash and not await self.chain.has_header(
-                    h.parent_hash
-                ):
-                    break
+                if h.parent_hash != prev.hash:
+                    # Use cached batch result if available
+                    parent_exists = (
+                        h.parent_hash in existing_parents_set
+                        if used_batch_check
+                        else await self.chain.has_header(h.parent_hash)
+                    )
+                    if not parent_exists:
+                        break
 
             # Lightweight consensus schedule/policy precheck (fast)
             ok = await self.consensus.precheck_header(h)
@@ -276,7 +319,13 @@ class HeaderSync:
         # Enforce reorg bound: if we're switching to a fork, the fork point must be within max_reorg_depth.
         new_tail_first = contiguous[0]
         # If parent is unknown, find common ancestor with current head (bounded).
-        if not await self.chain.has_header(new_tail_first.parent_hash):
+        # Use cached batch result if available
+        parent_exists = (
+            new_tail_first.parent_hash in existing_parents_set
+            if used_batch_check
+            else await self.chain.has_header(new_tail_first.parent_hash)
+        )
+        if not parent_exists:
             # Try to locate a fork point quickly; if not found, delay adoption.
             ancestor = await self.chain.common_ancestor(
                 head_hash, new_tail_first.hash, self.cfg.max_reorg_depth
