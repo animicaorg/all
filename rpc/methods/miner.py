@@ -1025,13 +1025,13 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         new_state = update_theta(state, dt_seconds, blocks_skipped=1)
         _MINING_STATE["theta_state"] = new_state
         
-        # Track block times for monitoring (keep last 20)
-        # Use list for simplicity; for production consider collections.deque(maxlen=20)
+        # Track block times for monitoring (keep last 1000)
+        # Increased from 20 to 1000 to prevent mining stalls after 20-25 blocks
         block_times = _MINING_STATE.get("block_times")
         if block_times is None:
             # Initialize with deque for automatic size management
             from collections import deque
-            block_times = deque(maxlen=20)
+            block_times = deque(maxlen=1000)
             _MINING_STATE["block_times"] = block_times
         block_times.append(dt_seconds)
         
