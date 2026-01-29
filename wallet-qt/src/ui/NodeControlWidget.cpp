@@ -4,13 +4,47 @@
 #include <QMessageBox>
 #include <QClipboard>
 #include <QApplication>
+#include <QDesktopServices>
+#include <QUrl>
 
 NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     : QWidget(parent)
     , m_nodeManager(nodeManager)
+    , m_degradedBanner(nullptr)
 {
     // Create UI elements
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    
+    // === Degraded State Banner (hidden by default) ===
+    m_degradedBanner = new QWidget(this);
+    m_degradedBanner->setStyleSheet("QWidget { background-color: #FFF3CD; border: 2px solid #FFD700; border-radius: 5px; padding: 10px; }");
+    m_degradedBanner->setVisible(false);
+    
+    QVBoxLayout* bannerLayout = new QVBoxLayout(m_degradedBanner);
+    
+    m_degradedLabel = new QLabel("⚠️ Node started but is degraded (P2P/sync issues). You can still use local wallet features.", this);
+    m_degradedLabel->setStyleSheet("QLabel { color: #856404; font-weight: bold; }");
+    m_degradedLabel->setWordWrap(true);
+    bannerLayout->addWidget(m_degradedLabel);
+    
+    // Recovery action buttons
+    QHBoxLayout* actionsLayout = new QHBoxLayout();
+    
+    m_openLogsButton = new QPushButton("Open Node Logs", this);
+    m_resetDataButton = new QPushButton("Reset Local Node Data", this);
+    m_copyDiagButton = new QPushButton("Copy Diagnostics", this);
+    
+    m_openLogsButton->setStyleSheet("QPushButton { background-color: #FFC107; color: black; padding: 5px; }");
+    m_resetDataButton->setStyleSheet("QPushButton { background-color: #FF5722; color: white; padding: 5px; }");
+    m_copyDiagButton->setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 5px; }");
+    
+    actionsLayout->addWidget(m_openLogsButton);
+    actionsLayout->addWidget(m_resetDataButton);
+    actionsLayout->addWidget(m_copyDiagButton);
+    actionsLayout->addStretch();
+    
+    bannerLayout->addLayout(actionsLayout);
+    mainLayout->addWidget(m_degradedBanner);
     
     // === Network Selection Group ===
     QGroupBox* networkGroup = new QGroupBox("Network", this);
@@ -88,11 +122,16 @@ NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     connect(m_restartButton, &QPushButton::clicked, this, &NodeControlWidget::onRestartClicked);
     connect(m_diagnosticsButton, &QPushButton::clicked, this, &NodeControlWidget::onDiagnosticsClicked);
     
+    connect(m_openLogsButton, &QPushButton::clicked, this, &NodeControlWidget::onOpenLogsClicked);
+    connect(m_resetDataButton, &QPushButton::clicked, this, &NodeControlWidget::onResetDataClicked);
+    connect(m_copyDiagButton, &QPushButton::clicked, this, &NodeControlWidget::onDiagnosticsClicked);
+    
     connect(m_nodeManager, &NodeManager::stateChanged, this, &NodeControlWidget::onNodeStateChanged);
     connect(m_nodeManager, &NodeManager::nodeReady, this, &NodeControlWidget::onNodeReady);
     connect(m_nodeManager, &NodeManager::error, this, &NodeControlWidget::onNodeError);
     connect(m_nodeManager, &NodeManager::syncProgress, this, &NodeControlWidget::onSyncProgress);
     connect(m_nodeManager, &NodeManager::logLinesAvailable, this, &NodeControlWidget::onLogLinesAvailable);
+    connect(m_nodeManager, &NodeManager::nodeDegraded, this, &NodeControlWidget::onNodeDegraded);
     
     // Initial UI state
     updateUI();
@@ -159,6 +198,51 @@ void NodeControlWidget::onNodeError(const QString& message)
     QMessageBox::warning(this, "Node Error", message);
 }
 
+void NodeControlWidget::onNodeDegraded(const QString& reason)
+{
+    m_logViewer->append(QString("⚠ Node degraded: %1").arg(reason));
+    m_degradedLabel->setText(QString("⚠️ Node degraded: %1. You can still use local wallet features.").arg(reason));
+    m_degradedBanner->setVisible(true);
+}
+
+void NodeControlWidget::onOpenLogsClicked()
+{
+    m_nodeManager->openLogsFolder();
+}
+
+void NodeControlWidget::onResetDataClicked()
+{
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        "Reset Chain Data",
+        "This will delete all local blockchain data and restart sync from scratch.\n\n"
+        "Are you sure you want to continue?",
+        QMessageBox::Yes | QMessageBox::No
+    );
+    
+    if (reply == QMessageBox::Yes) {
+        // Stop node first
+        if (m_nodeManager->isRunning()) {
+            m_nodeManager->stopNode();
+        }
+        
+        // Determine chain ID from current network
+        QString network = m_networkCombo->currentData().toString();
+        int chainId = 1337;  // devnet
+        if (network == "mainnet") chainId = 1;
+        else if (network == "testnet") chainId = 2;
+        
+        // Reset data
+        if (m_nodeManager->resetChainData(chainId)) {
+            QMessageBox::information(this, "Success", "Chain data has been reset successfully.");
+            m_logViewer->append("✓ Chain data reset successfully");
+        } else {
+            QMessageBox::critical(this, "Error", "Failed to reset chain data.");
+            m_logViewer->append("✗ Failed to reset chain data");
+        }
+    }
+}
+
 void NodeControlWidget::onSyncProgress(int currentBlock, int highestBlock, bool syncing)
 {
     if (syncing) {
@@ -194,10 +278,18 @@ void NodeControlWidget::updateUI()
     m_stateLabel->setText(QString("State: <b><span style='color: %1;'>%2</span></b>")
                           .arg(color, stateStr));
     
+    // Show/hide degraded banner
+    m_degradedBanner->setVisible(state == NodeManager::State::Degraded);
+    
     // Enable/disable controls based on state
     bool canStart = (state == NodeManager::State::Stopped || state == NodeManager::State::Error);
-    bool canStop = (state == NodeManager::State::Running || state == NodeManager::State::Starting);
-    bool canRestart = (state == NodeManager::State::Running);
+    bool canStop = (state == NodeManager::State::RpcReady || 
+                    state == NodeManager::State::Healthy || 
+                    state == NodeManager::State::Degraded || 
+                    state == NodeManager::State::Starting);
+    bool canRestart = (state == NodeManager::State::RpcReady || 
+                       state == NodeManager::State::Healthy || 
+                       state == NodeManager::State::Degraded);
     
     m_startButton->setEnabled(canStart);
     m_stopButton->setEnabled(canStop);
@@ -216,7 +308,9 @@ QString NodeControlWidget::stateToString(NodeManager::State state)
     switch (state) {
         case NodeManager::State::Stopped: return "Stopped";
         case NodeManager::State::Starting: return "Starting...";
-        case NodeManager::State::Running: return "Running";
+        case NodeManager::State::RpcReady: return "RPC Ready";
+        case NodeManager::State::Healthy: return "Running (Healthy)";
+        case NodeManager::State::Degraded: return "Running (Degraded)";
         case NodeManager::State::Stopping: return "Stopping...";
         case NodeManager::State::Error: return "Error";
         default: return "Unknown";
@@ -228,7 +322,9 @@ QString NodeControlWidget::stateColor(NodeManager::State state)
     switch (state) {
         case NodeManager::State::Stopped: return "#757575";  // Gray
         case NodeManager::State::Starting: return "#FF9800";  // Orange
-        case NodeManager::State::Running: return "#4CAF50";  // Green
+        case NodeManager::State::RpcReady: return "#2196F3";  // Blue
+        case NodeManager::State::Healthy: return "#4CAF50";  // Green
+        case NodeManager::State::Degraded: return "#FFC107";  // Amber/Warning
         case NodeManager::State::Stopping: return "#FF9800";  // Orange
         case NodeManager::State::Error: return "#f44336";  // Red
         default: return "#000000";  // Black
