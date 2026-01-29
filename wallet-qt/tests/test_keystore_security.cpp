@@ -1,5 +1,6 @@
 #include <QTest>
 #include <QTemporaryFile>
+#include <QRandomGenerator>
 #include "../src/wallet/EncryptedKeystore.h"
 
 /**
@@ -70,7 +71,7 @@ private slots:
         for (int size : sizes) {
             QByteArray payload(size, 0);
             for (int i = 0; i < size; i++) {
-                payload[i] = static_cast<char>(qrand() % 256);
+                payload[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
             }
             
             QString password = QString("password_%1").arg(size);

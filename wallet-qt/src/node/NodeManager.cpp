@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QTcpSocket>
+#include <QRandomGenerator>
 #include <QDebug>
 
 NodeManager::NodeManager(QObject* parent)
@@ -60,7 +61,7 @@ NodeManager::NodeManager(DataDirManager* dataDirManager, QObject* parent)
 
 NodeManager::~NodeManager()
 {
-    if (m_state == State::Running || m_state == State::Starting) {
+    if (isRunning() || m_state == State::Starting) {
         stopNode();
     }
     releaseLock();
@@ -268,7 +269,9 @@ QString NodeManager::collectDiagnostics()
     switch (m_state) {
         case State::Stopped: out << "Stopped"; break;
         case State::Starting: out << "Starting"; break;
-        case State::Running: out << "Running"; break;
+        case State::RpcReady: out << "RpcReady"; break;
+        case State::Healthy: out << "Healthy"; break;
+        case State::Degraded: out << "Degraded"; break;
         case State::Stopping: out << "Stopping"; break;
         case State::Error: out << "Error"; break;
     }
@@ -745,7 +748,7 @@ int NodeManager::calculateRestartDelay()
     }
     
     // Add jitter (±20%)
-    int jitter = (qrand() % (baseDelay / 5)) - (baseDelay / 10);
+    int jitter = (QRandomGenerator::global()->bounded(baseDelay / 5)) - (baseDelay / 10);
     int delay = baseDelay + jitter;
     
     qDebug() << "Restart delay calculated:" << delay << "ms (attempt" << m_restartAttempts << ")";
