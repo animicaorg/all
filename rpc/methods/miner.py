@@ -5093,6 +5093,14 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         credited_amount = 0
         block_hash_hex = None
         if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
+            # Notify all miners that a block was found so they can move to next block
+            try:
+                from mining.orchestrator import notify_all_template_feeders_block_found
+                notify_all_template_feeders_block_found()
+                log.debug("Notified template feeders about block acceptance")
+            except Exception as e:
+                log.debug("Failed to notify template feeders: %s", e, exc_info=True)
+            
             # Get expected reward for this block
             try:
                 from consensus.rewards import compute_block_reward
