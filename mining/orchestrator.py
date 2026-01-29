@@ -112,8 +112,8 @@ def notify_all_template_feeders_block_found() -> None:
         try:
             if hasattr(feeder, "notify_block_found"):
                 feeder.notify_block_found()
-        except Exception:
-            pass  # Best effort notification
+        except Exception as e:
+            log.debug("Failed to notify template feeder: %s", e, exc_info=True)
 
 
 # --------------------------- Work Sources ---------------------------
@@ -247,7 +247,7 @@ class TemplateFeeder:
         """
         Notify that a block was found (by this miner or network).
         This triggers an immediate template refresh so mining can move to the next block.
-        Thread-safe and backwards compatible.
+        Thread-safe (asyncio.Event.set() is thread-safe in Python 3.10+) and backwards compatible.
         """
         self._block_found.set()
 
@@ -290,7 +290,11 @@ class TemplateFeeder:
     async def _iter(self) -> AsyncIterator[JSON]:
         while not self._stop.is_set():
             try:
-                await self._cooldown.await_if_cooling_down(self._stop)
+                # Check cooldown unless we were just notified of a block found
+                # (block found should allow immediate mining on next block)
+                if not self._block_found.is_set():
+                    await self._cooldown.await_if_cooling_down(self._stop)
+                
                 tpl = await self._refresh()
                 if tpl and isinstance(tpl, dict):
                     ident = self._template_identity(tpl)
@@ -357,8 +361,10 @@ class TemplateFeeder:
                     for task in done:
                         try:
                             task.result()
-                        except Exception:
-                            pass
+                        except asyncio.CancelledError:
+                            pass  # Expected for cancelled tasks
+                        except Exception as e:
+                            log.debug("Task error during template feeder wait: %s", e, exc_info=True)
                     
                     # If block found event was set, clear it and force refresh
                     if self._block_found.is_set():
@@ -549,8 +555,8 @@ class SubmitPipe:
                         if self._template_feeder is not None:
                             try:
                                 self._template_feeder.notify_block_found()
-                            except Exception:
-                                pass  # Best effort notification
+                            except Exception as e:
+                                log.debug("Failed to notify template feeder: %s", e, exc_info=True)
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -599,8 +605,8 @@ class SubmitPipe:
                     if self._template_feeder is not None:
                         try:
                             self._template_feeder.notify_block_found()
-                        except Exception:
-                            pass  # Best effort notification
+                        except Exception as e:
+                            log.debug("Failed to notify template feeder: %s", e, exc_info=True)
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")

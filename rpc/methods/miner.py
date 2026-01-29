@@ -5098,8 +5098,8 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 from mining.orchestrator import notify_all_template_feeders_block_found
                 notify_all_template_feeders_block_found()
                 log.debug("Notified template feeders about block acceptance")
-            except Exception:
-                pass  # Best effort notification, don't fail block acceptance
+            except Exception as e:
+                log.debug("Failed to notify template feeders: %s", e, exc_info=True)
             
             # Get expected reward for this block
             try:
