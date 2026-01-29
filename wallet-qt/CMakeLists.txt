@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Include custom CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Include GNUInstallDirs for standard install directories
+include(GNUInstallDirs)
+
 # Find Qt6 packages (Qt5 fallback for older systems)
 find_package(Qt6 COMPONENTS Core Widgets Network Sql Concurrent)
 if(NOT Qt6_FOUND)
@@ -270,9 +273,20 @@ add_compile_definitions(
 )
 
 # Install target
-install(TARGETS animica-wallet
-    RUNTIME DESTINATION bin
-)
+# Note: On macOS, animica-wallet is built as a MACOSX_BUNDLE (.app bundle).
+# CMake requires BUNDLE DESTINATION to be specified for bundle targets,
+# otherwise install fails with "install TARGETS given no BUNDLE DESTINATION".
+# On other platforms, it's a regular executable installed to bin.
+if(APPLE)
+    # On macOS, install as bundle. RUNTIME DESTINATION is not needed for bundles.
+    install(TARGETS animica-wallet
+        BUNDLE DESTINATION "."
+    )
+else()
+    install(TARGETS animica-wallet
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    )
+endif()
 
 # Print build information
 # Add tests subdirectory (optional, enable with -DBUILD_TESTING=ON)
