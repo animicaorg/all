@@ -178,6 +178,19 @@ public:
     QList<LedgerEntry> getAccountLedger(const QString& accountId);
     
     /**
+     * @brief List all ledger entries (for monitoring/history).
+     * @return List of all ledger entries
+     */
+    QList<LedgerEntry> listLedgerEntries();
+    
+    /**
+     * @brief Delete a ledger entry by ID.
+     * @param ledgerId Entry ID to delete
+     * @return true if deleted successfully
+     */
+    bool deleteLedgerEntry(qint64 ledgerId);
+    
+    /**
      * @brief Get available balance for account.
      * @param accountId Account UUID
      * @param asset Asset identifier (default: "ANM")

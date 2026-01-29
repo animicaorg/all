@@ -209,6 +209,12 @@ public:
      */
     void refreshBalances();
     
+    /**
+     * @brief Get balance tracker instance.
+     * @return Pointer to balance tracker
+     */
+    BalanceTracker* balanceTracker() const { return m_balanceTracker; }
+    
     // ==================== Transaction Signing ====================
     
     /**
