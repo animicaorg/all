@@ -403,7 +403,8 @@ async def scan_forever(
                 max_found=4,
                 thread_id=0,
             )
-            nonce += scaled_batch_size
+            # Wrap nonce at 64-bit boundary to prevent infinite growth
+            nonce = (nonce + scaled_batch_size) & 0xFFFFFFFFFFFFFFFF
 
             for share in found:
                 nonce_val = int(share.get("nonce"))
