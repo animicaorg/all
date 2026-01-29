@@ -44,3 +44,12 @@ Makefile
 *.pkg
 *.msi
 *.appimage
+*.AppImage
+*.zip
+
+# Distribution artifacts
+dist/
+squashfs-root/
+
+# Icon generation checksum
+resources/icons/.logo-checksum

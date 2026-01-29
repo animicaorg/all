@@ -175,8 +175,17 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "AnimicaWallet"
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+        MACOSX_BUNDLE_ICON_FILE "animica.icns"
         OUTPUT_NAME "AnimicaWallet"
     )
+    
+    # Copy icon into app bundle Resources
+    set(MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.icns")
+    if(EXISTS "${MACOS_ICON}")
+        set_source_files_properties("${MACOS_ICON}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources")
+        target_sources(animica-wallet PRIVATE "${MACOS_ICON}")
+    endif()
     
     # Copy node venv into app bundle
     set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/AnimicaWallet.app/Contents/Resources/node")
@@ -198,6 +207,18 @@ if(APPLE)
     )
     
 elseif(WIN32)
+    # Windows: Set icon via RC file
+    set(WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")
+    if(EXISTS "${WINDOWS_ICON}")
+        # Create RC file for Windows icon
+        set(RC_FILE "${CMAKE_BINARY_DIR}/animica-wallet.rc")
+        file(WRITE "${RC_FILE}" 
+"#include <windows.h>
+IDI_ICON1 ICON \"${WINDOWS_ICON}\"
+")
+        target_sources(animica-wallet PRIVATE "${RC_FILE}")
+    endif()
+    
     # Windows: Copy node alongside executable
     set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
     add_custom_command(TARGET animica-wallet POST_BUILD
