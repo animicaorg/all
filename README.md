@@ -22,7 +22,11 @@ This monorepo contains:
   - **P2P Network** (`p2p/`): Full peer-to-peer networking with quantum-resistant handshake, gossip protocol, and multi-transport support
   - **Consensus** (`consensus/`): PoIES algorithm for decentralized block validation
 - **Cryptography & Proofs**: `proofs/`, `zk/`, `pq/`, `randomness/`
-- **Wallets & Explorer**: `wallet/` (Flutter), `wallet-extension/` (browser extension), `explorer-web/`
+- **Wallets & Explorer**: 
+  - `wallet-qt/` - Qt desktop wallet with embedded node (macOS/Windows/Linux)
+  - `wallet/` - Flutter mobile wallet
+  - `wallet-extension/` - Browser extension wallet
+  - `explorer-web/` - Block explorer
 - **Mining**: `mining/` (core), `apps/miner-gui/` (Qt desktop GUI miner)
 - **Studio & Tooling**: `studio-web/`, `studio-wasm/`, `studio-services/`, `templates/`
 - **SDKs & APIs**: `sdk/` (Python/TypeScript/Rust), `docs/` (specifications), `spec/` (canonical schemas)
@@ -180,6 +184,39 @@ animica node down --volumes         # wipe data (irreversible)
 ```
 
 > Need a deeper walkthrough? The sections below expand on each CLI area (networking, node ops, wallets, mining, RPC, Studio Services, Docker, non-Docker boot, and troubleshooting).
+
+## 💰 Animica Wallet Desktop App
+
+For users who want a simpler "just works" experience without managing the CLI, the **Animica Wallet Qt** provides a cross-platform desktop application with an embedded node.
+
+### Downloads
+
+**Current Release:** v0.1.0 (Coming Soon)
+
+| Platform | Download | Notes |
+|----------|----------|-------|
+| 🍎 **macOS** | `.dmg` installer | Universal (Apple Silicon + Intel) |
+| 🪟 **Windows** | `.msi` installer | Windows 10/11 (x64) |
+| 🐧 **Linux** | `.AppImage` or `.deb` | Universal AppImage or Debian package |
+
+**Installation:**
+- **macOS**: Download DMG, drag to Applications folder
+- **Windows**: Download MSI, run installer
+- **Linux AppImage**: Download, `chmod +x`, and run
+- **Linux DEB**: `sudo dpkg -i animica-wallet_*.deb`
+
+### Features
+
+- ✅ Embedded Animica node (no separate installation needed)
+- ✅ Full wallet management (create, import, send, receive)
+- ✅ Network selection (mainnet/testnet/devnet)
+- ✅ Live sync progress and node diagnostics
+- ✅ Transaction history and address book
+- ✅ Secure encrypted keystore
+
+### Building from Source
+
+See [`wallet-qt/README.md`](wallet-qt/README.md) for build instructions and [`wallet-qt/docs/RELEASING.md`](wallet-qt/docs/RELEASING.md) for packaging releases.
 
 ### 1. Clone the Repository
 
