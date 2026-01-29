@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QFile>
 #include "../rpc/AnimicaRpcClient.h"
+#include "../platform/DataDirManager.h"
 
 /**
  * @brief Manages the lifecycle of the embedded Animica node.
@@ -63,6 +64,7 @@ public:
     };
 
     explicit NodeManager(QObject* parent = nullptr);
+    explicit NodeManager(DataDirManager* dataDirManager, QObject* parent = nullptr);
     ~NodeManager() override;
 
     /**
@@ -124,6 +126,12 @@ public:
      * @return Diagnostics string
      */
     QString collectDiagnostics();
+    
+    /**
+     * @brief Set the data directory manager.
+     * @param dataDirManager Data directory manager instance
+     */
+    void setDataDirManager(DataDirManager* dataDirManager);
 
 signals:
     /**
@@ -244,6 +252,7 @@ private:
     
     QProcess* m_process;
     AnimicaRpcClient* m_rpcClient;
+    DataDirManager* m_dataDirManager;
     
     NodeInfo m_nodeInfo;
     
