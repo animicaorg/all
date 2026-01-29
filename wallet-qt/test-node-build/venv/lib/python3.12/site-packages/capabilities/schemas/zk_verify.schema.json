@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/capabilities/zk_verify.schema.json",
+  "title": "Animica Capabilities — zk.verify inputs",
+  "description": "Canonical request body for deterministic zk.verify(). Supports multiple proof systems and transports (inline bytes or DA reference). All byte strings are hex-prefixed (0x…) unless stated otherwise.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Schema version. Must be 0 for this document.",
+      "type": "integer",
+      "enum": [0],
+      "default": 0
+    },
+
+    "scheme": {
+      "description": "Zero-knowledge proof scheme / protocol family.",
+      "type": "string",
+      "enum": ["groth16", "plonk", "halo2", "plonky2", "fri-stark", "kimchi"]
+    },
+
+    "curve": {
+      "description": "Elliptic curve / field family used by the proof (if applicable to the scheme).",
+      "type": "string",
+      "examples": ["bn254", "bls12_381", "pallas-vesta", "jubjub"]
+    },
+
+    "hash": {
+      "description": "Transcript/hash function used inside the proof system when relevant.",
+      "type": "string",
+      "examples": ["keccak256", "sha3_256", "poseidon", "blake2s"]
+    },
+
+    "chainId": {
+      "description": "Animica chain id this verification pertains to (defensive binding).",
+      "type": "integer",
+      "minimum": 1
+    },
+
+    "circuitId": {
+      "description": "Human-readable identifier for the circuit (non-consensus); may be used to resolve registry keys.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+
+    "circuitHash": {
+      "description": "sha3_256 of the canonical circuit artifact (R1CS/IR/bytecode as defined by implementation).",
+      "$ref": "#/$defs/HexHash32"
+    },
+
+    "vkHash": {
+      "description": "sha3_256 of the canonical verifying key bytes.",
+      "$ref": "#/$defs/HexHash32"
+    },
+
+    "publicInputs": {
+      "description": "Ordered list of public inputs expected by the verifier. Order MUST match the circuit definition.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/HexBytes" },
+      "minItems": 0
+    },
+
+    "proof": {
+      "description": "Proof payload, provided inline or via Data-Availability (DA) reference.",
+      "oneOf": [
+        { "$ref": "#/$defs/HexBytes" },
+        { "$ref": "#/$defs/DARef" }
+      ]
+    },
+
+    "verifyingKey": {
+      "description": "Verifying key bytes, provided inline (preferred for small keys).",
+      "oneOf": [
+        { "$ref": "#/$defs/HexBytes" },
+        { "type": "null" }
+      ]
+    },
+
+    "vkRef": {
+      "description": "Data-Availability reference for a verifying key too large to embed inline.",
+      "oneOf": [
+        { "$ref": "#/$defs/DARef" },
+        { "type": "null" }
+      ]
+    },
+
+    "vkRegistryKey": {
+      "description": "Stable registry key that the node/provider can resolve to a verifying key (deployment-time registry).",
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._:+-]{1,128}$"
+    },
+
+    "meta": {
+      "description": "Non-consensus metadata. Implementations MUST ignore unknown fields.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+
+  "required": ["version", "scheme", "publicInputs", "proof"],
+
+  "anyOf": [
+    { "required": ["verifyingKey"] },
+    { "required": ["vkRef"] },
+    { "required": ["vkRegistryKey"] }
+  ],
+
+  "$defs": {
+    "HexBytes": {
+      "description": "Arbitrary-length bytes encoded as 0x-prefixed hex (even-length).",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$"
+    },
+
+    "HexHash32": {
+      "description": "32-byte sha3_256 digest encoded as 0x-prefixed hex (64 nybbles).",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+
+    "DARef": {
+      "description": "Reference to a blob stored via Animica Data-Availability service.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "description": "Namespace id for the blob (per da/constants.py).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777215
+        },
+        "commitment": {
+          "description": "NMT commitment root (32-byte hash) for the blob.",
+          "$ref": "#/$defs/HexHash32"
+        },
+        "size": {
+          "description": "Blob size in bytes.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["namespace", "commitment", "size"]
+    }
+  },
+
+  "examples": [
+    {
+      "version": 0,
+      "scheme": "groth16",
+      "curve": "bn254",
+      "hash": "keccak256",
+      "chainId": 1337,
+      "circuitId": "transfer-v1",
+      "circuitHash": "0x0d3f5e6ad9a9d5b5f7b3b7f8b8c1d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0",
+      "vkHash": "0x6edaa8b9f2fb0c5d3f5a7b9c0d1e2f33445566778899aabbccddeeff00112233",
+      "publicInputs": [
+        "0x0000000000000000000000000000000000000000000000000000000000000042",
+        "0x01"
+      ],
+      "proof": "0xabcdef",
+      "vkRef": {
+        "namespace": 24,
+        "commitment": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 32768
+      },
+      "meta": { "note": "example groth16 inline proof + DA VK" }
+    },
+    {
+      "version": 0,
+      "scheme": "fri-stark",
+      "hash": "poseidon",
+      "chainId": 2,
+      "circuitId": "stark-accumulator-v2",
+      "publicInputs": [],
+      "proof": {
+        "namespace": 25,
+        "commitment": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 1048576
+      },
+      "vkRegistryKey": "stark-accumulator-v2.prod",
+      "meta": { "batch": 17 }
+    }
+  ]
+}

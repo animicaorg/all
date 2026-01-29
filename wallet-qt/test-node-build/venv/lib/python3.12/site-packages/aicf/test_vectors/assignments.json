@@ -1,0 +1,138 @@
+{
+  "meta": {
+    "version": 1,
+    "module": "aicf.queue.assignment",
+    "description": "Deterministic, seeded provider assignment vectors with quotas and capabilities.",
+    "notes": [
+      "Eligibility: provider must support job_kind, be healthy, and match optional region filters.",
+      "Score = stake * health (higher is better).",
+      "Job order = descending priority, then task_id ascending.",
+      "Tie-break among equal scores uses a deterministic PRNG seeded by random_seed and provider_id.",
+      "Quotas: do not exceed per-provider concurrent limit; existing inflight leases count against quota."
+    ]
+  },
+  "vectors": [
+    {
+      "name": "basic-ai-two-providers-three-jobs",
+      "input": {
+        "random_seed": "0x00000001",
+        "providers": [
+          { "id": "provA", "stake": 1000000, "health": 0.98, "caps": ["AI"], "region": "us" },
+          { "id": "provB", "stake": 500000,  "health": 0.90, "caps": ["AI"], "region": "eu" }
+        ],
+        "quotas": { "provA": { "concurrent": 2 }, "provB": { "concurrent": 1 } },
+        "jobs": [
+          { "task_id": "0xaaa1", "job_kind": "AI", "priority": 0.90 },
+          { "task_id": "0xaaa2", "job_kind": "AI", "priority": 0.80 },
+          { "task_id": "0xaaa3", "job_kind": "AI", "priority": 0.70 }
+        ]
+      },
+      "expect": {
+        "assignments": [
+          { "task_id": "0xaaa1", "provider_id": "provA" },
+          { "task_id": "0xaaa2", "provider_id": "provA" },
+          { "task_id": "0xaaa3", "provider_id": "provB" }
+        ],
+        "unassigned": []
+      }
+    },
+    {
+      "name": "mixed-ai-quantum-capabilities-and-quotas",
+      "input": {
+        "random_seed": "0x00001337",
+        "providers": [
+          { "id": "provA", "stake": 800000, "health": 0.95, "caps": ["AI"], "region": "us" },
+          { "id": "provB", "stake": 700000, "health": 0.97, "caps": ["AI", "QUANTUM"], "region": "eu" },
+          { "id": "provC", "stake": 300000, "health": 0.99, "caps": ["QUANTUM"], "region": "us" }
+        ],
+        "quotas": { "provA": { "concurrent": 1 }, "provB": { "concurrent": 2 }, "provC": { "concurrent": 1 } },
+        "jobs": [
+          { "task_id": "0xbb01", "job_kind": "AI",      "priority": 0.90 },
+          { "task_id": "0xbb02", "job_kind": "QUANTUM", "priority": 0.85 },
+          { "task_id": "0xbb03", "job_kind": "AI",      "priority": 0.70 }
+        ]
+      },
+      "expect": {
+        "assignments": [
+          { "task_id": "0xbb01", "provider_id": "provA" },
+          { "task_id": "0xbb02", "provider_id": "provB" },
+          { "task_id": "0xbb03", "provider_id": "provB" }
+        ],
+        "unassigned": []
+      }
+    },
+    {
+      "name": "tie-break-equal-scores-seeded-order",
+      "input": {
+        "random_seed": "0xdeadbeef",
+        "providers": [
+          { "id": "provD", "stake": 400000, "health": 1.0, "caps": ["AI"], "region": "us" },
+          { "id": "provE", "stake": 400000, "health": 1.0, "caps": ["AI"], "region": "us" }
+        ],
+        "quotas": { "provD": { "concurrent": 1 }, "provE": { "concurrent": 1 } },
+        "jobs": [
+          { "task_id": "0xcc01", "job_kind": "AI", "priority": 1.00 },
+          { "task_id": "0xcc02", "job_kind": "AI", "priority": 0.50 }
+        ]
+      },
+      "expect": {
+        "seeded_order_tiebreak": ["provE", "provD"],
+        "assignments": [
+          { "task_id": "0xcc01", "provider_id": "provE" },
+          { "task_id": "0xcc02", "provider_id": "provD" }
+        ],
+        "unassigned": []
+      }
+    },
+    {
+      "name": "quota-exhaustion-unassigned-jobs",
+      "input": {
+        "random_seed": "0x01020304",
+        "providers": [
+          { "id": "provA", "stake": 900000, "health": 0.96, "caps": ["AI"], "region": "us" },
+          { "id": "provB", "stake": 600000, "health": 0.94, "caps": ["AI"], "region": "eu" }
+        ],
+        "quotas": { "provA": { "concurrent": 1 }, "provB": { "concurrent": 1 } },
+        "jobs": [
+          { "task_id": "0xdd01", "job_kind": "AI", "priority": 0.95 },
+          { "task_id": "0xdd02", "job_kind": "AI", "priority": 0.90 },
+          { "task_id": "0xdd03", "job_kind": "AI", "priority": 0.80 }
+        ]
+      },
+      "expect": {
+        "assignments": [
+          { "task_id": "0xdd01", "provider_id": "provA" },
+          { "task_id": "0xdd02", "provider_id": "provB" }
+        ],
+        "unassigned": ["0xdd03"]
+      }
+    },
+    {
+      "name": "region-filtering-and-inflight-lease-pressure",
+      "input": {
+        "random_seed": "0x0badcafe",
+        "providers": [
+          { "id": "provUS", "stake": 700000, "health": 0.98, "caps": ["AI","QUANTUM"], "region": "us" },
+          { "id": "provEU", "stake": 650000, "health": 0.99, "caps": ["AI"],           "region": "eu" }
+        ],
+        "quotas": { "provUS": { "concurrent": 2 }, "provEU": { "concurrent": 1 } },
+        "inflight": [
+          { "provider_id": "provUS", "task_id": "0xprev1" }
+        ],
+        "jobs": [
+          { "task_id": "0xee01", "job_kind": "AI",      "priority": 0.92, "region": "eu" },
+          { "task_id": "0xee02", "job_kind": "QUANTUM", "priority": 0.88, "region": "us" },
+          { "task_id": "0xee03", "job_kind": "AI",      "priority": 0.70, "region": "us" }
+        ]
+      },
+      "expect": {
+        "assignments": [
+          { "task_id": "0xee01", "provider_id": "provEU" },
+          { "task_id": "0xee02", "provider_id": "provUS" },
+          { "task_id": "0xee03", "provider_id": "provUS" }
+        ],
+        "unassigned": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "caps": {
+    "max_input_bytes": 256,
+    "max_output_bytes": 512
+  },
+  "kind": "AI",
+  "metadata": {
+    "comment": "Deterministic tiny prompt for tests"
+  },
+  "model": "demo.tiny-qa",
+  "policy": {
+    "temperature": 0.0,
+    "timeout_ms": 1000,
+    "top_p": 1.0
+  },
+  "prompt": "What is Animica? Answer in one short sentence.",
+  "version": 1
+}

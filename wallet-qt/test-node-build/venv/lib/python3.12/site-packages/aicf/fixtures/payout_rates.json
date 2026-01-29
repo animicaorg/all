@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "denom": "atoms",
+  "updated_at": "2025-09-24T00:00:00Z",
+
+  "epoch": {
+    "fund_cap": 1000000000
+  },
+
+  "ai": {
+    "unit_name": "ai_unit",
+    "min_job_fee": 25000,
+    "tiers": [
+      { "max_units": 1000,  "per_unit": 120 },
+      { "max_units": 10000, "per_unit": 100 },
+      { "max_units": null,  "per_unit": 80 }
+    ],
+    "surge": [
+      { "utilization_gte": 0.70, "multiplier": 1.15 },
+      { "utilization_gte": 0.90, "multiplier": 1.35 }
+    ],
+    "qos_bonus": { "p99_latency_ms_target": 1500, "bonus_multiplier": 1.05 },
+    "max_reward_per_job": 1500000
+  },
+
+  "quantum": {
+    "unit_name": "quantum_unit",
+    "min_job_fee": 40000,
+    "tiers": [
+      { "max_units": 2000,  "per_unit": 180 },
+      { "max_units": 8000,  "per_unit": 160 },
+      { "max_units": null,  "per_unit": 140 }
+    ],
+    "trap_bonus": { "target_ratio": 0.05, "bonus_multiplier": 1.10 },
+    "surge": [
+      { "utilization_gte": 0.70, "multiplier": 1.10 },
+      { "utilization_gte": 0.85, "multiplier": 1.25 },
+      { "utilization_gte": 0.95, "multiplier": 1.50 }
+    ],
+    "max_reward_per_job": 3000000
+  },
+
+  "split": {
+    "ai":      { "provider": 0.80, "treasury": 0.15, "miner": 0.05 },
+    "quantum": { "provider": 0.82, "treasury": 0.13, "miner": 0.05 }
+  },
+
+  "notes": "Amounts are in 'atoms' (smallest ANIM unit). Rewards = units × tier rate × surge × SLA adjustments, capped per job and per-epoch."
+}

@@ -1,0 +1,29 @@
+{
+  "chainId": 1,
+  "bestHeight": 1000,
+  "algorithm": "exponential-backoff",
+  "notes": "First 10 steps use step=1, then the step doubles each hop until genesis; stop=all-zero means no early stop.",
+  "locator": [
+    { "height": 1000, "hash": "0x1111111111111111111111111111111111111111111111111111111111111111" },
+    { "height": 999,  "hash": "0x2222222222222222222222222222222222222222222222222222222222222222" },
+    { "height": 998,  "hash": "0x3333333333333333333333333333333333333333333333333333333333333333" },
+    { "height": 997,  "hash": "0x4444444444444444444444444444444444444444444444444444444444444444" },
+    { "height": 996,  "hash": "0x5555555555555555555555555555555555555555555555555555555555555555" },
+    { "height": 995,  "hash": "0x6666666666666666666666666666666666666666666666666666666666666666" },
+    { "height": 994,  "hash": "0x7777777777777777777777777777777777777777777777777777777777777777" },
+    { "height": 993,  "hash": "0x8888888888888888888888888888888888888888888888888888888888888888" },
+    { "height": 992,  "hash": "0x9999999999999999999999999999999999999999999999999999999999999999" },
+    { "height": 991,  "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+
+    { "height": 989,  "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    { "height": 985,  "hash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    { "height": 977,  "hash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    { "height": 961,  "hash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+    { "height": 929,  "hash": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1" },
+    { "height": 865,  "hash": "0xf2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2" },
+    { "height": 737,  "hash": "0xf3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3" },
+    { "height": 481,  "hash": "0xf4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4" },
+    { "height": 0,    "hash": "0xf5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5" }
+  ],
+  "stop": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}

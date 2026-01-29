@@ -1,0 +1,426 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/spec/proofs/quantum_attestation.schema.json",
+  "title": "Animica — Quantum Provider Attestation Evidence (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ver", "provider", "bindings", "evidence", "metrics"],
+  "properties": {
+    "ver": {
+      "description": "Schema version. Must be 1 for this document.",
+      "const": 1
+    },
+    "provider": {
+      "description": "Quantum provider identifier and device metadata.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "device_id"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Provider short name.",
+          "enum": [
+            "ionq",
+            "rigetti",
+            "ibm_quantum",
+            "quantinuum",
+            "oqc",
+            "pasqal",
+            "xanadu",
+            "iqm",
+            "qci",
+            "alice_bob",
+            "quandela",
+            "other"
+          ]
+        },
+        "display_name": {
+          "type": "string",
+          "description": "Human-friendly provider name (freeform)."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Provider's device identifier (backend name)."
+        },
+        "device_fingerprint": {
+          "type": "string",
+          "description": "Stable fingerprint of the device identity (hash of serial/calibration/attest roots if available)."
+        },
+        "region": {
+          "type": "string",
+          "description": "Datacenter/region tag if provider exposes it."
+        },
+        "api_version": {
+          "type": "string",
+          "description": "Provider API version used for this job."
+        }
+      }
+    },
+
+    "bindings": {
+      "description": "Deterministic bindings tying this attestation to Animica consensus domains and the specific job/output.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_digest", "circuit_digest", "output_digest", "header_template_hash"],
+      "properties": {
+        "alg_policy_root": {
+          "description": "Optional PQ alg-policy Merkle root for this network.",
+          "$ref": "#/$defs/hex64"
+        },
+        "job_digest": {
+          "description": "Digest of normalized job payload (gate-set, params, requested shots).",
+          "$ref": "#/$defs/hex32"
+        },
+        "circuit_digest": {
+          "description": "Digest of compiled circuit netlist after provider-specific transpilation caps.",
+          "$ref": "#/$defs/hex32"
+        },
+        "output_digest": {
+          "description": "Digest of provider output bitstrings histogram or density-matrix down-projection.",
+          "$ref": "#/$defs/hex32"
+        },
+        "trap_seed": {
+          "description": "Deterministic seed for trap-circuit generation (if traps are used).",
+          "$ref": "#/$defs/hex32"
+        },
+        "header_template_hash": {
+          "description": "Hash of header SignBytes (nonce=0) that this proof binds to.",
+          "$ref": "#/$defs/hex32"
+        },
+        "timestamp": {
+          "description": "UTC time when the provider finalized the run.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "nonce": {
+          "description": "Optional provider nonce mixed into transcript.",
+          "$ref": "#/$defs/hexBytes"
+        }
+      }
+    },
+
+    "evidence": {
+      "description": "Provider-signed evidence objects proving job execution on the declared device.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attestation", "provenance"],
+      "properties": {
+        "attestation": {
+          "description": "Structured token(s) signed by the provider, encapsulating job parameters and results.",
+          "oneOf": [
+            { "$ref": "#/$defs/coseSign1" },
+            { "$ref": "#/$defs/jwsCompact" },
+            { "$ref": "#/$defs/jwsGeneral" }
+          ]
+        },
+        "provenance": {
+          "description": "Minimal subset of job metadata that must match the signed token payload.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["job_id", "run_id", "shots", "depth", "width", "transpiler_version"],
+          "properties": {
+            "job_id": { "type": "string" },
+            "run_id": { "type": "string" },
+            "backend": { "type": "string", "description": "Backend/backend_version if applicable." },
+            "shots": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+            "width": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "depth": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "two_qubit_count": { "type": "integer", "minimum": 0 },
+            "transpiler_version": { "type": "string" },
+            "compiler_passes": { "type": "array", "items": { "type": "string" } },
+            "gate_set": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" },
+              "description": "Final native gateset used by the backend."
+            }
+          }
+        },
+        "hardware_attest": {
+          "description": "Hardware identity certificate, optional chain, and PQ-co-signatures.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {
+            "provider_cert_pem": { "$ref": "#/$defs/pemCert" },
+            "provider_chain_pem": { "$ref": "#/$defs/pemChain" },
+            "signatures": {
+              "description": "Cross-alg signatures over the transcript (hybrid classical+PQ).",
+              "type": "array",
+              "minItems": 0,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["alg", "signature", "message_digest"],
+                "properties": {
+                  "alg": {
+                    "type": "string",
+                    "enum": ["ed25519", "ecdsa_p256_sha256", "rsa_pkcs1_2048_sha256", "dilithium3", "sphincs_shake_128s"]
+                  },
+                  "signature": { "type": "string", "contentEncoding": "base64" },
+                  "message_digest": { "$ref": "#/$defs/hex32" },
+                  "public_key_pem": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "calibration": {
+          "description": "Calibration snapshot used for this run.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "captured_at": { "type": "string", "format": "date-time" },
+            "digest": { "$ref": "#/$defs/hex32" },
+            "t1_us": { "type": "number", "minimum": 0 },
+            "t2_us": { "type": "number", "minimum": 0 },
+            "readout_fidelity": { "type": "number", "minimum": 0, "maximum": 1 },
+            "two_qubit_fidelity": { "type": "number", "minimum": 0, "maximum": 1 },
+            "single_qubit_error": { "type": "number", "minimum": 0, "maximum": 1 },
+            "two_qubit_error": { "type": "number", "minimum": 0, "maximum": 1 },
+            "readout_error": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+
+    "metrics": {
+      "description": "Quantities mapped to ψ inputs and QoS accounting.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quantum_units", "qos", "traps"],
+      "properties": {
+        "quantum_units": {
+          "description": "Reference units (depth × width × shots scaled by provider benchmarks).",
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "queue_wait_ms": { "type": "integer", "minimum": 0 },
+        "wall_time_ms": { "type": "integer", "minimum": 0 },
+        "qos": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["success", "availability"],
+          "properties": {
+            "success": { "type": "number", "minimum": 0, "maximum": 1 },
+            "availability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "timeliness": { "type": "number", "minimum": 0, "maximum": 1 },
+            "fresh_calibration": { "type": "boolean" }
+          }
+        },
+        "traps": {
+          "description": "Trap-circuit sampling results.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scheme", "outcomes"],
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "enum": ["stabilizer", "randomized_benchmarking", "mirror_circuits", "xeb", "other"]
+            },
+            "outcomes": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/trapOutcome" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "provider": { "properties": { "name": { "const": "ionq" } } } } },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "provenance": { "properties": { "job_id": { "pattern": "^ionq_[A-Za-z0-9_-]+$" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "provider": { "properties": { "name": { "const": "ibm_quantum" } } } } },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "provenance": {
+                "properties": {
+                  "job_id": { "pattern": "^[a-f0-9]{24}$" },
+                  "backend": { "pattern": "^[a-z0-9_\\-]+@[0-9]+$" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]{64}$"
+    },
+    "hex64": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]{128}$"
+    },
+    "hexBytes": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]+$"
+    },
+    "pemCert": {
+      "type": "string",
+      "pattern": "-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----\\s*$"
+    },
+    "pemChain": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/pemCert" }
+    },
+    "base64": { "type": "string", "contentEncoding": "base64" },
+    "url": { "type": "string", "format": "uri" },
+
+    "coseSign1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "payload_b64"],
+      "properties": {
+        "format": { "const": "cose_sign1" },
+        "payload_b64": { "$ref": "#/$defs/base64" },
+        "detached_sig_b64": { "$ref": "#/$defs/base64" },
+        "protected_b64": { "$ref": "#/$defs/base64" },
+        "unprotected": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "jwsCompact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "jws"],
+      "properties": {
+        "format": { "const": "jws_compact" },
+        "jws": { "type": "string", "pattern": "^[A-Za-z0-9_=-]+\\.[A-Za-z0-9_=-]+\\.[A-Za-z0-9_=-]+$" }
+      }
+    },
+    "jwsGeneral": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "payload_b64", "signatures"],
+      "properties": {
+        "format": { "const": "jws_general" },
+        "payload_b64": { "$ref": "#/$defs/base64" },
+        "signatures": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protected_b64", "signature_b64"],
+            "properties": {
+              "protected_b64": { "$ref": "#/$defs/base64" },
+              "header": { "type": "object", "additionalProperties": true },
+              "signature_b64": { "$ref": "#/$defs/base64" }
+            }
+          }
+        }
+      }
+    },
+
+    "trapOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shots", "passes", "pass_ratio", "method", "conf_level"],
+      "properties": {
+        "shots": { "type": "integer", "minimum": 1 },
+        "passes": { "type": "integer", "minimum": 0 },
+        "pass_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": {
+          "type": "string",
+          "enum": ["binomial", "clopper_pearson", "normal_approx", "xeb_fidelity"]
+        },
+        "p_value": { "type": "number", "minimum": 0, "maximum": 1 },
+        "conf_level": { "type": "number", "minimum": 0.5, "maximum": 0.999999 },
+        "min_required": { "type": "number", "minimum": 0, "maximum": 1 },
+        "notes": { "type": "string" }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "ver": 1,
+      "provider": { "name": "ionq", "display_name": "IonQ", "device_id": "Harmony-11", "api_version": "v0.6" },
+      "bindings": {
+        "job_digest": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+        "circuit_digest": "0xaaaa22223333444455556666777788889999aaaabbbbccccddddeeeeffff1111",
+        "output_digest": "0xbbbb22223333444455556666777788889999aaaabbbbccccddddeeeeffff2222",
+        "header_template_hash": "0xcccc22223333444455556666777788889999aaaabbbbccccddddeeeeffff3333",
+        "trap_seed": "0xdddd22223333444455556666777788889999aaaabbbbccccddddeeeeffff4444",
+        "timestamp": "2025-01-01T00:00:00Z"
+      },
+      "evidence": {
+        "attestation": {
+          "format": "jws_compact",
+          "jws": "eyJhbGciOiJFZERTQSJ9.eyJqb2JfaWQiOiJpb25xXzEyMyIsImJhY2tlbmQiOiJIYXJtb255LTExIiwic2hvdHMiOjEwMDAsIndpZHRoIjozMiwiZGVwdGgiOjI1MH0.SIGNATURE"
+        },
+        "provenance": {
+          "job_id": "ionq_123",
+          "run_id": "run-abc",
+          "backend": "Harmony-11@7",
+          "shots": 1000,
+          "width": 32,
+          "depth": 250,
+          "two_qubit_count": 480,
+          "transpiler_version": "1.2.3",
+          "compiler_passes": ["layout", "routing", "opt"],
+          "gate_set": ["rxx", "rz", "sx", "x", "measure"]
+        },
+        "hardware_attest": {
+          "provider_cert_pem": "-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----\\n",
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "signature": "BASE64==",
+              "message_digest": "0xeeee22223333444455556666777788889999aaaabbbbccccddddeeeeffff5555"
+            },
+            {
+              "alg": "dilithium3",
+              "signature": "BASE64==",
+              "message_digest": "0xeeee22223333444455556666777788889999aaaabbbbccccddddeeeeffff5555"
+            }
+          ]
+        },
+        "calibration": {
+          "captured_at": "2024-12-31T23:50:00Z",
+          "digest": "0xffff22223333444455556666777788889999aaaabbbbccccddddeeeeffff6666",
+          "t1_us": 7000.0,
+          "t2_us": 5000.0,
+          "readout_fidelity": 0.99,
+          "two_qubit_fidelity": 0.97,
+          "single_qubit_error": 0.0005,
+          "two_qubit_error": 0.02,
+          "readout_error": 0.01
+        }
+      },
+      "metrics": {
+        "quantum_units": 8.1e6,
+        "latency_ms": 54000,
+        "queue_wait_ms": 120000,
+        "wall_time_ms": 60000,
+        "qos": { "success": 0.995, "availability": 0.999, "timeliness": 0.92, "fresh_calibration": true },
+        "traps": {
+          "scheme": "stabilizer",
+          "outcomes": [
+            { "shots": 200, "passes": 196, "pass_ratio": 0.98, "method": "binomial", "p_value": 0.03, "conf_level": 0.99, "min_required": 0.95 }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+; Animica Capabilities — Job Request Envelope (CBOR/CDDL)
+; ------------------------------------------------------------------
+; Deterministic request object for enqueueing AI/Quantum compute jobs.
+; Maps use small integer keys to guarantee canonical CBOR ordering.
+;
+; Task-id derivation (out of scope of schema, documented for clarity):
+;   task_id = H("AICF|JobRequest"
+;               || chain_id || height_hint || tx_hash || caller
+;               || CBOR(payload))
+;
+; Versioning: bump 0:version on incompatible changes. Add new optional
+; fields with new integer keys to preserve forward/backward compatibility.
+
+JobRequest = {
+  0: uint,                    ; version (current: 0)
+  1: kind,                    ; job kind (AI or Quantum)
+  2: chain_id: uint,          ; network discriminator (animica chain id)
+  ?3: uint,                   ; height_hint (block height at enqueue), optional
+  4: Hash32,                  ; tx_hash of the calling transaction (domain binding)
+  5: Address,                 ; caller account address (alg_id||sha3_256(pubkey))
+  6: JobPayload,              ; kind-specific payload
+  ?7: Meta                    ; optional opaque metadata (non-consensus)
+}
+
+; ------------------------------------------------------------------
+
+kind = 0 / 1                   ; 0 = AI, 1 = Quantum
+
+JobPayload = AIJobSpec / QuantumJobSpec
+
+; --------------------------- AI job spec ---------------------------
+
+AIJobSpec = {
+  0: text .size (1..64),      ; model name (e.g., "animica.tiny-1")
+  1: bstr,                    ; prompt bytes (UTF-8 if text); max length enforced by policy
+  ?2: uint,                   ; max_tokens (cap enforced by policy)
+  ?3: float,                  ; temperature (0..2)
+  ?4: ParamsAI                ; optional structured params extension
+}
+
+ParamsAI = {
+  ?0: uint,                   ; top_k
+  ?1: float,                  ; top_p
+  ?2: uint,                   ; seed (for deterministic sampling when allowed)
+}
+
+; ------------------------ Quantum job spec -------------------------
+
+QuantumJobSpec = {
+  0: uint,                    ; shots (1..100_000 per policy)
+  1: Circuit,                 ; circuit description (typed bytes)
+  ?2: float,                  ; trap_ratio (0..1)
+  ?3: ParamsQ                 ; optional structured params extension
+}
+
+; Circuit is typed to avoid ambiguous encodings and to enable future formats.
+Circuit = {
+  0: text,                    ; format identifier: "qasm", "json", or vendor tag
+  1: bstr                     ; payload bytes (UTF-8 for text formats; raw for binary)
+}
+
+ParamsQ = {
+  ?0: uint,                   ; qubits (for sanity/quotas)
+  ?1: uint,                   ; depth hint
+  ?2: text                    ; backend hint/target family (non-binding)
+}
+
+; ---------------------------- Common -------------------------------
+
+Meta = {
+  * uint => any               ; extension space; ignored by consensus logic
+}
+
+Address = bstr .size 33       ; 1 byte alg_id || 32 bytes sha3_256(pubkey)
+Hash32  = bstr .size 32
+
+; Notes:
+; - All bstr fields are raw bytes; any hex/text transformation happens at higher layers.
+; - Maps MUST be encoded canonically (keys in ascending numeric order).
+; - Unknown optional fields in Meta MUST be ignored to permit forward-compat.
+; - Policy-enforced caps (sizes, token limits) are validated outside of schema.

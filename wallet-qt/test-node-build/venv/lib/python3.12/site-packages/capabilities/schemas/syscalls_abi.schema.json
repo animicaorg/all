@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/capabilities/syscalls_abi.schema.json",
+  "title": "Animica Capabilities — Syscalls ABI",
+  "description": "JSON-Schema describing the contract-facing syscall shapes used by the Animica VM stdlib (blob pinning, AI/Quantum enqueue, deterministic result reads, zk verification, and deterministic randomness). This schema covers both request envelopes and response envelopes.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/Request" },
+    { "$ref": "#/$defs/Response" }
+  ],
+  "$defs": {
+    "HexBytes": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]+$",
+      "examples": ["0x", "0xdeadbeef"]
+    },
+    "Hex32": {
+      "type": "string",
+      "description": "32-byte value encoded as 0x + 64 hex chars (e.g., commitments, task ids).",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "examples": ["0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]
+    },
+    "NamespaceId": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777215,
+      "description": "24-bit namespace id (0..2^24-1)."
+    },
+    "ModelName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "MimeType": {
+      "type": "string",
+      "pattern": "^[\\w.+-]+/[\\w.+-]+$",
+      "examples": ["application/octet-stream", "text/plain"]
+    },
+    "OkFlag": {
+      "type": "boolean",
+      "description": "True when the syscall completed successfully; false when an error is reported."
+    },
+
+    "Request": {
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": { "type": "string" }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/BlobPinCall" },
+        { "$ref": "#/$defs/AIEnqueueCall" },
+        { "$ref": "#/$defs/QuantumEnqueueCall" },
+        { "$ref": "#/$defs/ReadResultCall" },
+        { "$ref": "#/$defs/ZkVerifyCall" },
+        { "$ref": "#/$defs/RandomBytesCall" }
+      ],
+      "discriminator": {
+        "propertyName": "op",
+        "mapping": {
+          "blob.pin": "#/$defs/BlobPinCall",
+          "compute.ai.enqueue": "#/$defs/AIEnqueueCall",
+          "compute.quantum.enqueue": "#/$defs/QuantumEnqueueCall",
+          "compute.read_result": "#/$defs/ReadResultCall",
+          "zk.verify": "#/$defs/ZkVerifyCall",
+          "random.bytes": "#/$defs/RandomBytesCall"
+        }
+      }
+    },
+
+    "Response": {
+      "type": "object",
+      "required": ["op", "ok"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "blob.pin",
+            "compute.ai.enqueue",
+            "compute.quantum.enqueue",
+            "compute.read_result",
+            "zk.verify",
+            "random.bytes"
+          ]
+        },
+        "ok": { "$ref": "#/$defs/OkFlag" },
+        "error": {
+          "type": "string",
+          "description": "Present when ok=false; human-readable error message (non-normative)."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "blob.pin" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/BlobPinResult" } ] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "compute.ai.enqueue" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/AIEnqueueResult" } ] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "compute.quantum.enqueue" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/QuantumEnqueueResult" } ] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "compute.read_result" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/ReadResultResult" } ] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "zk.verify" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/ZkVerifyResult" } ] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "random.bytes" } } },
+          "then": { "allOf": [ { "$ref": "#/$defs/RandomBytesResult" } ] }
+        }
+      ]
+    },
+
+    /* ----------------------- Individual call requests ----------------------- */
+
+    "BlobPinCall": {
+      "type": "object",
+      "required": ["op", "ns", "data"],
+      "properties": {
+        "op": { "const": "blob.pin" },
+        "ns": { "$ref": "#/$defs/NamespaceId" },
+        "data": {
+          "$ref": "#/$defs/HexBytes",
+          "description": "Blob bytes (hex). Max 4 MiB.",
+          "maxLength": 2 + 4194304 * 2
+        },
+        "mime": { "$ref": "#/$defs/MimeType" }
+      },
+      "additionalProperties": false
+    },
+
+    "AIEnqueueCall": {
+      "type": "object",
+      "required": ["op", "model", "prompt"],
+      "properties": {
+        "op": { "const": "compute.ai.enqueue" },
+        "model": { "$ref": "#/$defs/ModelName" },
+        "prompt": {
+          "type": "string",
+          "description": "UTF-8 prompt bytes. Contracts pass bytes; JSON envelope uses text.",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "max_tokens": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2 }
+      },
+      "additionalProperties": false
+    },
+
+    "QuantumEnqueueCall": {
+      "type": "object",
+      "required": ["op", "shots"],
+      "properties": {
+        "op": { "const": "compute.quantum.enqueue" },
+        "shots": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "circuit": {
+          "description": "Circuit description. Either QASM string or structured JSON object.",
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 200000, "description": "OpenQASM (or similar) text." },
+            { "type": "object", "description": "Structured circuit JSON (implementation-defined)." }
+          ]
+        },
+        "trap_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Optional fraction of shots reserved for trap circuits."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ReadResultCall": {
+      "type": "object",
+      "required": ["op", "task_id"],
+      "properties": {
+        "op": { "const": "compute.read_result" },
+        "task_id": { "$ref": "#/$defs/Hex32" }
+      },
+      "additionalProperties": false
+    },
+
+    "ZkVerifyCall": {
+      "type": "object",
+      "required": ["op", "circuit_id", "proof", "public_input"],
+      "properties": {
+        "op": { "const": "zk.verify" },
+        "circuit_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "proof": { "$ref": "#/$defs/HexBytes" },
+        "public_input": {
+          "description": "Either a single hex-encoded input blob or an array of field elements as hex.",
+          "oneOf": [
+            { "$ref": "#/$defs/HexBytes" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/HexBytes" },
+              "minItems": 1,
+              "maxItems": 1024
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RandomBytesCall": {
+      "type": "object",
+      "required": ["op", "length"],
+      "properties": {
+        "op": { "const": "random.bytes" },
+        "length": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      },
+      "additionalProperties": false
+    },
+
+    /* ----------------------- Individual call results ------------------------ */
+
+    "BlobPinResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["commitment", "size", "ns"],
+          "properties": {
+            "commitment": {
+              "allOf": [
+                { "$ref": "#/$defs/Hex32" }
+              ],
+              "description": "NMT root commitment of the pinned blob."
+            },
+            "size": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+            "ns": { "$ref": "#/$defs/NamespaceId" },
+            "receipt": {
+              "type": "object",
+              "description": "Opaque receipt; structure defined by capabilities/jobs/receipts."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+
+    "AIEnqueueResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["task_id"],
+          "properties": {
+            "task_id": { "$ref": "#/$defs/Hex32" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+
+    "QuantumEnqueueResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["task_id"],
+          "properties": {
+            "task_id": { "$ref": "#/$defs/Hex32" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+
+    "ReadResultResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pending", "ready", "error"]
+            },
+            "output": {
+              "description": "Present when status=ready; application-defined output bytes.",
+              "$ref": "#/$defs/HexBytes"
+            },
+            "meta": {
+              "type": "object",
+              "description": "Optional metadata (e.g., model name, tokens, circuit stats)."
+            },
+            "error_detail": {
+              "type": "string",
+              "description": "Present when status=error; non-deterministic detail is allowed for UX, consensus does not rely on it."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+
+    "ZkVerifyResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["ok", "units"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "units": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Costed units reported for gas/accounting."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+
+    "RandomBytesResult": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "data": { "$ref": "#/$defs/HexBytes" }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

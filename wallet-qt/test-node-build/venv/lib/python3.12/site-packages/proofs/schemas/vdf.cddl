@@ -1,0 +1,91 @@
+; Animica — VDF Proof (Wesolowski) — CBOR CDDL
+; This file defines the CBOR body carried inside the generic proof envelope
+; (see proofs/schemas/proof_envelope.cddl) for verifiable delay functions.
+;
+; Design goals:
+; - Deterministic, minimal body containing everything the verifier needs OR a
+;   stable reference to shared chain params (preferred).
+; - Works with the Wesolowski proof over an RSA group of unknown order.
+; - Clear binding to the consensus "input" (derived from the randomness module).
+;
+; Conventions
+; - All maps use small integer keys to keep canonical order compact.
+; - All bstr big integers are big-endian, without leading zero padding.
+; - "address" is a 33-byte payload: alg_id (1 byte) || sha3_256(pubkey) (32 bytes).
+
+;------------------------------------------------------------
+; VDF proof body
+;------------------------------------------------------------
+
+vdf_proof = {
+  1: ver,                       ; schema version (= 1)
+  2: algo: vdf_algo,            ; algorithm id (wesolowski=1)
+  3: params: vdf_params,        ; modulus reference or inline modulus (+ hash-to-group)
+  4: input: bstr .size 32,      ; canonical 32-byte input digest (H_beacon as per randomness/vdf/input_builder)
+  5: T: uint,                   ; number of repeated squarings (iterations)
+  6: y: bstr,                   ; result element in Z*_N (big-endian; len ~= |N|)
+  7: pi: bstr,                  ; Wesolowski proof element π (big-endian; len ~= |N|)
+  8: ? meta: vdf_meta           ; non-consensus hints (timings/device/provider), optional
+}
+
+;------------------------------------------------------------
+; Algorithms
+;------------------------------------------------------------
+; Currently only Wesolowski is specified. Keep extension-friendly shape.
+
+vdf_algo = 1                    ; &(wesolowski: 1) — integer enum
+
+;------------------------------------------------------------
+; Parameters
+;------------------------------------------------------------
+; Exactly one of modulus_id or modulus_n MUST be present.
+; - modulus_id SHOULD be used in production to reference a chain-approved modulus
+;   published under randomness/vdf/params.py (and spec/params.yaml).
+; - modulus_n MAY be used for tests/devnets to carry an ad-hoc RSA modulus.
+
+vdf_params = {
+  ? 1: modulus_id: tstr,        ; e.g., "rsa-2048-a" — chain-known identifier
+  ? 2: modulus_n: bstr,         ; RSA modulus N (big-endian)
+  3: hash_to_group: tstr        ; name of hash-to-group mapping (e.g., "sha3-256-xmd")
+}
+
+; hash_to_group naming conventions (informative):
+; - "sha3-256-xmd": expand input (32 bytes) via XMD(SHA3-256) into an integer modulo N,
+;   then square to the nearest quadratic residue per spec. Keep consistent with verifier.
+
+;------------------------------------------------------------
+; Optional non-consensus metadata
+;------------------------------------------------------------
+
+vdf_meta = {
+  1: ? provider: address,       ; miner/worker identity (for accounting/ops/UI only)
+  2: ? wall_time_ms: uint,      ; observed wall-clock time to compute (ms)
+  3: ? device: tstr,            ; free-form device hint (e.g., "CPU 5950X", "FPGA/XYZ")
+  4: ? sw: tstr,                ; software version string (e.g., "animica-vdf 0.1.0")
+  5: ? note: tstr               ; free-form notes
+}
+
+;------------------------------------------------------------
+; Shared scalars
+;------------------------------------------------------------
+
+ver = 1
+address = bstr .size 33         ; alg_id (1) || sha3_256(pubkey) (32)
+
+;------------------------------------------------------------
+; Canonical binding (informative)
+;------------------------------------------------------------
+; The verifier:
+; 1) Resolves the RSA modulus N: from modulus_id via chain params, or inline modulus_n.
+; 2) Maps `input` into the group using the declared `hash_to_group` to get x in Z*_N.
+; 3) Checks Wesolowski proof: y = x^(2^T) mod N with proof π, using the standard check
+;    y ?= π^l * x^r (mod N), where 2^T = l·q + r and q, r derived per algorithm.
+; 4) On success, computes a seconds-equivalent metric from T and the chain's VDF params
+;    (used by proofs/policy_adapter.py to produce ψ-inputs). None of the meta fields are
+;    consensus-critical.
+
+; Sizes:
+; - y and pi are encoded as minimal big-endian bstr (no leading zeros). Implementations
+;   MUST reject encodings that are not in [1, N-1] or that include leading zeros.
+
+; End of vdf.cddl

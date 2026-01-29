@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2025-10-31T00:00:00Z",
+  "entries": [
+    {
+      "key": "animica-mainnet",
+      "name": "Animica Mainnet",
+      "chainId": 1,
+      "network": "mainnet",
+      "status": "planned",
+      "testnet": false,
+      "path": "chains/animica.mainnet.json",
+      "checksum": "<sha256-to-be-generated>",
+      "icons": {
+        "svg": "chains/icons/animica.svg",
+        "svgDark": "chains/icons/animica@dark.svg",
+        "png64": "chains/icons/animica-64.png",
+        "png128": "chains/icons/animica-128.png"
+      }
+    },
+    {
+      "key": "animica-testnet",
+      "name": "Animica Testnet",
+      "chainId": 2,
+      "network": "testnet",
+      "status": "active",
+      "testnet": true,
+      "path": "chains/animica.testnet.json",
+      "checksum": "<sha256-to-be-generated>",
+      "icons": {
+        "svg": "chains/icons/animica.svg",
+        "svgDark": "chains/icons/animica@dark.svg",
+        "png64": "chains/icons/animica-64.png",
+        "png128": "chains/icons/animica-128.png"
+      }
+    },
+    {
+      "key": "animica-localnet",
+      "name": "Animica Localnet",
+      "chainId": 1337,
+      "network": "localnet",
+      "status": "dev",
+      "testnet": true,
+      "path": "chains/animica.localnet.json",
+      "checksum": "<sha256-to-be-generated>",
+      "icons": {
+        "svg": "chains/icons/animica.svg",
+        "svgDark": "chains/icons/animica@dark.svg",
+        "png64": "chains/icons/animica-64.png",
+        "png128": "chains/icons/animica-128.png"
+      }
+    }
+  ]
+}

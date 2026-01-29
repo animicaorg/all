@@ -1,0 +1,272 @@
+{
+  "domain": "animica/proofs/ai-v1",
+  "version": 1,
+  "notes": "Focused vectors for AIProof verification: TEE attestation (SGX/SEV-SNP/Arm CCA), trap-circuit outcomes, redundancy, and QoS. These are JSON fixtures mirrored by the CLI to build CBOR envelopes for round-trip tests.",
+  "policy_assumptions": {
+    "min_traps_ratio": 0.90,
+    "min_redundancy": 2,
+    "min_qos_score": 0.80,
+    "max_quote_age_secs": 86400
+  },
+  "vectors": [
+    {
+      "name": "accept_sgx_ok_high_traps_high_qos",
+      "headerHash": "0x71f3f1b98e2c4a3db8d0a5e4b1c2d3e49f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "sgx",
+            "fmspc": "00906ED10000",
+            "mrenclave": "0x8c3f0b2a8d9e7f6a5b4c3d2e1f00112233445566778899aabbccddeeff001122",
+            "mrsigner": "0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff",
+            "isvsvn": 6,
+            "qe_report_body": "base64:SGX_QE_REPORT_PLACEHOLDER",
+            "pck_chain_der": "base64:PCK_CHAIN_PLACEHOLDER",
+            "tcb_info": "base64:TCB_INFO_PLACEHOLDER",
+            "timestamp": 1730000000
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0x3a5f3e2d1c0b9a887766554433221100ffeeddccbbaa99887766554433221100",
+            "output_digest": "0x99aa77bb33cc55dd11ee22ff00aa55cc77889900aabbccddeeff112233445566",
+            "redundancy": 3
+          },
+          "traps": {
+            "seed": "0x3b4c5d6e7f8091a2b3c4d5e6f718293a",
+            "total": 50,
+            "passed": 49
+          },
+          "qos": {
+            "uptime_1d": 0.995,
+            "p50_ms": 180,
+            "p95_ms": 320,
+            "p99_ms": 450
+          }
+        },
+        "nullifier": "0x0f5a9b7c3e2d1c0b99887766554433221100ffeeddccbbaa9988776655443322"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 0.98,
+          "redundancy": 3,
+          "qos_score": 0.94,
+          "ai_units": 120.0
+        },
+        "psi_micro": 250000,
+        "reason": "SGX chain/time valid; traps_ratio>=0.90; redundancy>=2; QoS>=0.80."
+      }
+    },
+    {
+      "name": "reject_sgx_low_traps_ratio",
+      "headerHash": "0xa4b3c2d1e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f718293a4b",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "sgx",
+            "fmspc": "00906ED10000",
+            "mrenclave": "0x8c3f0b2a8d9e7f6a5b4c3d2e1f00112233445566778899aabbccddeeff001122",
+            "mrsigner": "0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff",
+            "isvsvn": 6,
+            "qe_report_body": "base64:SGX_QE_REPORT_PLACEHOLDER",
+            "pck_chain_der": "base64:PCK_CHAIN_PLACEHOLDER",
+            "tcb_info": "base64:TCB_INFO_PLACEHOLDER",
+            "timestamp": 1730000000
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "output_digest": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "redundancy": 2
+          },
+          "traps": {
+            "seed": "0x0102030405060708090a0b0c0d0e0f10",
+            "total": 40,
+            "passed": 31
+          },
+          "qos": {
+            "uptime_1d": 0.990,
+            "p50_ms": 220,
+            "p95_ms": 480,
+            "p99_ms": 700
+          }
+        },
+        "nullifier": "0xdeadbeef00000000000000000000000000000000000000000000000000000001"
+      },
+      "expected": {
+        "accept": false,
+        "error": "TrapsRatioTooLow",
+        "metrics": {
+          "traps_ratio": 0.775,
+          "redundancy": 2,
+          "qos_score": 0.86
+        },
+        "reason": "traps_ratio 0.775 < 0.90 threshold."
+      }
+    },
+    {
+      "name": "reject_sgx_attestation_expired",
+      "headerHash": "0x0a1b2c3d4e5f60718293a4b5c6d7e8f90112a3b4c5d6e7f8091a2b3c4d5e6f70",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "sgx",
+            "fmspc": "00906ED30000",
+            "mrenclave": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "mrsigner": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "isvsvn": 5,
+            "qe_report_body": "base64:OLD_QE_REPORT",
+            "pck_chain_der": "base64:OLD_PCK_CHAIN",
+            "tcb_info": "base64:OLD_TCB_INFO",
+            "timestamp": 1600000000
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "output_digest": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "redundancy": 2
+          },
+          "traps": { "seed": "0xabcd", "total": 20, "passed": 20 },
+          "qos": { "uptime_1d": 0.999, "p50_ms": 120, "p95_ms": 200, "p99_ms": 260 }
+        },
+        "nullifier": "0x00000000000000000000000000000000cccccccccccccccccccccccccccccccc"
+      },
+      "expected": {
+        "accept": false,
+        "error": "AttestationExpired",
+        "metrics": {
+          "traps_ratio": 1.0,
+          "redundancy": 2,
+          "qos_score": 0.97
+        },
+        "reason": "SGX evidence older than max_quote_age_secs."
+      }
+    },
+    {
+      "name": "accept_sev_snp_ok",
+      "headerHash": "0x9f8e7d6c5b4a39281706f5e4d3c2b1a0ffeeddccbbaa99887766554433221100",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "sev_snp",
+            "report": "base64:SNP_REPORT_PLACEHOLDER",
+            "ark": "base64:AMD_ARK_PLACEHOLDER",
+            "ask": "base64:AMD_ASK_PLACEHOLDER",
+            "vcek": "base64:AMD_VCEK_PLACEHOLDER",
+            "policy_flags": { "debug": false, "smt": false },
+            "timestamp": 1730000100
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0x0102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00",
+            "output_digest": "0xffeeccbbaa99887766554433221100ffeeddccbbaa99887766554433221100ff",
+            "redundancy": 2
+          },
+          "traps": {
+            "seed": "0xfeedfacecafebeef",
+            "total": 30,
+            "passed": 29
+          },
+          "qos": {
+            "uptime_1d": 0.992,
+            "p50_ms": 160,
+            "p95_ms": 340,
+            "p99_ms": 520
+          }
+        },
+        "nullifier": "0x4ab1cd23ef4509876a5b4c3d2e1f00112233445566778899aabbccddeeff0011"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 0.9667,
+          "redundancy": 2,
+          "qos_score": 0.90,
+          "ai_units": 100.0
+        },
+        "psi_micro": 200000,
+        "reason": "SEV-SNP chain OK; traps & QoS above thresholds."
+      }
+    },
+    {
+      "name": "accept_arm_cca_ok",
+      "headerHash": "0x4f4e6c8f2a1cbbd4f7a1e2c3b4d5e6f70123456789abcdef0123456789abcdef",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "arm_cca",
+            "realm_token_cose": "base64:CCA_TOKEN_PLACEHOLDER",
+            "cca_root": "base64:CCA_ROOT_PLACEHOLDER",
+            "platform_hash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "realm_hash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "timestamp": 1730000200
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0x9999888877776666555544443333222211110000ffffeeeeddccbbbaaaffee",
+            "output_digest": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "redundancy": 2
+          },
+          "traps": { "seed": "0xcca1", "total": 25, "passed": 25 },
+          "qos": { "uptime_1d": 0.985, "p50_ms": 190, "p95_ms": 360, "p99_ms": 520 }
+        },
+        "nullifier": "0x7d4b55a4e0f9b6a41bf9b7a9fef6f7a0d6d1b7b8f6f1e0c9a3a2a19f0f0e0d0c"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 1.0,
+          "redundancy": 2,
+          "qos_score": 0.88,
+          "ai_units": 95.0
+        },
+        "psi_micro": 190000,
+        "reason": "CCA token/roots OK; perfect traps; QoS above 0.80."
+      }
+    },
+    {
+      "name": "reject_output_digest_mismatch",
+      "headerHash": "0x22232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041",
+      "envelope": {
+        "type_id": "ai_v1",
+        "body": {
+          "attestation": {
+            "kind": "sgx",
+            "fmspc": "00906ED10000",
+            "mrenclave": "0x8c3f0b2a8d9e7f6a5b4c3d2e1f00112233445566778899aabbccddeeff001122",
+            "mrsigner": "0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff",
+            "isvsvn": 6,
+            "qe_report_body": "base64:SGX_QE_REPORT_PLACEHOLDER",
+            "pck_chain_der": "base64:PCK_CHAIN_PLACEHOLDER",
+            "tcb_info": "base64:TCB_INFO_PLACEHOLDER",
+            "timestamp": 1730000300
+          },
+          "work": {
+            "model_id": "animica/demo/small-encoder:v1",
+            "input_digest": "0x00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff",
+            "output_digest": "0xBAD0UTPUTBAD0UTPUTBAD0UTPUTBAD0UTPUTBAD0UTPUTBAD0UTPUTBAD0UTPUT",
+            "redundancy": 2
+          },
+          "traps": { "seed": "0xbeef", "total": 32, "passed": 32 },
+          "qos": { "uptime_1d": 0.999, "p50_ms": 110, "p95_ms": 180, "p99_ms": 240 }
+        },
+        "nullifier": "0x0e9f8a7b6c5d4e3f2a1b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+      },
+      "expected": {
+        "accept": false,
+        "error": "OutputDigestMismatch",
+        "metrics": {
+          "traps_ratio": 1.0,
+          "redundancy": 2,
+          "qos_score": 0.98
+        },
+        "reason": "Output digest failed to match recomputed digest from provided artifact."
+      }
+    }
+  ]
+}
