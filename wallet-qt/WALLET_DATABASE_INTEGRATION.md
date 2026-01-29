@@ -310,6 +310,9 @@ void WalletEngine::handleConfirmationUpdate(const QString& txid,
 
 void WalletEngine::convertPendingInToAvailable(const QString& txid, const QString& accountId)
 {
+    // Wrap in database transaction for atomicity
+    m_database->beginTransaction();
+    
     // This is handled automatically by adding a new AVAILABLE entry
     // and offsetting the PENDING_IN entry
     QList<LedgerEntry> entries = m_database->getLedgerEntries(txid);
@@ -324,7 +327,10 @@ void WalletEngine::convertPendingInToAvailable(const QString& txid, const QStrin
             offset.delta = -entry.delta;  // Negative to cancel out
             offset.stateVersion = m_database->nextStateVersion();
             offset.createdAt = QDateTime::currentMSecsSinceEpoch();
-            m_database->addLedgerEntry(offset);
+            if (!m_database->addLedgerEntry(offset)) {
+                m_database->rollback();
+                return;
+            }
             
             // Add available entry
             LedgerEntry available;
@@ -335,9 +341,14 @@ void WalletEngine::convertPendingInToAvailable(const QString& txid, const QStrin
             available.delta = entry.delta;  // Positive credit
             available.stateVersion = m_database->nextStateVersion();
             available.createdAt = QDateTime::currentMSecsSinceEpoch();
-            m_database->addLedgerEntry(available);
+            if (!m_database->addLedgerEntry(available)) {
+                m_database->rollback();
+                return;
+            }
         }
     }
+    
+    m_database->commit();
 }
 ```
 
@@ -349,17 +360,26 @@ QString WalletEngine::formatBalance(const QString& accountId)
     qint64 available = m_database->getBalance(accountId, "ANM");
     qint64 pending = m_database->getPendingBalance(accountId, "ANM");
     
-    // Convert from wei to ANM (1 ANM = 10^18 wei)
-    double availableANM = available / 1e18;
-    double pendingANM = pending / 1e18;
+    // Convert from wei to ANM (1 ANM = 10^18 wei) using integer arithmetic to avoid precision loss
+    // Split into integer and fractional parts
+    qint64 availableWhole = available / 1000000000000000000LL;
+    qint64 availableFrac = available % 1000000000000000000LL;
     
-    if (pendingANM != 0) {
-        return QString("Available: %1 ANM (Pending: %2%3 ANM)")
-            .arg(availableANM, 0, 'f', 6)
-            .arg(pendingANM > 0 ? "+" : "")
-            .arg(pendingANM, 0, 'f', 6);
+    qint64 pendingWhole = pending / 1000000000000000000LL;
+    qint64 pendingFrac = qAbs(pending) % 1000000000000000000LL;
+    
+    QString availableStr = QString("%1.%2").arg(availableWhole).arg(availableFrac, 18, 10, QChar('0')).trimmed();
+    QString pendingStr = QString("%1%2.%3")
+        .arg(pending < 0 ? "-" : "+")
+        .arg(qAbs(pendingWhole))
+        .arg(pendingFrac, 18, 10, QChar('0')).trimmed();
+    
+    if (pending != 0) {
+        return QString("Available: %1 ANM (Pending: %2 ANM)")
+            .arg(availableStr)
+            .arg(pendingStr);
     } else {
-        return QString("%1 ANM").arg(availableANM, 0, 'f', 6);
+        return QString("%1 ANM").arg(availableStr);
     }
 }
 ```

@@ -287,13 +287,14 @@ void TestWalletDatabase::testAtomicTransaction()
     QVERIFY(db->beginTransaction());
 
     // Add ledger entry
+    qint64 version1 = db->nextStateVersion();
     LedgerEntry entry;
     entry.txid = "0xatomic";
     entry.accountId = accountId;
     entry.asset = "ANM";
     entry.type = "AVAILABLE";
     entry.delta = 1000000000000000000;
-    entry.stateVersion = db->nextStateVersion();
+    entry.stateVersion = version1;
     entry.createdAt = QDateTime::currentMSecsSinceEpoch();
     QVERIFY(db->addLedgerEntry(entry));
 
@@ -305,8 +306,12 @@ void TestWalletDatabase::testAtomicTransaction()
     QCOMPARE(balance, 0);
 
     // Try again with commit
+    // Note: state version counter does not roll back, so we get a gap in sequence
+    // This is acceptable as the counter only needs to be monotonic
     QVERIFY(db->beginTransaction());
-    entry.stateVersion = db->nextStateVersion();
+    qint64 version2 = db->nextStateVersion();
+    QVERIFY(version2 > version1);  // Version advanced despite rollback
+    entry.stateVersion = version2;
     QVERIFY(db->addLedgerEntry(entry));
     QVERIFY(db->commit());
 

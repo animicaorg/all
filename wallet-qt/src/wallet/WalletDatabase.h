@@ -198,6 +198,9 @@ public:
     /**
      * @brief Get next state version number.
      * @return Monotonically increasing version counter
+     * @note State version is managed in memory. If a database transaction is rolled back,
+     *       the state version counter will not be rolled back, creating gaps in the sequence.
+     *       This is acceptable as the counter only needs to be monotonic, not contiguous.
      */
     qint64 nextStateVersion();
     
@@ -206,7 +209,8 @@ public:
     /**
      * @brief Check if event has been processed.
      * @param key Idempotency key (format: "txid:event_type:event_source:event_seq")
-     * @return true if already processed
+     * @return true if already processed, false if not processed or on database error
+     * @note Returns false on database error - callers should check error signal separately
      */
     bool checkIdempotency(const QString& key);
     
@@ -255,6 +259,9 @@ public:
     /**
      * @brief Begin database transaction.
      * @return true if transaction started successfully
+     * @note The mutex is held only during this call, not for the entire transaction.
+     *       Callers must ensure external synchronization if transaction isolation is required
+     *       across multiple threads. For single-threaded usage, transaction isolation is guaranteed.
      */
     bool beginTransaction();
     
@@ -317,11 +324,26 @@ private:
     bool isValidStateTransition(const QString& oldState, const QString& newState);
     
     /**
-     * @brief Check if adding entry would violate balance invariant.
+     * @brief Check if adding entry would violate balance invariant (internal, assumes mutex held).
      * @param entry Entry to check
      * @return true if balance would remain non-negative
      */
     bool checkBalanceInvariant(const LedgerEntry& entry);
+    
+    /**
+     * @brief Get transaction by ID (internal, assumes mutex held).
+     * @param txid Transaction ID
+     * @return Transaction or invalid transaction if not found
+     */
+    WalletTx getTransactionUnlocked(const QString& txid);
+    
+    /**
+     * @brief Get available balance (internal, assumes mutex held).
+     * @param accountId Account UUID
+     * @param asset Asset identifier
+     * @return Available balance in atomic units
+     */
+    qint64 getBalanceUnlocked(const QString& accountId, const QString& asset);
     
     QString m_dbPath;               // Database file path
     QSqlDatabase m_db;              // Qt SQL database connection
