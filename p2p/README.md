@@ -136,7 +136,7 @@ claiming very high block heights.
 
 ### How it works
 
-1. **Trusted verifier nodes** are designated by IP address (default: `62.169.17.132`, `82.208.20.209`).
+1. **Trusted verifier nodes** are designated by IP address (default: `3.12.224.189`, `144.126.133.21`).
 2. The network's best height is constrained to be **at most 1 block ahead** of the highest verifier seed.
 3. This allows:
    - **Miners** who just found a new block to be 1 block ahead
@@ -152,7 +152,7 @@ export ANIMICA_P2P_ENABLE_VERIFIER_SEEDS=true  # default: true
 
 Customize verifier seed IPs:
 ```bash
-export ANIMICA_P2P_VERIFIER_SEED_IPS="62.169.17.132,82.208.20.209"
+export ANIMICA_P2P_VERIFIER_SEED_IPS="3.12.224.189,144.126.133.21"
 ```
 
 ### Why this matters

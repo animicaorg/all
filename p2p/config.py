@@ -86,8 +86,7 @@ NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
 # Other nodes can only be at most 1 block ahead of these verifier seeds (the miner
 # who just found the next block), or behind them (still syncing).
 VERIFIER_SEED_IPS: Final[tuple[str, ...]] = (
-    "62.169.17.132",
-    "82.208.20.209",
+    "3.12.224.189",
     "144.126.133.21",
 )
 
