@@ -127,6 +127,12 @@ QNetworkReply* AnimicaRpcClient::getChainParams()
 
 // ==================== Private Methods ====================
 
+QNetworkReply* AnimicaRpcClient::call(const QString& method)
+{
+    // No-parameter overload: use empty array as params
+    return call(method, QJsonArray());
+}
+
 QNetworkReply* AnimicaRpcClient::call(const QString& method, const QJsonValue& params)
 {
     QJsonObject request = buildRequest(method, params);

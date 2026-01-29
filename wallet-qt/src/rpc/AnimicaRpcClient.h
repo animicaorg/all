@@ -5,6 +5,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QUrl>
 
 /**
@@ -171,7 +172,14 @@ public:
      * @param params Parameters (array or object)
      * @return Network reply
      */
-    QNetworkReply* call(const QString& method, const QJsonValue& params = QJsonArray());
+    QNetworkReply* call(const QString& method, const QJsonValue& params);
+    
+    /**
+     * @brief Execute custom RPC call with no parameters.
+     * @param method RPC method name
+     * @return Network reply
+     */
+    QNetworkReply* call(const QString& method);
 
 signals:
     /**
