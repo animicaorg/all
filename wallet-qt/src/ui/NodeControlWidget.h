@@ -31,12 +31,15 @@ private slots:
     void onStopClicked();
     void onRestartClicked();
     void onDiagnosticsClicked();
+    void onOpenLogsClicked();
+    void onResetDataClicked();
     
     void onNodeStateChanged(NodeManager::State state);
     void onNodeReady();
     void onNodeError(const QString& message);
     void onSyncProgress(int currentBlock, int highestBlock, bool syncing);
     void onLogLinesAvailable(const QStringList& lines);
+    void onNodeDegraded(const QString& reason);
 
 private:
     void updateUI();
@@ -46,6 +49,12 @@ private:
     NodeManager* m_nodeManager;
     
     // UI elements
+    QWidget* m_degradedBanner;
+    QLabel* m_degradedLabel;
+    QPushButton* m_openLogsButton;
+    QPushButton* m_resetDataButton;
+    QPushButton* m_copyDiagButton;
+    
     QComboBox* m_networkCombo;
     QPushButton* m_startButton;
     QPushButton* m_stopButton;
