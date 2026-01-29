@@ -227,9 +227,16 @@ private:
 
     /**
      * @brief Find Python interpreter.
+     * Checks for bundled Python first, then falls back to system Python.
      * @return Path to python3 executable, or empty if not found
      */
     QString findPython();
+    
+    /**
+     * @brief Find bundled Python from the wallet installation.
+     * @return Path to bundled python executable, or empty if not bundled
+     */
+    QString findBundledPython();
 
     State m_state;
     QString m_lastError;
