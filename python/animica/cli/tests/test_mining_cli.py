@@ -1180,10 +1180,10 @@ def test_mine_blocks_without_no_timeout_uses_default(monkeypatch: Any) -> None:
 
 def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) -> None:
     """
-    Test that miner continues mining remaining blocks after 3 consecutive stale rejections.
+    Test that miner continues mining remaining blocks after 1 stale rejection.
     
-    Regression test for issue: "Rejected 3/3 then miner stops"
-    Previously, after exhausting 3 stale retries on one block, the miner would stop
+    Regression test for issue: "Rejected then miner stops"
+    Previously, after exhausting 1 stale retry on one block, the miner would stop
     completely instead of continuing to mine the remaining blocks.
     """
     test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
@@ -1236,11 +1236,11 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
                 }
             if method == "miner.submitBlock":
                 block_attempts["count"] += 1
-                # First block: reject 3 times (stale), then accept on 4th attempt would fail
-                # But we only retry 3 times, so all 3 attempts fail
+                # First block: reject once (stale), then accept on 2nd attempt would fail
+                # But we only retry 1 time, so both attempts fail
                 if block_attempts["current_block"] == 0:
-                    if block_attempts["count"] <= 3:
-                        # All 3 attempts for first block should be rejected as stale
+                    if block_attempts["count"] <= 1:
+                        # First attempt for first block should be rejected as stale
                         raise FakeRpcError(-32000, "stale template", {"reason": "stale_template"})
                 # Second block: accept immediately (shows miner continued after first block failed)
                 if block_attempts["current_block"] == 1:
@@ -1279,12 +1279,12 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
     )
 
     # The miner should:
-    # 1. Try to mine first block, get rejected 3 times (stale_template)
-    # 2. Give up on first block after 3 attempts
+    # 1. Try to mine first block, get rejected once (stale_template)
+    # 2. Give up on first block after 1 attempt (no more retries)
     # 3. Continue to mine second block (NOT stop entirely)
     # 4. Accept second block successfully
     
-    # Should have attempted first block 3 times, then moved to second block
+    # Should have attempted first block once, then moved to second block
     assert "REJECTED" in result.output, "Should show rejection messages"
     assert "stale attempt" in result.output, "Should show stale retry attempts"
     assert "Successfully mined 1 block" in result.output, "Should mine the second block after first failed"
