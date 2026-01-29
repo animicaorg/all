@@ -1,5 +1,6 @@
 #include "NodeManager.h"
 #include "../platform/AppPaths.h"
+#include "../platform/DataDirManager.h"
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +16,7 @@ NodeManager::NodeManager(QObject* parent)
     , m_state(State::Stopped)
     , m_process(new QProcess(this))
     , m_rpcClient(new AnimicaRpcClient(this))
+    , m_dataDirManager(nullptr)
     , m_healthCheckTimer(new QTimer(this))
     , m_syncCheckTimer(new QTimer(this))
     , m_healthCheckAttempts(0)
@@ -43,6 +45,12 @@ NodeManager::NodeManager(QObject* parent)
     AppPaths::ensureDirectoriesExist();
 }
 
+NodeManager::NodeManager(DataDirManager* dataDirManager, QObject* parent)
+    : NodeManager(parent)
+{
+    m_dataDirManager = dataDirManager;
+}
+
 NodeManager::~NodeManager()
 {
     if (m_state == State::Running || m_state == State::Starting) {
@@ -60,6 +68,27 @@ bool NodeManager::startNode(const QString& network)
     
     m_currentNetwork = network;
     setState(State::Starting);
+    
+    // Determine chain ID from network
+    int chainId = 1337;  // devnet
+    if (network == "mainnet") chainId = 1;
+    else if (network == "testnet") chainId = 2;
+    
+    // Check network compatibility if using DataDirManager
+    if (m_dataDirManager) {
+        QString errorMsg;
+        if (!m_dataDirManager->checkNetworkCompatibility(network, errorMsg)) {
+            setError(errorMsg);
+            setState(State::Error);
+            return false;
+        }
+        
+        // Ensure directories exist
+        m_dataDirManager->ensureDirectoriesExist();
+        
+        // Set network marker
+        m_dataDirManager->setStoredNetworkId(network);
+    }
     
     // Check for existing lock
     if (!acquireLock()) {
@@ -105,17 +134,20 @@ bool NodeManager::startNode(const QString& network)
     // Set up RPC client
     m_rpcClient->setEndpoint(QString("http://127.0.0.1:%1/rpc").arg(rpcPort));
     
-    // Determine chain ID from network
-    int chainId = 1337;  // devnet
-    if (network == "mainnet") chainId = 1;
-    else if (network == "testnet") chainId = 2;
+    // Determine data directory
+    QString dataDir;
+    if (m_dataDirManager) {
+        dataDir = m_dataDirManager->getChainDataDir(chainId);
+    } else {
+        dataDir = AppPaths::nodeChainDir(chainId);
+    }
     
     // Set environment variables
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("ANIMICA_RPC_HOST", "127.0.0.1");
     env.insert("ANIMICA_RPC_PORT", QString::number(rpcPort));
     env.insert("ANIMICA_P2P_PORT", QString::number(p2pPort));
-    env.insert("ANIMICA_DATA_DIR", AppPaths::nodeChainDir(chainId));
+    env.insert("ANIMICA_DATA_DIR", dataDir);
     env.insert("ANIMICA_NETWORK", network);
     env.insert("ANIMICA_CHAIN_ID", QString::number(chainId));
     env.insert("ANIMICA_LOG_LEVEL", "INFO");
@@ -130,7 +162,7 @@ bool NodeManager::startNode(const QString& network)
     qDebug() << "Starting node:" << python << args.join(" ");
     qDebug() << "RPC port:" << rpcPort << "P2P port:" << p2pPort;
     qDebug() << "Network:" << network << "Chain ID:" << chainId;
-    qDebug() << "Data dir:" << AppPaths::nodeChainDir(chainId);
+    qDebug() << "Data dir:" << dataDir;
     
     // Start process
     m_process->start(python, args);
@@ -621,4 +653,9 @@ NodeManager::NodeInfo NodeManager::NodeInfo::fromJson(const QString& json)
     info.version = obj["version"].toString();
     
     return info;
+}
+
+void NodeManager::setDataDirManager(DataDirManager* dataDirManager)
+{
+    m_dataDirManager = dataDirManager;
 }
