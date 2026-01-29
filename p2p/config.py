@@ -88,6 +88,7 @@ NETWORK_NAME_TO_CHAIN_ID: Final[dict[str, int]] = {
 VERIFIER_SEED_IPS: Final[tuple[str, ...]] = (
     "62.169.17.132",
     "82.208.20.209",
+    "144.126.133.21",
 )
 
 
