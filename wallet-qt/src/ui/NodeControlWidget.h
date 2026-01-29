@@ -1,0 +1,62 @@
+#ifndef NODECONTROLWIDGET_H
+#define NODECONTROLWIDGET_H
+
+#include <QWidget>
+#include <QPushButton>
+#include <QLabel>
+#include <QComboBox>
+#include <QTextEdit>
+#include <QVBoxLayout>
+#include "../node/NodeManager.h"
+
+/**
+ * @brief UI widget for controlling the embedded node.
+ * 
+ * Provides:
+ * - Start/Stop/Restart buttons
+ * - Network selection dropdown
+ * - Status display (state, block height, peer count)
+ * - Log viewer (last N lines from node log)
+ * - Diagnostics button
+ */
+class NodeControlWidget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit NodeControlWidget(NodeManager* nodeManager, QWidget* parent = nullptr);
+
+private slots:
+    void onStartClicked();
+    void onStopClicked();
+    void onRestartClicked();
+    void onDiagnosticsClicked();
+    
+    void onNodeStateChanged(NodeManager::State state);
+    void onNodeReady();
+    void onNodeError(const QString& message);
+    void onSyncProgress(int currentBlock, int highestBlock, bool syncing);
+    void onLogLinesAvailable(const QStringList& lines);
+
+private:
+    void updateUI();
+    QString stateToString(NodeManager::State state);
+    QString stateColor(NodeManager::State state);
+    
+    NodeManager* m_nodeManager;
+    
+    // UI elements
+    QComboBox* m_networkCombo;
+    QPushButton* m_startButton;
+    QPushButton* m_stopButton;
+    QPushButton* m_restartButton;
+    QPushButton* m_diagnosticsButton;
+    
+    QLabel* m_stateLabel;
+    QLabel* m_blockHeightLabel;
+    QLabel* m_syncStatusLabel;
+    
+    QTextEdit* m_logViewer;
+};
+
+#endif // NODECONTROLWIDGET_H
