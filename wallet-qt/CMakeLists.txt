@@ -56,6 +56,7 @@ add_compile_definitions(
 set(SOURCES
     src/main.cpp
     src/platform/AppPaths.cpp
+    src/platform/DataDirManager.cpp
     src/rpc/AnimicaRpcClient.cpp
     src/node/NodeManager.cpp
     src/ui/NodeControlWidget.cpp
@@ -76,6 +77,8 @@ set(SOURCES
     src/wallet/SendWidget.cpp
     src/wallet/ReconciliationJob.cpp
     src/wallet/ReceiveWidget.cpp
+    src/wallet/WalletImporter.cpp
+    src/wallet/WalletExporter.cpp
     src/diagnostics/Redactor.cpp
     src/diagnostics/RoleManager.cpp
     src/diagnostics/CommandAllowlist.cpp
@@ -89,6 +92,7 @@ set(SOURCES
 
 set(HEADERS
     src/platform/AppPaths.h
+    src/platform/DataDirManager.h
     src/rpc/AnimicaRpcClient.h
     src/node/NodeManager.h
     src/ui/NodeControlWidget.h
@@ -109,6 +113,8 @@ set(HEADERS
     src/wallet/SendWidget.h
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
+    src/wallet/WalletImporter.h
+    src/wallet/WalletExporter.h
     src/diagnostics/Redactor.h
     src/diagnostics/RoleManager.h
     src/diagnostics/CommandAllowlist.h
