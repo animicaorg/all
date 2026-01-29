@@ -195,14 +195,10 @@ export ANIMICA_LOG_LEVEL=DEBUG
 
 No configuration changes required! The optimizations activate automatically.
 
-Optional environment variables (if needed):
-```bash
-# Adjust cache size (default: 10000 entries)
-export ANIMICA_SYNC_CACHE_SIZE=20000
-
-# Disable batch optimizations for debugging (not recommended)
-export ANIMICA_DISABLE_BATCH_SYNC=true
-```
+The batch operations use these thresholds:
+- Batch mode activates for lists of 100+ blocks/headers
+- Cache size: 10,000 entries (~320KB memory)
+- Both are optimal for typical sync scenarios
 
 ## Monitoring
 
@@ -230,11 +226,8 @@ export ANIMICA_LOG_LEVEL=DEBUG
 
 ### Issue: Memory usage increased
 
-**Expected:** +1-2MB for the existence cache
-**If higher:** Cache may be too large, adjust:
-```bash
-export ANIMICA_SYNC_CACHE_SIZE=5000
-```
+**Expected:** +1-2MB for batch processing overhead
+**Normal:** No significant memory increase (batch operations are transient)
 
 ## Future Enhancements
 

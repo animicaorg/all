@@ -253,6 +253,7 @@ class HeaderSync:
         # Batch optimization: If we have many headers, check which parent hashes exist in one batch call
         # This is much faster than individual checks for large header lists (1000+)
         existing_parents_set = set()
+        used_batch_check = False
         if hasattr(self.chain, 'has_headers_batch') and len(headers) > 100:
             # Collect all parent hashes we need to check
             parent_hashes_to_check = set()
@@ -266,6 +267,7 @@ class HeaderSync:
             # Batch check all at once
             existing_parents_set = await self.chain.has_headers_batch(list(parent_hashes_to_check))
             first_parent_known = first.parent_hash in existing_parents_set
+            used_batch_check = True
         else:
             # Fallback to individual check
             first_parent_known = await self.chain.has_header(first.parent_hash)
@@ -286,7 +288,7 @@ class HeaderSync:
                 # Use cached batch result if available
                 parent_exists = (
                     first_parent_known 
-                    if existing_parents_set 
+                    if used_batch_check
                     else await self.chain.has_header(h.parent_hash)
                 )
                 if not parent_exists and h.parent_hash not in known_or_batched:
@@ -298,7 +300,7 @@ class HeaderSync:
                     # Use cached batch result if available
                     parent_exists = (
                         h.parent_hash in existing_parents_set
-                        if existing_parents_set
+                        if used_batch_check
                         else await self.chain.has_header(h.parent_hash)
                     )
                     if not parent_exists:
@@ -320,7 +322,7 @@ class HeaderSync:
         # Use cached batch result if available
         parent_exists = (
             new_tail_first.parent_hash in existing_parents_set
-            if existing_parents_set
+            if used_batch_check
             else await self.chain.has_header(new_tail_first.parent_hash)
         )
         if not parent_exists:
