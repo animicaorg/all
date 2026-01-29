@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Animica Wallet
+GenericName=Cryptocurrency Wallet
+Comment=Animica blockchain wallet with embedded node
+Exec=animica-wallet %U
+Icon=animica-wallet
+Terminal=false
+Categories=Finance;Network;Qt;
+Keywords=animica;blockchain;wallet;cryptocurrency;crypto;
+StartupNotify=true
+StartupWMClass=AnimicaWallet
