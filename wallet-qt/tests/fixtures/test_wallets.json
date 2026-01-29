@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "wallets": [
+    {
+      "label": "test-wallet-1",
+      "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+      "alg_id": 4097,
+      "alg_name": "dilithium3",
+      "public_key_hex": "0011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122334455667788990011",
+      "secret_key_hex": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      "created_at": "2026-01-29T00:00:00Z"
+    },
+    {
+      "label": "test-wallet-2",
+      "address": "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+      "alg_id": 4097,
+      "alg_name": "dilithium3",
+      "public_key_hex": "1122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122334455667788990011223344556677889900112233445566778899001122",
+      "secret_key_hex": "bbccddeeff00112233445566778899aabbccddeeff00112233445566778899aa",
+      "created_at": "2026-01-29T01:00:00Z"
+    }
+  ],
+  "default_address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+}
