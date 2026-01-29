@@ -38,6 +38,12 @@ bool WalletDatabase::initialize()
         return false;
     }
     
+    // Enable foreign key constraints
+    QSqlQuery pragmaQuery(m_db);
+    if (!pragmaQuery.exec("PRAGMA foreign_keys = ON")) {
+        qWarning() << "Failed to enable foreign key constraints:" << pragmaQuery.lastError().text();
+    }
+    
     qDebug() << "Opened wallet database:" << m_dbPath;
     
     // Create tables if needed
@@ -45,9 +51,9 @@ bool WalletDatabase::initialize()
         return false;
     }
     
-    // Load current state version from metadata
+    // Load current state version from metadata (NULL converts to 0 for empty table)
     QSqlQuery query(m_db);
-    query.prepare("SELECT MAX(state_version) FROM wallet_ledger_entry");
+    query.prepare("SELECT COALESCE(MAX(state_version), 0) FROM wallet_ledger_entry");
     if (query.exec() && query.next()) {
         m_stateVersion = query.value(0).toLongLong();
     }
@@ -90,9 +96,15 @@ bool WalletDatabase::createTables()
     }
     
     // Indexes for wallet_tx
-    query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_state ON wallet_tx(state)");
-    query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_account ON wallet_tx(from_account_id)");
-    query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_block ON wallet_tx(block_height)");
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_state ON wallet_tx(state)")) {
+        qWarning() << "Failed to create index idx_wallet_tx_state:" << query.lastError().text();
+    }
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_account ON wallet_tx(from_account_id)")) {
+        qWarning() << "Failed to create index idx_wallet_tx_account:" << query.lastError().text();
+    }
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_wallet_tx_block ON wallet_tx(block_height)")) {
+        qWarning() << "Failed to create index idx_wallet_tx_block:" << query.lastError().text();
+    }
     
     // wallet_ledger_entry table
     QString createLedger = R"(
@@ -118,9 +130,15 @@ bool WalletDatabase::createTables()
     }
     
     // Indexes for wallet_ledger_entry
-    query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_txid ON wallet_ledger_entry(txid)");
-    query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_account ON wallet_ledger_entry(account_id)");
-    query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_version ON wallet_ledger_entry(state_version)");
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_txid ON wallet_ledger_entry(txid)")) {
+        qWarning() << "Failed to create index idx_ledger_txid:" << query.lastError().text();
+    }
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_account ON wallet_ledger_entry(account_id)")) {
+        qWarning() << "Failed to create index idx_ledger_account:" << query.lastError().text();
+    }
+    if (!query.exec("CREATE INDEX IF NOT EXISTS idx_ledger_version ON wallet_ledger_entry(state_version)")) {
+        qWarning() << "Failed to create index idx_ledger_version:" << query.lastError().text();
+    }
     
     // idempotency_keys table
     QString createIdempotency = R"(
@@ -202,8 +220,8 @@ bool WalletDatabase::checkBalanceInvariant(const LedgerEntry& entry)
         return true;
     }
     
-    // Calculate what the new balance would be
-    qint64 currentBalance = getBalance(entry.accountId, entry.asset);
+    // Calculate what the new balance would be (mutex already held by caller)
+    qint64 currentBalance = getBalanceUnlocked(entry.accountId, entry.asset);
     qint64 newBalance = currentBalance + entry.delta;
     
     // Available balance must never go negative
@@ -216,6 +234,76 @@ bool WalletDatabase::checkBalanceInvariant(const LedgerEntry& entry)
     
     return true;
 }
+
+WalletTx WalletDatabase::getTransactionUnlocked(const QString& txid)
+{
+    // Mutex already held by caller
+    QSqlQuery query(m_db);
+    query.prepare(R"(
+        SELECT txid, direction, from_account_id, to_address,
+               amount, fee, state, first_seen_at, last_update_at,
+               block_hash, block_height, confirmations, raw_tx, failure_reason
+        FROM wallet_tx
+        WHERE txid = :txid
+    )");
+    
+    query.bindValue(":txid", txid);
+    
+    if (!query.exec()) {
+        qWarning() << "Failed to get transaction:" << query.lastError().text();
+        return WalletTx();
+    }
+    
+    if (!query.next()) {
+        return WalletTx();  // Not found
+    }
+    
+    WalletTx tx;
+    tx.txid = query.value(0).toString();
+    tx.direction = query.value(1).toString();
+    tx.fromAccountId = query.value(2).toString();
+    tx.toAddress = query.value(3).toString();
+    tx.amount = query.value(4).toLongLong();
+    tx.fee = query.value(5).toLongLong();
+    tx.state = query.value(6).toString();
+    tx.firstSeenAt = query.value(7).toLongLong();
+    tx.lastUpdateAt = query.value(8).toLongLong();
+    tx.blockHash = query.value(9).toString();
+    tx.blockHeight = query.value(10).toLongLong();
+    tx.confirmations = query.value(11).toInt();
+    tx.rawTx = query.value(12).toByteArray();
+    tx.failureReason = query.value(13).toString();
+    
+    return tx;
+}
+
+qint64 WalletDatabase::getBalanceUnlocked(const QString& accountId, const QString& asset)
+{
+    // Mutex already held by caller
+    QSqlQuery query(m_db);
+    query.prepare(R"(
+        SELECT COALESCE(SUM(delta), 0)
+        FROM wallet_ledger_entry
+        WHERE account_id = :account_id
+          AND asset = :asset
+          AND type = 'AVAILABLE'
+    )");
+    
+    query.bindValue(":account_id", accountId);
+    query.bindValue(":asset", asset);
+    
+    if (!query.exec()) {
+        qWarning() << "Failed to get balance:" << query.lastError().text();
+        return 0;
+    }
+    
+    if (query.next()) {
+        return query.value(0).toLongLong();
+    }
+    
+    return 0;
+}
+
 
 // ==================== Transaction Journal ====================
 
@@ -278,8 +366,8 @@ bool WalletDatabase::updateTransaction(const QString& txid, const WalletTx& tx)
         return false;
     }
     
-    // Check if transaction exists and get old state
-    WalletTx oldTx = getTransaction(txid);
+    // Check if transaction exists and get old state (use unlocked version)
+    WalletTx oldTx = getTransactionUnlocked(txid);
     if (!oldTx.isValid()) {
         qWarning() << "Transaction not found:" << txid;
         return false;
@@ -339,44 +427,7 @@ bool WalletDatabase::updateTransaction(const QString& txid, const WalletTx& tx)
 WalletTx WalletDatabase::getTransaction(const QString& txid)
 {
     QMutexLocker locker(&m_mutex);
-    
-    QSqlQuery query(m_db);
-    query.prepare(R"(
-        SELECT txid, direction, from_account_id, to_address,
-               amount, fee, state, first_seen_at, last_update_at,
-               block_hash, block_height, confirmations, raw_tx, failure_reason
-        FROM wallet_tx
-        WHERE txid = :txid
-    )");
-    
-    query.bindValue(":txid", txid);
-    
-    if (!query.exec()) {
-        qWarning() << "Failed to get transaction:" << query.lastError().text();
-        return WalletTx();
-    }
-    
-    if (!query.next()) {
-        return WalletTx();  // Not found
-    }
-    
-    WalletTx tx;
-    tx.txid = query.value(0).toString();
-    tx.direction = query.value(1).toString();
-    tx.fromAccountId = query.value(2).toString();
-    tx.toAddress = query.value(3).toString();
-    tx.amount = query.value(4).toLongLong();
-    tx.fee = query.value(5).toLongLong();
-    tx.state = query.value(6).toString();
-    tx.firstSeenAt = query.value(7).toLongLong();
-    tx.lastUpdateAt = query.value(8).toLongLong();
-    tx.blockHash = query.value(9).toString();
-    tx.blockHeight = query.value(10).toLongLong();
-    tx.confirmations = query.value(11).toInt();
-    tx.rawTx = query.value(12).toByteArray();
-    tx.failureReason = query.value(13).toString();
-    
-    return tx;
+    return getTransactionUnlocked(txid);
 }
 
 QList<WalletTx> WalletDatabase::listTransactions(const QString& accountId)
@@ -582,29 +633,7 @@ QList<LedgerEntry> WalletDatabase::getAccountLedger(const QString& accountId)
 qint64 WalletDatabase::getBalance(const QString& accountId, const QString& asset)
 {
     QMutexLocker locker(&m_mutex);
-    
-    QSqlQuery query(m_db);
-    query.prepare(R"(
-        SELECT COALESCE(SUM(delta), 0)
-        FROM wallet_ledger_entry
-        WHERE account_id = :account_id
-          AND asset = :asset
-          AND type = 'AVAILABLE'
-    )");
-    
-    query.bindValue(":account_id", accountId);
-    query.bindValue(":asset", asset);
-    
-    if (!query.exec()) {
-        qWarning() << "Failed to get balance:" << query.lastError().text();
-        return 0;
-    }
-    
-    if (query.next()) {
-        return query.value(0).toLongLong();
-    }
-    
-    return 0;
+    return getBalanceUnlocked(accountId, asset);
 }
 
 qint64 WalletDatabase::getPendingBalance(const QString& accountId, const QString& asset)
