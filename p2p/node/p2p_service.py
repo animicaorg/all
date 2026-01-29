@@ -10242,7 +10242,7 @@ class P2PService:
         Check if a peer is one of the trusted verifier seed nodes.
         
         Args:
-            peer_remote: The peer's remote address (e.g., "62.169.17.132:30333")
+            peer_remote: The peer's remote address (e.g., "3.12.224.189:30333")
             
         Returns:
             True if the peer is a verifier seed, False otherwise
