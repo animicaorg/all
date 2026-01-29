@@ -1236,11 +1236,11 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
                 }
             if method == "miner.submitBlock":
                 block_attempts["count"] += 1
-                # First block: reject once (stale), then accept on 2nd attempt would fail
-                # But we only retry 1 time, so both attempts fail
+                # First block: reject once (stale), then would accept on retry but we only retry 1 time
+                # So first attempt fails, retry also fails
                 if block_attempts["current_block"] == 0:
-                    if block_attempts["count"] <= 1:
-                        # First attempt for first block should be rejected as stale
+                    if block_attempts["count"] <= 2:
+                        # First and retry attempt for first block should be rejected as stale
                         raise FakeRpcError(-32000, "stale template", {"reason": "stale_template"})
                 # Second block: accept immediately (shows miner continued after first block failed)
                 if block_attempts["current_block"] == 1:
