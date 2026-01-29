@@ -869,6 +869,10 @@ def mine_blocks(
     block hashes that meet the current difficulty target (derived from the network's
     theta parameter). Block rewards are credited to the specified payout address.
     
+    The miner will continue until the requested number of non-duplicate blocks are mined.
+    If a block is found to be a duplicate (already mined by another miner), it is skipped
+    and mining continues. Stale templates are retried once before moving to the next block.
+    
     Pending mempool transactions are included in mined blocks and executed to update
     balances and nonces. After mining, included transactions are removed from the mempool.
     
@@ -1212,7 +1216,10 @@ def mine_blocks(
             last_accepted_height: int | None = None
             
             # Mine blocks one at a time with delay between them
-            for i in range(count):
+            # Continue until we mine the requested number of non-duplicate blocks
+            blocks_attempted = 0
+            while total_mined < count:
+                i = blocks_attempted
                 stale_attempts = 0
                 submit_result = None
                 while True:
@@ -1374,6 +1381,7 @@ def mine_blocks(
                                 f"Warning: Block template unavailable ({reason})",
                                 fg=typer.colors.YELLOW,
                             )
+                            blocks_attempted += 1
                             stale_attempts = 0
                             break
 
@@ -1434,6 +1442,7 @@ def mine_blocks(
                             "ANIMICA_MINER_MAX_TOTAL_NONCE for more PoW attempts.",
                             fg=typer.colors.YELLOW,
                         )
+                        blocks_attempted += 1
                         stale_attempts = 0
                         break
                     
@@ -1481,16 +1490,17 @@ def mine_blocks(
                             f"  REJECTED: Block {i + 1}/{count} (reason: stale_template)",
                             fg=typer.colors.RED,
                         )
-                        if stale_attempts < 3:
+                        if stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
                                 fg=typer.colors.YELLOW,
                             )
                             continue
                         # Exhausted stale retries - wait before moving to next block
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         _apply_stale_template_cooldown()
+                        blocks_attempted += 1
                         stale_attempts = 0
                         break
 
@@ -1579,10 +1589,10 @@ def mine_blocks(
                             fg=typer.colors.RED,
                         )
                         
-                        if is_stale and stale_attempts < 3:
+                        if is_stale and stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
                                 fg=typer.colors.YELLOW,
                             )
                             continue
@@ -1590,6 +1600,7 @@ def mine_blocks(
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         if is_stale:
                             _apply_stale_template_cooldown()
+                        blocks_attempted += 1
                         stale_attempts = 0
                         break
 
@@ -1602,10 +1613,10 @@ def mine_blocks(
                             f"  REJECTED: Block {i + 1}/{count} by node (reason: {rejection_reason})",
                             fg=typer.colors.RED,
                         )
-                        if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 3:
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/3)",
+                                f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
                                 fg=typer.colors.YELLOW,
                             )
                             continue
@@ -1613,11 +1624,27 @@ def mine_blocks(
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         if isinstance(rejection_reason, str) and "stale" in rejection_reason:
                             _apply_stale_template_cooldown()
+                        blocks_attempted += 1
+                        stale_attempts = 0
+                        break
+                    
+                    # Check if block is a duplicate (already found by another miner)
+                    is_duplicate = submit_result.get("duplicate", False)
+                    
+                    if is_duplicate:
+                        # Block was already found - skip it and continue mining
+                        typer.secho(
+                            f"  DUPLICATE: Block {i + 1} already found by another miner (skipping)",
+                            fg=typer.colors.YELLOW,
+                        )
+                        # Don't count this in total_mined, just move to next iteration
+                        blocks_attempted += 1
                         stale_attempts = 0
                         break
                     
                     # ACCEPTED - block fully validated, persisted, and reward credited
                     total_mined += 1
+                    blocks_attempted += 1
                     block_reward = template.get("coinbase", {}).get("amount") or 0
                     total_reward += int(block_reward or 0)
                     reward_anm = int(block_reward or 0) / COIN_UNIT
@@ -1662,11 +1689,12 @@ def mine_blocks(
                     break
 
                 # Continue to next block even if this one failed after retries
-                # The inner loop has already handled retry logic (up to 3 attempts for stale)
+                # The inner loop has already handled retry logic (up to 1 attempt for stale)
                 # and decided to break, so we just move on to the next block in the sequence
 
                 # Sleep between blocks (except after the last one)
-                if i < count - 1:
+                # Only sleep if we haven't reached the target count yet
+                if total_mined < count:
                     time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
             
             if total_mined == 0:
