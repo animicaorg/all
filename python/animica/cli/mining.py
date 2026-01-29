@@ -1233,6 +1233,15 @@ def mine_blocks(
                             )
                         return f"{message} {detail}".strip().lower()
 
+                    def _apply_stale_template_cooldown() -> None:
+                        """Apply cooldown period after exhausting stale template retries."""
+                        cooldown_seconds = MIN_BLOCK_INTERVAL_SECONDS * 2
+                        typer.secho(
+                            f"  Exhausted stale template retries. Waiting {cooldown_seconds}s for blockchain to stabilize...",
+                            fg=typer.colors.YELLOW,
+                        )
+                        time.sleep(cooldown_seconds)
+
                     def _handle_template_rpc_error(error: Exception) -> None:
                         code, message, data = _rpc_error_details(error)
                         detail_text = _rpc_error_detail_text(message, data)
@@ -1479,6 +1488,9 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        _apply_stale_template_cooldown()
                         stale_attempts = 0
                         break
 
@@ -1574,6 +1586,10 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        if is_stale:
+                            _apply_stale_template_cooldown()
                         stale_attempts = 0
                         break
 
@@ -1593,6 +1609,10 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason:
+                            _apply_stale_template_cooldown()
                         stale_attempts = 0
                         break
                     
