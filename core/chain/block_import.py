@@ -852,6 +852,13 @@ class BlockImporter:
                 self._index_block_if_canonical(height=0, block_hash=h, block=block)
                 self._capture_state_snapshot(0)
 
+                # Notify all miners that genesis block was accepted
+                try:
+                    from mining.orchestrator import notify_all_template_feeders_block_found
+                    notify_all_template_feeders_block_found()
+                except Exception:
+                    pass  # Best effort notification
+
                 return ImportResult(ImportErrorCode.ACCEPTED, 0, h, True, None)
 
             # Non-genesis needs parent
@@ -904,6 +911,13 @@ class BlockImporter:
             )
 
             self._process_orphans(parent_hash=h)
+
+            # Notify all miners that a block was found so they can move to next block
+            try:
+                from mining.orchestrator import notify_all_template_feeders_block_found
+                notify_all_template_feeders_block_found()
+            except Exception:
+                pass  # Best effort notification, don't fail block import
 
             return ImportResult(ImportErrorCode.ACCEPTED, height, h, head_changed, None)
 

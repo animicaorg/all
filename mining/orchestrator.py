@@ -32,6 +32,7 @@ import asyncio
 import logging
 import os
 import signal
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -65,6 +66,54 @@ except Exception:
     MINER_SCANNER_HASHRATE_ABS = _Counter()
 
 from .cooldown import BlockFoundCooldown, get_block_found_cooldown
+
+
+# --------------------------- Global Template Feeder Registry ---------------------------
+
+# Global registry for template feeders that need block found notifications
+# This allows RPC handlers to notify miners when blocks are accepted
+_TEMPLATE_FEEDERS: list[Any] = []
+_TEMPLATE_FEEDERS_LOCK = threading.Lock()
+
+
+def register_template_feeder(feeder: Any) -> None:
+    """
+    Register a TemplateFeeder instance for block found notifications.
+    Thread-safe. Backwards compatible - does nothing if feeder is None.
+    """
+    if feeder is None:
+        return
+    with _TEMPLATE_FEEDERS_LOCK:
+        if feeder not in _TEMPLATE_FEEDERS:
+            _TEMPLATE_FEEDERS.append(feeder)
+
+
+def unregister_template_feeder(feeder: Any) -> None:
+    """
+    Unregister a TemplateFeeder instance. Thread-safe.
+    """
+    if feeder is None:
+        return
+    with _TEMPLATE_FEEDERS_LOCK:
+        if feeder in _TEMPLATE_FEEDERS:
+            _TEMPLATE_FEEDERS.remove(feeder)
+
+
+def notify_all_template_feeders_block_found() -> None:
+    """
+    Notify all registered template feeders that a block was found.
+    This triggers immediate template refresh in all active miners.
+    Thread-safe and backwards compatible.
+    """
+    with _TEMPLATE_FEEDERS_LOCK:
+        feeders = list(_TEMPLATE_FEEDERS)  # Copy to avoid lock during notifications
+    
+    for feeder in feeders:
+        try:
+            if hasattr(feeder, "notify_block_found"):
+                feeder.notify_block_found()
+        except Exception:
+            pass  # Best effort notification
 
 
 # --------------------------- Work Sources ---------------------------
@@ -164,6 +213,10 @@ class TemplateFeeder:
     Re-yields stale templates periodically (after stale_after_sec) to keep
     the scanner active even when the blockchain head doesn't advance.
     This prevents mining from stopping after missing a block.
+    
+    When a block is found, notify_block_found() can be called to immediately
+    trigger a template refresh, allowing mining to switch to the next block
+    without waiting for the polling interval.
     """
 
     def __init__(
@@ -179,6 +232,7 @@ class TemplateFeeder:
         self._interval = interval_sec
         self._stale_after = stale_after_sec
         self._stop = asyncio.Event()
+        self._block_found = asyncio.Event()  # Signal for immediate template refresh
         self._last_job_id: Optional[str] = None
         self._last_ts: float = 0.0
         self._ws_hub = ws_hub
@@ -188,6 +242,14 @@ class TemplateFeeder:
 
     def stop(self) -> None:
         self._stop.set()
+    
+    def notify_block_found(self) -> None:
+        """
+        Notify that a block was found (by this miner or network).
+        This triggers an immediate template refresh so mining can move to the next block.
+        Thread-safe and backwards compatible.
+        """
+        self._block_found.set()
 
     async def _get_current(self) -> Optional[JSON]:
         cur = await _maybe_await(self._provider, "current_template")
@@ -277,7 +339,33 @@ class TemplateFeeder:
                                 # This ensures we only re-yield once per stale_after_sec period
                                 self._last_ts = time.time()
                                 yield tpl
-                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                    
+                    # Wait for next interval, stop signal, or block found signal
+                    # If block found, loop immediately to get new template
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(self._stop.wait()),
+                            asyncio.create_task(self._block_found.wait()),
+                        ],
+                        timeout=self._interval,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    # Cancel pending tasks
+                    for task in pending:
+                        task.cancel()
+                    # Clean up completed tasks
+                    for task in done:
+                        try:
+                            task.result()
+                        except Exception:
+                            pass
+                    
+                    # If block found event was set, clear it and force refresh
+                    if self._block_found.is_set():
+                        self._block_found.clear()
+                        log.debug("Block found signal received, refreshing template immediately")
+                        # Force template ID reset so next iteration will yield new template
+                        self._last_job_id = None
                 else:
                     self._warn_throttled(
                         "invalid-template",
@@ -375,6 +463,7 @@ class SubmitPipe:
         backoff_initial: float,
         backoff_max: float,
         cooldown: BlockFoundCooldown | None = None,
+        template_feeder: Optional[Any] = None,  # TemplateFeeder instance
     ) -> None:
         self._submitter = submitter
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
@@ -382,6 +471,7 @@ class SubmitPipe:
         self._bmax = max(self._b0, backoff_max)
         self._warned_at: Dict[str, float] = {}
         self._cooldown = cooldown or get_block_found_cooldown()
+        self._template_feeder = template_feeder
 
     async def run(
         self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event
@@ -455,6 +545,12 @@ class SubmitPipe:
                         self._cooldown.notify_block_accepted(
                             height=res.get("height"), block_hash=res.get("hash")
                         )
+                        # Notify template feeder to immediately refresh for next block
+                        if self._template_feeder is not None:
+                            try:
+                                self._template_feeder.notify_block_found()
+                            except Exception:
+                                pass  # Best effort notification
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -499,6 +595,12 @@ class SubmitPipe:
                     self._cooldown.notify_block_accepted(
                         height=res.get("height"), block_hash=res.get("hash")
                     )
+                    # Notify template feeder to immediately refresh for next block
+                    if self._template_feeder is not None:
+                        try:
+                            self._template_feeder.notify_block_found()
+                        except Exception:
+                            pass  # Best effort notification
                 else:
                     MINER_SUBMIT_REJECT.inc()  # type: ignore
                     reason = res.get("reason", "unknown")
@@ -618,6 +720,9 @@ class MinerOrchestrator:
             self.config.device_kind,
             self.config.threads or "auto",
         )
+        # Register template feeder for global block found notifications
+        register_template_feeder(self._feeder)
+        
         # Scanner
         self._tasks.append(
             asyncio.create_task(
@@ -634,6 +739,7 @@ class MinerOrchestrator:
             backoff_initial=self.config.submit_backoff_initial,
             backoff_max=self.config.submit_backoff_max,
             cooldown=get_block_found_cooldown(),
+            template_feeder=self._feeder,
         )
         self._tasks.append(
             asyncio.create_task(
@@ -685,6 +791,8 @@ class MinerOrchestrator:
         if self._stop.is_set():
             return
         log.info("MinerOrchestrator stopping...")
+        # Unregister template feeder from global notifications
+        unregister_template_feeder(self._feeder)
         self._stop.set()
         self._feeder.stop()
         for t in self._tasks:
