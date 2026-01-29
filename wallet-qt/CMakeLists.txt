@@ -280,6 +280,7 @@ add_compile_definitions(
 if(APPLE)
     install(TARGETS animica-wallet
         BUNDLE DESTINATION "."
+        # RUNTIME is included for compatibility but ignored when BUNDLE is used
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
 else()

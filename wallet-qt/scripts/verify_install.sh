@@ -110,7 +110,7 @@ if $IS_MACOS; then
     else
         log_error "macOS bundle not found at: $BUNDLE_PATH"
         log_info "Checking install directory contents:"
-        find "$INSTALL_PREFIX" -maxdepth 3 -type f -o -type d | head -20
+        find "$INSTALL_PREFIX" -maxdepth 3 | head -20
         exit 1
     fi
 else
@@ -128,7 +128,7 @@ else
     else
         log_error "Executable not found at: $EXECUTABLE"
         log_info "Checking install directory contents:"
-        find "$INSTALL_PREFIX" -maxdepth 3 -type f -o -type d | head -20
+        find "$INSTALL_PREFIX" -maxdepth 3 | head -20
         exit 1
     fi
     
