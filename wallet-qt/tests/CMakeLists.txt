@@ -46,6 +46,9 @@ add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 add_wallet_test(test_datadirmanager test_datadirmanager.cpp)
 add_wallet_test(test_walletimporter test_walletimporter.cpp)
 
+# Add RPC MOC syntax test (verifies AnimicaRpcClient.h compiles with AUTOMOC)
+add_wallet_test(test_rpc_moc_syntax test_rpc_moc_syntax.cpp)
+
 # Add diagnostics tests
 add_wallet_test(test_redactor diagnostics/test_redactor.cpp)
 add_wallet_test(test_allowlist diagnostics/test_allowlist.cpp)
@@ -100,4 +103,9 @@ target_sources(test_datadirmanager PRIVATE
 
 target_sources(test_walletimporter PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/WalletImporter.cpp
+)
+
+# Link RPC client source to MOC syntax test
+target_sources(test_rpc_moc_syntax PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
 )
