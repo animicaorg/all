@@ -10457,7 +10457,7 @@ class P2PService:
                         connected_verifiers.append({
                             "remote": peer.remote,
                             "height": int(info.height),
-                            "head_hash": "0x" + info.hash.hex() if info.hash else None,
+                            "head_hash": "0x" + info.head_hash.hex() if info.head_hash else None,
                         })
         
         max_allowed = None if max_verifier is None else max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER

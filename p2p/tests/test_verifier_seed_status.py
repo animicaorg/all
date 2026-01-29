@@ -58,13 +58,13 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     
     # Set heights
     node._sync_peer_heads["3.12.224.189:30333"] = _PeerHeadInfo(
-        height=100, hash=b"\x00" * 32, last_seen=now
+        height=100, updated_at=now, source="test"
     )
     node._sync_peer_heads["144.126.133.21:30333"] = _PeerHeadInfo(
-        height=105, hash=b"\x00" * 32, last_seen=now
+        height=105, updated_at=now, source="test"
     )
     node._sync_peer_heads["192.168.1.1:30333"] = _PeerHeadInfo(
-        height=110, hash=b"\x00" * 32, last_seen=now
+        height=110, updated_at=now, source="test"
     )
     
     # Mock local head
@@ -102,13 +102,13 @@ def test_get_verifier_seed_status_cannot_mine(tmp_path: Path) -> None:
     )
     
     # Register verifier seed peer
-    verifier1 = _register_peer(node, "62.169.17.132:30333")
+    verifier1 = _register_peer(node, "3.12.224.189:30333")
     
     now = time.time()
     
     # Set verifier at height 100
-    node._sync_peer_heads["62.169.17.132:30333"] = _PeerHeadInfo(
-        height=100, hash=b"\x00" * 32, last_seen=now
+    node._sync_peer_heads["3.12.224.189:30333"] = _PeerHeadInfo(
+        height=100, updated_at=now, source="test"
     )
     
     # Mock local head at 103 (2 blocks ahead - not allowed)
@@ -142,7 +142,7 @@ def test_get_verifier_seed_status_at_boundary(tmp_path: Path) -> None:
     
     # Set verifier at height 100
     node._sync_peer_heads["3.12.224.189:30333"] = _PeerHeadInfo(
-        height=100, hash=b"\x00" * 32, last_seen=now
+        height=100, updated_at=now, source="test"
     )
     
     # Mock local head at 101 (exactly at boundary)
@@ -174,7 +174,7 @@ def test_get_verifier_seed_status_no_verifiers(tmp_path: Path) -> None:
     
     now = time.time()
     node._sync_peer_heads["192.168.1.1:30333"] = _PeerHeadInfo(
-        height=100, hash=b"\x00" * 32, last_seen=now
+        height=100, updated_at=now, source="test"
     )
     
     # Mock local head
