@@ -10,6 +10,7 @@
 #include <QTextEdit>
 #include <QString>
 #include "FeeEstimator.h"
+#include "BalanceTracker.h"
 
 class WalletEngine;
 class AnimicaRpcClient;
@@ -87,7 +88,7 @@ private slots:
     void onAddressChanged();
     void onAmountChanged();
     void onAccountChanged(int index);
-    void onBalanceUpdated(const QString& address, const QJsonObject& balance);
+    void onBalanceUpdated(const QString& address, const Balance& balance);
     
 private:
     void setupUI();

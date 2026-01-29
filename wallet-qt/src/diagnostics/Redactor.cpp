@@ -64,7 +64,7 @@ void Redactor::initializeRules()
 
     // JSON field patterns with sensitive keys
     s_rules.append({
-        QRegularExpression(R"("(privateKey|private_key|secretKey|secret_key|mnemonic|seed|password)"\s*:\s*"([^"]*)")"),
+        QRegularExpression(R"re("(privateKey|private_key|secretKey|secret_key|mnemonic|seed|password)"\s*:\s*"([^"]*)")re"),
         R"("\1": "***REDACTED***")"
     });
 

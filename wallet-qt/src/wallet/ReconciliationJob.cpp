@@ -224,7 +224,7 @@ QList<ReconciliationJob::AccountBalance> ReconciliationJob::queryChainBalances()
         
         if (success) {
             AccountBalance ab;
-            ab.accountId = account.id;
+            ab.accountId = account.accountId;
             ab.address = account.address;
             ab.confirmedChain = balance;
             result.append(ab);
@@ -247,14 +247,14 @@ QList<ReconciliationJob::AccountBalance> ReconciliationJob::queryLocalBalances()
         }
         
         AccountBalance ab;
-        ab.accountId = account.id;
+        ab.accountId = account.accountId;
         ab.address = account.address;
         
         // Get confirmed balance (AVAILABLE type)
-        ab.confirmedLocal = m_database->getBalance(account.id, "ANM");
+        ab.confirmedLocal = m_database->getBalance(account.accountId, "ANM");
         
         // Get pending balance (PENDING_IN - PENDING_OUT)
-        ab.pendingLocal = m_database->getPendingBalance(account.id, "ANM");
+        ab.pendingLocal = m_database->getPendingBalance(account.accountId, "ANM");
         
         result.append(ab);
     }

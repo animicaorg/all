@@ -1,5 +1,6 @@
 #include "TransactionMonitor.h"
 #include "WalletDatabase.h"
+#include "WalletLedger.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include <QDebug>
 #include <QMutexLocker>
@@ -368,7 +369,7 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
 
 void TransactionMonitor::updateConfirmations() {
     try {
-        QJsonObject head = m_rpcClient->getHead();
+        QJsonObject head = m_rpcClient->getHeadJson();
         if (head.isEmpty()) {
             qWarning() << "Failed to get chain head";
             return;
@@ -492,7 +493,7 @@ void TransactionMonitor::detectReorgs() {
 
 bool TransactionMonitor::isBlockStillCanonical(const QString& blockHash, qint64 height) {
     try {
-        QJsonObject block = m_rpcClient->getBlockByNumber(height, false);
+        QJsonObject block = m_rpcClient->getBlockByNumberJson(height, false);
         if (block.isEmpty()) {
             qWarning() << "Block not found at height" << height;
             return false;

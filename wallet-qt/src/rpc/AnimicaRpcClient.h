@@ -180,6 +180,29 @@ public:
      * @return Network reply
      */
     QNetworkReply* call(const QString& method);
+    
+    // ==================== Synchronous JSON Wrappers ====================
+    
+    /**
+     * @brief Get chain head synchronously.
+     * @return JSON object with block data or empty object on error
+     */
+    QJsonObject getHeadJson();
+    
+    /**
+     * @brief Get block by number synchronously.
+     * @param number Block number
+     * @param fullTx Include full transaction objects
+     * @return JSON object with block data or empty object on error
+     */
+    QJsonObject getBlockByNumberJson(qint64 number, bool fullTx = false);
+    
+    /**
+     * @brief Get transaction by hash synchronously.
+     * @param txHash Transaction hash (hex with 0x prefix)
+     * @return JSON object with transaction data or empty object on error
+     */
+    QJsonObject getTransactionByHash(const QString& txHash);
 
 signals:
     /**
@@ -216,6 +239,14 @@ private:
      * @return Monotonically increasing request ID
      */
     int nextId();
+    
+    /**
+     * @brief Execute synchronous RPC call with timeout.
+     * @param method RPC method name
+     * @param params Parameters (array or object)
+     * @return JSON result value or null on error
+     */
+    QJsonValue rpcCallSync(const QString& method, const QJsonValue& params);
 
     // ==================== Member Variables ====================
     

@@ -630,6 +630,59 @@ QList<LedgerEntry> WalletDatabase::getAccountLedger(const QString& accountId)
     return entries;
 }
 
+QList<LedgerEntry> WalletDatabase::listLedgerEntries()
+{
+    QMutexLocker locker(&m_mutex);
+    
+    QSqlQuery query(m_db);
+    query.prepare(R"(
+        SELECT entry_id, txid, account_id, asset, type, delta, state_version, created_at
+        FROM wallet_ledger_entry
+        ORDER BY state_version ASC
+    )");
+    
+    if (!query.exec()) {
+        qWarning() << "Failed to list ledger entries:" << query.lastError().text();
+        return QList<LedgerEntry>();
+    }
+    
+    QList<LedgerEntry> entries;
+    while (query.next()) {
+        LedgerEntry entry;
+        entry.entryId = query.value(0).toLongLong();
+        entry.txid = query.value(1).toString();
+        entry.accountId = query.value(2).toString();
+        entry.asset = query.value(3).toString();
+        entry.type = query.value(4).toString();
+        entry.delta = query.value(5).toLongLong();
+        entry.stateVersion = query.value(6).toLongLong();
+        entry.createdAt = query.value(7).toLongLong();
+        entries.append(entry);
+    }
+    
+    return entries;
+}
+
+bool WalletDatabase::deleteLedgerEntry(qint64 ledgerId)
+{
+    QMutexLocker locker(&m_mutex);
+    
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM wallet_ledger_entry WHERE entry_id = :entry_id");
+    query.bindValue(":entry_id", ledgerId);
+    
+    if (!query.exec()) {
+        QString errorMsg = QString("Failed to delete ledger entry %1: %2")
+            .arg(ledgerId)
+            .arg(query.lastError().text());
+        qWarning() << errorMsg;
+        emit error(errorMsg);
+        return false;
+    }
+    
+    return true;
+}
+
 qint64 WalletDatabase::getBalance(const QString& accountId, const QString& asset)
 {
     QMutexLocker locker(&m_mutex);
