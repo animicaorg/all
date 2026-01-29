@@ -1,5 +1,6 @@
 #include "AppPaths.h"
 #include <QStandardPaths>
+#include <QCoreApplication>
 #include <QDebug>
 
 QString AppPaths::baseDir()
@@ -77,6 +78,17 @@ QString AppPaths::nodeLockFile()
 QString AppPaths::nodeInfoFile()
 {
     return runDir() + "/node.json";
+}
+
+QString AppPaths::getBundledNodePath()
+{
+#ifdef BUNDLED_NODE_PATH
+    return QString(BUNDLED_NODE_PATH);
+#else
+    // Fallback: assume node is in ../node relative to executable
+    QDir appDir(QCoreApplication::applicationDirPath());
+    return appDir.filePath("node");
+#endif
 }
 
 bool AppPaths::ensureDirectoriesExist()

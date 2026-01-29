@@ -76,6 +76,15 @@ set(SOURCES
     src/wallet/SendWidget.cpp
     src/wallet/ReconciliationJob.cpp
     src/wallet/ReceiveWidget.cpp
+    src/diagnostics/Redactor.cpp
+    src/diagnostics/RoleManager.cpp
+    src/diagnostics/CommandAllowlist.cpp
+    src/diagnostics/ConsoleExecutor.cpp
+    src/diagnostics/NodeController.cpp
+    src/diagnostics/DiagnosticsConsoleWidget.cpp
+    src/diagnostics/DiagnosticsStatusWidget.cpp
+    src/diagnostics/DiagnosticsLogsWidget.cpp
+    src/diagnostics/DiagnosticsWindow.cpp
 )
 
 set(HEADERS
@@ -100,6 +109,15 @@ set(HEADERS
     src/wallet/SendWidget.h
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
+    src/diagnostics/Redactor.h
+    src/diagnostics/RoleManager.h
+    src/diagnostics/CommandAllowlist.h
+    src/diagnostics/ConsoleExecutor.h
+    src/diagnostics/NodeController.h
+    src/diagnostics/DiagnosticsConsoleWidget.h
+    src/diagnostics/DiagnosticsStatusWidget.h
+    src/diagnostics/DiagnosticsLogsWidget.h
+    src/diagnostics/DiagnosticsWindow.h
 )
 
 # Create executable

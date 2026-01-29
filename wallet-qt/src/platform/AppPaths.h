@@ -108,6 +108,12 @@ public:
     static QString nodeInfoFile();
 
     /**
+     * @brief Get the bundled node path (where animica executable is).
+     * @return Bundled node directory path
+     */
+    static QString getBundledNodePath();
+
+    /**
      * @brief Ensure all required directories exist.
      * @return true if successful, false on error
      */

@@ -7,6 +7,8 @@
 #include "ui/NodeControlWidget.h"
 #include "node/NodeManager.h"
 #include "platform/AppPaths.h"
+#include "rpc/AnimicaRpcClient.h"
+#include "diagnostics/DiagnosticsWindow.h"
 
 int main(int argc, char *argv[])
 {
@@ -32,6 +34,13 @@ int main(int argc, char *argv[])
     
     // Create node manager
     NodeManager nodeManager;
+    
+    // Create RPC client
+    AnimicaRpcClient rpcClient;
+    rpcClient.setEndpoint("http://127.0.0.1:8545/rpc");
+    
+    // Create diagnostics window (parent to window for proper cleanup)
+    DiagnosticsWindow* diagnosticsWindow = new DiagnosticsWindow(&rpcClient, &nodeManager, &window);
     
     // Create and set central widget
     NodeControlWidget* nodeControl = new NodeControlWidget(&nodeManager);
@@ -60,6 +69,14 @@ int main(int argc, char *argv[])
     stopNodeAction->setShortcut(QKeySequence("Ctrl+T"));
     QObject::connect(stopNodeAction, &QAction::triggered, [&nodeManager]() {
         nodeManager.stopNode();
+    });
+    
+    nodeMenu->addSeparator();
+    
+    QAction* diagnosticsAction = nodeMenu->addAction("&Diagnostics...");
+    diagnosticsAction->setShortcut(QKeySequence("Ctrl+D"));
+    QObject::connect(diagnosticsAction, &QAction::triggered, [diagnosticsWindow]() {
+        diagnosticsWindow->showAndActivate();
     });
     
     nodeMenu->addSeparator();
