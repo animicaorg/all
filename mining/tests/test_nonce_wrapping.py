@@ -24,13 +24,13 @@ def test_nonce_wraps_at_64bit_boundary():
     new_nonce = (nonce + batch_size) & UINT64_MASK
     assert new_nonce == 51000
     
-    # Test near boundary
+    # Test near boundary (doesn't wrap yet, but validates mask works)
     nonce = MAX_UINT64 - 100
     batch_size = 50
     new_nonce = (nonce + batch_size) & UINT64_MASK
-    # Should wrap around: (MAX - 100 + 50) wraps to (50 - 101) = -51 but unsigned = MAX - 50
-    expected = 50 - 101  # -51, but wraps to positive
-    assert new_nonce == (MAX_UINT64 - 100 + 50) & UINT64_MASK
+    # Result is MAX_UINT64 - 50, still in range but close to boundary
+    expected = MAX_UINT64 - 50
+    assert new_nonce == expected
     
     # Test exact boundary
     nonce = MAX_UINT64

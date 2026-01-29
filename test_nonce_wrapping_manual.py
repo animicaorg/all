@@ -71,14 +71,19 @@ def test_scan_forever_fix():
     """Verify the fix is in the code."""
     print("\nVerifying fix in hash_search.py...")
     
-    with open("/home/runner/work/all/all/mining/hash_search.py", "r") as f:
+    # Use relative path based on script location
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    hash_search_path = os.path.join(script_dir, "mining", "hash_search.py")
+    
+    with open(hash_search_path, "r") as f:
         content = f.read()
     
-    # Check that the fix is present
+    # Check that the fix is present (full 64-bit mask)
     if "nonce = (nonce + scaled_batch_size) & 0xFFFFFFFFFFFFFFFF" in content:
         print("✓ Fix found in scan_forever function!")
         return True
-    elif "nonce += scaled_batch_size" in content and "& 0xFFFF" not in content:
+    elif "nonce += scaled_batch_size" in content and "& 0xFFFFFFFFFFFFFFFF" not in content:
         print("✗ BUG: nonce increment without wrapping found!")
         return False
     else:
