@@ -9,6 +9,10 @@
 #include <QSet>
 #include <QDir>
 
+#ifndef Q_OS_WIN
+#include <unistd.h>
+#endif
+
 WalletImporter::WalletImporter(QObject* parent)
     : QObject(parent)
 {

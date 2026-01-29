@@ -484,7 +484,7 @@ void SendWidget::onAccountChanged(int)
     updateFeeDisplay();
 }
 
-void SendWidget::onBalanceUpdated(const QString& address, const QJsonObject&)
+void SendWidget::onBalanceUpdated(const QString& address, const Balance&)
 {
     QString currentAddress = getCurrentAccountAddress();
     if (currentAddress == address) {
