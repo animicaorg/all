@@ -93,6 +93,14 @@ async def test_template_feeder_continues_with_stale_template():
     assert provider.call_count >= 2, (
         "Provider should be called multiple times to check for new templates"
     )
+    
+    # Verify timing: second template should arrive approximately stale_after_sec after first
+    if len(templates_received) >= 2:
+        time_diff = templates_received[1]["timestamp"] - templates_received[0]["timestamp"]
+        # Allow some tolerance for timing (0.2 to 0.5 seconds)
+        assert 0.2 <= time_diff <= 0.5, (
+            f"Re-yield should happen after stale_after_sec (0.3s), got {time_diff:.2f}s"
+        )
 
 
 @pytest.mark.asyncio

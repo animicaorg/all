@@ -273,6 +273,9 @@ class TemplateFeeder:
                                     "Re-yielding stale template (age=%.1fs) to keep scanner active",
                                     time.time() - self._last_ts,
                                 )
+                                # Update timestamp to track when we last yielded
+                                # This ensures we only re-yield once per stale_after_sec period
+                                self._last_ts = time.time()
                                 yield tpl
                     await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
                 else:
