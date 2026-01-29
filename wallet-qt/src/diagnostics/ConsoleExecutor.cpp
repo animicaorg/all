@@ -53,7 +53,7 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::execute(const QString& command
         for (int i = 3; i < parts.size(); ++i) {
             QJsonDocument doc = QJsonDocument::fromJson(parts[i].toUtf8());
             if (!doc.isNull()) {
-                params.append(doc.isArray() ? doc.array() : doc.object());
+                params.append(doc.isArray() ? QJsonValue(doc.array()) : QJsonValue(doc.object()));
             } else {
                 params.append(parts[i]);
             }

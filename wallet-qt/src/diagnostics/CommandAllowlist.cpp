@@ -31,7 +31,7 @@ void CommandAllowlist::initializeAllowlists()
 
     // Operator CLI commands (adds network operations)
     s_operatorCommands = s_userCommands;
-    s_operatorCommands.insert({
+    for (const auto& cmd : QStringList{
         "peer add",
         "peer remove",
         "peer bootstrap",
@@ -39,14 +39,18 @@ void CommandAllowlist::initializeAllowlists()
         "sync resume",
         "sync force",
         "node bootstrap",
-    });
+    }) {
+        s_operatorCommands.insert(cmd);
+    }
 
     // Developer CLI commands (adds dangerous operations)
     s_developerCommands = s_operatorCommands;
-    s_developerCommands.insert({
+    for (const auto& cmd : QStringList{
         "node reset",
         "mempool drop",
-    });
+    }) {
+        s_developerCommands.insert(cmd);
+    }
 
     // User RPC methods (read-only)
     s_userRpcMethods = {

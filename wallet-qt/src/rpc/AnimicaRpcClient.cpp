@@ -2,6 +2,8 @@
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QEventLoop>
+#include <QTimer>
 #include <QDebug>
 
 AnimicaRpcClient::AnimicaRpcClient(QObject* parent)
@@ -159,6 +161,113 @@ QNetworkReply* AnimicaRpcClient::call(const QString& method, const QJsonValue& p
     });
     
     return reply;
+}
+
+// ==================== Synchronous JSON Wrappers ====================
+
+QJsonValue AnimicaRpcClient::rpcCallSync(const QString& method, const QJsonValue& params)
+{
+    QJsonObject request = buildRequest(method, params);
+    QJsonDocument doc(request);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    QNetworkRequest netRequest(m_endpoint);
+    netRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    
+    // Set timeout
+    #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    netRequest.setTransferTimeout(m_timeout);
+    #endif
+
+    QNetworkReply* reply = m_network->post(netRequest, data);
+    
+    // Block with event loop
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    
+    timeoutTimer.start(m_timeout);
+    loop.exec();
+    
+    // Check for timeout
+    if (!timeoutTimer.isActive()) {
+        qWarning() << "RPC call timed out:" << method;
+        reply->abort();
+        reply->deleteLater();
+        return QJsonValue();
+    }
+    
+    timeoutTimer.stop();
+    
+    // Check for network error
+    if (reply->error() != QNetworkReply::NoError) {
+        QString errorMsg = QString("RPC error for %1: %2").arg(method, reply->errorString());
+        qWarning() << errorMsg;
+        reply->deleteLater();
+        return QJsonValue();
+    }
+    
+    // Parse response
+    QByteArray responseData = reply->readAll();
+    reply->deleteLater();
+    
+    QJsonDocument responseDoc = QJsonDocument::fromJson(responseData);
+    if (!responseDoc.isObject()) {
+        qWarning() << "Invalid JSON-RPC response for" << method;
+        return QJsonValue();
+    }
+    
+    QJsonObject responseObj = responseDoc.object();
+    
+    // Check for JSON-RPC error
+    if (responseObj.contains("error")) {
+        QJsonObject errorObj = responseObj["error"].toObject();
+        QString errorMsg = QString("RPC error %1: %2")
+            .arg(errorObj["code"].toInt())
+            .arg(errorObj["message"].toString());
+        qWarning() << errorMsg;
+        return QJsonValue();
+    }
+    
+    // Return result
+    return responseObj["result"];
+}
+
+QJsonObject AnimicaRpcClient::getHeadJson()
+{
+    QJsonValue result = rpcCallSync("chain.getHead", QJsonArray());
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QJsonObject AnimicaRpcClient::getBlockByNumberJson(qint64 number, bool fullTx)
+{
+    QJsonArray params;
+    params.append(QString::number(number));
+    params.append(fullTx);
+    
+    QJsonValue result = rpcCallSync("chain.getBlockByNumber", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QJsonObject AnimicaRpcClient::getTransactionByHash(const QString& txHash)
+{
+    QJsonArray params;
+    params.append(txHash);
+    
+    QJsonValue result = rpcCallSync("tx.getTransactionByHash", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
 }
 
 QJsonObject AnimicaRpcClient::buildRequest(const QString& method, const QJsonValue& params)

@@ -209,7 +209,7 @@ void ReceiveWidget::updateAccounts()
         if (account.isDefault) {
             displayText += " (Default)";
         }
-        m_accountCombo->addItem(displayText, account.id);
+        m_accountCombo->addItem(displayText, account.accountId);
     }
     
     // Select first account
@@ -246,7 +246,7 @@ void ReceiveWidget::updateAddress()
     
     QList<WalletAccount> accounts = m_walletEngine->listAccounts();
     for (const WalletAccount& account : accounts) {
-        if (account.id == accountId) {
+        if (account.accountId == accountId) {
             m_addressLabel->setText(account.address);
             generateQRCode();
             return;
@@ -272,7 +272,7 @@ void ReceiveWidget::updateBalance()
     
     QList<WalletAccount> accounts = m_walletEngine->listAccounts();
     for (const WalletAccount& account : accounts) {
-        if (account.id == accountId) {
+        if (account.accountId == accountId) {
             BalanceTracker* tracker = m_walletEngine->balanceTracker();
             if (tracker) {
                 Balance balance = tracker->getBalance(account.address);
@@ -351,7 +351,7 @@ void ReceiveWidget::onBalanceUpdated(const QString& address, const Balance& bala
     
     QList<WalletAccount> accounts = m_walletEngine->listAccounts();
     for (const WalletAccount& account : accounts) {
-        if (account.id == accountId && account.address == address) {
+        if (account.accountId == accountId && account.address == address) {
             updateBalance();
             break;
         }
