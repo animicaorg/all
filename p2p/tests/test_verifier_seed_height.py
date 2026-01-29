@@ -1,7 +1,7 @@
 """
 Test verifier seed height validation.
 
-This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209)
+This ensures that the trusted verifier seed nodes (62.169.17.132, 82.208.20.209, 144.126.133.21)
 are treated as authoritative for determining the highest block height, with other
 nodes only allowed to be max 1 block ahead (e.g., a miner who just found a block).
 """
@@ -52,6 +52,7 @@ def test_verifier_seed_identification(tmp_path: Path) -> None:
     # Test verifier seeds
     assert node._is_verifier_seed_peer("62.169.17.132:30333") is True
     assert node._is_verifier_seed_peer("82.208.20.209:30333") is True
+    assert node._is_verifier_seed_peer("144.126.133.21:30333") is True
     
     # Test non-verifier seeds
     assert node._is_verifier_seed_peer("192.168.1.1:30333") is False
@@ -75,6 +76,7 @@ def test_verifier_seeds_disabled(tmp_path: Path) -> None:
         # Even verifier IPs should return False when disabled
         assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
         assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", None)
 
@@ -99,6 +101,7 @@ def test_custom_verifier_seeds(tmp_path: Path) -> None:
         # Default verifier seeds should not be recognized
         assert node._is_verifier_seed_peer("62.169.17.132:30333") is False
         assert node._is_verifier_seed_peer("82.208.20.209:30333") is False
+        assert node._is_verifier_seed_peer("144.126.133.21:30333") is False
     finally:
         os.environ.pop("ANIMICA_P2P_VERIFIER_SEED_IPS", None)
 
