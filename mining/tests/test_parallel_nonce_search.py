@@ -80,9 +80,9 @@ def test_resolve_worker_count_clamps_and_autos():
 
 
 def test_parallel_search_prefers_higher_nonce():
-    """Test that when multiple valid nonces are found, the highest is selected."""
-    # Use a check function that accepts multiple nonces
-    # nonces 3, 6, 9, 12, 15, 18, 21, 24, 27 are all valid (multiples of 3)
+    """Test that when multiple workers find valid nonces, the highest is selected."""
+    # Use a check function that accepts multiple nonces (multiples of 3)
+    # nonces 3, 6, 9, 12, 15, 18, 21, 24, 27 are all valid
     
     result = parallel_nonce_search(
         toy_check_multiple_valid, 
@@ -94,20 +94,19 @@ def test_parallel_search_prefers_higher_nonce():
     
     assert result is not None
     # With 4 workers searching 0-30:
-    # worker 0: 0, 4, 8, 12, 16, 20, 24, 28 -> finds 12, 24
-    # worker 1: 1, 5, 9, 13, 17, 21, 25, 29 -> finds 9, 21
-    # worker 2: 2, 6, 10, 14, 18, 22, 26 -> finds 6, 18
-    # worker 3: 3, 7, 11, 15, 19, 23, 27 -> finds 3, 15, 27
+    # worker 0: 0, 4, 8, 12, 16, 20, 24, 28 -> finds 12
+    # worker 1: 1, 5, 9, 13, 17, 21, 25, 29 -> finds 9
+    # worker 2: 2, 6, 10, 14, 18, 22, 26 -> finds 6
+    # worker 3: 3, 7, 11, 15, 19, 23, 27 -> finds 3
     
-    # The first nonce found will likely be 3 (worker 3) or 6 (worker 2)
-    # But with the collection window (0.05s), multiple nonces should be collected
-    # and the highest one should be selected
+    # Each worker finds one valid nonce and submits it
+    # With the collection window (50ms), multiple workers submit their results
+    # and the main loop selects the highest nonce
     
     # The result should be one of the valid nonces
     assert result.nonce % 3 == 0  # Must be a valid nonce
     assert result.nonce > 0
     
-    # With the collection window, we should tend to get higher nonces
-    # Let's verify the result is at least reasonable (not necessarily the absolute highest
-    # since workers may not all complete in the window, but should be higher than minimum)
-    assert result.nonce >= 3  # At minimum, should find 3
+    # With the collection window allowing multiple workers to submit,
+    # we should get a higher nonce than the minimum (3)
+    assert result.nonce >= 3
