@@ -303,7 +303,7 @@ class HeaderSync:
                         if used_batch_check
                         else await self.chain.has_header(h.parent_hash)
                     )
-                    if not parent_exists:
+                    if not parent_exists and h.parent_hash not in known_or_batched:
                         break
 
             # Lightweight consensus schedule/policy precheck (fast)
