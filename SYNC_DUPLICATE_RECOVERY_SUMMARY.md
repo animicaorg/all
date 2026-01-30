@@ -110,7 +110,7 @@ if duplicate_count >= self._sync_duplicate_headers_threshold:
 
 1. **Breaks the Loop:** After trying all peers, state is reset, allowing fresh attempts
 2. **Better Locators:** Resetting depth to 0 creates more detailed locators with closer spacing
-3. **Timeout-Based:** Only triggers after genuine stall (60s), not during normal sync
+3. **Timeout-Based:** Only triggers after genuine stall (20s), not during normal sync
 4. **Preserves Normal Operation:** Short-term duplicates still increase depth normally
 5. **No Peer Punishment:** During reset, peers aren't penalized (they may be correct)
 
@@ -124,7 +124,7 @@ if duplicate_count >= self._sync_duplicate_headers_threshold:
 - ✅ Self-recovers without manual intervention
 
 ### Cons  
-- ⚠️ Adds 60s delay before recovery triggers
+- ⚠️ Adds 20s delay before recovery triggers
 - ⚠️ May cause extra peer rotation during genuine forks
 - ⚠️ Doesn't address underlying locator algorithm limitations
 
@@ -171,7 +171,7 @@ Requires live network or devnet simulation with:
 ## Deployment Notes
 
 - **Backward Compatible:** No protocol changes, works with all peer versions
-- **Configuration:** Uses existing `_sync_stall_timeout` (60s default)
+- **Configuration:** Uses existing `_sync_stall_timeout` (20s default)
 - **Monitoring:** Watch for "resetting sync state" log messages
 - **Rollback:** Safe to revert, no persistent state changes
 
