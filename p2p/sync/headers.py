@@ -109,11 +109,11 @@ class HeaderFetcher(Protocol):
 
 @dataclass(slots=True)
 class HeaderSyncConfig:
-    batch_size: int = 8192  # Massively increased from 2048 to 8192 for ultra-fast header sync
+    batch_size: int = 16384  # Massively increased to 16384 for 10,000+ blocks/minute header sync
     max_in_flight: int = DEFAULT_MAX_IN_FLIGHT
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_reorg_depth: int = DEFAULT_MAX_REORG_DEPTH
-    idle_backoff_sec: float = 0.01  # Reduced from 0.05 to 0.01 for minimal latency
+    idle_backoff_sec: float = 0.005  # Reduced to 0.005 for ultra-minimal latency
     locator_max_steps: int = 32  # number of entries in the locator (exp backoff)
     sanity_parent_required: bool = True  # require first header's parent to be known
     enable_checkpoints: bool = True  # enable checkpoint verification during sync
