@@ -111,7 +111,7 @@ def _nonce_worker(
         found, payload = check_fn(nonce, *check_args)
         attempts += 1
         if found:
-            stop_event.set()
+            # Don't stop immediately - let other workers find potentially higher nonces
             result_queue.put(
                 {
                     "nonce": nonce,
@@ -186,6 +186,12 @@ def parallel_nonce_search(
         _spawn(worker_id)
 
     try:
+        # Collect valid nonces and prefer the highest one
+        # Wait briefly after first result to allow other workers to submit higher nonces
+        first_result_time = None
+        collection_window_s = float(os.getenv("ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S", "0.05"))
+        collected_results = []
+        
         while True:
             if timeout_s is not None and (time.monotonic() - start_time) > timeout_s:
                 if log:
@@ -198,16 +204,35 @@ def parallel_nonce_search(
                 result = result_queue.get(timeout=0.1)
             except Exception:
                 result = None
+            
             if result is not None:
-                stop_event.set()
-                return SearchResult(
-                    nonce=int(result["nonce"]),
-                    payload=result["payload"],
-                    worker_id=int(result["worker_id"]),
-                    attempts=int(result["attempts"]),
-                    elapsed_s=float(result["elapsed_s"]),
-                    restarts=restarts,
-                )
+                collected_results.append(result)
+                if first_result_time is None:
+                    first_result_time = time.monotonic()
+            
+            # Once we have at least one result, wait for collection window to gather more
+            if first_result_time is not None:
+                if (time.monotonic() - first_result_time) >= collection_window_s:
+                    stop_event.set()
+                    # Select the result with the highest nonce
+                    best_result = max(collected_results, key=lambda r: int(r["nonce"]))
+                    if log and len(collected_results) > 1:
+                        log.info(
+                            "Multiple valid nonces found, selected highest",
+                            extra={
+                                "candidates": len(collected_results),
+                                "nonces": [r["nonce"] for r in collected_results],
+                                "selected_nonce": best_result["nonce"],
+                            },
+                        )
+                    return SearchResult(
+                        nonce=int(best_result["nonce"]),
+                        payload=best_result["payload"],
+                        worker_id=int(best_result["worker_id"]),
+                        attempts=int(best_result["attempts"]),
+                        elapsed_s=float(best_result["elapsed_s"]),
+                        restarts=restarts,
+                    )
 
             all_dead = True
             for worker_id, proc in list(processes.items()):
