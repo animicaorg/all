@@ -23,13 +23,12 @@ def test_scan_with_default_max_nonce_terminates():
     
     start_time = time.time()
     shares_found = 0
-    nonces_checked = 0
     
     # Use a stop event to terminate after checking some nonces
     stop_event = threading.Event()
     
-    def count_nonces():
-        nonlocal nonces_checked, shares_found
+    def count_shares():
+        nonlocal shares_found
         # Call scan() WITHOUT explicit max_nonce parameter (should use default of 2^32)
         # But we'll stop it early with stop_event to verify it respects the event
         for share in scanner.scan(prefix, t_micro, start_nonce=0, stop_event=stop_event):
@@ -37,7 +36,7 @@ def test_scan_with_default_max_nonce_terminates():
         # The important thing is that the generator returns when stopped
         # Previously with max_nonce=None and no limit, it would run forever
     
-    thread = threading.Thread(target=count_nonces, daemon=True)
+    thread = threading.Thread(target=count_shares, daemon=True)
     thread.start()
     
     # Let it run briefly
@@ -191,6 +190,28 @@ def test_default_max_nonce_is_reasonable():
     print(f"✓ Default max_nonce is set to {max_nonce_param.default:,} (2^32)")
 
 
+def test_limit_handles_64bit_wrapping():
+    """Test that the limit doesn't overflow past 2^64."""
+    scanner = HashScanner()
+    prefix = b"animica:header:signbytes:v1:" + os.urandom(48)
+    t_micro = 50_000_000
+    
+    # Start very close to 2^64 limit
+    start_nonce = (1 << 64) - 1000
+    max_nonce = 2000  # This would overflow past 2^64
+    
+    # The scan should handle this gracefully by capping at 2^64
+    shares = []
+    for share in scanner.scan(prefix, t_micro, start_nonce=start_nonce, max_nonce=max_nonce):
+        shares.append(share)
+        # Safety: don't let test run forever if something is wrong
+        if len(shares) > 10:
+            break
+    
+    # Should complete without hanging
+    print(f"✓ Scan near 64-bit boundary completed successfully with {len(shares)} shares")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("Mining Stall Fix Test Suite")
@@ -203,6 +224,7 @@ if __name__ == "__main__":
         test_scan_can_be_stopped_with_event()
         test_scan_with_none_max_nonce_uses_default()
         test_scan_limit_prevents_overflow()
+        test_limit_handles_64bit_wrapping()
         
         print("\n" + "=" * 60)
         print("SUCCESS: All mining stall fix tests passed!")

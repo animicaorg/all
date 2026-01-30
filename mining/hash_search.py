@@ -203,7 +203,9 @@ class HashScanner:
         # Safety: if max_nonce is None, default to 2^32 to prevent indefinite searching
         if max_nonce is None:
             max_nonce = 1 << 32
-        limit = start_nonce + max_nonce
+        # Handle 64-bit wrapping: cap limit at 2^64 to prevent overflow
+        _UINT64_MAX = (1 << 64) - 1
+        limit = min(start_nonce + max_nonce, _UINT64_MAX)
 
         while True:
             if stop_event is not None and stop_event.is_set():
