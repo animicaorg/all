@@ -26,7 +26,7 @@ def test_duplicate_header_recovery_resets_locator_depth():
     # Simulate initial state
     service._sync_locator_depth_hint = 32  # Already increased from duplicates
     service._sync_last_progress_at = time.time() - 120  # Stalled for 2 minutes
-    service._sync_stall_timeout = 60  # 1 minute stall timeout
+    service._sync_stall_timeout = 60  # Test with 60s (actual default is 20s)
     service._sync_last_header_error = "duplicate_headers"
     service._sync_duplicate_headers_threshold = 2
     

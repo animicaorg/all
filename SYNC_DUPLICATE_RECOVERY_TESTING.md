@@ -21,7 +21,7 @@ When all peers return headers that are "all_known" (already in local store by ha
 
 ### 1. All-Peers-Duplicate Recovery (lines ~8823-8867)
 When no eligible peers remain:
-- **Condition:** All peers tried AND last error is "duplicate_headers" AND stalled > 60s
+- **Condition:** All peers tried AND last error is "duplicate_headers" AND stalled > 20s
 - **Action:** 
   - Reset `_sync_locator_depth_hint` to 0
   - Clear `duplicate_headers` error
@@ -30,7 +30,7 @@ When no eligible peers remain:
 
 ### 2. Extended-Stall Reset (lines ~9192-9225)  
 When receiving duplicate headers from a peer:
-- **Condition:** Stalled > 60s AND depth_hint > 0 AND duplicate count >= threshold
+- **Condition:** Stalled > 20s AND depth_hint > 0 AND duplicate count >= threshold
 - **Action:**
   - Reset depth hint to 0 instead of increasing
   - Don't penalize peer (may be giving correct headers)
@@ -48,7 +48,7 @@ When receiving duplicate headers from a peer:
 1. **Observe stalled sync:**
    ```bash
    animica sync status
-   # Should show stuck at same height for > 60s
+   # Should show stuck at same height for > 20s
    ```
 
 2. **Check for duplicate header errors:**
@@ -220,7 +220,7 @@ animica node restart
 
 ## Additional Notes
 
-- Recovery timeout is controlled by `_sync_stall_timeout` (default 60s)
+- Recovery timeout is controlled by `_sync_stall_timeout` (default 20s)
 - Duplicate threshold is controlled by `ANIMICA_P2P_DUPLICATE_HEADERS_THRESHOLD` (default 2)
 - Locator depth hint range: 0-64
 - Maximum depth increase per duplicate: 8

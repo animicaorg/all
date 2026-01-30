@@ -9212,6 +9212,10 @@ class P2PService:
                                 )
                                 # Reset to allow more detailed locators
                                 self._sync_locator_depth_hint = 0
+                                # Clear error state for fresh retry
+                                self._sync_last_header_error = None
+                                self._sync_last_header_error_at = None
+                                self._sync_last_header_error_peer = None
                                 # Don't penalize the peer - it might be giving us the right headers
                                 # Just try again with a better locator
                                 tried_peers.add(peer.remote)
