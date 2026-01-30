@@ -132,6 +132,33 @@ class RocksKV(KV):
         v = self._db.get(key)
         return v is not None
 
+    def get_batch(self, keys: list[bytes]) -> list[Optional[bytes]]:
+        """
+        Batch get operation for multiple keys using RocksDB's multi_get.
+        
+        This is significantly faster than calling get() in a loop for large batches,
+        especially for sync operations checking 1000+ blocks.
+        
+        Args:
+            keys: List of keys to fetch
+            
+        Returns:
+            List of values (or None if key doesn't exist), in same order as input keys
+        """
+        if not keys:
+            return []
+        
+        # RocksDB's multi_get returns a dict, so we need to build result list in correct order
+        result_dict = self._db.multi_get(keys)
+        
+        # Convert to list maintaining order, with defensive byte copies
+        results = []
+        for k in keys:
+            v = result_dict.get(k)
+            results.append(bytes(v) if v is not None else None)
+        
+        return results
+
     def iter_prefix(self, prefix: bytes) -> Iterator[Tuple[bytes, bytes]]:
         it = self._db.iterkeys()  # We'll switch to full iterator for k,v
         # python-rocksdb's iterators can be configured; use raw for both.

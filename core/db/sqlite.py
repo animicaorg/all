@@ -245,6 +245,55 @@ class SQLiteKV(KV):
         cur.close()
         return row is not None
 
+    def get_batch(self, keys: list[bytes]) -> list[Optional[bytes]]:
+        """
+        Batch get operation for multiple keys. Returns list of values in same order as keys.
+        
+        This is significantly faster than calling get() in a loop for large batches,
+        especially for sync operations checking 1000+ blocks.
+        
+        Args:
+            keys: List of keys to fetch
+            
+        Returns:
+            List of values (or None if key doesn't exist), in same order as input keys
+        """
+        if not keys:
+            return []
+        
+        # Build a map to track all indices for each key (handles duplicates)
+        key_to_indices: dict[bytes, list[int]] = {}
+        for i, k in enumerate(keys):
+            if k not in key_to_indices:
+                key_to_indices[k] = []
+            key_to_indices[k].append(i)
+        
+        # Initialize results with None
+        results: list[Optional[bytes]] = [None] * len(keys)
+        
+        # Get unique keys to query
+        unique_keys = list(key_to_indices.keys())
+        
+        # Use IN clause for efficient batch lookup
+        # Note: SQLite has a default limit of 999 variables per query, so batch in chunks
+        CHUNK_SIZE = 900  # Conservative limit to avoid SQLITE_MAX_VARIABLE_NUMBER
+        
+        for chunk_start in range(0, len(unique_keys), CHUNK_SIZE):
+            chunk_keys = unique_keys[chunk_start:chunk_start + CHUNK_SIZE]
+            placeholders = ','.join('?' * len(chunk_keys))
+            sql = f"SELECT k, v FROM kv WHERE k IN ({placeholders})"
+            
+            cur = self._conn.execute(sql, [memoryview(k) for k in chunk_keys])
+            for k, v in cur:
+                k_bytes = bytes(k)
+                v_bytes = bytes(v)
+                # Fill all indices for this key (handles duplicates)
+                for idx in key_to_indices[k_bytes]:
+                    results[idx] = v_bytes
+            cur.close()
+        
+        return results
+
     def iter_prefix(self, prefix: bytes) -> Iterator[Tuple[bytes, bytes]]:
         """
         Iterate keys with the given binary prefix in lexicographic order.
