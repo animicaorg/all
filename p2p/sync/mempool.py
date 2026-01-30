@@ -132,8 +132,8 @@ class PerPeerRecentlySent:
 class MempoolSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_in_flight_batches: int = 128  # Massively increased from 32 to 128 for ultra-fast tx sync
-    fetch_batch_size: int = 1024  # Massively increased from 256 to 1024 for better throughput
-    inv_batch_size: int = 8192  # Massively increased from 2048 to 8192 for larger announcements
+    fetch_batch_size: int = 2048  # Massively increased to 2048 for 10,000+ blocks/minute throughput
+    inv_batch_size: int = 16384  # Massively increased to 16384 for ultra-large announcements
     max_retries: int = 2
     seen_ttl_sec: float = 5 * 60  # suppress refetching the same tx for 5 minutes
     per_peer_suppress_sec: float = (
