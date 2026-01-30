@@ -74,29 +74,30 @@ The blockchain sync process needs to be dramatically accelerated to support rapi
 With these changes, the theoretical maximum sync rate is:
 
 **Block Download:**
-- 4,096 parallel workers × 4,096 max inflight blocks = ~16,777,216 blocks in flight
-- At 20s timeout: 16,777,216 / 20 = ~838,860 blocks/second (theoretical peak)
-- Practical limit (accounting for network latency, validation): ~200-300 blocks/second
-- **Target: 166.7 blocks/second (10,000/minute) is well within capacity**
+- Primary parallelism: 4,096 parallel workers downloading concurrently
+- Queue depth: 16,384 max inflight blocks
+- Throughput ceiling: ~820 blocks/second (16,384 blocks ÷ 20s timeout)
+- Practical limit (accounting for network latency, validation): ~150-200 blocks/second
+- **Target: 166.7 blocks/second (10,000/minute) is achievable**
 
 **Header Download:**
-- 16,384 headers per batch × 16,384 max inflight = ~268,435,456 headers in flight
+- 16,384 headers per batch
 - Headers are lightweight and validate quickly
-- Should easily exceed several thousand headers per second
+- Should achieve several hundred to thousand headers per second
 
 ### Real-World Expected Performance
 Based on ultra-fast blockchain sync patterns:
 
 1. **Header sync phase** (very fast):
    - Headers are small (~1KB each)
-   - Should sync at 2,000-5,000 headers/second
-   - For a 100K block chain: 20-50 seconds
+   - Should sync at 500-2,000 headers/second
+   - For a 100K block chain: 50-100 seconds
 
 2. **Block sync phase** (main bottleneck):
    - Blocks vary in size (1KB - 1MB typical)
    - Expected rate: 150-200 blocks/second
    - **Target 166.7 blocks/second (10,000/minute) should be reliably achieved**
-   - For 100K blocks: 8-11 minutes (dramatically faster than previous ~30-180 minutes)
+   - For 100K blocks: 8-11 minutes
 
 ### Performance Comparison
 **Previous:**
@@ -106,7 +107,7 @@ Based on ultra-fast blockchain sync patterns:
 **Current:**
 - Sync rate: 150-200 blocks/second
 - 100K blocks: 8-11 minutes
-- **Speedup: 3-4x faster (15-22x faster than original baseline)**
+- **Speedup: 3-4x faster than previous optimization (15-22x faster than original baseline)**
 
 ## Memory Considerations
 
