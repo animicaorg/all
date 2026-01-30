@@ -1,3 +1,26 @@
+"""
+Parallel nonce search for Proof-of-Work mining.
+
+This module implements parallel nonce search with multiple workers, where
+each worker searches a different subset of the nonce space in parallel.
+When multiple workers find valid nonces at similar times, the highest 
+nonce value is preferred for better determinism in block selection.
+
+Key features:
+- Multi-worker parallel search with stride-based nonce partitioning
+- Collection window after first valid nonce to gather results from other workers
+- Workers search different nonce ranges, and the highest valid nonce is selected
+- Automatic worker count resolution based on CPU cores
+- Worker restart on crash with configurable retry limit
+- Configurable nonce collection window via ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S
+
+Environment variables:
+- ANIMICA_MINER_WORKERS: Number of parallel workers (default: auto)
+- ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S: Time window to collect valid nonces 
+  from multiple workers before selecting the highest (default: 0.05 seconds)
+
+Note: Single-worker mode returns the first valid nonce found (no collection window).
+"""
 from __future__ import annotations
 
 import logging
@@ -111,7 +134,8 @@ def _nonce_worker(
         found, payload = check_fn(nonce, *check_args)
         attempts += 1
         if found:
-            stop_event.set()
+            # Submit result and exit - the main loop will collect results from
+            # all workers for a short time window and prefer the highest nonce
             result_queue.put(
                 {
                     "nonce": nonce,
@@ -136,6 +160,28 @@ def parallel_nonce_search(
     log: logging.Logger | None = None,
     crash_after_by_worker: dict[int, int] | None = None,
 ) -> SearchResult | None:
+    """
+    Search for a valid nonce using parallel workers.
+    
+    When multiple valid nonces are found within the collection window,
+    this function prefers the highest nonce value. This provides better
+    determinism for block selection when multiple miners find valid blocks
+    at similar times.
+    
+    Args:
+        check_fn: Function to validate a nonce, returns (is_valid, payload)
+        check_args: Arguments to pass to check_fn after nonce
+        start_nonce: Starting nonce value
+        max_nonce: Maximum number of nonces to search
+        workers: Number of parallel workers (0 for auto)
+        timeout_s: Optional timeout in seconds
+        max_restarts: Maximum worker restarts on crash
+        log: Optional logger for progress messages
+        crash_after_by_worker: For testing - simulate worker crashes
+        
+    Returns:
+        SearchResult with the highest valid nonce found, or None if no valid nonce
+    """
     resolved_workers = resolve_worker_count(workers)
     if resolved_workers <= 1:
         start_time = time.monotonic()
@@ -186,6 +232,17 @@ def parallel_nonce_search(
         _spawn(worker_id)
 
     try:
+        # Collect valid nonces and prefer the highest one
+        # Wait briefly after first result to allow other workers to submit higher nonces
+        first_result_time = None
+        try:
+            collection_window_s = float(os.getenv("ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S", "0.05"))
+            if collection_window_s <= 0:
+                collection_window_s = 0.05
+        except (ValueError, TypeError):
+            collection_window_s = 0.05
+        collected_results = []
+        
         while True:
             if timeout_s is not None and (time.monotonic() - start_time) > timeout_s:
                 if log:
@@ -198,16 +255,35 @@ def parallel_nonce_search(
                 result = result_queue.get(timeout=0.1)
             except Exception:
                 result = None
+            
             if result is not None:
-                stop_event.set()
-                return SearchResult(
-                    nonce=int(result["nonce"]),
-                    payload=result["payload"],
-                    worker_id=int(result["worker_id"]),
-                    attempts=int(result["attempts"]),
-                    elapsed_s=float(result["elapsed_s"]),
-                    restarts=restarts,
-                )
+                collected_results.append(result)
+                if first_result_time is None:
+                    first_result_time = time.monotonic()
+            
+            # Once we have at least one result, wait for collection window to gather more
+            if first_result_time is not None:
+                if (time.monotonic() - first_result_time) >= collection_window_s:
+                    stop_event.set()
+                    # Select the result with the highest nonce
+                    best_result = max(collected_results, key=lambda r: int(r["nonce"]))
+                    if log and len(collected_results) > 1:
+                        log.info(
+                            "Multiple valid nonces found, selected highest",
+                            extra={
+                                "candidates": len(collected_results),
+                                "nonces": [r["nonce"] for r in collected_results],
+                                "selected_nonce": best_result["nonce"],
+                            },
+                        )
+                    return SearchResult(
+                        nonce=int(best_result["nonce"]),
+                        payload=best_result["payload"],
+                        worker_id=int(best_result["worker_id"]),
+                        attempts=int(best_result["attempts"]),
+                        elapsed_s=float(best_result["elapsed_s"]),
+                        restarts=restarts,
+                    )
 
             all_dead = True
             for worker_id, proc in list(processes.items()):
