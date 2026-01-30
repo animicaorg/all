@@ -8833,6 +8833,39 @@ class P2PService:
                         self._sync_phase = "SYNCING"
                     else:
                         self._sync_phase = "IDLE"
+                    
+                    # Recovery logic: If we've tried all peers and gotten no progress for a while,
+                    # clear the duplicate headers state to allow retry with fresh locators
+                    now = time.time()
+                    if (
+                        len(tried_peers) >= eligible_count
+                        and eligible_count > 0
+                        and self._sync_last_header_error == "duplicate_headers"
+                        and now - self._sync_last_progress_at > self._sync_stall_timeout
+                    ):
+                        log.warning(
+                            "All peers returned duplicate headers with no progress; resetting sync state",
+                            extra={
+                                "tried_peers": len(tried_peers),
+                                "eligible_peers": eligible_count,
+                                "stall_duration_s": now - self._sync_last_progress_at,
+                                "locator_depth_hint": self._sync_locator_depth_hint,
+                            },
+                        )
+                        # Reset locator depth hint to get more detailed locators
+                        self._sync_locator_depth_hint = 0
+                        # Clear duplicate headers error to allow retry
+                        self._sync_last_header_error = None
+                        self._sync_last_header_error_at = None
+                        self._sync_last_header_error_peer = None
+                        # Clear all duplicate header tracking
+                        self._sync_duplicate_header_ranges.clear()
+                        # Clear peer backoffs for duplicate_headers reason
+                        for backoff_key in list(self._sync_peer_backoff.keys()):
+                            if self._sync_peer_backoff_reason.get(backoff_key) == "duplicate_headers":
+                                self._sync_peer_backoff.pop(backoff_key, None)
+                                self._sync_peer_backoff_reason.pop(backoff_key, None)
+                    
                     log.debug(
                         "Sync skipped header request",
                         extra={
@@ -9163,15 +9196,41 @@ class P2PService:
                             self._mark_peer_anchored(peer, reason="headers_duplicate")
                         duplicate_count = self._track_duplicate_header_range(peer, headers)
                         if duplicate_count >= self._sync_duplicate_headers_threshold:
-                            self._sync_locator_depth_hint = min(
-                                self._sync_locator_depth_hint + 8, 64
-                            )
-                            tried_peers.add(peer.remote)
-                            self._sync_last_header_error = "duplicate_headers"
-                            self._sync_last_header_error_at = time.time()
-                            self._sync_last_header_error_peer = peer.remote
-                            self._penalize_peer(peer, "duplicate_headers", nonfatal=True)
-                            rotate_peer = True
+                            now = time.time()
+                            stall_duration = now - self._sync_last_progress_at
+                            
+                            # If we've been stalled too long, reset instead of increasing depth
+                            if stall_duration > self._sync_stall_timeout and self._sync_locator_depth_hint > 0:
+                                log.warning(
+                                    "Duplicate headers with extended stall; resetting locator depth",
+                                    extra={
+                                        "peer": peer.remote,
+                                        "duplicate_count": duplicate_count,
+                                        "stall_duration_s": stall_duration,
+                                        "old_depth_hint": self._sync_locator_depth_hint,
+                                    },
+                                )
+                                # Reset to allow more detailed locators
+                                self._sync_locator_depth_hint = 0
+                                # Clear error state for fresh retry
+                                self._sync_last_header_error = None
+                                self._sync_last_header_error_at = None
+                                self._sync_last_header_error_peer = None
+                                # Don't penalize the peer - it might be giving us the right headers
+                                # Just try again with a better locator
+                                tried_peers.add(peer.remote)
+                                rotate_peer = True
+                            else:
+                                # Normal duplicate handling: increase depth and penalize
+                                self._sync_locator_depth_hint = min(
+                                    self._sync_locator_depth_hint + 8, 64
+                                )
+                                tried_peers.add(peer.remote)
+                                self._sync_last_header_error = "duplicate_headers"
+                                self._sync_last_header_error_at = now
+                                self._sync_last_header_error_peer = peer.remote
+                                self._penalize_peer(peer, "duplicate_headers", nonfatal=True)
+                                rotate_peer = True
 
                     if rotate_peer:
                         saw_headers = False
