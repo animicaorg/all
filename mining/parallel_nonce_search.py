@@ -1,3 +1,22 @@
+"""
+Parallel nonce search for Proof-of-Work mining.
+
+This module implements parallel nonce search with multiple workers.
+When multiple valid nonces are found, it prefers the highest nonce value
+to provide better determinism in block selection.
+
+Key features:
+- Multi-worker parallel search with stride-based nonce partitioning
+- Collection window after first valid nonce to gather higher candidates
+- Automatic worker count resolution based on CPU cores
+- Worker restart on crash with configurable retry limit
+- Configurable nonce collection window via ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S
+
+Environment variables:
+- ANIMICA_MINER_WORKERS: Number of parallel workers (default: auto)
+- ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S: Time window to collect multiple 
+  valid nonces before selecting the highest (default: 0.05 seconds)
+"""
 from __future__ import annotations
 
 import logging
@@ -136,6 +155,28 @@ def parallel_nonce_search(
     log: logging.Logger | None = None,
     crash_after_by_worker: dict[int, int] | None = None,
 ) -> SearchResult | None:
+    """
+    Search for a valid nonce using parallel workers.
+    
+    When multiple valid nonces are found within the collection window,
+    this function prefers the highest nonce value. This provides better
+    determinism for block selection when multiple miners find valid blocks
+    at similar times.
+    
+    Args:
+        check_fn: Function to validate a nonce, returns (is_valid, payload)
+        check_args: Arguments to pass to check_fn after nonce
+        start_nonce: Starting nonce value
+        max_nonce: Maximum number of nonces to search
+        workers: Number of parallel workers (0 for auto)
+        timeout_s: Optional timeout in seconds
+        max_restarts: Maximum worker restarts on crash
+        log: Optional logger for progress messages
+        crash_after_by_worker: For testing - simulate worker crashes
+        
+    Returns:
+        SearchResult with the highest valid nonce found, or None if no valid nonce
+    """
     resolved_workers = resolve_worker_count(workers)
     if resolved_workers <= 1:
         start_time = time.monotonic()
