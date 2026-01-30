@@ -162,7 +162,7 @@ class HashScanner:
         t_share_micro: int,
         *,
         start_nonce: int = 0,
-        max_nonce: Optional[int] = None,
+        max_nonce: Optional[int] = 1 << 32,
         theta_micro: Optional[int] = None,
         on_found: Optional[Callable[[FoundShare], None]] = None,
         stop_event: Optional[threading.Event] = None,
@@ -176,7 +176,7 @@ class HashScanner:
           prefix: bytes to be hashed *before* appending the 8-byte LE nonce.
           t_share_micro: share threshold in µ-nats.
           start_nonce: starting 64-bit nonce (wraps at 2^64).
-          max_nonce: if set, scan at most this many nonces (window size).
+          max_nonce: max nonces to scan (window size). Default: 2^32 to prevent indefinite searching.
           theta_micro: optional Θ for computing d_ratio in result.
           on_found: callback(FoundShare) for push-mode; if None, generator yields shares.
           stop_event: external signal to stop scanning promptly.
@@ -200,12 +200,15 @@ class HashScanner:
         _on_found = on_found
         _theta = theta_micro
 
-        limit = None if max_nonce is None else start_nonce + max_nonce
+        # Safety: if max_nonce is None, default to 2^32 to prevent indefinite searching
+        if max_nonce is None:
+            max_nonce = 1 << 32
+        limit = start_nonce + max_nonce
 
         while True:
             if stop_event is not None and stop_event.is_set():
                 break
-            if limit is not None and nonce >= limit:
+            if nonce >= limit:
                 break
 
             # Compute digest(prefix || nonce_le8) with prehashed prefix
