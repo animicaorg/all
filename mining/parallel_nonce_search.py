@@ -1,21 +1,25 @@
 """
 Parallel nonce search for Proof-of-Work mining.
 
-This module implements parallel nonce search with multiple workers.
-When multiple valid nonces are found, it prefers the highest nonce value
-to provide better determinism in block selection.
+This module implements parallel nonce search with multiple workers, where
+each worker searches a different subset of the nonce space in parallel.
+When multiple workers find valid nonces at similar times, the highest 
+nonce value is preferred for better determinism in block selection.
 
 Key features:
 - Multi-worker parallel search with stride-based nonce partitioning
-- Collection window after first valid nonce to gather higher candidates
+- Collection window after first valid nonce to gather results from other workers
+- Workers search different nonce ranges, and the highest valid nonce is selected
 - Automatic worker count resolution based on CPU cores
 - Worker restart on crash with configurable retry limit
 - Configurable nonce collection window via ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S
 
 Environment variables:
 - ANIMICA_MINER_WORKERS: Number of parallel workers (default: auto)
-- ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S: Time window to collect multiple 
-  valid nonces before selecting the highest (default: 0.05 seconds)
+- ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S: Time window to collect valid nonces 
+  from multiple workers before selecting the highest (default: 0.05 seconds)
+
+Note: Single-worker mode returns the first valid nonce found (no collection window).
 """
 from __future__ import annotations
 
@@ -130,7 +134,8 @@ def _nonce_worker(
         found, payload = check_fn(nonce, *check_args)
         attempts += 1
         if found:
-            # Don't stop immediately - let other workers find potentially higher nonces
+            # Submit result and exit - the main loop will collect results from
+            # all workers for a short time window and prefer the highest nonce
             result_queue.put(
                 {
                     "nonce": nonce,
@@ -230,7 +235,12 @@ def parallel_nonce_search(
         # Collect valid nonces and prefer the highest one
         # Wait briefly after first result to allow other workers to submit higher nonces
         first_result_time = None
-        collection_window_s = float(os.getenv("ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S", "0.05"))
+        try:
+            collection_window_s = float(os.getenv("ANIMICA_MINER_NONCE_COLLECTION_WINDOW_S", "0.05"))
+            if collection_window_s <= 0:
+                collection_window_s = 0.05
+        except (ValueError, TypeError):
+            collection_window_s = 0.05
         collected_results = []
         
         while True:
