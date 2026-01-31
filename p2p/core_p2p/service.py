@@ -85,6 +85,7 @@ class CoreP2PService:
     _seed_list: list[str] = field(default_factory=list, init=False)
     _mempool_rebroadcast_interval: float = field(default=0.0, init=False)
     _mempool_rebroadcast_limit: int = field(default=0, init=False)
+    _sync_tick_interval: float = field(default=0.0, init=False)
 
     def __post_init__(self) -> None:
         self.addrman = AddressManager()
@@ -93,6 +94,9 @@ class CoreP2PService:
         )
         self._mempool_rebroadcast_limit = int(
             os.environ.get("ANIMICA_P2P_CORE_MEMPOOL_LIMIT", "512") or 512
+        )
+        self._sync_tick_interval = float(
+            os.environ.get("ANIMICA_P2P_CORE_SYNC_TICK_SEC", "2") or 2
         )
         self._seed_list = list(self.seeds)
         for seed in self._seed_list:
@@ -119,6 +123,7 @@ class CoreP2PService:
         self._tasks = [
             asyncio.create_task(self._dial_loop(), name="core_p2p.dial"),
             asyncio.create_task(self._head_watch_loop(), name="core_p2p.head_watch"),
+            asyncio.create_task(self._sync_watch_loop(), name="core_p2p.sync_watch"),
         ]
         if self._mempool_rebroadcast_interval > 0:
             self._tasks.append(
@@ -180,6 +185,18 @@ class CoreP2PService:
                         current_hash,
                         self.connman._send,
                     )
+        except asyncio.CancelledError:
+            return
+
+    async def _sync_watch_loop(self) -> None:
+        if self._sync_tick_interval <= 0:
+            return
+        try:
+            while self._running:
+                await asyncio.sleep(self._sync_tick_interval)
+                await self.net_processing.sync_tick(
+                    self.connman.peers().values(), self.connman._send
+                )
         except asyncio.CancelledError:
             return
 
