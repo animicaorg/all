@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ from .sync_manager import ChainAdapter, SyncManager
 INV_TYPE_TX = 1
 INV_TYPE_BLOCK = 2
 
+log = logging.getLogger("animica.p2p.core_p2p.net_processing")
+
 
 @dataclass
 class NetProcessing:
@@ -42,6 +45,7 @@ class NetProcessing:
     async def on_handshake_complete(self, peer: PeerState, send) -> None:
         msg = self.sync.build_getheaders()
         await send("getheaders", msg.serialize())
+        self.sync.mark_headers_request(peer.peer_id)
 
     def build_version(self, peer: PeerState, local_addr: NetAddress, height: int) -> VersionMessage:
         return build_version_message(addr_recv=peer.address, addr_from=local_addr, start_height=height)
@@ -207,6 +211,44 @@ class NetProcessing:
         ).serialize()
         await send("getdata", payload)
 
+    async def sync_tick(self, peers: Iterable[PeerState], send) -> None:
+        now = time.time()
+        self.sync.expire_inflight(now)
+        local_height = self.chain_height()
+        peers_list = [peer for peer in peers if peer.handshake_complete]
+        if not peers_list:
+            return
+        best_peer = self._select_best_peer(peers_list, local_height)
+        if best_peer is None:
+            return
+        self.sync.record_tip(best_peer.start_height)
+        needs_headers = (
+            best_peer.start_height > local_height
+            or self.sync.pending_blocks
+            or self.sync.inflight_blocks
+        )
+        if needs_headers and now - self.sync.last_headers_request >= self.sync.header_request_interval:
+            await send(best_peer, "getheaders", self.sync.build_getheaders().serialize())
+            self.sync.mark_headers_request(best_peer.peer_id)
+        if needs_headers and now - self.sync.last_progress >= self.sync.stall_timeout:
+            alt_peer = self._select_best_peer(
+                peers_list, local_height, avoid_peer_id=best_peer.peer_id
+            )
+            if alt_peer is not None and alt_peer.peer_id != best_peer.peer_id:
+                await send(alt_peer, "getheaders", self.sync.build_getheaders().serialize())
+                self.sync.mark_headers_request(alt_peer.peer_id)
+            if self.sync.should_log_stall(now):
+                self.sync.mark_stall_logged(now)
+                log.warning(
+                    "sync stall detected",
+                    extra={
+                        "local_height": local_height,
+                        "best_height": best_peer.start_height,
+                        "pending": len(self.sync.pending_blocks),
+                        "inflight": len(self.sync.inflight_blocks),
+                    },
+                )
+
     async def announce_block(self, peers: Iterable[PeerState], block_hash: bytes, send) -> None:
         inv = InventoryVector(inv_type=INV_TYPE_BLOCK, inv_hash=block_hash)
         payload = InvMessage([inv]).serialize()
@@ -222,6 +264,22 @@ class NetProcessing:
             if tx_hash not in peer.known_inventory:
                 peer.known_inventory.add(tx_hash)
                 await send(peer, "inv", payload)
+
+    def _select_best_peer(
+        self,
+        peers: Sequence[PeerState],
+        local_height: int,
+        avoid_peer_id: Optional[str] = None,
+    ) -> Optional[PeerState]:
+        candidates = [peer for peer in peers if peer.start_height >= local_height]
+        if avoid_peer_id:
+            filtered = [peer for peer in candidates if peer.peer_id != avoid_peer_id]
+            if filtered:
+                candidates = filtered
+        if not candidates:
+            return None
+        candidates.sort(key=lambda peer: (peer.start_height, peer.last_recv), reverse=True)
+        return candidates[0]
 
     def _block_hash(self, payload: bytes) -> bytes:
         getter = getattr(self.chain, "block_hash", None)
