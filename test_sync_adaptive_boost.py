@@ -13,6 +13,32 @@ import time
 from unittest.mock import MagicMock, PropertyMock
 
 
+def calculate_active_sync(
+    sync_block_queue_len: int,
+    sync_inflight_blocks_len: int,
+    sync_block_buffer_len: int,
+    best_header_height: int,
+    local_head_height: int,
+) -> bool:
+    """
+    Calculate if sync is active based on queue/inflight/buffer/header status.
+    This mirrors the production logic in p2p_service.py.
+    """
+    return (
+        sync_block_queue_len > 0
+        or sync_inflight_blocks_len > 0
+        or sync_block_buffer_len > 0
+        or best_header_height > local_head_height
+    )
+
+
+def calculate_tick_rate(
+    sync_boost_tick_sec: float | None, sync_tick_sec: float
+) -> float:
+    """Calculate the boosted tick rate."""
+    return sync_boost_tick_sec if sync_boost_tick_sec is not None else max(0.1, sync_tick_sec / 5)
+
+
 def test_adaptive_boost_extends_during_active_sync():
     """Test that boost is extended when blocks are actively being synced."""
     print("\n=== Test: Adaptive Boost Extends During Active Sync ===")
@@ -39,11 +65,12 @@ def test_adaptive_boost_extends_during_active_sync():
     print(f"✓ Boost expired at: {sync_boost_until}, now: {now}")
     
     # Adaptive boost logic: detect active sync
-    active_sync = (
-        sync_block_queue_len > 0
-        or sync_inflight_blocks_len > 0
-        or sync_block_buffer_len > 0
-        or best_header_height > local_head_height
+    active_sync = calculate_active_sync(
+        sync_block_queue_len,
+        sync_inflight_blocks_len,
+        sync_block_buffer_len,
+        best_header_height,
+        local_head_height,
     )
     
     print(f"✓ Active sync detected: {active_sync}")
@@ -59,7 +86,7 @@ def test_adaptive_boost_extends_during_active_sync():
         assert new_boost_until > sync_boost_until, "Boost should be extended"
         
         # Tick rate should remain boosted
-        tick = sync_boost_tick_sec if sync_boost_tick_sec is not None else max(0.1, sync_tick_sec / 5)
+        tick = calculate_tick_rate(sync_boost_tick_sec, sync_tick_sec)
         print(f"✓ Tick rate maintained at: {tick * 1000:.2f}ms (boosted)")
         assert tick < sync_tick_sec, "Tick should be faster than normal"
     else:
@@ -92,11 +119,12 @@ def test_adaptive_boost_expires_when_idle():
     print(f"✓ Boost expired at: {sync_boost_until}, now: {now}")
     
     # Adaptive boost logic: detect no active sync
-    active_sync = (
-        sync_block_queue_len > 0
-        or sync_inflight_blocks_len > 0
-        or sync_block_buffer_len > 0
-        or best_header_height > local_head_height
+    active_sync = calculate_active_sync(
+        sync_block_queue_len,
+        sync_inflight_blocks_len,
+        sync_block_buffer_len,
+        best_header_height,
+        local_head_height,
     )
     
     print(f"✓ Active sync detected: {active_sync}")
@@ -135,11 +163,12 @@ def test_adaptive_boost_with_queued_blocks_only():
     time.sleep(1.1)
     now = time.time()
     
-    active_sync = (
-        sync_block_queue_len > 0
-        or sync_inflight_blocks_len > 0
-        or sync_block_buffer_len > 0
-        or best_header_height > local_head_height
+    active_sync = calculate_active_sync(
+        sync_block_queue_len,
+        sync_inflight_blocks_len,
+        sync_block_buffer_len,
+        best_header_height,
+        local_head_height,
     )
     
     print(f"✓ Active sync detected: {active_sync}")
@@ -171,11 +200,12 @@ def test_adaptive_boost_with_headers_ahead():
     time.sleep(1.1)
     now = time.time()
     
-    active_sync = (
-        sync_block_queue_len > 0
-        or sync_inflight_blocks_len > 0
-        or sync_block_buffer_len > 0
-        or best_header_height > local_head_height
+    active_sync = calculate_active_sync(
+        sync_block_queue_len,
+        sync_inflight_blocks_len,
+        sync_block_buffer_len,
+        best_header_height,
+        local_head_height,
     )
     
     print(f"✓ Active sync detected: {active_sync}")
