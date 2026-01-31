@@ -9348,6 +9348,17 @@ class P2PService:
                         continue
                 tick = self._sync_tick_sec
                 now = time.time()
+                
+                # Adaptive boost: maintain boost mode while actively syncing blocks
+                # This prevents the dramatic slowdown that occurs when boost expires
+                # while blocks are still in-flight or queued
+                active_sync = (
+                    len(self._sync_block_queue) > 0
+                    or len(self._sync_inflight_blocks) > 0
+                    or len(self._sync_block_buffer) > 0
+                    or (self._sync_best_header and self._sync_best_header.height > int(self._local_head()[0] or 0))
+                )
+                
                 if self._sync_boost_until and now < self._sync_boost_until:
                     tick = (
                         self._sync_boost_tick_sec
@@ -9355,8 +9366,27 @@ class P2PService:
                         else max(0.1, self._sync_tick_sec / 5)
                     )
                 elif self._sync_boost_until and now >= self._sync_boost_until:
-                    self._sync_boost_until = None
-                    self._sync_boost_tick_sec = None
+                    # Extend boost if actively syncing blocks instead of expiring
+                    if active_sync:
+                        # Extend boost by another request timeout period
+                        self._sync_boost_until = now + max(1.0, self._sync_request_timeout)
+                        tick = (
+                            self._sync_boost_tick_sec
+                            if self._sync_boost_tick_sec is not None
+                            else max(0.1, self._sync_tick_sec / 5)
+                        )
+                        log.debug(
+                            "Extended sync boost due to active block syncing",
+                            extra={
+                                "queued_blocks": len(self._sync_block_queue),
+                                "inflight_blocks": len(self._sync_inflight_blocks),
+                                "buffered_blocks": len(self._sync_block_buffer),
+                                "boost_until": self._sync_boost_until,
+                            },
+                        )
+                    else:
+                        self._sync_boost_until = None
+                        self._sync_boost_tick_sec = None
                 try:
                     await asyncio.wait_for(self._sync_wakeup.wait(), timeout=tick)
                 except asyncio.TimeoutError:
