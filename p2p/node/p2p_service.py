@@ -127,6 +127,14 @@ class PeerBroadcastScore:
     last_classification: Optional[str] = None
 
 
+STALL_BLOCK_TIMEOUT = "STALL_BLOCK_TIMEOUT"
+STALL_BLOCK_PEER_UNRESPONSIVE = "STALL_BLOCK_PEER_UNRESPONSIVE"
+STALL_BLOCK_NOT_FOUND_ACROSS_PEERS = "STALL_BLOCK_NOT_FOUND_ACROSS_PEERS"
+STALL_BLOCK_INVALID_RESPONSE = "STALL_BLOCK_INVALID_RESPONSE"
+STALL_CACHE_LOOP = "STALL_CACHE_LOOP"
+STALL_VERIFY_BACKPRESSURE = "STALL_VERIFY_BACKPRESSURE"
+
+
 @dataclass(slots=True)
 class _PeerState:
     session_id: str
@@ -164,6 +172,11 @@ class _PeerState:
     sync_successes: int = 0
     sync_timeouts: int = 0
     sync_failures: int = 0
+    block_successes: int = 0
+    block_failures: int = 0
+    block_cooldown_until: float = 0.0
+    last_block_failure_at: float = 0.0
+    last_block_success_at: float = 0.0
     last_msg_at: float = field(default_factory=time.time)
     last_progress_at: float = field(default_factory=time.time)
     ban_until: Optional[float] = None
@@ -439,6 +452,7 @@ class SyncStatusSnapshot:
     headers_seen_total: int
     last_block_request_at: float
     last_block_response_at: float
+    last_block_download_at: float
     last_header_request_peer: Optional[str]
     last_header_response_peer: Optional[str]
     last_header_error: Optional[str]
@@ -456,6 +470,8 @@ class SyncStatusSnapshot:
     pending_header_batches: int
     header_cooldown_count: int
     header_cooldown_next_expiry: Optional[float]
+    block_cooldown_count: int
+    block_cooldown_next_expiry: Optional[float]
     recovery_attempts: int
     last_recovery_action: Optional[str]
     last_recovery_at: Optional[float]
@@ -481,6 +497,8 @@ class SyncStatusSnapshot:
     peer_penalties: Dict[str, int]
     last_block_error_peer: Optional[str]
     block_error_summary: Dict[str, dict[str, Any]]
+    block_peer_failures: Dict[str, int]
+    recent_block_recovery_peers: list[str]
     next_block_needed_height: Optional[int]
     next_block_needed_hash: Optional[str]
     stall_timeout_s: float
@@ -538,6 +556,8 @@ class SyncStatusSnapshot:
             "headers_seen_total": self.headers_seen_total,
             "last_block_request_at": self.last_block_request_at,
             "last_block_response_at": self.last_block_response_at,
+            "last_block_download_at": self.last_block_download_at,
+            "last_block_download_at": self.last_block_download_at,
             "last_header_request_peer": self.last_header_request_peer,
             "last_header_response_peer": self.last_header_response_peer,
             "last_header_error": self.last_header_error,
@@ -555,6 +575,10 @@ class SyncStatusSnapshot:
             "pending_header_batches": self.pending_header_batches,
             "header_cooldown_count": self.header_cooldown_count,
             "header_cooldown_next_expiry": self.header_cooldown_next_expiry,
+            "block_cooldown_count": self.block_cooldown_count,
+            "block_cooldown_next_expiry": self.block_cooldown_next_expiry,
+            "block_cooldown_count": self.block_cooldown_count,
+            "block_cooldown_next_expiry": self.block_cooldown_next_expiry,
             "recovery_attempts": self.recovery_attempts,
             "last_recovery_action": self.last_recovery_action,
             "last_recovery_at": self.last_recovery_at,
@@ -584,6 +608,10 @@ class SyncStatusSnapshot:
             "peer_penalties": dict(self.peer_penalties),
             "last_block_error_peer": self.last_block_error_peer,
             "block_error_summary": dict(self.block_error_summary),
+            "block_peer_failures": dict(self.block_peer_failures),
+            "recent_block_recovery_peers": list(self.recent_block_recovery_peers),
+            "block_peer_failures": dict(self.block_peer_failures),
+            "recent_block_recovery_peers": list(self.recent_block_recovery_peers),
             "next_block_needed_height": self.next_block_needed_height,
             "next_block_needed_hash": self.next_block_needed_hash,
             "stall_timeout_s": self.stall_timeout_s,
@@ -902,6 +930,42 @@ class P2PService:
         self._sync_peer_backoff_reason: dict[str, str] = {}
         self._sync_block_peer_backoff: dict[str, float] = {}
         self._sync_block_peer_backoff_reason: dict[str, str] = {}
+        self._sync_block_failure_events: dict[str, Deque[float]] = {}
+        self._sync_block_failure_window_s = float(
+            os.environ.get("ANIMICA_P2P_BLOCK_FAILURE_WINDOW", "600") or 600
+        )
+        self._sync_block_cooldown_base_s = float(
+            os.environ.get("ANIMICA_P2P_BLOCK_COOLDOWN_BASE", "60") or 60
+        )
+        self._sync_block_cooldown_cap_s = float(
+            os.environ.get("ANIMICA_P2P_BLOCK_COOLDOWN_CAP", "600") or 600
+        )
+        self._sync_block_recovery_peers = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_RECOVERY_PEERS", "5") or 5
+        )
+        self._sync_block_recovery_concurrency = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_RECOVERY_CONCURRENCY", "2") or 2
+        )
+        self._sync_last_block_recovery_peers: list[str] = []
+        self._sync_block_chunk_size_default = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_CHUNK_SIZE", "16") or 16
+        )
+        self._sync_block_chunk_size_min = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_CHUNK_SIZE_MIN", "1") or 1
+        )
+        self._sync_block_chunk_size_current = max(
+            self._sync_block_chunk_size_min, self._sync_block_chunk_size_default
+        )
+        self._sync_block_queue_limit = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_QUEUE_LIMIT", "50000") or 50000
+        )
+        self._sync_cache_failure_window_s = float(
+            os.environ.get("ANIMICA_P2P_CACHE_FAILURE_WINDOW", "300") or 300
+        )
+        self._sync_cache_failure_cap = int(
+            os.environ.get("ANIMICA_P2P_CACHE_FAILURE_CAP", "3") or 3
+        )
+        self._sync_cache_failures: dict[bytes, Deque[float]] = {}
         self._sync_peer_eligibility_cache: dict[str, str] = {}
         self._sync_last_phase_reported: Optional[str] = None
         self._sync_header_events: Deque[dict[str, Any]] = deque(
@@ -1294,6 +1358,7 @@ class P2PService:
         self._sync_headers_seen_total = 0
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
+        self._sync_last_block_download_at = 0.0
         self._sync_last_header_request_peer: Optional[str] = None
         self._sync_last_header_response_peer: Optional[str] = None
         self._sync_last_header_error: Optional[str] = None
@@ -1395,6 +1460,9 @@ class P2PService:
             os.environ.get("ANIMICA_SNAPSHOT_RECOVERY_MAX_PER_WINDOW", "2") or 2
         )
         self._snapshot_recovery_attempts: deque[float] = deque()
+        self._snapshot_recovery_min_stall_recoveries = int(
+            os.environ.get("ANIMICA_SNAPSHOT_MIN_STALL_RECOVERIES", "3") or 3
+        )
         self._sync_tip_tolerance = int(
             os.environ.get("ANIMICA_P2P_SYNC_TIP_TOLERANCE", "2") or 2
         )
@@ -2934,6 +3002,16 @@ class P2PService:
         eligible_peers, ineligible_peers = self._eligible_sync_peers()
         eligible_block_peers, ineligible_block_peers = self._eligible_block_peers()
         header_cooldown_count, header_cooldown_next_expiry = self._header_cooldown_snapshot()
+        now = time.time()
+        block_cooldown_peers = [
+            peer for peer in self._peers.values() if peer.block_cooldown_until > now
+        ]
+        block_cooldown_count = len(block_cooldown_peers)
+        block_cooldown_next_expiry = (
+            min((peer.block_cooldown_until for peer in block_cooldown_peers), default=None)
+            if block_cooldown_peers
+            else None
+        )
         phase = self._derive_sync_phase(
             best_header_height=best_header_height,
             best_block_height=best_block_height,
@@ -3053,6 +3131,7 @@ class P2PService:
             headers_seen_total=self._sync_headers_seen_total,
             last_block_request_at=self._sync_last_block_request_at,
             last_block_response_at=self._sync_last_block_response_at,
+            last_block_download_at=self._sync_last_block_download_at,
             last_header_request_peer=self._sync_last_header_request_peer,
             last_header_response_peer=self._sync_last_header_response_peer,
             last_header_error=self._sync_last_header_error,
@@ -3070,6 +3149,8 @@ class P2PService:
             pending_header_batches=len(self._sync_header_queue),
             header_cooldown_count=header_cooldown_count,
             header_cooldown_next_expiry=header_cooldown_next_expiry,
+            block_cooldown_count=block_cooldown_count,
+            block_cooldown_next_expiry=block_cooldown_next_expiry,
             recovery_attempts=self._sync_recovery_attempts,
             last_recovery_action=self._sync_last_recovery_action,
             last_recovery_at=self._sync_last_recovery_at,
@@ -3099,6 +3180,12 @@ class P2PService:
             },
             last_block_error_peer=self._sync_last_block_error_peer,
             block_error_summary=dict(self._sync_block_error_summary),
+            block_peer_failures={
+                peer.remote: peer.block_failures
+                for peer in self._peers.values()
+                if peer.block_failures > 0
+            },
+            recent_block_recovery_peers=list(self._sync_last_block_recovery_peers),
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
             stall_timeout_s=float(self._sync_stall_timeout),
@@ -3517,38 +3604,51 @@ class P2PService:
             return
         next_block_height, next_block_hash = self._next_block_needed()
         if next_block_hash is None:
-            if self._sync_block_stalled_reason == "blocks stalled":
+            if self._sync_block_stalled_reason in {
+                STALL_BLOCK_TIMEOUT,
+                STALL_BLOCK_PEER_UNRESPONSIVE,
+                STALL_BLOCK_NOT_FOUND_ACROSS_PEERS,
+                STALL_BLOCK_INVALID_RESPONSE,
+                STALL_CACHE_LOOP,
+                STALL_VERIFY_BACKPRESSURE,
+            }:
                 self._sync_block_stalled_reason = None
                 self._sync_last_block_error = None
                 self._sync_last_block_error_at = None
             return
-        if now - self._sync_last_progress_at <= self._sync_stall_timeout:
+        block_progress_at = max(
+            self._sync_last_block_at,
+            self._sync_last_block_download_at,
+            self._sync_last_block_request_at,
+        )
+        if now - block_progress_at <= self._sync_stall_timeout:
             return
         if self._sync_inflight_blocks:
             return
         local_height, _ = self._local_head()
         if self._sync_best_header.height <= int(local_height or 0):
             return
-        if self._sync_last_block_request_at > 0:
-            if self._sync_last_block_at >= self._sync_last_block_request_at:
-                if self._sync_block_stalled_reason == "blocks stalled":
-                    self._sync_block_stalled_reason = None
-                    self._sync_last_block_error = None
-                    self._sync_last_block_error_at = None
-                return
-            if now - self._sync_last_block_request_at <= self._sync_stall_timeout:
-                return
+        stall_reason = STALL_BLOCK_TIMEOUT
+        eligible_peers, _ = self._eligible_block_peers()
+        if not eligible_peers:
+            stall_reason = STALL_BLOCK_NOT_FOUND_ACROSS_PEERS
+        elif self._sync_last_block_error_peer == "sync-cache":
+            stall_reason = STALL_CACHE_LOOP
+        elif self._sync_last_block_error:
+            stall_reason = STALL_BLOCK_INVALID_RESPONSE
         if not self._sync_block_stalled_reason:
-            self._sync_block_stalled_reason = "blocks stalled"
-            self._sync_last_block_error = "blocks stalled"
+            self._sync_block_stalled_reason = stall_reason
+            self._sync_last_block_error = stall_reason
             self._sync_last_block_error_at = now
             log.warning(
                 "Block sync stalled",
                 extra={
                     "last_block_request_at": self._sync_last_block_request_at,
                     "last_block_at": self._sync_last_block_at,
+                    "last_block_download_at": self._sync_last_block_download_at,
                     "next_block_height": next_block_height,
                     "next_block_hash": next_block_hash.hex(),
+                    "stall_reason": stall_reason,
                 },
             )
 
@@ -3624,6 +3724,54 @@ class P2PService:
         
         return result
 
+    async def _recover_missing_block(
+        self,
+        *,
+        block_hash: bytes,
+        block_height: Optional[int],
+        reason: str,
+    ) -> None:
+        eligible, ineligible = self._eligible_block_peers()
+        peers = [peer for peer in eligible if peer.hello_done.is_set()]
+        if not peers:
+            self._sync_last_block_recovery_peers = []
+            log.warning(
+                "Block recovery skipped: no eligible peers",
+                extra={
+                    "reason": reason,
+                    "block_height": block_height,
+                    "block_hash": block_hash.hex(),
+                    "ineligible_peers": list(ineligible.keys()),
+                },
+            )
+            return
+        random.shuffle(peers)
+        if self._sync_active_block_peer:
+            peers.sort(
+                key=lambda p: 1
+                if p.remote == self._sync_active_block_peer
+                else 0
+            )
+        selected = peers[: max(1, self._sync_block_recovery_peers)]
+        self._sync_last_block_recovery_peers = [peer.remote for peer in selected]
+        semaphore = asyncio.Semaphore(max(1, self._sync_block_recovery_concurrency))
+
+        async def _request(peer: _PeerState) -> None:
+            async with semaphore:
+                try:
+                    self._sync_last_block_request_at = time.time()
+                    peer.last_block_request_at = self._sync_last_block_request_at
+                    await self._send(
+                        peer,
+                        MsgID.GET_BLOCKS,
+                        GetBlocks(by_hash=[block_hash], max_blocks=1),
+                    )
+                except Exception:
+                    self._record_block_failure(peer, reason="recovery_request_error")
+
+        tasks = [asyncio.create_task(_request(peer)) for peer in selected]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     def _handle_sync_stall(self, *, reason: str) -> None:
         now = time.time()
         # Allow stall handling even when _sync_best_header is None or equals local height
@@ -3645,6 +3793,7 @@ class P2PService:
                 severity=2,
                 quarantine_s=30.0,
             )
+            self._record_block_failure(old_peer, reason="stall")
             old_peer.last_progress_at = now
         for h in list(self._sync_inflight_blocks.keys()):
             if self._has_block(h):
@@ -3655,7 +3804,24 @@ class P2PService:
         self._sync_inflight_blocks.clear()
         self._sync_inflight_peers.clear()
         self._sync_inflight_block_requests.clear()
+        if reason == STALL_VERIFY_BACKPRESSURE and self._sync_block_buffer:
+            dropped_hash, dropped_block = self._sync_block_buffer.popitem(last=False)
+            log.warning(
+                "Relieving verify backpressure by dropping buffered block",
+                extra={
+                    "hash": dropped_hash.hex(),
+                    "origin_peer": dropped_block.origin_peer,
+                },
+            )
+            if dropped_hash not in self._sync_block_queue_set:
+                self._sync_block_queue.appendleft(dropped_hash)
+                self._sync_block_queue_set.add(dropped_hash)
         needed_height, _ = self._next_block_needed()
+        if self._sync_block_chunk_size_current > self._sync_block_chunk_size_min:
+            self._sync_block_chunk_size_current = max(
+                self._sync_block_chunk_size_min,
+                self._sync_block_chunk_size_current // 2,
+            )
         new_peer = self._select_block_peer(
             needed_height=needed_height,
             require_anchored=self._should_enforce_checkpoint_anchor(),
@@ -3676,6 +3842,16 @@ class P2PService:
         self._sync_last_recovery_at = now
         self._sync_last_recovery_reason = reason
         self._last_rotation_at = now
+        needed_height, needed_hash = self._next_block_needed()
+        if needed_hash:
+            self._create_child_task(
+                self._recover_missing_block(
+                    block_hash=needed_hash,
+                    block_height=needed_height,
+                    reason=reason,
+                ),
+                name=f"p2p.block_recovery@{needed_hash.hex()}",
+            )
         local_height, _ = self._local_head()
         best_header_height = self._sync_best_header.height if self._sync_best_header else local_height
         eligible_block_peers, _ineligible_block_peers = self._eligible_block_peers()
@@ -3692,6 +3868,7 @@ class P2PService:
                 "queued_blocks": len(self._sync_block_queue),
                 "eligible_block_peers": [p.remote for p in eligible_block_peers],
                 "discarded_blocks": discarded,
+                "recovery_peers": list(self._sync_last_block_recovery_peers),
             },
         )
 
@@ -6984,6 +7161,7 @@ class P2PService:
             )
         if not msg.blocks:
             self._stats["blocks_req_empty"] += 1
+            self._record_block_failure(peer, reason="empty_blocks")
             return
         if peer.last_block_request_at:
             self._update_latency(peer, peer.last_block_request_at)
@@ -6991,6 +7169,7 @@ class P2PService:
             self._stats["blocks_recv"] += 1
             self._stats["blocks_received"] += 1
             self._sync_last_block_response_at = time.time()
+            self._sync_last_block_download_at = self._sync_last_block_response_at
             self._sync_active_block_peer = peer.remote
             log.info(
                 "Block received",
@@ -7001,6 +7180,7 @@ class P2PService:
                 sync_block = self._decode_block(raw_bytes)
             except Exception as e:
                 self._penalize_peer(peer, f"bad_block_decode:{e.__class__.__name__}")
+                self._record_block_failure(peer, reason="decode_error")
                 continue
             sync_block.received_at = time.time()
             if sync_block.hash in self._sync_inflight_block_requests:
@@ -7034,6 +7214,7 @@ class P2PService:
                 ok = True
                 reason = None
             if ok:
+                self._record_block_success(peer)
                 try:
                     if hasattr(sync_block.block, "header"):
                         self._update_peer_head(
@@ -7073,6 +7254,7 @@ class P2PService:
                     self._handle_missing_parent(peer, sync_block)
                 else:
                     reject_reason = reason or "block_rejected"
+                    self._record_block_failure(peer, reason=reject_reason)
                     if self._sync_cache is not None and not self._is_orphan_reason(
                         reject_reason
                     ):
@@ -7086,7 +7268,7 @@ class P2PService:
                     summary["last_error"] = reject_reason
                     summary["last_at"] = time.time()
                     if self._is_db_write_error(reject_reason):
-                        self._sync_block_stalled_reason = "db not writable"
+                        self._sync_block_stalled_reason = STALL_BLOCK_INVALID_RESPONSE
                         self._sync_last_block_error = f"db not writable: {reject_reason}"
                         log.error(
                             "Block DB write failed",
@@ -7352,6 +7534,16 @@ class P2PService:
         local_height, _ = self._local_head()
         added = 0
         for hdr in sorted(headers, key=lambda h: h.height):
+            if len(self._sync_block_queue) >= self._sync_block_queue_limit:
+                log.warning(
+                    "Block queue at capacity; deferring additional blocks",
+                    extra={
+                        "queue_limit": self._sync_block_queue_limit,
+                        "queued_blocks": len(self._sync_block_queue),
+                        "last_header_height": hdr.height,
+                    },
+                )
+                break
             if hdr.height <= int(local_height or 0):
                 continue
             if self._has_block(hdr.hash):
@@ -7381,6 +7573,12 @@ class P2PService:
     async def _try_import_cached_block(self, block_hash: bytes) -> bool:
         if self._sync_cache is None:
             return False
+        if self._should_skip_cache_block(block_hash):
+            log.debug(
+                "Skipping sync cache block after repeated failures",
+                extra={"hash": block_hash.hex()},
+            )
+            return False
         raw_bytes = self._sync_cache.get_block(block_hash)
         if raw_bytes is None:
             self._stats["cache_misses"] += 1
@@ -7397,6 +7595,15 @@ class P2PService:
             return True
         if not self._is_orphan_reason(reason):
             self._sync_cache.invalidate_block(block_hash)
+        events = self._sync_cache_failures.setdefault(block_hash, deque())
+        now = time.time()
+        window = self._sync_cache_failure_window_s
+        while events and now - events[0] > window:
+            events.popleft()
+        events.append(now)
+        self._sync_last_block_error = STALL_CACHE_LOOP
+        self._sync_last_block_error_at = now
+        self._sync_last_block_error_peer = "sync-cache"
         return False
 
     def _ensure_block_queue(self) -> int:
@@ -7655,12 +7862,16 @@ class P2PService:
             if peer_remote:
                 peer = self._peer_by_remote(peer_remote)
                 if peer is not None:
+                    self._record_block_failure(peer, reason="block_timeout")
                     self._set_block_backoff(peer, reason="block_timeout", delay=60.0)
                     peer.sync_timeouts += 1
                     peer.sync_failures += 1
                 self._penalize_peer(peer, "block_timeout", nonfatal=True)
                 if peer is not None:
                     self._mark_peer_head_issue(peer, reason="block_timeout")
+                self._sync_last_block_error = STALL_BLOCK_TIMEOUT
+                self._sync_last_block_error_at = now
+                self._sync_last_block_error_peer = peer_remote
             if request is not None:
                 request.retry_count += 1
                 self._stats["blocks_req_timeout"] += 1
@@ -8444,10 +8655,6 @@ class P2PService:
             reason=f"headers:{reason}",
             header_height=header_height,
         )
-        if self._sync_block_stalled_reason == "blocks stalled":
-            self._sync_block_stalled_reason = None
-            self._sync_last_block_error = None
-            self._sync_last_block_error_at = None
         log.debug(
             "Header progress noted",
             extra={"remote": peer.remote, "reason": reason},
@@ -8552,8 +8759,9 @@ class P2PService:
             return 0
 
         # Chunk requests to keep payloads small.
-        for i in range(0, len(requested), 16):
-            chunk = requested[i : i + 16]
+        chunk_size = max(self._sync_block_chunk_size_min, self._sync_block_chunk_size_current)
+        for i in range(0, len(requested), chunk_size):
+            chunk = requested[i : i + chunk_size]
             with contextlib.suppress(Exception):
                 self._sync_last_block_request_at = time.time()
                 peer.last_block_request_at = self._sync_last_block_request_at
@@ -8580,6 +8788,18 @@ class P2PService:
     async def _schedule_block_requests(
         self, peer: Optional[_PeerState] = None
     ) -> int:
+        if len(self._sync_block_buffer) >= self._max_orphan_blocks:
+            self._sync_block_stalled_reason = STALL_VERIFY_BACKPRESSURE
+            self._sync_last_block_error = STALL_VERIFY_BACKPRESSURE
+            self._sync_last_block_error_at = time.time()
+            log.warning(
+                "Block download backpressure: verify queue full",
+                extra={
+                    "buffer_size": len(self._sync_block_buffer),
+                    "buffer_limit": self._max_orphan_blocks,
+                },
+            )
+            return 0
         if not self._sync_block_queue:
             seeded = 0
             if self._sync_best_header is not None:
@@ -8744,9 +8964,13 @@ class P2PService:
             preferred_peer = (
                 self._peer_by_remote(preferred_remote) if preferred_remote else None
             )
+            if preferred_peer is not None:
+                ok, _reason = self._block_peer_eligibility(preferred_peer)
+            else:
+                ok = False
             target_peer = (
                 preferred_peer
-                if preferred_peer and preferred_peer.hello_done.is_set()
+                if preferred_peer and preferred_peer.hello_done.is_set() and ok
                 else peer
             )
             groups.setdefault(target_peer.remote, []).append(h)
@@ -9526,11 +9750,9 @@ class P2PService:
                         or not any(self._peer_is_anchored(p) for p in self._peers.values())
                     )
                     if inflight_stuck or queues_empty or anchor_invalid:
-                        stall_reason = "inflight_stuck"
-                        if queues_empty:
-                            stall_reason = "queue_empty"
+                        stall_reason = STALL_BLOCK_PEER_UNRESPONSIVE
                         if anchor_invalid:
-                            stall_reason = "not_anchored"
+                            stall_reason = STALL_BLOCK_NOT_FOUND_ACROSS_PEERS
                         self._sync_block_stalled_reason = stall_reason
                         self._sync_last_block_error = stall_reason
                         self._sync_last_block_error_at = now
@@ -9549,7 +9771,7 @@ class P2PService:
                     and self._peers  # Have peers but not making progress
                 ):
                     # Mark as stalled to trigger peer rotation and recovery
-                    if self._sync_block_stalled_reason != "headers_blocks_equal_stall":
+                    if self._sync_block_stalled_reason != STALL_BLOCK_PEER_UNRESPONSIVE:
                         log.warning(
                             "Sync stalled: headers == blocks with no progress",
                             extra={
@@ -9559,7 +9781,7 @@ class P2PService:
                                 "last_header_error": self._sync_last_header_error,
                             },
                         )
-                        self._sync_block_stalled_reason = "headers_blocks_equal_stall"
+                        self._sync_block_stalled_reason = STALL_BLOCK_PEER_UNRESPONSIVE
                         # Force sync on next iteration to try different peers
                         self._sync_requested = True
 
@@ -9580,7 +9802,7 @@ class P2PService:
                             "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
                         },
                     )
-                    self._sync_block_stalled_reason = "blocks stalled"
+                    self._sync_block_stalled_reason = STALL_BLOCK_TIMEOUT
                     self._ensure_block_queue()
                     self._sync_kick(reason="behind_network_empty_queue", aggressive=True)
                 if now - self._sync_last_progress_at > self._sync_no_progress_timeout:
@@ -9601,6 +9823,8 @@ class P2PService:
                     if (
                         now - self._sync_last_progress_at
                         >= max(60.0, self._sync_watchdog_timeout)
+                        and self._sync_recovery_attempts
+                        >= self._snapshot_recovery_min_stall_recoveries
                     ):
                         self._maybe_trigger_snapshot_recovery(
                             reason="stall_snapshot_recovery"
@@ -9878,6 +10102,8 @@ class P2PService:
         ok, reason = self._sync_peer_eligibility(peer, now=now)
         if not ok:
             return False, reason
+        if peer.block_cooldown_until and peer.block_cooldown_until > now:
+            return False, "block_cooldown"
         backoff_key = self._peer_backoff_key(peer)
         backoff_until = self._sync_block_peer_backoff.get(backoff_key, 0.0)
         if backoff_until and backoff_until > now:
@@ -9904,6 +10130,57 @@ class P2PService:
         key = self._peer_backoff_key(peer)
         self._sync_block_peer_backoff[key] = until
         self._sync_block_peer_backoff_reason[key] = reason
+
+    def _record_block_failure(self, peer: Optional[_PeerState], *, reason: str) -> None:
+        if peer is None:
+            return
+        now = time.time()
+        events = self._sync_block_failure_events.setdefault(peer.remote, deque())
+        window = self._sync_block_failure_window_s
+        while events and now - events[0] > window:
+            events.popleft()
+        events.append(now)
+        failures = len(events)
+        peer.block_failures = failures
+        peer.last_block_failure_at = now
+        cooldown = min(self._sync_block_cooldown_base_s * failures, self._sync_block_cooldown_cap_s)
+        if cooldown > 0:
+            peer.block_cooldown_until = max(peer.block_cooldown_until, now + cooldown)
+        log.info(
+            "Block peer cooldown applied",
+            extra={
+                "remote": peer.remote,
+                "reason": reason,
+                "failures": failures,
+                "cooldown_s": round(cooldown, 2),
+            },
+        )
+
+    def _record_block_success(self, peer: Optional[_PeerState]) -> None:
+        if peer is None:
+            return
+        now = time.time()
+        peer.block_successes += 1
+        peer.last_block_success_at = now
+        events = self._sync_block_failure_events.get(peer.remote)
+        if events:
+            events.clear()
+        peer.block_failures = 0
+        peer.block_cooldown_until = 0.0
+        self._sync_block_chunk_size_current = min(
+            self._sync_block_chunk_size_default,
+            max(self._sync_block_chunk_size_min, self._sync_block_chunk_size_current + 1),
+        )
+
+    def _should_skip_cache_block(self, block_hash: bytes) -> bool:
+        events = self._sync_cache_failures.get(block_hash)
+        if not events:
+            return False
+        now = time.time()
+        window = self._sync_cache_failure_window_s
+        while events and now - events[0] > window:
+            events.popleft()
+        return len(events) >= self._sync_cache_failure_cap
 
     def _should_enforce_checkpoint_anchor(self) -> bool:
         if not self._sync_checkpoint_mode_enabled:
@@ -10164,8 +10441,7 @@ class P2PService:
                 for score, non_broadcasting, peer in height_filtered
                 if not non_broadcasting
             ]
-        best: Optional[_PeerState] = None
-        best_score = None
+        scored: list[tuple[tuple[float, ...], _PeerState]] = []
         for broadcast_score, non_broadcasting, p in height_filtered:
             latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if p.direction == "outbound" else 0
@@ -10181,10 +10457,14 @@ class P2PService:
                 -latency,
                 -netgroup_penalty,
             )
-            if best_score is None or score > best_score:
-                best = p
-                best_score = score
-        return best
+            scored.append((score, p))
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top_count = max(1, min(3, len(scored)))
+        top_peers = [peer for _score, peer in scored[:top_count]]
+        random.shuffle(top_peers)
+        return top_peers[0]
 
     def _select_block_peer(
         self,
@@ -10261,13 +10541,13 @@ class P2PService:
                 for score, non_broadcasting, peer in height_filtered
                 if not non_broadcasting
             ]
-        best: Optional[_PeerState] = None
-        best_score = None
+        scored: list[tuple[tuple[float, ...], _PeerState]] = []
         for broadcast_score, non_broadcasting, peer in height_filtered:
             latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if peer.direction == "outbound" else 0
             anchored_bonus = 1 if self._peer_is_anchored(peer) else 0
             sync_score = self._peer_sync_score(peer)
+            block_failure_penalty = -1.0 * float(peer.block_failures or 0)
             non_broadcasting_penalty = -5.0 if non_broadcasting else 0.0
             score = (
                 anchored_bonus,
@@ -10275,14 +10555,22 @@ class P2PService:
                 non_broadcasting_penalty,
                 outbound_bonus,
                 *sync_score,
+                block_failure_penalty,
                 -peer.misbehavior_score,
                 -latency,
                 peer.last_progress_at,
             )
-            if best_score is None or score > best_score:
-                best = peer
-                best_score = score
-        return best
+            scored.append((score, peer))
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top_count = max(1, min(3, len(scored)))
+        top_peers = [peer for _score, peer in scored[:top_count]]
+        jittered = top_peers[:]
+        random.shuffle(jittered)
+        candidate = jittered[self._sync_block_peer_cursor % len(jittered)]
+        self._sync_block_peer_cursor = (self._sync_block_peer_cursor + 1) % 1000000
+        return candidate
 
     # ---------------------------------------------------------------------
     # Storage helpers
@@ -11718,10 +12006,12 @@ class P2PService:
         self._sync_last_block_error_peer = None
         self._sync_block_error_summary.clear()
         self._sync_pow_mismatch_votes.clear()
+        self._sync_last_block_recovery_peers = []
         self._sync_last_head_height = 0
         self._sync_last_head_hash = None
         self._sync_last_header_height = 0
         self._sync_last_block_fetch_height = 0
+        self._sync_last_block_download_at = 0.0
         self._sync_last_queue_depth = 0
         log.info("Reset sync state", extra={"reason": reason})
 
@@ -12405,7 +12695,7 @@ class P2PService:
                     },
                 )
             if self._is_db_write_error(reason_str):
-                self._sync_block_stalled_reason = "db not writable"
+                self._sync_block_stalled_reason = STALL_BLOCK_INVALID_RESPONSE
                 self._sync_last_block_error = f"db not writable: {reason_str}"
                 log.error(
                     "Block DB write failed",
