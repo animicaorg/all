@@ -385,6 +385,14 @@ class _SyncBlock:
 
 
 @dataclass(slots=True)
+class _SyncVerifyTask:
+    sync_block: _SyncBlock
+    peer_remote: str
+    enqueued_at: float
+    raw_bytes_len: int = 0
+
+
+@dataclass(slots=True)
 class _SyncRequest:
     request_id: str
     peer_id: str
@@ -1135,6 +1143,7 @@ class P2PService:
             "blocks_req_timeout": 0,
             "blocks_req_ok": 0,
             "blocks_req_empty": 0,
+            "blocks_orphaned": 0,
             "blocks_applied": 0,
             "blocks_validated_ok": 0,
             "blocks_imported": 0,
@@ -1412,6 +1421,7 @@ class P2PService:
             _env_value(
                 "SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS",
+                "ANIMICA_SYNC_INFLIGHT_BLOCKS",
                 "ANIMICA_P2P_SYNC_INFLIGHT",
                 default="16384",  # Massively increased from 2048 for ultra-fast sync (hundreds-to-thousands blocks/sec)
             )
@@ -1419,6 +1429,29 @@ class P2PService:
         )
         self._sync_max_inflight_per_peer = int(
             os.environ.get("ANIMICA_P2P_SYNC_INFLIGHT_PER_PEER", "2048") or 2048  # Massively increased from 512 for ultra-fast sync
+        )
+        self._sync_max_parallel_peers = int(
+            os.environ.get("ANIMICA_SYNC_MAX_PEERS", "16") or 16
+        )
+        cpu_count = os.cpu_count() or 1
+        default_verify_workers = min(max(4, cpu_count - 1), 16)
+        self._sync_verify_workers = int(
+            os.environ.get("ANIMICA_SYNC_VERIFY_WORKERS", str(default_verify_workers))
+            or default_verify_workers
+        )
+        self._sync_verify_queue_limit = int(
+            os.environ.get("ANIMICA_SYNC_VERIFY_QUEUE_LIMIT", "10000") or 10000
+        )
+        self._sync_db_batch_blocks = int(
+            os.environ.get("ANIMICA_SYNC_DB_BATCH_BLOCKS", "1000") or 1000
+        )
+        self._sync_db_batch_blocks_current = max(1, self._sync_db_batch_blocks)
+        self._sync_fast_mode_enabled = os.environ.get(
+            "ANIMICA_SYNC_FAST_MODE", "1"
+        ).lower() in ("1", "true", "yes", "on")
+        self._sync_fast_mode_active = False
+        self._sync_target_bps = float(
+            os.environ.get("ANIMICA_SYNC_TARGET_BPS", "100") or 100
         )
         self._sync_headers_batch = int(
             os.environ.get("ANIMICA_P2P_SYNC_HEADERS_BATCH", "16384") or 16384  # Massively increased from 4096 for ultra-fast sync
@@ -1525,6 +1558,26 @@ class P2PService:
         self._sync_cache_max_headers = int(
             os.environ.get("ANIMICA_SYNC_CACHE_MAX_HEADERS", "20000") or 20000  # Massively increased from 5000 for ultra-fast sync
         )
+        self._sync_verify_queue: asyncio.Queue[_SyncVerifyTask] = asyncio.Queue(
+            maxsize=self._sync_verify_queue_limit
+        )
+        self._sync_verify_tasks: list[asyncio.Task] = []
+        self._sync_metrics_log_interval = float(
+            os.environ.get("ANIMICA_SYNC_METRICS_INTERVAL", "2.0") or 2.0
+        )
+        self._sync_last_metrics_log_at = 0.0
+        self._sync_metrics_window_s = float(
+            os.environ.get("ANIMICA_SYNC_METRICS_WINDOW_S", "10") or 10
+        )
+        self._sync_metrics_block_received_events: Deque[float] = deque()
+        self._sync_metrics_block_committed_events: Deque[float] = deque()
+        self._sync_metrics_bytes_received_events: Deque[tuple[float, int]] = deque()
+        self._sync_metrics_peer_block_events: dict[str, Deque[float]] = {}
+        self._sync_metrics_verify_ms: Deque[float] = deque(maxlen=2000)
+        self._sync_metrics_db_commit_ms: Deque[float] = deque(maxlen=2000)
+        self._sync_metrics_db_batch_sizes: Deque[int] = deque(maxlen=2000)
+        self._sync_metrics_fsync_count = 0
+        self._sync_last_tuning_at = 0.0
         self._sync_cache_task: Optional[asyncio.Task] = None
         self._sync_last_reorg_at: Optional[float] = None
         self._sync_locator_backtrack_threshold = int(
@@ -1571,6 +1624,60 @@ class P2PService:
 
         task.add_done_callback(_discard)
         return task
+
+    def _start_verify_workers(self) -> None:
+        if self._sync_verify_tasks:
+            return
+        worker_count = max(1, int(self._sync_verify_workers))
+        for idx in range(worker_count):
+            task = asyncio.create_task(
+                self._verify_worker_loop(idx),
+                name=f"p2p.sync.verify[{idx}]",
+            )
+            self._sync_verify_tasks.append(task)
+
+    async def _stop_verify_workers(self) -> None:
+        if not self._sync_verify_tasks:
+            return
+        for task in self._sync_verify_tasks:
+            task.cancel()
+        await asyncio.gather(*self._sync_verify_tasks, return_exceptions=True)
+        self._sync_verify_tasks.clear()
+
+    async def _verify_worker_loop(self, idx: int) -> None:
+        _ = idx
+        try:
+            while self._running:
+                first = await self._sync_verify_queue.get()
+                tasks = [first]
+                batch_limit = max(1, int(self._sync_db_batch_blocks_current))
+                while len(tasks) < batch_limit:
+                    try:
+                        tasks.append(self._sync_verify_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                for task in tasks:
+                    start = time.time()
+                    ok = False
+                    reason = None
+                    try:
+                        ok, reason = await self._import_block_payload(
+                            task.sync_block.block, origin_remote=task.peer_remote
+                        )
+                    except Exception as exc:
+                        ok = False
+                        reason = f"verify_error:{exc}"
+                    duration_ms = (time.time() - start) * 1000
+                    self._record_verify_metrics(duration_ms, batch_size=len(tasks))
+                    await self._finalize_block_import(
+                        task.sync_block,
+                        peer_remote=task.peer_remote,
+                        ok=ok,
+                        reason=reason,
+                    )
+                    self._sync_verify_queue.task_done()
+        except asyncio.CancelledError:
+            return
 
     async def start(self) -> None:
         if self._running:
@@ -1661,6 +1768,7 @@ class P2PService:
             )
             await self._transport.listen(cfg)
 
+        self._start_verify_workers()
         self._tasks = [
             asyncio.create_task(self._accept_loop(), name="p2p.accept"),
             asyncio.create_task(self._dial_loop(), name="p2p.dial"),
@@ -1721,6 +1829,7 @@ class P2PService:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        await self._stop_verify_workers()
 
         for t in list(self._child_tasks):
             t.cancel()
@@ -2523,6 +2632,145 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    def _prune_metric_events(self, events: Deque[float], now: float) -> None:
+        window = self._sync_metrics_window_s
+        while events and now - events[0] > window:
+            events.popleft()
+
+    def _prune_metric_bytes(
+        self, events: Deque[tuple[float, int]], now: float
+    ) -> None:
+        window = self._sync_metrics_window_s
+        while events and now - events[0][0] > window:
+            events.popleft()
+
+    def _record_block_received_metrics(self, peer_remote: str, raw_len: int) -> None:
+        now = time.time()
+        self._sync_metrics_block_received_events.append(now)
+        self._sync_metrics_bytes_received_events.append((now, raw_len))
+        peer_events = self._sync_metrics_peer_block_events.setdefault(peer_remote, deque())
+        peer_events.append(now)
+        self._prune_metric_events(self._sync_metrics_block_received_events, now)
+        self._prune_metric_bytes(self._sync_metrics_bytes_received_events, now)
+        self._prune_metric_events(peer_events, now)
+
+    def _record_block_committed_metrics(self) -> None:
+        now = time.time()
+        self._sync_metrics_block_committed_events.append(now)
+        self._prune_metric_events(self._sync_metrics_block_committed_events, now)
+
+    def _record_verify_metrics(self, duration_ms: float, *, batch_size: int) -> None:
+        self._sync_metrics_verify_ms.append(duration_ms)
+        self._sync_metrics_db_commit_ms.append(duration_ms)
+        self._sync_metrics_db_batch_sizes.append(batch_size)
+
+    def _metric_summary(self, samples: Deque[float]) -> dict[str, float]:
+        if not samples:
+            return {"avg": 0.0, "p50": 0.0, "p95": 0.0}
+        values = sorted(samples)
+        total = sum(values)
+        count = len(values)
+        def _pct(p: float) -> float:
+            if not values:
+                return 0.0
+            idx = int(round((p / 100.0) * (count - 1)))
+            return float(values[min(max(idx, 0), count - 1)])
+
+        return {
+            "avg": total / count,
+            "p50": _pct(50.0),
+            "p95": _pct(95.0),
+        }
+
+    def _metric_rate(self, events: Deque[float], now: float) -> float:
+        self._prune_metric_events(events, now)
+        window = max(1.0, self._sync_metrics_window_s)
+        return len(events) / window
+
+    def _metric_bytes_rate(self, now: float) -> float:
+        self._prune_metric_bytes(self._sync_metrics_bytes_received_events, now)
+        window = max(1.0, self._sync_metrics_window_s)
+        total_bytes = sum(size for _, size in self._sync_metrics_bytes_received_events)
+        return total_bytes / window
+
+    def _sync_metrics_snapshot(self) -> dict[str, Any]:
+        now = time.time()
+        best_header_height = self._sync_best_header.height if self._sync_best_header else 0
+        head_height, _head_hash = self._local_head()
+        committed_bps = self._metric_rate(self._sync_metrics_block_committed_events, now)
+        received_bps = self._metric_rate(self._sync_metrics_block_received_events, now)
+        bytes_per_s = self._metric_bytes_rate(now)
+        peer_throughput = {}
+        for remote, events in self._sync_metrics_peer_block_events.items():
+            peer_throughput[remote] = self._metric_rate(events, now)
+        return {
+            "headers_tip": int(best_header_height),
+            "blocks_tip": int(head_height or 0),
+            "verify_tip": int(self._sync_last_validated_height),
+            "download_inflight_blocks": len(self._sync_inflight_blocks),
+            "download_queue_depth": len(self._sync_block_queue),
+            "verify_queue_depth": self._sync_verify_queue.qsize()
+            + len(self._sync_block_buffer),
+            "verify_workers": int(self._sync_verify_workers),
+            "verify_ms_per_block": self._metric_summary(self._sync_metrics_verify_ms),
+            "db_batch_size": self._metric_summary(
+                deque(float(v) for v in self._sync_metrics_db_batch_sizes)
+            ),
+            "db_commit_ms": self._metric_summary(self._sync_metrics_db_commit_ms),
+            "fsync_count": int(self._sync_metrics_fsync_count),
+            "net_blocks_received_per_s": received_bps,
+            "blocks_committed_per_s": committed_bps,
+            "net_mb_per_s": bytes_per_s / (1024 * 1024),
+            "peer_throughput": peer_throughput,
+            "orphan_count": int(self._stats.get("blocks_orphaned", 0)),
+            "reject_count": int(self._stats.get("blocks_rejected", 0)),
+        }
+
+    def _log_sync_metrics(self, now: float) -> None:
+        if now - self._sync_last_metrics_log_at < self._sync_metrics_log_interval:
+            return
+        self._sync_last_metrics_log_at = now
+        metrics = self._sync_metrics_snapshot()
+        log.info("Sync metrics", extra=metrics)
+        self._maybe_adjust_sync_tuning(metrics, now)
+
+    def _maybe_adjust_sync_tuning(self, metrics: dict[str, Any], now: float) -> None:
+        if now - self._sync_last_tuning_at < max(1.0, self._sync_metrics_log_interval):
+            return
+        self._sync_last_tuning_at = now
+        committed_bps = float(metrics.get("blocks_committed_per_s") or 0.0)
+        if self._sync_fast_mode_enabled:
+            ahead = int(metrics.get("headers_tip") or 0) - int(metrics.get("blocks_tip") or 0)
+            fast_active = ahead > 100
+            if fast_active != self._sync_fast_mode_active:
+                self._sync_fast_mode_active = fast_active
+                self._sync_db_batch_blocks_current = (
+                    max(1, self._sync_db_batch_blocks) if fast_active else 1
+                )
+                log.info(
+                    "Sync fast mode toggled",
+                    extra={
+                        "active": self._sync_fast_mode_active,
+                        "ahead_blocks": ahead,
+                        "db_batch_blocks": self._sync_db_batch_blocks_current,
+                    },
+                )
+        if committed_bps >= self._sync_target_bps:
+            return
+        inflight = len(self._sync_inflight_blocks)
+        queue_depth = len(self._sync_block_queue)
+        inflight_cap = max(
+            self._sync_max_inflight,
+            self._sync_max_inflight_per_peer * max(1, self._sync_max_parallel_peers),
+        )
+        if queue_depth > 0 and inflight < self._sync_max_inflight:
+            self._sync_max_inflight = min(
+                inflight_cap,
+                max(self._sync_max_inflight + 256, int(self._sync_max_inflight * 1.1)),
+            )
+        if self._sync_verify_queue.qsize() > self._sync_verify_queue_limit * 0.9:
+            self._sync_max_inflight = max(1, int(self._sync_max_inflight * 0.8))
+
     async def _persist_peers_snapshot(self) -> None:
         data = self._build_peers_snapshot()
         if not data:
@@ -3216,7 +3464,8 @@ class P2PService:
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
             next_block_attempt_peers=next_block_attempts,
-            verify_queue_depth=len(self._sync_block_buffer),
+            verify_queue_depth=self._sync_verify_queue.qsize()
+            + len(self._sync_block_buffer),
             stall_timeout_s=float(self._sync_stall_timeout),
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
@@ -4830,6 +5079,7 @@ class P2PService:
                 "mempool_sync_interval_s": self._tx_mempool_sync_interval_s,
                 "mempool_sync_limit": self._tx_mempool_sync_limit,
             },
+            "sync_metrics": self._sync_metrics_snapshot(),
             "peers": peer_entries,
             "recent_rejects": list(self._tx_recent_rejects),
         }
@@ -7207,6 +7457,144 @@ class P2PService:
                 await self._send(peer, MsgID.BLOCKS, Blocks(blocks=chunk))
                 self._stats["blocks_sent"] += len(chunk)
 
+    async def _enqueue_verify_task(
+        self, peer: _PeerState, sync_block: _SyncBlock, raw_len: int
+    ) -> None:
+        if self._sync_verify_queue.full():
+            self._sync_block_stalled_reason = STALL_VERIFY_BACKPRESSURE
+            self._sync_last_block_error = STALL_VERIFY_BACKPRESSURE
+            self._sync_last_block_error_at = time.time()
+            log.warning(
+                "Verify queue full; buffering block",
+                extra={
+                    "remote": peer.remote,
+                    "verify_queue_depth": self._sync_verify_queue.qsize(),
+                    "verify_queue_limit": self._sync_verify_queue_limit,
+                },
+            )
+            sync_block.origin_peer = peer.remote
+            self._buffer_orphan_block(sync_block)
+            self._sync_inflight_blocks.pop(sync_block.hash, None)
+            self._sync_inflight_peers.pop(sync_block.hash, None)
+            self._sync_inflight_block_requests.pop(sync_block.hash, None)
+            return
+        task = _SyncVerifyTask(
+            sync_block=sync_block,
+            peer_remote=peer.remote,
+            enqueued_at=time.time(),
+            raw_bytes_len=raw_len,
+        )
+        await self._sync_verify_queue.put(task)
+
+    async def _finalize_block_import(
+        self,
+        sync_block: _SyncBlock,
+        *,
+        peer_remote: str,
+        ok: bool,
+        reason: Optional[str],
+    ) -> None:
+        peer = self._peer_by_remote(peer_remote)
+        if not ok and self._is_duplicate_reason(reason):
+            self._drop_from_block_queue(sync_block.hash)
+            ok = True
+            reason = None
+        if ok:
+            if peer is not None:
+                self._record_block_success(peer)
+                self._sync_block_attempts_by_hash.pop(sync_block.hash, None)
+                try:
+                    if hasattr(sync_block.block, "header"):
+                        self._update_peer_head(
+                            peer,
+                            height=int(getattr(sync_block.block.header, "height", 0)),
+                            head_hash=sync_block.hash,
+                        )
+                except Exception:
+                    pass
+                peer.broadcast.successful_blocks_served += 1
+                peer.broadcast.last_head_advancement_at = time.time()
+                self._stats["peer_broadcast_good"] += 1
+                peer.sync_successes += 1
+                peer.last_progress_at = time.time()
+            self._sync_inflight_blocks.pop(sync_block.hash, None)
+            self._sync_inflight_peers.pop(sync_block.hash, None)
+            self._sync_inflight_block_requests.pop(sync_block.hash, None)
+            self._sync_last_block_at = time.time()
+            self._sync_last_progress_at = self._sync_last_block_at
+            head_height, head_hash = self._local_head()
+            self._note_sync_progress(
+                reason="block_imported",
+                head_height=int(head_height or 0),
+                head_hash=head_hash,
+            )
+            self._sync_block_stalled_reason = None
+            self._sync_wakeup.set()
+            self._refresh_locator_summary()
+            self._record_block_committed_metrics()
+            await self._drain_block_buffer()
+            return
+
+        self._sync_inflight_blocks.pop(sync_block.hash, None)
+        self._sync_inflight_peers.pop(sync_block.hash, None)
+        self._sync_inflight_block_requests.pop(sync_block.hash, None)
+        if self._is_orphan_reason(reason):
+            if peer is not None:
+                sync_block.origin_peer = peer.remote
+            self._stats["blocks_orphaned"] += 1
+            self._buffer_orphan_block(sync_block)
+            if peer is not None:
+                self._handle_missing_parent(peer, sync_block)
+            return
+        reject_reason = reason or "block_rejected"
+        if peer is not None:
+            self._record_block_failure(peer, reason=reject_reason)
+        if self._sync_cache is not None and not self._is_orphan_reason(reject_reason):
+            self._sync_cache.invalidate_block(sync_block.hash)
+        self._sync_last_block_error_peer = peer_remote
+        summary = self._sync_block_error_summary.setdefault(
+            peer_remote,
+            {"count": 0, "last_error": None, "last_at": 0.0},
+        )
+        summary["count"] = int(summary.get("count", 0)) + 1
+        summary["last_error"] = reject_reason
+        summary["last_at"] = time.time()
+        if self._is_db_write_error(reject_reason):
+            self._sync_block_stalled_reason = STALL_BLOCK_INVALID_RESPONSE
+            self._sync_last_block_error = f"db not writable: {reject_reason}"
+            log.error(
+                "Block DB write failed",
+                extra={"remote": peer_remote, "error": reject_reason},
+            )
+        log.warning(
+            "Block rejected",
+            extra={
+                "remote": peer_remote,
+                "reason": reject_reason,
+            },
+        )
+        if "pow target not met" in reject_reason.lower() and peer is not None:
+            corroborated = self._record_pow_mismatch(sync_block.hash, peer=peer)
+            self._set_block_backoff(peer, reason="consensus_mismatch_pow", delay=60.0)
+            if sync_block.hash not in self._sync_block_queue_set:
+                self._sync_block_queue.append(sync_block.hash)
+                self._sync_block_queue_set.add(sync_block.hash)
+            if corroborated:
+                self._penalize_peer(
+                    peer,
+                    "consensus_mismatch_pow",
+                    severity=2,
+                    quarantine_s=300.0,
+                )
+        elif peer is not None:
+            self._set_block_backoff(peer, reason="bad_block", delay=60.0)
+            self._penalize_peer(
+                peer,
+                f"block_rejected:{reject_reason}",
+                severity=2,
+                quarantine_s=300.0,
+            )
+
     async def _handle_blocks(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         msg = Blocks(**data)
@@ -7231,6 +7619,7 @@ class P2PService:
                 extra={"remote": peer.remote, "bytes": len(rawb)},
             )
             raw_bytes = bytes(rawb)
+            self._record_block_received_metrics(peer.remote, len(raw_bytes))
             try:
                 sync_block = self._decode_block(raw_bytes)
             except Exception as e:
@@ -7255,113 +7644,14 @@ class P2PService:
                 )
             if sync_block.parent_hash and not self._has_block(sync_block.parent_hash):
                 sync_block.origin_peer = peer.remote
+                self._stats["blocks_orphaned"] += 1
                 self._buffer_orphan_block(sync_block)
                 self._handle_missing_parent(peer, sync_block)
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_inflight_block_requests.pop(sync_block.hash, None)
                 continue
-            ok, reason = await self._import_block_payload(
-                sync_block.block, origin_remote=peer.remote
-            )
-            if not ok and self._is_duplicate_reason(reason):
-                self._drop_from_block_queue(sync_block.hash)
-                ok = True
-                reason = None
-            if ok:
-                self._record_block_success(peer)
-                self._sync_block_attempts_by_hash.pop(sync_block.hash, None)
-                try:
-                    if hasattr(sync_block.block, "header"):
-                        self._update_peer_head(
-                            peer,
-                            height=int(getattr(sync_block.block.header, "height", 0)),
-                            head_hash=sync_block.hash,
-                        )
-                except Exception:
-                    pass
-                peer.broadcast.successful_blocks_served += 1
-                peer.broadcast.last_head_advancement_at = time.time()
-                self._stats["peer_broadcast_good"] += 1
-                peer.sync_successes += 1
-                self._sync_inflight_blocks.pop(sync_block.hash, None)
-                self._sync_inflight_peers.pop(sync_block.hash, None)
-                self._sync_inflight_block_requests.pop(sync_block.hash, None)
-                self._sync_last_block_at = time.time()
-                self._sync_last_progress_at = self._sync_last_block_at
-                peer.last_progress_at = self._sync_last_block_at
-                head_height, head_hash = self._local_head()
-                self._note_sync_progress(
-                    reason="block_imported",
-                    head_height=int(head_height or 0),
-                    head_hash=head_hash,
-                )
-                self._sync_block_stalled_reason = None
-                self._sync_wakeup.set()
-                self._refresh_locator_summary()
-                await self._drain_block_buffer()
-            else:
-                self._sync_inflight_blocks.pop(sync_block.hash, None)
-                self._sync_inflight_peers.pop(sync_block.hash, None)
-                self._sync_inflight_block_requests.pop(sync_block.hash, None)
-                if self._is_orphan_reason(reason):
-                    sync_block.origin_peer = peer.remote
-                    self._buffer_orphan_block(sync_block)
-                    self._handle_missing_parent(peer, sync_block)
-                else:
-                    reject_reason = reason or "block_rejected"
-                    self._record_block_failure(peer, reason=reject_reason)
-                    if self._sync_cache is not None and not self._is_orphan_reason(
-                        reject_reason
-                    ):
-                        self._sync_cache.invalidate_block(sync_block.hash)
-                    self._sync_last_block_error_peer = peer.remote
-                    summary = self._sync_block_error_summary.setdefault(
-                        peer.remote,
-                        {"count": 0, "last_error": None, "last_at": 0.0},
-                    )
-                    summary["count"] = int(summary.get("count", 0)) + 1
-                    summary["last_error"] = reject_reason
-                    summary["last_at"] = time.time()
-                    if self._is_db_write_error(reject_reason):
-                        self._sync_block_stalled_reason = STALL_BLOCK_INVALID_RESPONSE
-                        self._sync_last_block_error = f"db not writable: {reject_reason}"
-                        log.error(
-                            "Block DB write failed",
-                            extra={"remote": peer.remote, "error": reject_reason},
-                        )
-                    log.warning(
-                        "Block rejected",
-                        extra={
-                            "remote": peer.remote,
-                            "reason": reject_reason,
-                        },
-                    )
-                    if "pow target not met" in reject_reason.lower():
-                        corroborated = self._record_pow_mismatch(
-                            sync_block.hash, peer=peer
-                        )
-                        self._set_block_backoff(
-                            peer, reason="consensus_mismatch_pow", delay=60.0
-                        )
-                        if sync_block.hash not in self._sync_block_queue_set:
-                            self._sync_block_queue.append(sync_block.hash)
-                            self._sync_block_queue_set.add(sync_block.hash)
-                        if corroborated:
-                            self._penalize_peer(
-                                peer,
-                                "consensus_mismatch_pow",
-                                severity=2,
-                                quarantine_s=300.0,
-                            )
-                    else:
-                        self._set_block_backoff(peer, reason="bad_block", delay=60.0)
-                        self._penalize_peer(
-                            peer,
-                            f"block_rejected:{reject_reason}",
-                            severity=2,
-                            quarantine_s=300.0,
-                        )
+            await self._enqueue_verify_task(peer, sync_block, len(raw_bytes))
 
     async def _handle_block_announce(self, peer: _PeerState, payload: bytes) -> None:
         if proto_blk is None:
@@ -8910,35 +9200,45 @@ class P2PService:
             attempted_peers = set(
                 self._sync_block_attempts_by_hash.get(next_block_hash, deque())
             )
+        require_anchored = self._should_enforce_checkpoint_anchor()
+        selected_peers: list[_PeerState] = []
         if peer is None:
-            peer = self._select_block_peer(
-                needed_height=next_block_height,
-                require_anchored=self._should_enforce_checkpoint_anchor(),
-                avoid_remotes=attempted_peers,
-            )
-        if peer is None and attempted_peers:
-            peer = self._select_block_peer(
-                needed_height=next_block_height,
-                require_anchored=self._should_enforce_checkpoint_anchor(),
-            )
-        if peer is None or not peer.hello_done.is_set():
+            eligible_peers, _ = self._eligible_block_peers()
+            eligible_peers = [
+                p
+                for p in eligible_peers
+                if p.hello_done.is_set()
+                and (not require_anchored or self._peer_is_anchored(p))
+            ]
+            preferred = [p for p in eligible_peers if p.remote not in attempted_peers]
+            if not preferred and attempted_peers:
+                preferred = eligible_peers
+            now = time.time()
+            def _peer_score(p: _PeerState) -> tuple[float, int]:
+                events = self._sync_metrics_peer_block_events.get(p.remote, deque())
+                rate = self._metric_rate(events, now)
+                inflight = sum(
+                    1 for remote in self._sync_inflight_peers.values() if remote == p.remote
+                )
+                return (-rate, inflight)
+
+            preferred.sort(key=_peer_score)
+            selected_peers = preferred[: max(1, self._sync_max_parallel_peers)]
+        else:
+            selected_peers = [peer] if peer.hello_done.is_set() else []
+
+        if not selected_peers:
             log.debug(
                 "Skipped block requests: no eligible block peer",
                 extra={"reason": "no_peer" if peer is None else "handshake_pending"},
             )
             return 0
-        self._sync_active_block_peer = peer.remote
+        self._sync_active_block_peer = selected_peers[0].remote
         log.debug(
             "Selected sync peer for blocks",
-            extra=self._sync_peer_log_context(peer),
+            extra=self._sync_peer_log_context(selected_peers[0]),
         )
         self._stats["peer_selected_for_blocks"] += 1
-        if self._should_enforce_checkpoint_anchor() and not self._peer_is_anchored(peer):
-            log.debug(
-                "Skipped block requests: waiting for anchored peer",
-                extra={"remote": peer.remote},
-            )
-            return 0
         local_height, _ = self._local_head()
         expected_height = int(local_height or 0) + 1
         best_header_height = (
@@ -9024,13 +9324,40 @@ class P2PService:
             log.debug(
                 "Skipped block requests: no eligible blocks to request",
                 extra={
-                    "remote": peer.remote,
+                    "remote": selected_peers[0].remote,
                     "queue_len": len(self._sync_block_queue),
                     "inflight_blocks": len(self._sync_inflight_blocks),
                 },
             )
             return 0
+        peer_slots: dict[str, int] = {}
+        peer_rates: dict[str, float] = {}
+        now = time.time()
+        for target_peer in selected_peers:
+            inflight_for_peer = sum(
+                1 for remote in self._sync_inflight_peers.values() if remote == target_peer.remote
+            )
+            peer_slots[target_peer.remote] = max(
+                0, self._sync_max_inflight_per_peer - inflight_for_peer
+            )
+            events = self._sync_metrics_peer_block_events.get(target_peer.remote, deque())
+            peer_rates[target_peer.remote] = self._metric_rate(events, now)
+
+        def _pick_peer() -> Optional[_PeerState]:
+            best_peer = None
+            best_score = None
+            for candidate in selected_peers:
+                slots = peer_slots.get(candidate.remote, 0)
+                if slots <= 0:
+                    continue
+                score = (peer_rates.get(candidate.remote, 0.0), slots)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_peer = candidate
+            return best_peer
+
         groups: "OrderedDict[str, list[bytes]]" = OrderedDict()
+        unassigned: list[bytes] = []
         for h in to_request:
             preferred_remote = self._sync_header_sources.get(h)
             preferred_peer = (
@@ -9038,17 +9365,31 @@ class P2PService:
             )
             if preferred_peer is not None:
                 ok, _reason = self._block_peer_eligibility(preferred_peer)
-            else:
-                ok = False
-            target_peer = (
-                preferred_peer
-                if preferred_peer and preferred_peer.hello_done.is_set() and ok
-                else peer
-            )
+                if (
+                    ok
+                    and preferred_peer.hello_done.is_set()
+                    and preferred_peer.remote in peer_slots
+                    and peer_slots.get(preferred_peer.remote, 0) > 0
+                ):
+                    peer_slots[preferred_peer.remote] -= 1
+                    groups.setdefault(preferred_peer.remote, []).append(h)
+                    continue
+            target_peer = _pick_peer()
+            if target_peer is None:
+                unassigned.append(h)
+                continue
+            peer_slots[target_peer.remote] -= 1
             groups.setdefault(target_peer.remote, []).append(h)
+        if unassigned:
+            for h in unassigned:
+                self._sync_block_queue.append(h)
+                self._sync_block_queue_set.add(h)
+                height_hint = self._block_height_hint(h)
+                if height_hint is not None:
+                    self._sync_block_queue_heights[h] = height_hint
         requested = 0
         for remote, hashes in groups.items():
-            target_peer = self._peer_by_remote(remote) or peer
+            target_peer = self._peer_by_remote(remote) or selected_peers[0]
             requested += await self._queue_block_requests(target_peer, hashes)
         return requested
 
@@ -9956,6 +10297,7 @@ class P2PService:
                 # Single call is sufficient: _schedule_block_requests() handles all cases
                 # internally (seeding from headers, checking inflight, respecting limits)
                 await self._schedule_block_requests()
+                self._log_sync_metrics(time.time())
         except asyncio.CancelledError:
             return
 
