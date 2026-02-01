@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Mail, Lock, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
 
+const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +30,7 @@ export default function LoginPage() {
 
   const handleGoogleLogin = () => {
     // Redirect to Google OAuth endpoint
-    window.location.href = `${import.meta.env.VITE_CEX_API_URL || 'http://localhost:3000'}/auth/google`;
+    window.location.href = `${API_URL}/auth/google`;
   };
 
   return (

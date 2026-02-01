@@ -21,7 +21,7 @@ const env = loadEnv(
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     GOOGLE_CALLBACK_URL: z.string().optional(),
     SESSION_SECRET: z.string().default("change-me-in-production"),
-    FRONTEND_URL: z.string().default("http://localhost:5174"),
+    FRONTEND_URL: z.string().default("http://trade.animica.org"),
   })
 );
 
