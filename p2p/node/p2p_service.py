@@ -1577,6 +1577,9 @@ class P2PService:
         self._sync_metrics_db_commit_ms: Deque[float] = deque(maxlen=2000)
         self._sync_metrics_db_batch_sizes: Deque[int] = deque(maxlen=2000)
         self._sync_metrics_fsync_count = 0
+        self._snapshot_metrics_download_mbps: Optional[float] = None
+        self._snapshot_metrics_install_seconds: Optional[float] = None
+        self._snapshot_metrics_last_updated_at: float = 0.0
         self._sync_last_tuning_at = 0.0
         self._sync_cache_task: Optional[asyncio.Task] = None
         self._sync_last_reorg_at: Optional[float] = None
@@ -2693,6 +2696,18 @@ class P2PService:
         total_bytes = sum(size for _, size in self._sync_metrics_bytes_received_events)
         return total_bytes / window
 
+    def record_snapshot_metrics(
+        self,
+        *,
+        download_mbps: Optional[float] = None,
+        install_seconds: Optional[float] = None,
+    ) -> None:
+        if download_mbps is not None:
+            self._snapshot_metrics_download_mbps = float(download_mbps)
+        if install_seconds is not None:
+            self._snapshot_metrics_install_seconds = float(install_seconds)
+        self._snapshot_metrics_last_updated_at = time.time()
+
     def _sync_metrics_snapshot(self) -> dict[str, Any]:
         now = time.time()
         best_header_height = self._sync_best_header.height if self._sync_best_header else 0
@@ -2720,7 +2735,11 @@ class P2PService:
             "fsync_count": int(self._sync_metrics_fsync_count),
             "net_blocks_received_per_s": received_bps,
             "blocks_committed_per_s": committed_bps,
+            "blocks_committed_per_minute": committed_bps * 60.0,
             "net_mb_per_s": bytes_per_s / (1024 * 1024),
+            "snapshot_download_mbps": self._snapshot_metrics_download_mbps,
+            "snapshot_install_seconds": self._snapshot_metrics_install_seconds,
+            "snapshot_metrics_updated_at": self._snapshot_metrics_last_updated_at,
             "peer_throughput": peer_throughput,
             "orphan_count": int(self._stats.get("blocks_orphaned", 0)),
             "reject_count": int(self._stats.get("blocks_rejected", 0)),
@@ -7150,19 +7169,33 @@ class P2PService:
             from p2p.wire.messages import SnapshotInfo
 
             def _snapshot_from_sequence(seq: list[Any] | tuple[Any, ...]) -> dict[str, Any]:
-                fields = (
-                    "chain_id",
-                    "checkpoint_height",
-                    "checkpoint_hash",
-                    "blocks_count",
-                    "accounts_count",
-                    "size_mb",
-                    "timestamp",
-                    "created_at",
-                    "manifest_hash",
-                )
+                if len(seq) >= 10:
+                    fields = (
+                        "chain_id",
+                        "checkpoint_height",
+                        "checkpoint_hash",
+                        "state_root",
+                        "blocks_count",
+                        "accounts_count",
+                        "size_mb",
+                        "timestamp",
+                        "created_at",
+                        "manifest_hash",
+                    )
+                else:
+                    fields = (
+                        "chain_id",
+                        "checkpoint_height",
+                        "checkpoint_hash",
+                        "blocks_count",
+                        "accounts_count",
+                        "size_mb",
+                        "timestamp",
+                        "created_at",
+                        "manifest_hash",
+                    )
                 snapshot_dict = {field: value for field, value in zip(fields, seq)}
-                for key in ("checkpoint_hash", "manifest_hash"):
+                for key in ("checkpoint_hash", "manifest_hash", "state_root"):
                     value = snapshot_dict.get(key)
                     if isinstance(value, (bytes, bytearray)):
                         snapshot_dict[key] = "0x" + bytes(value).hex()
@@ -7187,6 +7220,7 @@ class P2PService:
                             "chain_id": getattr(snap_data, 'chain_id', 0),
                             "checkpoint_height": getattr(snap_data, 'checkpoint_height', 0),
                             "checkpoint_hash": getattr(snap_data, 'checkpoint_hash', ''),
+                            "state_root": getattr(snap_data, 'state_root', ''),
                             "blocks_count": getattr(snap_data, 'blocks_count', 0),
                             "accounts_count": getattr(snap_data, 'accounts_count', 0),
                             "size_mb": getattr(snap_data, 'size_mb', 0.0),
@@ -7371,6 +7405,7 @@ class P2PService:
                     chain_id=entry.chain_id,
                     checkpoint_height=entry.checkpoint_height,
                     checkpoint_hash=entry.checkpoint_hash,
+                    state_root=entry.state_root or "",
                     blocks_count=entry.blocks_count,
                     accounts_count=entry.accounts_count,
                     size_mb=size_mb,
