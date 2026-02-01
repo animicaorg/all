@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, Optional
 
 import httpx
@@ -174,4 +175,109 @@ def sync_dump(
             f"Last recovery:    {dump['sync_recovery']['last_action']} "
             f"(attempt {dump['sync_recovery']['attempts']})"
         )
+    typer.echo("━" * 60)
+
+
+@app.command("sync-bench")
+def sync_bench(
+    duration: int = typer.Option(60, "--duration", help="Benchmark duration in seconds"),
+    from_peers: int = typer.Option(0, "--from-peers", help="Minimum peer count required"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"
+    ),
+    interval: float = typer.Option(2.0, "--interval", help="Sampling interval (seconds)"),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output JSON instead of formatted text"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="RPC timeout in seconds"
+    ),
+) -> None:
+    """
+    Run a sync throughput benchmark by sampling sync metrics over time.
+    """
+    url = _resolve_rpc_url(rpc_url)
+
+    async def _run() -> dict[str, Any]:
+        samples: list[dict[str, float]] = []
+        start = time.time()
+        while time.time() - start < duration:
+            snapshot = await rpc_call(
+                "p2p.debugStatus", {}, rpc_url=url, timeout=timeout
+            )
+            sync_metrics = (
+                snapshot.get("sync_metrics", {}) if isinstance(snapshot, dict) else {}
+            )
+            peers = snapshot.get("peers", []) if isinstance(snapshot, dict) else []
+            if from_peers and len(peers) < from_peers:
+                typer.secho(
+                    f"⚠ Only {len(peers)} peer(s) connected (requested {from_peers})",
+                    fg=typer.colors.YELLOW,
+                )
+            samples.append(
+                {
+                    "committed_bps": float(sync_metrics.get("blocks_committed_per_s") or 0.0),
+                    "verify_ms": float(
+                        (sync_metrics.get("verify_ms_per_block") or {}).get("avg", 0.0)
+                    ),
+                    "db_commit_ms": float(
+                        (sync_metrics.get("db_commit_ms") or {}).get("avg", 0.0)
+                    ),
+                    "net_mb_s": float(sync_metrics.get("net_mb_per_s") or 0.0),
+                }
+            )
+            await asyncio.sleep(max(0.1, interval))
+
+        def _summarize(key: str) -> dict[str, float]:
+            vals = [s[key] for s in samples if key in s]
+            if not vals:
+                return {"avg": 0.0, "p95": 0.0}
+            vals.sort()
+            avg = sum(vals) / len(vals)
+            idx = int(round(0.95 * (len(vals) - 1)))
+            return {"avg": avg, "p95": vals[max(0, min(idx, len(vals) - 1))]}
+
+        return {
+            "duration_s": duration,
+            "sample_count": len(samples),
+            "blocks_committed_per_s": _summarize("committed_bps"),
+            "verify_ms_per_block": _summarize("verify_ms"),
+            "db_commit_ms": _summarize("db_commit_ms"),
+            "net_mb_per_s": _summarize("net_mb_s"),
+        }
+
+    try:
+        results = asyncio.run(_run())
+    except Exception as exc:
+        typer.secho(f"❌ Sync bench failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(results, indent=2))
+        return
+
+    typer.echo("\n⚡ Sync Benchmark\n")
+    typer.echo("━" * 60)
+    typer.echo(f"RPC URL:          {url}")
+    typer.echo(f"Duration:         {results['duration_s']}s ({results['sample_count']} samples)")
+    typer.echo(
+        "Blocks/sec:       "
+        f"avg={results['blocks_committed_per_s']['avg']:.2f} "
+        f"p95={results['blocks_committed_per_s']['p95']:.2f}"
+    )
+    typer.echo(
+        "Verify ms/block:  "
+        f"avg={results['verify_ms_per_block']['avg']:.2f} "
+        f"p95={results['verify_ms_per_block']['p95']:.2f}"
+    )
+    typer.echo(
+        "DB commit ms:     "
+        f"avg={results['db_commit_ms']['avg']:.2f} "
+        f"p95={results['db_commit_ms']['p95']:.2f}"
+    )
+    typer.echo(
+        "Net MB/s:         "
+        f"avg={results['net_mb_per_s']['avg']:.2f} "
+        f"p95={results['net_mb_per_s']['p95']:.2f}"
+    )
     typer.echo("━" * 60)
