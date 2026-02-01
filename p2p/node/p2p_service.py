@@ -131,7 +131,10 @@ STALL_BLOCK_TIMEOUT = "STALL_BLOCK_TIMEOUT"
 STALL_BLOCK_PEER_UNRESPONSIVE = "STALL_BLOCK_PEER_UNRESPONSIVE"
 STALL_BLOCK_NOT_FOUND_ACROSS_PEERS = "STALL_BLOCK_NOT_FOUND_ACROSS_PEERS"
 STALL_BLOCK_INVALID_RESPONSE = "STALL_BLOCK_INVALID_RESPONSE"
+STALL_BLOCK_NOT_ADVANCING = "STALL_BLOCK_NOT_ADVANCING"
+STALL_HEADERS_EMPTY_LOOP = "STALL_HEADERS_EMPTY_LOOP"
 STALL_CACHE_LOOP = "STALL_CACHE_LOOP"
+STALL_CACHE_SHORT_CIRCUIT = "STALL_CACHE_SHORT_CIRCUIT"
 STALL_VERIFY_BACKPRESSURE = "STALL_VERIFY_BACKPRESSURE"
 
 
@@ -164,6 +167,7 @@ class _PeerState:
     missing_parent: int = 0
     stall_events: int = 0
     empty_header_responses: int = 0
+    header_cooldown_until: float = 0.0
     not_anchored_count: int = 0
     last_not_anchored_at: float = 0.0
     anchored: bool = False
@@ -501,6 +505,8 @@ class SyncStatusSnapshot:
     recent_block_recovery_peers: list[str]
     next_block_needed_height: Optional[int]
     next_block_needed_hash: Optional[str]
+    next_block_attempt_peers: list[str]
+    verify_queue_depth: int
     stall_timeout_s: float
     stall_reason: Optional[str]
     stall_elapsed_s: float
@@ -614,6 +620,8 @@ class SyncStatusSnapshot:
             "recent_block_recovery_peers": list(self.recent_block_recovery_peers),
             "next_block_needed_height": self.next_block_needed_height,
             "next_block_needed_hash": self.next_block_needed_hash,
+            "next_block_attempt_peers": list(self.next_block_attempt_peers),
+            "verify_queue_depth": self.verify_queue_depth,
             "stall_timeout_s": self.stall_timeout_s,
             "stall_reason": self.stall_reason,
             "stall_elapsed_s": self.stall_elapsed_s,
@@ -978,6 +986,18 @@ class P2PService:
         self._sync_no_headers_backoff = float(
             os.environ.get("ANIMICA_P2P_NO_HEADERS_BACKOFF", "15.0") or 15.0
         )
+        self._sync_header_empty_cooldown_base_s = float(
+            os.environ.get("ANIMICA_P2P_HEADER_EMPTY_COOLDOWN_BASE", "30") or 30
+        )
+        self._sync_header_empty_cooldown_cap_s = float(
+            os.environ.get("ANIMICA_P2P_HEADER_EMPTY_COOLDOWN_CAP", "600") or 600
+        )
+        self._sync_block_attempts_by_hash: dict[bytes, Deque[str]] = {}
+        self._sync_block_attempts_cap = int(
+            os.environ.get("ANIMICA_P2P_BLOCK_ATTEMPT_HISTORY", "8") or 8
+        )
+        self._sync_last_cache_error_at = 0.0
+        self._sync_last_cache_error_hash: Optional[bytes] = None
         self._sync_not_anchored_backoff = float(
             os.environ.get("ANIMICA_P2P_NOT_ANCHORED_BACKOFF", "30.0") or 30.0
         )
@@ -1359,6 +1379,8 @@ class P2PService:
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
         self._sync_last_block_download_at = 0.0
+        self._sync_next_block_stable_hash: Optional[bytes] = None
+        self._sync_next_block_stable_since = 0.0
         self._sync_last_header_request_peer: Optional[str] = None
         self._sync_last_header_response_peer: Optional[str] = None
         self._sync_last_header_error: Optional[str] = None
@@ -3063,6 +3085,11 @@ class P2PService:
         next_block_hash_hex = (
             "0x" + next_block_hash.hex() if next_block_hash is not None else None
         )
+        next_block_attempts = []
+        if next_block_hash is not None:
+            next_block_attempts = list(
+                self._sync_block_attempts_by_hash.get(next_block_hash, deque())
+            )
         stall_elapsed_s = max(0.0, time.time() - self._sync_last_progress_at)
         checkpoint_hash = (
             "0x" + self._sync_checkpoint_hash.hex()
@@ -3188,6 +3215,8 @@ class P2PService:
             recent_block_recovery_peers=list(self._sync_last_block_recovery_peers),
             next_block_needed_height=next_block_height,
             next_block_needed_hash=next_block_hash_hex,
+            next_block_attempt_peers=next_block_attempts,
+            verify_queue_depth=len(self._sync_block_buffer),
             stall_timeout_s=float(self._sync_stall_timeout),
             stall_reason=self._sync_block_stalled_reason,
             stall_elapsed_s=stall_elapsed_s,
@@ -3530,7 +3559,12 @@ class P2PService:
         if pending_header_batches > 0 or self._sync_inflight_headers:
             return "HEADERS"
         if best_header_height > best_block_height:
-            if active_block_peer and eligible_header_peers > 0:
+            if (
+                self._sync_block_queue
+                or self._sync_inflight_blocks
+                or self._sync_block_buffer
+                or active_block_peer
+            ):
                 return "BLOCKS"
             return "SYNCING"
         if self._sync_inflight_blocks or self._sync_block_buffer:
@@ -3610,7 +3644,10 @@ class P2PService:
                 STALL_BLOCK_NOT_FOUND_ACROSS_PEERS,
                 STALL_BLOCK_INVALID_RESPONSE,
                 STALL_CACHE_LOOP,
+                STALL_CACHE_SHORT_CIRCUIT,
                 STALL_VERIFY_BACKPRESSURE,
+                STALL_BLOCK_NOT_ADVANCING,
+                STALL_HEADERS_EMPTY_LOOP,
             }:
                 self._sync_block_stalled_reason = None
                 self._sync_last_block_error = None
@@ -3632,10 +3669,16 @@ class P2PService:
         eligible_peers, _ = self._eligible_block_peers()
         if not eligible_peers:
             stall_reason = STALL_BLOCK_NOT_FOUND_ACROSS_PEERS
-        elif self._sync_last_block_error_peer == "sync-cache":
-            stall_reason = STALL_CACHE_LOOP
+        elif (
+            self._sync_last_cache_error_at
+            and self._sync_last_cache_error_at >= self._sync_last_block_request_at
+        ):
+            stall_reason = STALL_CACHE_SHORT_CIRCUIT
         elif self._sync_last_block_error:
-            stall_reason = STALL_BLOCK_INVALID_RESPONSE
+            if self._sync_last_block_error == STALL_CACHE_SHORT_CIRCUIT:
+                stall_reason = STALL_CACHE_SHORT_CIRCUIT
+            else:
+                stall_reason = STALL_BLOCK_INVALID_RESPONSE
         if not self._sync_block_stalled_reason:
             self._sync_block_stalled_reason = stall_reason
             self._sync_last_block_error = stall_reason
@@ -3761,6 +3804,7 @@ class P2PService:
                 try:
                     self._sync_last_block_request_at = time.time()
                     peer.last_block_request_at = self._sync_last_block_request_at
+                    self._record_block_attempt(peer, block_hash)
                     await self._send(
                         peer,
                         MsgID.GET_BLOCKS,
@@ -3777,6 +3821,17 @@ class P2PService:
         # Allow stall handling even when _sync_best_header is None or equals local height
         # This handles the case where headers == blocks and we're stuck
         if self._last_rotation_at and now - self._last_rotation_at < 5.0:
+            return
+        if reason == STALL_HEADERS_EMPTY_LOOP:
+            self._sync_last_header_error = None
+            self._sync_last_header_error_at = None
+            self._sync_last_header_error_peer = None
+            self._sync_last_recovery_action = "headers_empty_rotate"
+            self._sync_last_recovery_at = now
+            self._sync_last_recovery_reason = reason
+            self._sync_block_stalled_reason = None
+            self._sync_kick(reason="headers_empty_rotate", aggressive=True)
+            self._last_rotation_at = now
             return
         
         # Discard blocks from ineligible peers before attempting recovery
@@ -7215,6 +7270,7 @@ class P2PService:
                 reason = None
             if ok:
                 self._record_block_success(peer)
+                self._sync_block_attempts_by_hash.pop(sync_block.hash, None)
                 try:
                     if hasattr(sync_block.block, "header"):
                         self._update_peer_head(
@@ -7567,6 +7623,7 @@ class P2PService:
             return
         self._sync_block_queue_set.discard(block_hash)
         self._sync_block_queue_heights.pop(block_hash, None)
+        self._sync_block_attempts_by_hash.pop(block_hash, None)
         with contextlib.suppress(ValueError):
             self._sync_block_queue.remove(block_hash)
 
@@ -7601,9 +7658,10 @@ class P2PService:
         while events and now - events[0] > window:
             events.popleft()
         events.append(now)
-        self._sync_last_block_error = STALL_CACHE_LOOP
+        self._sync_last_cache_error_at = now
+        self._sync_last_cache_error_hash = block_hash
+        self._sync_last_block_error = STALL_CACHE_SHORT_CIRCUIT
         self._sync_last_block_error_at = now
-        self._sync_last_block_error_peer = "sync-cache"
         return False
 
     def _ensure_block_queue(self) -> int:
@@ -8649,6 +8707,8 @@ class P2PService:
         self._sync_last_header_response_at = now
         self._sync_last_progress_at = now
         peer.last_progress_at = now
+        peer.empty_header_responses = 0
+        peer.header_cooldown_until = 0.0
         peer.sync_successes += 1
         header_height = self._sync_best_header.height if self._sync_best_header else 0
         self._note_sync_progress(
@@ -8748,6 +8808,7 @@ class P2PService:
             self._sync_inflight_peers[h] = peer.remote
             self._sync_inflight_block_requests[h] = request
             requested.append(h)
+            self._record_block_attempt(peer, h)
             inflight_for_peer += 1
             height_hint = self._block_height_hint(h)
             if height_hint is not None:
@@ -8844,7 +8905,18 @@ class P2PService:
                 )
                 return 0
         next_block_height, next_block_hash = self._next_block_needed()
+        attempted_peers: set[str] = set()
+        if next_block_hash is not None:
+            attempted_peers = set(
+                self._sync_block_attempts_by_hash.get(next_block_hash, deque())
+            )
         if peer is None:
+            peer = self._select_block_peer(
+                needed_height=next_block_height,
+                require_anchored=self._should_enforce_checkpoint_anchor(),
+                avoid_remotes=attempted_peers,
+            )
+        if peer is None and attempted_peers:
             peer = self._select_block_peer(
                 needed_height=next_block_height,
                 require_anchored=self._should_enforce_checkpoint_anchor(),
@@ -9021,6 +9093,24 @@ class P2PService:
                     self._sync_phase = "IDLE"
                     log.debug("Sync idle: no eligible peers for headers")
                     return result
+
+            best_header_height = (
+                self._sync_best_header.height if self._sync_best_header else 0
+            )
+            if best_header_height > int(local_height or 0) and (
+                self._sync_block_queue or self._sync_inflight_blocks
+            ):
+                self._sync_phase = "BLOCKS"
+                log.debug(
+                    "Skipping header sync: blocks behind headers",
+                    extra={
+                        "best_header_height": best_header_height,
+                        "local_height": int(local_height or 0),
+                        "queued_blocks": len(self._sync_block_queue),
+                        "inflight_blocks": len(self._sync_inflight_blocks),
+                    },
+                )
+                return result
 
             self._stats["sync_rounds"] += 1
             self._sync_phase = "HEADERS"
@@ -9237,16 +9327,11 @@ class P2PService:
                                 self._penalize_peer(peer, "genesis_mismatch")
                                 tried_peers.add(peer.remote)
                             elif empty_reason == "headers_empty":
-                                peer.empty_header_responses += 1
+                                self._record_header_empty(peer)
                                 self._adjust_header_batch(
                                     success=False, reason="headers_empty"
                                 )
                                 self._penalize_peer(peer, "headers_empty", nonfatal=True)
-                                self._set_sync_backoff(
-                                    peer,
-                                    reason="headers_empty",
-                                    delay=self._sync_no_headers_backoff,
-                                )
                                 self._mark_peer_head_issue(
                                     peer,
                                     reason="headers_empty",
@@ -9302,11 +9387,6 @@ class P2PService:
                                     self._penalize_peer(
                                         peer, "headers_empty", nonfatal=True
                                     )
-                                    self._set_sync_backoff(
-                                        peer,
-                                        reason="headers_empty",
-                                        delay=self._sync_no_headers_backoff,
-                                    )
                                 tried_peers.add(peer.remote)
                                 no_headers_responses += 1
                             elif empty_reason == "stale_network_best":
@@ -9344,6 +9424,7 @@ class P2PService:
 
                     saw_headers = True
                     peer.empty_header_responses = 0
+                    peer.header_cooldown_until = 0.0
                     order, header_error, discard_reason_counts = self._process_headers(
                         peer, headers
                     )
@@ -9508,6 +9589,16 @@ class P2PService:
                     self._sync_kick(
                         reason="headers_empty_all_peers", aggressive=True
                     )
+                if (
+                    self._sync_last_header_error == "headers_empty"
+                    and time.time() - self._sync_last_header_at > self._sync_stall_timeout
+                ):
+                    self._sync_block_stalled_reason = STALL_HEADERS_EMPTY_LOOP
+                    self._sync_last_block_error = STALL_HEADERS_EMPTY_LOOP
+                    self._sync_last_block_error_at = time.time()
+                    self._sync_kick(
+                        reason="stall:headers_empty_loop", aggressive=True
+                    )
             if best_header_height > local_height:
                 self._sync_phase = "SYNCING"
                 if self._should_defer_blocks_for_checkpoint(best_header_height):
@@ -9653,6 +9744,25 @@ class P2PService:
                 # This is especially important when peers have handshake_pending status
                 if now - self._sync_last_progress_at > self._sync_stall_timeout / 2:
                     self._discard_blocks_from_ineligible_peers()
+
+                next_block_height, next_block_hash = self._next_block_needed()
+                if next_block_hash != self._sync_next_block_stable_hash:
+                    self._sync_next_block_stable_hash = next_block_hash
+                    self._sync_next_block_stable_since = now
+                elif (
+                    next_block_hash is not None
+                    and best_header_height > best_block_height
+                    and not self._sync_inflight_blocks
+                    and not self._sync_block_buffer
+                    and now - self._sync_next_block_stable_since > self._sync_stall_timeout
+                ):
+                    if self._sync_block_stalled_reason != STALL_BLOCK_NOT_ADVANCING:
+                        self._sync_block_stalled_reason = STALL_BLOCK_NOT_ADVANCING
+                        self._sync_last_block_error = STALL_BLOCK_NOT_ADVANCING
+                        self._sync_last_block_error_at = now
+                        self._sync_kick(
+                            reason="stall:block_not_advancing", aggressive=True
+                        )
                 
                 self._maybe_mark_block_stalled(now)
                 self._sync_watchdog_check(
@@ -9995,6 +10105,7 @@ class P2PService:
         *,
         now: Optional[float] = None,
         ignore_backoff_reason: Optional[str] = None,
+        enforce_header_cooldown: bool = True,
     ) -> tuple[bool, str]:
         now = time.time() if now is None else now
         if peer.remote in FORCE_SYNC_HEADER_PEERS:
@@ -10007,6 +10118,8 @@ class P2PService:
             return False, "peer_id_missing"
         if not peer.ready_for_sync:
             return False, "not_ready"
+        if enforce_header_cooldown and peer.header_cooldown_until > now:
+            return False, "headers_cooldown"
         if self._is_self_address(
             self._extract_host(peer.remote), self._extract_port(peer.remote) or 0
         ):
@@ -10099,7 +10212,12 @@ class P2PService:
         self, peer: _PeerState, *, now: Optional[float] = None
     ) -> tuple[bool, str]:
         now = time.time() if now is None else now
-        ok, reason = self._sync_peer_eligibility(peer, now=now)
+        ok, reason = self._sync_peer_eligibility(
+            peer,
+            now=now,
+            ignore_backoff_reason="headers_empty",
+            enforce_header_cooldown=False,
+        )
         if not ok:
             return False, reason
         if peer.block_cooldown_until and peer.block_cooldown_until > now:
@@ -10131,6 +10249,33 @@ class P2PService:
         self._sync_block_peer_backoff[key] = until
         self._sync_block_peer_backoff_reason[key] = reason
 
+    def _record_header_empty(self, peer: _PeerState) -> None:
+        peer.empty_header_responses += 1
+        now = time.time()
+        failures = max(1, peer.empty_header_responses)
+        cooldown = min(
+            self._sync_header_empty_cooldown_base_s * (2 ** (failures - 1)),
+            self._sync_header_empty_cooldown_cap_s,
+        )
+        if cooldown > 0:
+            peer.header_cooldown_until = max(peer.header_cooldown_until, now + cooldown)
+        log.info(
+            "Header peer cooldown applied",
+            extra={
+                "remote": peer.remote,
+                "failures": failures,
+                "cooldown_s": round(cooldown, 2),
+            },
+        )
+
+    def _record_block_attempt(self, peer: _PeerState, block_hash: bytes) -> None:
+        history = self._sync_block_attempts_by_hash.setdefault(
+            block_hash, deque(maxlen=self._sync_block_attempts_cap)
+        )
+        if peer.remote in history:
+            return
+        history.append(peer.remote)
+
     def _record_block_failure(self, peer: Optional[_PeerState], *, reason: str) -> None:
         if peer is None:
             return
@@ -10143,7 +10288,10 @@ class P2PService:
         failures = len(events)
         peer.block_failures = failures
         peer.last_block_failure_at = now
-        cooldown = min(self._sync_block_cooldown_base_s * failures, self._sync_block_cooldown_cap_s)
+        cooldown = min(
+            self._sync_block_cooldown_base_s * (2 ** (failures - 1)),
+            self._sync_block_cooldown_cap_s,
+        )
         if cooldown > 0:
             peer.block_cooldown_until = max(peer.block_cooldown_until, now + cooldown)
         log.info(
@@ -10448,8 +10596,16 @@ class P2PService:
             netgroup_penalty = 1 if avoid_netgroup and p.netgroup == avoid_netgroup else 0
             sync_score = self._peer_sync_score(p)
             non_broadcasting_penalty = -5.0 if non_broadcasting else 0.0
+            recent_header_bonus = (
+                1.0
+                if p.broadcast.last_head_advancement_at
+                and now - p.broadcast.last_head_advancement_at
+                <= self._sync_peer_broadcast_recent_sec
+                else 0.0
+            )
             score = (
                 broadcast_score,
+                recent_header_bonus,
                 non_broadcasting_penalty,
                 outbound_bonus,
                 *sync_score,
@@ -10471,6 +10627,7 @@ class P2PService:
         *,
         needed_height: Optional[int] = None,
         require_anchored: bool = False,
+        avoid_remotes: Optional[set[str]] = None,
     ) -> Optional[_PeerState]:
         eligible, _ = self._eligible_block_peers()
         if require_anchored:
@@ -10479,9 +10636,12 @@ class P2PService:
                 eligible = anchored
         if not eligible:
             return None
+        avoid_remotes = avoid_remotes or set()
         
         # Prioritize force peers (those in FORCE_SYNC_HEADER_PEERS)
-        force_peers = [p for p in eligible if p.remote in FORCE_SYNC_HEADER_PEERS]
+        force_peers = [
+            p for p in eligible if p.remote in FORCE_SYNC_HEADER_PEERS and p.remote not in avoid_remotes
+        ]
         if force_peers:
             # Check if any force peer has the needed height
             now = time.time()
@@ -10505,6 +10665,8 @@ class P2PService:
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
         for peer in eligible:
+            if peer.remote in avoid_remotes:
+                continue
             if require_anchored and not self._peer_is_anchored(peer):
                 continue
             info = self._sync_peer_heads.get(peer.remote)
@@ -11427,10 +11589,18 @@ class P2PService:
     def _header_cooldown_snapshot(self) -> tuple[int, Optional[float]]:
         now = time.time()
         expiries = [
-            until
-            for remote, until in self._sync_peer_backoff.items()
-            if until > now and self._sync_peer_backoff_reason.get(remote) == "not_anchored"
+            peer.header_cooldown_until
+            for peer in self._peers.values()
+            if peer.header_cooldown_until and peer.header_cooldown_until > now
         ]
+        expiries.extend(
+            [
+                until
+                for remote, until in self._sync_peer_backoff.items()
+                if until > now
+                and self._sync_peer_backoff_reason.get(remote) == "not_anchored"
+            ]
+        )
         if not expiries:
             return 0, None
         return len(expiries), min(expiries)
