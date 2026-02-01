@@ -1390,6 +1390,8 @@ class P2PService:
         self._sync_last_anchor_check: Optional[dict[str, Any]] = None
         self._sync_headers_accepted_total = 0
         self._sync_headers_seen_total = 0
+        self._sync_zero_accept_batches = 0
+        self._sync_zero_accept_last_at = 0.0
         self._sync_last_block_request_at = 0.0
         self._sync_last_block_response_at = 0.0
         self._sync_last_block_download_at = 0.0
@@ -1477,6 +1479,12 @@ class P2PService:
         )
         self._sync_request_timeout = float(
             os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "15.0") or 15.0  # Increased from 10.0 for much larger batches
+        )
+        self._sync_header_watchdog_timeout = float(
+            os.environ.get("ANIMICA_P2P_HEADER_REQ_TIMEOUT", "10.0") or 10.0
+        )
+        self._sync_zero_accept_threshold = int(
+            os.environ.get("ANIMICA_P2P_HEADERS_NO_PROGRESS_THRESHOLD", "2") or 2
         )
         self._sync_peer_penalty_threshold = int(
             os.environ.get("ANIMICA_P2P_SYNC_PENALTY_THRESHOLD", "6") or 6
@@ -4334,6 +4342,21 @@ class P2PService:
             self._sync_inflight_headers
             and now - self._sync_last_progress_at > max(1.0, self._sync_request_timeout)
         ):
+            self._expire_inflight_headers()
+        if (
+            self._sync_inflight_headers
+            and self._sync_last_header_request_at
+            and now - self._sync_last_header_request_at
+            > max(1.0, self._sync_header_watchdog_timeout)
+        ):
+            log.warning(
+                "Header request watchdog triggered",
+                extra={
+                    "inflight_headers": int(self._sync_inflight_headers),
+                    "age_s": round(now - self._sync_last_header_request_at, 3),
+                    "timeout_s": self._sync_header_watchdog_timeout,
+                },
+            )
             self._expire_inflight_headers()
 
         if target_height is not None and int(target_height) > best_block_height + 2:
@@ -8592,6 +8615,8 @@ class P2PService:
             )
             return None
         finally:
+            if peer.pending_headers is fut:
+                peer.pending_headers = None
             self._clear_header_request(peer)
             self._sync_active_header_peer = None
         self._sync_last_header_response_at = time.time()
@@ -8650,17 +8675,17 @@ class P2PService:
             request_start_height=int(self._sync_checkpoint_height),
         )
         if probe_headers is None:
-            return False
+            return True
         if not probe_headers:
             self._note_not_anchored_probe(peer, reason="checkpoint_empty")
-            return False
+            return True
         probe_header = self._header_from_compact(probe_headers[0])
         if (
             probe_header.parent_hash != self._sync_checkpoint_hash
             or probe_header.height != int(self._sync_checkpoint_height) + 1
         ):
             self._note_not_anchored_probe(peer, reason="checkpoint_mismatch")
-            return False
+            return True
         self._mark_peer_anchored(peer, reason="checkpoint_verified")
         return True
 
@@ -9814,6 +9839,18 @@ class P2PService:
                     saw_headers = True
                     peer.empty_header_responses = 0
                     peer.header_cooldown_until = 0.0
+                    response_info = self._headers_debug_info(headers)
+                    self._sync_last_header_response_at = time.time()
+                    self._sync_last_header_response_peer = peer.remote
+                    self._sync_last_header_response_count = len(headers)
+                    log.debug(
+                        "Processing headers batch",
+                        extra={
+                            "remote": peer.remote,
+                            "peer_id": peer.peer_id,
+                            **response_info,
+                        },
+                    )
                     order, header_error, discard_reason_counts = self._process_headers(
                         peer, headers
                     )
@@ -9883,6 +9920,51 @@ class P2PService:
                         )
                         tried_peers.add(peer.remote)
                         rotate_peer = True
+                    if accepted_count > 0:
+                        self._sync_zero_accept_batches = 0
+                    elif headers:
+                        self._sync_zero_accept_batches += 1
+                        self._sync_zero_accept_last_at = time.time()
+                        if (
+                            self._sync_zero_accept_batches
+                            >= max(1, self._sync_zero_accept_threshold)
+                            and header_error != "invalid_headers"
+                            and not all_known
+                        ):
+                            anchor_height, anchor_hash_hex = self._local_head()
+                            anchor_hash = self._parse_hash_bytes(anchor_hash_hex)
+                            locator = self._build_headers_locator()
+                            if not locator:
+                                fallback = self._genesis_hash()
+                                if fallback:
+                                    locator = [fallback]
+                            log.warning(
+                                "No header progress; rotating peer and retrying",
+                                extra={
+                                    "remote": peer.remote,
+                                    "batch_count": len(headers),
+                                    "zero_accept_batches": self._sync_zero_accept_batches,
+                                    "discard_reasons": discard_reason_counts,
+                                },
+                            )
+                            self._adjust_header_batch(
+                                success=False, reason="no_progress_headers"
+                            )
+                            self._sync_last_header_error = "no_progress_headers"
+                            self._sync_last_header_error_at = time.time()
+                            self._sync_last_header_error_peer = peer.remote
+                            self._enqueue_header_retry(
+                                peer=peer,
+                                locator=locator,
+                                locator_mode="no_progress_headers",
+                                anchor_height=int(anchor_height or 0),
+                                anchor_hash=anchor_hash,
+                                request_start_height=int(anchor_height or 0) + 1,
+                                max_headers=self._sync_headers_batch_current,
+                                reason="no_progress_headers",
+                            )
+                            tried_peers.add(peer.remote)
+                            rotate_peer = True
                     if accepted_count > 0:
                         self._reset_duplicate_header_range(peer)
                     elif all_known and headers:
@@ -10527,6 +10609,8 @@ class P2PService:
             if reason == "not_anchored" and peer.anchored:
                 self._sync_peer_backoff.pop(backoff_key, None)
                 self._sync_peer_backoff_reason.pop(backoff_key, None)
+            elif reason == "not_anchored":
+                return True, "not_anchored"
             elif ignore_backoff_reason != reason:
                 return False, reason
         version = str(peer.hello.get("version") or "")
@@ -11636,28 +11720,32 @@ class P2PService:
         if not self._sync_inflight_header_requests:
             return
         now = time.monotonic()
-        expired: list[tuple[str, str]] = [
-            key
-            for key, request in list(self._sync_inflight_header_requests.items())
-            if now >= request.deadline_at
-        ]
+        watchdog_timeout = max(1.0, float(self._sync_header_watchdog_timeout))
+        expired: list[tuple[str, str]] = []
+        for key, request in list(self._sync_inflight_header_requests.items()):
+            age_s = now - request.started_at
+            if now >= request.deadline_at or age_s >= watchdog_timeout:
+                expired.append(key)
         for remote, request_id in expired:
             request = self._sync_inflight_header_requests.pop((remote, request_id), None)
             peer = self._peer_by_remote(remote)
+            timeout_reason = "headers_timeout"
+            if request is not None and now - request.started_at >= watchdog_timeout:
+                timeout_reason = "headers_watchdog_timeout"
             if peer and peer.pending_header_request_id == request_id:
                 peer.pending_header_request_id = None
                 fut = peer.pending_headers
                 peer.pending_headers = None
                 if fut is not None and not fut.done():
                     fut.set_result(None)
-                self._penalize_peer(peer, "headers_timeout", nonfatal=True)
+                self._penalize_peer(peer, timeout_reason, nonfatal=True)
                 peer.sync_timeouts += 1
-                self._set_sync_backoff(peer, reason="headers_timeout", delay=5.0)
+                self._set_sync_backoff(peer, reason=timeout_reason, delay=5.0)
                 if request is not None:
                     request.retry_count += 1
                     self._sync_header_retry_queue.append(request)
                     self._stats["headers_req_timeout"] += 1
-                    self._mark_peer_head_issue(peer, reason="headers_timeout")
+                    self._mark_peer_head_issue(peer, reason=timeout_reason)
                     log.warning(
                         "Header request expired",
                         extra={
@@ -11665,6 +11753,7 @@ class P2PService:
                             "peer": request.peer_id,
                             "kind": request.kind,
                             "age_s": round(now - request.started_at, 3),
+                            "timeout_reason": timeout_reason,
                             "retry_count": request.retry_count,
                             "start_height": request.start_height,
                             "count": request.count,
@@ -11725,6 +11814,8 @@ class P2PService:
         self._sync_last_headers_discard_reason_counts = {}
         self._sync_headers_accepted_total = 0
         self._sync_headers_seen_total = 0
+        self._sync_zero_accept_batches = 0
+        self._sync_zero_accept_last_at = 0.0
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
