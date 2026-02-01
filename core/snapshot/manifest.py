@@ -52,7 +52,6 @@ class SnapshotManifest:
     chunks: list[SnapshotChunk]
     db_engine: Optional[str] = None
     db_version: Optional[str] = None
-    state_root: Optional[str] = None
     signature: Optional[dict[str, Any]] = None
 
     @classmethod
@@ -75,7 +74,6 @@ class SnapshotManifest:
             chunks=chunks,
             db_engine=data.get("db_engine"),
             db_version=data.get("db_version"),
-            state_root=data.get("state_root"),
             signature=data.get("signature"),
         )
 
@@ -91,7 +89,6 @@ class SnapshotManifest:
             "chunks": [chunk.to_dict() for chunk in self.chunks],
             "db_engine": self.db_engine,
             "db_version": self.db_version,
-            "state_root": self.state_root,
         }
         if self.signature:
             payload["signature"] = self.signature
@@ -122,3 +119,4 @@ def select_best_manifest(manifests: Iterable[SnapshotManifest]) -> Optional[Snap
         return (item.head_height, item.created_at or "")
 
     return max(candidates, key=sort_key)
+
