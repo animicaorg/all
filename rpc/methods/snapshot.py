@@ -136,7 +136,6 @@ def snapshot_list(chain_id: int | None = None, include_peers: bool = False) -> d
                     "chain_id": entry.chain_id,
                     "checkpoint_height": entry.checkpoint_height,
                     "checkpoint_hash": entry.checkpoint_hash,
-                    "state_root": entry.state_root,
                     "timestamp": entry.timestamp,
                     "created_at": entry.created_at,
                     "manifest_hash": entry.manifest_hash,

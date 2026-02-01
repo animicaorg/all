@@ -25,10 +25,9 @@ class SnapshotEntry:
     path: str
     path_display: str
     chunks: list[dict[str, Any]]
-    state_root: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
-        payload = {
+        return {
             "chain_id": self.chain_id,
             "checkpoint_height": self.checkpoint_height,
             "checkpoint_hash": self.checkpoint_hash,
@@ -42,9 +41,6 @@ class SnapshotEntry:
             "path_display": self.path_display,
             "chunks": list(self.chunks),
         }
-        if self.state_root:
-            payload["state_root"] = self.state_root
-        return payload
 
 
 def _inventory_path(snapshots_dir: Path) -> Path:
@@ -80,7 +76,6 @@ def _manifest_entry(
     accounts_count = int(manifest_data.get("accounts_count") or 0)
     timestamp = int(manifest_data.get("timestamp") or 0)
     created_at = str(manifest_data.get("created_at") or "")
-    state_root = manifest_data.get("state_root")
     chunks = list(manifest_data.get("chunks") or [])
     total_size = int(
         manifest_data.get("total_size")
@@ -103,7 +98,6 @@ def _manifest_entry(
         path=str(snapshot_dir),
         path_display=snapshot_path_display(snapshot_dir, data_dir=data_dir),
         chunks=chunks,
-        state_root=state_root,
     )
 
 
@@ -133,7 +127,6 @@ def read_inventory(snapshots_dir: Optional[Path] = None) -> list[SnapshotEntry]:
                     path=str(item.get("path") or ""),
                     path_display=str(item.get("path_display") or item.get("path") or ""),
                     chunks=list(item.get("chunks") or []),
-                    state_root=item.get("state_root"),
                 )
             )
         except Exception:

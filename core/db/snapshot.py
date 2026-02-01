@@ -42,7 +42,6 @@ from .block_db import (
     META_HEAD_HASH,
     META_HEAD_HEIGHT,
     _from_u64be,
-    header_hash,
 )
 from .state_db import StateDB, PFX_ACC, PFX_CODE, PFX_STO
 
@@ -158,9 +157,6 @@ def export_snapshot(
         code_contracts_count=0,
         compressed=compress,
     )
-    checkpoint_header = block_db.get_header_by_hash(checkpoint_hash_bytes)
-    if checkpoint_header is not None:
-        manifest.state_root = _hex(checkpoint_header.stateRoot)
     manifest.db_engine = type(block_db.kv).__name__ if hasattr(block_db, "kv") else None
     manifest.db_version = getattr(block_db.kv, "version", None)
 
@@ -406,28 +402,8 @@ def import_snapshot(
         else:
             _log.warning(f"Unknown chunk type: {chunk_info['type']}")
 
-    checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
-    checkpoint_header = block_db.get_header_by_hash(checkpoint_hash_bytes)
-    if checkpoint_header is None:
-        header_by_height = block_db.get_header_by_height(manifest.checkpoint_height)
-        if header_by_height is None:
-            raise ValueError("Snapshot missing checkpoint header")
-        computed_hash = header_hash(header_by_height)
-        if computed_hash != checkpoint_hash_bytes:
-            raise ValueError(
-                f"Checkpoint hash mismatch: expected {manifest.checkpoint_hash} "
-                f"got {_hex(computed_hash)}"
-            )
-        checkpoint_header = header_by_height
-    if manifest.state_root:
-        expected_state_root = _hex(checkpoint_header.stateRoot)
-        if manifest.state_root != expected_state_root:
-            raise ValueError(
-                f"Checkpoint state root mismatch: expected {manifest.state_root} "
-                f"got {expected_state_root}"
-            )
-
     # Update block DB head to checkpoint
+    checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
     block_db.set_head(manifest.checkpoint_height, checkpoint_hash_bytes)
 
     _log.info(
