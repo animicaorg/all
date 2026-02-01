@@ -1600,6 +1600,18 @@ class P2PService:
         self._last_bootstrap_error: Optional[dict[str, Any]] = None
         self._last_peer_connect_at: Optional[float] = None
         self._last_peer_disconnect_at: Optional[float] = None
+        self._no_peers_since: Optional[float] = None
+        self._no_peers_last_log_at: float = 0.0
+        self._no_peers_grace_s = float(
+            os.environ.get("ANIMICA_P2P_NO_PEERS_GRACE", "30") or 30
+        )
+        self._no_peers_log_interval_s = float(
+            os.environ.get("ANIMICA_P2P_NO_PEERS_LOG_INTERVAL", "60") or 60
+        )
+        self._disconnect_reason_window_s = float(
+            os.environ.get("ANIMICA_P2P_DISCONNECT_REASON_WINDOW", "600") or 600
+        )
+        self._disconnect_reason_events: Deque[tuple[float, str]] = deque()
         self._invalid_seed_addrs: set[str] = set()
 
         class _Metrics:
@@ -2625,6 +2637,34 @@ class P2PService:
         try:
             while self._running:
                 await asyncio.sleep(60.0)
+                now = time.time()
+                peer_count = self._peer_registry.peer_count()
+                if peer_count == 0:
+                    if self._no_peers_since is None:
+                        self._no_peers_since = now
+                    elapsed = now - self._no_peers_since
+                    if (
+                        elapsed >= self._no_peers_grace_s
+                        and now - self._no_peers_last_log_at >= self._no_peers_log_interval_s
+                    ):
+                        self._no_peers_last_log_at = now
+                        self._seeding_mode = True
+                        self._dial_backoff.clear()
+                        self._dial_inflight.clear()
+                        if self.seeds:
+                            self._seed_peerstore(self.seeds)
+                        self._sync_wakeup.set()
+                        log.warning(
+                            "NO_PEERS: retrying seed/dial cycle",
+                            extra={
+                                "peer_count": peer_count,
+                                "no_peers_for_s": round(elapsed, 2),
+                                "disconnect_reasons": self._disconnect_reason_top(),
+                                "seed_count": len(self.seeds),
+                            },
+                        )
+                else:
+                    self._no_peers_since = None
                 addrman_size = self._addrman.size()
                 learned_1m = self._addr_events_last_minute(self._addr_learned_events)
                 announced_1m = self._addr_events_last_minute(self._addr_announced_events)
@@ -2700,6 +2740,24 @@ class P2PService:
         window = max(1.0, self._sync_metrics_window_s)
         total_bytes = sum(size for _, size in self._sync_metrics_bytes_received_events)
         return total_bytes / window
+
+    def _prune_disconnect_reasons(self, now: float) -> None:
+        window = max(1.0, self._disconnect_reason_window_s)
+        while self._disconnect_reason_events and now - self._disconnect_reason_events[0][0] > window:
+            self._disconnect_reason_events.popleft()
+
+    def _record_disconnect_reason(self, reason: str) -> None:
+        now = time.time()
+        self._disconnect_reason_events.append((now, reason))
+        self._prune_disconnect_reasons(now)
+
+    def _disconnect_reason_top(self, *, limit: int = 5) -> list[tuple[str, int]]:
+        now = time.time()
+        self._prune_disconnect_reasons(now)
+        counts: dict[str, int] = {}
+        for _, reason in self._disconnect_reason_events:
+            counts[reason] = counts.get(reason, 0) + 1
+        return sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
 
     def record_snapshot_metrics(
         self,
@@ -5472,6 +5530,15 @@ class P2PService:
             netgroup=netgroup,
         )
 
+        log.info(
+            "Peer TCP connected",
+            extra={
+                "remote": remote,
+                "direction": direction,
+                "stage": "tcp_connected",
+            },
+        )
+
         async with self._peer_lock:
             self._peers[self._peer_key(remote, direction)] = peer
             self._peers_by_session[peer.session_id] = peer
@@ -5578,6 +5645,7 @@ class P2PService:
                 self.peerstore.record_disconnection(peer.peer_id, reason=reason)
 
         uptime = time.time() - peer.connected_at if peer.connected_at else 0.0
+        self._record_disconnect_reason(reason)
         log.info(
             "Peer disconnected",
             extra={
@@ -5700,6 +5768,14 @@ class P2PService:
             capabilities=["tx", "blocks", "sync"],
             timestamp=int(time.time()),
             network_best_height=network_best,
+        )
+        log.info(
+            "Handshake sent",
+            extra={
+                "remote": peer.remote,
+                "direction": peer.direction,
+                "stage": "handshake_sent",
+            },
         )
         await self._send(peer, MsgID.HELLO, hello)
 
@@ -5888,6 +5964,15 @@ class P2PService:
         data = self._decode_map(payload)
         allowed = set(Hello.__dataclass_fields__)
         hello = Hello(**{k: v for k, v in data.items() if k in allowed})
+        log.info(
+            "Handshake received",
+            extra={
+                "remote": peer.remote,
+                "direction": peer.direction,
+                "stage": "handshake_received",
+            },
+        )
+        missing_fields: list[str] = []
 
         def _hash_bytes(value: Any) -> bytes:
             parsed = self._parse_hash_bytes(value)
@@ -5982,31 +6067,14 @@ class P2PService:
                 },
             )
 
-        if not getattr(hello, "fork_id", None):
-            self._log_handshake_mismatch(
-                peer,
-                reason="fork_id_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_fork_id=getattr(hello, "fork_id", None),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="fork_id_missing"),
-            )
-            raise PeerMisbehavior(
-                "fork_id_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if int(getattr(hello, "fork_id", 0) or 0) != int(self._fork_id()):
+        peer_fork_id = int(getattr(hello, "fork_id", 0) or 0)
+        if peer_fork_id and peer_fork_id != int(self._fork_id()):
             self._log_handshake_mismatch(
                 peer,
                 reason="fork_id_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_fork_id=int(getattr(hello, "fork_id", 0) or 0),
+                peer_fork_id=peer_fork_id,
             )
             await self._send(
                 peer,
@@ -6017,32 +6085,17 @@ class P2PService:
                 "fork_id_mismatch",
                 points=self._score_points["wrong_chain"],
             )
+        if not peer_fork_id:
+            missing_fields.append("fork_id")
 
-        if not getattr(hello, "consensus_id", None):
-            self._log_handshake_mismatch(
-                peer,
-                reason="consensus_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_consensus_id=getattr(hello, "consensus_id", None),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="consensus_missing"),
-            )
-            raise PeerMisbehavior(
-                "consensus_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if str(getattr(hello, "consensus_id", "")) != str(self._consensus_id()):
+        peer_consensus_id = str(getattr(hello, "consensus_id", "") or "")
+        if peer_consensus_id and peer_consensus_id != str(self._consensus_id()):
             self._log_handshake_mismatch(
                 peer,
                 reason="consensus_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_consensus_id=str(getattr(hello, "consensus_id", "")),
+                peer_consensus_id=peer_consensus_id,
             )
             await self._send(
                 peer,
@@ -6053,32 +6106,17 @@ class P2PService:
                 "consensus_mismatch",
                 points=self._score_points["wrong_chain"],
             )
+        if not peer_consensus_id:
+            missing_fields.append("consensus_id")
 
-        if not getattr(hello, "protocol_version", None):
-            self._log_handshake_mismatch(
-                peer,
-                reason="protocol_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_protocol_version=getattr(hello, "protocol_version", None),
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="protocol_missing"),
-            )
-            raise PeerMisbehavior(
-                "protocol_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if str(getattr(hello, "protocol_version", "")) != str(self._protocol_version()):
+        peer_protocol_version = str(getattr(hello, "protocol_version", "") or "")
+        if peer_protocol_version and peer_protocol_version != str(self._protocol_version()):
             self._log_handshake_mismatch(
                 peer,
                 reason="protocol_mismatch",
                 peer_chain_id=int(hello.chain_id or 0),
                 peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_protocol_version=str(getattr(hello, "protocol_version", "")),
+                peer_protocol_version=peer_protocol_version,
             )
             await self._send(
                 peer,
@@ -6089,6 +6127,8 @@ class P2PService:
                 "protocol_mismatch",
                 points=self._score_points["wrong_chain"],
             )
+        if not peer_protocol_version:
+            missing_fields.append("protocol_version")
 
         local_repo_state = self._repo_state
         peer_repo_state = str(
@@ -6125,24 +6165,7 @@ class P2PService:
             peer.repo_state_ok = True
 
         peer_genesis_identity = _hash_bytes(getattr(hello, "genesis_identity", None))
-        if not peer_genesis_identity:
-            self._log_handshake_mismatch(
-                peer,
-                reason="genesis_identity_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="genesis_identity_missing"),
-            )
-            raise PeerMisbehavior(
-                "genesis_identity_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if peer_genesis_identity != self._genesis_identity():
+        if peer_genesis_identity and peer_genesis_identity != self._genesis_identity():
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_identity_mismatch",
@@ -6159,29 +6182,13 @@ class P2PService:
                 "genesis_identity_mismatch",
                 points=self._score_points["wrong_chain"],
             )
+        if not peer_genesis_identity:
+            missing_fields.append("genesis_identity")
 
         peer_network_params_hash = _hash_bytes(
             getattr(hello, "network_params_hash", None)
         )
-        if not peer_network_params_hash:
-            self._log_handshake_mismatch(
-                peer,
-                reason="network_params_missing",
-                peer_chain_id=int(hello.chain_id or 0),
-                peer_genesis_hash=peer_genesis_header or peer_genesis_block or b"",
-                peer_genesis_identity=peer_genesis_identity,
-            )
-            await self._send(
-                peer,
-                MsgID.HELLO_ACK,
-                HelloAck(accepted=False, reason="network_params_missing"),
-            )
-            raise PeerMisbehavior(
-                "network_params_missing",
-                points=self._score_points["wrong_chain"],
-            )
-
-        if peer_network_params_hash != self._network_params_hash():
+        if peer_network_params_hash and peer_network_params_hash != self._network_params_hash():
             self._log_handshake_mismatch(
                 peer,
                 reason="network_params_mismatch",
@@ -6198,6 +6205,19 @@ class P2PService:
             raise PeerMisbehavior(
                 "network_params_mismatch",
                 points=self._score_points["wrong_chain"],
+            )
+        if not peer_network_params_hash:
+            missing_fields.append("network_params_hash")
+
+        if missing_fields:
+            log.info(
+                "Legacy handshake missing fields",
+                extra={
+                    "remote": peer.remote,
+                    "direction": peer.direction,
+                    "missing_fields": missing_fields,
+                    "stage": "handshake_legacy",
+                },
             )
 
         if hello.version and str(hello.version) not in {"1", "2"}:
@@ -6308,6 +6328,16 @@ class P2PService:
         )
         peer.hello = normalized
         peer.hello_done.set()
+        log.info(
+            "Handshake verified",
+            extra={
+                "remote": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": peer.direction,
+                "stage": "handshake_verified",
+                "missing_fields": missing_fields or None,
+            },
+        )
         if normalized.get("head_height"):
             self._update_peer_head_table(
                 peer,
@@ -6418,6 +6448,15 @@ class P2PService:
             self.peerstore.record_connection(peer.peer_id)
             self.peerstore.update_head_height(peer.peer_id, int(normalized["head_height"]))
             self._schedule_peer_persist()
+            log.info(
+                "Peer added to peerstore",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id,
+                    "direction": peer.direction,
+                    "stage": "added_to_peerstore",
+                },
+            )
 
         await self._send(peer, MsgID.HELLO_ACK, HelloAck(accepted=True, reason=None))
         self._sync_wakeup.set()
@@ -10550,31 +10589,37 @@ class P2PService:
         elif genesis_block_hash:
             if genesis_block_hash != local_genesis_block:
                 return False, "genesis_mismatch"
+        missing_fields: list[str] = []
         fork_id = int(peer.hello.get("fork_id") or 0)
-        if not fork_id:
-            return False, "fork_id_missing"
-        if fork_id != int(self._fork_id()):
-            return False, "fork_id_mismatch"
+        if fork_id:
+            if fork_id != int(self._fork_id()):
+                return False, "fork_id_mismatch"
+        else:
+            missing_fields.append("fork_id")
         consensus_id = str(peer.hello.get("consensus_id") or "")
-        if not consensus_id:
-            return False, "consensus_missing"
-        if consensus_id != str(self._consensus_id()):
-            return False, "consensus_mismatch"
+        if consensus_id:
+            if consensus_id != str(self._consensus_id()):
+                return False, "consensus_mismatch"
+        else:
+            missing_fields.append("consensus_id")
         protocol_version = str(peer.hello.get("protocol_version") or "")
-        if not protocol_version:
-            return False, "protocol_missing"
-        if protocol_version != str(self._protocol_version()):
-            return False, "protocol_mismatch"
+        if protocol_version:
+            if protocol_version != str(self._protocol_version()):
+                return False, "protocol_mismatch"
+        else:
+            missing_fields.append("protocol_version")
         genesis_identity = bytes(peer.hello.get("genesis_identity") or b"")
-        if not genesis_identity:
-            return False, "genesis_identity_missing"
-        if genesis_identity != self._genesis_identity():
-            return False, "genesis_identity_mismatch"
+        if genesis_identity:
+            if genesis_identity != self._genesis_identity():
+                return False, "genesis_identity_mismatch"
+        else:
+            missing_fields.append("genesis_identity")
         params_hash = bytes(peer.hello.get("network_params_hash") or b"")
-        if not params_hash:
-            return False, "network_params_missing"
-        if params_hash != self._network_params_hash():
-            return False, "network_params_mismatch"
+        if params_hash:
+            if params_hash != self._network_params_hash():
+                return False, "network_params_mismatch"
+        else:
+            missing_fields.append("network_params_hash")
         if not self._peer_head_matches_known_chain(peer):
             log.debug(
                 "Peer head hash mismatch (non-fatal)",
@@ -10592,6 +10637,8 @@ class P2PService:
                     return False, "no_sync_capability"
         elif head_height <= 0:
             return False, "no_chain_data"
+        if missing_fields:
+            return True, "legacy_handshake"
         return True, "eligible"
 
     def _block_peer_eligibility(
