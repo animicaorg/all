@@ -11,7 +11,12 @@ from core.chain.block_import import _theta_to_target, compute_header_hash
 from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
-from p2p.node.p2p_service import P2PService, _PeerState, _SyncRequest
+from p2p.node.p2p_service import (
+    STALL_CACHE_SHORT_CIRCUIT,
+    P2PService,
+    _PeerState,
+    _SyncRequest,
+)
 from p2p.tests import free_port, tcp_multiaddr
 from p2p.wire.messages import HeaderCompact
 
@@ -86,6 +91,20 @@ def _make_child_block(parent) -> Block:
 class _NullCache:
     def get_block(self, _block_hash: bytes) -> None:
         return None
+
+    def put_block(self, _block_hash: bytes, _raw: bytes, **_kwargs) -> None:
+        return None
+
+    def invalidate_block(self, _block_hash: bytes) -> None:
+        return None
+
+
+class _BadCache:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def get_block(self, _block_hash: bytes) -> bytes:
+        return self._payload
 
     def put_block(self, _block_hash: bytes, _raw: bytes, **_kwargs) -> None:
         return None
@@ -591,6 +610,9 @@ async def test_headers_empty_rotates_peer(tmp_path: Path) -> None:
     info = node._sync_peer_heads.get(peer_a.remote)
     assert info is not None
     assert info.cooldown_until > time.time()
+    assert peer_a.header_cooldown_until > time.time()
+    _eligible, ineligible = node._eligible_sync_peers()
+    assert ineligible.get(peer_a.remote) == "headers_cooldown"
 
 
 @pytest.mark.asyncio
@@ -751,6 +773,34 @@ async def test_cache_miss_requests_block(tmp_path: Path, monkeypatch: pytest.Mon
     requested = await node._schedule_block_requests()
     assert requested > 0
     assert node._sync_inflight_blocks
+
+
+@pytest.mark.asyncio
+async def test_cache_failure_does_not_set_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "cache-failure-no-peer")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "cache-failure-no-peer" / "p2p"),
+    )
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    child_hash = compute_header_hash(child_block.header)
+
+    node._sync_cache = _BadCache(b"bad-block-bytes")
+
+    async def _fake_import(_payload, origin_remote=None):
+        return False, "invalid_block"
+
+    node._import_block_payload = _fake_import  # type: ignore[assignment]
+
+    ok = await node._try_import_cached_block(child_hash)
+    assert not ok
+    assert node._sync_last_block_error == STALL_CACHE_SHORT_CIRCUIT
+    assert node._sync_last_block_error_peer is None
 
 
 @pytest.mark.asyncio
