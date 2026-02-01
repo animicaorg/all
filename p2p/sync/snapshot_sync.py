@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -85,6 +86,67 @@ def _select_best_snapshot(
         return (height, created_at, -size)
 
     return max(candidates, key=sort_key)
+
+
+def _parse_hex(value: Optional[str]) -> Optional[bytes]:
+    if not value:
+        return None
+    if isinstance(value, bytes):
+        return bytes(value)
+    text = str(value)
+    if text.startswith("0x"):
+        text = text[2:]
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        return None
+
+
+def _verify_snapshot_anchor(
+    block_db: Any,
+    *,
+    checkpoint_height: int,
+    checkpoint_hash: Optional[str],
+    state_root: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    if block_db is None:
+        return True, None
+
+    expected_hash = _parse_hex(checkpoint_hash)
+    local_hash = None
+    try:
+        local_hash = block_db.get_canonical_hash(checkpoint_height)
+    except Exception:
+        local_hash = None
+
+    if local_hash and expected_hash and local_hash != expected_hash:
+        return (
+            False,
+            "checkpoint hash mismatch with local canonical chain",
+        )
+
+    header = None
+    if local_hash:
+        try:
+            header = block_db.get_header_by_hash(local_hash)
+        except Exception:
+            header = None
+    elif expected_hash:
+        try:
+            header = block_db.get_header_by_hash(expected_hash)
+        except Exception:
+            header = None
+
+    if state_root and header:
+        local_state_root = "0x" + header.stateRoot.hex()
+        if local_state_root != state_root:
+            return False, "state_root mismatch with local header"
+        return True, None
+
+    if header and not state_root:
+        return False, "snapshot missing state_root for anchored header"
+
+    return True, None
 
 
 def _is_snapshot_sync_enabled() -> bool:
@@ -199,6 +261,7 @@ def _download_apply_manifest_snapshot_sync(
     manifest_url: str,
     db_uri: Optional[str],
     chain_id: int,
+    block_db: Optional[Any] = None,
     force: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     policy = _policy_for_chain(chain_id)
@@ -213,6 +276,15 @@ def _download_apply_manifest_snapshot_sync(
 
     if policy.require_signature and not policy.trusted_pubkeys:
         return False, "signature required but no trusted keys configured"
+
+    ok, error = _verify_snapshot_anchor(
+        block_db,
+        checkpoint_height=manifest.head_height,
+        checkpoint_hash=manifest.head_hash,
+        state_root=manifest.state_root,
+    )
+    if not ok:
+        return False, error
 
     ok, error = verify_manifest_signature(manifest, policy.trusted_pubkeys)
     if not ok:
@@ -299,6 +371,7 @@ async def try_snapshot_bootstrap(
                     manifest_url=manifest_url,
                     db_uri=db_uri,
                     chain_id=chain_id,
+                    block_db=block_db,
                     force=force,
                 )
                 if ok:
@@ -394,6 +467,7 @@ async def try_snapshot_bootstrap(
                 checkpoint_height=snapshot_height,
                 block_db=block_db,
                 state_db=state_db,
+                p2p_service=p2p_service,
                 db_uri=db_uri,
             )
 
@@ -600,6 +674,7 @@ async def _download_and_import_snapshot(
     checkpoint_height: int,
     block_db: Any,
     state_db: Any,
+    p2p_service: Optional[Any] = None,
     db_uri: Optional[str] = None,
 ) -> bool:
     """
@@ -640,11 +715,22 @@ async def _download_and_import_snapshot(
 
     source_path = Path(source_path)
 
+    ok, error = _verify_snapshot_anchor(
+        block_db,
+        checkpoint_height=int(manifest.get("checkpoint_height") or checkpoint_height),
+        checkpoint_hash=manifest.get("checkpoint_hash") or manifest.get("head_hash"),
+        state_root=manifest.get("state_root"),
+    )
+    if not ok:
+        _log.warning(f"Snapshot anchor verification failed: {error}")
+        return False
+
     # Check if snapshot is local or needs download
     if source_path.exists():
         # Local snapshot, import directly
         _log.info(f"Importing local snapshot from {source_path}")
         try:
+            install_start = time.perf_counter()
             if db_uri:
                 apply_snapshot_atomic(
                     source_path,
@@ -657,6 +743,10 @@ async def _download_and_import_snapshot(
                     state_db=state_db,
                     snapshot_dir=source_path,
                     verify_hashes=True,
+                )
+            if p2p_service is not None and hasattr(p2p_service, "record_snapshot_metrics"):
+                p2p_service.record_snapshot_metrics(
+                    install_seconds=time.perf_counter() - install_start
                 )
             return True
         except Exception as e:
@@ -682,6 +772,8 @@ async def _download_and_import_snapshot(
                 if not chunks:
                     raise RuntimeError("No chunks in manifest")
                 
+                total_bytes = 0
+                download_start = time.perf_counter()
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     for chunk_info in chunks:
                         chunk_name = chunk_info["name"]
@@ -742,6 +834,7 @@ async def _download_and_import_snapshot(
                         chunk_path = temp_dir / chunk_name
                         with open(chunk_path, "wb") as f:
                             f.write(chunk_content)
+                        total_bytes += len(chunk_content)
                         
                         _log.info(
                             f"Downloaded chunk {chunk_name}: "
@@ -750,6 +843,7 @@ async def _download_and_import_snapshot(
                 
                 # Now import the snapshot from temp directory
                 _log.info(f"Importing downloaded snapshot from {temp_dir}")
+                install_start = time.perf_counter()
                 if db_uri:
                     apply_snapshot_atomic(
                         temp_dir,
@@ -762,6 +856,13 @@ async def _download_and_import_snapshot(
                         state_db=state_db,
                         snapshot_dir=temp_dir,
                         verify_hashes=True,
+                    )
+                if p2p_service is not None and hasattr(p2p_service, "record_snapshot_metrics"):
+                    download_elapsed = max(time.perf_counter() - download_start, 0.001)
+                    download_mbps = (total_bytes * 8) / (download_elapsed * 1_000_000)
+                    p2p_service.record_snapshot_metrics(
+                        download_mbps=download_mbps,
+                        install_seconds=time.perf_counter() - install_start,
                     )
                 
                 _log.info("Successfully imported downloaded snapshot")
@@ -891,6 +992,8 @@ async def _download_and_import_snapshot_via_p2p(
                 valid, err = verify_chunk_hash(manifest_path, expected_manifest_hash)
                 if not valid:
                     _log.warning(f"Manifest hash mismatch: {err}")
+                    if hasattr(p2p_service, "penalize_peer"):
+                        p2p_service.penalize_peer(peer, "snapshot_manifest_hash_mismatch", points=10)
                     return False
 
             manifest_data = json.loads(manifest_blob.decode("utf-8"))
@@ -899,6 +1002,20 @@ async def _download_and_import_snapshot_via_p2p(
             ok, error = verify_manifest_signature(manifest, policy.trusted_pubkeys)
             if not ok and (policy.require_signature or policy.trusted_pubkeys):
                 _log.warning(f"Manifest signature invalid: {error}")
+                if hasattr(p2p_service, "penalize_peer"):
+                    p2p_service.penalize_peer(peer, "snapshot_manifest_signature_invalid", points=10)
+                return False
+
+            ok, error = _verify_snapshot_anchor(
+                block_db,
+                checkpoint_height=int(manifest_data.get("checkpoint_height") or checkpoint_height),
+                checkpoint_hash=manifest_data.get("checkpoint_hash") or manifest_data.get("head_hash"),
+                state_root=manifest_data.get("state_root"),
+            )
+            if not ok:
+                _log.warning(f"Snapshot anchor verification failed: {error}")
+                if hasattr(p2p_service, "penalize_peer"):
+                    p2p_service.penalize_peer(peer, "snapshot_anchor_mismatch", points=10)
                 return False
 
             chunks = manifest_data.get("chunks") or []
@@ -907,6 +1024,8 @@ async def _download_and_import_snapshot_via_p2p(
                 return False
 
             downloaded_chunks = []
+            total_bytes = 0
+            download_start = time.perf_counter()
             for chunk_info in chunks:
                 chunk_name = chunk_info.get("name")
                 if not chunk_name:
@@ -928,11 +1047,14 @@ async def _download_and_import_snapshot_via_p2p(
                     continue
                 chunk_path = temp_dir / chunk_name
                 chunk_path.write_bytes(chunk_data)
+                total_bytes += len(chunk_data)
                 expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
                 if expected_hash:
                     valid, err = verify_chunk_hash(chunk_path, expected_hash)
                     if not valid:
                         _log.warning(f"Chunk {chunk_name} failed hash check: {err}")
+                        if hasattr(p2p_service, "penalize_peer"):
+                            p2p_service.penalize_peer(peer, "snapshot_chunk_hash_mismatch", points=10)
                         return False
                 downloaded_chunks.append(chunk_name)
                 _log.info(f"Downloaded chunk {chunk_name}: {len(chunk_data)} bytes")
@@ -943,6 +1065,7 @@ async def _download_and_import_snapshot_via_p2p(
             
             # Import the snapshot
             _log.info(f"Importing downloaded snapshot from {temp_dir}")
+            install_start = time.perf_counter()
             if db_uri:
                 apply_snapshot_atomic(
                     temp_dir,
@@ -955,6 +1078,13 @@ async def _download_and_import_snapshot_via_p2p(
                     state_db=state_db,
                     snapshot_dir=temp_dir,
                     verify_hashes=True,
+                )
+            if hasattr(p2p_service, "record_snapshot_metrics"):
+                download_elapsed = max(time.perf_counter() - download_start, 0.001)
+                download_mbps = (total_bytes * 8) / (download_elapsed * 1_000_000)
+                p2p_service.record_snapshot_metrics(
+                    download_mbps=download_mbps,
+                    install_seconds=time.perf_counter() - install_start,
                 )
             
             _log.info("Successfully imported P2P downloaded snapshot")

@@ -44,8 +44,10 @@ class SnapshotConfig:
     # Storage settings
     data_dir: Optional[Path] = None
     max_snapshots: int = 10  # Keep last N snapshots
+    max_bytes: Optional[int] = None  # Optional size cap for snapshots directory
     min_disk_space_gb: float = 10.0  # Min free space before cleanup
-    
+    compress: bool = True
+
     # Sync settings
     sync_enabled: bool = True
     min_height_for_sync: int = 1000
@@ -61,12 +63,25 @@ class SnapshotConfig:
     @classmethod
     def from_env(cls) -> SnapshotConfig:
         """Load configuration from environment variables."""
+        max_keep_raw = os.getenv("ANIMICA_SNAPSHOT_MAX_KEEP") or os.getenv(
+            "ANIMICA_SNAPSHOT_KEEP"
+        )
+        max_keep = int(max_keep_raw) if max_keep_raw else 10
+        auto_enable_raw = os.getenv("ANIMICA_SNAPSHOT_ENABLE")
+        if auto_enable_raw is None:
+            auto_enable_raw = os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true")
+        compress_raw = os.getenv("ANIMICA_SNAPSHOT_COMPRESS", "true")
+        compress = str(compress_raw).lower() not in ("0", "false", "no", "off")
+        max_bytes_raw = os.getenv("ANIMICA_SNAPSHOT_MAX_BYTES")
+        max_bytes = int(max_bytes_raw) if max_bytes_raw else None
         return cls(
             interval=int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "2000")),
-            auto_create=os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true").lower() in ("true", "1", "yes"),
+            auto_create=str(auto_enable_raw).lower() in ("true", "1", "yes", "on"),
             data_dir=Path(os.getenv("ANIMICA_DATA_DIR", "~/.animica")).expanduser() if os.getenv("ANIMICA_DATA_DIR") else None,
-            max_snapshots=int(os.getenv("ANIMICA_SNAPSHOT_MAX_KEEP", "10")),
+            max_snapshots=max_keep,
+            max_bytes=max_bytes,
             min_disk_space_gb=float(os.getenv("ANIMICA_SNAPSHOT_MIN_DISK_GB", "10.0")),
+            compress=compress,
             sync_enabled=os.getenv("ANIMICA_SNAPSHOT_SYNC_ENABLED", "true").lower() in ("true", "1", "yes"),
             min_height_for_sync=int(os.getenv("ANIMICA_SNAPSHOT_MIN_HEIGHT", "1000")),
             health_check_interval=int(os.getenv("ANIMICA_SNAPSHOT_HEALTH_INTERVAL", "300")),
@@ -242,38 +257,42 @@ class SnapshotOrchestrator:
             snapshot_dir.mkdir(parents=True, exist_ok=True)
             
             # Export snapshot
-            result = await asyncio.to_thread(
+            manifest = await asyncio.to_thread(
                 export_snapshot,
                 block_db=self.block_db,
                 state_db=self.state_db,
                 checkpoint_height=height,
-                output_dir=str(snapshot_dir),
-                chain_id=self.chain_id,
-                compress=True,
+                output_dir=snapshot_dir,
+                compress=self.config.compress,
             )
             
             elapsed = time.perf_counter() - start_time
             
-            if result.get("success"):
-                _log.info(f"Snapshot created successfully at height {height} (elapsed: {elapsed:.1f}s)")
-                self.status.snapshots_created += 1
-                self.status.last_snapshot_height = height
-                self.status.last_snapshot_time = time.time()
-                upsert_snapshot(snapshot_dir, snapshots_dir=self.get_snapshots_dir())
-                
-                # Verify if configured
-                if self.config.verify_on_create:
-                    verified, error = await self.verify_snapshot(height)
-                    if not verified:
-                        _log.warning(f"Snapshot verification failed: {error}")
-                        self.status.warnings.append(f"Snapshot {height} verification failed: {error}")
-                
-                return True, None
-            else:
-                error = result.get("error", "Unknown error")
-                _log.error(f"Snapshot creation failed: {error}")
-                self.status.snapshots_failed += 1
-                return False, error
+            _log.info(
+                f"Snapshot created successfully at height {height} "
+                f"(elapsed: {elapsed:.1f}s)"
+            )
+            self.status.snapshots_created += 1
+            self.status.last_snapshot_height = height
+            self.status.last_snapshot_time = time.time()
+            upsert_snapshot(snapshot_dir, snapshots_dir=self.get_snapshots_dir())
+
+            if manifest.state_root is None:
+                _log.warning(
+                    "Snapshot manifest missing state_root",
+                    extra={"height": height},
+                )
+
+            # Verify if configured
+            if self.config.verify_on_create:
+                verified, error = await self.verify_snapshot(height)
+                if not verified:
+                    _log.warning(f"Snapshot verification failed: {error}")
+                    self.status.warnings.append(
+                        f"Snapshot {height} verification failed: {error}"
+                    )
+
+            return True, None
                 
         except Exception as e:
             error_msg = str(e)
@@ -299,16 +318,14 @@ class SnapshotOrchestrator:
             if not snapshot_dir.exists():
                 return False, f"Snapshot directory not found: {snapshot_dir}"
             
-            result = await asyncio.to_thread(
+            valid, errors = await asyncio.to_thread(
                 verify_snapshot,
-                snapshot_dir=str(snapshot_dir),
+                snapshot_dir=snapshot_dir,
             )
-            
-            if result.get("valid"):
+
+            if valid:
                 return True, None
-            else:
-                errors = result.get("errors", ["Unknown error"])
-                return False, "; ".join(errors)
+            return False, "; ".join(errors or ["Unknown error"])
                 
         except Exception as e:
             return False, str(e)
@@ -324,11 +341,25 @@ class SnapshotOrchestrator:
         """
         snapshots = self.list_snapshots()
         
-        if len(snapshots) <= self.config.max_snapshots:
+        if len(snapshots) <= self.config.max_snapshots and not self.config.max_bytes:
             return 0
-        
-        # Delete oldest snapshots beyond max_keep
-        to_delete = snapshots[self.config.max_snapshots:]
+
+        to_delete = []
+        if len(snapshots) > self.config.max_snapshots:
+            to_delete.extend(snapshots[self.config.max_snapshots :])
+
+        if self.config.max_bytes:
+            total_bytes = sum(int(snap.get("size_bytes", 0)) for snap in snapshots)
+            if total_bytes > self.config.max_bytes:
+                for snap in reversed(snapshots):
+                    if total_bytes <= self.config.max_bytes:
+                        break
+                    if snap in to_delete:
+                        total_bytes -= int(snap.get("size_bytes", 0))
+                        continue
+                    to_delete.append(snap)
+                    total_bytes -= int(snap.get("size_bytes", 0))
+
         deleted = 0
         
         for snapshot in to_delete:
