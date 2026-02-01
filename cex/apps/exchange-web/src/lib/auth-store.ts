@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
 
 interface AuthState {
   isAuthenticated: boolean;
