@@ -305,6 +305,7 @@ class SnapshotInfo:
     chain_id: ChainId
     checkpoint_height: Height
     checkpoint_hash: str  # hex string
+    state_root: str = ""  # hex string
     blocks_count: int
     accounts_count: int
     size_mb: float
@@ -318,6 +319,7 @@ class SnapshotInfo:
             "chain_id": self.chain_id,
             "checkpoint_height": self.checkpoint_height,
             "checkpoint_hash": self.checkpoint_hash,
+            "state_root": self.state_root,
             "blocks_count": self.blocks_count,
             "accounts_count": self.accounts_count,
             "size_mb": self.size_mb,

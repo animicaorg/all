@@ -207,6 +207,7 @@ class SnapshotHandler:
                     chain_id=entry.chain_id,
                     checkpoint_height=entry.checkpoint_height,
                     checkpoint_hash=entry.checkpoint_hash,
+                    state_root=entry.state_root or "",
                     blocks_count=entry.blocks_count,
                     accounts_count=entry.accounts_count,
                     size_mb=size_mb,
