@@ -11278,6 +11278,13 @@ class P2PService:
         except Exception:
             return False
 
+    def _local_is_verifier_seed(self) -> bool:
+        if not self._enable_verifier_seeds or not self._verifier_seed_ips:
+            return False
+        if not self._external_ip:
+            return False
+        return self._external_ip in self._verifier_seed_ips
+
     def _get_max_verifier_height(self) -> Optional[int]:
         """
         Get the maximum height from verifier seed peers.
@@ -11304,6 +11311,10 @@ class P2PService:
                     peer_height = int(info.height)
                     verifier_heights.append(peer_height)
         
+        if self._local_is_verifier_seed():
+            local_height, _ = self._local_head()
+            verifier_heights.append(int(local_height))
+
         if not verifier_heights:
             return None
         
@@ -11457,10 +11468,12 @@ class P2PService:
         - max_verifier_height: Maximum height among connected verifiers (None if none connected)
         - max_allowed_height: Maximum height allowed for mining (max_verifier + 1)
         - local_height: Current local chain height
+        - local_is_verifier_seed: Whether this node is a configured verifier seed
         - can_mine: Whether mining is allowed based on verifier constraints
         """
         local_height, local_hash = self._local_head()
         max_verifier = self._get_max_verifier_height()
+        local_is_verifier_seed = self._local_is_verifier_seed()
         
         connected_verifiers = []
         now = time.time()
@@ -11500,6 +11513,7 @@ class P2PService:
             "max_verifier_height": max_verifier,
             "max_allowed_height": max_allowed,
             "local_height": local_height,
+            "local_is_verifier_seed": local_is_verifier_seed,
             "can_mine": can_mine,
         }
 

@@ -1727,6 +1727,7 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
         - max_verifier_height: Maximum height among verifiers
         - max_allowed_height: Maximum height allowed for mining
         - local_height: Current local chain height
+        - local_is_verifier_seed: Whether this node is a configured verifier seed
         - can_mine: Whether mining is allowed based on constraints
     """
     svc = _get_p2p_service()
@@ -1744,6 +1745,7 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
             "max_verifier_height": None,
             "max_allowed_height": None,
             "local_height": 0,
+            "local_is_verifier_seed": False,
             "can_mine": True,  # Allow mining when P2P is explicitly disabled
             "error": P2P_UNAVAILABLE_ERROR,
         }
@@ -1760,6 +1762,7 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
                 "max_verifier_height": None,
                 "max_allowed_height": None,
                 "local_height": 0,
+                "local_is_verifier_seed": False,
                 "can_mine": True,
                 "error": str(e),
             }
@@ -1771,6 +1774,7 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
         "max_verifier_height": None,
         "max_allowed_height": None,
         "local_height": 0,
+        "local_is_verifier_seed": False,
         "can_mine": True,
         "error": "verifier seed status not available in this P2P implementation",
     }
