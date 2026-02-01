@@ -10,7 +10,7 @@ import type {
   PlatformStats,
 } from '../types';
 
-const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
 
 class ApiClient {
   private client: AxiosInstance;
