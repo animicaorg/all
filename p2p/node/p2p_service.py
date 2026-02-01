@@ -769,6 +769,11 @@ class P2PService:
             },
         )
         self._repo_state = p2p_version.git_describe(default="").strip()
+        self._require_repo_state_match = _env_flag(
+            "ANIMICA_P2P_REQUIRE_REPO_STATE",
+            "ANIMICA_P2P_STRICT_REPO_STATE",
+            default=False,
+        )
 
         # Persistent peerstore
         self._ensure_peerstore_dir(peerstore_dir)
@@ -6103,17 +6108,21 @@ class P2PService:
                     peer_repo_state=peer_repo_state or None,
                     local_repo_state=local_repo_state,
                 )
-                await self._send(
-                    peer,
-                    MsgID.HELLO_ACK,
-                    HelloAck(accepted=False, reason="repo_state_mismatch"),
-                )
-                raise PeerMisbehavior(
-                    "repo_state_mismatch",
-                    points=self._score_points["wrong_chain"],
-                    ban_ttl=self._ban_thresholds[-1][1],
-                )
-        peer.repo_state_ok = True
+                if self._require_repo_state_match:
+                    await self._send(
+                        peer,
+                        MsgID.HELLO_ACK,
+                        HelloAck(accepted=False, reason="repo_state_mismatch"),
+                    )
+                    raise PeerMisbehavior(
+                        "repo_state_mismatch",
+                        points=self._score_points["wrong_chain"],
+                        ban_ttl=self._ban_thresholds[-1][1],
+                    )
+            else:
+                peer.repo_state_ok = True
+        else:
+            peer.repo_state_ok = True
 
         peer_genesis_identity = _hash_bytes(getattr(hello, "genesis_identity", None))
         if not peer_genesis_identity:
