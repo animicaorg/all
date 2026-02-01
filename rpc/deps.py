@@ -1279,8 +1279,10 @@ async def _background_snapshot_discovery(
                        (Continuous retry interval is configured via env var)
     """
     # Local imports to avoid circular dependencies and lazy loading
-    import asyncio
-    from p2p.sync.snapshot_sync import continuous_snapshot_discovery, should_try_snapshot_bootstrap
+    from p2p.sync.snapshot_sync import (
+        continuous_snapshot_discovery,
+        should_try_snapshot_bootstrap,
+    )
     
     log = logging.getLogger("animica.rpc.deps.snapshot_discovery")
     
@@ -1471,7 +1473,6 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 register("ptl_service", ptl_service)
                 
                 # Start maintenance loop in background
-                import asyncio
                 asyncio.create_task(ptl_service.maintenance_loop())
                 
                 logging.getLogger("animica.rpc.deps").info(
