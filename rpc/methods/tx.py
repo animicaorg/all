@@ -14,7 +14,6 @@ from rpc.methods import method
 from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
 from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
-from core.utils.tx_trace import tx_trace
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
@@ -1317,17 +1316,6 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
                 "gas_limit": gas_limit,
                 "decision": decision,
                 "reason": reason_value,
-                "latency_ms": latency_ms,
-            },
-        )
-        tx_trace(
-            tx_hash_hex or _safe_hash_hex(raw),
-            f"rpc.tx.send.{decision}",
-            {
-                "peer": "local",
-                "reason": reason_value,
-                "sender": sender,
-                "nonce": nonce,
                 "latency_ms": latency_ms,
             },
         )

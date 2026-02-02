@@ -135,7 +135,6 @@ def _entry_details(
     raw: bytes,
     meta: Any | None,
     diagnostics: dict[str, dict[str, Any]],
-    relay_state: dict[str, Any] | None,
 ) -> dict[str, Any]:
     sender = getattr(meta, "sender", None) or getattr(entry.tx, "sender", None)
     valid_after = getattr(meta, "valid_after", None) or getattr(entry.tx, "valid_after", None)
@@ -188,7 +187,6 @@ def _entry_details(
         "size": size,
         "status": status,
         "reason": reason,
-        "relay_state": relay_state,
     }
 
 
@@ -206,39 +204,21 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
         if not verbose:
             return pending_hashes
         diagnostics = mempool_service.diagnose(limit=len(pending_hashes) + 1)
-        relay_svc = None
-        try:
-            ctx = deps.get_ctx()
-            p2p_svc = getattr(ctx, "p2p_service", None)
-            if p2p_svc is not None:
-                relay_svc = (
-                    getattr(p2p_svc, "tx_relay_service", None)
-                    or getattr(p2p_svc, "_tx_relay", None)
-                    or getattr(p2p_svc, "_txrelay", None)
-                )
-        except Exception:
-            relay_svc = None
         details: list[dict] = []
         pool = getattr(mempool_service, "pool", None)
         for entry in snapshot.entries:
             meta = None
-            hash_bytes = _hash_hex_to_bytes(entry.hash_hex)
-            if pool is not None and hash_bytes is not None:
-                pool_entry = pool.index.get(hash_bytes)
-                meta = getattr(pool_entry, "meta", None) if pool_entry else None
-            relay_state = None
-            if relay_svc is not None and hash_bytes is not None:
-                try:
-                    relay_state = relay_svc.tx_state_for(hash_bytes)
-                except Exception:
-                    relay_state = None
+            if pool is not None:
+                hash_bytes = _hash_hex_to_bytes(entry.hash_hex)
+                if hash_bytes is not None:
+                    pool_entry = pool.index.get(hash_bytes)
+                    meta = getattr(pool_entry, "meta", None) if pool_entry else None
             details.append(
                 _entry_details(
                     entry=entry,
                     raw=entry.raw,
                     meta=meta,
                     diagnostics=diagnostics,
-                    relay_state=relay_state,
                 )
             )
         return details
@@ -250,35 +230,10 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
         return pending_hashes
     diagnostics: dict[str, dict[str, Any]] = {}
     details = []
-    relay_svc = None
-    try:
-        ctx = deps.get_ctx()
-        p2p_svc = getattr(ctx, "p2p_service", None)
-        if p2p_svc is not None:
-            relay_svc = (
-                getattr(p2p_svc, "tx_relay_service", None)
-                or getattr(p2p_svc, "_tx_relay", None)
-                or getattr(p2p_svc, "_txrelay", None)
-            )
-    except Exception:
-        relay_svc = None
     for h, raw, ts in pending_items:
-        relay_state = None
-        tx_bytes = _hash_hex_to_bytes(h)
-        if relay_svc is not None and tx_bytes is not None:
-            try:
-                relay_state = relay_svc.tx_state_for(tx_bytes)
-            except Exception:
-                relay_state = None
         entry = PendingTxEntry(hash_hex=h, raw=raw, tx=None, received_at=ts, expires_at=None)
         details.append(
-            _entry_details(
-                entry=entry,
-                raw=raw,
-                meta=None,
-                diagnostics=diagnostics,
-                relay_state=relay_state,
-            )
+            _entry_details(entry=entry, raw=raw, meta=None, diagnostics=diagnostics)
         )
     return details
 
