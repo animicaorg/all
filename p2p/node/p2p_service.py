@@ -5296,6 +5296,23 @@ class P2PService:
             return 0
         return await self._txrelay.request_missing_known(limit=limit)
 
+    async def sync_all_peer_mempools(self, timeout_s: float = 2.0) -> int:
+        """
+        Synchronize mempools from all connected peers.
+        
+        This is called when building a block template to ensure the miner
+        has transactions from all other nodes in the network.
+        
+        Args:
+            timeout_s: Maximum time to wait for sync completion
+            
+        Returns:
+            Number of peers synced
+        """
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+            return 0
+        return await self._txrelay.sync_all_peers(timeout_s=timeout_s)
+
     async def relay_block(self, block_hash: bytes) -> None:
         self._remember(self._seen_blocks, block_hash, self._seen_block_cap)
         await self._broadcast_inv(
