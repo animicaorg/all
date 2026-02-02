@@ -1497,7 +1497,7 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
 
         # Admit to mempool using robust method probing
         try:
-            _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
+            _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex, local=True)
         except Exception as exc:
             if ReplacementUnsupported is not None and isinstance(exc, ReplacementUnsupported):
                 existing = exc.context.get("existing_tx_hash") if hasattr(exc, "context") else None
