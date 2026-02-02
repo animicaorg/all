@@ -1337,7 +1337,7 @@ class BlockImporter:
             height = _height_of(header)
             
             if hasattr(self.block_db, "set_canonical"):
-                self.block_db.set_canonical(height, h)
+                self.block_db.set_canonical(height, h, allow_overwrite=True)
             if self.tx_index is not None:
                 block = self.block_db.get_block_by_hash(h)
                 if block is not None:
@@ -1362,9 +1362,9 @@ class BlockImporter:
             self._delete_canonical_range(best.height + 1, old_height)
 
         if hasattr(self.block_db, "set_head"):
-            self.block_db.set_head(best.height, best.h)
+            self.block_db.set_head(best.height, best.h, allow_reorg=True)
         else:
-            self.block_db.set_canonical_head(best.height, best.h)
+            self.block_db.set_canonical_head(best.height, best.h, allow_overwrite=True, allow_reorg=True)
 
         if self.state_db is not None:
             if old_height is not None and old_height not in self._state_snapshots:
@@ -1503,6 +1503,28 @@ class BlockImporter:
         """
         if self.state_db is None:
             return
+
+        # Only credit rewards for canonical blocks.
+        try:
+            if hasattr(self.block_db, "get_canonical_hash"):
+                height = int(getattr(block.header, "height", 0))
+                canonical_hash = self.block_db.get_canonical_hash(height)
+                block_hash = block.header.hash()
+                if canonical_hash is not None and canonical_hash != block_hash:
+                    log.error(
+                        "Refusing to apply reward for non-canonical block",
+                        extra={
+                            "height": height,
+                            "canonical_hash": canonical_hash.hex(),
+                            "block_hash": block_hash.hex(),
+                        },
+                    )
+                    return
+        except Exception as exc:
+            log.warning(
+                "Failed to verify canonical status before reward",
+                extra={"error": str(exc)},
+            )
         
         try:
             # Import reward computation and balance credit functions

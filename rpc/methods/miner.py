@@ -914,6 +914,54 @@ def _target_block_time_s(default: float = 300.0) -> float:
     return float(os.getenv("ANIMICA_TARGET_BLOCK_TIME_S", default))
 
 
+def _min_block_spacing_s() -> float:
+    default_spacing_ms = 0
+    try:
+        ctx = _ctx()
+        params = getattr(ctx, "params", {}) or {}
+        monetary = params.get("monetary") or {}
+        issuance = monetary.get("issuance") or {}
+        if "min_block_spacing_ms" in issuance:
+            default_spacing_ms = int(issuance.get("min_block_spacing_ms") or 0)
+        else:
+            defaults = params.get("defaults") or {}
+            default_spacing_ms = int(defaults.get("min_block_spacing_ms") or 0)
+    except Exception:
+        default_spacing_ms = 0
+    try:
+        override = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", str(default_spacing_ms)))
+    except ValueError:
+        override = default_spacing_ms
+    if override < 0:
+        return 0.0
+    return float(override) / 1000.0
+
+
+def _head_timestamp_seconds() -> Optional[int]:
+    snap = _current_head_snapshot()
+    header = snap.get("header") if isinstance(snap, dict) else None
+    ts = getattr(header, "timestamp", None) if header is not None else None
+    if ts is not None:
+        try:
+            return int(ts)
+        except Exception:
+            return None
+    hash_hex = snap.get("hash") if isinstance(snap, dict) else None
+    if not hash_hex:
+        return None
+    try:
+        h_bytes = bytes.fromhex(hash_hex[2:] if hash_hex.startswith("0x") else hash_hex)
+        ctx = _ctx()
+        if hasattr(ctx, "block_db") and ctx.block_db:
+            header = ctx.block_db.get_header_by_hash(h_bytes)
+            ts = getattr(header, "timestamp", None) if header is not None else None
+            if ts is not None:
+                return int(ts)
+    except Exception:
+        return None
+    return None
+
+
 def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     """
     Dynamically adjust theta micro during mining based on observed block times.
@@ -3304,6 +3352,15 @@ def _mine_once(
         # Import Receipt, ReceiptStatus, Log, and BlockEnv at block level (once per mined block)
         from core.types.receipt import Receipt, ReceiptStatus, Log
         from execution.runtime.env import BlockEnv
+
+        state_snap = None
+        if getattr(ctx, "state_db", None) is not None:
+            snap_fn = getattr(ctx.state_db, "snapshot", None)
+            if callable(snap_fn):
+                try:
+                    state_snap = snap_fn()
+                except Exception as e:
+                    log.warning("Failed to snapshot state before mining", extra={"error": str(e)})
         
         # Reconstruct the header with the valid nonce
         try:
@@ -3482,7 +3539,7 @@ def _mine_once(
                 block_db.append_canonical_block(header.height, block)
                 accepted = True
                 log.info(f"Block persisted via append_canonical_block at height {header.height}")
-                
+
                 # CRITICAL FIX: Re-index receipts using canonical tx hashes
                 # append_canonical_block indexes receipts using tx.hash() which re-encodes,
                 # but we need to index them using the canonical hash from raw CBOR.
@@ -3499,7 +3556,7 @@ def _mine_once(
                                 if tracked:
                                     tx_hash_hex, raw = tracked
                                     tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
-                                    
+
                                     # Store receipt pointer using canonical hash
                                     # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
                                     receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
@@ -3516,6 +3573,33 @@ def _mine_once(
         except Exception as e:
             log.error(f"Block persistence failed: {e}", exc_info=True)
             accepted = False
+
+        if accepted:
+            try:
+                if hasattr(block_db, "get_canonical_hash"):
+                    canonical_hash = block_db.get_canonical_hash(header.height)
+                    if canonical_hash is not None and canonical_hash != block_hash_bytes:
+                        log.error(
+                            "Invariant violation: mined block not canonical after persistence",
+                            extra={
+                                "height": header.height,
+                                "canonical_hash": canonical_hash.hex(),
+                                "block_hash": block_hash_bytes.hex(),
+                            },
+                        )
+                        accepted = False
+            except Exception as e:
+                log.warning("Failed to verify canonical block after persistence", extra={"error": str(e)})
+
+        if not accepted and state_snap is not None:
+            try:
+                ctx.state_db.revert(state_snap)
+                log.warning(
+                    "Reverted state after non-canonical or failed block persistence",
+                    extra={"height": header.height},
+                )
+            except Exception as e:
+                log.error("Failed to revert state after block rejection", extra={"error": str(e)})
         
         if accepted:
             _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
@@ -4143,7 +4227,29 @@ def miner_mine(
     aggregated_rejected: dict[str, int] = {}
     rejected_by_hash_sample: dict[str, str] = {}
     
-    for _ in range(target):
+    retry_delay_s = float(os.getenv("ANIMICA_MINER_MINE_RETRY_DELAY_S", "1.0") or 1.0)
+    max_failures = int(os.getenv("ANIMICA_MINER_MINE_MAX_FAILURES", "0") or 0)
+    failures = 0
+    while mined < target:
+        min_spacing_s = _min_block_spacing_s()
+        if min_spacing_s > 0:
+            head_ts = _head_timestamp_seconds()
+            if head_ts is not None:
+                now = time.time()
+                earliest = head_ts + min_spacing_s
+                if now < earliest:
+                    wait_s = max(0.0, earliest - now)
+                    log.info(
+                        "MINER_WAIT_COOLDOWN",
+                        extra={
+                            "wait_s": round(wait_s, 3),
+                            "head_height": int(_current_head_snapshot().get("height") or 0),
+                        },
+                    )
+                    if wait_s > 0:
+                        time.sleep(wait_s)
+
+        log.info("mining block %d/%d", mined + 1, target)
         mine_result = _mine_once(
             payout_address=payout_address_bytes,
             workers=workers,
@@ -4159,6 +4265,7 @@ def miner_mine(
         else:
             success, reward_amount, selection_summary = mine_result
         if success:
+            failures = 0
             mined += 1
             total_reward += reward_amount
             mempool_pending_before = selection_summary.get("pending", 0)
@@ -4182,8 +4289,20 @@ def miner_mine(
             current_height = int(head_current.get("height") or 0) if isinstance(head_current, dict) else 0
             rewards_list.append({"height": current_height, "reward": reward_amount})
         else:
+            failures += 1
             selection_summary = selection_summary or {}
-            break
+            log.warning(
+                "mining attempt failed; retrying",
+                extra={"failures": failures, "max_failures": max_failures},
+            )
+            if max_failures > 0 and failures >= max_failures:
+                log.error(
+                    "mining aborted after repeated failures",
+                    extra={"failures": failures, "max_failures": max_failures},
+                )
+                break
+            if retry_delay_s > 0:
+                time.sleep(retry_delay_s)
     
     head = ctx.get_head()
     height = int(head.get("height") or 0) if isinstance(head, dict) else 0
@@ -4321,6 +4440,31 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 extra={"sync_phase": reason.split(":", 1)[1]},
             )
         return {"enabled": False, "reason": reason}
+
+    min_spacing_s = _min_block_spacing_s()
+    if min_spacing_s > 0:
+        head_ts = _head_timestamp_seconds()
+        if head_ts is not None:
+            now = time.time()
+            earliest = head_ts + min_spacing_s
+            if now < earliest:
+                wait_s = max(0.0, earliest - now)
+                snap = _current_head_snapshot()
+                log.info(
+                    "MINER_WAIT_TEMPLATE",
+                    extra={
+                        "reason": "min_block_spacing",
+                        "wait_s": round(wait_s, 3),
+                        "head_height": int(snap.get("height") or 0),
+                        "head_hash": snap.get("hash"),
+                    },
+                )
+                return {
+                    "enabled": False,
+                    "reason": "min_block_spacing",
+                    "waitSeconds": round(wait_s, 3),
+                    "head": {"height": int(snap.get("height") or 0), "hash": snap.get("hash")},
+                }
 
     try:
         ctx = _ctx()
