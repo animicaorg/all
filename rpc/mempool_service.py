@@ -12,7 +12,6 @@ from typing import Any, Iterable, Optional
 
 from rpc import deps
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
-from core.utils.tx_trace import tx_trace
 from core.utils.tx import normalize_tx_envelope, TxNormalizationError
 from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
 from mempool.config import MempoolConfig, load_config as load_mempool_config
@@ -369,15 +368,6 @@ class MempoolService:
             "ts": time.time(),
         }
         self._prune_rejections()
-        tx_trace(
-            tx_hash_hex,
-            "mempool.rejected",
-            {
-                "peer": (details or {}).get("origin_peer"),
-                "reason": reason,
-                "reason_code": reason,
-            },
-        )
 
     def _prune_rejections(self) -> None:
         if not self._last_rejections:
@@ -1177,14 +1167,6 @@ class MempoolService:
                 "from": meta.sender,
                 "origin": origin_label,
                 "peer": origin_peer,
-            },
-        )
-        tx_trace(
-            tx_hash_hex,
-            "mempool.accepted",
-            {
-                "peer": origin_peer or origin_label,
-                "sender": _sender_hex(meta.sender),
             },
         )
         

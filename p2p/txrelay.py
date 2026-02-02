@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Set
 
 from core.utils.hash import sha3_256
-from core.utils.tx_trace import tx_trace
 
 log = logging.getLogger("animica.p2p.txrelay")
 
@@ -16,25 +15,15 @@ log = logging.getLogger("animica.p2p.txrelay")
 @dataclass(slots=True)
 class TxIdSetLRU:
     cap: int
-    ttl_s: float
-    _items: "OrderedDict[bytes, float]" = field(default_factory=OrderedDict)
-
-    def _gc(self, now: Optional[float] = None) -> None:
-        if not self._items:
-            return
-        cutoff = (now or time.time()) - self.ttl_s
-        expired = [txid for txid, ts in self._items.items() if ts <= cutoff]
-        for txid in expired:
-            self._items.pop(txid, None)
+    _items: "OrderedDict[bytes, None]" = field(default_factory=OrderedDict)
 
     def add(self, txid: bytes) -> None:
-        now = time.time()
-        self._gc(now)
         if txid in self._items:
             self._items.move_to_end(txid)
-        self._items[txid] = now
+            return
+        self._items[txid] = None
         self._items.move_to_end(txid)
-        while len(self._items) > self.cap:
+        if len(self._items) > self.cap:
             self._items.popitem(last=False)
 
     def remove(self, txid: bytes) -> None:
@@ -42,17 +31,14 @@ class TxIdSetLRU:
         self._items.pop(txid, None)
 
     def __contains__(self, txid: bytes) -> bool:
-        self._gc()
         return txid in self._items
 
     def __len__(self) -> int:
-        self._gc()
         return len(self._items)
 
     def sample(self, limit: int = 20) -> List[bytes]:
         if limit <= 0:
             return []
-        self._gc()
         items = list(self._items.keys())
         return items[-limit:]
 
@@ -267,7 +253,6 @@ class TxRelayService:
         mempool_watchdog_interval_s: float = 3.0,
         mempool_watchdog_limit: int = 256,
         known_txids_cap: int = 50_000,
-        known_txids_ttl_s: float = 20 * 60,
         inv_rate_per_sec: float = 2000.0,
         inv_burst: float = 4000.0,
         tx_data_rate_bytes_per_sec: float = 5_000_000.0,
@@ -300,7 +285,6 @@ class TxRelayService:
         self.mempool_watchdog_interval_s = float(mempool_watchdog_interval_s)
         self.mempool_watchdog_limit = int(mempool_watchdog_limit)
         self.known_txids_cap = int(known_txids_cap)
-        self.known_txids_ttl_s = float(known_txids_ttl_s)
 
         self._peer_ids = peer_ids
         self._peer_eligible = peer_eligible
@@ -350,7 +334,7 @@ class TxRelayService:
                 peer_node_id=peer_node_id,
                 direction=direction,
                 remote=remote,
-                known_txids=TxIdSetLRU(self.known_txids_cap, self.known_txids_ttl_s),
+                known_txids=TxIdSetLRU(self.known_txids_cap),
             )
         else:
             state = self._peer_state[conn_id]
@@ -375,7 +359,7 @@ class TxRelayService:
                 peer_node_id=None,
                 direction=None,
                 remote=None,
-                known_txids=TxIdSetLRU(self.known_txids_cap, self.known_txids_ttl_s),
+                known_txids=TxIdSetLRU(self.known_txids_cap),
             )
             self._peer_state[conn_id] = state
         return state
@@ -390,37 +374,6 @@ class TxRelayService:
             "peer_id": state.peer_node_id if state else None,
             "peer_node_id": state.peer_node_id if state else None,
         }
-
-    @staticmethod
-    def _reject_code(reason: Optional[str]) -> str:
-        if not reason:
-            return "UNKNOWN"
-        r = str(reason).lower()
-        if "decode" in r or "cbor" in r or "serialize" in r:
-            return "DECODE"
-        if "verify" in r or "sig" in r:
-            return "BAD_SIG"
-        if "chain_id" in r or "chainid" in r:
-            return "CHAIN_ID"
-        if "nonce" in r:
-            if "too_low" in r or "low" in r:
-                return "NONCE_TOO_LOW"
-            return "NONCE_GAP"
-        if "fee" in r:
-            return "FEE_TOO_LOW"
-        if "size" in r or "oversize" in r:
-            return "OVERSIZE"
-        if "duplicate" in r or "replay" in r:
-            return "DUPLICATE"
-        if "balance" in r or "insufficient" in r:
-            return "INSUFFICIENT_BALANCE"
-        if "conflict" in r or "double" in r:
-            return "CONFLICT"
-        if "expired" in r:
-            return "EXPIRED"
-        if "valid_after" in r or "not_yet" in r:
-            return "NOT_YET_VALID"
-        return "POLICY"
 
     def _reject_remember(self, txid: bytes) -> None:
         expire_at = time.time() + self._reject_cache_ttl_s
@@ -491,11 +444,6 @@ class TxRelayService:
                     continue
                 state.inv_queue.append(txid)
         log.info("TX_ACCEPT_LOCAL", extra={"hash": txid.hex(), "bytes": len(raw)})
-        tx_trace(
-            txid,
-            "mempool.accepted.local",
-            {"peer": "local", "bytes": len(raw)},
-        )
 
     async def on_tx_inv(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
@@ -509,12 +457,6 @@ class TxRelayService:
                 **self._peer_log_extra(conn_id),
             },
         )
-        for txid in tx_list:
-            tx_trace(
-                txid,
-                "p2p.inv.recv",
-                {"peer": conn_id},
-            )
         needs_check: List[bytes] = []
         async with self._lock:
             state = self._ensure_peer(conn_id)
@@ -631,12 +573,6 @@ class TxRelayService:
                         **self._peer_log_extra(conn_id),
                     },
                 )
-                for txid in batch:
-                    tx_trace(
-                        txid,
-                        "p2p.get.sent",
-                        {"peer": conn_id},
-                    )
         else:
             log.info(
                 "TX_INV_NO_MISSING",
@@ -655,12 +591,6 @@ class TxRelayService:
             "TX_GET_RECV",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
         )
-        for txid in tx_list:
-            tx_trace(
-                txid,
-                "p2p.get.recv",
-                {"peer": conn_id},
-            )
         send_items: List[dict[str, Any]] = []
         notfound: List[bytes] = []
         for txid in tx_list:
@@ -696,12 +626,6 @@ class TxRelayService:
                         **self._peer_log_extra(conn_id),
                     },
                 )
-                for item in send_items:
-                    tx_trace(
-                        item.get("txid"),
-                        "p2p.tx.sent",
-                        {"peer": conn_id, "bytes": len(item.get(\"tx_bytes\", b\"\"))},
-                    )
 
         if notfound:
             await self._send_tx_notfound(conn_id, notfound)
@@ -709,12 +633,6 @@ class TxRelayService:
                 "TX_NOTFOUND",
                 extra={"peer": conn_id, "count": len(notfound), **self._peer_log_extra(conn_id)},
             )
-            for txid in notfound:
-                tx_trace(
-                    txid,
-                    "p2p.tx.notfound.sent",
-                    {"peer": conn_id},
-                )
 
     async def on_tx_data(self, conn_id: str, items: Iterable[dict[str, Any]]) -> None:
         items_list = list(items)
@@ -756,11 +674,6 @@ class TxRelayService:
                     **self._peer_log_extra(conn_id),
                 },
             )
-            tx_trace(
-                txid_bytes,
-                "p2p.tx.recv",
-                {"peer": conn_id, "bytes": len(raw_bytes)},
-            )
             if len(raw_bytes) > self.max_tx_bytes:
                 log.warning(
                     "TX_REJECTED",
@@ -777,15 +690,6 @@ class TxRelayService:
                 )
                 self._reject_remember(txid_bytes)
                 self._clear_inflight(txid_bytes)
-                tx_trace(
-                    txid_bytes,
-                    "p2p.tx.rejected",
-                    {
-                        "peer": conn_id,
-                        "reason": "oversize",
-                        "reason_code": self._reject_code("oversize"),
-                    },
-                )
                 continue
             computed = sha3_256(raw_bytes)
             if computed != txid_bytes:
@@ -804,15 +708,6 @@ class TxRelayService:
                 )
                 self._reject_remember(txid_bytes)
                 self._clear_inflight(txid_bytes)
-                tx_trace(
-                    txid_bytes,
-                    "p2p.tx.rejected",
-                    {
-                        "peer": conn_id,
-                        "reason": "hash_mismatch",
-                        "reason_code": self._reject_code("hash_mismatch"),
-                    },
-                )
                 continue
             
             origin_peer = self._peer_state.get(conn_id, None)
@@ -875,15 +770,6 @@ class TxRelayService:
                         **self._peer_log_extra(conn_id),
                     },
                 )
-                tx_trace(
-                    txid_bytes,
-                    "p2p.tx.accepted",
-                    {
-                        "peer": origin_label or conn_id,
-                        "reason": reason,
-                        "reason_code": self._reject_code(reason),
-                    },
-                )
             else:
                 self._reject_remember(txid_bytes)
                 self._request_mgr.mark_received_invalid(
@@ -899,15 +785,6 @@ class TxRelayService:
                         "reason": reason or "reject",
                         "origin": f"peer:{origin_label or conn_id}",
                         **self._peer_log_extra(conn_id),
-                    },
-                )
-                tx_trace(
-                    txid_bytes,
-                    "p2p.tx.rejected",
-                    {
-                        "peer": origin_label or conn_id,
-                        "reason": reason or "reject",
-                        "reason_code": self._reject_code(reason),
                     },
                 )
 
@@ -949,12 +826,6 @@ class TxRelayService:
             "TX_NOTFOUND",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
         )
-        for txid in tx_list:
-            tx_trace(
-                txid,
-                "p2p.tx.notfound.recv",
-                {"peer": conn_id},
-            )
 
     async def on_mempool_req(self, conn_id: str, limit: Optional[int] = None) -> None:
         lim = int(limit) if limit is not None else self.mempool_sync_limit
