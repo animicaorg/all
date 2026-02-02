@@ -746,6 +746,16 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if view is not None:
         return True, None
 
+    min_spacing_s = miner_methods._min_block_spacing_s()
+    if min_spacing_s > 0:
+        head_ts = miner_methods._head_timestamp_seconds()
+        if head_ts is not None:
+            now = time.time()
+            earliest = head_ts + min_spacing_s
+            if now < earliest:
+                wait_s = max(0.0, earliest - now)
+                return False, f"min_block_spacing_wait:{wait_s:.3f}s"
+
     # Mine a block to persist the transaction
     # Use instant_block=True to ensure zero rewards for tx send blocks
     try:
