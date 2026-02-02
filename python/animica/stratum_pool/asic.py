@@ -453,10 +453,15 @@ class Sha256StratumServer:
             }
 
             if accepted and is_block:
-                await self._adapter.submit_block(submit_payload)
+                result = await self._adapter.submit_block(submit_payload)
+                # Check if the block is a duplicate
+                is_duplicate = result.get("duplicate", False) if isinstance(result, dict) else False
+            else:
+                is_duplicate = False
+                
             if self._submit_hook:
                 await self._submit_hook(
-                    session, job, submit_payload, accepted, reason, is_block, 0
+                    session, job, submit_payload, accepted, reason, is_block and not is_duplicate, 0
                 )
 
         elif method == "mining.configure":

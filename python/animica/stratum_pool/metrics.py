@@ -154,6 +154,27 @@ class PoolMetrics:
                 )
             self._db.commit()
 
+    def remove_duplicate_block(self, job_id: str) -> None:
+        """Remove a block from tracking if it turns out to be a duplicate.
+        
+        This should be called after block submission when the node returns duplicate=true.
+        Removes the block from both in-memory deque and database.
+        """
+        # Remove from in-memory deque
+        self._block_events = deque(
+            (blk for blk in self._block_events if blk.get("job_id") != job_id),
+            maxlen=200
+        )
+        
+        # Remove from database
+        if self._db is not None:
+            with self._db_lock:
+                self._db.execute(
+                    "DELETE FROM blocks WHERE job_id = ?",
+                    (job_id,)
+                )
+                self._db.commit()
+
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
