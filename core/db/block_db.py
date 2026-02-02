@@ -31,6 +31,7 @@ Notes
 """
 
 from dataclasses import asdict, is_dataclass
+import logging
 from typing import Callable, Iterator, Optional, Tuple
 
 from ..encoding.cbor import cbor_dumps, cbor_loads
@@ -39,6 +40,8 @@ from ..types.header import Header  # type: ignore
 from ..utils.bytes import to_hex
 from ..utils.hash import sha3_256
 from .kv import KV, Batch, ReadOnlyKV
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Key helpers
@@ -176,12 +179,28 @@ class BlockDB:
     # --- Canonical index ---
 
     def set_canonical(
-        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+        self,
+        height: int,
+        block_hash: bytes,
+        batch: Optional[Batch] = None,
+        *,
+        allow_overwrite: bool = False,
     ) -> None:
         """
         Set the canonical block at `height` to `block_hash`. Does not verify that the hash
         corresponds to a stored header—callers should ensure existence earlier.
         """
+        existing = self.kv.get(k_hix(height))
+        if existing is not None and existing != block_hash and not allow_overwrite:
+            log.error(
+                "refusing to overwrite canonical block at height %d",
+                height,
+                extra={"existing": to_hex(existing), "incoming": to_hex(block_hash)},
+            )
+            raise ValueError(
+                "refusing to overwrite canonical block at height "
+                f"{height}: {to_hex(existing)} != {to_hex(block_hash)}"
+            )
         if batch is None:
             self.kv.put(k_hix(height), block_hash)
         else:
@@ -193,11 +212,33 @@ class BlockDB:
     # --- Head pointers ---
 
     def set_head(
-        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+        self,
+        height: int,
+        block_hash: bytes,
+        batch: Optional[Batch] = None,
+        *,
+        allow_reorg: bool = False,
     ) -> None:
         """
         Update the canonical head pointers. Usually called after writing the height index.
         """
+        cur = self.get_head()
+        if cur is not None:
+            cur_height, cur_hash = cur
+            if height <= cur_height and block_hash != cur_hash and not allow_reorg:
+                log.error(
+                    "refusing to move head without explicit reorg",
+                    extra={
+                        "current_height": cur_height,
+                        "current_hash": to_hex(cur_hash),
+                        "next_height": height,
+                        "next_hash": to_hex(block_hash),
+                    },
+                )
+                raise ValueError(
+                    "refusing to move head without explicit reorg: "
+                    f"{cur_height}->{height}"
+                )
         if batch is None:
             self.kv.put(META_HEAD_HEIGHT, _u64be(height))
             self.kv.put(META_HEAD_HASH, block_hash)
@@ -206,14 +247,20 @@ class BlockDB:
             batch.put(META_HEAD_HASH, block_hash)
 
     def set_canonical_head(
-        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+        self,
+        height: int,
+        block_hash: bytes,
+        batch: Optional[Batch] = None,
+        *,
+        allow_overwrite: bool = False,
+        allow_reorg: bool = False,
     ) -> None:
         """
         Convenience helper that updates both the canonical height index and
         the head pointers.
         """
-        self.set_canonical(height, block_hash, batch=batch)
-        self.set_head(height, block_hash, batch=batch)
+        self.set_canonical(height, block_hash, batch=batch, allow_overwrite=allow_overwrite)
+        self.set_head(height, block_hash, batch=batch, allow_reorg=allow_reorg)
 
     def get_head(self) -> Optional[Tuple[int, bytes]]:
         h_raw = self.kv.get(META_HEAD_HEIGHT)

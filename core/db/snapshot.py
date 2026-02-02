@@ -404,7 +404,7 @@ def import_snapshot(
 
     # Update block DB head to checkpoint
     checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
-    block_db.set_head(manifest.checkpoint_height, checkpoint_hash_bytes)
+    block_db.set_head(manifest.checkpoint_height, checkpoint_hash_bytes, allow_reorg=True)
 
     _log.info(
         f"Snapshot imported successfully: height {manifest.checkpoint_height}, "

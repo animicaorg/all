@@ -60,10 +60,10 @@ def test_snapshot_auto_creation_integration():
         def put_block(self, block):
             return b'\x00' * 32
         
-        def set_canonical(self, height, block_hash):
+        def set_canonical(self, height, block_hash, **_kwargs):
             self._canonical[height] = block_hash
         
-        def set_head(self, height, block_hash):
+        def set_head(self, height, block_hash, **_kwargs):
             self._head = (height, block_hash)
     
     # Import BlockImporter
