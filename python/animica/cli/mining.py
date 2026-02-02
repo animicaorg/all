@@ -159,12 +159,18 @@ def _mine_header(
                 return nonce, digest
         return None, None
 
-    start_nonce = 0
+    # Use random starting nonce for each block to prevent nonce growth issues
+    # This makes mining time-based and more about hash power rather than sequential nonce counting
+    # Randomize in 32-bit space for better distribution and to avoid large nonce values
+    import secrets
+    start_nonce = secrets.randbelow(2**32)
+    
     for _ in range(max(1, total_windows)):
         nonce, digest = _scan_window(start_nonce, start_nonce + max_nonce)
         if nonce is not None and digest is not None:
             return nonce, digest
-        start_nonce += max_nonce
+        # Wrap around at 64-bit boundary to prevent overflow
+        start_nonce = (start_nonce + max_nonce) & 0xFFFFFFFFFFFFFFFF
     return None, None
 
 
