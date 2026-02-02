@@ -1,12 +1,12 @@
 {
   "meta": {
-    "version": 5,
-    "genesis_version": "reset-2026-01-30",
+    "version": 6,
+    "genesis_version": "reset-2026-02-02",
     "description": "Animica mainnet reset genesis (chainId=1). Premine + system accounts only."
   },
   "chainId": 1,
   "network": "animica-mainnet",
-  "genesisTime": "2026-01-30T06:17:43Z",
+  "genesisTime": "2026-02-02T00:30:50Z",
   "unit": {
     "symbol": "ANM",
     "decimals": 9
@@ -17,7 +17,7 @@
   },
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
   "beacon": {
-    "seed": "0xf9c887e345f49b56b5ee9d620bde8f242c2bb3b4a68582c7a70bb7459946076c",
+    "seed": "0x17d79a29e330abeb88b13ae49633b66a17f7003b4ec7c8fda62ff3e25d65ea1d",
     "round": 0
   },
   "economics": {
@@ -48,6 +48,6 @@
   },
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
-    "Generated via tools/genesis/make_genesis.py for mainnet reset 2026-01-30"
+    "Generated via tools/genesis/make_genesis.py for mainnet reset 2026-02-02"
   ]
 }

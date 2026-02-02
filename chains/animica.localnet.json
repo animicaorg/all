@@ -58,8 +58,8 @@
   },
 
   "genesis": {
-    "hash": "0x00localnet0000000000000000000000000000000000000000000000000000",
-    "timestamp": "2025-10-01T00:00:00Z",
+    "hash": "0xb73c699ef881472743ee6c6ba2ea6c6e81c9a8ffc9dd7a743ef024c2243cae10",
+    "timestamp": "2026-02-02T00:30:50Z",
     "initialHeight": 0
   },
 

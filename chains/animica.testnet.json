@@ -63,8 +63,8 @@
   },
 
   "genesis": {
-    "hash": "0x0123abcd0123abcd0123abcd0123abcd",
-    "timestamp": "2025-10-01T00:00:00Z",
+    "hash": "0xb7f811752e52c61b29b8da5196b27a93684004a2a47309439d9467a0fb8f1c9b",
+    "timestamp": "2026-02-02T00:30:50Z",
     "initialHeight": 0
   },
 
