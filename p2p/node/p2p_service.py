@@ -893,6 +893,9 @@ class P2PService:
         self._tx_inv_rate_burst = float(
             os.environ.get("ANIMICA_P2P_TX_INV_RATE_BURST", "4000") or 4000
         )
+        self._tx_known_ttl_s = float(
+            os.environ.get("ANIMICA_P2P_TX_KNOWN_TTL_S", "1200") or 1200
+        )
         self._tx_data_rate_bytes_per_sec = float(
             os.environ.get("ANIMICA_P2P_TX_DATA_RATE_BYTES_PER_SEC", "5000000")
             or 5000000
@@ -931,6 +934,7 @@ class P2PService:
             mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
             mempool_watchdog_limit=self._tx_mempool_watchdog_limit,
             known_txids_cap=50_000,
+            known_txids_ttl_s=self._tx_known_ttl_s,
             inv_rate_per_sec=self._tx_inv_rate_per_sec,
             inv_burst=self._tx_inv_rate_burst,
             tx_data_rate_bytes_per_sec=self._tx_data_rate_bytes_per_sec,
