@@ -64,6 +64,128 @@ class InflightEntry:
     requested_at: float = 0.0
 
 
+@dataclass(slots=True)
+class TxRequestState:
+    first_seen_at: float
+    last_updated_at: float
+    state: str
+    last_peer: Optional[str] = None
+    last_reason: Optional[str] = None
+    attempts: int = 0
+    next_retry_at: float = 0.0
+    requested_peers: Set[str] = field(default_factory=set)
+
+
+class TxRequestManager:
+    def __init__(self, *, cooldown_s: float, cap: int) -> None:
+        self.cooldown_s = float(cooldown_s)
+        self.cap = int(cap)
+        self._states: "OrderedDict[bytes, TxRequestState]" = OrderedDict()
+
+    def _touch(
+        self,
+        txid: bytes,
+        *,
+        now: float,
+        state: str,
+        peer: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> TxRequestState:
+        entry = self._states.get(txid)
+        if entry is None:
+            entry = TxRequestState(
+                first_seen_at=now,
+                last_updated_at=now,
+                state=state,
+                last_peer=peer,
+                last_reason=reason,
+                attempts=0,
+                next_retry_at=0.0,
+            )
+            self._states[txid] = entry
+        entry.last_updated_at = now
+        entry.state = state
+        if peer is not None:
+            entry.last_peer = peer
+        if reason is not None:
+            entry.last_reason = reason
+        self._states.move_to_end(txid, last=True)
+        while len(self._states) > self.cap:
+            self._states.popitem(last=False)
+        return entry
+
+    def mark_announced(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
+        entry = self._states.get(txid)
+        if entry and entry.state == "accepted_in_mempool":
+            return
+        self._touch(txid, now=now, state="announced_only", peer=peer)
+
+    def mark_requested(self, txid: bytes, *, peer: str, now: float) -> TxRequestState:
+        entry = self._touch(txid, now=now, state="requested", peer=peer)
+        entry.attempts += 1
+        entry.requested_peers.add(peer)
+        entry.next_retry_at = now + self.cooldown_s
+        return entry
+
+    def mark_received_valid(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
+        self._touch(txid, now=now, state="received_valid_pending", peer=peer)
+
+    def mark_received_invalid(
+        self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
+    ) -> None:
+        self._touch(txid, now=now, state="received_invalid", peer=peer, reason=reason)
+
+    def mark_accepted(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
+        self._touch(txid, now=now, state="accepted_in_mempool", peer=peer)
+
+    def mark_dropped(
+        self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
+    ) -> None:
+        self._touch(txid, now=now, state="dropped_evicted", peer=peer, reason=reason)
+
+    def can_request(self, txid: bytes, *, now: float) -> bool:
+        entry = self._states.get(txid)
+        if entry is None:
+            return True
+        if entry.state in {"accepted_in_mempool"}:
+            return False
+        return entry.next_retry_at <= now
+
+    def pick_peer(self, txid: bytes, *, candidates: Iterable[str]) -> Optional[str]:
+        entry = self._states.get(txid)
+        if entry is None:
+            return next(iter(candidates), None)
+        for peer in candidates:
+            if peer not in entry.requested_peers:
+                return peer
+        return next(iter(candidates), None)
+
+    def get_state(self, txid: bytes) -> Optional[TxRequestState]:
+        return self._states.get(txid)
+
+    def snapshot(self, *, limit: int = 20) -> List[dict[str, Any]]:
+        items = list(self._states.items())[-limit:]
+        return [
+            {
+                "txid": "0x" + txid.hex(),
+                "state": entry.state,
+                "last_peer": entry.last_peer,
+                "last_reason": entry.last_reason,
+                "attempts": entry.attempts,
+                "first_seen_at": entry.first_seen_at,
+                "last_updated_at": entry.last_updated_at,
+                "requested_peers": len(entry.requested_peers),
+            }
+            for txid, entry in items
+        ]
+
+    def counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for entry in self._states.values():
+            counts[entry.state] = counts.get(entry.state, 0) + 1
+        return counts
+
+
 class TokenBucket:
     def __init__(self, rate: float, burst: float) -> None:
         self.rate = float(rate)
@@ -113,6 +235,10 @@ class TxRelayService:
         inv_flush_interval_s: float = 0.2,
         inflight_timeout_s: float = 10.0,
         inflight_max_retries: int = 2,
+        request_cooldown_s: float = 3.5,
+        max_inflight_total: int = 2048,
+        max_inflight_per_peer: int = 128,
+        tx_state_cap: int = 50_000,
         mempool_sync_interval_s: float = 15.0,
         mempool_sync_limit: int = 2000,
         known_txids_cap: int = 50_000,
@@ -139,6 +265,10 @@ class TxRelayService:
         self.inv_flush_interval_s = float(inv_flush_interval_s)
         self.inflight_timeout_s = float(inflight_timeout_s)
         self.inflight_max_retries = int(inflight_max_retries)
+        self.request_cooldown_s = float(request_cooldown_s)
+        self.max_inflight_total = int(max_inflight_total)
+        self.max_inflight_per_peer = int(max_inflight_per_peer)
+        self.tx_state_cap = int(tx_state_cap)
         self.mempool_sync_interval_s = float(mempool_sync_interval_s)
         self.mempool_sync_limit = int(mempool_sync_limit)
         self.known_txids_cap = int(known_txids_cap)
@@ -159,7 +289,9 @@ class TxRelayService:
 
         self._peer_state: Dict[str, PeerTxState] = {}
         self._inflight: Dict[bytes, InflightEntry] = {}
+        self._inflight_by_peer: Dict[str, int] = {}
         self._tx_sources: Dict[bytes, Set[str]] = {}
+        self._tx_sources_order: Dict[bytes, List[str]] = {}
         self._reject_cache: "OrderedDict[bytes, float]" = OrderedDict()
         self._reject_cache_ttl_s = float(
             max(5.0, min(self.inflight_timeout_s, 30.0))
@@ -168,6 +300,9 @@ class TxRelayService:
         self._inv_limiter = TokenBucket(inv_rate_per_sec, inv_burst)
         self._tx_data_limiter = TokenBucket(
             tx_data_rate_bytes_per_sec, tx_data_burst_bytes
+        )
+        self._request_mgr = TxRequestManager(
+            cooldown_s=self.request_cooldown_s, cap=self.tx_state_cap
         )
         self._running = False
         self._lock = asyncio.Lock()
@@ -198,7 +333,7 @@ class TxRelayService:
         self._peer_state.pop(conn_id, None)
         for txid, entry in list(self._inflight.items()):
             if entry.conn_id == conn_id:
-                self._inflight.pop(txid, None)
+                self._clear_inflight(txid)
 
     def _eligible_peers(self) -> List[str]:
         return [p for p in self._peer_ids() if self._peer_eligible(p)]
@@ -244,7 +379,50 @@ class TxRelayService:
             return False
         return True
 
+    def _record_source(self, txid: bytes, conn_id: str) -> None:
+        self._tx_sources.setdefault(txid, set()).add(conn_id)
+        order = self._tx_sources_order.setdefault(txid, [])
+        if conn_id not in order:
+            order.append(conn_id)
+
+    def _inflight_count_for_peer(self, conn_id: str) -> int:
+        return self._inflight_by_peer.get(conn_id, 0)
+
+    def _set_inflight(
+        self,
+        txid: bytes,
+        *,
+        conn_id: str,
+        peer_node_id: Optional[str],
+        now: float,
+        attempts: int = 1,
+    ) -> bool:
+        if len(self._inflight) >= self.max_inflight_total:
+            return False
+        if self._inflight_count_for_peer(conn_id) >= self.max_inflight_per_peer:
+            return False
+        self._inflight[txid] = InflightEntry(
+            conn_id=conn_id,
+            peer_node_id=peer_node_id,
+            deadline=now + self.inflight_timeout_s,
+            attempts=attempts,
+            requested_at=now,
+        )
+        self._inflight_by_peer[conn_id] = self._inflight_by_peer.get(conn_id, 0) + 1
+        return True
+
+    def _clear_inflight(self, txid: bytes) -> None:
+        entry = self._inflight.pop(txid, None)
+        if entry is None:
+            return
+        count = self._inflight_by_peer.get(entry.conn_id, 0)
+        if count <= 1:
+            self._inflight_by_peer.pop(entry.conn_id, None)
+        else:
+            self._inflight_by_peer[entry.conn_id] = count - 1
+
     async def on_mempool_add(self, txid: bytes, raw: bytes) -> None:
+        self._request_mgr.mark_accepted(txid, peer="local", now=time.time())
         async with self._lock:
             peers = self._eligible_peers()
             for conn_id in peers:
@@ -271,7 +449,8 @@ class TxRelayService:
             state = self._ensure_peer(conn_id)
             for txid in tx_list:
                 state.known_txids.add(txid)
-                self._tx_sources.setdefault(txid, set()).add(conn_id)
+                self._record_source(txid, conn_id)
+                self._request_mgr.mark_announced(txid, peer=conn_id, now=time.time())
                 if txid in self._inflight:
                     log.debug(
                         "TX_INV_SKIP_INFLIGHT",
@@ -307,6 +486,7 @@ class TxRelayService:
                 )
                 continue
             if await self._has_tx(txid):
+                self._request_mgr.mark_accepted(txid, peer="local", now=now)
                 log.debug(
                     "TX_INV_SKIP_HAVE_TX",
                     extra={
@@ -317,6 +497,9 @@ class TxRelayService:
                 )
                 continue
             if await self._has_chain_tx(txid):
+                self._request_mgr.mark_dropped(
+                    txid, peer="chain", reason="in_chain", now=now
+                )
                 log.debug(
                     "TX_INV_SKIP_IN_CHAIN",
                     extra={
@@ -329,14 +512,28 @@ class TxRelayService:
             async with self._lock:
                 if txid in self._inflight:
                     continue
-                self._inflight[txid] = InflightEntry(
+                if not self._request_mgr.can_request(txid, now=now):
+                    continue
+                if not self._set_inflight(
+                    txid,
                     conn_id=conn_id,
                     peer_node_id=self._peer_state.get(conn_id, None).peer_node_id
                     if conn_id in self._peer_state
                     else None,
-                    deadline=now + self.inflight_timeout_s,
-                    requested_at=now,
-                )
+                    now=now,
+                    attempts=1,
+                ):
+                    log.info(
+                        "TX_GET_SKIPPED",
+                        extra={
+                            "peer": conn_id,
+                            "hash": txid.hex(),
+                            "reason": "inflight_limit",
+                            **self._peer_log_extra(conn_id),
+                        },
+                    )
+                    continue
+                self._request_mgr.mark_requested(txid, peer=conn_id, now=now)
             missing.append(txid)
         
         log.info(
@@ -475,8 +672,11 @@ class TxRelayService:
                         **self._peer_log_extra(conn_id),
                     },
                 )
+                self._request_mgr.mark_received_invalid(
+                    txid_bytes, peer=conn_id, reason="oversize", now=time.time()
+                )
                 self._reject_remember(txid_bytes)
-                self._inflight.pop(txid_bytes, None)
+                self._clear_inflight(txid_bytes)
                 continue
             computed = sha3_256(raw_bytes)
             if computed != txid_bytes:
@@ -490,8 +690,11 @@ class TxRelayService:
                         **self._peer_log_extra(conn_id),
                     },
                 )
+                self._request_mgr.mark_received_invalid(
+                    txid_bytes, peer=conn_id, reason="hash_mismatch", now=time.time()
+                )
                 self._reject_remember(txid_bytes)
-                self._inflight.pop(txid_bytes, None)
+                self._clear_inflight(txid_bytes)
                 continue
             
             origin_peer = self._peer_state.get(conn_id, None)
@@ -506,6 +709,9 @@ class TxRelayService:
                     "origin": origin_label or conn_id,
                     **self._peer_log_extra(conn_id),
                 },
+            )
+            self._request_mgr.mark_received_valid(
+                txid_bytes, peer=origin_label or conn_id, now=time.time()
             )
             
             try:
@@ -535,11 +741,14 @@ class TxRelayService:
                 ok = False
                 reason = f"exception:{type(exc).__name__}"
             
-            self._inflight.pop(txid_bytes, None)
+            self._clear_inflight(txid_bytes)
             self._mark_known(conn_id, txid_bytes)
             if ok:
                 broadcast.append(txid_bytes)
                 self._reject_cache.pop(txid_bytes, None)
+                self._request_mgr.mark_accepted(
+                    txid_bytes, peer=origin_label or conn_id, now=time.time()
+                )
                 log.info(
                     "TX_ACCEPTED",
                     extra={
@@ -550,6 +759,12 @@ class TxRelayService:
                 )
             else:
                 self._reject_remember(txid_bytes)
+                self._request_mgr.mark_received_invalid(
+                    txid_bytes,
+                    peer=origin_label or conn_id,
+                    reason=reason or "reject",
+                    now=time.time(),
+                )
                 log.warning(
                     "TX_REJECTED",
                     extra={
@@ -586,8 +801,11 @@ class TxRelayService:
         async with self._lock:
             state = self._peer_state.get(conn_id)
             for txid in tx_list:
-                self._inflight.pop(txid, None)
+                self._clear_inflight(txid)
                 self._reject_remember(txid)
+                self._request_mgr.mark_dropped(
+                    txid, peer=conn_id, reason="notfound", now=time.time()
+                )
                 # Clear from peer's known_txids since they don't have it
                 if state and txid in state.known_txids:
                     state.known_txids.remove(txid)
@@ -621,7 +839,8 @@ class TxRelayService:
             state = self._ensure_peer(conn_id)
             for txid in tx_list:
                 state.known_txids.add(txid)
-                self._tx_sources.setdefault(txid, set()).add(conn_id)
+                self._record_source(txid, conn_id)
+                self._request_mgr.mark_announced(txid, peer=conn_id, now=time.time())
                 if txid in self._inflight:
                     continue
                 needs_check.append(txid)
@@ -635,20 +854,30 @@ class TxRelayService:
             if self._reject_recent(txid):
                 continue
             if await self._has_tx(txid):
+                self._request_mgr.mark_accepted(txid, peer="local", now=time.time())
                 continue
             if await self._has_chain_tx(txid):
+                self._request_mgr.mark_dropped(
+                    txid, peer="chain", reason="in_chain", now=time.time()
+                )
                 continue
             async with self._lock:
                 if txid in self._inflight:
                     continue
-                self._inflight[txid] = InflightEntry(
+                now = time.time()
+                if not self._request_mgr.can_request(txid, now=now):
+                    continue
+                if not self._set_inflight(
+                    txid,
                     conn_id=conn_id,
                     peer_node_id=self._peer_state.get(conn_id, None).peer_node_id
                     if conn_id in self._peer_state
                     else None,
-                    deadline=time.time() + self.inflight_timeout_s,
-                    requested_at=time.time(),
-                )
+                    now=now,
+                    attempts=1,
+                ):
+                    continue
+                self._request_mgr.mark_requested(txid, peer=conn_id, now=now)
             want_txids.append(txid)
         if want_txids:
             for idx in range(0, len(want_txids), 256):
@@ -733,9 +962,10 @@ class TxRelayService:
                     if entry.deadline <= now:
                         expired.append(txid)
                 for txid in expired:
-                    entry = self._inflight.pop(txid, None)
+                    entry = self._inflight.get(txid)
                     if entry is None:
                         continue
+                    self._clear_inflight(txid)
                     log.info(
                         "TX_INFLIGHT_TIMEOUT",
                         extra={
@@ -747,29 +977,49 @@ class TxRelayService:
                         },
                     )
                     sources = list(self._tx_sources.get(txid, set()))
+                    ordered_sources = self._tx_sources_order.get(txid, [])
                     candidates = [
-                        p for p in sources if p != entry.conn_id and self._peer_eligible(p)
+                        p
+                        for p in ordered_sources
+                        if p != entry.conn_id and self._peer_eligible(p)
                     ]
+                    if not candidates:
+                        candidates = [
+                            p
+                            for p in sources
+                            if p != entry.conn_id and self._peer_eligible(p)
+                        ]
                     if candidates and entry.attempts < self.inflight_max_retries:
-                        next_peer = candidates[0]
-                        self._inflight[txid] = InflightEntry(
-                            conn_id=next_peer,
-                            peer_node_id=self._peer_state.get(next_peer, None).peer_node_id
-                            if next_peer in self._peer_state
-                            else None,
-                            deadline=now + self.inflight_timeout_s,
-                            attempts=entry.attempts + 1,
+                        next_peer = self._request_mgr.pick_peer(
+                            txid, candidates=candidates
                         )
-                        await self._send_tx_get(next_peer, [txid])
-                        log.info(
-                            "TX_GET_SENT",
-                            extra={
-                                "peer": next_peer,
-                                "count": 1,
-                                "retry": True,
-                                **self._peer_log_extra(next_peer),
-                            },
-                        )
+                        if next_peer is not None and self._request_mgr.can_request(
+                            txid, now=now
+                        ):
+                            if self._set_inflight(
+                                txid,
+                                conn_id=next_peer,
+                                peer_node_id=self._peer_state.get(
+                                    next_peer, None
+                                ).peer_node_id
+                                if next_peer in self._peer_state
+                                else None,
+                                now=now,
+                                attempts=entry.attempts + 1,
+                            ):
+                                self._request_mgr.mark_requested(
+                                    txid, peer=next_peer, now=now
+                                )
+                                await self._send_tx_get(next_peer, [txid])
+                                log.info(
+                                    "TX_GET_SENT",
+                                    extra={
+                                        "peer": next_peer,
+                                        "count": 1,
+                                        "retry": True,
+                                        **self._peer_log_extra(next_peer),
+                                    },
+                                )
                     else:
                         # No more retry candidates or max retries reached.
                         # Remove txid from known_txids of all source peers so they can
@@ -779,6 +1029,9 @@ class TxRelayService:
                                 state = self._peer_state.get(source_conn_id)
                                 if state and txid in state.known_txids:
                                     state.known_txids.remove(txid)
+                        self._request_mgr.mark_dropped(
+                            txid, peer=entry.conn_id, reason="fetch_timeout", now=now
+                        )
                         log.info(
                             "TX_FETCH_ABANDONED",
                             extra={
@@ -861,22 +1114,31 @@ class TxRelayService:
                 inflight_entry = self._inflight.get(txid)
                 if inflight_entry is not None:
                     if inflight_entry.deadline <= now:
-                        self._inflight.pop(txid, None)
+                        self._clear_inflight(txid)
                     else:
                         continue
                 if self._reject_recent(txid):
                     continue
                 if await self._has_tx(txid):
+                    self._request_mgr.mark_accepted(txid, peer="local", now=now)
                     continue
                 if await self._has_chain_tx(txid):
+                    self._request_mgr.mark_dropped(
+                        txid, peer="chain", reason="in_chain", now=now
+                    )
                     continue
-                self._inflight[txid] = InflightEntry(
+                if not self._request_mgr.can_request(txid, now=now):
+                    continue
+                if not self._set_inflight(
+                    txid,
                     conn_id=state.conn_id,
                     peer_node_id=state.peer_node_id,
-                    deadline=now + self.inflight_timeout_s,
-                    requested_at=now,
-                )
-                self._tx_sources.setdefault(txid, set()).add(state.conn_id)
+                    now=now,
+                    attempts=1,
+                ):
+                    continue
+                self._request_mgr.mark_requested(txid, peer=state.conn_id, now=now)
+                self._record_source(txid, state.conn_id)
                 requests_by_peer.setdefault(state.conn_id, []).append(txid)
                 remaining -= 1
         total = 0
@@ -916,7 +1178,31 @@ class TxRelayService:
             )
         return {
             "inflight": len(self._inflight),
+            "inflight_by_peer": dict(self._inflight_by_peer),
+            "tx_state_counts": self._request_mgr.counts(),
+            "tx_state_sample": self._request_mgr.snapshot(limit=10),
             "peers": peers,
+        }
+
+    def tx_state_snapshot(self, limit: int = 20) -> List[dict[str, Any]]:
+        return self._request_mgr.snapshot(limit=limit)
+
+    def tx_state_counts(self) -> Dict[str, int]:
+        return self._request_mgr.counts()
+
+    def tx_state_for(self, txid: bytes) -> Optional[dict[str, Any]]:
+        entry = self._request_mgr.get_state(txid)
+        if entry is None:
+            return None
+        return {
+            "txid": "0x" + txid.hex(),
+            "state": entry.state,
+            "last_peer": entry.last_peer,
+            "last_reason": entry.last_reason,
+            "attempts": entry.attempts,
+            "first_seen_at": entry.first_seen_at,
+            "last_updated_at": entry.last_updated_at,
+            "requested_peers": len(entry.requested_peers),
         }
 
     async def request_mempool_sync(self, conn_id: str) -> None:
