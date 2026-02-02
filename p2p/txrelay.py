@@ -163,6 +163,15 @@ class TxRequestManager:
     def get_state(self, txid: bytes) -> Optional[TxRequestState]:
         return self._states.get(txid)
 
+    def clear_state(self, txid: bytes) -> bool:
+        """
+        Clear the state for a transaction ID.
+        
+        Returns True if state was present and cleared, False otherwise.
+        Used to handle stale states (e.g., marked as accepted but not in mempool).
+        """
+        return self._states.pop(txid, None) is not None
+
     def snapshot(self, *, limit: int = 20) -> List[dict[str, Any]]:
         items = list(self._states.items())[-limit:]
         return [
@@ -1186,7 +1195,7 @@ class TxRelayService:
                 req_state = self._request_mgr.get_state(txid)
                 if req_state is not None and req_state.state == "accepted_in_mempool" and not has_tx:
                     # Transaction marked as accepted but not in mempool - clear the state
-                    self._request_mgr._states.pop(txid, None)
+                    self._request_mgr.clear_state(txid)
                     log.info(
                         "TX_STATE_CLEARED",
                         extra={
