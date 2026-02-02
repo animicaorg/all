@@ -163,6 +163,15 @@ class TxRequestManager:
     def get_state(self, txid: bytes) -> Optional[TxRequestState]:
         return self._states.get(txid)
 
+    def clear_state(self, txid: bytes) -> bool:
+        """
+        Clear the state for a transaction ID.
+        
+        Returns True if state was present and cleared, False otherwise.
+        Used to handle stale states (e.g., marked as accepted but not in mempool).
+        """
+        return self._states.pop(txid, None) is not None
+
     def snapshot(self, *, limit: int = 20) -> List[dict[str, Any]]:
         items = list(self._states.items())[-limit:]
         return [
@@ -1168,7 +1177,9 @@ class TxRelayService:
                         continue
                 if self._reject_recent(txid):
                     continue
-                if await self._has_tx(txid):
+                # Check if we actually have the transaction in mempool or chain
+                has_tx = await self._has_tx(txid)
+                if has_tx:
                     self._request_mgr.mark_accepted(txid, peer="local", now=now)
                     continue
                 if await self._has_chain_tx(txid):
@@ -1176,6 +1187,24 @@ class TxRelayService:
                         txid, peer="chain", reason="in_chain", now=now
                     )
                     continue
+                # IMPORTANT: If transaction is marked as accepted but we don't actually have it,
+                # clear the state so we can re-request it. This handles cases where:
+                # - Transaction was evicted from mempool
+                # - State became stale/inconsistent
+                # - Mempool was cleared/reset
+                # Note: At this point we know has_tx is False (checked above)
+                req_state = self._request_mgr.get_state(txid)
+                if req_state is not None and req_state.state == "accepted_in_mempool":
+                    # Transaction marked as accepted but not in mempool - clear the state
+                    self._request_mgr.clear_state(txid)
+                    log.info(
+                        "TX_STATE_CLEARED",
+                        extra={
+                            "hash": txid.hex(),
+                            "reason": "marked_accepted_but_not_in_mempool",
+                            "trigger": trigger,
+                        },
+                    )
                 if not self._request_mgr.can_request(txid, now=now):
                     continue
                 if not self._set_inflight(
