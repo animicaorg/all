@@ -1476,6 +1476,8 @@ async def debug_mempool_stats() -> dict[str, t.Any]:
         "recent_rejects": [],
         "persist_path": None,
         "has_mempool_service": False,
+        "tx_state_counts": {},
+        "tx_state_sample": [],
     }
     
     try:
@@ -1531,6 +1533,26 @@ async def debug_mempool_stats() -> dict[str, t.Any]:
                 if rejects:
                     timestamps = [v.get("ts", 0) for v in rejects.values()]
                     result["last_reject_at"] = max(timestamps) if timestamps else None
+
+        p2p_svc = _get_p2p_service()
+        relay_svc = None
+        if p2p_svc is not None:
+            relay_svc = (
+                getattr(p2p_svc, "tx_relay_service", None)
+                or getattr(p2p_svc, "_tx_relay", None)
+                or getattr(p2p_svc, "_txrelay", None)
+            )
+        if relay_svc is not None:
+            if hasattr(relay_svc, "tx_state_counts"):
+                try:
+                    result["tx_state_counts"] = relay_svc.tx_state_counts()
+                except Exception:
+                    pass
+            if hasattr(relay_svc, "tx_state_snapshot"):
+                try:
+                    result["tx_state_sample"] = relay_svc.tx_state_snapshot(limit=10)
+                except Exception:
+                    pass
     
     except Exception as e:
         log.error(f"Error in debug_mempool_stats: {e}", exc_info=True)
@@ -1647,6 +1669,13 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
     if not tx_hash.startswith("0x"):
         tx_hash = f"0x{tx_hash}"
     tx_hash = tx_hash.lower()
+    tx_hash_bytes: bytes | None = None
+    try:
+        tx_hash_bytes = bytes.fromhex(
+            tx_hash[2:] if tx_hash.startswith("0x") else tx_hash
+        )
+    except Exception:
+        tx_hash_bytes = None
     
     result: dict[str, t.Any] = {
         "found": False,
@@ -1656,6 +1685,7 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
         "accept_reason": None,
         "reject_reason": None,
         "reject_details": None,
+        "tx_state": None,
         "tx_hash": tx_hash,
     }
     
@@ -1696,12 +1726,29 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
         tx_index = getattr(ctx, "tx_index", None)
         if tx_index is not None and hasattr(tx_index, "exists"):
             try:
-                tx_hash_bytes = bytes.fromhex(tx_hash[2:] if tx_hash.startswith("0x") else tx_hash)
-                if tx_index.exists(tx_hash_bytes):
+                if tx_hash_bytes is not None and tx_index.exists(tx_hash_bytes):
                     result["in_chain"] = True
                     result["found"] = True
             except Exception:
                 pass
+
+        try:
+            p2p_svc = _get_p2p_service()
+            relay_svc = None
+            if p2p_svc is not None:
+                relay_svc = (
+                    getattr(p2p_svc, "tx_relay_service", None)
+                    or getattr(p2p_svc, "_tx_relay", None)
+                    or getattr(p2p_svc, "_txrelay", None)
+                )
+            if (
+                relay_svc is not None
+                and hasattr(relay_svc, "tx_state_for")
+                and tx_hash_bytes is not None
+            ):
+                result["tx_state"] = relay_svc.tx_state_for(tx_hash_bytes)
+        except Exception:
+            pass
     
     except Exception as e:
         log.error(f"Error in debug_tx_by_id: {e}", exc_info=True)

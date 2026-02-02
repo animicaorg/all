@@ -50,6 +50,9 @@ async def test_txid_must_match_bytes_hash() -> None:
     bad_hash = hashlib.sha3_256(b"other-tx").digest()
     await relay.on_tx_data("peer-a", [{"txid": bad_hash, "tx_bytes": bad_tx}])
     assert admitted == []
+    state = relay.tx_state_for(bad_hash)
+    assert state is not None
+    assert state["state"] == "received_invalid"
 
 
 @pytest.mark.asyncio
@@ -112,3 +115,54 @@ async def test_inflight_timeout_retries() -> None:
     peers = [peer for peer, _txids in sent_get]
     assert "peer-a" in peers
     assert "peer-b" in peers
+
+
+@pytest.mark.asyncio
+async def test_tx_state_requested_on_inv() -> None:
+    sent_get: list[tuple[str, list[bytes]]] = []
+
+    async def send_noop(_peer: str, _payload):
+        return None
+
+    async def send_get(peer: str, txids: list[bytes]):
+        sent_get.append((peer, list(txids)))
+
+    async def has_tx(_txid: bytes) -> bool:
+        return False
+
+    async def has_chain_tx(_txid: bytes) -> bool:
+        return False
+
+    async def get_tx_raw(_txid: bytes):
+        return None
+
+    async def admit_tx(_raw: bytes, _origin: str | None):
+        return True, None
+
+    async def list_hashes(_limit: int):
+        return []
+
+    relay = TxRelayService(
+        max_tx_bytes=1024,
+        inflight_timeout_s=1.0,
+        peer_ids=lambda: ["peer-a"],
+        peer_eligible=lambda _peer: True,
+        send_tx_inv=send_noop,
+        send_tx_get=send_get,
+        send_tx_data=send_noop,
+        send_tx_notfound=send_noop,
+        send_mempool_req=send_noop,
+        send_mempool_resp=send_noop,
+        has_tx=has_tx,
+        has_chain_tx=has_chain_tx,
+        get_tx_raw=get_tx_raw,
+        admit_tx=admit_tx,
+        list_mempool_hashes=list_hashes,
+    )
+
+    txid = hashlib.sha3_256(b"inv-requested").digest()
+    await relay.on_tx_inv("peer-a", [txid])
+    assert sent_get
+    state = relay.tx_state_for(txid)
+    assert state is not None
+    assert state["state"] == "requested"
