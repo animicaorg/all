@@ -331,7 +331,9 @@ async def scan_forever(
     current_tpl: Optional[dict] = None
     current_job_id: Optional[str] = None
     prepared = None
-    nonce = 0
+    # Start with random nonce for better distribution
+    import secrets
+    nonce = secrets.randbelow(2**32)
 
     tpl_iter = template_iter.__aiter__()
     next_tpl_task: Optional[asyncio.Task] = None
@@ -350,7 +352,8 @@ async def scan_forever(
                     break
                 next_tpl_task = asyncio.create_task(tpl_iter.__anext__())
                 prepared = None
-                nonce = 0
+                # Reset to random nonce for new template
+                nonce = secrets.randbelow(2**32)
 
             if not current_tpl:
                 await asyncio.sleep(0.05)
@@ -365,7 +368,8 @@ async def scan_forever(
             if job_id != current_job_id:
                 current_job_id = job_id
                 prepared = None
-                nonce = 0
+                # Reset to random nonce for new job
+                nonce = secrets.randbelow(2**32)
 
             sign_hex = current_tpl.get("signBytes") or current_tpl.get("sign_bytes")
             if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
