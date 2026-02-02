@@ -955,6 +955,23 @@ class P2PDeps:
         except Exception as e:
             return False, f"admit_error:{e}"
 
+    def has_tx(self, tx_hash: bytes) -> bool:
+        """Check if transaction exists in mempool."""
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception:
+            return False
+
+        svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        if svc is not None:
+            has_hash = getattr(svc, "has_hash", None)
+            if callable(has_hash):
+                return bool(has_hash("0x" + tx_hash.hex()))
+
+        cache = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
+        tx_hash_hex = "0x" + tx_hash.hex()
+        return tx_hash_hex in cache
+
     def get_tx_raw(self, tx_hash: bytes) -> Optional[bytes]:
         try:
             from rpc.methods import tx as tx_methods
@@ -1153,6 +1170,11 @@ class AsyncP2PDeps:
         return await loop.run_in_executor(
             None, self._sync.cheap_header_sanity, header
         )
+
+    async def has_tx(self, tx_hash: bytes) -> bool:
+        """Check if transaction exists in mempool."""
+        loop = self._executor_loop()
+        return await loop.run_in_executor(None, self._sync.has_tx, tx_hash)
 
     async def get_tx_raw(self, tx_hash: bytes) -> Optional[bytes]:
         loop = self._executor_loop()
