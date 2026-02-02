@@ -910,6 +910,8 @@ class P2PService:
         self._txrelay_inv_flush_task: Optional[asyncio.Task] = None
         self._txrelay_inflight_task: Optional[asyncio.Task] = None
         self._txrelay_sync_task: Optional[asyncio.Task] = None
+        self._mempool_bind_task: Optional[asyncio.Task] = None
+        self._mempool_callback_bound = False
         self._txrelay = TxRelayService(
             max_tx_bytes=self._max_tx_bytes,
             inv_batch_size=200,
@@ -1704,6 +1706,55 @@ class P2PService:
         except asyncio.CancelledError:
             return
 
+    def _bind_mempool_callback(self) -> bool:
+        if self._mempool_callback_bound:
+            return True
+        try:
+            from rpc.methods import tx as tx_methods
+
+            mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        except Exception:
+            return False
+        if mempool_service is None or not hasattr(
+            mempool_service, "set_p2p_broadcast_callback"
+        ):
+            return False
+        try:
+            pending_path = getattr(mempool_service, "_persist_path", None)
+            log.info(
+                "Tx relay mempool binding",
+                extra={
+                    "chain_id": self.chain_id,
+                    "mempool_id": hex(id(mempool_service)),
+                    "pending_path": str(pending_path) if pending_path else None,
+                },
+            )
+            mempool_service.set_p2p_broadcast_callback(
+                self._txrelay.on_mempool_add,
+                loop=self.loop,
+            )
+            self._mempool_callback_bound = True
+            log.info(
+                "P2P broadcast callback registered",
+                extra={"mempool_id": hex(id(mempool_service))},
+            )
+            return True
+        except Exception as e:
+            log.warning(
+                "Failed to set P2P broadcast callback",
+                extra={"error": str(e)},
+            )
+            return False
+
+    async def _mempool_bind_loop(self) -> None:
+        try:
+            while self._running and not self._mempool_callback_bound:
+                if self._bind_mempool_callback():
+                    return
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
+
     async def start(self) -> None:
         if self._running:
             return
@@ -1711,38 +1762,11 @@ class P2PService:
             self.loop = asyncio.get_running_loop()
         self._running = True
         self._sync_paused = False
-        try:
-            from rpc.methods import tx as tx_methods
-
-            mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
-            if mempool_service is not None:
-                pending_path = getattr(mempool_service, "_persist_path", None)
-                log.info(
-                    "Tx relay mempool binding",
-                    extra={
-                        "chain_id": self.chain_id,
-                        "mempool_id": hex(id(mempool_service)),
-                        "pending_path": str(pending_path) if pending_path else None,
-                    },
-                )
-                # Set up P2P broadcast callback for reliable propagation
-                if hasattr(mempool_service, "set_p2p_broadcast_callback"):
-                    try:
-                        mempool_service.set_p2p_broadcast_callback(
-                            self._txrelay.on_mempool_add,
-                            loop=self.loop,
-                        )
-                        log.info(
-                            "P2P broadcast callback registered",
-                            extra={"mempool_id": hex(id(mempool_service))}
-                        )
-                    except Exception as e:
-                        log.warning(
-                            "Failed to set P2P broadcast callback",
-                            extra={"error": str(e)}
-                        )
-        except Exception:
-            pass
+        self._bind_mempool_callback()
+        if not self._mempool_callback_bound:
+            self._mempool_bind_task = asyncio.create_task(
+                self._mempool_bind_loop(), name="p2p.mempool_bind"
+            )
         await self._maybe_detect_external_ip()
 
         if self._peerstore_fallback_path:
@@ -1834,6 +1858,8 @@ class P2PService:
                 self._txrelay_sync_task,
             ]
         )
+        if self._mempool_bind_task is not None:
+            self._tasks.append(self._mempool_bind_task)
         self._sync_wakeup.set()
         log.info(
             "P2P started",
