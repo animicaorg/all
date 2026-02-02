@@ -907,9 +907,17 @@ class P2PService:
         self._tx_mempool_sync_limit = int(
             os.environ.get("ANIMICA_P2P_TX_MEMPOOL_SYNC_LIMIT", "2000") or 2000
         )
+        # Watchdog for more aggressive mempool monitoring
+        self._tx_mempool_watchdog_interval_s = float(
+            os.environ.get("ANIMICA_P2P_TX_MEMPOOL_WATCHDOG_SEC", "3") or 3
+        )
+        self._tx_mempool_watchdog_limit = int(
+            os.environ.get("ANIMICA_P2P_TX_MEMPOOL_WATCHDOG_LIMIT", "256") or 256
+        )
         self._txrelay_inv_flush_task: Optional[asyncio.Task] = None
         self._txrelay_inflight_task: Optional[asyncio.Task] = None
         self._txrelay_sync_task: Optional[asyncio.Task] = None
+        self._txrelay_watchdog_task: Optional[asyncio.Task] = None
         self._mempool_bind_task: Optional[asyncio.Task] = None
         self._mempool_callback_bound = False
         self._txrelay = TxRelayService(
@@ -920,6 +928,8 @@ class P2PService:
             inflight_max_retries=2,
             mempool_sync_interval_s=self._tx_mempool_sync_interval_s,
             mempool_sync_limit=self._tx_mempool_sync_limit,
+            mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
+            mempool_watchdog_limit=self._tx_mempool_watchdog_limit,
             known_txids_cap=50_000,
             inv_rate_per_sec=self._tx_inv_rate_per_sec,
             inv_burst=self._tx_inv_rate_burst,
@@ -1851,11 +1861,15 @@ class P2PService:
         self._txrelay_sync_task = asyncio.create_task(
             self._txrelay.mempool_sync_loop(), name="p2p.txrelay.mempool_sync"
         )
+        self._txrelay_watchdog_task = asyncio.create_task(
+            self._txrelay.mempool_watchdog_loop(), name="p2p.txrelay.mempool_watchdog"
+        )
         self._tasks.extend(
             [
                 self._txrelay_inv_flush_task,
                 self._txrelay_inflight_task,
                 self._txrelay_sync_task,
+                self._txrelay_watchdog_task,
             ]
         )
         if self._mempool_bind_task is not None:
@@ -5191,6 +5205,8 @@ class P2PService:
                 "inflight": txrelay_snapshot.get("inflight"),
                 "mempool_sync_interval_s": self._tx_mempool_sync_interval_s,
                 "mempool_sync_limit": self._tx_mempool_sync_limit,
+                "mempool_watchdog_interval_s": self._tx_mempool_watchdog_interval_s,
+                "mempool_watchdog_limit": self._tx_mempool_watchdog_limit,
             },
             "sync_metrics": self._sync_metrics_snapshot(),
             "peers": peer_entries,
