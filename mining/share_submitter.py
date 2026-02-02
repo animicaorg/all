@@ -754,16 +754,19 @@ class ShareSubmitter:
             tries += 1
             try:
                 res = self.rpc.call(self.cfg.method_submit_block, [payload])
-                # Contract: {'accepted': bool, 'reason': str, 'hash': '0x…', 'height': N}
+                # Contract: {'accepted': bool, 'reason': str, 'hash': '0x…', 'height': N, 'duplicate': bool}
                 if isinstance(res, dict):
                     accepted = bool(res.get("accepted", False))
-                    if accepted:
+                    is_duplicate = bool(res.get("duplicate", False))
+                    if accepted and not is_duplicate:
+                        # Only count blocks that are accepted AND not duplicates
                         self._stats.blocks_accepted += 1
                         self._cooldown.notify_block_accepted(
                             height=res.get("height"), block_hash=res.get("hash")
                         )
-                    else:
+                    elif not accepted:
                         self._stats.blocks_rejected += 1
+                    # Note: duplicate blocks (accepted but already found) are not counted
                     return res
                 # Fallback
                 if res is True:
@@ -817,16 +820,20 @@ class ShareSubmitter:
                 dt = time.perf_counter() - t0
                 if isinstance(res, dict):
                     accepted = bool(res.get("accepted", False))
-                    if accepted:
+                    is_duplicate = bool(res.get("duplicate", False))
+                    if accepted and not is_duplicate:
+                        # Only count blocks that are accepted AND not duplicates
                         self._stats.blocks_accepted += 1
                         self._cooldown.notify_block_accepted(
                             height=res.get("height"), block_hash=res.get("hash")
                         )
-                    else:
+                    elif not accepted:
                         self._stats.blocks_rejected += 1
+                    # Note: duplicate blocks (accepted but already found) are not counted
                     self._log.info(
-                        "submitBlock result accepted=%s reason=%s latency=%.3fs",
+                        "submitBlock result accepted=%s duplicate=%s reason=%s latency=%.3fs",
                         accepted,
+                        is_duplicate,
                         res.get("reason"),
                         dt,
                     )

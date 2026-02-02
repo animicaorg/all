@@ -3950,6 +3950,25 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
         res["reason"] = "target-not-met"
         return res
 
+    # Check if this block hash already exists (duplicate)
+    try:
+        ctx = _ctx()
+        if hasattr(ctx, 'block_db') and ctx.block_db:
+            # Convert block_hash to bytes for lookup
+            block_hash_bytes = bytes.fromhex(block_hash[2:] if block_hash.startswith("0x") else block_hash)
+            existing_header = ctx.block_db.get_header_by_hash(block_hash_bytes)
+            if existing_header is not None:
+                # Block already exists - mark as duplicate
+                res["duplicate"] = True
+                res["reason"] = "duplicate"
+                res["height"] = int(job.get("height", 0))
+                res["newHead"] = {"height": int(job.get("height", 0)), "hash": block_hash}
+                _JOB_CACHE.pop(str(job_id), None)
+                return res
+    except Exception as e:
+        # If duplicate check fails, log but continue (don't block submission)
+        log.debug("Failed to check for duplicate block: %s", e)
+
     # Record the new head locally for lightweight test chains.
     try:
         header_obj = job["job"].header  # type: ignore[index]
@@ -3967,6 +3986,7 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
             "reason": None,
             "height": int(job.get("height", 0)),
             "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
+            "duplicate": False,
         }
     )
     return res
