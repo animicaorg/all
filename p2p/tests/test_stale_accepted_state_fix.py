@@ -7,6 +7,7 @@ but the local mempool is empty. The root cause was that transactions marked as
 """
 import asyncio
 import hashlib
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,7 +63,6 @@ async def test_stale_accepted_state_is_cleared():
         state.known_txids.add(tx1)
     
     # Manually mark as accepted in mempool (simulating a previous successful fetch)
-    import time
     now = time.time()
     service._request_mgr.mark_accepted(tx1, peer="peer1", now=now)
     
@@ -140,7 +140,6 @@ async def test_accepted_state_preserved_if_tx_in_mempool():
         state.known_txids.add(tx1)
     
     # Manually mark as accepted in mempool
-    import time
     now = time.time()
     service._request_mgr.mark_accepted(tx1, peer="peer1", now=now)
     
@@ -207,7 +206,6 @@ async def test_watchdog_fetches_after_clearing_stale_state():
         state.known_txids.add(tx1)
     
     # Mark as accepted (stale state)
-    import time
     now = time.time()
     service._request_mgr.mark_accepted(tx1, peer="peer1", now=now)
     
