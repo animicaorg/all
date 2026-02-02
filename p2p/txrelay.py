@@ -1192,8 +1192,9 @@ class TxRelayService:
                 # - Transaction was evicted from mempool
                 # - State became stale/inconsistent
                 # - Mempool was cleared/reset
+                # Note: At this point we know has_tx is False (checked above)
                 req_state = self._request_mgr.get_state(txid)
-                if req_state is not None and req_state.state == "accepted_in_mempool" and not has_tx:
+                if req_state is not None and req_state.state == "accepted_in_mempool":
                     # Transaction marked as accepted but not in mempool - clear the state
                     self._request_mgr.clear_state(txid)
                     log.info(
