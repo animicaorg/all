@@ -3239,11 +3239,8 @@ class P2PService:
 
     def status_snapshot(self) -> P2PStatusSnapshot:
         snapshot = self._peer_registry.snapshot()
-        identified = [
-            p for p in snapshot if p.get("peer_id") and p.get("peer_id") != "unknown"
-        ]
-        inbound = sum(1 for p in identified if p.get("direction") == "inbound")
-        outbound = sum(1 for p in identified if p.get("direction") == "outbound")
+        inbound = sum(1 for p in snapshot if p.get("direction") == "inbound")
+        outbound = sum(1 for p in snapshot if p.get("direction") == "outbound")
         bootstrap_bonus = self.bootstrap_peer_bonus()
         now = time.time()
         attempts_last_5m = sum(
@@ -3256,7 +3253,7 @@ class P2PService:
         return P2PStatusSnapshot(
             p2p_running=self._running,
             listen_addrs=list(self.listen_addrs),
-            peers_total=self._peer_registry.peer_count() + bootstrap_bonus,
+            peers_total=len(snapshot) + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
             bootstrap_attempts_last_5m=attempts_last_5m,
