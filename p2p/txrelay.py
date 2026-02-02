@@ -241,6 +241,8 @@ class TxRelayService:
         tx_state_cap: int = 50_000,
         mempool_sync_interval_s: float = 15.0,
         mempool_sync_limit: int = 2000,
+        mempool_watchdog_interval_s: float = 3.0,
+        mempool_watchdog_limit: int = 256,
         known_txids_cap: int = 50_000,
         inv_rate_per_sec: float = 2000.0,
         inv_burst: float = 4000.0,
@@ -271,6 +273,8 @@ class TxRelayService:
         self.tx_state_cap = int(tx_state_cap)
         self.mempool_sync_interval_s = float(mempool_sync_interval_s)
         self.mempool_sync_limit = int(mempool_sync_limit)
+        self.mempool_watchdog_interval_s = float(mempool_watchdog_interval_s)
+        self.mempool_watchdog_limit = int(mempool_watchdog_limit)
         self.known_txids_cap = int(known_txids_cap)
 
         self._peer_ids = peer_ids
@@ -1095,6 +1099,51 @@ class TxRelayService:
                     )
             except Exception:
                 log.warning("tx mempool sync loop error", exc_info=True)
+
+    async def mempool_watchdog_loop(self) -> None:
+        """
+        Aggressive watchdog that continuously monitors for missing transactions.
+        This runs more frequently than mempool_sync_loop to ensure no transactions
+        are missed. It actively fetches known transactions that haven't been retrieved yet.
+        """
+        self._running = True
+        last_heartbeat = 0.0
+        while self._running:
+            try:
+                await asyncio.sleep(self.mempool_watchdog_interval_s)
+                now = time.time()
+                
+                # Request missing known transactions more aggressively
+                requested = await self.request_missing_known(
+                    limit=self.mempool_watchdog_limit, 
+                    trigger="mempool_watchdog"
+                )
+                if requested > 0:
+                    log.info(
+                        "TX_WATCHDOG_FETCH",
+                        extra={
+                            "requested": requested,
+                            "trigger": "watchdog",
+                            "interval_s": self.mempool_watchdog_interval_s,
+                        },
+                    )
+                
+                if now - last_heartbeat >= 30.0:
+                    last_heartbeat = now
+                    async with self._lock:
+                        peer_count = len(self._peer_state)
+                        inflight_count = len(self._inflight)
+                    log.info(
+                        "TX_RELAY_HEARTBEAT",
+                        extra={
+                            "loop": "watchdog",
+                            "peers": peer_count,
+                            "inflight": inflight_count,
+                            "interval_s": self.mempool_watchdog_interval_s,
+                        },
+                    )
+            except Exception:
+                log.warning("tx mempool watchdog loop error", exc_info=True)
 
     async def request_missing_known(self, limit: int = 128, trigger: str = "request_missing_known") -> int:
         if limit <= 0:
