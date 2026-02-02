@@ -1170,8 +1170,8 @@ class MempoolService:
             },
         )
         
-        # Trigger P2P broadcast for all admitted txs (best-effort, non-blocking)
-        if self._p2p_broadcast_callback is not None:
+        # Trigger P2P broadcast for locally-submitted txs (best-effort, non-blocking)
+        if self._p2p_broadcast_callback is not None and local:
             try:
                 import asyncio
 
