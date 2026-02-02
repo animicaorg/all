@@ -184,11 +184,17 @@ class MiningCoreAdapter:
 
         accepted = False
         updated_reason: Optional[str] = None
+        is_duplicate = False
         if isinstance(result, dict):
             accepted = bool(result.get("accepted", False))
+            is_duplicate = bool(result.get("duplicate", False))
             updated_reason = result.get("reason") or reason
         elif isinstance(result, bool):
             accepted = result
             updated_reason = reason
+
+        # If it's a block but it's a duplicate, don't count it as a block
+        if is_block and is_duplicate:
+            is_block = False
 
         return accepted, updated_reason, is_block, tx_count
