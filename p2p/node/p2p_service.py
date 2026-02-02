@@ -1729,7 +1729,8 @@ class P2PService:
                 if hasattr(mempool_service, "set_p2p_broadcast_callback"):
                     try:
                         mempool_service.set_p2p_broadcast_callback(
-                            self._txrelay.on_mempool_add
+                            self._txrelay.on_mempool_add,
+                            loop=self.loop,
                         )
                         log.info(
                             "P2P broadcast callback registered",
