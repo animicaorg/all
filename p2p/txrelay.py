@@ -1296,3 +1296,56 @@ class TxRelayService:
                 **self._peer_log_extra(conn_id),
             },
         )
+
+    async def sync_all_peers(self, timeout_s: float = 2.0) -> int:
+        """
+        Synchronize mempools from all connected peers.
+        
+        This method requests mempool snapshots from all eligible peers
+        and waits for responses. It's used when building block templates
+        to ensure the miner includes transactions from all network nodes.
+        
+        Args:
+            timeout_s: Maximum time to wait for sync to complete
+            
+        Returns:
+            Number of peers successfully synced
+        """
+        async with self._lock:
+            peer_states = list(self._peer_state.values())
+        
+        synced_count = 0
+        now = time.time()
+        
+        # Send mempool requests to all eligible peers
+        for state in peer_states:
+            if not self._peer_eligible(state.conn_id):
+                continue
+            
+            try:
+                state.last_sync_sent_at = now
+                await self._send_mempool_req(state.conn_id, self.mempool_sync_limit)
+                synced_count += 1
+                log.info(
+                    "TX_SYNC_REQ",
+                    extra={
+                        "peer": state.conn_id,
+                        "limit": self.mempool_sync_limit,
+                        "trigger": "block_template_build",
+                        **self._peer_log_extra(state.conn_id),
+                    },
+                )
+            except Exception as e:
+                log.warning(
+                    "Failed to sync mempool from peer",
+                    extra={
+                        "peer": state.conn_id,
+                        "error": str(e),
+                    },
+                )
+        
+        # Wait briefly for responses to arrive and be processed
+        if synced_count > 0 and timeout_s > 0:
+            await asyncio.sleep(min(timeout_s, 2.0))
+        
+        return synced_count
