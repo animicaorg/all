@@ -858,8 +858,12 @@ class TxRelayService:
             for txid in candidates:
                 if remaining <= 0:
                     break
-                if txid in self._inflight:
-                    continue
+                inflight_entry = self._inflight.get(txid)
+                if inflight_entry is not None:
+                    if inflight_entry.deadline <= now:
+                        self._inflight.pop(txid, None)
+                    else:
+                        continue
                 if self._reject_recent(txid):
                     continue
                 if await self._has_tx(txid):
