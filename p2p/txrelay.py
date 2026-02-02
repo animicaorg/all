@@ -1168,7 +1168,9 @@ class TxRelayService:
                         continue
                 if self._reject_recent(txid):
                     continue
-                if await self._has_tx(txid):
+                # Check if we actually have the transaction in mempool or chain
+                has_tx = await self._has_tx(txid)
+                if has_tx:
                     self._request_mgr.mark_accepted(txid, peer="local", now=now)
                     continue
                 if await self._has_chain_tx(txid):
@@ -1176,6 +1178,23 @@ class TxRelayService:
                         txid, peer="chain", reason="in_chain", now=now
                     )
                     continue
+                # IMPORTANT: If transaction is marked as accepted but we don't actually have it,
+                # clear the state so we can re-request it. This handles cases where:
+                # - Transaction was evicted from mempool
+                # - State became stale/inconsistent
+                # - Mempool was cleared/reset
+                req_state = self._request_mgr.get_state(txid)
+                if req_state is not None and req_state.state == "accepted_in_mempool" and not has_tx:
+                    # Transaction marked as accepted but not in mempool - clear the state
+                    self._request_mgr._states.pop(txid, None)
+                    log.info(
+                        "TX_STATE_CLEARED",
+                        extra={
+                            "hash": txid.hex(),
+                            "reason": "marked_accepted_but_not_in_mempool",
+                            "trigger": trigger,
+                        },
+                    )
                 if not self._request_mgr.can_request(txid, now=now):
                     continue
                 if not self._set_inflight(
