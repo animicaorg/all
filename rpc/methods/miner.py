@@ -2337,6 +2337,45 @@ def _request_missing_mempool_txs(
         return 0
 
 
+def _sync_all_peer_mempools(*, timeout_s: float = 2.0) -> int:
+    """
+    Sync mempools from all connected peers before building a block template.
+    
+    This ensures that when a miner builds a block, it includes transactions
+    from all other nodes in the network, not just its local mempool.
+    
+    Args:
+        timeout_s: Maximum time to wait for sync completion
+        
+    Returns:
+        Number of peers successfully synced
+    """
+    try:
+        ctx = _ctx()
+    except Exception:
+        return 0
+    p2p_service = getattr(ctx, "p2p_service", None)
+    if p2p_service is None:
+        return 0
+    fn = getattr(p2p_service, "sync_all_peer_mempools", None)
+    if not callable(fn):
+        return 0
+    try:
+        running_loop = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        loop = running_loop or getattr(p2p_service, "loop", None)
+        if loop is not None and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(fn(timeout_s=timeout_s), loop)
+            return int(future.result(timeout=timeout_s + 0.5))
+        return int(asyncio.run(fn(timeout_s=timeout_s)))
+    except Exception as e:
+        log.warning(f"Failed to sync peer mempools: {e}")
+        return 0
+
+
 def _build_child_header(
     parent_height: int, parent_hash: bytes, parent_header: Any, *, coinbase: bytes | None = None, instant_block: bool = False
 ) -> Header:
@@ -4482,6 +4521,14 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         }
 
         if include_mempool_flag:
+            # Sync mempools from all peers to ensure we have transactions from all nodes
+            synced_peers = _sync_all_peer_mempools(timeout_s=1.5)
+            if synced_peers > 0:
+                log.info(
+                    "Synced peer mempools before building block template",
+                    extra={"peers_synced": synced_peers},
+                )
+            
             pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
                 ctx=ctx,
                 adapter=adapter,
