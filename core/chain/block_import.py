@@ -1391,9 +1391,17 @@ class BlockImporter:
         miners' nodes.
         
         Args:
-            attached_blocks: List of block hashes that were attached to the canonical chain
+            attached_blocks: List of block hashes (bytes) that were attached to the canonical chain
         """
         if not attached_blocks:
+            return
+        
+        # Validate input types
+        if not all(isinstance(h, (bytes, bytearray)) for h in attached_blocks):
+            log.warning(
+                "Invalid block hash type in attached_blocks",
+                extra={"expected": "bytes", "got": [type(h).__name__ for h in attached_blocks]},
+            )
             return
         
         try:
@@ -1411,13 +1419,17 @@ class BlockImporter:
             return
         
         # Extract transaction hashes from all attached blocks
+        # Cache blocks to avoid redundant database lookups
         tx_hashes_to_confirm: list[str] = []
+        blocks_cache: dict[bytes, Any] = {}
         
         for block_hash in attached_blocks:
             try:
+                # Fetch and cache block
                 block = self.block_db.get_block_by_hash(block_hash)
                 if block is None:
                     continue
+                blocks_cache[block_hash] = block
                 
                 # Extract transaction hashes from the block
                 if hasattr(block, "txs") and block.txs:
@@ -1429,7 +1441,7 @@ class BlockImporter:
             except Exception as e:
                 log.debug(
                     "Failed to extract transactions from block for mempool confirmation",
-                    extra={"block_hash": block_hash.hex(), "error": str(e)},
+                    extra={"block_hash": block_hash.hex() if isinstance(block_hash, bytes) else str(block_hash), "error": str(e)},
                 )
                 continue
         
@@ -1448,12 +1460,13 @@ class BlockImporter:
                 )
         
         # Trigger mempool reconciliation for conflict resolution
+        # Use cached blocks to avoid redundant lookups
         try:
             from mempool import on_block_accepted
             
             # Call on_block_accepted for each attached block to handle conflicts
             for block_hash in attached_blocks:
-                block = self.block_db.get_block_by_hash(block_hash)
+                block = blocks_cache.get(block_hash)
                 if block is not None:
                     reconcile_result = on_block_accepted(
                         block, 
@@ -1471,7 +1484,7 @@ class BlockImporter:
                 extra={"error": str(e)},
             )
     
-    def _extract_tx_hash(self, tx: Any) -> Optional[str]:
+    def _extract_tx_hash(self, tx: Union[Tx, Dict[str, Any], bytes]) -> Optional[str]:
         """
         Extract canonical transaction hash from a transaction object.
         
