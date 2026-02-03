@@ -14,6 +14,7 @@ is not running, methods return empty results or appropriate errors.
 from __future__ import annotations
 
 import asyncio
+import time
 import hashlib
 import inspect
 import ipaddress
@@ -1558,6 +1559,96 @@ async def debug_mempool_stats() -> dict[str, t.Any]:
         log.error(f"Error in debug_mempool_stats: {e}", exc_info=True)
     
     return result
+
+
+@method(
+    "p2p.mempoolSyncStatus",
+    desc="Return mempool sync status and TX relay counters",
+    aliases=("debug.mempoolSyncStatus",),
+)
+async def mempool_sync_status() -> dict[str, t.Any]:
+    """
+    Return mempool sync status for diagnostics.
+
+    Includes TX relay counters, per-peer known counts, and mempool age/size.
+    """
+    from rpc import deps
+
+    p2p_svc = _get_p2p_service()
+    relay_svc = _get_tx_relay_service(p2p_svc) if p2p_svc is not None else None
+
+    txrelay_snapshot: dict[str, t.Any] = {}
+    txrelay_metrics: dict[str, t.Any] = {}
+    if relay_svc is not None:
+        if hasattr(relay_svc, "snapshot"):
+            try:
+                txrelay_snapshot = t.cast(dict[str, t.Any], relay_svc.snapshot())
+            except Exception:
+                txrelay_snapshot = {}
+        if hasattr(relay_svc, "metrics"):
+            try:
+                txrelay_metrics = t.cast(dict[str, t.Any], relay_svc.metrics())
+            except Exception:
+                txrelay_metrics = {}
+
+    mempool_info: dict[str, t.Any] = {
+        "count": 0,
+        "totalBytes": 0,
+        "age_s": None,
+    }
+    try:
+        ctx = deps.get_ctx()
+        mempool_svc = getattr(ctx, "mempool", None)
+        if mempool_svc is None:
+            try:
+                import rpc.mempool_service as mp_mod
+                mempool_svc = getattr(mp_mod, "_mempool_service_singleton", None)
+            except Exception:
+                mempool_svc = None
+        if mempool_svc is not None:
+            if hasattr(mempool_svc, "stats"):
+                try:
+                    mempool_info.update(t.cast(dict[str, t.Any], mempool_svc.stats()))
+                except Exception:
+                    pass
+            try:
+                snapshot = mempool_svc.snapshot(limit=1000)
+                received_times = [
+                    entry.received_at
+                    for entry in snapshot.entries
+                    if entry.received_at is not None
+                ]
+                if received_times:
+                    oldest = min(received_times)
+                    mempool_info["age_s"] = max(0.0, time.time() - float(oldest))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    peers = txrelay_snapshot.get("peers", []) if isinstance(txrelay_snapshot, dict) else []
+    inv_queue_depth = txrelay_metrics.get("inv_queue_depth")
+    if inv_queue_depth is None and isinstance(txrelay_snapshot, dict):
+        inv_queue_depth = sum(
+            int(entry.get("inv_queue") or 0) for entry in txrelay_snapshot.get("peers", [])
+        )
+
+    return {
+        "announced_count": txrelay_metrics.get("announced_count", 0),
+        "received_count": txrelay_metrics.get("received_count", 0),
+        "requested_count": txrelay_metrics.get("requested_count", 0),
+        "accepted_count": txrelay_metrics.get("accepted_count", 0),
+        "rejected_count": txrelay_metrics.get("rejected_count", 0),
+        "dropped_count": txrelay_metrics.get("dropped_count", 0),
+        "inv_queue_depth": inv_queue_depth or 0,
+        "inflight": txrelay_metrics.get("inflight", 0),
+        "mempool": mempool_info,
+        "peers": peers,
+        "txrelay": {
+            "metrics": txrelay_metrics,
+            "snapshot": txrelay_snapshot,
+        },
+    }
 
 
 @method(
