@@ -1719,11 +1719,21 @@ class P2PService:
     def _bind_mempool_callback(self) -> bool:
         if self._mempool_callback_bound:
             return True
+        mempool_service = None
         try:
             from rpc.methods import tx as tx_methods
 
             mempool_service = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
         except Exception:
+            mempool_service = None
+        if mempool_service is None:
+            try:
+                from rpc.mempool_service import get_mempool_service_singleton
+
+                mempool_service = get_mempool_service_singleton()
+            except Exception:
+                mempool_service = None
+        if mempool_service is None:
             return False
         if mempool_service is None or not hasattr(
             mempool_service, "set_p2p_broadcast_callback"
