@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
+import uuid
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional, Tuple
 
@@ -20,9 +22,12 @@ from p2p.crypto.handshake import \
 from .base import (MAX_FRAME_DEFAULT, CloseCode, Conn, ConnInfo,
                    HandshakeError, ListenConfig, Stream, StreamClosed,
                    Transport, TransportError)
+from ..metrics import inc_handshake_failure
 
 # Frame header: 4 bytes ciphertext length (network order)
 LEN_HDR = struct.Struct("!I")
+
+log = logging.getLogger("animica.p2p.transport.tcp")
 
 
 @dataclass(slots=True)
@@ -242,6 +247,7 @@ class TcpTransport(Transport):
         async def _on_client(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         ):
+            trace_id = uuid.uuid4().hex
             # Handshake as responder (inbound)
             try:
                 tx_aead, rx_aead, info = await perform_handshake_tcp(
@@ -260,6 +266,7 @@ class TcpTransport(Transport):
                 except Exception:
                     pass
                 info.is_outbound = False
+                info.conn_trace_id = trace_id
                 conn = TcpConn(
                     reader,
                     writer,
@@ -270,6 +277,16 @@ class TcpTransport(Transport):
                 )
                 await self._incoming.put(conn)
             except Exception as e:
+                inc_handshake_failure("transport_handshake")
+                log.info(
+                    "P2P_DIAL_FAIL",
+                    extra={
+                        "conn_trace_id": trace_id,
+                        "stage": "handshake",
+                        "direction": "in",
+                        "reason": str(e),
+                    },
+                )
                 # On handshake failure, ensure socket is closed.
                 with contextlib.suppress(Exception):
                     writer.close()
