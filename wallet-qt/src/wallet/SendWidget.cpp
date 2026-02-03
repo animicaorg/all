@@ -8,7 +8,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QMessageBox>
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -35,8 +35,8 @@ SendWidget::SendWidget(
     setupUI();
     
     // Get chain ID
-    QNetworkReply* reply = m_rpcClient->getChainId();
-    connect(reply, &QNetworkReply::finished, [this, reply]() {
+    RpcReply* reply = m_rpcClient->getChainId();
+    connect(reply, &RpcReply::finished, [this, reply]() {
         if (reply->error() == QNetworkReply::NoError) {
             QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
             if (doc.isObject()) {
@@ -230,12 +230,12 @@ void SendWidget::onSendClicked()
     }
     
     // Get nonce
-    QNetworkReply* nonceReply = m_rpcClient->getNonce(account.address, "pending");
+    RpcReply* nonceReply = m_rpcClient->getNonce(account.address, "pending");
     QEventLoop loop;
     QTimer timer;
     timer.setSingleShot(true);
     
-    connect(nonceReply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(nonceReply, &RpcReply::finished, &loop, &QEventLoop::quit);
     connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     
     timer.start(10000);
@@ -338,12 +338,12 @@ void SendWidget::onSendClicked()
     }
     
     // Broadcast transaction
-    QNetworkReply* txReply = m_rpcClient->sendRawTransaction(signedHex);
+    RpcReply* txReply = m_rpcClient->sendRawTransaction(signedHex);
     QEventLoop txLoop;
     QTimer txTimer;
     txTimer.setSingleShot(true);
     
-    connect(txReply, &QNetworkReply::finished, &txLoop, &QEventLoop::quit);
+    connect(txReply, &RpcReply::finished, &txLoop, &QEventLoop::quit);
     connect(&txTimer, &QTimer::timeout, &txLoop, &QEventLoop::quit);
     
     txTimer.start(10000);

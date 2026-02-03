@@ -7,14 +7,26 @@
 #include <QFileDialog>
 #include <QDesktopServices>
 #include <QUrl>
-#include "ui/NodeControlWidget.h"
-#include "node/NodeManager.h"
 #include "platform/AppPaths.h"
 #include "platform/DataDirManager.h"
 #include "rpc/AnimicaRpcClient.h"
-#include "diagnostics/DiagnosticsWindow.h"
+#include "rpc/RpcSettings.h"
+#include "ui/RpcSettingsDialog.h"
 #include "wallet/WalletImporter.h"
 #include "wallet/WalletExporter.h"
+#include "wallet/WalletEngine.h"
+#include "wallet/WalletWidget.h"
+#include "wallet/WalletDatabase.h"
+#include "wallet/TransactionMonitor.h"
+#include "wallet/UnlockDialog.h"
+#include <QInputDialog>
+#include <QFileInfo>
+#include <QDir>
+#if !WALLET_REMOTE_RPC_ONLY
+#include "ui/NodeControlWidget.h"
+#include "node/NodeManager.h"
+#include "diagnostics/DiagnosticsWindow.h"
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -42,12 +54,64 @@ int main(int argc, char *argv[])
     window.setWindowTitle("Animica Wallet");
     window.setMinimumSize(800, 600);
     
-    // Create node manager with data directory manager
-    NodeManager nodeManager(&dataDirManager);
+    // Load RPC settings
+    RpcSettings rpcSettings;
+    RpcEndpointSettings rpcEndpoint = rpcSettings.load();
     
     // Create RPC client
     AnimicaRpcClient rpcClient;
-    rpcClient.setEndpoint("http://127.0.0.1:8545/rpc");
+    rpcClient.setEndpoint(RpcSettings::toUrl(rpcEndpoint).toString());
+
+    WalletEngine walletEngine(&rpcClient);
+    WalletDatabase walletDb(QDir(dataDirManager.getDataDir()).filePath("wallet.db"), &window);
+    if (!walletDb.initialize()) {
+        QMessageBox::warning(&window, "Wallet Error", "Failed to initialize wallet database.");
+    }
+    TransactionMonitor txMonitor(&rpcClient, &walletDb, &window);
+    txMonitor.start();
+
+    QString keystorePath = QDir(dataDirManager.getDataDir()).filePath("keystore.json");
+    if (QFile::exists(keystorePath)) {
+        if (!walletEngine.openWallet(keystorePath)) {
+            QMessageBox::warning(&window, "Wallet Error", "Failed to open wallet keystore.");
+        }
+    } else {
+        bool ok = false;
+        QString password = QInputDialog::getText(
+            &window,
+            "Create Wallet",
+            "Create a new wallet password:",
+            QLineEdit::Password,
+            QString(),
+            &ok
+        );
+        if (ok && !password.isEmpty()) {
+            bool confirmOk = false;
+            QString confirm = QInputDialog::getText(
+                &window,
+                "Create Wallet",
+                "Confirm wallet password:",
+                QLineEdit::Password,
+                QString(),
+                &confirmOk
+            );
+
+            if (!confirmOk || confirm != password) {
+                QMessageBox::warning(&window, "Wallet Error", "Passwords did not match.");
+            } else if (!walletEngine.createWallet(password, dataDirManager.getDataDir())) {
+                QMessageBox::warning(&window, "Wallet Error", "Failed to create new wallet.");
+            } else {
+                walletEngine.unlockWallet(password);
+            }
+        }
+    }
+
+    WalletWidget* walletWidget = new WalletWidget(&walletEngine, &rpcClient, &walletDb, &txMonitor, &window);
+    walletWidget->setRpcEndpoint(RpcSettings::toDisplayUrl(rpcEndpoint));
+
+#if !WALLET_REMOTE_RPC_ONLY
+    // Create node manager with data directory manager
+    NodeManager nodeManager(&dataDirManager);
     
     // Create diagnostics window (parent to window for proper cleanup)
     DiagnosticsWindow* diagnosticsWindow = new DiagnosticsWindow(&rpcClient, &nodeManager, &window);
@@ -55,6 +119,9 @@ int main(int argc, char *argv[])
     // Create and set central widget
     NodeControlWidget* nodeControl = new NodeControlWidget(&nodeManager);
     window.setCentralWidget(nodeControl);
+#else
+    window.setCentralWidget(walletWidget);
+#endif
     
     // Create menu bar
     QMenuBar* menuBar = window.menuBar();
@@ -209,6 +276,7 @@ int main(int argc, char *argv[])
     exitAction->setShortcut(QKeySequence::Quit);
     QObject::connect(exitAction, &QAction::triggered, &app, &QApplication::quit);
     
+#if !WALLET_REMOTE_RPC_ONLY
     // Node menu
     QMenu* nodeMenu = menuBar->addMenu("&Node");
     
@@ -238,6 +306,7 @@ int main(int argc, char *argv[])
     QObject::connect(openLogsAction, &QAction::triggered, [&nodeManager]() {
         nodeManager.openLogsFolder();
     });
+#endif
     
     // Settings menu
     QMenu* settingsMenu = menuBar->addMenu("&Settings");
@@ -254,10 +323,14 @@ int main(int argc, char *argv[])
         
         msg += "This directory contains:\n"
                "• wallets.json (your wallet keys)\n"
+#if !WALLET_REMOTE_RPC_ONLY
                "• chain-* (blockchain data)\n"
-               "• logs (node and wallet logs)\n"
-               "• snapshots (chain snapshots)\n\n"
-               "Open this folder in file manager?";
+#endif
+               "• logs (wallet logs)\n"
+#if !WALLET_REMOTE_RPC_ONLY
+               "• snapshots (chain snapshots)\n"
+#endif
+               "\nOpen this folder in file manager?";
         
         QMessageBox::StandardButton reply = QMessageBox::information(
             &window,
@@ -272,13 +345,19 @@ int main(int argc, char *argv[])
     });
     
     QAction* changeDataDirAction = settingsMenu->addAction("&Change Data Directory...");
-    QObject::connect(changeDataDirAction, &QAction::triggered, [&window, &dataDirManager, &nodeManager, &app]() {
+    QObject::connect(changeDataDirAction, &QAction::triggered, [&window, &dataDirManager, &app
+#if !WALLET_REMOTE_RPC_ONLY
+    , &nodeManager
+#endif
+    ]() {
         // Warn to stop node first
+#if !WALLET_REMOTE_RPC_ONLY
         if (nodeManager.isRunning()) {
             QMessageBox::warning(&window, "Node Running",
                 "Please stop the node before changing the data directory.");
             return;
         }
+#endif
         
         QString currentDir = dataDirManager.getDataDir();
         
@@ -331,6 +410,16 @@ int main(int argc, char *argv[])
             }
         }
     });
+
+    QAction* rpcSettingsAction = settingsMenu->addAction("&RPC Settings...");
+    QObject::connect(rpcSettingsAction, &QAction::triggered, [&window, &rpcClient, walletWidget]() {
+        RpcSettingsDialog dialog(&window);
+        QObject::connect(&dialog, &RpcSettingsDialog::settingsSaved, [&rpcClient, walletWidget](const RpcEndpointSettings& settings) {
+            rpcClient.setEndpoint(RpcSettings::toUrl(settings).toString());
+            walletWidget->setRpcEndpoint(RpcSettings::toDisplayUrl(settings));
+        });
+        dialog.exec();
+    });
     
     // Help menu
     QMenu* helpMenu = menuBar->addMenu("&Help");
@@ -339,16 +428,13 @@ int main(int argc, char *argv[])
     QObject::connect(aboutAction, &QAction::triggered, [&window]() {
         QMessageBox::about(&window, "About Animica Wallet",
                           "<h2>Animica Wallet v0.1.0</h2>"
-                          "<p>A desktop wallet for the Animica blockchain with embedded node.</p>"
-                          "<p>This is an early prototype implementing node control functionality.</p>"
+                          "<p>A desktop wallet for the Animica blockchain using remote RPC.</p>"
+                          "<p>This build connects to an external RPC endpoint by default.</p>"
                           "<p><b>Features:</b></p>"
                           "<ul>"
-                          "<li>Embedded Animica node (standalone Python mode)</li>"
-                          "<li>Localhost-only RPC communication</li>"
-                          "<li>Network selection (mainnet/testnet/devnet)</li>"
-                          "<li>Node lifecycle management</li>"
-                          "<li>Sync progress monitoring</li>"
-                          "<li>Log viewing and diagnostics</li>"
+                          "<li>Remote RPC client mode</li>"
+                          "<li>Configurable RPC endpoint</li>"
+                          "<li>Balance display and transaction tools</li>"
                           "</ul>"
                           "<p><b>Coming soon:</b></p>"
                           "<ul>"
@@ -365,6 +451,17 @@ int main(int argc, char *argv[])
     
     // Show window
     window.show();
+
+    QObject::connect(walletWidget, &WalletWidget::unlockRequested, [&window, &walletEngine]() {
+        UnlockDialog dialog(&window);
+        if (dialog.exec() == QDialog::Accepted) {
+            if (!walletEngine.unlockWallet(dialog.password())) {
+                QMessageBox::warning(&window, "Unlock Failed", "Incorrect password.");
+                return;
+            }
+            walletEngine.setAutoLockTimeout(dialog.autoLockMinutes());
+        }
+    });
     
     return app.exec();
 }

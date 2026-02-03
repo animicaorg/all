@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include "RpcReply.h"
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QUrl>
@@ -14,7 +14,7 @@
  * Provides type-safe wrapper around Animica RPC methods.
  * Uses Qt's QNetworkAccessManager for HTTP communication.
  * 
- * All methods return QNetworkReply* which can be used to:
+ * All methods return RpcReply* which can be used to:
  * - Connect to finished() signal
  * - Read response with readAll()
  * - Parse JSON with QJsonDocument
@@ -24,8 +24,8 @@
  *   AnimicaRpcClient client;
  *   client.setEndpoint("http://127.0.0.1:8545/rpc");
  *   
- *   QNetworkReply* reply = client.ping();
- *   connect(reply, &QNetworkReply::finished, [reply]() {
+ *   RpcReply* reply = client.ping();
+ *   connect(reply, &RpcReply::finished, [reply]() {
  *       if (reply->error() == QNetworkReply::NoError) {
  *           QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
  *           // Process response...
@@ -54,8 +54,15 @@ public:
     QString endpoint() const { return m_endpoint.toString(); }
 
     /**
+     * @brief Set retry policy for RPC calls.
+     * @param maxRetries Maximum retries after initial attempt
+     * @param backoffMs Base backoff delay in ms
+     */
+    void setRetryPolicy(int maxRetries, int backoffMs);
+
+    /**
      * @brief Set request timeout in milliseconds.
-     * @param timeout Timeout in ms (default: 30000)
+     * @param timeout Timeout in ms (default: 8000)
      */
     void setTimeout(int timeout) { m_timeout = timeout; }
 
@@ -65,7 +72,7 @@ public:
      * @brief Health check ping.
      * @return Network reply (expect: {"result": "pong"})
      */
-    QNetworkReply* ping();
+    RpcReply* ping();
 
     // ==================== Chain Information ====================
 
@@ -73,13 +80,13 @@ public:
      * @brief Get network chain ID.
      * @return Network reply (expect: {"result": <integer>})
      */
-    QNetworkReply* getChainId();
+    RpcReply* getChainId();
 
     /**
      * @brief Get current chain head (latest block).
      * @return Network reply (expect: {"result": {block object}})
      */
-    QNetworkReply* getHead();
+    RpcReply* getHead();
 
     /**
      * @brief Get block by number.
@@ -87,7 +94,7 @@ public:
      * @param fullTx Include full transaction objects
      * @return Network reply
      */
-    QNetworkReply* getBlockByNumber(const QString& number, bool fullTx = false);
+    RpcReply* getBlockByNumber(const QString& number, bool fullTx = false);
 
     /**
      * @brief Get block by hash.
@@ -95,7 +102,7 @@ public:
      * @param fullTx Include full transaction objects
      * @return Network reply
      */
-    QNetworkReply* getBlockByHash(const QString& hash, bool fullTx = false);
+    RpcReply* getBlockByHash(const QString& hash, bool fullTx = false);
 
     // ==================== Sync Status ====================
 
@@ -103,7 +110,7 @@ public:
      * @brief Get synchronization status.
      * @return Network reply (expect: {"result": {sync status}})
      */
-    QNetworkReply* getSyncStatus();
+    RpcReply* getSyncStatus();
 
     // ==================== State Queries ====================
 
@@ -113,7 +120,7 @@ public:
      * @param block Block specifier ("latest", "pending", or number)
      * @return Network reply (expect: {"result": "<balance in wei>"})
      */
-    QNetworkReply* getBalance(const QString& address, const QString& block = "latest");
+    RpcReply* getBalance(const QString& address, const QString& block = "latest");
 
     /**
      * @brief Get account nonce (transaction count).
@@ -121,7 +128,7 @@ public:
      * @param block Block specifier ("latest", "pending", or number)
      * @return Network reply (expect: {"result": <nonce>})
      */
-    QNetworkReply* getNonce(const QString& address, const QString& block = "latest");
+    RpcReply* getNonce(const QString& address, const QString& block = "latest");
 
     // ==================== Transactions ====================
 
@@ -130,21 +137,21 @@ public:
      * @param signedTx Signed transaction bytes (hex with 0x prefix)
      * @return Network reply (expect: {"result": "<tx hash>"})
      */
-    QNetworkReply* sendRawTransaction(const QString& signedTx);
+    RpcReply* sendRawTransaction(const QString& signedTx);
 
     /**
      * @brief Get transaction by hash.
      * @param hash Transaction hash (hex with 0x prefix)
      * @return Network reply (expect: {"result": {tx object}})
      */
-    QNetworkReply* getTransaction(const QString& hash);
+    RpcReply* getTransaction(const QString& hash);
 
     /**
      * @brief Get transaction receipt.
      * @param hash Transaction hash (hex with 0x prefix)
      * @return Network reply (expect: {"result": {receipt} or null})
      */
-    QNetworkReply* getReceipt(const QString& hash);
+    RpcReply* getReceipt(const QString& hash);
 
     // ==================== P2P Network ====================
 
@@ -152,19 +159,19 @@ public:
      * @brief List connected peers.
      * @return Network reply (expect: {"result": [peer objects]})
      */
-    QNetworkReply* listPeers();
+    RpcReply* listPeers();
 
     /**
      * @brief Get peer count.
      * @return Network reply (expect: {"result": <count>})
      */
-    QNetworkReply* getPeerCount();
+    RpcReply* getPeerCount();
 
     /**
      * @brief Get chain parameters.
      * @return Network reply (expect: {"result": {params object}})
      */
-    QNetworkReply* getChainParams();
+    RpcReply* getChainParams();
 
     /**
      * @brief Execute custom RPC call.
@@ -172,14 +179,14 @@ public:
      * @param params Parameters (array or object)
      * @return Network reply
      */
-    QNetworkReply* call(const QString& method, const QJsonValue& params);
+    RpcReply* call(const QString& method, const QJsonValue& params);
     
     /**
      * @brief Execute custom RPC call with no parameters.
      * @param method RPC method name
      * @return Network reply
      */
-    QNetworkReply* call(const QString& method);
+    RpcReply* call(const QString& method);
     
     // ==================== Synchronous JSON Wrappers ====================
     
@@ -234,6 +241,10 @@ private:
      */
     QJsonObject buildRequest(const QString& method, const QJsonValue& params);
 
+    QNetworkRequest buildNetworkRequest() const;
+    RpcReply* createReply(const QJsonObject& request);
+    void updateConnectionState(bool connected);
+
     /**
      * @brief Get next request ID.
      * @return Monotonically increasing request ID
@@ -252,8 +263,13 @@ private:
     
     QNetworkAccessManager* m_network;
     QUrl m_endpoint;
+    QString m_username;
+    QString m_password;
     int m_timeout;
+    int m_maxRetries;
+    int m_backoffMs;
     int m_requestId;
+    bool m_connected;
 };
 
 #endif // ANIMICARPCCLIENT_H

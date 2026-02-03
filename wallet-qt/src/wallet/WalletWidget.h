@@ -9,9 +9,14 @@
 #include <QLabel>
 #include <QAction>
 
+class AnimicaRpcClient;
+class WalletDatabase;
+class TransactionMonitor;
 class WalletEngine;
 class AccountsWidget;
 class AddressBookWidget;
+class SendWidget;
+class ReceiveWidget;
 
 /**
  * @brief Main wallet UI coordinator.
@@ -31,7 +36,13 @@ class WalletWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit WalletWidget(WalletEngine* engine, QWidget* parent = nullptr);
+    explicit WalletWidget(
+        WalletEngine* engine,
+        AnimicaRpcClient* rpcClient,
+        WalletDatabase* database,
+        TransactionMonitor* monitor,
+        QWidget* parent = nullptr
+    );
     
     /**
      * @brief Refresh all wallet data.
@@ -42,6 +53,8 @@ public:
      * @brief Get wallet engine.
      */
     WalletEngine* engine() const { return m_engine; }
+
+    void setRpcEndpoint(const QString& endpoint);
 
 signals:
     void lockRequested();
@@ -58,13 +71,20 @@ private slots:
     void handleSyncStatusChanged(bool syncing);
     void handleCreateAccountRequested();
     void updateStatus();
+    void handleRpcConnected();
+    void handleRpcDisconnected();
+    void handleRpcError(const QString& message);
 
 private:
     void setupUi();
     void updateToolbarState();
     QString formatTotalBalance() const;
+    void updateRpcStatusLabel(const QString& status, const QString& color);
     
     WalletEngine* m_engine;
+    AnimicaRpcClient* m_rpcClient;
+    WalletDatabase* m_database;
+    TransactionMonitor* m_monitor;
     
     // UI components
     QToolBar* m_toolbar;
@@ -72,6 +92,8 @@ private:
     QLabel* m_statusLabel;
     QLabel* m_balanceLabel;
     QLabel* m_syncLabel;
+    QLabel* m_rpcStatusLabel;
+    QLabel* m_rpcEndpointLabel;
     
     // Actions
     QAction* m_lockAction;
@@ -82,6 +104,8 @@ private:
     // Child widgets
     AccountsWidget* m_accountsWidget;
     AddressBookWidget* m_addressBookWidget;
+    SendWidget* m_sendWidget;
+    ReceiveWidget* m_receiveWidget;
 };
 
 #endif // WALLETWIDGET_H

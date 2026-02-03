@@ -8,7 +8,7 @@
 #include <QEventLoop>
 #include <QTimer>
 #include <QElapsedTimer>
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 
 ConsoleExecutor::ConsoleExecutor(AnimicaRpcClient* rpcClient, QObject* parent)
     : QObject(parent)
@@ -87,7 +87,7 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::executeRpc(const QString& meth
     }
 
     // Execute RPC call
-    QNetworkReply* reply = m_rpcClient->call(method, params);
+    RpcReply* reply = m_rpcClient->call(method, params);
     if (!reply) {
         result.error = "Failed to create RPC request";
         result.durationMs = timer.elapsed();
@@ -102,7 +102,7 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::executeRpc(const QString& meth
     int actualTimeout = timeoutMs > 0 ? timeoutMs : getDefaultTimeout(method);
     timeout.setInterval(actualTimeout);
 
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(reply, &RpcReply::finished, &loop, &QEventLoop::quit);
     connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 
     timeout.start();
@@ -112,7 +112,6 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::executeRpc(const QString& meth
         // Timeout occurred
         result.timedOut = true;
         result.error = QString("RPC call timed out after %1ms").arg(actualTimeout);
-        reply->abort();
         reply->deleteLater();
         result.durationMs = timer.elapsed();
         return result;
