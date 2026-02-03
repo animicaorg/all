@@ -25,6 +25,8 @@ const configSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('1h'),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default('7d'),
   SESSION_SECRET: z.string().min(32),
+  ADMIN_BOOTSTRAP_SECRET: z.string().min(16),
+  CONFIG_ENCRYPTION_KEY: z.string().min(32),
   
   // TOTP
   TOTP_ISSUER: z.string().default('Animica Admin'),
@@ -47,6 +49,7 @@ const configSchema = z.object({
   EXCHANGE_API_URL: z.string().default('http://localhost:3000'),
   MATCHING_ENGINE_URL: z.string().default('http://localhost:3100'),
   LEDGER_SERVICE_URL: z.string().default('http://localhost:3200'),
+  BITGO_ENV: z.enum(['test', 'prod']).default('test'),
   BITGO_API_URL: z.string().optional(),
   BITGO_ACCESS_TOKEN: z.string().optional(),
   ANIMICA_NODE_URL: z.string().default('http://localhost:8545'),

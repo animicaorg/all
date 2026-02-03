@@ -16,6 +16,7 @@ export interface LoginRequest {
   email: string;
   password: string;
   totpToken?: string;
+  bootstrapSecret?: string;
 }
 
 export interface LoginResponse {
@@ -30,6 +31,7 @@ export interface LoginResponse {
     accessToken: string;
     refreshToken: string;
     sessionId: string;
+    bootstrapCreated?: boolean;
   };
 }
 
@@ -50,6 +52,23 @@ export interface MeResponse {
       adminId: string;
     };
   };
+}
+
+export interface BitgoSettings {
+  id: string;
+  environment: 'test' | 'prod';
+  baseUrl: string | null;
+  wallets: Record<string, string> | null;
+  coins: Record<string, any> | null;
+  enabled: boolean;
+  accessTokenMasked: string | null;
+  webhookSecretMasked: string | null;
+  updatedAt: string | null;
+}
+
+export interface BitgoTestResponse {
+  ok: boolean;
+  message: string;
 }
 
 class ApiClient {
@@ -135,6 +154,38 @@ class ApiClient {
 
   async me(): Promise<MeResponse> {
     const response = await this.client.get<MeResponse>('/auth/me');
+    return response.data;
+  }
+
+  async getBitgoSettings(): Promise<{ success: boolean; data: BitgoSettings }> {
+    const response = await this.client.get<{ success: boolean; data: BitgoSettings }>(
+      '/settings/bitgo'
+    );
+    return response.data;
+  }
+
+  async updateBitgoSettings(
+    payload: {
+      environment: 'test' | 'prod';
+      baseUrl?: string | null;
+      accessToken?: string | null;
+      webhookSecret?: string | null;
+      wallets?: Record<string, string> | null;
+      coins?: Record<string, any> | null;
+      enabled: boolean;
+    }
+  ): Promise<{ success: boolean; data: BitgoSettings }> {
+    const response = await this.client.put<{ success: boolean; data: BitgoSettings }>(
+      '/settings/bitgo',
+      payload
+    );
+    return response.data;
+  }
+
+  async testBitgoConnection(): Promise<{ success: boolean; data: BitgoTestResponse }> {
+    const response = await this.client.post<{ success: boolean; data: BitgoTestResponse }>(
+      '/settings/bitgo/test'
+    );
     return response.data;
   }
 

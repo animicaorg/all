@@ -46,6 +46,7 @@ export const PERMISSIONS = {
   
   // Wallet visibility
   WALLETS_READ: 'wallets:read',
+  WALLETS_WRITE: 'wallets:write',
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -73,6 +74,7 @@ const ROLE_PERMISSIONS: Record<AdminRole, Permission[]> = {
     PERMISSIONS.INCIDENTS_EXECUTE,
     PERMISSIONS.AUDIT_READ,
     PERMISSIONS.WALLETS_READ,
+    PERMISSIONS.WALLETS_WRITE,
   ],
   
   COMPLIANCE: [

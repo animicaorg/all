@@ -22,6 +22,7 @@ import {
 import { createAuthRouter } from './routes/auth.js';
 import { createUsersRouter } from './routes/users.js';
 import { createHealthRouter } from './routes/health.js';
+import { createSettingsRouter } from './routes/settings.js';
 
 export interface ServerDependencies {
   prisma: PrismaClient;
@@ -85,6 +86,7 @@ export function createApp(deps: ServerDependencies): Express {
   
   // Protected route groups
   app.use('/admin/v1/users', createUsersRouter(prisma, config, logger));
+  app.use('/admin/v1/settings', createSettingsRouter(prisma, config, logger));
 
   // TODO: Add more route groups here
   // app.use('/admin/v1/admins', createAdminsRouter(...));

@@ -8,6 +8,7 @@ import { createLogger, createPgPool, createRedis } from "@cex/common";
 import { loadConfig } from "./config.js";
 import { createServer } from "./http/server.js";
 import { createBitGoClient } from "./bitgo/client.js";
+import { BitgoConfigStore } from "./bitgo/config.js";
 import { OutboxWorker } from "./outbox/worker.js";
 import { PollPendingJob, ReconciliationJob } from "./jobs/index.js";
 
@@ -34,14 +35,11 @@ async function start() {
   logger.info("Database and Redis connections established");
 
   // Create BitGo client
-  const bitgoClient = createBitGoClient(
-    config.BITGO_BASE_URL!,
-    config.BITGO_ACCESS_TOKEN,
-    logger
-  );
+  const bitgoConfigStore = new BitgoConfigStore(pool, config, logger);
+  const bitgoClient = createBitGoClient(bitgoConfigStore, logger);
 
   // Create HTTP server
-  const app = createServer(pool, redis, config, logger);
+  const app = createServer(pool, redis, config, bitgoConfigStore, logger);
   const server = app.listen(config.PORT, "0.0.0.0", () => {
     logger.info({ port: config.PORT }, "HTTP server listening");
   });

@@ -10,6 +10,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totpToken, setTotpToken] = useState('');
+  const [bootstrapSecret, setBootstrapSecret] = useState('');
+  const [showBootstrap, setShowBootstrap] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
@@ -24,6 +26,7 @@ export default function LoginPage() {
         email,
         password,
         totpToken: totpToken || undefined,
+        bootstrapSecret: showBootstrap ? bootstrapSecret || undefined : undefined,
       });
     } catch (err: any) {
       setError(err.response?.data?.message || 'Login failed');
@@ -96,6 +99,33 @@ export default function LoginPage() {
                 maxLength={6}
               />
             </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowBootstrap((prev) => !prev)}
+                className="text-sm text-blue-600 hover:text-blue-700"
+              >
+                {showBootstrap ? 'Hide first-time setup' : 'First-time setup'}
+              </button>
+            </div>
+            {showBootstrap && (
+              <div>
+                <label htmlFor="bootstrapSecret" className="block text-sm font-medium text-gray-700">
+                  Bootstrap Secret
+                </label>
+                <input
+                  id="bootstrapSecret"
+                  type="password"
+                  value={bootstrapSecret}
+                  onChange={(e) => setBootstrapSecret(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter bootstrap secret"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Required only to initialize the first admin account.
+                </p>
+              </div>
+            )}
           </div>
 
           <button
