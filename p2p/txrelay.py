@@ -933,6 +933,10 @@ class TxRelayService:
                 async with self._lock:
                     peer_states = list(self._peer_state.values())
                 for state in peer_states:
+                    if not self._peer_eligible(state.conn_id):
+                        if state.inv_queue:
+                            state.inv_queue.clear()
+                        continue
                     if not state.inv_queue:
                         continue
                     batch: List[bytes] = []
