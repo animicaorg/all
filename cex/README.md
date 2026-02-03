@@ -112,6 +112,12 @@ If you see TypeScript errors about missing type definitions:
 3. Create a `tsconfig.json` that extends `../../tsconfig.base.json`
 4. Build required workspace dependencies before starting development
 
+## How to Use (Admin & BitGo)
+
+- **Admin bootstrap**: Configure `ADMIN_BOOTSTRAP_SECRET` for the admin API, then use the admin login page’s “First-time setup” toggle to initialize the first SUPERADMIN.
+- **BitGo configuration**: Use the admin portal **Settings → BitGo** page to edit environment, API base URL, and wallet settings.
+- **Test BitGo**: Use the **Test Connection** button on the BitGo settings page to verify credentials.
+
 ### Adding a new shared package
 
 1. Create a new directory under `packages/`

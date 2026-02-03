@@ -5,15 +5,15 @@
 import type { Router } from "express";
 import type { Pool } from "pg";
 import type { Logger } from "pino";
-import type { Config } from "../../config.js";
 import { verifyWebhookSignature } from "../../bitgo/verify.js";
 import { normalizeWebhookToObservation } from "../../bitgo/normalize.js";
 import { processWebhook } from "../../pipeline/tracker.js";
+import type { BitgoConfigStore } from "../../bitgo/config.js";
 
 export function setupBitGoWebhookRoutes(
   router: Router,
   pool: Pool,
-  config: Config,
+  bitgoConfigStore: BitgoConfigStore,
   logger: Logger
 ): void {
   /**
@@ -22,7 +22,8 @@ export function setupBitGoWebhookRoutes(
   router.post("/webhooks/bitgo", async (req, res) => {
     try {
       // Verify webhook signature if secret is configured
-      if (config.BITGO_WEBHOOK_SECRET) {
+      const runtimeConfig = await bitgoConfigStore.getConfig();
+      if (runtimeConfig.webhookSecret) {
         const signature = req.headers["x-bitgo-signature"] as string;
         
         if (!signature) {
@@ -37,7 +38,7 @@ export function setupBitGoWebhookRoutes(
         const isValid = verifyWebhookSignature(
           payload,
           signature,
-          config.BITGO_WEBHOOK_SECRET
+          runtimeConfig.webhookSecret
         );
 
         if (!isValid) {

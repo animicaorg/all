@@ -9,6 +9,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { Config } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { AuthService } from '../../services/auth.js';
+import { AdminBootstrapService } from '../../services/admin_bootstrap.js';
 import { validateBody } from '../middleware/validation.js';
 import { createAuthMiddleware } from '../middleware/auth.js';
 import { createLoginRateLimiter } from '../middleware/rate_limit.js';
@@ -17,6 +18,7 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   totpToken: z.string().length(6).optional(),
+  bootstrapSecret: z.string().min(1).optional(),
 });
 
 const refreshSchema = z.object({
@@ -31,6 +33,7 @@ export function createAuthRouter(
 ): Router {
   const router = Router();
   const authService = new AuthService(prisma, config, logger);
+  const bootstrapService = new AdminBootstrapService(prisma, config, logger);
   const authMiddleware = createAuthMiddleware(prisma, config, logger);
   const loginRateLimiter = createLoginRateLimiter(config);
 
@@ -44,8 +47,16 @@ export function createAuthRouter(
     validateBody(loginSchema),
     async (req, res, next) => {
       try {
+        const { bootstrapSecret, ...loginPayload } = req.body;
+
+        const bootstrapResult = await bootstrapService.bootstrapIfNeeded(
+          { email: loginPayload.email, password: loginPayload.password },
+          bootstrapSecret,
+          req.ip || req.socket.remoteAddress
+        );
+
         const result = await authService.login(
-          req.body,
+          loginPayload,
           req.ip || req.socket.remoteAddress,
           req.headers['user-agent']
         );
@@ -86,6 +97,7 @@ export function createAuthRouter(
             accessToken: result.accessToken,
             refreshToken: result.refreshToken,
             sessionId: result.sessionId,
+            bootstrapCreated: bootstrapResult.created,
           },
         });
       } catch (error) {

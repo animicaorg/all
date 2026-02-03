@@ -46,6 +46,9 @@ pnpm install
 # Set up environment
 cp .env.example .env
 # Edit .env with your configuration
+# Required additions:
+# - ADMIN_BOOTSTRAP_SECRET (first admin bootstrap)
+# - CONFIG_ENCRYPTION_KEY (32-byte key for encrypting BitGo secrets)
 
 # Generate Prisma client
 pnpm db:generate
@@ -58,24 +61,16 @@ pnpm db:migrate
 ### Creating the First Admin
 
 ```bash
-# Run the seed script
-pnpm db:seed
+# Option 1: Bootstrap on first login
+# 1) Set ADMIN_BOOTSTRAP_SECRET in .env
+# 2) Open the admin login page and expand "First-time setup"
+# 3) Provide email, password, and the bootstrap secret
+# 4) A SUPERADMIN account is created and logged in
 ```
 
-Or manually via psql:
-
-```sql
--- Create first SUPERADMIN (password: "Admin123!")
-INSERT INTO admins (id, email, password_hash, role, status, created_at, updated_at)
-VALUES (
-  gen_random_uuid(),
-  'admin@example.com',
-  '$argon2id$v=19$m=19456,t=2,p=1$...',  -- Use argon2 to hash
-  'SUPERADMIN',
-  'ACTIVE',
-  NOW(),
-  NOW()
-);
+```bash
+# Option 2: Run the seed script
+pnpm db:seed
 ```
 
 ### Development
@@ -141,6 +136,11 @@ pnpm test
 - `GET /admin/v1/wallets/bitgo` - BitGo policy & status
 - `GET /admin/v1/wallets/animica` - Animica node health
 
+### Settings (OPS/SUPERADMIN)
+- `GET /admin/v1/settings/bitgo` - Get BitGo configuration (masked secrets)
+- `PUT /admin/v1/settings/bitgo` - Update BitGo configuration
+- `POST /admin/v1/settings/bitgo/test` - Test BitGo connection
+
 ### Withdrawals (OPS)
 - `GET /admin/v1/withdrawals` - List withdrawals
 - `GET /admin/v1/withdrawals/:id` - Get withdrawal details
@@ -194,6 +194,13 @@ Every admin action is logged with:
 - Before/after snapshots (PII redacted)
 - Request ID, IP, user agent
 - Timestamp
+
+## BitGo Configuration (Admin Portal)
+
+1. Navigate to **Settings → BitGo** in the admin web console.
+2. Enter the environment, API base URL (optional), wallet IDs, and secrets.
+3. Click **Save Settings** to persist the encrypted config.
+4. Use **Test Connection** to verify BitGo connectivity.
 
 ## Deployment
 

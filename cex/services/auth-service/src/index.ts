@@ -11,8 +11,13 @@ import {
   createRedis,
   loadEnv
 } from "@cex/common";
-import { hashPassword, verifyPassword } from "@cex/security/auth/password";
+import { verifyPassword } from "@cex/security/auth/password";
 import { generateSessionId, getUserSessionCookieOptions } from "@cex/security/auth/session";
+import {
+  registerUser,
+  RegistrationError,
+  normalizeEmail,
+} from "./registration.js";
 
 const env = loadEnv(
   baseEnvSchema.extend({
@@ -132,40 +137,21 @@ const start = async () => {
   // Register endpoint
   app.post("/auth/register", async (req, res) => {
     try {
-      const { email, password, fullName } = req.body;
-
-      // Validate input
-      if (!email || !password || !fullName) {
-        return res.status(400).json({ message: "Email, password, and full name are required" });
-      }
-
-      // Check if user already exists
-      const existing = await pgPool.query("SELECT id FROM users WHERE email = $1", [email]);
-      if (existing.rows.length > 0) {
-        return res.status(400).json({ message: "User with this email already exists" });
-      }
-
-      // Hash password
-      const passwordHash = await hashPassword(password);
-
-      // Create user
-      const result = await pgPool.query(
-        `INSERT INTO users (email, full_name, password_hash, active) 
-         VALUES ($1, $2, $3, true) 
-         RETURNING id, email, full_name, created_at`,
-        [email, fullName, passwordHash]
-      );
-
-      const user = result.rows[0];
+      const user = await registerUser(pgPool, req.body);
       
-      logger.info({ userId: user.id, email }, "User registered");
+      logger.info({ userId: user.id, email: user.email }, "User registered");
 
       res.status(201).json({
-        message: "Registration successful",
+        message: "Registration successful. Please sign in.",
         userId: user.id,
-        email: user.email
+        email: user.email,
+        fullName: user.full_name,
       });
     } catch (error) {
+      if (error instanceof RegistrationError) {
+        const status = error.code === "email_taken" ? 409 : 400;
+        return res.status(status).json({ message: error.message, code: error.code });
+      }
       logger.error({ error }, "Registration error");
       res.status(500).json({ message: "Registration failed" });
     }
@@ -180,10 +166,12 @@ const start = async () => {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
+      const normalizedEmail = normalizeEmail(email);
+
       // Find user
       const result = await pgPool.query(
-        "SELECT id, email, full_name, password_hash, active FROM users WHERE email = $1",
-        [email]
+        "SELECT id, email, full_name, password_hash, active FROM users WHERE lower(email) = lower($1)",
+        [normalizedEmail]
       );
 
       if (result.rows.length === 0) {
@@ -191,7 +179,7 @@ const start = async () => {
         await pgPool.query(
           `INSERT INTO login_attempts (identifier, identifier_type, success, ip_address, failure_reason)
            VALUES ($1, 'email', false, $2, 'invalid_credentials')`,
-          [email, req.ip || 'unknown']
+          [normalizedEmail, req.ip || 'unknown']
         );
         return res.status(401).json({ message: "Invalid credentials" });
       }
@@ -213,7 +201,7 @@ const start = async () => {
         await pgPool.query(
           `INSERT INTO login_attempts (identifier, identifier_type, success, ip_address, failure_reason)
            VALUES ($1, 'email', false, $2, 'invalid_password')`,
-          [email, req.ip || 'unknown']
+          [normalizedEmail, req.ip || 'unknown']
         );
         return res.status(401).json({ message: "Invalid credentials" });
       }
@@ -231,7 +219,7 @@ const start = async () => {
       await pgPool.query(
         `INSERT INTO login_attempts (identifier, identifier_type, success, ip_address)
          VALUES ($1, 'email', true, $2)`,
-        [email, req.ip || 'unknown']
+        [normalizedEmail, req.ip || 'unknown']
       );
 
       // Set session

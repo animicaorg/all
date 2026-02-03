@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "lint": "echo 'no lint configured'"
+    "lint": "echo 'no lint configured'",
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
     "@cex/common": "workspace:*",

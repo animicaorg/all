@@ -13,6 +13,7 @@ const configSchema = baseEnvSchema.extend({
   BITGO_ACCESS_TOKEN: z.string(),
   BITGO_WEBHOOK_SECRET: z.string().optional(),
   BITGO_BASE_URL: z.string().optional(),
+  CONFIG_ENCRYPTION_KEY: z.string().optional(),
   
   // Ledger service integration
   LEDGER_SERVICE_URL: z.string().default("http://localhost:3002"),
