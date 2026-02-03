@@ -15,6 +15,7 @@ import {
   ArrowUpDown,
   AlertTriangle,
   FileText,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -31,6 +32,7 @@ const navigation = [
   { name: 'Withdrawals', href: '/withdrawals', icon: ArrowUpDown },
   { name: 'Incidents', href: '/incidents', icon: AlertTriangle },
   { name: 'Audit Log', href: '/audit', icon: FileText },
+  { name: 'BitGo Settings', href: '/settings/bitgo', icon: Settings },
 ];
 
 export default function Layout() {

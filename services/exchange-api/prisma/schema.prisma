@@ -235,6 +235,11 @@ enum AuditActorType {
   SYSTEM
 }
 
+enum BitgoEnvironment {
+  TEST
+  PROD
+}
+
 enum AdminActionType {
   LOGIN
   LOGOUT
@@ -896,6 +901,7 @@ model Admin {
 
   sessions             AdminSession[]
   auditLogs            AuditLog[]
+  bitgoConfigsUpdated  BitgoConfig[]
   riskFlagsCreated     RiskFlag[]
   marketControlUpdates MarketControl[]
   feeSchedulesCreated  FeeSchedule[]        @relation("FeeScheduleCreator")
@@ -904,6 +910,24 @@ model Admin {
   incidentActions      IncidentAction[]
 
   @@map("admins")
+}
+
+model BitgoConfig {
+  id                     String           @id @default("default")
+  environment            BitgoEnvironment @default(TEST)
+  baseUrl                String?          @map("base_url")
+  accessTokenEncrypted   String?          @map("access_token_encrypted")
+  webhookSecretEncrypted String?          @map("webhook_secret_encrypted")
+  wallets                Json?
+  coins                  Json?
+  enabled                Boolean          @default(false)
+  updatedBy              String?          @map("updated_by") @db.Uuid
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updater Admin? @relation(fields: [updatedBy], references: [id])
+
+  @@map("bitgo_configs")
 }
 
 model AdminSession {

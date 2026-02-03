@@ -20,8 +20,8 @@ export default function RegisterPage() {
   // Password strength calculation
   const calculatePasswordStrength = (password: string) => {
     let strength = 0;
-    if (password.length >= 8) strength++;
-    if (password.length >= 12) strength++;
+    if (password.length >= 10) strength++;
+    if (password.length >= 14) strength++;
     if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
     if (/\d/.test(password)) strength++;
     if (/[^A-Za-z0-9]/.test(password)) strength++;
@@ -41,8 +41,8 @@ export default function RegisterPage() {
       return;
     }
 
-    if (passwordStrength < 3) {
-      setError('Password is too weak. Please use at least 8 characters with uppercase, lowercase, and numbers.');
+    if (formData.password.length < 10 || !/[A-Za-z]/.test(formData.password) || !/\d/.test(formData.password)) {
+      setError('Password must be at least 10 characters and include at least one letter and one number.');
       return;
     }
 
@@ -65,7 +65,13 @@ export default function RegisterPage() {
       // Registration successful, redirect to login
       navigate('/login', { state: { message: 'Registration successful! Please sign in.' } });
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      if (err.response?.status === 409) {
+        setError('Email already taken. Please use a different address.');
+      } else if (err.response?.data?.code === 'invalid_input') {
+        setError(err.response?.data?.message || 'Please check your registration details.');
+      } else {
+        setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
