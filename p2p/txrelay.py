@@ -666,6 +666,10 @@ class TxRelayService:
             else:
                 self._metrics["data_sent"] += len(send_items)
                 await self._send_tx_data(conn_id, send_items)
+                for item in send_items:
+                    txid = item.get("txid")
+                    if isinstance(txid, (bytes, bytearray)):
+                        self._mark_known(conn_id, bytes(txid))
                 log.info(
                     "TX_DATA_SEND",
                     extra={
@@ -716,6 +720,13 @@ class TxRelayService:
                 continue
             txid_bytes = bytes(txid)
             raw_bytes = bytes(raw)
+            normalized_raw = raw_bytes
+            try:
+                from core.utils.tx import normalize_tx_bytes
+
+                normalized_raw = normalize_tx_bytes(raw_bytes)
+            except Exception:
+                normalized_raw = raw_bytes
             log.info(
                 "TX_DATA_RECV",
                 extra={
@@ -743,7 +754,7 @@ class TxRelayService:
                 self._reject_remember(txid_bytes)
                 self._clear_inflight(txid_bytes)
                 continue
-            computed = sha3_256(raw_bytes)
+            computed = sha3_256(normalized_raw)
             if computed != txid_bytes:
                 log.warning(
                     "TX_REJECTED",
@@ -770,7 +781,7 @@ class TxRelayService:
                 extra={
                     "peer": conn_id,
                     "hash": txid_bytes.hex(),
-                    "bytes": len(raw_bytes),
+                    "bytes": len(normalized_raw),
                     "origin": origin_label or conn_id,
                     **self._peer_log_extra(conn_id),
                 },
@@ -780,7 +791,7 @@ class TxRelayService:
             )
             
             try:
-                ok, reason = await self._admit_tx(raw_bytes, origin_label or conn_id)
+                ok, reason = await self._admit_tx(normalized_raw, origin_label or conn_id)
                 log.info(
                     "TX_DATA_ADMIT_RESULT",
                     extra={
@@ -888,6 +899,9 @@ class TxRelayService:
     async def on_mempool_req(self, conn_id: str, limit: Optional[int] = None) -> None:
         lim = int(limit) if limit is not None else self.mempool_sync_limit
         txids = await self._list_mempool_hashes(lim)
+        for txid in txids:
+            if isinstance(txid, (bytes, bytearray)):
+                self._mark_known(conn_id, bytes(txid))
         self._metrics["mempool_sync_resp_sent"] += 1
         await self._send_mempool_resp(conn_id, txids)
         log.info(
