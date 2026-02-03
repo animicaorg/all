@@ -1371,10 +1371,182 @@ class BlockImporter:
                 self._capture_state_snapshot(old_height)
             self._apply_state_reorg(detached_list, attached_list, best)
         
+        # Auto-confirm local mempool transactions when canonical height increases
+        # This ensures transactions in local mempools get confirmed without needing
+        # to propagate to miners' nodes
+        if attached_list:
+            self._confirm_mempool_transactions(attached_list)
+        
         # Check for and create missing snapshots (run periodically, not on every block)
         # Only check every 100 blocks to avoid overhead
         if best.height % 100 == 0:
             self._check_and_create_missing_snapshots(best.height)
+
+    def _confirm_mempool_transactions(self, attached_blocks: list[bytes]) -> None:
+        """
+        Automatically confirm local mempool transactions when blocks are attached.
+        
+        This ensures that when a block increases the canonical height, transactions
+        in the local mempool are confirmed/evicted without needing to propagate to
+        miners' nodes.
+        
+        Args:
+            attached_blocks: List of block hashes (bytes) that were attached to the canonical chain
+        """
+        if not attached_blocks:
+            return
+        
+        # Validate input types
+        if not all(isinstance(h, (bytes, bytearray)) for h in attached_blocks):
+            log.warning(
+                "Invalid block hash type in attached_blocks",
+                extra={"expected": "bytes", "got": [type(h).__name__ for h in attached_blocks]},
+            )
+            return
+        
+        try:
+            # Try to get mempool service from context (may not be available in all environments)
+            from rpc import deps
+            ctx = deps.get_ctx()
+            mempool_service = getattr(ctx, "mempool", None)
+        except Exception:
+            # Context not available (e.g., during testing or minimal node setup)
+            # This is expected and safe to ignore
+            mempool_service = None
+        
+        if mempool_service is None:
+            # No mempool service available, nothing to do
+            return
+        
+        # Extract transaction hashes from all attached blocks
+        # Cache blocks and their transaction hashes to avoid redundant database lookups
+        blocks_cache: dict[bytes, Block] = {}
+        block_tx_hashes: dict[bytes, list[str]] = {}  # Map block_hash -> tx_hashes in that block
+        
+        for block_hash in attached_blocks:
+            try:
+                # Fetch and cache block
+                block = self.block_db.get_block_by_hash(block_hash)
+                if block is None:
+                    continue
+                blocks_cache[block_hash] = block
+                
+                # Extract transaction hashes from this block
+                tx_hashes: list[str] = []
+                if hasattr(block, "txs") and block.txs:
+                    for tx in block.txs:
+                        # Try to get canonical transaction hash
+                        tx_hash_hex = self._extract_tx_hash(tx)
+                        if tx_hash_hex:
+                            tx_hashes.append(tx_hash_hex)
+                block_tx_hashes[block_hash] = tx_hashes
+            except Exception as e:
+                log.debug(
+                    "Failed to extract transactions from block for mempool confirmation",
+                    extra={"block_hash": block_hash.hex() if isinstance(block_hash, bytes) else str(block_hash), "error": str(e)},
+                )
+                continue
+        
+        # Collect all transaction hashes for bulk removal
+        all_tx_hashes = []
+        for hashes in block_tx_hashes.values():
+            all_tx_hashes.extend(hashes)
+        
+        # Remove confirmed transactions from mempool
+        if all_tx_hashes:
+            try:
+                removed = mempool_service.remove_included(all_tx_hashes)
+                log.debug(
+                    "Auto-confirmed local mempool transactions on height increase",
+                    extra={"removed": removed, "tx_count": len(all_tx_hashes)},
+                )
+            except Exception as e:
+                log.warning(
+                    "Failed to remove confirmed transactions from mempool",
+                    extra={"error": str(e), "tx_count": len(all_tx_hashes)},
+                )
+        
+        # Trigger mempool reconciliation for conflict resolution
+        # Use cached blocks and per-block tx hashes to avoid redundant lookups
+        try:
+            from mempool import on_block_accepted
+            
+            # Call on_block_accepted for each attached block with its specific tx hashes
+            for block_hash in attached_blocks:
+                block = blocks_cache.get(block_hash)
+                if block is not None:
+                    # Get transaction hashes for this specific block
+                    tx_hashes = block_tx_hashes.get(block_hash, [])
+                    reconcile_result = on_block_accepted(
+                        block, 
+                        self.state_db,
+                        tx_hashes=tx_hashes
+                    )
+                    if reconcile_result and (reconcile_result.get("evicted", 0) > 0 or reconcile_result.get("conflicts", 0) > 0):
+                        log.debug(
+                            "Reconciled mempool after block attachment",
+                            extra=reconcile_result,
+                        )
+        except Exception as e:
+            log.debug(
+                "Failed to reconcile mempool after block attachment",
+                extra={"error": str(e)},
+            )
+    
+    def _extract_tx_hash(self, tx: Union[Tx, Dict[str, Any]]) -> Optional[str]:
+        """
+        Extract canonical transaction hash from a transaction object.
+        
+        Args:
+            tx: Transaction object (can be Tx, dict, or bytes)
+            
+        Returns:
+            Transaction hash as hex string with 0x prefix, or None if extraction fails
+        """
+        try:
+            # Try raw CBOR method first (most canonical)
+            raw = getattr(tx, "raw_cbor", None)
+            if raw is None and hasattr(tx, "to_cbor") and callable(getattr(tx, "to_cbor")):
+                try:
+                    raw = tx.to_cbor()
+                except Exception:
+                    raw = None
+            
+            if raw:
+                from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
+                return _tx_hash_hex(raw)
+            
+            # Try hash() method
+            if hasattr(tx, "hash") and callable(getattr(tx, "hash")):
+                try:
+                    h = tx.hash()
+                    if isinstance(h, bytes) and len(h) == 32:
+                        return "0x" + h.hex()
+                except Exception:
+                    pass
+            
+            # Try hash attribute
+            if hasattr(tx, "hash"):
+                h = getattr(tx, "hash")
+                if isinstance(h, bytes) and len(h) == 32:
+                    return "0x" + h.hex()
+                elif isinstance(h, str):
+                    return h if h.startswith("0x") else f"0x{h}"
+            
+            # Try tx_hash attribute
+            if hasattr(tx, "tx_hash"):
+                h = getattr(tx, "tx_hash")
+                if isinstance(h, bytes) and len(h) == 32:
+                    return "0x" + h.hex()
+                elif isinstance(h, str):
+                    return h if h.startswith("0x") else f"0x{h}"
+        except Exception as e:
+            log.debug(
+                "Failed to extract transaction hash",
+                extra={"error": str(e), "tx_type": type(tx).__name__},
+            )
+        
+        return None
 
     def _apply_state_reorg(
         self,
