@@ -30,7 +30,7 @@ from p2p.peer.p2p_store import (
     merge_peer_files,
     read_peers_json,
 )
-from p2p.transport.base import ListenConfig
+from p2p.transport.base import HandshakeError, ListenConfig
 from p2p.constants import DEFAULT_TCP_PORT, MAX_INV_PER_MSG, MAX_TX_BYTES
 from p2p.transport.multiaddr import parse_multiaddr
 from p2p.transport.tcp import TcpTransport
@@ -48,6 +48,13 @@ from p2p.messages_tx import (
     parse_txids,
 )
 from p2p.txrelay import TxRelayService
+from p2p.metrics import (
+    inc_caps_failure,
+    inc_dial_attempt,
+    inc_dial_success,
+    inc_disconnect,
+    inc_handshake_failure,
+)
 from p2p.wire.messages import (
     AddressAnnounce,
     Blocks,
@@ -148,6 +155,7 @@ class _PeerState:
     stream: Any
     framer: Framer
     write_lock: asyncio.Lock
+    conn_trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     peer_id: Optional[str] = None  # hex string
     hello: Optional[dict] = None
     hello_done: asyncio.Event = field(default_factory=asyncio.Event)
@@ -195,6 +203,78 @@ class _PeerState:
     last_tx_data_sent_at: Optional[float] = None
     last_tx_data_recv_at: Optional[float] = None
     broadcast: PeerBroadcastScore = field(default_factory=PeerBroadcastScore)
+    negotiated_caps: set[str] = field(default_factory=set)
+
+
+class _NullTxRelay:
+    def __init__(self) -> None:
+        self._running = False
+
+    def snapshot(self) -> dict[str, Any]:
+        return {}
+
+    def register_peer(
+        self,
+        conn_id: str,
+        *,
+        peer_node_id: Optional[str] = None,
+        direction: Optional[str] = None,
+        remote: Optional[str] = None,
+    ) -> None:
+        return None
+
+    def unregister_peer(self, conn_id: str) -> None:
+        return None
+
+    async def request_mempool_sync(self, conn_id: str) -> int:
+        return 0
+
+    async def on_tx_inv(self, conn_id: str, txids: list[bytes]) -> None:
+        return None
+
+    async def on_tx_get(self, conn_id: str, txids: list[bytes]) -> None:
+        return None
+
+    async def on_tx_data(self, conn_id: str, items: list[dict[str, Any]]) -> None:
+        return None
+
+    async def on_tx_notfound(self, conn_id: str, txids: list[bytes]) -> None:
+        return None
+
+    async def on_mempool_req(self, conn_id: str, limit: int = 0) -> None:
+        return None
+
+    async def on_mempool_resp(self, conn_id: str, txids: list[bytes]) -> None:
+        return None
+
+    async def on_mempool_add(self, txid: bytes, raw: bytes) -> None:
+        return None
+
+    async def request_missing_known(self, limit: int = 0) -> int:
+        return 0
+
+    async def sync_all_peers(self, timeout_s: float = 0.0) -> int:
+        return 0
+
+    async def announce_txids(
+        self, txids: list[bytes], *, exclude_peer: Optional[str] = None
+    ) -> None:
+        return None
+
+    async def inv_flush_loop(self) -> None:
+        return None
+
+    async def inflight_timeout_loop(self) -> None:
+        return None
+
+    async def mempool_sync_loop(self) -> None:
+        return None
+
+    async def mempool_watchdog_loop(self) -> None:
+        return None
+
+    async def reconcile_loop(self) -> None:
+        return None
 
 
 class PeerMisbehavior(Exception):
@@ -323,6 +403,7 @@ class _AddrMan:
 class P2PStatusSnapshot:
     p2p_running: bool
     listen_addrs: list[str]
+    bound_listen_addrs: list[str]
     peers_total: int
     peers_inbound: int
     peers_outbound: int
@@ -334,9 +415,14 @@ class P2PStatusSnapshot:
     addrman_size: Optional[int]
     dial_attempts: int
     dial_successes: int
+    dial_attempt_history: list[dict[str, Any]]
     learned_addrs_1m: int
     announced_addrs_1m: int
     persisted_peer_count: Optional[int]
+    seed_list: list[str]
+    outbound_dialing_enabled: bool
+    outbound_target: int
+    caps_config: dict[str, Any]
     dial_last_error: Optional[dict[str, Any]] = None
     bootstrap_last_attempt: Optional[dict[str, Any]] = None
     bootstrap_last_success: Optional[dict[str, Any]] = None
@@ -346,6 +432,7 @@ class P2PStatusSnapshot:
         return {
             "p2p_running": self.p2p_running,
             "listen_addrs": list(self.listen_addrs),
+            "bound_listen_addrs": list(self.bound_listen_addrs),
             "peers_total": self.peers_total,
             "peers_inbound": self.peers_inbound,
             "peers_outbound": self.peers_outbound,
@@ -357,9 +444,14 @@ class P2PStatusSnapshot:
             "addrman_size": self.addrman_size,
             "dial_attempts": self.dial_attempts,
             "dial_successes": self.dial_successes,
+            "dial_attempt_history": list(self.dial_attempt_history),
             "learned_addrs_1m": self.learned_addrs_1m,
             "announced_addrs_1m": self.announced_addrs_1m,
             "persisted_peer_count": self.persisted_peer_count,
+            "seed_list": list(self.seed_list),
+            "outbound_dialing_enabled": self.outbound_dialing_enabled,
+            "outbound_target": self.outbound_target,
+            "caps_config": dict(self.caps_config),
             "dial_last_error": self.dial_last_error,
             "bootstrap_last_attempt": self.bootstrap_last_attempt,
             "bootstrap_last_success": self.bootstrap_last_success,
@@ -786,9 +878,8 @@ class P2PService:
         self.peerstore = pstore.open_peerstore(peerstore_path, json_fallback=fallback_json)
 
         # Transport (TCP only for now)
-        prologue = f"animica/tcp/{self.chain_id}".encode()
         self._transport = TcpTransport(
-            handshake_prologue=prologue, chain_id=self.chain_id
+            handshake_prologue=b"animica/tcp/1", chain_id=self.chain_id
         )
 
         self._running = False
@@ -864,6 +955,10 @@ class P2PService:
         self._tx_inv_reannounce_interval_s = float(
             os.environ.get("ANIMICA_P2P_TX_REANNOUNCE_SEC", "15") or 15
         )
+        required_caps = os.environ.get("ANIMICA_P2P_REQUIRED_CAPS", "")
+        self._required_caps: set[str] = {
+            c.strip() for c in required_caps.split(",") if c.strip()
+        }
         self._max_tx_bytes = int(
             os.environ.get("ANIMICA_P2P_MAX_TX_BYTES", str(MAX_TX_BYTES))
             or MAX_TX_BYTES
@@ -927,38 +1022,48 @@ class P2PService:
         self._txrelay_reconcile_task: Optional[asyncio.Task] = None
         self._mempool_bind_task: Optional[asyncio.Task] = None
         self._mempool_callback_bound = False
-        self._txrelay = TxRelayService(
-            max_tx_bytes=self._max_tx_bytes,
-            inv_batch_size=200,
-            inv_flush_interval_s=0.2,
-            inflight_timeout_s=10.0,
-            inflight_max_retries=2,
-            mempool_sync_interval_s=self._tx_mempool_sync_interval_s,
-            mempool_sync_limit=self._tx_mempool_sync_limit,
-            mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
-            mempool_watchdog_limit=self._tx_mempool_watchdog_limit,
-            reconcile_interval_s=self._tx_relay_reconcile_interval_s,
-            debug_enabled=self._tx_relay_debug,
-            known_txids_cap=50_000,
-            inv_rate_per_sec=self._tx_inv_rate_per_sec,
-            inv_burst=self._tx_inv_rate_burst,
-            tx_data_rate_bytes_per_sec=self._tx_data_rate_bytes_per_sec,
-            tx_data_burst_bytes=self._tx_data_rate_burst_bytes,
-            peer_ids=self._txrelay_peer_ids,
-            peer_eligible=self._txrelay_peer_eligible,
-            send_tx_inv=self._txrelay_send_inv,
-            send_tx_get=self._txrelay_send_get,
-            send_tx_data=self._txrelay_send_data,
-            send_tx_notfound=self._txrelay_send_notfound,
-            send_mempool_req=self._txrelay_send_mempool_req,
-            send_mempool_resp=self._txrelay_send_mempool_resp,
-            has_tx=self._txrelay_has_tx,
-            has_chain_tx=self._txrelay_has_chain_tx,
-            get_tx_raw=self._txrelay_get_tx_raw,
-            admit_tx=self._txrelay_admit_tx,
-            list_mempool_hashes=self._txrelay_list_mempool_hashes,
-            on_tx_accepted=self._legacy_tx_relay_announce,
-        )
+        try:
+            self._txrelay = TxRelayService(
+                max_tx_bytes=self._max_tx_bytes,
+                inv_batch_size=200,
+                inv_flush_interval_s=0.2,
+                inflight_timeout_s=10.0,
+                inflight_max_retries=2,
+                mempool_sync_interval_s=self._tx_mempool_sync_interval_s,
+                mempool_sync_limit=self._tx_mempool_sync_limit,
+                mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
+                mempool_watchdog_limit=self._tx_mempool_watchdog_limit,
+                reconcile_interval_s=self._tx_relay_reconcile_interval_s,
+                debug_enabled=self._tx_relay_debug,
+                known_txids_cap=50_000,
+                inv_rate_per_sec=self._tx_inv_rate_per_sec,
+                inv_burst=self._tx_inv_rate_burst,
+                tx_data_rate_bytes_per_sec=self._tx_data_rate_bytes_per_sec,
+                tx_data_burst_bytes=self._tx_data_rate_burst_bytes,
+                peer_ids=self._txrelay_peer_ids,
+                peer_eligible=self._txrelay_peer_eligible,
+                send_tx_inv=self._txrelay_send_inv,
+                send_tx_get=self._txrelay_send_get,
+                send_tx_data=self._txrelay_send_data,
+                send_tx_notfound=self._txrelay_send_notfound,
+                send_mempool_req=self._txrelay_send_mempool_req,
+                send_mempool_resp=self._txrelay_send_mempool_resp,
+                has_tx=self._txrelay_has_tx,
+                has_chain_tx=self._txrelay_has_chain_tx,
+                get_tx_raw=self._txrelay_get_tx_raw,
+                admit_tx=self._txrelay_admit_tx,
+                list_mempool_hashes=self._txrelay_list_mempool_hashes,
+                on_tx_accepted=self._legacy_tx_relay_announce,
+            )
+        except Exception as exc:
+            log.warning(
+                "Tx relay initialization failed; disabling tx relay",
+                extra={"error": str(exc)},
+                exc_info=True,
+            )
+            self._txrelay = _NullTxRelay()
+            self._tx_relay_enabled = False
+            self._tx_relay_v2_enabled = False
         self._addr_peer_known_ttl = float(
             os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
         )
@@ -1141,6 +1246,11 @@ class P2PService:
         # Tiny metrics snapshot used by RPC/CLI
         self._stats: dict[str, int] = {
             "peers": 0,
+            "dial_attempts": 0,
+            "dial_successes": 0,
+            "handshake_failures": 0,
+            "caps_failures": 0,
+            "disconnects": 0,
             "inv_tx_sent": 0,
             "inv_tx_recv": 0,
             "tx_inv_sent_total": 0,
@@ -1639,6 +1749,9 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_DISCONNECT_REASON_WINDOW", "600") or 600
         )
         self._disconnect_reason_events: Deque[tuple[float, str]] = deque()
+        self._dial_attempt_log: Deque[dict[str, Any]] = deque(maxlen=20)
+        self._handshake_failures_by_reason: dict[str, int] = {}
+        self._caps_failures_by_reason: dict[str, int] = {}
         self._invalid_seed_addrs: set[str] = set()
 
         class _Metrics:
@@ -1727,6 +1840,8 @@ class P2PService:
             return
 
     def _bind_mempool_callback(self) -> bool:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+            return False
         if self._mempool_callback_bound:
             return True
         mempool_service = None
@@ -1872,30 +1987,41 @@ class P2PService:
             asyncio.create_task(self._metrics_loop(), name="p2p.metrics"),
             asyncio.create_task(self._startup_sync_kick(), name="p2p.startup_sync"),
         ]
-        self._txrelay_inv_flush_task = asyncio.create_task(
-            self._txrelay.inv_flush_loop(), name="p2p.txrelay.inv_flush"
-        )
-        self._txrelay_inflight_task = asyncio.create_task(
-            self._txrelay.inflight_timeout_loop(), name="p2p.txrelay.inflight"
-        )
-        self._txrelay_sync_task = asyncio.create_task(
-            self._txrelay.mempool_sync_loop(), name="p2p.txrelay.mempool_sync"
-        )
-        self._txrelay_watchdog_task = asyncio.create_task(
-            self._txrelay.mempool_watchdog_loop(), name="p2p.txrelay.mempool_watchdog"
-        )
-        self._txrelay_reconcile_task = asyncio.create_task(
-            self._txrelay.reconcile_loop(), name="p2p.txrelay.reconcile"
-        )
-        self._tasks.extend(
-            [
-                self._txrelay_inv_flush_task,
-                self._txrelay_inflight_task,
-                self._txrelay_sync_task,
-                self._txrelay_watchdog_task,
-                self._txrelay_reconcile_task,
-            ]
-        )
+        if self._tx_relay_enabled and self._p2p_tx_enabled:
+            try:
+                self._txrelay_inv_flush_task = asyncio.create_task(
+                    self._txrelay.inv_flush_loop(), name="p2p.txrelay.inv_flush"
+                )
+                self._txrelay_inflight_task = asyncio.create_task(
+                    self._txrelay.inflight_timeout_loop(), name="p2p.txrelay.inflight"
+                )
+                self._txrelay_sync_task = asyncio.create_task(
+                    self._txrelay.mempool_sync_loop(), name="p2p.txrelay.mempool_sync"
+                )
+                self._txrelay_watchdog_task = asyncio.create_task(
+                    self._txrelay.mempool_watchdog_loop(),
+                    name="p2p.txrelay.mempool_watchdog",
+                )
+                self._txrelay_reconcile_task = asyncio.create_task(
+                    self._txrelay.reconcile_loop(), name="p2p.txrelay.reconcile"
+                )
+                self._tasks.extend(
+                    [
+                        self._txrelay_inv_flush_task,
+                        self._txrelay_inflight_task,
+                        self._txrelay_sync_task,
+                        self._txrelay_watchdog_task,
+                        self._txrelay_reconcile_task,
+                    ]
+                )
+            except Exception as exc:
+                log.warning(
+                    "Tx relay background tasks failed; disabling tx relay",
+                    extra={"error": str(exc)},
+                    exc_info=True,
+                )
+                self._tx_relay_enabled = False
+                self._tx_relay_v2_enabled = False
         if self._mempool_bind_task is not None:
             self._tasks.append(self._mempool_bind_task)
         self._sync_wakeup.set()
@@ -2820,6 +2946,8 @@ class P2PService:
         now = time.time()
         self._disconnect_reason_events.append((now, reason))
         self._prune_disconnect_reasons(now)
+        self._stats["disconnects"] += 1
+        inc_disconnect(reason)
 
     def _disconnect_reason_top(self, *, limit: int = 5) -> list[tuple[str, int]]:
         now = time.time()
@@ -3155,6 +3283,43 @@ class P2PService:
             and self._addr_key(str(entry.get("addr", ""))) == addr_key
         )
 
+    def _new_conn_trace_id(self) -> str:
+        return uuid.uuid4().hex
+
+    def _record_dial_attempt(
+        self,
+        *,
+        addr: str,
+        stage: str,
+        success: bool,
+        reason: Optional[str] = None,
+        conn_trace_id: Optional[str] = None,
+    ) -> None:
+        self._dial_attempt_log.append(
+            {
+                "at": time.time(),
+                "addr": addr,
+                "stage": stage,
+                "success": success,
+                "reason": reason,
+                "conn_trace_id": conn_trace_id,
+            }
+        )
+
+    def _record_handshake_failure(self, reason: str) -> None:
+        self._stats["handshake_failures"] += 1
+        self._handshake_failures_by_reason[reason] = (
+            self._handshake_failures_by_reason.get(reason, 0) + 1
+        )
+        inc_handshake_failure(reason)
+
+    def _record_caps_failure(self, reason: str) -> None:
+        self._stats["caps_failures"] += 1
+        self._caps_failures_by_reason[reason] = (
+            self._caps_failures_by_reason.get(reason, 0) + 1
+        )
+        inc_caps_failure(reason)
+
     def _dial_delay(self, addr_key: str) -> float:
         attempts = self._dial_attempts.get(addr_key, 0)
         base = 2.0 * (2 ** min(attempts, 5))
@@ -3172,7 +3337,15 @@ class P2PService:
         lowered = error.lower()
         return "invalid handshake magic" in lowered or "handshakeerror" in lowered
 
-    def _mark_dial_failure(self, addr: str, *, is_seed: bool, error: str) -> None:
+    def _mark_dial_failure(
+        self,
+        addr: str,
+        *,
+        is_seed: bool,
+        error: str,
+        stage: str = "tcp",
+        conn_trace_id: Optional[str] = None,
+    ) -> None:
         addr_key = self._addr_key(addr)
         attempts = self._dial_attempts.get(addr_key, 0) + 1
         self._dial_attempts[addr_key] = attempts
@@ -3181,7 +3354,24 @@ class P2PService:
             "error": error,
             "attempts": attempts,
             "at": time.time(),
+            "stage": stage,
         }
+        self._record_dial_attempt(
+            addr=addr,
+            stage=stage,
+            success=False,
+            reason=error,
+            conn_trace_id=conn_trace_id,
+        )
+        log.info(
+            "P2P_DIAL_FAIL",
+            extra={
+                "conn_trace_id": conn_trace_id,
+                "peer_addr": addr,
+                "stage": stage,
+                "reason": error,
+            },
+        )
         delay = self._dial_delay_for_error(addr_key, error)
         next_retry = time.time() + delay
         self._dial_backoff[addr_key] = next_retry
@@ -3221,11 +3411,19 @@ class P2PService:
                         self.peerstore.increment_score(peer_id, -1.0)
                         self.peerstore.record_seen(peer_id, normalized)
 
-    def _mark_dial_success(self, addr: str, *, is_seed: bool) -> None:
+    def _mark_dial_success(
+        self, addr: str, *, is_seed: bool, conn_trace_id: Optional[str] = None
+    ) -> None:
         addr_key = self._addr_key(addr)
         self._dial_attempts.pop(addr_key, None)
         self._dial_backoff.pop(addr_key, None)
         self._dial_success_total += 1
+        self._record_dial_attempt(
+            addr=addr,
+            stage="success",
+            success=True,
+            conn_trace_id=conn_trace_id,
+        )
         normalized = self._sanitize_peer_addr(addr, fallback_port=self._local_listen_port())
         if normalized:
             self._addrman.mark_success(normalized)
@@ -3269,10 +3467,15 @@ class P2PService:
         addrman_size = self._addrman.size()
         learned_1m = self._addr_events_last_minute(self._addr_learned_events)
         announced_1m = self._addr_events_last_minute(self._addr_announced_events)
+        outbound_target = max(
+            int(os.environ.get("ANIMICA_P2P_OUTBOUND", "8") or 8), self._min_outbound
+        )
+        outbound_enabled = outbound_target > 0
 
         return P2PStatusSnapshot(
             p2p_running=self._running,
             listen_addrs=list(self.listen_addrs),
+            bound_listen_addrs=self._transport.addresses(),
             peers_total=len(snapshot) + bootstrap_bonus,
             peers_inbound=inbound,
             peers_outbound=outbound + bootstrap_bonus,
@@ -3284,9 +3487,17 @@ class P2PService:
             addrman_size=addrman_size,
             dial_attempts=self._dial_attempt_total,
             dial_successes=self._dial_success_total,
+            dial_attempt_history=list(self._dial_attempt_log),
             learned_addrs_1m=learned_1m,
             announced_addrs_1m=announced_1m,
             persisted_peer_count=self._persisted_peer_count,
+            seed_list=list(self.seeds),
+            outbound_dialing_enabled=outbound_enabled,
+            outbound_target=outbound_target,
+            caps_config={
+                "tx_relay_v2_enabled": self._tx_relay_v2_enabled,
+                "required_caps": sorted(self._required_caps),
+            },
             dial_last_error=self._dial_last_error,
             bootstrap_last_attempt=self._last_bootstrap_attempt,
             bootstrap_last_success=self._last_bootstrap_success,
@@ -5536,11 +5747,25 @@ class P2PService:
             return False
         addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
+        conn_trace_id = self._new_conn_trace_id()
         self._dial_attempt_total += 1
+        self._stats["dial_attempts"] += 1
+        inc_dial_attempt("out")
+        dial_started_at = time.time()
+        log.info(
+            "P2P_DIAL_START",
+            extra={"conn_trace_id": conn_trace_id, "peer_addr": addr},
+        )
         if is_seed:
             resolved = await self._resolve_seed_host(addr)
             if not resolved:
-                self._mark_dial_failure(addr, is_seed=True, error="dns_lookup_failed")
+                self._mark_dial_failure(
+                    addr,
+                    is_seed=True,
+                    error="dns_lookup_failed",
+                    stage="tcp",
+                    conn_trace_id=conn_trace_id,
+                )
                 self._dial_inflight.discard(addr_key)
                 return False
         try:
@@ -5549,18 +5774,51 @@ class P2PService:
             raise
         except Exception as exc:
             err = f"{exc.__class__.__name__}: {exc}"
-            self._mark_dial_failure(addr, is_seed=is_seed, error=err)
+            stage = "handshake" if isinstance(exc, HandshakeError) else "tcp"
+            if "handshake" in err.lower():
+                stage = "handshake"
+            if stage == "handshake":
+                self._record_handshake_failure("transport_handshake")
+            self._mark_dial_failure(
+                addr,
+                is_seed=is_seed,
+                error=err,
+                stage=stage,
+                conn_trace_id=conn_trace_id,
+            )
             return False
         finally:
             self._dial_inflight.discard(addr_key)
-        self._mark_dial_success(addr, is_seed=is_seed)
-        await self._register_conn(conn, direction="outbound", feeler=feeler)
+        conn.info.conn_trace_id = conn_trace_id
+        dial_latency_ms = (time.time() - dial_started_at) * 1000.0
+        log.info(
+            "P2P_TCP_CONNECTED",
+            extra={
+                "conn_trace_id": conn_trace_id,
+                "peer_addr": addr,
+                "direction": "out",
+                "latency_ms": round(dial_latency_ms, 2),
+            },
+        )
+        self._mark_dial_success(addr, is_seed=is_seed, conn_trace_id=conn_trace_id)
+        self._stats["dial_successes"] += 1
+        inc_dial_success("out")
+        await self._register_conn(
+            conn, direction="outbound", feeler=feeler, conn_trace_id=conn_trace_id
+        )
         return True
 
     async def _register_conn(
-        self, conn: Any, *, direction: str, feeler: bool = False
+        self,
+        conn: Any,
+        *,
+        direction: str,
+        feeler: bool = False,
+        conn_trace_id: Optional[str] = None,
     ) -> None:
         remote = getattr(conn.info, "remote_addr", None) or "unknown"
+        if conn_trace_id is None:
+            conn_trace_id = getattr(conn.info, "conn_trace_id", None) or self._new_conn_trace_id()
         if (
             not self._allow_self_peers
             and self._is_self_address(
@@ -5621,6 +5879,7 @@ class P2PService:
             stream=stream,
             framer=Framer(aead=None),
             write_lock=asyncio.Lock(),
+            conn_trace_id=conn_trace_id,
             connected_at=session.connected_at,
             feeler=feeler,
             netgroup=netgroup,
@@ -5632,6 +5891,16 @@ class P2PService:
                 "remote": remote,
                 "direction": direction,
                 "stage": "tcp_connected",
+                "conn_trace_id": conn_trace_id,
+            },
+        )
+        log.info(
+            "P2P_TCP_CONNECTED",
+            extra={
+                "conn_trace_id": conn_trace_id,
+                "peer_addr": remote,
+                "direction": "in" if direction == "inbound" else "out",
+                "latency_ms": 0.0,
             },
         )
 
@@ -5660,10 +5929,20 @@ class P2PService:
         try:
             await self._send_hello(peer)
         except Exception as exc:
+            self._record_handshake_failure("hello_send_failed")
             log.warning(
                 "Failed to send HELLO",
                 extra={"remote": peer.remote, "direction": peer.direction},
                 exc_info=exc,
+            )
+            log.info(
+                "P2P_DIAL_FAIL",
+                extra={
+                    "conn_trace_id": peer.conn_trace_id,
+                    "peer_addr": peer.remote,
+                    "stage": "handshake",
+                    "reason": "hello_send_failed",
+                },
             )
             await self._drop_peer(peer, reason="hello_send_failed")
             return
@@ -5750,6 +6029,7 @@ class P2PService:
                 "reason": reason,
                 "direction": peer.direction,
                 "uptime_s": round(uptime, 2),
+                "conn_trace_id": peer.conn_trace_id,
             },
         )
 
@@ -5825,6 +6105,12 @@ class P2PService:
             )
         return obj
 
+    def _local_capabilities(self) -> list[str]:
+        caps = ["tx", "blocks", "sync"]
+        if self._tx_relay_v2_enabled:
+            caps.append("tx_relay_v2")
+        return caps
+
     async def _send_hello(self, peer: _PeerState) -> None:
         height, head_hash_hex = self._local_head()
         head_hash = self._parse_hash_bytes(head_hash_hex) or (b"\x00" * 32)
@@ -5861,12 +6147,7 @@ class P2PService:
             head_height=height,
             head_hash=head_hash,
             alg_policy_root=b"",
-            capabilities=[
-                "tx",
-                "blocks",
-                "sync",
-                *("tx_relay_v2",) if self._tx_relay_v2_enabled else (),
-            ],
+            capabilities=self._local_capabilities(),
             timestamp=int(time.time()),
             network_best_height=network_best,
         )
@@ -5876,6 +6157,15 @@ class P2PService:
                 "remote": peer.remote,
                 "direction": peer.direction,
                 "stage": "handshake_sent",
+                "conn_trace_id": peer.conn_trace_id,
+            },
+        )
+        log.info(
+            "P2P_HANDSHAKE_SEND",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_addr": peer.remote,
+                "direction": "in" if peer.direction == "inbound" else "out",
             },
         )
         await self._send(peer, MsgID.HELLO, hello)
@@ -6127,15 +6417,54 @@ class P2PService:
                 "remote": peer.remote,
                 "direction": peer.direction,
                 "stage": "handshake_received",
+                "conn_trace_id": peer.conn_trace_id,
+            },
+        )
+        log.info(
+            "P2P_HANDSHAKE_RECV",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_addr": peer.remote,
+                "direction": "in" if peer.direction == "inbound" else "out",
             },
         )
         missing_fields: list[str] = []
+
+        def _handshake_fail(reason: str, *, stage: str = "handshake") -> None:
+            if stage == "caps":
+                self._record_caps_failure(reason)
+            else:
+                self._record_handshake_failure(reason)
+            log.info(
+                "P2P_HANDSHAKE_VALIDATE_FAIL",
+                extra={
+                    "conn_trace_id": peer.conn_trace_id,
+                    "peer_addr": peer.remote,
+                    "direction": "in" if peer.direction == "inbound" else "out",
+                    "reason": reason,
+                },
+            )
+            log.info(
+                "P2P_DIAL_FAIL",
+                extra={
+                    "conn_trace_id": peer.conn_trace_id,
+                    "peer_addr": peer.remote,
+                    "stage": stage,
+                    "reason": reason,
+                },
+            )
+
+        def _normalize_caps_list(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            return [str(c) for c in value if isinstance(c, (str, int))]
 
         def _hash_bytes(value: Any) -> bytes:
             parsed = self._parse_hash_bytes(value)
             return parsed or b""
 
         if int(hello.chain_id) != int(self.chain_id):
+            _handshake_fail("chain_id_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="chain_id_mismatch",
@@ -6160,6 +6489,7 @@ class P2PService:
 
         if not peer_genesis_header and not peer_genesis_block:
             self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+            _handshake_fail("genesis_missing")
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_missing",
@@ -6178,6 +6508,7 @@ class P2PService:
 
         if peer_genesis_header and peer_genesis_header != local_genesis_header:
             self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+            _handshake_fail("genesis_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_mismatch",
@@ -6198,6 +6529,7 @@ class P2PService:
         if not peer_genesis_header and peer_genesis_block:
             if peer_genesis_block != local_genesis_block:
                 self._stats["p2p_peers_rejected_genesis_mismatch"] += 1
+                _handshake_fail("genesis_mismatch")
                 self._log_handshake_mismatch(
                     peer,
                     reason="genesis_mismatch",
@@ -6226,6 +6558,7 @@ class P2PService:
 
         peer_fork_id = int(getattr(hello, "fork_id", 0) or 0)
         if peer_fork_id and peer_fork_id != int(self._fork_id()):
+            _handshake_fail("fork_id_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="fork_id_mismatch",
@@ -6247,6 +6580,7 @@ class P2PService:
 
         peer_consensus_id = str(getattr(hello, "consensus_id", "") or "")
         if peer_consensus_id and peer_consensus_id != str(self._consensus_id()):
+            _handshake_fail("consensus_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="consensus_mismatch",
@@ -6268,6 +6602,7 @@ class P2PService:
 
         peer_protocol_version = str(getattr(hello, "protocol_version", "") or "")
         if peer_protocol_version and peer_protocol_version != str(self._protocol_version()):
+            _handshake_fail("protocol_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="protocol_mismatch",
@@ -6306,6 +6641,7 @@ class P2PService:
                     local_repo_state=local_repo_state,
                 )
                 if self._require_repo_state_match:
+                    _handshake_fail("repo_state_mismatch")
                     await self._send(
                         peer,
                         MsgID.HELLO_ACK,
@@ -6323,6 +6659,7 @@ class P2PService:
 
         peer_genesis_identity = _hash_bytes(getattr(hello, "genesis_identity", None))
         if peer_genesis_identity and peer_genesis_identity != self._genesis_identity():
+            _handshake_fail("genesis_identity_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="genesis_identity_mismatch",
@@ -6346,6 +6683,7 @@ class P2PService:
             getattr(hello, "network_params_hash", None)
         )
         if peer_network_params_hash and peer_network_params_hash != self._network_params_hash():
+            _handshake_fail("network_params_mismatch")
             self._log_handshake_mismatch(
                 peer,
                 reason="network_params_mismatch",
@@ -6378,6 +6716,7 @@ class P2PService:
             )
 
         if hello.version and str(hello.version) not in {"1", "2"}:
+            _handshake_fail("version_mismatch")
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -6391,6 +6730,7 @@ class P2PService:
         except Exception:
             peer_ts = 0
         if peer_ts and abs(now - peer_ts) > self._clock_skew_s:
+            _handshake_fail("clock_skew")
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -6405,6 +6745,7 @@ class P2PService:
             and peer.peer_id
             and peer.peer_id == self._peer_id_bytes.hex()
         ):
+            _handshake_fail("self_peer")
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -6416,6 +6757,7 @@ class P2PService:
             and peer.peer_id
             and self._is_banned(peer.peer_id)
         ):
+            _handshake_fail("banned")
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -6426,6 +6768,7 @@ class P2PService:
         remote_port = self._extract_port(peer.remote) or 0
         self._maybe_enable_private_network(remote_host, reason="connected_peer")
         if not self._allow_self_peers and self._is_self_address(remote_host, remote_port):
+            _handshake_fail("self_peer")
             await self._send(
                 peer,
                 MsgID.HELLO_ACK,
@@ -6433,6 +6776,34 @@ class P2PService:
             )
             raise PeerMisbehavior("self_peer", points=0)
         normalized = dict(data)
+        remote_caps = _normalize_caps_list(
+            getattr(hello, "capabilities", None) or data.get("capabilities")
+        )
+        local_caps = set(self._local_capabilities())
+        negotiated_caps = sorted(local_caps.intersection(remote_caps))
+        if self._required_caps:
+            missing_required = sorted(self._required_caps - set(remote_caps))
+            if missing_required:
+                _handshake_fail("caps_missing", stage="caps")
+                await self._send(
+                    peer,
+                    MsgID.HELLO_ACK,
+                    HelloAck(accepted=False, reason="caps_missing"),
+                )
+                raise PeerMisbehavior(
+                    "caps_missing", points=self._score_points["wrong_chain"]
+                )
+        log.info(
+            "P2P_CAPS_NEGOTIATED",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_addr": peer.remote,
+                "direction": "in" if peer.direction == "inbound" else "out",
+                "local_caps": sorted(local_caps),
+                "remote_caps": remote_caps,
+                "negotiated": negotiated_caps,
+            },
+        )
         normalized["chain_id"] = int(getattr(hello, "chain_id", 0) or 0)
         normalized["head_height"] = int(
             getattr(hello, "head_height", 0)
@@ -6483,7 +6854,9 @@ class P2PService:
         normalized["network_params_hash"] = peer_network_params_hash or _hash_bytes(
             data.get("network_params_hash") or data.get("networkParamsHash")
         )
+        normalized["capabilities"] = remote_caps
         peer.hello = normalized
+        peer.negotiated_caps = set(negotiated_caps)
         peer.hello_done.set()
         log.info(
             "Handshake verified",
@@ -6493,6 +6866,16 @@ class P2PService:
                 "direction": peer.direction,
                 "stage": "handshake_verified",
                 "missing_fields": missing_fields or None,
+                "conn_trace_id": peer.conn_trace_id,
+            },
+        )
+        log.info(
+            "P2P_HANDSHAKE_VALIDATE_OK",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_addr": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": "in" if peer.direction == "inbound" else "out",
             },
         )
         if normalized.get("head_height"):
@@ -6592,6 +6975,23 @@ class P2PService:
                     name=f"p2p.drop_peer@{dup_peer.remote}",
                 )
         self._stats["peers"] = self._peer_registry.peer_count()
+        log.info(
+            "P2P_SESSION_READY",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_addr": peer.remote,
+                "peer_id": peer.peer_id,
+                "direction": "in" if peer.direction == "inbound" else "out",
+            },
+        )
+        log.info(
+            "P2P_PEER_ADDED",
+            extra={
+                "conn_trace_id": peer.conn_trace_id,
+                "peer_id": peer.peer_id,
+                "direction": "in" if peer.direction == "inbound" else "out",
+            },
+        )
 
         with contextlib.suppress(Exception):
             addrs = reported_addrs or ([reported_addr] if reported_addr else [])
@@ -13693,10 +14093,10 @@ class P2PService:
         return True, "ok"
 
     def _peer_supports_tx_relay_v2(self, peer: _PeerState) -> bool:
+        if peer.negotiated_caps:
+            return "tx_relay_v2" in peer.negotiated_caps
         caps = peer.hello.get("capabilities") if peer.hello else None
-        if not caps:
-            return False
-        return "tx_relay_v2" in caps
+        return bool(caps and "tx_relay_v2" in caps)
 
     def _txrelay_peer_ids(self) -> list[str]:
         return [self._peer_tx_key(peer) for peer in self._peers.values()]

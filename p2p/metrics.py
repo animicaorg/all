@@ -169,6 +169,38 @@ p2p_errors_total = Counter(
     registry=REG,
 )
 
+# Dial/handshake lifecycle
+p2p_dial_attempts_total = Counter(
+    "p2p_dial_attempts_total",
+    "Outbound dial attempts.",
+    labelnames=("direction",),
+    registry=REG,
+)
+p2p_dial_success_total = Counter(
+    "p2p_dial_success_total",
+    "Outbound dial successes.",
+    labelnames=("direction",),
+    registry=REG,
+)
+p2p_handshake_failures_total = Counter(
+    "p2p_handshake_failures_total",
+    "Handshake failures by reason.",
+    labelnames=("reason",),
+    registry=REG,
+)
+p2p_caps_negotiation_failures_total = Counter(
+    "p2p_caps_negotiation_failures_total",
+    "Capability negotiation failures by reason.",
+    labelnames=("reason",),
+    registry=REG,
+)
+p2p_disconnects_total = Counter(
+    "p2p_disconnects_total",
+    "Disconnect reasons.",
+    labelnames=("reason",),
+    registry=REG,
+)
+
 
 # --------------------------------------------------------------------------- #
 # Public helpers (thin, allocation-light)
@@ -219,6 +251,31 @@ def observe_rtt(peer_id: str, seconds: float) -> None:
     """Observe a ping RTT (peer_id is unused but convenient for call sites)."""
     if seconds >= 0:
         p2p_rtt_seconds.observe(seconds)
+
+
+def inc_dial_attempt(direction: str = "out") -> None:
+    """Increment outbound dial attempts."""
+    p2p_dial_attempts_total.labels(direction=direction).inc()
+
+
+def inc_dial_success(direction: str = "out") -> None:
+    """Increment outbound dial successes."""
+    p2p_dial_success_total.labels(direction=direction).inc()
+
+
+def inc_handshake_failure(reason: str) -> None:
+    """Increment handshake failure counters."""
+    p2p_handshake_failures_total.labels(reason=reason).inc()
+
+
+def inc_caps_failure(reason: str) -> None:
+    """Increment caps negotiation failure counters."""
+    p2p_caps_negotiation_failures_total.labels(reason=reason).inc()
+
+
+def inc_disconnect(reason: str) -> None:
+    """Increment disconnect reason counters."""
+    p2p_disconnects_total.labels(reason=reason).inc()
 
 
 class _Timer:
@@ -345,6 +402,11 @@ __all__ = [
     "set_peers",
     "set_mesh_size",
     "observe_handshake",
+    "inc_dial_attempt",
+    "inc_dial_success",
+    "inc_handshake_failure",
+    "inc_caps_failure",
+    "inc_disconnect",
     "observe_rtt",
     "time_decode",
     "set_queue_depth",

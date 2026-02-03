@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from p2p.deps import P2PDeps
-from p2p.node.p2p_service import P2PService, _PeerState
+from p2p.node.p2p_service import P2PService, PeerMisbehavior, _PeerState
 from p2p.tests import tcp_multiaddr
 from p2p.wire.encoding import encode_payload
 from p2p.wire.frames import Framer
@@ -89,6 +89,7 @@ async def test_legacy_handshake_missing_fields_is_accepted(tmp_path: Path) -> No
     ok, reason = node._sync_peer_eligibility(peer)
     assert ok, reason
     assert reason in {"eligible", "legacy_handshake"}
+    assert "tx_relay_v2" not in peer.negotiated_caps
 
 
 @pytest.mark.asyncio
@@ -124,3 +125,40 @@ async def test_unknown_capabilities_do_not_block_handshake(tmp_path: Path) -> No
 
     ok, reason = node._sync_peer_eligibility(peer)
     assert ok, reason
+    assert "sync" in peer.negotiated_caps
+    assert "totally_new_feature" not in peer.negotiated_caps
+
+
+@pytest.mark.asyncio
+async def test_required_caps_missing_is_rejected(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_REQUIRED_CAPS", "tx_relay_v2")
+    node = _make_service(tmp_path, "required-caps")
+    peer = _register_peer(node, "peer-required:0")
+
+    genesis_header_hash = node._genesis_header_hash()
+    payload = {
+        "version": "2",
+        "agent": "missing-caps-node",
+        "chain_id": node.chain_id,
+        "listen_port": 0,
+        "listen_addrs": [],
+        "genesis_hash": genesis_header_hash,
+        "genesis_header_hash": genesis_header_hash,
+        "genesis_block_hash": node._genesis_block_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "peer_id": b"\x33" * 32,
+        "head_height": 1,
+        "head_hash": genesis_header_hash,
+        "capabilities": ["sync"],
+        "timestamp": 0,
+    }
+
+    with pytest.raises(PeerMisbehavior):
+        await node._handle_hello(peer, encode_payload(payload))
+    assert node._caps_failures_by_reason.get("caps_missing") == 1
