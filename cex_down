@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 CEX_DIR="$ROOT_DIR/cex"
 COMPOSE_FILE="$CEX_DIR/ops/docker-compose.yml"
+ENV_DIR="$CEX_DIR/ops/env"
+ENV_FILE="$ENV_DIR/.env"
+ENV_EXAMPLE="$ENV_DIR/.env.example"
 PID_FILE="$ROOT_DIR/.cex_pids"
 LOG_DIR="$ROOT_DIR/.cex_logs"
 
@@ -44,6 +47,53 @@ compose_cmd() {
   exit 1
 }
 
+load_env() {
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  else
+    if [[ -f "$ENV_EXAMPLE" ]]; then
+      log_warning "Missing $ENV_FILE. Using default ports."
+    fi
+  fi
+}
+
+set_service_defaults() {
+  API_GATEWAY_PORT="${API_GATEWAY_PORT:-2456}"
+  ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-4000}"
+  ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5173}"
+  EXCHANGE_WEB_PORT="${EXCHANGE_WEB_PORT:-5174}"
+}
+
+find_pids_by_port() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u
+    return
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp 2>/dev/null | awk -v port=":$port" '$4 ~ port {match($NF,/pid=([0-9]+)/,m); if(m[1]) print m[1]}' | sort -u
+    return
+  fi
+}
+
+stop_port_processes() {
+  local port="$1"
+  local pids
+  pids="$(find_pids_by_port "$port" | xargs)"
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+  log_info "Stopping processes on port ${port}: ${pids}"
+  for pid in $pids; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" || true
+    fi
+  done
+}
+
 stop_dev_processes() {
   if [[ -f "$PID_FILE" ]]; then
     log_info "Stopping local dev processes..."
@@ -57,6 +107,11 @@ stop_dev_processes() {
   else
     log_info "No local dev PID file found. Skipping."
   fi
+
+  stop_port_processes "$API_GATEWAY_PORT"
+  stop_port_processes "$ADMIN_SERVICE_PORT"
+  stop_port_processes "$ADMIN_WEB_PORT"
+  stop_port_processes "$EXCHANGE_WEB_PORT"
 }
 
 stop_docker() {
@@ -103,6 +158,8 @@ main() {
     esac
   done
 
+  load_env
+  set_service_defaults
   stop_dev_processes
   stop_docker
   wipe_local_data
