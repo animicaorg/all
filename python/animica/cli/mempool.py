@@ -5,6 +5,7 @@ Commands:
   animica mempool list      List pending transaction hashes
   animica mempool stats     Show mempool statistics (count, size, age)
   animica mempool drop      Drop a transaction by hash
+  animica mempool sync-status  Show P2P mempool sync status
 """
 
 from __future__ import annotations
@@ -32,6 +33,82 @@ app = typer.Typer(
     help="Mempool inspection and management",
     no_args_is_help=True,
 )
+
+
+@app.command("sync-status")
+def sync_status(
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="RPC endpoint URL",
+        envvar="ANIMICA_RPC_URL",
+    ),
+    no_cache: bool = typer.Option(
+        True,
+        "--no-cache/--cache",
+        help="Disable HTTP caching for mempool reads (default: no-cache).",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw JSON",
+    ),
+) -> None:
+    """
+    Show mempool sync status and per-peer known transaction counts.
+
+    Examples:
+        animica mempool sync-status
+        animica mempool sync-status --json
+    """
+    resolved_rpc_url = _resolve_rpc_url(rpc_url)
+    result = call_rpc(
+        "p2p.mempoolSyncStatus",
+        [],
+        rpc_url=resolved_rpc_url,
+        no_cache=no_cache,
+    )
+    if json:
+        typer.echo(json_lib.dumps(result, indent=2))
+        return
+
+    mempool = result.get("mempool") if isinstance(result, dict) else {}
+    typer.echo(f"RPC_TARGET={resolved_rpc_url}")
+    typer.echo(
+        "Mempool: count={count} bytes={bytes} age_s={age}".format(
+            count=mempool.get("count", "n/a"),
+            bytes=mempool.get("totalBytes", "n/a"),
+            age=mempool.get("age_s", "n/a"),
+        )
+    )
+    typer.echo(
+        "Sync: announced={announced} received={received} requested={requested} accepted={accepted} rejected={rejected} dropped={dropped} inflight={inflight} inv_queue={inv_queue}".format(
+            announced=result.get("announced_count", 0),
+            received=result.get("received_count", 0),
+            requested=result.get("requested_count", 0),
+            accepted=result.get("accepted_count", 0),
+            rejected=result.get("rejected_count", 0),
+            dropped=result.get("dropped_count", 0),
+            inflight=result.get("inflight", 0),
+            inv_queue=result.get("inv_queue_depth", 0),
+        )
+    )
+    peers = result.get("peers") if isinstance(result, dict) else []
+    if peers:
+        typer.echo("Peers:")
+        for entry in peers:
+            if not isinstance(entry, dict):
+                continue
+            peer_id = entry.get("peer_node_id") or entry.get("conn_id") or "n/a"
+            typer.echo(
+                "  peer={peer} known_txids={known} inv_queue={inv_queue} last_sync_sent={sent} last_sync_recv={recv}".format(
+                    peer=_short_id(peer_id) or "n/a",
+                    known=entry.get("known_txids", 0),
+                    inv_queue=entry.get("inv_queue", 0),
+                    sent=entry.get("last_sync_sent_at"),
+                    recv=entry.get("last_sync_recv_at"),
+                )
+            )
 
 
 @app.command("list")
