@@ -249,12 +249,12 @@ def list_pending(
             )
         )
     peer_known = None
+    total_peer_known_txids = 0  # Initialize early for use later
     if isinstance(p2p_debug, dict):
         peer_known = p2p_debug.get("peers")
     
-    # Count total known txids from peers
-    total_peer_known_txids = 0
     if peer_known:
+        # Count total known txids from peers
         typer.echo("Peer-known txids (sample):")
         for entry in peer_known:
             if not isinstance(entry, dict):

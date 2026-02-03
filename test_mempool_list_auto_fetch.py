@@ -5,6 +5,7 @@ when the mempool is empty but peers have known transactions.
 
 This is a code inspection test that verifies the logic is in place.
 """
+import os
 import sys
 
 
@@ -16,8 +17,16 @@ def test_code_logic_verification():
     print("Test: Code Logic Verification")
     print("=" * 70 + "\n")
 
+    # Find the mempool.py file relative to this test
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    mempool_file = os.path.join(test_dir, "python", "animica", "cli", "mempool.py")
+    
+    if not os.path.exists(mempool_file):
+        print(f"❌ Could not find mempool.py at: {mempool_file}")
+        return False
+
     # Read the mempool.py file
-    with open("/home/runner/work/all/all/python/animica/cli/mempool.py", "r") as f:
+    with open(mempool_file, "r") as f:
         content = f.read()
 
     # Verify key components are present
@@ -25,9 +34,9 @@ def test_code_logic_verification():
         ("total_peer_known_txids counter", "total_peer_known_txids" in content),
         ("Check for peer-known transactions", "if total_peer_known_txids > 0:" in content),
         ("Call to p2p.importPeerKnownTxs", '"p2p.importPeerKnownTxs"' in content),
-        ("User-friendly tip message", "Tip: Peers know about" in content),
+        ("User-friendly tip message", "Tip: Peers know about" in content and "Fetching them automatically" in content),
         ("Success feedback message", "Requested" in content and "transaction(s) from peers" in content),
-        ("Advice to run command again", "animica mempool list" in content and "again" in content),
+        ("Advice to run command again", "again in a few seconds" in content),
     ]
 
     all_passed = True
