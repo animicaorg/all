@@ -1847,6 +1847,90 @@ async def debug_tx_by_id(tx_hash: str) -> dict[str, t.Any]:
     return result
 
 
+@method(
+    "debug_tx_relay",
+    desc="Return TX relay state and per-peer relay status for a txid.",
+    aliases=("debug.txRelay",),
+)
+async def debug_tx_relay(tx_hash: str) -> dict[str, t.Any]:
+    """
+    Return tx relay diagnostics for a given txid.
+
+    Fields:
+      - tx_hash
+      - has_tx_bytes
+      - in_mempool
+      - in_chain
+      - tx_state (global relay state)
+      - peer_states (per-peer relay state machine)
+    """
+    from rpc import deps
+
+    if not tx_hash.startswith("0x"):
+        tx_hash = f"0x{tx_hash}"
+    tx_hash = tx_hash.lower()
+    tx_hash_bytes: bytes | None = None
+    try:
+        tx_hash_bytes = bytes.fromhex(tx_hash[2:] if tx_hash.startswith("0x") else tx_hash)
+    except Exception:
+        tx_hash_bytes = None
+
+    result: dict[str, t.Any] = {
+        "tx_hash": tx_hash,
+        "has_tx_bytes": False,
+        "in_mempool": False,
+        "in_chain": False,
+        "tx_state": None,
+        "peer_states": [],
+    }
+
+    try:
+        ctx = deps.get_ctx()
+        mempool_svc = getattr(ctx, "mempool", None)
+        if mempool_svc is None:
+            try:
+                import rpc.mempool_service as mp_mod
+                mempool_svc = getattr(mp_mod, "_mempool_service_singleton", None)
+            except Exception:
+                mempool_svc = None
+        if mempool_svc is not None:
+            if hasattr(mempool_svc, "has_hash"):
+                try:
+                    result["in_mempool"] = mempool_svc.has_hash(tx_hash)
+                except Exception:
+                    pass
+            if hasattr(mempool_svc, "get_raw"):
+                try:
+                    raw = mempool_svc.get_raw(tx_hash)
+                    result["has_tx_bytes"] = bool(raw)
+                except Exception:
+                    pass
+
+        tx_index = getattr(ctx, "tx_index", None)
+        if tx_index is not None and hasattr(tx_index, "exists"):
+            try:
+                if tx_hash_bytes is not None and tx_index.exists(tx_hash_bytes):
+                    result["in_chain"] = True
+            except Exception:
+                pass
+
+        p2p_svc = _get_p2p_service()
+        relay_svc = _get_tx_relay_service(p2p_svc) if p2p_svc is not None else None
+        if relay_svc is not None and tx_hash_bytes is not None:
+            if hasattr(relay_svc, "tx_state_for"):
+                result["tx_state"] = relay_svc.tx_state_for(tx_hash_bytes)
+                if isinstance(result["tx_state"], dict):
+                    result["has_tx_bytes"] = bool(
+                        result["tx_state"].get("has_bytes") or result["has_tx_bytes"]
+                    )
+            if hasattr(relay_svc, "tx_peer_state_for"):
+                result["peer_states"] = relay_svc.tx_peer_state_for(tx_hash_bytes)
+    except Exception as exc:
+        log.error(f"Error in debug_tx_relay: {exc}", exc_info=True)
+
+    return result
+
+
 @method("p2p.getVerifierSeeds", desc="Get verifier seed status for height validation")
 async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
     """

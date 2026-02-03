@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from typing import Any
 
 import pytest
 
@@ -518,6 +519,181 @@ async def test_p2p_service_tx_relay_mempool_visibility(monkeypatch, tmp_path) ->
         assert tx_hash in mined_hashes
         pending_after = await deps_b.list_pending_hashes()
         assert tx_hash not in pending_after
+    finally:
+        await svc_b.stop()
+        await svc_a.stop()
+
+
+@pytest.mark.asyncio
+async def test_tx_relay_announce_fetch_insert(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
+    monkeypatch.delenv("ANIMICA_P2P_IDENTITY_PATH", raising=False)
+    monkeypatch.setenv("ANIMICA_P2P_ALLOW_SELF_PEERS", "1")
+    port_a = free_port()
+    port_b = free_port()
+    while port_b == port_a:
+        port_b = free_port()
+
+    deps_a = InMemoryTxPool()
+    deps_b = InMemoryTxPool()
+
+    svc_a = P2PService(
+        listen_addrs=[tcp_multiaddr(port_a)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node-a" / "p2p"),
+    )
+    svc_b = P2PService(
+        listen_addrs=[tcp_multiaddr(port_b)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node-b" / "p2p"),
+    )
+
+    await svc_a.start()
+    await svc_b.start()
+    try:
+        await svc_b.dial(tcp_multiaddr(port_a))
+        connected = await wait_for(
+            lambda: svc_a.status_snapshot().peers_total >= 1
+            and svc_b.status_snapshot().peers_total >= 1,
+            timeout=10.0,
+        )
+        if not connected:
+            pytest.skip("P2P handshake failed in this environment")
+
+        raw_tx = b"tx-relay-announce-fetch-insert"
+        tx_hash = hashlib.sha3_256(raw_tx).digest()
+        await svc_a.relay_tx(raw_tx)
+
+        relayed = await wait_for(lambda: deps_b.has_tx(tx_hash), timeout=3.0)
+        assert relayed
+
+        peer_states = svc_b._txrelay.tx_peer_state_for(tx_hash)
+        assert any(state.get("state") == "INSERTED_TO_MEMPOOL" for state in peer_states)
+    finally:
+        await svc_b.stop()
+        await svc_a.stop()
+
+
+@pytest.mark.asyncio
+async def test_tx_relay_retry_on_missed_push(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
+    monkeypatch.delenv("ANIMICA_P2P_IDENTITY_PATH", raising=False)
+    monkeypatch.setenv("ANIMICA_P2P_ALLOW_SELF_PEERS", "1")
+    port_a = free_port()
+    port_b = free_port()
+    while port_b == port_a:
+        port_b = free_port()
+
+    deps_a = InMemoryTxPool()
+    deps_b = InMemoryTxPool()
+
+    svc_a = P2PService(
+        listen_addrs=[tcp_multiaddr(port_a)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node-a" / "p2p"),
+    )
+    svc_b = P2PService(
+        listen_addrs=[tcp_multiaddr(port_b)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node-b" / "p2p"),
+    )
+
+    await svc_a.start()
+    await svc_b.start()
+    try:
+        await svc_b.dial(tcp_multiaddr(port_a))
+        connected = await wait_for(
+            lambda: svc_a.status_snapshot().peers_total >= 1
+            and svc_b.status_snapshot().peers_total >= 1,
+            timeout=10.0,
+        )
+        if not connected:
+            pytest.skip("P2P handshake failed in this environment")
+
+        # Drop the first tx_data push from A to simulate a missed delivery.
+        original_send = svc_a._txrelay_send_data
+        sent = {"count": 0}
+
+        async def drop_first(peer_key: str, items: list[dict[str, Any]]) -> None:
+            sent["count"] += 1
+            if sent["count"] == 1:
+                return
+            await original_send(peer_key, items)
+
+        svc_a._txrelay_send_data = drop_first  # type: ignore[assignment]
+        svc_b._txrelay.inflight_timeout_s = 0.2
+        svc_b._txrelay.request_cooldown_s = 0.1
+
+        raw_tx = b"tx-relay-missed-push"
+        tx_hash = hashlib.sha3_256(raw_tx).digest()
+        await svc_a.relay_tx(raw_tx)
+
+        relayed = await wait_for(lambda: deps_b.has_tx(tx_hash), timeout=4.0)
+        assert relayed
+        assert sent["count"] >= 2
+    finally:
+        await svc_b.stop()
+        await svc_a.stop()
+
+
+@pytest.mark.asyncio
+async def test_tx_relay_accepts_when_not_synced(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
+    monkeypatch.delenv("ANIMICA_P2P_IDENTITY_PATH", raising=False)
+    monkeypatch.setenv("ANIMICA_P2P_ALLOW_SELF_PEERS", "1")
+    port_a = free_port()
+    port_b = free_port()
+    while port_b == port_a:
+        port_b = free_port()
+
+    deps_a = InMemoryTxPool()
+    deps_b = InMemoryTxPool()
+
+    svc_a = P2PService(
+        listen_addrs=[tcp_multiaddr(port_a)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_a,
+        peerstore_path=str(tmp_path / "node-a" / "p2p"),
+    )
+    svc_b = P2PService(
+        listen_addrs=[tcp_multiaddr(port_b)],
+        seeds=[],
+        chain_id=1337,
+        deps=deps_b,
+        peerstore_path=str(tmp_path / "node-b" / "p2p"),
+    )
+
+    await svc_a.start()
+    await svc_b.start()
+    try:
+        await svc_b.dial(tcp_multiaddr(port_a))
+        connected = await wait_for(
+            lambda: svc_a.status_snapshot().peers_total >= 1
+            and svc_b.status_snapshot().peers_total >= 1,
+            timeout=10.0,
+        )
+        if not connected:
+            pytest.skip("P2P handshake failed in this environment")
+
+        # Simulate a node still syncing headers.
+        svc_b._sync_last_header_error = "not_anchored"
+        svc_b._sync_not_anchored_attempts = 3
+
+        raw_tx = b"tx-relay-behind-node"
+        tx_hash = hashlib.sha3_256(raw_tx).digest()
+        await svc_a.relay_tx(raw_tx)
+
+        relayed = await wait_for(lambda: deps_b.has_tx(tx_hash), timeout=5.0)
+        assert relayed
     finally:
         await svc_b.stop()
         await svc_a.stop()
