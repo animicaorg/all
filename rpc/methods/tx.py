@@ -875,10 +875,11 @@ def _get_mempool_service():
 
     We therefore probe multiple likely attribute names and wrappers.
     """
+    ctx = None
     try:
         ctx = deps.get_ctx()
     except Exception:
-        return None
+        ctx = None
 
     # Common names across refactors
     candidates = [
@@ -892,19 +893,24 @@ def _get_mempool_service():
         "pool",
     ]
 
-    for name in candidates:
-        svc = getattr(ctx, name, None)
-        if svc is None:
-            continue
-        # Some contexts store a wrapper with .mempool or .service
-        if hasattr(svc, "submit") or hasattr(svc, "admit") or hasattr(svc, "add_raw") or hasattr(svc, "has_hash"):
-            return svc
-        inner = getattr(svc, "mempool", None) or getattr(svc, "service", None)
-        if inner is not None:
-            if hasattr(inner, "submit") or hasattr(inner, "admit") or hasattr(inner, "add_raw") or hasattr(inner, "has_hash"):
-                return inner
+    if ctx is not None:
+        for name in candidates:
+            svc = getattr(ctx, name, None)
+            if svc is None:
+                continue
+            # Some contexts store a wrapper with .mempool or .service
+            if hasattr(svc, "submit") or hasattr(svc, "admit") or hasattr(svc, "add_raw") or hasattr(svc, "has_hash"):
+                return svc
+            inner = getattr(svc, "mempool", None) or getattr(svc, "service", None)
+            if inner is not None:
+                if hasattr(inner, "submit") or hasattr(inner, "admit") or hasattr(inner, "add_raw") or hasattr(inner, "has_hash"):
+                    return inner
 
-    return None
+    try:
+        from rpc.mempool_service import get_mempool_service_singleton
+    except Exception:
+        return None
+    return get_mempool_service_singleton()
 
 
 def _mempool_has(svc: t.Any, tx_hash_hex: str) -> bool | None:
