@@ -21,6 +21,11 @@ def _extract_block_txs(block: Any) -> Iterable[Any]:
 
 
 def _canonical_hash_from_tx(tx: Any) -> str | None:
+    if isinstance(tx, (bytes, bytearray, str, dict)):
+        try:
+            return _tx_hash_hex(tx)
+        except Exception:
+            return None
     raw = getattr(tx, "raw_cbor", None)
     if raw is None and hasattr(tx, "to_cbor"):
         try:
@@ -64,6 +69,18 @@ def on_block_accepted(
     included_hashes: list[str] = []
     if tx_hashes is not None:
         included_hashes = [_normalize_hash_hex(h) for h in tx_hashes if h]
+    elif hasattr(block, "tx_hashes"):
+        try:
+            raw_hashes = getattr(block, "tx_hashes") or []
+            included_hashes = [_normalize_hash_hex(h) for h in raw_hashes if h]
+        except Exception:
+            included_hashes = []
+    elif isinstance(block, dict) and block.get("tx_hashes"):
+        try:
+            raw_hashes = block.get("tx_hashes") or []
+            included_hashes = [_normalize_hash_hex(h) for h in raw_hashes if h]
+        except Exception:
+            included_hashes = []
     else:
         for tx in _extract_block_txs(block):
             tx_hash_hex = _canonical_hash_from_tx(tx)
