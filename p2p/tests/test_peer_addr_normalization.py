@@ -31,6 +31,12 @@ def test_normalize_peer_addr_ws_multiaddr() -> None:
     assert parsed.addr.canonical == "ws://ws.example.net:443"
 
 
+def test_normalize_peer_addr_ws_url_with_query() -> None:
+    parsed = normalize_peer_addr("ws://ws.example.net:443/p2p?psk=deadbeef", allow_ws=True)
+    assert parsed.addr is not None
+    assert parsed.addr.canonical == "ws://ws.example.net:443/p2p?psk=deadbeef"
+
+
 def test_normalize_peer_addr_ws_rejected() -> None:
     parsed = normalize_peer_addr("/dns4/ws.example.net/tcp/443/ws", allow_ws=False)
     assert parsed.addr is None
