@@ -12,8 +12,9 @@ import socket
 import time
 import uuid
 from collections import OrderedDict, deque
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Deque, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -6063,7 +6064,63 @@ class P2PService:
     async def _handle_hello(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
         allowed = set(Hello.__dataclass_fields__)
-        hello = Hello(**{k: v for k, v in data.items() if k in allowed})
+        hello_defaults: dict[str, Any] = {}
+        for name, spec in Hello.__dataclass_fields__.items():
+            if spec.default_factory is not MISSING:  # type: ignore[comparison-overlap]
+                hello_defaults[name] = spec.default_factory()
+            else:
+                hello_defaults[name] = spec.default
+
+        def _coerce_fixed_bytes(value: Any, size: int) -> Optional[bytes]:
+            if isinstance(value, (bytes, bytearray)):
+                return bytes(value) if len(value) == size else None
+            if isinstance(value, str):
+                cleaned = value.strip().lower()
+                if cleaned.startswith("0x"):
+                    cleaned = cleaned[2:]
+                if len(cleaned) != size * 2:
+                    return None
+                try:
+                    return bytes.fromhex(cleaned)
+                except ValueError:
+                    return None
+            return None
+
+        def _normalize_hello_payload(values: dict, *, for_fallback: bool) -> dict:
+            normalized = {k: v for k, v in values.items() if k in allowed}
+            for field_name, size in (
+                ("genesis_hash", 32),
+                ("genesis_header_hash", 32),
+                ("genesis_block_hash", 32),
+                ("genesis_identity", 32),
+                ("network_params_hash", 32),
+                ("peer_id", 32),
+                ("head_hash", 32),
+                ("alg_policy_root", 64),
+            ):
+                if field_name not in normalized:
+                    continue
+                parsed = _coerce_fixed_bytes(normalized[field_name], size)
+                if parsed is not None:
+                    normalized[field_name] = parsed
+                elif for_fallback:
+                    normalized[field_name] = b""
+            if for_fallback:
+                merged = dict(hello_defaults)
+                merged.update(normalized)
+                return merged
+            return normalized
+
+        hello_payload = _normalize_hello_payload(data, for_fallback=False)
+        try:
+            hello = Hello(**hello_payload)
+        except Exception as exc:
+            log.info(
+                "Handshake payload normalized with fallback",
+                extra={"remote": peer.remote, "error": str(exc)},
+            )
+            fallback_payload = _normalize_hello_payload(data, for_fallback=True)
+            hello = SimpleNamespace(**fallback_payload)
         log.info(
             "Handshake received",
             extra={
