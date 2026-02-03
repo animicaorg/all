@@ -526,16 +526,19 @@ class TxRelayService:
                 if txid in self._inflight:
                     continue
                 # Clear stale "accepted_in_mempool" state if transaction is not actually in mempool
-                # This handles cases where transaction was evicted or state became inconsistent
+                # Note: We only reach this point if has_tx(txid) returned False (checked at line 501)
+                # and has_chain_tx(txid) returned False (checked at line 512). So if the state is
+                # "accepted_in_mempool" here, it means the state is stale/inconsistent.
+                # This handles cases where transaction was evicted or state became inconsistent.
                 req_state = self._request_mgr.get_state(txid)
                 if req_state is not None and req_state.state == "accepted_in_mempool":
-                    # Transaction announced by peer but marked as accepted - clear the state
+                    # Transaction announced by peer but marked as accepted while not in mempool
                     self._request_mgr.clear_state(txid)
                     log.info(
                         "TX_STATE_CLEARED",
                         extra={
                             "hash": txid.hex(),
-                            "reason": "marked_accepted_but_announced_by_peer",
+                            "reason": "marked_accepted_but_not_in_mempool",
                             "peer": conn_id,
                             **self._peer_log_extra(conn_id),
                         },
