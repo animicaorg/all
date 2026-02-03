@@ -13609,15 +13609,8 @@ class P2PService:
         peer = self._txrelay_find_peer(peer_key)
         if peer is None:
             return False
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
-            return False
-        if not peer.hello_done.is_set():
-            return False
-        if peer.ban_until and peer.ban_until > time.time():
-            return False
-        if not self._peer_chain_matches(peer):
-            return False
-        return True
+        ok, _reason = self._tx_peer_eligibility(peer)
+        return ok
 
     async def _txrelay_send_inv(self, peer_key: str, txids: list[bytes]) -> None:
         peer = self._txrelay_find_peer(peer_key)
