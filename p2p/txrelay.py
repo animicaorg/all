@@ -1675,6 +1675,9 @@ class TxRelayService:
         for state in peer_states:
             if remaining <= 0:
                 break
+            # Skip ineligible peers (disconnected, duplicate connections, etc.)
+            if not self._peer_eligible(state.conn_id):
+                continue
             candidates = state.known_txids.sample(limit=remaining)
             for txid in candidates:
                 if remaining <= 0:
