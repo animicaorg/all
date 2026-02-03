@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(AnimicaWallet VERSION 0.1.0 LANGUAGES CXX)
 
+option(WALLET_REMOTE_RPC_ONLY "Disable embedded node and use remote RPC only" ON)
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,14 +57,21 @@ add_compile_definitions(
     BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
 )
 
+if(WALLET_REMOTE_RPC_ONLY)
+    add_compile_definitions(WALLET_REMOTE_RPC_ONLY=1)
+else()
+    add_compile_definitions(WALLET_REMOTE_RPC_ONLY=0)
+endif()
+
 # Source files
 set(SOURCES
     src/main.cpp
     src/platform/AppPaths.cpp
     src/platform/DataDirManager.cpp
     src/rpc/AnimicaRpcClient.cpp
-    src/node/NodeManager.cpp
-    src/ui/NodeControlWidget.cpp
+    src/rpc/RpcReply.cpp
+    src/rpc/RpcSettings.cpp
+    src/ui/RpcSettingsDialog.cpp
     src/wallet/WalletAccount.cpp
     src/wallet/EncryptedKeystore.cpp
     src/wallet/AccountManager.cpp
@@ -89,16 +98,24 @@ set(SOURCES
     src/diagnostics/NodeController.cpp
     src/diagnostics/DiagnosticsConsoleWidget.cpp
     src/diagnostics/DiagnosticsStatusWidget.cpp
-    src/diagnostics/DiagnosticsLogsWidget.cpp
-    src/diagnostics/DiagnosticsWindow.cpp
 )
+
+if(NOT WALLET_REMOTE_RPC_ONLY)
+    list(APPEND SOURCES
+        src/node/NodeManager.cpp
+        src/ui/NodeControlWidget.cpp
+        src/diagnostics/DiagnosticsLogsWidget.cpp
+        src/diagnostics/DiagnosticsWindow.cpp
+    )
+endif()
 
 set(HEADERS
     src/platform/AppPaths.h
     src/platform/DataDirManager.h
     src/rpc/AnimicaRpcClient.h
-    src/node/NodeManager.h
-    src/ui/NodeControlWidget.h
+    src/rpc/RpcReply.h
+    src/rpc/RpcSettings.h
+    src/ui/RpcSettingsDialog.h
     src/wallet/WalletAccount.h
     src/wallet/EncryptedKeystore.h
     src/wallet/AccountManager.h
@@ -125,9 +142,16 @@ set(HEADERS
     src/diagnostics/NodeController.h
     src/diagnostics/DiagnosticsConsoleWidget.h
     src/diagnostics/DiagnosticsStatusWidget.h
-    src/diagnostics/DiagnosticsLogsWidget.h
-    src/diagnostics/DiagnosticsWindow.h
 )
+
+if(NOT WALLET_REMOTE_RPC_ONLY)
+    list(APPEND HEADERS
+        src/node/NodeManager.h
+        src/ui/NodeControlWidget.h
+        src/diagnostics/DiagnosticsLogsWidget.h
+        src/diagnostics/DiagnosticsWindow.h
+    )
+endif()
 
 # Create executable
 add_executable(animica-wallet ${SOURCES} ${HEADERS})
@@ -170,109 +194,111 @@ set_target_properties(animica-wallet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# Build the Animica node
-include(AnimicaNode)
-animica_build_node(NODE_PYTHON_PATH)
+if(NOT WALLET_REMOTE_RPC_ONLY)
+    # Build the Animica node
+    include(AnimicaNode)
+    animica_build_node(NODE_PYTHON_PATH)
 
-# Bundle the node into the wallet output
-# This creates a platform-specific bundle structure
-if(APPLE)
-    # macOS: Create app bundle with node inside Resources
-    set_target_properties(animica-wallet PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER "org.animica.wallet"
-        MACOSX_BUNDLE_BUNDLE_NAME "AnimicaWallet"
-        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
-        MACOSX_BUNDLE_ICON_FILE "animica.icns"
-        OUTPUT_NAME "AnimicaWallet"
-    )
-    
-    # Copy icon into app bundle Resources
-    set(MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.icns")
-    if(EXISTS "${MACOS_ICON}")
-        set_source_files_properties("${MACOS_ICON}" PROPERTIES
-            MACOSX_PACKAGE_LOCATION "Resources")
-        target_sources(animica-wallet PRIVATE "${MACOS_ICON}")
-    endif()
-    
-    # Copy node venv into app bundle
-    set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/AnimicaWallet.app/Contents/Resources/node")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
-        # Remove existing venv if present to avoid nested directories
-        COMMAND rm -rf "${BUNDLE_NODE_DIR}/venv"
-        # Use native cp on macOS to preserve symlinks in venv
-        COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
-        COMMENT "Bundling Animica node into macOS app bundle"
-    )
-    
-    # Create wrapper script for easy access
-    set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "#!/bin/bash" > "${NODE_WRAPPER}"
-        COMMAND ${CMAKE_COMMAND} -E echo "exec \"\$(dirname \"\$0\")/venv/bin/python\" -m rpc \"\$@\"" >> "${NODE_WRAPPER}"
-        COMMAND chmod +x "${NODE_WRAPPER}"
-        COMMENT "Creating node wrapper script"
-    )
-    
-elseif(WIN32)
-    # Windows: Set icon via RC file
-    set(WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")
-    if(EXISTS "${WINDOWS_ICON}")
-        # Create RC file for Windows icon
-        set(RC_FILE "${CMAKE_BINARY_DIR}/animica-wallet.rc")
-        file(WRITE "${RC_FILE}" 
+    # Bundle the node into the wallet output
+    # This creates a platform-specific bundle structure
+    if(APPLE)
+        # macOS: Create app bundle with node inside Resources
+        set_target_properties(animica-wallet PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_GUI_IDENTIFIER "org.animica.wallet"
+            MACOSX_BUNDLE_BUNDLE_NAME "AnimicaWallet"
+            MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+            MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+            MACOSX_BUNDLE_ICON_FILE "animica.icns"
+            OUTPUT_NAME "AnimicaWallet"
+        )
+        
+        # Copy icon into app bundle Resources
+        set(MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.icns")
+        if(EXISTS "${MACOS_ICON}")
+            set_source_files_properties("${MACOS_ICON}" PROPERTIES
+                MACOSX_PACKAGE_LOCATION "Resources")
+            target_sources(animica-wallet PRIVATE "${MACOS_ICON}")
+        endif()
+        
+        # Copy node venv into app bundle
+        set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/AnimicaWallet.app/Contents/Resources/node")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
+            # Remove existing venv if present to avoid nested directories
+            COMMAND rm -rf "${BUNDLE_NODE_DIR}/venv"
+            # Use native cp on macOS to preserve symlinks in venv
+            COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
+            COMMENT "Bundling Animica node into macOS app bundle"
+        )
+        
+        # Create wrapper script for easy access
+        set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "#!/bin/bash" > "${NODE_WRAPPER}"
+            COMMAND ${CMAKE_COMMAND} -E echo "exec \"\$(dirname \"\$0\")/venv/bin/python\" -m rpc \"\$@\"" >> "${NODE_WRAPPER}"
+            COMMAND chmod +x "${NODE_WRAPPER}"
+            COMMENT "Creating node wrapper script"
+        )
+        
+    elseif(WIN32)
+        # Windows: Set icon via RC file
+        set(WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")
+        if(EXISTS "${WINDOWS_ICON}")
+            # Create RC file for Windows icon
+            set(RC_FILE "${CMAKE_BINARY_DIR}/animica-wallet.rc")
+            file(WRITE "${RC_FILE}" 
 "#include <windows.h>
 IDI_ICON1 ICON \"${WINDOWS_ICON}\"
 ")
-        target_sources(animica-wallet PRIVATE "${RC_FILE}")
+            target_sources(animica-wallet PRIVATE "${RC_FILE}")
+        endif()
+        
+        # Windows: Copy node alongside executable
+        set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${ANIMICA_NODE_VENV}"
+                "${BUNDLE_NODE_DIR}/venv"
+            COMMENT "Bundling Animica node for Windows"
+        )
+        
+        # Create batch wrapper
+        set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node.bat")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "@echo off" > "${NODE_WRAPPER}"
+            COMMAND ${CMAKE_COMMAND} -E echo "\"%~dp0venv\\Scripts\\python.exe\" -m rpc %*" >> "${NODE_WRAPPER}"
+            COMMENT "Creating node wrapper script"
+        )
+        
+    else()
+        # Linux: Copy node into dist/node
+        set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
+            # Remove existing venv if present to avoid nested directories
+            COMMAND rm -rf "${BUNDLE_NODE_DIR}/venv"
+            # Use native cp on Linux to preserve symlinks in venv
+            COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
+            COMMENT "Bundling Animica node for Linux"
+        )
+        
+        # Create wrapper script
+        set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node")
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "#!/bin/bash" > "${NODE_WRAPPER}"
+            COMMAND ${CMAKE_COMMAND} -E echo "exec \"\$(dirname \"\$0\")/venv/bin/python\" -m rpc \"\$@\"" >> "${NODE_WRAPPER}"
+            COMMAND chmod +x "${NODE_WRAPPER}"
+            COMMENT "Creating node wrapper script"
+        )
     endif()
     
-    # Windows: Copy node alongside executable
-    set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${ANIMICA_NODE_VENV}"
-            "${BUNDLE_NODE_DIR}/venv"
-        COMMENT "Bundling Animica node for Windows"
-    )
-    
-    # Create batch wrapper
-    set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node.bat")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "@echo off" > "${NODE_WRAPPER}"
-        COMMAND ${CMAKE_COMMAND} -E echo "\"%~dp0venv\\Scripts\\python.exe\" -m rpc %*" >> "${NODE_WRAPPER}"
-        COMMENT "Creating node wrapper script"
-    )
-    
-else()
-    # Linux: Copy node into dist/node
-    set(BUNDLE_NODE_DIR "${CMAKE_BINARY_DIR}/bin/node")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_DIR}"
-        # Remove existing venv if present to avoid nested directories
-        COMMAND rm -rf "${BUNDLE_NODE_DIR}/venv"
-        # Use native cp on Linux to preserve symlinks in venv
-        COMMAND cp -R "${ANIMICA_NODE_VENV}" "${BUNDLE_NODE_DIR}/venv"
-        COMMENT "Bundling Animica node for Linux"
-    )
-    
-    # Create wrapper script
-    set(NODE_WRAPPER "${BUNDLE_NODE_DIR}/animica-node")
-    add_custom_command(TARGET animica-wallet POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "#!/bin/bash" > "${NODE_WRAPPER}"
-        COMMAND ${CMAKE_COMMAND} -E echo "exec \"\$(dirname \"\$0\")/venv/bin/python\" -m rpc \"\$@\"" >> "${NODE_WRAPPER}"
-        COMMAND chmod +x "${NODE_WRAPPER}"
-        COMMENT "Creating node wrapper script"
+    # Store bundle info for runtime
+    add_compile_definitions(
+        BUNDLED_NODE_PATH="${BUNDLE_NODE_DIR}"
     )
 endif()
-
-# Store bundle info for runtime
-add_compile_definitions(
-    BUNDLED_NODE_PATH="${BUNDLE_NODE_DIR}"
-)
 
 # Install target
 # Note: On macOS, animica-wallet is built as a MACOSX_BUNDLE (.app bundle).

@@ -142,6 +142,7 @@ bool DataDirManager::ensureDirectoriesExist()
         success &= dir.mkpath(".");
     }
     
+    #if !WALLET_REMOTE_RPC_ONLY
     // Create chain directories for common networks
     QStringList chainDirs = {"chain-1", "chain-2", "chain-1337"};
     for (const QString& chainDir : chainDirs) {
@@ -150,6 +151,7 @@ bool DataDirManager::ensureDirectoriesExist()
             success &= dir.mkpath(chainDir);
         }
     }
+    #endif
     
     // Create logs directory
     QString logsPath = getLogsDir();
@@ -157,11 +159,13 @@ bool DataDirManager::ensureDirectoriesExist()
         success &= dir.mkpath("logs");
     }
     
+    #if !WALLET_REMOTE_RPC_ONLY
     // Create snapshots directory
     QString snapshotsPath = getSnapshotsDir();
     if (!QDir(snapshotsPath).exists()) {
         success &= dir.mkpath("snapshots");
     }
+    #endif
     
     if (success) {
         qDebug() << "All required directories exist in:" << baseDir;
