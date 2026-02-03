@@ -2015,39 +2015,68 @@ def _adapter() -> CoreChainAdapter:
                 """
                 Drain function that selects transactions from the pending pool.
                 
-                This reads from rpc.methods.tx._PEND (if available) or _FALLBACK_PENDING
-                (fallback), matching the same priority used by tx.sendRawTransaction and
-                mempool.getPending.
+                Priority order:
+                1. ctx.mempool service (authoritative source where tx.sendRawTransaction submits)
+                2. rpc.methods.tx._PEND (if available)
+                3. _FALLBACK_PENDING (last resort)
                 
                 Returns a list of Tx objects. Uses _tx_hash_map to track original hashes.
                 """
                 log.info(f"drain_fn: ENTRY with max_gas={max_gas}, max_bytes={max_bytes}")
                 txs = []
                 try:
-                    # Check _PEND first (same priority as _pending_put and mempool.getPending)
-                    pend = getattr(tx_methods, "_PEND", None)
                     pending_map = {}
                     
-                    if pend is not None:
-                        log.info("drain_fn: Using _PEND pool")
-                        # Try to get items from _PEND (depends on its interface)
-                        if hasattr(pend, "items") and callable(pend.items):
-                            try:
-                                pending_map = dict(pend.items())  # dict[str, bytes]
-                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.items()")
-                            except Exception as e:
-                                log.warning(f"drain_fn: _PEND.items() failed: {e}")
-                        elif hasattr(pend, "list_raw") and callable(pend.list_raw):
-                            try:
-                                items = pend.list_raw()  # Iterable[(str, bytes)]
-                                pending_map = dict(items)
-                                log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.list_raw()")
-                            except Exception as e:
-                                log.warning(f"drain_fn: _PEND.list_raw() failed: {e}")
+                    # PRIORITY 1: Query the authoritative mempool service from context
+                    # This is where tx.sendRawTransaction submits transactions
+                    try:
+                        ctx = _ctx()
+                        mempool_svc = _resolve_mempool_service(ctx)
+                        if mempool_svc is not None:
+                            log.info(f"drain_fn: Found ctx.mempool service (id={hex(id(mempool_svc))})")
+                            # Try to get a snapshot from the mempool service
+                            if hasattr(mempool_svc, "snapshot") and callable(mempool_svc.snapshot):
+                                try:
+                                    snapshot = mempool_svc.snapshot(limit=max(1000, int(max_gas // 21000)))
+                                    entries = getattr(snapshot, "entries", [])
+                                    raw_by_hash = getattr(snapshot, "raw_by_hash", {})
+                                    log.info(f"drain_fn: Got {len(entries)} transactions from mempool.snapshot()")
+                                    for entry in entries:
+                                        hash_hex = getattr(entry, "hash_hex", None)
+                                        if hash_hex:
+                                            raw = raw_by_hash.get(hash_hex) or getattr(entry, "raw", None)
+                                            if raw and isinstance(raw, (bytes, bytearray)):
+                                                pending_map[hash_hex] = bytes(raw)
+                                except Exception as e:
+                                    log.warning(f"drain_fn: mempool.snapshot() failed: {e}", exc_info=True)
                         else:
-                            log.warning("drain_fn: _PEND exists but has no items() or list_raw() method")
+                            log.info("drain_fn: No mempool service found in context")
+                    except Exception as e:
+                        log.warning(f"drain_fn: Failed to access mempool service: {e}", exc_info=True)
                     
-                    # Fallback to _FALLBACK_PENDING if _PEND is None or didn't provide items
+                    # PRIORITY 2: Check _PEND (legacy pool)
+                    if not pending_map:
+                        pend = getattr(tx_methods, "_PEND", None)
+                        if pend is not None:
+                            log.info("drain_fn: Using _PEND pool")
+                            # Try to get items from _PEND (depends on its interface)
+                            if hasattr(pend, "items") and callable(pend.items):
+                                try:
+                                    pending_map = dict(pend.items())  # dict[str, bytes]
+                                    log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.items()")
+                                except Exception as e:
+                                    log.warning(f"drain_fn: _PEND.items() failed: {e}")
+                            elif hasattr(pend, "list_raw") and callable(pend.list_raw):
+                                try:
+                                    items = pend.list_raw()  # Iterable[(str, bytes)]
+                                    pending_map = dict(items)
+                                    log.info(f"drain_fn: Got {len(pending_map)} txs from _PEND.list_raw()")
+                                except Exception as e:
+                                    log.warning(f"drain_fn: _PEND.list_raw() failed: {e}")
+                            else:
+                                log.warning("drain_fn: _PEND exists but has no items() or list_raw() method")
+                    
+                    # PRIORITY 3: Fallback to _FALLBACK_PENDING if nothing else worked
                     if not pending_map:
                         fallback = getattr(tx_methods, "_FALLBACK_PENDING", {}) or {}
                         pending_map = fallback
