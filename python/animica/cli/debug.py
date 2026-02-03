@@ -281,3 +281,62 @@ def sync_bench(
         f"p95={results['net_mb_per_s']['p95']:.2f}"
     )
     typer.echo("━" * 60)
+
+
+@app.command("tx-relay")
+def tx_relay(
+    txid: str = typer.Argument(..., help="Transaction hash (hex, with or without 0x)"),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="RPC timeout in seconds"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output JSON instead of formatted text"
+    ),
+) -> None:
+    """
+    Dump tx relay state machine info for a specific txid.
+    """
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        relay = asyncio.run(
+            rpc_call("debug.txRelay", [txid], rpc_url=url, timeout=timeout)
+        )
+    except Exception as exc:
+        typer.secho(f"❌ Failed to query tx relay state: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(relay, indent=2))
+        return
+
+    typer.echo("\n🧪 TX Relay Debug\n")
+    typer.echo("━" * 60)
+    typer.echo(f"RPC URL:          {url}")
+    typer.echo(f"TXID:             {relay.get('tx_hash')}")
+    typer.echo(f"Has bytes:        {relay.get('has_tx_bytes')}")
+    typer.echo(f"In mempool:       {relay.get('in_mempool')}")
+    typer.echo(f"In chain:         {relay.get('in_chain')}")
+    tx_state = relay.get("tx_state") or {}
+    if isinstance(tx_state, dict) and tx_state:
+        typer.echo("Global relay state:")
+        typer.echo(f"  state:          {tx_state.get('state')}")
+        typer.echo(f"  source:         {tx_state.get('source')}")
+        typer.echo(f"  validation:     {tx_state.get('validation_status')}")
+        if tx_state.get("validation_reason"):
+            typer.echo(f"  val reason:     {tx_state.get('validation_reason')}")
+        typer.echo(f"  mempool:        {tx_state.get('mempool_status')}")
+        if tx_state.get("mempool_reason"):
+            typer.echo(f"  mem reason:     {tx_state.get('mempool_reason')}")
+        typer.echo(f"  last peer:      {tx_state.get('last_peer')}")
+    peer_states = relay.get("peer_states") or []
+    if peer_states:
+        typer.echo("\nPer-peer relay states:")
+        for entry in peer_states:
+            typer.echo(
+                f"  - {entry.get('peer')}: {entry.get('state')}"
+                + (f" reason={entry.get('reason')}" if entry.get("reason") else "")
+            )
+    typer.echo("━" * 60)

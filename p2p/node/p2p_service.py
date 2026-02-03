@@ -850,6 +850,8 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_TX_RELAY_TTL_SECONDS", "120") or 120
         )
         self._tx_relay_enabled = _env_flag("ANIMICA_P2P_TX_RELAY", default=True)
+        self._tx_relay_v2_enabled = _env_flag("ANIMICA_TX_RELAY_V2", default=True)
+        self._tx_relay_debug = _env_flag("ANIMICA_TX_RELAY_DEBUG", default=False)
         self._tx_gossip_enabled = _env_flag("ANIMICA_P2P_TX_GOSSIP", default=True)
         self._mempool_gossip_enabled = _env_flag(
             "ANIMICA_P2P_MEMPOOL_GOSSIP", default=True
@@ -904,6 +906,9 @@ class P2PService:
         self._tx_mempool_sync_interval_s = float(
             os.environ.get("ANIMICA_P2P_TX_MEMPOOL_SYNC_SEC", "15") or 15
         )
+        self._tx_relay_reconcile_interval_s = float(
+            os.environ.get("ANIMICA_TX_RELAY_RECONCILE_INTERVAL", "10") or 10
+        )
         self._tx_mempool_sync_limit = int(
             os.environ.get("ANIMICA_P2P_TX_MEMPOOL_SYNC_LIMIT", "2000") or 2000
         )
@@ -918,6 +923,7 @@ class P2PService:
         self._txrelay_inflight_task: Optional[asyncio.Task] = None
         self._txrelay_sync_task: Optional[asyncio.Task] = None
         self._txrelay_watchdog_task: Optional[asyncio.Task] = None
+        self._txrelay_reconcile_task: Optional[asyncio.Task] = None
         self._mempool_bind_task: Optional[asyncio.Task] = None
         self._mempool_callback_bound = False
         self._txrelay = TxRelayService(
@@ -930,6 +936,8 @@ class P2PService:
             mempool_sync_limit=self._tx_mempool_sync_limit,
             mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
             mempool_watchdog_limit=self._tx_mempool_watchdog_limit,
+            reconcile_interval_s=self._tx_relay_reconcile_interval_s,
+            debug_enabled=self._tx_relay_debug,
             known_txids_cap=50_000,
             inv_rate_per_sec=self._tx_inv_rate_per_sec,
             inv_burst=self._tx_inv_rate_burst,
@@ -948,6 +956,7 @@ class P2PService:
             get_tx_raw=self._txrelay_get_tx_raw,
             admit_tx=self._txrelay_admit_tx,
             list_mempool_hashes=self._txrelay_list_mempool_hashes,
+            on_tx_accepted=self._legacy_tx_relay_announce,
         )
         self._addr_peer_known_ttl = float(
             os.environ.get("ANIMICA_P2P_ADDR_KNOWN_TTL", "600") or 600
@@ -1874,12 +1883,16 @@ class P2PService:
         self._txrelay_watchdog_task = asyncio.create_task(
             self._txrelay.mempool_watchdog_loop(), name="p2p.txrelay.mempool_watchdog"
         )
+        self._txrelay_reconcile_task = asyncio.create_task(
+            self._txrelay.reconcile_loop(), name="p2p.txrelay.reconcile"
+        )
         self._tasks.extend(
             [
                 self._txrelay_inv_flush_task,
                 self._txrelay_inflight_task,
                 self._txrelay_sync_task,
                 self._txrelay_watchdog_task,
+                self._txrelay_reconcile_task,
             ]
         )
         if self._mempool_bind_task is not None:
@@ -5291,7 +5304,10 @@ class P2PService:
             extra={"hash": txh.hex(), "peers": peer_count},
         )
         if admitted:
-            await self._txrelay.on_mempool_add(txh, canonical_raw)
+            if self._tx_relay_v2_enabled:
+                await self._txrelay.on_mempool_add(txh, canonical_raw)
+            else:
+                await self._legacy_tx_relay_announce(txh, canonical_raw, "local")
         log.info(
             "tx relay announced",
             extra={"tx_hash": txh.hex(), "peers": peer_count},
@@ -5299,7 +5315,11 @@ class P2PService:
         return "0x" + txh.hex()
 
     async def request_missing_txids(self, limit: int = 128) -> int:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if (
+            not self._tx_relay_enabled
+            or not self._p2p_tx_enabled
+            or not self._tx_relay_v2_enabled
+        ):
             return 0
         return await self._txrelay.request_missing_known(limit=limit)
 
@@ -5316,7 +5336,11 @@ class P2PService:
         Returns:
             Number of peers synced
         """
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if (
+            not self._tx_relay_enabled
+            or not self._p2p_tx_enabled
+            or not self._tx_relay_v2_enabled
+        ):
             return 0
         return await self._txrelay.sync_all_peers(timeout_s=timeout_s)
 
@@ -5836,7 +5860,12 @@ class P2PService:
             head_height=height,
             head_hash=head_hash,
             alg_policy_root=b"",
-            capabilities=["tx", "blocks", "sync"],
+            capabilities=[
+                "tx",
+                "blocks",
+                "sync",
+                *("tx_relay_v2",) if self._tx_relay_v2_enabled else (),
+            ],
             timestamp=int(time.time()),
             network_best_height=network_best,
         )
@@ -6851,7 +6880,7 @@ class P2PService:
                     self._sync_wakeup.set()
 
     async def _handle_tx_inv(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         txids = parse_txids(data.get("txids") or [])
@@ -6859,7 +6888,7 @@ class P2PService:
         await self._txrelay.on_tx_inv(peer_key, txids)
 
     async def _handle_tx_get(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         txids = parse_txids(data.get("txids") or [])
@@ -6871,7 +6900,7 @@ class P2PService:
         await self._txrelay.on_tx_get(peer_key, txids)
 
     async def _handle_tx_data(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         items = parse_tx_data_items(data.get("items") or [])
@@ -6882,7 +6911,7 @@ class P2PService:
         )
 
     async def _handle_tx_notfound(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         txids = parse_txids(data.get("txids") or [])
@@ -6890,7 +6919,7 @@ class P2PService:
         await self._txrelay.on_tx_notfound(peer_key, txids)
 
     async def _handle_tx_mempool_req(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         limit = data.get("limit")
@@ -6898,7 +6927,7 @@ class P2PService:
         await self._txrelay.on_mempool_req(peer_key, limit=limit)
 
     async def _handle_tx_mempool_resp(self, peer: _PeerState, payload: bytes) -> None:
-        if not self._tx_relay_enabled or not self._p2p_tx_enabled:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
             return
         data = self._decode_payload_map(payload)
         txids = parse_txids(data.get("txids") or [])
@@ -13606,6 +13635,12 @@ class P2PService:
             return False, "peer_not_eligible"
         return True, "ok"
 
+    def _peer_supports_tx_relay_v2(self, peer: _PeerState) -> bool:
+        caps = peer.hello.get("capabilities") if peer.hello else None
+        if not caps:
+            return False
+        return "tx_relay_v2" in caps
+
     def _txrelay_peer_ids(self) -> list[str]:
         return [self._peer_tx_key(peer) for peer in self._peers.values()]
 
@@ -13619,8 +13654,32 @@ class P2PService:
         peer = self._txrelay_find_peer(peer_key)
         if peer is None:
             return False
+        if not self._tx_relay_v2_enabled:
+            return False
+        if self._tx_relay_v2_enabled and not self._peer_supports_tx_relay_v2(peer):
+            return False
         ok, _reason = self._tx_peer_eligibility(peer)
         return ok
+
+    async def _legacy_tx_relay_announce(
+        self, txid: bytes, raw: bytes, origin_peer: Optional[str]
+    ) -> None:
+        if not self._tx_relay_allowed():
+            return
+        inv_item = InvItem(typ=InvType.TX, h=txid)
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        for peer in peers:
+            if self._tx_relay_v2_enabled and self._peer_supports_tx_relay_v2(peer):
+                continue
+            if origin_peer:
+                if origin_peer == peer.peer_id:
+                    continue
+                if origin_peer == peer.remote:
+                    continue
+                if origin_peer == self._peer_tx_key(peer):
+                    continue
+            await self._send_inv(peer, [inv_item], is_tx=True)
 
     async def _txrelay_send_inv(self, peer_key: str, txids: list[bytes]) -> None:
         peer = self._txrelay_find_peer(peer_key)
