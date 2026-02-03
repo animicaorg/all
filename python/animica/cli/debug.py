@@ -340,3 +340,79 @@ def tx_relay(
                 + (f" reason={entry.get('reason')}" if entry.get("reason") else "")
             )
     typer.echo("━" * 60)
+
+
+@app.command("p2p-health")
+def p2p_health(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="RPC timeout in seconds"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output JSON instead of formatted text"
+    ),
+) -> None:
+    """
+    Diagnose P2P connectivity health and dial pipeline.
+    """
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        status = asyncio.run(
+            rpc_call("p2p.getStatus", {}, rpc_url=url, timeout=timeout)
+        )
+    except Exception as exc:
+        typer.secho(f"❌ Failed to query P2P status: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(status, indent=2))
+        return
+
+    seed_list = status.get("seed_list", [])
+    seed_sources = status.get("seed_sources", {})
+    peerstore_size = status.get("persisted_peer_count")
+    addrman_size = status.get("addrman_size")
+    dial_history = status.get("dial_attempt_history", [])[-20:]
+    caps_config = status.get("caps_config", {})
+    listen_addrs = status.get("listen_addrs", [])
+    bound_addrs = status.get("bound_listen_addrs", [])
+    outbound_enabled = status.get("outbound_dialing_enabled")
+    outbound_target = status.get("outbound_target")
+
+    typer.echo("\n🧭 P2P Health\n")
+    typer.echo("━" * 60)
+    typer.echo(f"RPC URL:              {url}")
+    typer.echo(f"Outbound dialing:     {outbound_enabled} (target={outbound_target})")
+    typer.echo(f"Seeds configured:     {len(seed_list)}")
+    if seed_list:
+        typer.echo("  " + ", ".join(seed_list))
+    if seed_sources:
+        typer.echo(f"Seed sources:         {json.dumps(seed_sources)}")
+    typer.echo(f"Peerstore size:       {peerstore_size}")
+    typer.echo(f"Addrman size:         {addrman_size}")
+    typer.echo(f"Listen addrs:         {listen_addrs}")
+    typer.echo(f"Bound sockets:        {bound_addrs}")
+    typer.echo("Caps config:")
+    typer.echo(
+        f"  tx_relay_v2_enabled={caps_config.get('tx_relay_v2_enabled')} "
+        f"required_caps={caps_config.get('required_caps')}"
+    )
+
+    typer.echo("\nLast 20 dial attempts:")
+    if not dial_history:
+        typer.echo("  (none)")
+    else:
+        for entry in dial_history:
+            if not isinstance(entry, dict):
+                continue
+            at = entry.get("at")
+            addr = entry.get("addr")
+            stage = entry.get("stage")
+            success = entry.get("success")
+            reason = entry.get("reason")
+            typer.echo(
+                f"  - addr={addr} stage={stage} success={success} reason={reason} at={at}"
+            )
+    typer.echo("━" * 60)
