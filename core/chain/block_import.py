@@ -1419,9 +1419,9 @@ class BlockImporter:
             return
         
         # Extract transaction hashes from all attached blocks
-        # Cache blocks to avoid redundant database lookups
-        tx_hashes_to_confirm: list[str] = []
-        blocks_cache: dict[bytes, Any] = {}
+        # Cache blocks and their transaction hashes to avoid redundant database lookups
+        blocks_cache: dict[bytes, Block] = {}
+        block_tx_hashes: dict[bytes, list[str]] = {}  # Map block_hash -> tx_hashes in that block
         
         for block_hash in attached_blocks:
             try:
@@ -1431,13 +1431,15 @@ class BlockImporter:
                     continue
                 blocks_cache[block_hash] = block
                 
-                # Extract transaction hashes from the block
+                # Extract transaction hashes from this block
+                tx_hashes: list[str] = []
                 if hasattr(block, "txs") and block.txs:
                     for tx in block.txs:
                         # Try to get canonical transaction hash
                         tx_hash_hex = self._extract_tx_hash(tx)
                         if tx_hash_hex:
-                            tx_hashes_to_confirm.append(tx_hash_hex)
+                            tx_hashes.append(tx_hash_hex)
+                block_tx_hashes[block_hash] = tx_hashes
             except Exception as e:
                 log.debug(
                     "Failed to extract transactions from block for mempool confirmation",
@@ -1445,33 +1447,40 @@ class BlockImporter:
                 )
                 continue
         
+        # Collect all transaction hashes for bulk removal
+        all_tx_hashes = []
+        for hashes in block_tx_hashes.values():
+            all_tx_hashes.extend(hashes)
+        
         # Remove confirmed transactions from mempool
-        if tx_hashes_to_confirm:
+        if all_tx_hashes:
             try:
-                removed = mempool_service.remove_included(tx_hashes_to_confirm)
+                removed = mempool_service.remove_included(all_tx_hashes)
                 log.debug(
                     "Auto-confirmed local mempool transactions on height increase",
-                    extra={"removed": removed, "tx_count": len(tx_hashes_to_confirm)},
+                    extra={"removed": removed, "tx_count": len(all_tx_hashes)},
                 )
             except Exception as e:
                 log.warning(
                     "Failed to remove confirmed transactions from mempool",
-                    extra={"error": str(e), "tx_count": len(tx_hashes_to_confirm)},
+                    extra={"error": str(e), "tx_count": len(all_tx_hashes)},
                 )
         
         # Trigger mempool reconciliation for conflict resolution
-        # Use cached blocks to avoid redundant lookups
+        # Use cached blocks and per-block tx hashes to avoid redundant lookups
         try:
             from mempool import on_block_accepted
             
-            # Call on_block_accepted for each attached block to handle conflicts
+            # Call on_block_accepted for each attached block with its specific tx hashes
             for block_hash in attached_blocks:
                 block = blocks_cache.get(block_hash)
                 if block is not None:
+                    # Get transaction hashes for this specific block
+                    tx_hashes = block_tx_hashes.get(block_hash, [])
                     reconcile_result = on_block_accepted(
                         block, 
                         self.state_db,
-                        tx_hashes=tx_hashes_to_confirm
+                        tx_hashes=tx_hashes
                     )
                     if reconcile_result and (reconcile_result.get("evicted", 0) > 0 or reconcile_result.get("conflicts", 0) > 0):
                         log.debug(
@@ -1484,7 +1493,7 @@ class BlockImporter:
                 extra={"error": str(e)},
             )
     
-    def _extract_tx_hash(self, tx: Union[Tx, Dict[str, Any], bytes]) -> Optional[str]:
+    def _extract_tx_hash(self, tx: Union[Tx, Dict[str, Any]]) -> Optional[str]:
         """
         Extract canonical transaction hash from a transaction object.
         
