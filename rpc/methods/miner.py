@@ -2037,14 +2037,19 @@ def _adapter() -> CoreChainAdapter:
                             # Try to get a snapshot from the mempool service
                             if hasattr(mempool_svc, "snapshot") and callable(mempool_svc.snapshot):
                                 try:
-                                    snapshot = mempool_svc.snapshot(limit=max(1000, int(max_gas // 21000)))
+                                    # Calculate reasonable limit based on max_gas (avoid division by zero)
+                                    tx_limit = max(1000, int(max_gas // 21000)) if max_gas > 0 else 1000
+                                    snapshot = mempool_svc.snapshot(limit=tx_limit)
                                     entries = getattr(snapshot, "entries", [])
                                     raw_by_hash = getattr(snapshot, "raw_by_hash", {})
                                     log.info(f"drain_fn: Got {len(entries)} transactions from mempool.snapshot()")
                                     for entry in entries:
                                         hash_hex = getattr(entry, "hash_hex", None)
                                         if hash_hex:
-                                            raw = raw_by_hash.get(hash_hex) or getattr(entry, "raw", None)
+                                            # Explicit None check to handle empty bytes correctly
+                                            raw = raw_by_hash.get(hash_hex)
+                                            if raw is None:
+                                                raw = getattr(entry, "raw", None)
                                             if raw and isinstance(raw, (bytes, bytearray)):
                                                 pending_map[hash_hex] = bytes(raw)
                                 except Exception as e:
