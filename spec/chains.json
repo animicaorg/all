@@ -37,8 +37,8 @@
     },
     "genesis": {
       "height": 0,
-      "time": "2026-02-03T05:09:17Z",
-      "hash": "0x69cbf43cbfd78aba3de2189156bae4145827f2e54638185216ffef73c7e93b3a"
+      "time": "2026-02-03T20:55:38Z",
+      "hash": "0x98451b849722c0da71138d7c648c004d553a067cbac7b45b82eb50c2226f8d3e"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -87,8 +87,8 @@
     },
     "genesis": {
       "height": 0,
-      "time": "2026-02-03T05:09:17Z",
-      "hash": "0xd5e59e3633cb0eebc4fbc8eb628511fcd87b5835c0d76fa701bb5ae9420ef5ec"
+      "time": "2026-02-03T20:55:38Z",
+      "hash": "0x97cdf1333c13e947208e4e3a47ccbdd0118be192680b256b89c16b2083f6ecd1"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -137,8 +137,8 @@
     },
     "genesis": {
       "height": 0,
-      "time": "2026-02-03T05:09:17Z",
-      "hash": "0x1b9f7afab6542e843dbc2c87a9a49d57e5068c10fc02698548d65d08e9c5437c"
+      "time": "2026-02-03T20:55:38Z",
+      "hash": "0x0a489e0d737a8962af5435c0c9e0f9a4fa6bfd9e6a208ea8c46d9cc5bcb9bda8"
     },
     "policyRoots": {
       "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
