@@ -251,6 +251,9 @@ def list_pending(
     peer_known = None
     if isinstance(p2p_debug, dict):
         peer_known = p2p_debug.get("peers")
+    
+    # Count total known txids from peers
+    total_peer_known_txids = 0
     if peer_known:
         typer.echo("Peer-known txids (sample):")
         for entry in peer_known:
@@ -269,9 +272,41 @@ def list_pending(
                     sample=sample_text,
                 )
             )
+            if isinstance(known, int):
+                total_peer_known_txids += known
+    
     if isinstance(result, list):
         if not result:
             typer.echo("Mempool is empty (no pending transactions)")
+            # If mempool is empty but peers have known transactions, offer to fetch them
+            if total_peer_known_txids > 0:
+                typer.echo(
+                    f"\n💡 Tip: Peers know about {total_peer_known_txids} transaction(s). "
+                    f"Fetching them automatically..."
+                )
+                try:
+                    import_result = call_rpc(
+                        "p2p.importPeerKnownTxs",
+                        [128],  # Fetch up to 128 transactions
+                        rpc_url=resolved_rpc_url,
+                        no_cache=True,
+                    )
+                    if isinstance(import_result, dict):
+                        requested = import_result.get("requested", 0)
+                        if requested > 0:
+                            typer.echo(
+                                f"✓ Requested {requested} transaction(s) from peers. "
+                                f"Run 'animica mempool list' again in a few seconds to see them."
+                            )
+                        else:
+                            typer.echo(
+                                "⚠ No transactions were requested. They may already be in flight or recently rejected."
+                            )
+                except Exception as e:
+                    typer.echo(
+                        f"⚠ Could not fetch transactions from peers: {e}\n"
+                        f"  You can manually trigger this with: animica rpc call p2p.importPeerKnownTxs"
+                    )
         else:
             typer.echo(f"Pending transactions ({len(result)}):")
             for i, entry in enumerate(result, 1):
