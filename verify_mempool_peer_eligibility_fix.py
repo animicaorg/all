@@ -7,6 +7,7 @@ ineligible peers before processing their known_txids.
 """
 import asyncio
 import hashlib
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 from p2p.txrelay import TxRelayService
@@ -144,5 +145,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(asyncio.run(main()))

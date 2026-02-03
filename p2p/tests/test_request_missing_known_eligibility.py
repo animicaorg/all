@@ -239,7 +239,3 @@ async def test_request_missing_known_with_mixed_eligibility():
     
     # Should have tx1 and tx3 (from eligible peers), not tx2 (from ineligible peer)
     assert set(all_requested_txids) == {tx1, tx3}
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
