@@ -1,6 +1,6 @@
 #include "BalanceTracker.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
@@ -81,7 +81,7 @@ void BalanceTracker::pollBalances()
 
 void BalanceTracker::fetchBalance(const QString& address)
 {
-    QNetworkReply* reply = m_rpcClient->getBalance(address, "latest");
+    RpcReply* reply = m_rpcClient->getBalance(address, "latest");
     if (!reply) {
         return;
     }
@@ -89,22 +89,22 @@ void BalanceTracker::fetchBalance(const QString& address)
     // Store address in reply property for later retrieval
     reply->setProperty("address", address);
     
-    connect(reply, &QNetworkReply::finished, this, &BalanceTracker::handleBalanceReply);
+    connect(reply, &RpcReply::finished, this, &BalanceTracker::handleBalanceReply);
 }
 
 void BalanceTracker::fetchSyncStatus()
 {
-    QNetworkReply* reply = m_rpcClient->getSyncStatus();
+    RpcReply* reply = m_rpcClient->getSyncStatus();
     if (!reply) {
         return;
     }
     
-    connect(reply, &QNetworkReply::finished, this, &BalanceTracker::handleSyncStatusReply);
+    connect(reply, &RpcReply::finished, this, &BalanceTracker::handleSyncStatusReply);
 }
 
 void BalanceTracker::handleBalanceReply()
 {
-    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    RpcReply* reply = qobject_cast<RpcReply*>(sender());
     if (!reply) {
         return;
     }
@@ -164,7 +164,7 @@ void BalanceTracker::handleBalanceReply()
 
 void BalanceTracker::handleSyncStatusReply()
 {
-    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    RpcReply* reply = qobject_cast<RpcReply*>(sender());
     if (!reply) {
         return;
     }

@@ -5,7 +5,7 @@
 #include <QJsonDocument>
 #include <QEventLoop>
 #include <QTimer>
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QProcessEnvironment>
 #include <QSysInfo>
 
@@ -144,7 +144,7 @@ QString NodeController::executeRpcSync(const QString& method, const QJsonValue& 
         return QString();
     }
 
-    QNetworkReply* reply = m_rpcClient->call(method, params);
+    RpcReply* reply = m_rpcClient->call(method, params);
     if (!reply) {
         return QString();
     }
@@ -155,7 +155,7 @@ QString NodeController::executeRpcSync(const QString& method, const QJsonValue& 
     timeout.setSingleShot(true);
     timeout.setInterval(30000);
 
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(reply, &RpcReply::finished, &loop, &QEventLoop::quit);
     connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 
     timeout.start();
@@ -163,7 +163,6 @@ QString NodeController::executeRpcSync(const QString& method, const QJsonValue& 
 
     if (!timeout.isActive()) {
         // Timeout
-        reply->abort();
         reply->deleteLater();
         return QString();
     }

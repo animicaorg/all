@@ -3,17 +3,31 @@
 #include "AccountsWidget.h"
 #include "AddressBookWidget.h"
 #include "CreateAccountDialog.h"
+#include "SendWidget.h"
+#include "ReceiveWidget.h"
 #include "UnlockDialog.h"
 #include "BalanceTracker.h"
+#include "../rpc/AnimicaRpcClient.h"
+#include "WalletDatabase.h"
+#include "TransactionMonitor.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QTimer>
 #include <QDateTime>
 
-WalletWidget::WalletWidget(WalletEngine* engine, QWidget* parent)
+WalletWidget::WalletWidget(
+    WalletEngine* engine,
+    AnimicaRpcClient* rpcClient,
+    WalletDatabase* database,
+    TransactionMonitor* monitor,
+    QWidget* parent
+)
     : QWidget(parent)
     , m_engine(engine)
+    , m_rpcClient(rpcClient)
+    , m_database(database)
+    , m_monitor(monitor)
 {
     setupUi();
     
@@ -22,6 +36,13 @@ WalletWidget::WalletWidget(WalletEngine* engine, QWidget* parent)
     connect(m_engine, &WalletEngine::walletUnlocked, this, &WalletWidget::handleWalletUnlocked);
     connect(m_engine, &WalletEngine::balanceUpdated, this, &WalletWidget::handleBalanceUpdated);
     connect(m_engine, &WalletEngine::syncStatusChanged, this, &WalletWidget::handleSyncStatusChanged);
+
+    if (m_rpcClient) {
+        connect(m_rpcClient, &AnimicaRpcClient::connected, this, &WalletWidget::handleRpcConnected);
+        connect(m_rpcClient, &AnimicaRpcClient::disconnected, this, &WalletWidget::handleRpcDisconnected);
+        connect(m_rpcClient, &AnimicaRpcClient::error, this, &WalletWidget::handleRpcError);
+        setRpcEndpoint(m_rpcClient->endpoint());
+    }
     
     // Initial state
     updateToolbarState();
@@ -77,6 +98,14 @@ void WalletWidget::setupUi()
     // Address Book tab
     m_addressBookWidget = new AddressBookWidget(m_engine, this);
     m_tabWidget->addTab(m_addressBookWidget, "Address Book");
+
+    // Send tab
+    m_sendWidget = new SendWidget(m_engine, m_rpcClient, m_database, m_monitor, this);
+    m_tabWidget->addTab(m_sendWidget, "Send");
+
+    // Receive tab
+    m_receiveWidget = new ReceiveWidget(m_engine, this);
+    m_tabWidget->addTab(m_receiveWidget, "Receive");
     
     layout->addWidget(m_tabWidget);
     
@@ -86,11 +115,16 @@ void WalletWidget::setupUi()
     statusLayout->setContentsMargins(8, 4, 8, 4);
     
     m_statusLabel = new QLabel("Ready", this);
+    m_rpcStatusLabel = new QLabel("RPC: Disconnected", this);
+    m_rpcEndpointLabel = new QLabel("", this);
+    m_rpcEndpointLabel->setStyleSheet("color: #666;");
     m_balanceLabel = new QLabel("Total: 0.000000 ANM", this);
     m_syncLabel = new QLabel("", this);
     
     statusLayout->addWidget(m_statusLabel);
     statusLayout->addStretch();
+    statusLayout->addWidget(m_rpcStatusLabel);
+    statusLayout->addWidget(m_rpcEndpointLabel);
     statusLayout->addWidget(m_balanceLabel);
     statusLayout->addWidget(m_syncLabel);
     
@@ -102,6 +136,7 @@ void WalletWidget::refresh()
 {
     m_accountsWidget->refreshAccounts();
     m_addressBookWidget->refreshContacts();
+    m_receiveWidget->refresh();
     m_engine->refreshBalances();
     updateStatus();
 }
@@ -130,6 +165,11 @@ void WalletWidget::updateStatus()
     
     // Total balance
     m_balanceLabel->setText(formatTotalBalance());
+}
+
+void WalletWidget::setRpcEndpoint(const QString& endpoint)
+{
+    m_rpcEndpointLabel->setText(QString("Endpoint: %1").arg(endpoint));
 }
 
 QString WalletWidget::formatTotalBalance() const
@@ -202,6 +242,22 @@ void WalletWidget::handleSyncStatusChanged(bool syncing)
     }
 }
 
+void WalletWidget::handleRpcConnected()
+{
+    updateRpcStatusLabel("RPC: Connected", "#15803d");
+}
+
+void WalletWidget::handleRpcDisconnected()
+{
+    updateRpcStatusLabel("RPC: Disconnected", "#b91c1c");
+}
+
+void WalletWidget::handleRpcError(const QString& message)
+{
+    Q_UNUSED(message);
+    updateRpcStatusLabel("RPC: Error", "#b91c1c");
+}
+
 void WalletWidget::handleCreateAccountRequested()
 {
     if (m_engine->isLocked()) {
@@ -221,4 +277,10 @@ void WalletWidget::handleCreateAccountRequested()
                                     QString("Account created!\n\nAddress:\n%1").arg(addr));
         }
     }
+}
+
+void WalletWidget::updateRpcStatusLabel(const QString& status, const QString& color)
+{
+    m_rpcStatusLabel->setText(status);
+    m_rpcStatusLabel->setStyleSheet(QString("color: %1;").arg(color));
 }

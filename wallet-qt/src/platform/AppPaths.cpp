@@ -95,10 +95,12 @@ bool AppPaths::ensureDirectoriesExist()
 {
     bool success = true;
     success &= ensureDir(baseDir());
-    success &= ensureDir(nodeDir());
     success &= ensureDir(walletDir());
     success &= ensureDir(logsDir());
+#if !WALLET_REMOTE_RPC_ONLY
     success &= ensureDir(runDir());
+    success &= ensureDir(nodeDir());
+#endif
     return success;
 }
 

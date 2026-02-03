@@ -5,7 +5,7 @@
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QTextStream>
@@ -422,8 +422,8 @@ void NodeManager::onHealthCheckTimeout()
 void NodeManager::onSyncCheckTimeout()
 {
     // Query sync status
-    QNetworkReply* reply = m_rpcClient->getSyncStatus();
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    RpcReply* reply = m_rpcClient->getSyncStatus();
+    connect(reply, &RpcReply::finished, this, [this, reply]() {
         reply->deleteLater();
         
         if (reply->error() == QNetworkReply::NoError) {
@@ -778,8 +778,8 @@ void NodeManager::onRestartBackoffTimeout()
 void NodeManager::performHealthCheck()
 {
     // Try to get chain head as a more robust health check
-    QNetworkReply* reply = m_rpcClient->getHead();
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    RpcReply* reply = m_rpcClient->getHead();
+    connect(reply, &RpcReply::finished, this, [this, reply]() {
         reply->deleteLater();
         
         if (reply->error() == QNetworkReply::NoError) {
