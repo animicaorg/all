@@ -58,8 +58,8 @@
   },
 
   "genesis": {
-    "hash": "0x1b9f7afab6542e843dbc2c87a9a49d57e5068c10fc02698548d65d08e9c5437c",
-    "timestamp": "2026-02-03T05:09:17Z",
+    "hash": "0x0a489e0d737a8962af5435c0c9e0f9a4fa6bfd9e6a208ea8c46d9cc5bcb9bda8",
+    "timestamp": "2026-02-03T20:55:38Z",
     "initialHeight": 0
   },
 
