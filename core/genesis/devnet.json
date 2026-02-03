@@ -1,12 +1,12 @@
 {
   "meta": {
-    "version": 5,
-    "genesis_version": "reset-2026-02-03",
+    "version": 6,
+    "genesis_version": "reset-2026-02-03b",
     "description": "Animica devnet genesis (chainId=1337). Premine + system accounts only."
   },
   "chainId": 1337,
   "network": "animica-devnet",
-  "genesisTime": "2026-02-03T05:09:17Z",
+  "genesisTime": "2026-02-03T20:55:38Z",
   "unit": {
     "symbol": "ANM",
     "decimals": 9
@@ -17,7 +17,7 @@
   },
   "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
   "beacon": {
-    "seed": "0x3fed32785aba883e2c69aac08da056e6eeafe287bc685dec7477ec105cebbc38",
+    "seed": "0xcac80f5bbd78459476bef5fb2898d3f1d31c843bc74045212f3dff8db1777823",
     "round": 0
   },
   "economics": {
