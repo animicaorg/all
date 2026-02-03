@@ -505,8 +505,11 @@ class MempoolService:
         )
 
     def _persist_snapshot(self) -> None:
-        if not self._persist_enabled or self._persist_path is None:
+        if not self._persist_enabled:
             return
+        if self._persist_path is None:
+            log.error("Mempool persistence enabled but persist path is unset")
+            raise PersistenceFailed(tx_hash="unknown", error="persist_path_unset")
         snapshot = self.snapshot(limit=len(self.pool) + 1)
         now = time.time()
         ttl_s = self._persist_ttl_s or 0
@@ -561,7 +564,7 @@ class MempoolService:
         try:
             lines = self._persist_path.read_text(encoding="utf-8").splitlines()
         except Exception as exc:
-            log.warning("Failed to read mempool persistence file", exc_info=exc)
+            log.error("Failed to read mempool persistence file", exc_info=exc)
             return
         restored = 0
         bad_entries: list[str] = []
@@ -623,7 +626,7 @@ class MempoolService:
                 quarantine.write_text("\n".join(bad_entries) + "\n", encoding="utf-8")
             except Exception:
                 pass
-            log.warning(
+            log.error(
                 "Dropped invalid persisted mempool entries",
                 extra={"count": len(bad_entries), "quarantine": str(quarantine)},
             )
@@ -1142,14 +1145,15 @@ class MempoolService:
             try:
                 self._persist_snapshot()
             except Exception as exc:
-                try:
-                    self.pool.remove_included([tx_hash_bytes])
-                except Exception:
-                    pass
                 self._record_rejection(
                     tx_hash_hex,
                     "persistence_failed",
                     {"tx_hash": tx_hash_hex, "error": str(exc)},
+                )
+                log.error(
+                    "MempoolService.submit: persistence failed, keeping in memory",
+                    extra={"tx_hash": tx_hash_hex, "error": str(exc)},
+                    exc_info=True,
                 )
                 raise PersistenceFailed(tx_hash=tx_hash_hex, error=str(exc)) from exc
 
