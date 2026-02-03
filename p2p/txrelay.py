@@ -164,7 +164,11 @@ class TxRequestManager:
     def mark_dropped(
         self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
     ) -> None:
-        self._touch(txid, now=now, state="dropped_evicted", peer=peer, reason=reason)
+        entry = self._touch(txid, now=now, state="dropped_evicted", peer=peer, reason=reason)
+        # Reset next_retry_at to allow immediate retry from other peers
+        # This ensures dropped transactions can be re-requested without waiting
+        # for the old cooldown period to expire
+        entry.next_retry_at = now
 
     def can_request(self, txid: bytes, *, now: float) -> bool:
         entry = self._states.get(txid)
