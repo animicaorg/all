@@ -1,6 +1,6 @@
 #include "FeeEstimator.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -97,7 +97,7 @@ void FeeEstimator::refreshBaseFee()
     }
     
     // Try to get chain parameters
-    QNetworkReply* reply = m_rpcClient->getChainParams();
+    RpcReply* reply = m_rpcClient->getChainParams();
     
     if (!reply) {
         m_lastError = "Failed to create RPC request";
@@ -113,7 +113,7 @@ void FeeEstimator::refreshBaseFee()
     QTimer timer;
     timer.setSingleShot(true);
     
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(reply, &RpcReply::finished, &loop, &QEventLoop::quit);
     connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     
     timer.start(5000); // 5 second timeout
@@ -121,7 +121,6 @@ void FeeEstimator::refreshBaseFee()
     
     if (!timer.isActive()) {
         // Timeout
-        reply->abort();
         m_lastError = "RPC request timed out";
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);

@@ -8,7 +8,7 @@
 #include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QNetworkReply>
+#include "../rpc/RpcReply.h"
 #include <QEventLoop>
 #include <QtConcurrent/QtConcurrent>
 #include <QDebug>
@@ -192,11 +192,11 @@ QList<ReconciliationJob::AccountBalance> ReconciliationJob::queryChainBalances()
         
         // Query balance from node (synchronously)
         QEventLoop loop;
-        QNetworkReply* reply = m_rpcClient->getBalance(account.address, "latest");
+        RpcReply* reply = m_rpcClient->getBalance(account.address, "latest");
         qint64 balance = 0;
         bool success = false;
         
-        connect(reply, &QNetworkReply::finished, [&]() {
+        connect(reply, &RpcReply::finished, [&]() {
             if (reply->error() == QNetworkReply::NoError) {
                 QByteArray data = reply->readAll();
                 QJsonDocument doc = QJsonDocument::fromJson(data);

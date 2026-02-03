@@ -8,7 +8,7 @@
  * @brief Cross-platform application path resolution.
  * 
  * Provides OS-appropriate base directories for:
- * - Node data (chain DB, P2P state)
+ * - Node data (chain DB, P2P state, when embedded node is enabled)
  * - Wallet data (keys, accounts, settings)
  * - Logs (wallet and node logs)
  * - Runtime state (PID files, lock files, ports)
@@ -16,7 +16,7 @@
  * Directory structure:
  * 
  * <base>/
- *   ├── node/           # Node data (ANIMICA_DATA_DIR points here)
+ *   ├── node/           # Node data (embedded node builds only)
  *   │   ├── chain-1/    # Mainnet
  *   │   ├── chain-2/    # Testnet
  *   │   └── chain-1337/ # Devnet
@@ -26,7 +26,7 @@
  *   ├── logs/           # All logs
  *   │   ├── wallet.log
  *   │   └── node-*.log
- *   └── run/            # Runtime state
+ *   └── run/            # Runtime state (embedded node builds only)
  *       ├── node.json
  *       ├── node.lock
  *       └── node.pid
