@@ -37,10 +37,15 @@ def _bracket_ipv6(host: str) -> str:
     return host
 
 
-def _build_canonical(scheme: str, host: str, port: int, query: str = "") -> str:
+def _build_canonical(
+    scheme: str, host: str, port: int, query: str = "", path: str = ""
+) -> str:
     host_disp = _bracket_ipv6(host)
+    path_part = ""
+    if path:
+        path_part = path if path.startswith("/") else f"/{path}"
     suffix = f"?{query}" if query else ""
-    return f"{scheme}://{host_disp}:{port}{suffix}"
+    return f"{scheme}://{host_disp}:{port}{path_part}{suffix}"
 
 
 def normalize_peer_addr(
@@ -117,7 +122,13 @@ def normalize_peer_addr(
         port = parsed.port or (int(fallback_port) if fallback_port else None)
         if port is None:
             return PeerAddrParseResult(None, "missing_port", False)
-        canonical = _build_canonical(scheme, host, int(port))
+        path = parsed.path or ""
+        if path == "/":
+            path = ""
+        query = parsed.query if scheme in ("ws", "wss") and parsed.query else ""
+        canonical = _build_canonical(
+            scheme, host, int(port), query=query, path=path
+        )
         return PeerAddrParseResult(
             PeerAddr(
                 raw=addr, scheme=scheme, host=host, port=int(port), canonical=canonical
