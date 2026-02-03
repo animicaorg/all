@@ -319,6 +319,29 @@ class TxRelayService:
         )
         self._running = False
         self._lock = asyncio.Lock()
+        self._metrics: Dict[str, Any] = {
+            "announced_count": 0,
+            "received_count": 0,
+            "requested_count": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+            "dropped_count": 0,
+            "inv_sent": 0,
+            "inv_recv": 0,
+            "get_sent": 0,
+            "get_recv": 0,
+            "data_sent": 0,
+            "data_recv": 0,
+            "mempool_sync_req_sent": 0,
+            "mempool_sync_resp_sent": 0,
+            "mempool_sync_resp_recv": 0,
+            "last_announced_at": None,
+            "last_received_at": None,
+            "last_requested_at": None,
+            "last_accepted_at": None,
+            "last_rejected_at": None,
+            "last_dropped_at": None,
+        }
 
     def register_peer(
         self,
@@ -436,6 +459,8 @@ class TxRelayService:
 
     async def on_mempool_add(self, txid: bytes, raw: bytes) -> None:
         self._request_mgr.mark_accepted(txid, peer="local", now=time.time())
+        self._metrics["accepted_count"] += 1
+        self._metrics["last_accepted_at"] = time.time()
         async with self._lock:
             peers = self._eligible_peers()
             for conn_id in peers:
@@ -447,6 +472,7 @@ class TxRelayService:
 
     async def on_tx_inv(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
+        self._metrics["inv_recv"] += len(tx_list)
         log.info(
             "TX_INV_RECEIVED",
             extra={
@@ -580,6 +606,9 @@ class TxRelayService:
         if missing:
             for idx in range(0, len(missing), 256):
                 batch = missing[idx : idx + 256]
+                self._metrics["get_sent"] += len(batch)
+                self._metrics["requested_count"] += len(batch)
+                self._metrics["last_requested_at"] = time.time()
                 await self._send_tx_get(conn_id, batch)
                 log.info(
                     "TX_GET_SENT",
@@ -605,6 +634,7 @@ class TxRelayService:
 
     async def on_tx_get(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
+        self._metrics["get_recv"] += len(tx_list)
         log.info(
             "TX_GET_RECV",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
@@ -634,6 +664,7 @@ class TxRelayService:
                     },
                 )
             else:
+                self._metrics["data_sent"] += len(send_items)
                 await self._send_tx_data(conn_id, send_items)
                 log.info(
                     "TX_DATA_SEND",
@@ -654,6 +685,9 @@ class TxRelayService:
 
     async def on_tx_data(self, conn_id: str, items: Iterable[dict[str, Any]]) -> None:
         items_list = list(items)
+        self._metrics["data_recv"] += len(items_list)
+        self._metrics["received_count"] += len(items_list)
+        self._metrics["last_received_at"] = time.time()
         log.info(
             "TX_DATA_RECV_START",
             extra={
@@ -780,6 +814,8 @@ class TxRelayService:
                 self._request_mgr.mark_accepted(
                     txid_bytes, peer=origin_label or conn_id, now=time.time()
                 )
+                self._metrics["accepted_count"] += 1
+                self._metrics["last_accepted_at"] = time.time()
                 log.info(
                     "TX_ACCEPTED",
                     extra={
@@ -796,6 +832,8 @@ class TxRelayService:
                     reason=reason or "reject",
                     now=time.time(),
                 )
+                self._metrics["rejected_count"] += 1
+                self._metrics["last_rejected_at"] = time.time()
                 log.warning(
                     "TX_REJECTED",
                     extra={
@@ -829,6 +867,8 @@ class TxRelayService:
 
     async def on_tx_notfound(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
+        self._metrics["dropped_count"] += len(tx_list)
+        self._metrics["last_dropped_at"] = time.time()
         async with self._lock:
             state = self._peer_state.get(conn_id)
             for txid in tx_list:
@@ -848,6 +888,7 @@ class TxRelayService:
     async def on_mempool_req(self, conn_id: str, limit: Optional[int] = None) -> None:
         lim = int(limit) if limit is not None else self.mempool_sync_limit
         txids = await self._list_mempool_hashes(lim)
+        self._metrics["mempool_sync_resp_sent"] += 1
         await self._send_mempool_resp(conn_id, txids)
         log.info(
             "TX_SYNC_RESP_SEND",
@@ -856,6 +897,7 @@ class TxRelayService:
 
     async def on_mempool_resp(self, conn_id: str, txids: Iterable[bytes]) -> None:
         tx_list = list(txids)
+        self._metrics["mempool_sync_resp_recv"] += 1
         log.info(
             "TXIDS_LEARNED",
             extra={
@@ -913,6 +955,9 @@ class TxRelayService:
         if want_txids:
             for idx in range(0, len(want_txids), 256):
                 batch = want_txids[idx : idx + 256]
+                self._metrics["get_sent"] += len(batch)
+                self._metrics["requested_count"] += len(batch)
+                self._metrics["last_requested_at"] = time.time()
                 await self._send_tx_get(conn_id, batch)
                 log.info(
                     "TX_GET_SENT",
@@ -966,6 +1011,9 @@ class TxRelayService:
                         state.inv_queue.extendleft(reversed(batch))
                         continue
                     await self._send_tx_inv(state.conn_id, batch)
+                    self._metrics["inv_sent"] += len(batch)
+                    self._metrics["announced_count"] += len(batch)
+                    self._metrics["last_announced_at"] = time.time()
                     for txid in batch:
                         state.known_txids.add(txid)
                     log.info(
@@ -1045,6 +1093,9 @@ class TxRelayService:
                                 self._request_mgr.mark_requested(
                                     txid, peer=next_peer, now=now
                                 )
+                                self._metrics["get_sent"] += 1
+                                self._metrics["requested_count"] += 1
+                                self._metrics["last_requested_at"] = time.time()
                                 await self._send_tx_get(next_peer, [txid])
                                 log.info(
                                     "TX_GET_SENT",
@@ -1067,6 +1118,8 @@ class TxRelayService:
                         self._request_mgr.mark_dropped(
                             txid, peer=entry.conn_id, reason="fetch_timeout", now=now
                         )
+                        self._metrics["dropped_count"] += 1
+                        self._metrics["last_dropped_at"] = time.time()
                         log.info(
                             "TX_FETCH_ABANDONED",
                             extra={
@@ -1101,6 +1154,7 @@ class TxRelayService:
                         continue
                     state.last_sync_sent_at = now
                     await self._send_mempool_req(state.conn_id, self.mempool_sync_limit)
+                    self._metrics["mempool_sync_req_sent"] += 1
                     log.info(
                         "TX_SYNC_REQ",
                         extra={
@@ -1245,6 +1299,9 @@ class TxRelayService:
         for conn_id, txids in requests_by_peer.items():
             for idx in range(0, len(txids), 256):
                 batch = txids[idx : idx + 256]
+                self._metrics["get_sent"] += len(batch)
+                self._metrics["requested_count"] += len(batch)
+                self._metrics["last_requested_at"] = time.time()
                 await self._send_tx_get(conn_id, batch)
                 total += len(batch)
                 log.info(
@@ -1284,6 +1341,17 @@ class TxRelayService:
             "peers": peers,
         }
 
+    def metrics(self) -> Dict[str, Any]:
+        inv_queue_depth = sum(len(state.inv_queue) for state in self._peer_state.values())
+        metrics = dict(self._metrics)
+        metrics.update(
+            {
+                "inflight": len(self._inflight),
+                "inv_queue_depth": inv_queue_depth,
+            }
+        )
+        return metrics
+
     def tx_state_snapshot(self, limit: int = 20) -> List[dict[str, Any]]:
         return self._request_mgr.snapshot(limit=limit)
 
@@ -1309,6 +1377,7 @@ class TxRelayService:
         state = self._ensure_peer(conn_id)
         state.last_sync_sent_at = time.time()
         await self._send_mempool_req(conn_id, self.mempool_sync_limit)
+        self._metrics["mempool_sync_req_sent"] += 1
         log.info(
             "TX_SYNC_REQ",
             extra={
