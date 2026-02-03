@@ -16,7 +16,7 @@ from p2p.txrelay import TxRelayService
 @pytest.mark.asyncio
 async def test_stale_accepted_state_cleared_on_new_announcement() -> None:
     """
-    Reproduce the bug where transactions are in known_txids but not in mempool.
+    Reproduces the bug where transactions are in known_txids but not in mempool.
     
     Scenario:
     1. Transaction is announced by peer A and admitted to mempool
