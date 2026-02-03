@@ -64,6 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (credentials: LoginRequest) => {
     const response = await apiClient.login(credentials);
     setAdmin(response.data.admin);
+    if (response.data.bootstrapCreated) {
+      localStorage.setItem('admin_bootstrap_created', 'true');
+    }
     navigate('/');
   };
 

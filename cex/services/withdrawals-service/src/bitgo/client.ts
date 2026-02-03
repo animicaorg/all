@@ -2,63 +2,57 @@
  * BitGo API Client
  */
 
-import axios, { type AxiosInstance } from "axios";
+import axios from "axios";
 import type { Logger } from "pino";
 import type { BitGoTransferRequest, BitGoTransferResponse } from "./types.js";
 
+export interface BitgoConfigProvider {
+  getConfig: () => Promise<{
+    baseUrl: string;
+    accessToken?: string;
+  }>;
+}
+
 export class BitGoClient {
-  private client: AxiosInstance;
-
   constructor(
-    private baseUrl: string,
-    private accessToken: string,
+    private configProvider: BitgoConfigProvider,
     private logger: Logger
-  ) {
-    this.client = axios.create({
-      baseURL: baseUrl,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 30000, // 30 seconds
-    });
+  ) {}
 
-    // Add request/response logging
-    this.client.interceptors.request.use((config) => {
-      this.logger.debug(
-        {
-          method: config.method,
-          url: config.url,
-          data: config.data,
+  private async request<T>(method: "get" | "post" | "delete", url: string, data?: any) {
+    const config = await this.configProvider.getConfig();
+    if (!config.accessToken) {
+      throw new Error("BitGo access token not configured");
+    }
+
+    this.logger.debug({ method, url, data }, "BitGo API request");
+
+    try {
+      const response = await axios.request<T>({
+        method,
+        baseURL: config.baseUrl,
+        url,
+        data,
+        headers: {
+          Authorization: `Bearer ${config.accessToken}`,
+          "Content-Type": "application/json",
         },
-        "BitGo API request"
-      );
-      return config;
-    });
+        timeout: 30000,
+      });
 
-    this.client.interceptors.response.use(
-      (response) => {
-        this.logger.debug(
-          {
-            status: response.status,
-            url: response.config.url,
-          },
-          "BitGo API response"
-        );
-        return response;
-      },
-      (error) => {
-        this.logger.error(
-          {
-            status: error.response?.status,
-            url: error.config?.url,
-            error: error.response?.data || error.message,
-          },
-          "BitGo API error"
-        );
-        throw error;
-      }
-    );
+      this.logger.debug({ status: response.status, url }, "BitGo API response");
+      return response.data;
+    } catch (error: any) {
+      this.logger.error(
+        {
+          status: error.response?.status,
+          url,
+          error: error.response?.data || error.message,
+        },
+        "BitGo API error"
+      );
+      throw error;
+    }
   }
 
   /**
@@ -68,11 +62,7 @@ export class BitGoClient {
     walletId: string,
     request: BitGoTransferRequest
   ): Promise<BitGoTransferResponse> {
-    const response = await this.client.post<BitGoTransferResponse>(
-      `/api/v2/${walletId}/sendcoins`,
-      request
-    );
-    return response.data;
+    return this.request<BitGoTransferResponse>(`post`, `/api/v2/${walletId}/sendcoins`, request);
   }
 
   /**
@@ -82,17 +72,14 @@ export class BitGoClient {
     walletId: string,
     transferId: string
   ): Promise<BitGoTransferResponse> {
-    const response = await this.client.get<BitGoTransferResponse>(
-      `/api/v2/${walletId}/transfer/${transferId}`
-    );
-    return response.data;
+    return this.request<BitGoTransferResponse>(`get`, `/api/v2/${walletId}/transfer/${transferId}`);
   }
 
   /**
    * Cancel a pending transfer
    */
   async cancelTransfer(walletId: string, transferId: string): Promise<void> {
-    await this.client.delete(`/api/v2/${walletId}/transfer/${transferId}`);
+    await this.request(`delete`, `/api/v2/${walletId}/transfer/${transferId}`);
   }
 }
 
@@ -100,9 +87,8 @@ export class BitGoClient {
  * Create BitGo client instance
  */
 export function createBitGoClient(
-  baseUrl: string,
-  accessToken: string,
+  configProvider: BitgoConfigProvider,
   logger: Logger
 ): BitGoClient {
-  return new BitGoClient(baseUrl, accessToken, logger);
+  return new BitGoClient(configProvider, logger);
 }

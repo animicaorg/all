@@ -7,6 +7,7 @@ import type { Pool } from "pg";
 import type { Logger } from "pino";
 import type { RedisClientType } from "redis";
 import type { Config } from "../config.js";
+import type { BitgoConfigStore } from "../bitgo/config.js";
 import {
   createAuthMiddleware,
   createAdminAuthMiddleware,
@@ -27,6 +28,7 @@ export function createServer(
   pool: Pool,
   redis: RedisClientType | null,
   config: Config,
+  bitgoConfigStore: BitgoConfigStore,
   logger: Logger
 ): Express {
   const app = express();
@@ -78,7 +80,7 @@ export function createServer(
 
   // Webhook routes (signature verification, no user auth)
   const webhookRouter = express.Router();
-  setupBitGoWebhookRoutes(webhookRouter, pool, config, logger);
+  setupBitGoWebhookRoutes(webhookRouter, pool, bitgoConfigStore, logger);
   app.use(webhookRouter);
 
   // User withdrawal routes (authentication + rate limiting + idempotency)

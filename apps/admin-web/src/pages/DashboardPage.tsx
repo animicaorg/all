@@ -3,11 +3,21 @@
  * System overview with health metrics
  */
 
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Activity, Users, AlertTriangle, ArrowUpDown } from 'lucide-react';
 
 export default function DashboardPage() {
   const { admin } = useAuth();
+  const [showBootstrapNotice, setShowBootstrapNotice] = useState(false);
+
+  useEffect(() => {
+    const flag = localStorage.getItem('admin_bootstrap_created');
+    if (flag) {
+      setShowBootstrapNotice(true);
+      localStorage.removeItem('admin_bootstrap_created');
+    }
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -17,6 +27,11 @@ export default function DashboardPage() {
           Welcome back, {admin?.email}
         </p>
       </div>
+      {showBootstrapNotice && (
+        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+          Admin initialized successfully.
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
