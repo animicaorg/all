@@ -80,6 +80,7 @@ class ConnInfo:
     Metadata about a live connection after handshake.
     """
 
+    conn_trace_id: Optional[str] = None
     peer_id: Optional[bytes] = None  # p2p.crypto.peer_id bytes (sha3-256(...))
     alpn: Optional[str] = None  # "animica/1" for QUIC/TLS-based transports
     local_addr: Optional[str] = None
