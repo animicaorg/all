@@ -525,6 +525,21 @@ class TxRelayService:
             async with self._lock:
                 if txid in self._inflight:
                     continue
+                # Clear stale "accepted_in_mempool" state if transaction is not actually in mempool
+                # This handles cases where transaction was evicted or state became inconsistent
+                req_state = self._request_mgr.get_state(txid)
+                if req_state is not None and req_state.state == "accepted_in_mempool":
+                    # Transaction announced by peer but marked as accepted - clear the state
+                    self._request_mgr.clear_state(txid)
+                    log.info(
+                        "TX_STATE_CLEARED",
+                        extra={
+                            "hash": txid.hex(),
+                            "reason": "marked_accepted_but_announced_by_peer",
+                            "peer": conn_id,
+                            **self._peer_log_extra(conn_id),
+                        },
+                    )
                 if not self._request_mgr.can_request(txid, now=now):
                     continue
                 if not self._set_inflight(
