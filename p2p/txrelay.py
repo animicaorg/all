@@ -52,6 +52,7 @@ class PeerTxState:
     remote: Optional[str]
     known_txids: TxIdSetLRU
     inv_queue: Deque[bytes] = field(default_factory=deque)
+    inv_queue_timestamps: Dict[bytes, float] = field(default_factory=dict)
     last_sync_sent_at: float = 0.0
     last_sync_recv_at: float = 0.0
 
@@ -288,6 +289,7 @@ class TxRelayService:
         inv_burst: float = 4000.0,
         tx_data_rate_bytes_per_sec: float = 5_000_000.0,
         tx_data_burst_bytes: float = 10_000_000.0,
+        inv_queue_timeout_s: Optional[float] = None,
         peer_ids: PeerListFn,
         peer_eligible: PeerEligibleFn,
         send_tx_inv: SendFn,
@@ -319,6 +321,7 @@ class TxRelayService:
         self.known_txids_cap = int(known_txids_cap)
         self.reconcile_interval_s = float(reconcile_interval_s)
         self.reconcile_batch_size = int(reconcile_batch_size)
+        self.inv_queue_timeout_s = float(inv_queue_timeout_s or 30.0)
         self._debug_enabled = bool(debug_enabled)
 
         self._peer_ids = peer_ids
@@ -570,6 +573,9 @@ class TxRelayService:
             self._inflight_by_peer[entry.conn_id] = count - 1
 
     async def on_mempool_add(self, txid: bytes, raw: bytes) -> None:
+        log.info(f"[DIAG] on_mempool_add called: txid={txid.hex()}, len={len(raw)}")
+
+        now = time.time()
         self._touch_tx_store(
             txid,
             source="local",
@@ -579,16 +585,20 @@ class TxRelayService:
             last_peer="local",
         )
         self._recent_txids.append(txid)
-        self._request_mgr.mark_accepted(txid, peer="local", now=time.time())
+        self._request_mgr.mark_accepted(txid, peer="local", now=now)
         self._metrics["accepted_count"] += 1
-        self._metrics["last_accepted_at"] = time.time()
+        self._metrics["last_accepted_at"] = now
         async with self._lock:
             peers = self._eligible_peers()
+            log.info(f"[DIAG] Eligible peers for tx broadcast: {len(peers)}, peers={peers}")
             for conn_id in peers:
                 state = self._ensure_peer(conn_id)
                 if txid in state.known_txids:
+                    log.info(f"[DIAG] Peer {conn_id} already knows txid {txid.hex()}, skipping")
                     continue
                 state.inv_queue.append(txid)
+                state.inv_queue_timestamps[txid] = now
+                log.info(f"[DIAG] Queued txid {txid.hex()} for peer {conn_id}, queue_len={len(state.inv_queue)}")
         log.info("TX_RELAY_ACCEPT_LOCAL", extra={"hash": txid.hex(), "bytes": len(raw)})
         self._record_event(
             "TX_RELAY_ACCEPT_LOCAL",
@@ -1337,6 +1347,7 @@ class TxRelayService:
     async def _broadcast_inv(
         self, txids: Iterable[bytes], *, exclude_peer: Optional[str]
     ) -> None:
+        now = time.time()
         async with self._lock:
             for conn_id in self._eligible_peers():
                 if exclude_peer and conn_id == exclude_peer:
@@ -1346,6 +1357,7 @@ class TxRelayService:
                     if txid in state.known_txids:
                         continue
                     state.inv_queue.append(txid)
+                    state.inv_queue_timestamps[txid] = now
 
     async def announce_txids(
         self, txids: Iterable[bytes], *, exclude_peer: Optional[str] = None
@@ -1354,6 +1366,7 @@ class TxRelayService:
 
     async def inv_flush_loop(self) -> None:
         self._running = True
+        log.info("[DIAG] inv_flush_loop STARTED")
         last_heartbeat = 0.0
         while self._running:
             try:
@@ -1361,10 +1374,38 @@ class TxRelayService:
                 now = time.time()
                 async with self._lock:
                     peer_states = list(self._peer_state.values())
+
+                log.info(f"[DIAG] inv_flush tick: {len(peer_states)} peer states")
+
                 for state in peer_states:
+                    log.info(f"[DIAG] Checking peer {state.conn_id}: eligible={self._peer_eligible(state.conn_id)}, queue_len={len(state.inv_queue)}")
+
                     if not self._peer_eligible(state.conn_id):
+                        # Don't clear queue - keep transactions for when peer becomes eligible
+                        # But clean up transactions that have been queued too long
                         if state.inv_queue:
-                            state.inv_queue.clear()
+                            timeout = self.inv_queue_timeout_s
+                            stale_txids = []
+                            for txid in list(state.inv_queue):
+                                queued_at = state.inv_queue_timestamps.get(txid)
+                                if queued_at and (now - queued_at) > timeout:
+                                    stale_txids.append(txid)
+
+                            if stale_txids:
+                                # Remove stale transactions
+                                for txid in stale_txids:
+                                    if txid in state.inv_queue:
+                                        state.inv_queue.remove(txid)
+                                    state.inv_queue_timestamps.pop(txid, None)
+
+                                log.warning(
+                                    f"[DIAG] Removed {len(stale_txids)} stale transactions from queue for ineligible peer {state.conn_id}",
+                                    extra={
+                                        "peer": state.conn_id,
+                                        "stale_count": len(stale_txids),
+                                        "queue_remaining": len(state.inv_queue),
+                                    }
+                                )
                         continue
                     if not state.inv_queue:
                         continue
@@ -1382,6 +1423,7 @@ class TxRelayService:
                     self._metrics["last_announced_at"] = time.time()
                     for txid in batch:
                         state.known_txids.add(txid)
+                        state.inv_queue_timestamps.pop(txid, None)
                         self._set_peer_tx_state(state.conn_id, txid, "ANNOUNCED_TO_PEER")
                         self._record_event(
                             "TX_RELAY_ANNOUNCE_SENT",
@@ -1619,6 +1661,37 @@ class TxRelayService:
                     )
             except Exception:
                 log.warning("tx mempool watchdog loop error", exc_info=True)
+
+    async def inv_queue_watchdog_loop(self) -> None:
+        """Monitor for stuck INV queues that aren't being flushed."""
+        self._running = True
+        log.info("[DIAG] inv_queue_watchdog_loop STARTED")
+        while self._running:
+            try:
+                await asyncio.sleep(5.0)
+                now = time.time()
+                async with self._lock:
+                    for conn_id, state in self._peer_state.items():
+                        queue_size = len(state.inv_queue)
+                        if queue_size > 10:
+                            eligible = self._peer_eligible(conn_id)
+                            oldest_age = 0.0
+                            if state.inv_queue and state.inv_queue_timestamps:
+                                oldest_txid = state.inv_queue[0]
+                                queued_at = state.inv_queue_timestamps.get(oldest_txid, now)
+                                oldest_age = now - queued_at
+
+                            log.warning(
+                                f"[DIAG] INV queue for peer {conn_id} has {queue_size} items - may be stuck",
+                                extra={
+                                    "peer": conn_id,
+                                    "queue_size": queue_size,
+                                    "eligible": eligible,
+                                    "oldest_age_seconds": oldest_age,
+                                }
+                            )
+            except Exception:
+                log.warning("inv queue watchdog loop error", exc_info=True)
 
     async def reconcile_loop(self) -> None:
         """
