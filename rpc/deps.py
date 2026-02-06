@@ -1072,6 +1072,20 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             "RPC context ready: no head set yet (genesis will be initialized on first use)"
         )
 
+    instant_tx_service = None
+    try:
+        from rpc.instant_tx import InstantTxService, set_instant_tx_service_singleton
+
+        instant_ttl_s = int(os.environ.get("ANIMICA_INSTANT_TXBLOCK_TTL_S", "1800") or 1800)
+        instant_tx_service = InstantTxService(
+            data_root=data_root,
+            chain_id=cfg_view.chain_id,
+            ttl_s=instant_ttl_s,
+        )
+        set_instant_tx_service_singleton(instant_tx_service)
+    except Exception as exc:
+        log.warning("Failed to initialize instant tx service", exc_info=exc)
+
     mempool_service = None
     try:
         from rpc.mempool_service import MempoolService

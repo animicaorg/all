@@ -1465,6 +1465,14 @@ class BlockImporter:
                     "Failed to remove confirmed transactions from mempool",
                     extra={"error": str(e), "tx_count": len(all_tx_hashes)},
                 )
+            try:
+                from rpc.instant_tx import get_instant_tx_service_singleton
+
+                instant_svc = get_instant_tx_service_singleton()
+                if instant_svc is not None:
+                    instant_svc.mark_finalized(all_tx_hashes)
+            except Exception:
+                log.debug("Failed to mark instant tx confirmations finalized", exc_info=True)
         
         # Trigger mempool reconciliation for conflict resolution
         # Use cached blocks and per-block tx hashes to avoid redundant lookups

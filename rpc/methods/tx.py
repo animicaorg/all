@@ -14,6 +14,7 @@ from rpc.methods import method
 from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
 from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
+from rpc.instant_tx import get_instant_tx_service_singleton
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
@@ -736,6 +737,19 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     if raw is not None:
         return raw
     return _mempool_get_raw(tx_hash_hex)
+
+
+def _instant_receipt(tx_hash_hex: str) -> dict | None:
+    try:
+        svc = get_instant_tx_service_singleton()
+    except Exception:
+        svc = None
+    if svc is None:
+        return None
+    try:
+        return svc.get_receipt(tx_hash_hex)
+    except Exception:
+        return None
 
 
 def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
@@ -1811,6 +1825,9 @@ def tx_get_transaction_status(txHash: str) -> dict:
         except Exception:
             has = None
         if has:
+            receipt = _instant_receipt(tx_hash_hex)
+            if receipt is not None:
+                return {"hash": tx_hash_hex, "status": "instant_confirmed", "instant_receipt": receipt}
             return {"hash": tx_hash_hex, "status": "pending"}
 
     if _pending_get(tx_hash_hex) is not None:
@@ -1899,10 +1916,16 @@ def tx_get_status(txHash: str) -> dict:
     if included_hash is None and tx_hash_hex in _REORGED_TXS:
         reorged_out = True
 
+    receipt = _instant_receipt(tx_hash_hex)
+    instant_confirmed = bool(receipt is not None and receipt.get("instant_confirmed"))
+    finalized_in_pow = bool(included_hash is not None) or bool(receipt is not None and receipt.get("finalized_in_pow"))
+
     if included_hash is not None:
         status = "confirmed"
     elif reorged_out:
         status = "reorged_out"
+    elif instant_confirmed:
+        status = "instant_confirmed"
     elif seen_in_mempool:
         status = "pending"
     else:
@@ -1917,6 +1940,30 @@ def tx_get_status(txHash: str) -> dict:
         "confirmations": confirmations,
         "finalized": finalized,
         "reorged_out": reorged_out,
+        "instant_confirmed": instant_confirmed,
+        "finalized_in_pow": finalized_in_pow,
+        "reason": receipt.get("reason") if receipt else None,
     }
 
 # NOTE: tx.getTransactionReceipt is in rpc/methods/receipt.py
+
+
+@method(
+    "tx.getInstantReceipt",
+    desc="Return instant tx block receipt for a transaction hash.",
+    aliases=("tx_getInstantReceipt",),
+)
+def tx_get_instant_receipt(txHash: str) -> dict:
+    if not isinstance(txHash, str):
+        raise rpc_errors.InvalidParams("txHash must be hex string")
+    tx_hash_hex = txHash.lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+    receipt = _instant_receipt(tx_hash_hex)
+    if receipt is None:
+        return {"hash": tx_hash_hex, "status": "not_found"}
+    return {
+        "hash": tx_hash_hex,
+        "status": "instant_confirmed" if receipt.get("instant_confirmed") else "known",
+        "receipt": receipt,
+    }
