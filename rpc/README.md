@@ -306,3 +306,21 @@ Useful links
 	•	Wallet extension provider: wallet-extension/src/provider
 
 ⸻
+
+## Instant tx blocks (micro-confirmations)
+
+Nodes can emit **instant tx blocks** (aka micro-confirmation receipts) as soon as a transaction is accepted into local mempool validation.
+
+- They are **not PoW blocks**.
+- They carry **zero mining reward** and do not affect halving/emission.
+- They do **not** change canonical PoW head/height, difficulty, or min block spacing.
+- They are anchored to a known canonical PoW hash and are stored separately under `chain-<id>/instant_blocks/`.
+- They are short-lived/prunable receipts intended for UX speed; PoW inclusion remains the final source of truth.
+
+RPC additions:
+- `tx.getStatus(txid)` now exposes `instant_confirmed` and `finalized_in_pow`.
+- `tx.getInstantReceipt(txid)` returns the instant receipt when available.
+
+P2P compatibility:
+- Instant receipt gossip uses capability negotiation (`INSTANT_TXBLOCK_V1`).
+- Peers without this capability are not sent instant tx block messages and continue normal PoW sync unchanged.

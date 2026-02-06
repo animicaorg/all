@@ -342,6 +342,8 @@ class MempoolService:
         # Optional P2P broadcast callback - set by P2P service to trigger tx propagation
         self._p2p_broadcast_callback: Optional[Any] = None
         self._p2p_broadcast_loop: Optional["asyncio.AbstractEventLoop"] = None
+        self._instant_block_callback: Optional[Any] = None
+        self._instant_block_loop: Optional["asyncio.AbstractEventLoop"] = None
         if self._persist_enabled:
             self._load_persisted()
     
@@ -357,6 +359,19 @@ class MempoolService:
         owner_loop = getattr(owner, "loop", None) if owner is not None else None
         if owner_loop is not None:
             self._p2p_broadcast_loop = owner_loop
+
+    def set_instant_block_callback(
+        self, callback: Any, *, loop: Optional["asyncio.AbstractEventLoop"] = None
+    ) -> None:
+        """Set callback to emit instant tx block receipts when tx is accepted."""
+        self._instant_block_callback = callback
+        if loop is not None:
+            self._instant_block_loop = loop
+            return
+        owner = getattr(callback, "__self__", None)
+        owner_loop = getattr(owner, "loop", None) if owner is not None else None
+        if owner_loop is not None:
+            self._instant_block_loop = owner_loop
 
     def _record_rejection(
         self, tx_hash_hex: str, reason: str, details: dict[str, Any] | None = None
@@ -1159,6 +1174,26 @@ class MempoolService:
 
         self._recent_txids[tx_hash_hex] = current_height + self._replay_window_blocks
 
+        try:
+            from rpc.instant_tx import get_instant_tx_service_singleton, instant_enabled
+            from rpc import deps as _rpc_deps
+
+            if instant_enabled():
+                instant_svc = get_instant_tx_service_singleton()
+                if instant_svc is not None:
+                    anchor_hash = "0x" + ("00" * 32)
+                    try:
+                        head = _rpc_deps.ensure_started().get_head()
+                        if isinstance(head, dict):
+                            hh = str(head.get("hash") or "")
+                            if hh:
+                                anchor_hash = hh if hh.startswith("0x") else ("0x" + hh)
+                    except Exception:
+                        pass
+                    instant_svc.emit_local(txid=tx_hash_hex, anchor_hash=anchor_hash)
+        except Exception:
+            log.debug("instant tx receipt emit failed", exc_info=True)
+
         log.info(
             "MempoolService.submit: SUCCESS - tx added and persisted, tx_hash=%s, pool_size=%d",
             tx_hash_hex,
@@ -1215,7 +1250,28 @@ class MempoolService:
                 )
         else:
             log.info(f"[DIAG] P2P broadcast callback is NOT set for tx {tx_hash_hex}")
-        
+
+        if self._instant_block_callback is not None:
+            try:
+                import asyncio
+
+                callback = self._instant_block_callback
+                try:
+                    running_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    running_loop = None
+
+                if running_loop is not None and running_loop.is_running():
+                    asyncio.ensure_future(callback(tx_hash_bytes, raw_bytes), loop=running_loop)
+                else:
+                    target_loop = self._instant_block_loop
+                    if target_loop is not None and target_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            callback(tx_hash_bytes, raw_bytes), target_loop
+                        )
+            except Exception:
+                log.debug("instant block callback failed", exc_info=True)
+
         return tx_hash_hex
 
     def submit_atomic(

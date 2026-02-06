@@ -37,6 +37,7 @@ from p2p.transport.tcp import TcpTransport
 from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
 from p2p.wire.message_ids import MsgID
+from rpc.instant_tx import get_instant_tx_service_singleton, instant_enabled
 from p2p.messages_tx import (
     TxData,
     TxGet,
@@ -929,6 +930,8 @@ class P2PService:
         self._seen_block_cap = 10_000
         self._tx_inv_seen: "OrderedDict[bytes, float]" = OrderedDict()
         self._tx_inv_seen_cap = 50_000
+        self._txblock_seen: "OrderedDict[str, float]" = OrderedDict()
+        self._txblock_seen_cap = 50_000
         self._tx_requested: "OrderedDict[bytes, tuple[float, str]]" = OrderedDict()
         self._tx_requested_cap = 50_000
         self._tx_sent_by_peer: dict[str, "OrderedDict[bytes, float]"] = {}
@@ -976,6 +979,13 @@ class P2PService:
         self._tx_rate_window_s = float(
             os.environ.get("ANIMICA_P2P_TX_RATE_WINDOW_S", "60") or 60
         )
+        self._txblock_rate_window_s = float(
+            os.environ.get("ANIMICA_P2P_TXBLOCK_RATE_WINDOW_S", "60") or 60
+        )
+        self._max_txblock_per_min_per_peer = int(
+            os.environ.get("ANIMICA_P2P_MAX_TXBLOCK_PER_MIN_PER_PEER", "120") or 120
+        )
+        self._txblock_inflight_by_peer: dict[str, Deque[float]] = {}
         self._getdata_inflight_by_peer: dict[str, Deque[float]] = {}
         self._tx_inflight_by_peer: dict[str, Deque[float]] = {}
         self._getdata_out_by_peer: dict[str, Deque[float]] = {}
@@ -1884,6 +1894,11 @@ class P2PService:
                 self._txrelay.on_mempool_add,
                 loop=self.loop,
             )
+            if hasattr(mempool_service, "set_instant_block_callback"):
+                mempool_service.set_instant_block_callback(
+                    self._on_mempool_tx_accepted_instant,
+                    loop=self.loop,
+                )
             self._mempool_callback_bound = True
             log.info(
                 "P2P broadcast callback registered",
@@ -6121,6 +6136,8 @@ class P2PService:
         caps = ["tx", "blocks", "sync"]
         if self._tx_relay_v2_enabled:
             caps.append("tx_relay_v2")
+        if instant_enabled():
+            caps.append("INSTANT_TXBLOCK_V1")
         return caps
 
     async def _send_hello(self, peer: _PeerState) -> None:
@@ -6268,6 +6285,15 @@ class P2PService:
             return
         if mid == int(MsgID.TX_MEMPOOL_RESP):
             await self._handle_tx_mempool_resp(peer, payload)
+            return
+        if mid == int(MsgID.TXBLOCK_INV):
+            await self._handle_txblock_inv(peer, payload)
+            return
+        if mid == int(MsgID.TXBLOCK_GET):
+            await self._handle_txblock_get(peer, payload)
+            return
+        if mid == int(MsgID.TXBLOCK_DATA):
+            await self._handle_txblock_data(peer, payload)
             return
         if mid == int(MsgID.GETDATA):
             await self._handle_getdata(peer, payload)
@@ -14154,6 +14180,148 @@ class P2PService:
                 if origin_peer == self._peer_tx_key(peer):
                     continue
             await self._send_inv(peer, [inv_item], is_tx=True)
+
+    def _peer_supports_instant_txblock(self, peer: _PeerState) -> bool:
+        if peer.negotiated_caps:
+            return "INSTANT_TXBLOCK_V1" in peer.negotiated_caps
+        caps = peer.hello.get("capabilities") if peer.hello else None
+        return bool(caps and "INSTANT_TXBLOCK_V1" in caps)
+
+    async def _on_mempool_tx_accepted_instant(self, txid: bytes, _raw: bytes) -> None:
+        if not instant_enabled():
+            return
+        txid_hex = "0x" + bytes(txid).hex()
+        try:
+            height, anchor_hex = self._local_head()
+            _ = height
+            anchor_hash = anchor_hex if isinstance(anchor_hex, str) and anchor_hex.startswith("0x") else ("0x" + (anchor_hex or "").removeprefix("0x"))
+            if anchor_hash in {"0x", ""}:
+                return
+            svc = get_instant_tx_service_singleton()
+            if svc is None:
+                return
+            existing = svc.get_receipt(txid_hex)
+            if existing and existing.get("block"):
+                rec = dict(existing["block"])
+            else:
+                rec = svc.emit_local(txid=txid_hex, anchor_hash=anchor_hash)
+        except Exception:
+            log.debug("instant tx block local emit failed", exc_info=True)
+            return
+
+        block_id = str(rec.get("block_id") or "")
+        if not block_id:
+            return
+        self._remember_ttl(self._txblock_seen, block_id, self._txblock_seen_cap, self._tx_relay_ttl_s)
+
+        async with self._peer_lock:
+            peers = list(self._peers.values())
+        for peer in peers:
+            if not self._peer_supports_instant_txblock(peer):
+                continue
+            ok, _reason = self._tx_peer_eligibility(peer)
+            if not ok:
+                continue
+            await self._send(peer, MsgID.TXBLOCK_INV, {"ids": [block_id]})
+
+    async def _handle_txblock_inv(self, peer: _PeerState, payload: bytes) -> None:
+        if not instant_enabled():
+            return
+        if not self._peer_supports_instant_txblock(peer):
+            return
+        data = self._decode_payload_map(payload)
+        ids = [str(x) for x in (data.get("ids") or []) if isinstance(x, str)]
+        want: list[str] = []
+        svc = get_instant_tx_service_singleton()
+        for block_id in ids[: self._max_inv_per_msg]:
+            if self._seen(self._txblock_seen, block_id):
+                continue
+            if svc is not None and svc.get_block(block_id) is not None:
+                continue
+            want.append(block_id)
+            self._remember_ttl(self._txblock_seen, block_id, self._txblock_seen_cap, self._tx_relay_ttl_s)
+        if want:
+            await self._send(peer, MsgID.TXBLOCK_GET, {"ids": want})
+
+    async def _handle_txblock_get(self, peer: _PeerState, payload: bytes) -> None:
+        if not instant_enabled():
+            return
+        if not self._peer_supports_instant_txblock(peer):
+            return
+        if self._rate_limit(
+            self._txblock_inflight_by_peer,
+            peer.remote,
+            self._max_txblock_per_min_per_peer,
+            self._txblock_rate_window_s,
+        ):
+            self._penalize_peer(peer, "txblock_get_rate_limited", points=self._score_points["malformed_message"])
+            return
+        data = self._decode_payload_map(payload)
+        ids = [str(x) for x in (data.get("ids") or []) if isinstance(x, str)]
+        svc = get_instant_tx_service_singleton()
+        if svc is None:
+            return
+        items = []
+        for block_id in ids[: self._max_inv_per_msg]:
+            rec = svc.get_block(block_id)
+            if rec is not None:
+                items.append(rec)
+        if items:
+            await self._send(peer, MsgID.TXBLOCK_DATA, {"items": items})
+
+    async def _handle_txblock_data(self, peer: _PeerState, payload: bytes) -> None:
+        if not instant_enabled():
+            return
+        if not self._peer_supports_instant_txblock(peer):
+            return
+        data = self._decode_payload_map(payload)
+        items = data.get("items") or []
+        svc = get_instant_tx_service_singleton()
+        if svc is None:
+            return
+        for it in items[: self._max_inv_per_msg]:
+            if not isinstance(it, dict):
+                continue
+            anchor_hash = str(it.get("anchor_hash") or "")
+            txids = [str(t) for t in (it.get("txids") or []) if isinstance(t, str)]
+            block_id = str(it.get("block_id") or "")
+            ts = int(it.get("timestamp") or 0)
+            now = int(time.time())
+            if not anchor_hash.startswith("0x") or len(anchor_hash) != 66:
+                self._penalize_peer(peer, "invalid_txblock_anchor", points=self._score_points["malformed_message"])
+                continue
+            if not block_id.startswith("0x") or len(block_id) != 66:
+                self._penalize_peer(peer, "invalid_txblock_id", points=self._score_points["malformed_message"])
+                continue
+            if len(txids) == 0 or len(txids) > 32:
+                self._penalize_peer(peer, "invalid_txblock_size", points=self._score_points["malformed_message"])
+                continue
+            if ts <= 0 or abs(now - ts) > 120:
+                self._penalize_peer(peer, "invalid_txblock_timestamp", points=self._score_points["malformed_message"])
+                continue
+            # anchor must reference known canonical head hash (or current local head hash)
+            _h, local_head_hash = self._local_head()
+            if anchor_hash != local_head_hash:
+                has_anchor = False
+                try:
+                    if self.deps is not None and hasattr(self.deps, "has_block"):
+                        has_anchor = bool(self.deps.has_block(bytes.fromhex(anchor_hash[2:])))
+                except Exception:
+                    has_anchor = False
+                if not has_anchor:
+                    continue
+            tmp = {
+                "version": int(it.get("version") or 1),
+                "anchor_hash": anchor_hash,
+                "txids": sorted(txids),
+                "timestamp": ts,
+                "mempool_state_root": it.get("mempool_state_root"),
+            }
+            expect = "0x" + hashlib.sha3_256(json.dumps(tmp, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if expect != block_id:
+                self._penalize_peer(peer, "invalid_txblock_hash", points=self._score_points["malformed_message"])
+                continue
+            svc.ingest_remote(dict(it))
 
     async def _txrelay_send_inv(self, peer_key: str, txids: list[bytes]) -> None:
         peer = self._txrelay_find_peer(peer_key)

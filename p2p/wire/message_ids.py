@@ -31,7 +31,7 @@ from typing import Dict, Optional
 
 # Bump when changing payload schemas in incompatible ways.
 # (e.g., adding mandatory fields, renaming fields, or changing semantics)
-WIRE_SCHEMA_VERSION: int = 4
+WIRE_SCHEMA_VERSION: int = 5
 
 
 class MsgID(IntEnum):
@@ -108,6 +108,9 @@ class MsgID(IntEnum):
     PTL_WANT = 0x040A  # Request specific transactions from PTL
     PTL_PUSH = 0x040B  # Push transactions to peer
     PTL_ACK = 0x040C  # Acknowledge receipt of transactions
+    TXBLOCK_INV = 0x040D  # announce instant tx block ids
+    TXBLOCK_GET = 0x040E  # request instant tx blocks by id
+    TXBLOCK_DATA = 0x040F  # instant tx block payload(s)
 
     # ---------------------------
     # 0x05xx — Useful-work Shares
@@ -169,6 +172,7 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.TX_GET: MsgID.TX_DATA,
     MsgID.TX_MEMPOOL_REQ: MsgID.TX_MEMPOOL_RESP,
     MsgID.PTL_WANT: MsgID.PTL_PUSH,
+    MsgID.TXBLOCK_GET: MsgID.TXBLOCK_DATA,
 }
 
 
