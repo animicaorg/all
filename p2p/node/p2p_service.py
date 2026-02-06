@@ -1015,11 +1015,15 @@ class P2PService:
         self._tx_mempool_watchdog_limit = int(
             os.environ.get("ANIMICA_P2P_TX_MEMPOOL_WATCHDOG_LIMIT", "256") or 256
         )
+        self._tx_inv_queue_timeout_s = float(
+            os.environ.get("ANIMICA_TX_INV_QUEUE_TIMEOUT_SEC", "30") or 30
+        )
         self._txrelay_inv_flush_task: Optional[asyncio.Task] = None
         self._txrelay_inflight_task: Optional[asyncio.Task] = None
         self._txrelay_sync_task: Optional[asyncio.Task] = None
         self._txrelay_watchdog_task: Optional[asyncio.Task] = None
         self._txrelay_reconcile_task: Optional[asyncio.Task] = None
+        self._txrelay_inv_watchdog_task: Optional[asyncio.Task] = None
         self._mempool_bind_task: Optional[asyncio.Task] = None
         self._mempool_callback_bound = False
         try:
@@ -1040,6 +1044,7 @@ class P2PService:
                 inv_burst=self._tx_inv_rate_burst,
                 tx_data_rate_bytes_per_sec=self._tx_data_rate_bytes_per_sec,
                 tx_data_burst_bytes=self._tx_data_rate_burst_bytes,
+                inv_queue_timeout_s=self._tx_inv_queue_timeout_s,
                 peer_ids=self._txrelay_peer_ids,
                 peer_eligible=self._txrelay_peer_eligible,
                 send_tx_inv=self._txrelay_send_inv,
@@ -1874,6 +1879,7 @@ class P2PService:
                     "pending_path": str(pending_path) if pending_path else None,
                 },
             )
+            log.info(f"[DIAG] Binding mempool callback to TxRelayService.on_mempool_add")
             mempool_service.set_p2p_broadcast_callback(
                 self._txrelay.on_mempool_add,
                 loop=self.loop,
@@ -1883,6 +1889,7 @@ class P2PService:
                 "P2P broadcast callback registered",
                 extra={"mempool_id": hex(id(mempool_service))},
             )
+            log.info(f"[DIAG] Mempool callback bound successfully")
             return True
         except Exception as e:
             log.warning(
@@ -1988,6 +1995,7 @@ class P2PService:
             asyncio.create_task(self._startup_sync_kick(), name="p2p.startup_sync"),
         ]
         if self._tx_relay_enabled and self._p2p_tx_enabled:
+            log.info(f"[DIAG] Starting txrelay background tasks: tx_relay_enabled={self._tx_relay_enabled}, p2p_tx_enabled={self._p2p_tx_enabled}")
             try:
                 self._txrelay_inv_flush_task = asyncio.create_task(
                     self._txrelay.inv_flush_loop(), name="p2p.txrelay.inv_flush"
@@ -2005,6 +2013,9 @@ class P2PService:
                 self._txrelay_reconcile_task = asyncio.create_task(
                     self._txrelay.reconcile_loop(), name="p2p.txrelay.reconcile"
                 )
+                self._txrelay_inv_watchdog_task = asyncio.create_task(
+                    self._txrelay.inv_queue_watchdog_loop(), name="p2p.txrelay.inv_watchdog"
+                )
                 self._tasks.extend(
                     [
                         self._txrelay_inv_flush_task,
@@ -2012,6 +2023,7 @@ class P2PService:
                         self._txrelay_sync_task,
                         self._txrelay_watchdog_task,
                         self._txrelay_reconcile_task,
+                        self._txrelay_inv_watchdog_task,
                     ]
                 )
             except Exception as exc:
@@ -14110,12 +14122,17 @@ class P2PService:
     def _txrelay_peer_eligible(self, peer_key: str) -> bool:
         peer = self._txrelay_find_peer(peer_key)
         if peer is None:
+            log.debug(f"[DIAG] Peer {peer_key} not eligible: peer not found")
             return False
         if not self._tx_relay_v2_enabled:
+            log.debug(f"[DIAG] Peer {peer_key} not eligible: tx_relay_v2 disabled globally")
             return False
         if self._tx_relay_v2_enabled and not self._peer_supports_tx_relay_v2(peer):
+            log.debug(f"[DIAG] Peer {peer_key} not eligible: peer doesn't support tx_relay_v2")
             return False
-        ok, _reason = self._tx_peer_eligibility(peer)
+        ok, reason = self._tx_peer_eligibility(peer)
+        if not ok:
+            log.debug(f"[DIAG] Peer {peer_key} not eligible: {reason}")
         return ok
 
     async def _legacy_tx_relay_announce(

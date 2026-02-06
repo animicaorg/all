@@ -1176,6 +1176,7 @@ class MempoolService:
         
         # Trigger P2P broadcast for all admitted txs (best-effort, non-blocking)
         if self._p2p_broadcast_callback is not None:
+            log.info(f"[DIAG] P2P broadcast callback is set, triggering for tx {tx_hash_hex}")
             try:
                 import asyncio
 
@@ -1187,8 +1188,8 @@ class MempoolService:
 
                 if running_loop is not None and running_loop.is_running():
                     asyncio.ensure_future(callback(tx_hash_bytes, raw_bytes), loop=running_loop)
-                    log.debug(
-                        "P2P broadcast scheduled for tx",
+                    log.info(
+                        f"[DIAG] P2P broadcast scheduled for tx {tx_hash_hex} on current loop",
                         extra={"tx_hash": tx_hash_hex, "trigger": "mempool_submit"}
                     )
                 else:
@@ -1197,20 +1198,23 @@ class MempoolService:
                         asyncio.run_coroutine_threadsafe(
                             callback(tx_hash_bytes, raw_bytes), target_loop
                         )
-                        log.debug(
-                            "P2P broadcast scheduled on stored loop",
+                        log.info(
+                            f"[DIAG] P2P broadcast scheduled for tx {tx_hash_hex} on stored loop",
                             extra={"tx_hash": tx_hash_hex, "trigger": "mempool_submit"}
                         )
                     else:
-                        log.debug(
-                            "No running event loop for P2P broadcast",
+                        log.warning(
+                            f"[DIAG] No running event loop for P2P broadcast for tx {tx_hash_hex}",
                             extra={"tx_hash": tx_hash_hex}
                         )
             except Exception as e:
-                log.debug(
-                    "P2P broadcast callback failed (non-fatal)",
-                    extra={"tx_hash": tx_hash_hex, "error": str(e)}
+                log.error(
+                    f"[DIAG] P2P broadcast callback failed for tx {tx_hash_hex}: {e}",
+                    extra={"tx_hash": tx_hash_hex, "error": str(e)},
+                    exc_info=True
                 )
+        else:
+            log.info(f"[DIAG] P2P broadcast callback is NOT set for tx {tx_hash_hex}")
         
         return tx_hash_hex
 
