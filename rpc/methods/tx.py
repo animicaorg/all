@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses as _dc
+import hashlib
 import logging
 import os
 import time
@@ -338,49 +339,39 @@ def _extract_nonce(obj: dict) -> int | None:
 
 def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
     candidates: list[tuple[str, bytes]] = []
-    errors: list[str] = []
 
-    def _add(label: str, fn: t.Callable[[], bytes]) -> None:
-        try:
-            data = fn()
-            if not isinstance(data, (bytes, bytearray)):
-                return
-            b = bytes(data)
-            if all(existing != b for _, existing in candidates):
-                candidates.append((label, b))
-        except Exception as exc:  # pragma: no cover
-            errors.append(f"{label}: {exc}")
+    def _as_map(val: t.Any) -> dict[str, t.Any]:
+        if _dc.is_dataclass(val):
+            return _dcd(val)
+        if isinstance(val, dict):
+            return dict(val)
+        if hasattr(val, "to_obj") and callable(getattr(val, "to_obj")):
+            try:
+                out = val.to_obj()
+                if isinstance(out, dict):
+                    return dict(out)
+            except Exception:
+                return {}
+        if hasattr(val, "__dict__") and isinstance(getattr(val, "__dict__"), dict):
+            return dict(getattr(val, "__dict__"))
+        return {}
 
-    if _build_signable_tx_bytes is not None:
-        _add("animica.tx.signing", lambda: _build_signable_tx_bytes(tx_like))
-    if _tx_sign_bytes is not None:
-        _add("core.encoding.canonical", lambda: _tx_sign_bytes(tx_like))
-    if _sdk_sign_bytes is not None:
-        _add("omni_sdk.tx.encode", lambda: _sdk_sign_bytes(tx_like))
+    tx_obj = _as_map(tx_like)
+    body_obj = tx_obj.get("body") if isinstance(tx_obj.get("body"), dict) else None
+    sign_target = dict(body_obj) if isinstance(body_obj, dict) else dict(tx_obj)
+    for k in ("sig", "signature", "sigs"):
+        sign_target.pop(k, None)
 
-    if _cbor_dumps is not None:
+    canonical_body = None
+    if sign_target and _cbor_dumps is not None:
+        canonical_body = _cbor_dumps(sign_target)
+    if canonical_body is None and _build_signable_tx_bytes is not None:
+        canonical_body = _build_signable_tx_bytes(tx_like)
+    if canonical_body is None:
+        raise rpc_errors.InternalError("No canonical encoder for SignBytes")
 
-        def _fallback_body() -> bytes:
-            if _dc.is_dataclass(tx_like):
-                obj = _dcd(tx_like)
-            else:
-                obj = dict(tx_like)
-            if "body" in obj:
-                body = obj["body"]
-            else:
-                body = dict(obj)
-                for k in ("sig", "signature", "sigs"):
-                    body.pop(k, None)
-            return _cbor_dumps(body)
-
-        _add("local.cbor_fallback", _fallback_body)
-
-    if not candidates:
-        raise rpc_errors.InternalError("No canonical encoder for SignBytes (all helpers unavailable)")
-
-    if errors:
-        log.debug("SignBytes helper errors (ignored): %s", "; ".join(errors))
-
+    candidates.append(("txsig_legacy.body_cbor", canonical_body))
+    candidates.append(("txsig_v1.domain_prefixed", b"ANIMICA_TXSIG_V1" + canonical_body))
     return candidates
 
 
@@ -606,6 +597,23 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         log.debug("PQ verify helper errors: %s", "; ".join(verify_errors))
 
     if not ok:
+        body_hash = None
+        try:
+            raw_canonical = _cbor_dumps(obj) if _cbor_dumps is not None else b""
+            body_hash = "0x" + hashlib.sha3_256(raw_canonical).hexdigest() if raw_canonical else None
+        except Exception:
+            body_hash = None
+        pub_fp = "0x" + hashlib.sha3_256(pub).hexdigest()[:16]
+        sign_hash = "0x" + hashlib.sha3_256(msg).hexdigest()
+        log.warning(
+            "PQ verify failed: alg=%s label=%s sign_hash=%s pub_fp=%s tx_body_hash=%s sig_len=%d",
+            alg_name,
+            used_label or msg_label,
+            sign_hash,
+            pub_fp,
+            body_hash,
+            len(sig),
+        )
         raise rpc_errors.BadSignature(
             "Invalid post-quantum signature: verification failed",
             **_error_data(
@@ -1991,7 +1999,20 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
         "usedCandidate": used_label,
         "candidates": candidate_views,
         "errors": verify_errors,
+        "domainTag": "ANIMICA_TXSIG_V1",
+        "hashAlg": "sha3_256",
+        "pubkeyFingerprint": "0x" + hashlib.sha3_256(pub).hexdigest()[:16],
     }
+
+
+@method("tx.debugVerify", desc="Verify tx signature diagnostics by txid or raw bytes.")
+def tx_debug_verify(target: str) -> dict:
+    if isinstance(target, str) and target.startswith("0x") and len(target) == 66:
+        raw = _mempool_get_raw(target.lower()) or _pending_get(target.lower())
+        if raw is None:
+            raise rpc_errors.InvalidParams("tx not found in mempool/pending cache")
+        return tx_debug_verify_raw_transaction("0x" + raw.hex())
+    return tx_debug_verify_raw_transaction(target)
 
 
 @method(
