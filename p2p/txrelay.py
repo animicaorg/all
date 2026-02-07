@@ -1221,9 +1221,23 @@ class TxRelayService:
                     mempool_reason="notfound",
                     last_peer=conn_id,
                 )
-                # Clear from peer's known_txids since they don't have it
-                if state and txid in state.known_txids:
-                    state.known_txids.remove(txid)
+                # Clear from ALL peers' known_txids since the responding peer doesn't have it.
+                # This prevents infinite loops where multiple peers report knowing about a
+                # transaction that none of them actually have (e.g., after it was mined or evicted).
+                removed_from = []
+                for peer_id, peer_state in self._peer_state.items():
+                    if txid in peer_state.known_txids:
+                        peer_state.known_txids.remove(txid)
+                        removed_from.append(peer_id)
+                if removed_from:
+                    log.info(
+                        "TX_NOTFOUND_CLEARED_FROM_ALL_PEERS",
+                        extra={
+                            "hash": txid.hex(),
+                            "cleared_from_peer_count": len(removed_from),
+                            "reporting_peer": conn_id,
+                        },
+                    )
         log.info(
             "TX_NOTFOUND",
             extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
