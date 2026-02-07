@@ -34,9 +34,9 @@ def test_code_logic_verification():
         ("total_peer_known_txids counter", "total_peer_known_txids" in content),
         ("Check for peer-known transactions", "if total_peer_known_txids > 0:" in content),
         ("Call to p2p.importPeerKnownTxs", '"p2p.importPeerKnownTxs"' in content),
-        ("User-friendly tip message", "Tip: Peers know about" in content and "Fetching them automatically" in content),
-        ("Success feedback message", "Requested" in content and "transaction(s) from peers" in content),
-        ("Advice to run command again", "again in a few seconds" in content),
+        ("Enhanced empty mempool message", "Local mempool is empty" in content and "peers advertise" in content),
+        ("Transaction status summary", "Transaction Status Summary" in content),
+        ("Rejection details display", "Rejected Transaction Details" in content),
     ]
 
     all_passed = True
