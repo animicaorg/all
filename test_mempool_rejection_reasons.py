@@ -59,16 +59,30 @@ def test_rejection_display():
     if tx_state_sample:
         # Group transactions by state and reason
         rejected_txs = []
+        accepted_txs = []
+        pending_txs = []
+        
         for tx_state in tx_state_sample:
             if not isinstance(tx_state, dict):
                 continue
             state = tx_state.get("state", "")
-            # Show transactions that weren't accepted into mempool
-            if state not in {"accepted_in_mempool"}:
+            
+            if state in {"accepted_in_mempool"}:
+                accepted_txs.append(tx_state)
+            elif state in {"requested", "inflight"}:
+                pending_txs.append(tx_state)
+            else:
                 rejected_txs.append(tx_state)
         
+        # Show summary first
+        print(f"Transaction Status Summary (sampled {len(tx_state_sample)} recent):")
+        print(f"  ✓ Accepted:  {len(accepted_txs)}")
+        print(f"  ⏳ Pending:   {len(pending_txs)}")
+        print(f"  ✗ Rejected:  {len(rejected_txs)}")
+        print("")
+        
         if rejected_txs:
-            print("Rejection details:")
+            print("Rejected Transaction Details:")
             # Limit output to avoid overwhelming the user
             for tx_state in rejected_txs[:20]:
                 txid = tx_state.get("txid", "unknown")
@@ -77,22 +91,34 @@ def test_rejection_display():
                 peer = tx_state.get("last_peer", "n/a")
                 attempts = tx_state.get("attempts", 0)
                 
-                # Format the rejection info
-                reason_text = f" reason={reason}" if reason else ""
+                # Format the rejection info with better readability
+                reason_text = f" → {reason}" if reason else ""
                 print(
-                    f"  {_short_id(txid, 10)} state={state}{reason_text} peer={_short_id(peer, 10) or 'n/a'} attempts={attempts}"
+                    f"  • {_short_id(txid, 16)} [{state}]{reason_text} (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
                 )
             
             if len(rejected_txs) > 20:
-                print(f"  ... and {len(rejected_txs) - 20} more (see node logs for full details)")
+                print(f"  ... and {len(rejected_txs) - 20} more rejected transactions")
+        
+        if pending_txs:
+            print("")
+            print("Pending Transaction Details:")
+            for tx_state in pending_txs[:10]:
+                txid = tx_state.get("txid", "unknown")
+                state = tx_state.get("state", "unknown")
+                peer = tx_state.get("last_peer", "n/a")
+                attempts = tx_state.get("attempts", 0)
+                print(
+                    f"  • {_short_id(txid, 16)} [{state}] (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
+                )
     
     print()
     print("✅ Test passed: Rejection reasons are properly formatted and displayed")
     print()
     print("Expected output:")
-    print("  - Three transactions with different states")
-    print("  - Two with rejection reasons (invalid_signature, insufficient_balance)")
-    print("  - One requested without a reason yet")
+    print("  - Transaction Status Summary showing counts")
+    print("  - Two rejected transactions with reasons (invalid_signature, insufficient_balance)")
+    print("  - One pending transaction (requested without a reason yet)")
     print()
 
 
