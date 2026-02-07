@@ -121,8 +121,11 @@ Future configuration options could include:
 The system tracks decoder fallback usage through:
 - Log messages when fallback decoders are used
 - Existing `TX_VALIDATION_FAILURES` counter (reason="cbor_decode_failed")
+- `TX_DECODER_SUCCESS` counter with decoder label - tracks successful decodes by decoder type
+- `TX_DECODER_FALLBACK` counter with fallback_decoder label - tracks when fallback decoders are used  
+- `TX_DECODER_ALL_FAILED` counter - tracks when all decoders fail
 
-Future enhancements could add specific metrics:
-- `tx_decoder_fallback_total{decoder="cbor2"}` - Count of fallback usage
-- `tx_decoder_primary_success_total` - Count of primary decoder successes
-- `tx_decoder_all_failed_total` - Count of complete failures
+These metrics are defined in `rpc/metrics.py` and help monitor:
+- Which decoder is being used in production (should be "primary" in vast majority of cases)
+- How often fallback decoders are needed (indicates encoding compatibility issues)
+- Complete decoder failure rate (indicates invalid transactions being submitted)

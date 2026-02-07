@@ -144,6 +144,3 @@ def test_defensive_decode_logs_fallback_usage():
                     # Check that fallback was logged
                     # The log should mention trying alternative decoders
 
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
