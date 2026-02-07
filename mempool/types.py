@@ -87,6 +87,10 @@ class EffectiveFee:
         Construct from a transaction object that may carry either legacy or
         EIP-1559-style fee fields.
         """
+        # If tx is a wrapped Tx with an 'unsigned' field, unwrap it
+        if hasattr(tx, "unsigned") and tx.unsigned is not None:
+            tx = tx.unsigned
+        
         # Prefer explicit EIP-1559-style fields if both are present.
         if (
             getattr(tx, "max_fee_per_gas", None) is not None

@@ -421,7 +421,17 @@ class Pool:
 
         # Floor (unless local exemption)
         if not self._admit_floor_ok(meta, is_local=is_local):
-            raise FeeTooLow("effective fee below current admit floor")
+            th = self.wm.thresholds(pool_size=len(self.index), capacity=self.cfg.max_txs)
+            offered = int(getattr(meta, "effective_fee_wei", 0))
+            required = int(th.admit_floor_wei)
+            tx_hash_hex = "0x" + h.hex() if h else None
+            sender = getattr(meta, "sender", None)
+            raise FeeTooLow(
+                offered_gas_price_wei=offered,
+                min_required_wei=required,
+                tx_hash=tx_hash_hex,
+                sender=sender,
+            )
 
         # Index & accounting
         self.index.add(h, tx, meta)
