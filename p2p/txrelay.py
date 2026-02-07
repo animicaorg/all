@@ -1248,14 +1248,16 @@ class TxRelayService:
         tx_list = list(txids)
         self._metrics["dropped_count"] += len(tx_list)
         self._metrics["last_dropped_at"] = time.time()
+        now = time.time()
+        retry_requests: Dict[str, List[bytes]] = {}  # peer -> [txids to request]
+        
         async with self._lock:
             state = self._peer_state.get(conn_id)
             for txid in tx_list:
                 self._clear_inflight(txid)
-                self._reject_remember(txid)
                 self._notfound_remember(txid)  # Remember this txid received NOTFOUND
                 self._request_mgr.mark_dropped(
-                    txid, peer=conn_id, reason="notfound", now=time.time()
+                    txid, peer=conn_id, reason="notfound", now=now
                 )
                 self._set_peer_tx_state(conn_id, txid, "GAVE_UP", reason="notfound")
                 self._touch_tx_store(
@@ -1264,37 +1266,122 @@ class TxRelayService:
                     mempool_reason="notfound",
                     last_peer=conn_id,
                 )
-                # Clear from ALL peers' known_txids since the responding peer doesn't have it.
-                # This prevents infinite loops where multiple peers report knowing about a
-                # transaction that none of them actually have (e.g., after it was mined or evicted).
-                removed_from = []
-                for peer_id, peer_state in self._peer_state.items():
-                    if txid in peer_state.known_txids:
-                        peer_state.known_txids.remove(txid)
-                        removed_from.append(peer_id)
-                if removed_from:
-                    log.info(
-                        "TX_NOTFOUND_CLEARED_FROM_ALL_PEERS",
+                
+                # Clear txid only from the peer that responded with NOTFOUND
+                if state and txid in state.known_txids:
+                    state.known_txids.remove(txid)
+                    log.debug(
+                        "TX_NOTFOUND_CLEARED_FROM_PEER",
                         extra={
                             "hash": txid.hex(),
-                            "cleared_from_peer_count": len(removed_from),
-                            "reporting_peer": conn_id,
+                            "peer": conn_id,
+                            **self._peer_log_extra(conn_id),
                         },
                     )
+                
+                # Check if other peers still have this txid and try requesting from them
+                sources = list(self._tx_sources.get(txid, set()))
+                ordered_sources = self._tx_sources_order.get(txid, [])
+                
+                # Find eligible peers who still have the txid (excluding the one that just said NOTFOUND)
+                candidates = [
+                    p for p in ordered_sources
+                    if p != conn_id and self._peer_eligible(p)
+                ]
+                if not candidates:
+                    candidates = [
+                        p for p in sources
+                        if p != conn_id and self._peer_eligible(p)
+                    ]
+                
+                # Filter to only peers who still have the txid in known_txids
+                candidates = [
+                    p for p in candidates
+                    if p in self._peer_state and txid in self._peer_state[p].known_txids
+                ]
+                
+                if candidates and self._request_mgr.can_request(txid, now=now):
+                    # Try requesting from another peer
+                    next_peer = self._request_mgr.pick_peer(txid, candidates=candidates)
+                    if next_peer is not None:
+                        peer_state = self._peer_state.get(next_peer)
+                        if self._set_inflight(
+                            txid,
+                            conn_id=next_peer,
+                            peer_node_id=peer_state.peer_node_id if peer_state else None,
+                            now=now,
+                            attempts=1,
+                        ):
+                            self._request_mgr.mark_requested(txid, peer=next_peer, now=now)
+                            retry_requests.setdefault(next_peer, []).append(txid)
+                            self._set_peer_tx_state(
+                                next_peer, txid, "REQUESTED_FROM_PEER", increment_attempt=True
+                            )
+                            log.info(
+                                "TX_NOTFOUND_RETRY_OTHER_PEER",
+                                extra={
+                                    "hash": txid.hex(),
+                                    "notfound_peer": conn_id,
+                                    "retry_peer": next_peer,
+                                    "remaining_candidates": len(candidates),
+                                    **self._peer_log_extra(next_peer),
+                                },
+                            )
+                            continue
+                
+                # No other peers have this txid or can't request - mark as permanently rejected
+                self._reject_remember(txid)
+                log.info(
+                    "TX_NOTFOUND_NO_RETRY",
+                    extra={
+                        "hash": txid.hex(),
+                        "peer": conn_id,
+                        "reason": "no_other_peers_with_txid",
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
+        
+        # Send retry requests outside the lock
+        for retry_peer, retry_txids in retry_requests.items():
+            for idx in range(0, len(retry_txids), 256):
+                batch = retry_txids[idx : idx + 256]
+                self._metrics["get_sent"] += len(batch)
+                self._metrics["requested_count"] += len(batch)
+                self._metrics["last_requested_at"] = time.time()
+                await self._send_tx_get(retry_peer, batch)
+                for txid in batch:
+                    self._record_event(
+                        "TX_RELAY_GET_SENT",
+                        extra={
+                            "peer": retry_peer,
+                            "hash": txid.hex(),
+                            "retry": True,
+                            "reason": "notfound_from_other_peer",
+                            **self._peer_log_extra(retry_peer),
+                        },
+                    )
+        
         log.info(
             "TX_NOTFOUND",
-            extra={"peer": conn_id, "count": len(tx_list), **self._peer_log_extra(conn_id)},
+            extra={
+                "peer": conn_id,
+                "count": len(tx_list),
+                "retried": sum(len(v) for v in retry_requests.values()),
+                **self._peer_log_extra(conn_id),
+            },
         )
         for txid in tx_list:
-            self._record_event(
-                "TX_RELAY_MEMPOOL_INSERT_FAIL",
-                extra={
-                    "peer": conn_id,
-                    "hash": txid.hex(),
-                    "reason": "notfound",
-                    **self._peer_log_extra(conn_id),
-                },
-            )
+            # Only record as failed if we didn't retry with another peer
+            if not any(txid in txids for txids in retry_requests.values()):
+                self._record_event(
+                    "TX_RELAY_MEMPOOL_INSERT_FAIL",
+                    extra={
+                        "peer": conn_id,
+                        "hash": txid.hex(),
+                        "reason": "notfound",
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
 
     async def on_mempool_req(self, conn_id: str, limit: Optional[int] = None) -> None:
         lim = int(limit) if limit is not None else self.mempool_sync_limit
