@@ -289,13 +289,13 @@ def list_pending(
                 )
                 requested = import_result.get("requested", 0) if isinstance(import_result, dict) else 0
                 if requested > 0:
-                    # Poll for transactions to arrive with exponential backoff
+                    # Poll for transactions to arrive with increasing delays
                     # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
                     # Start with short delays to be responsive, increase if needed
                     delays = [0.05, 0.1, 0.15, 0.2]  # Total: 0.5 seconds max
                     for delay in delays:
                         time.sleep(delay)
-                        
+
                         refreshed = call_rpc(
                             "mempool.getPending",
                             [True],
