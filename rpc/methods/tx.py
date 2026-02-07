@@ -621,6 +621,12 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
 
 
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
+    """
+    Legacy single-decoder transaction decoder.
+    
+    This function is kept for backward compatibility and direct calls that don't
+    need defensive decoding. New code should use _decode_tx_defensive() instead.
+    """
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
     obj = _cbor_loads(raw)
@@ -733,9 +739,12 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
     # Try JSON as last resort (in case someone sent JSON instead of CBOR)
     if _json_module is not None:
         try:
-            # Check if it looks like JSON (starts with '{' or '[')
+            text = raw.decode('utf-8').strip()
+        except UnicodeDecodeError as e:
+            failure_reasons.append(("json", f"not valid UTF-8: {str(e)}"))
+        else:
             try:
-                text = raw.decode('utf-8').strip()
+                # Check if it looks like JSON (starts with '{' or '[')
                 if text.startswith('{') or text.startswith('['):
                     obj = _json_module.loads(text)
                     if isinstance(obj, dict):
@@ -746,10 +755,8 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
                     failure_reasons.append(("json", f"Decoded to {type(obj).__name__}, expected dict"))
                 else:
                     failure_reasons.append(("json", "data does not appear to be JSON"))
-            except UnicodeDecodeError as e:
-                failure_reasons.append(("json", f"not valid UTF-8: {str(e)}"))
-        except Exception as e:
-            failure_reasons.append(("json", f"{type(e).__name__}: {str(e)}"))
+            except Exception as e:
+                failure_reasons.append(("json", f"{type(e).__name__}: {str(e)}"))
     else:
         failure_reasons.append(("json", "library not available"))
     
