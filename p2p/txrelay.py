@@ -674,7 +674,7 @@ class TxRelayService:
                         },
                     )
                     continue
-                
+
                 state.known_txids.add(txid)
                 self._record_source(txid, conn_id)
                 self._set_peer_tx_state(conn_id, txid, "ANNOUNCED_BY_PEER")
@@ -1344,7 +1344,7 @@ class TxRelayService:
                         },
                     )
                     continue
-                
+
                 state.known_txids.add(txid)
                 self._record_source(txid, conn_id)
                 self._set_peer_tx_state(conn_id, txid, "ANNOUNCED_BY_PEER")
