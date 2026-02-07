@@ -89,7 +89,7 @@ async def create_test_transaction(
     value: int = 1000,
 ) -> bytes:
     """Create a test transaction in canonical CBOR format."""
-    import cbor2
+    from core.encoding.cbor import dumps as cbor_dumps
     
     if sender is None:
         # Generate random sender for testing
@@ -126,7 +126,7 @@ async def create_test_transaction(
     }
     
     # Encode to canonical CBOR
-    raw_bytes = cbor2.dumps(tx_envelope, canonical=True)
+    raw_bytes = cbor_dumps(tx_envelope)
     return raw_bytes
 
 
