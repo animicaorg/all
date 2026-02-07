@@ -320,10 +320,19 @@ def list_pending(
                             f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
                         )
                         typer.echo(
-                            "  Note: Transactions may have failed validation or mempool admission."
+                            "  Note: Transactions may have been:"
                         )
                         typer.echo(
-                            "  Check node logs for TX_DATA_ADMIT_RESULT or TX_REJECTED messages."
+                            "    • Rejected during validation (hash mismatch, invalid signature)"
+                        )
+                        typer.echo(
+                            "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
+                        )
+                        typer.echo(
+                            "    • Not available on peers (responded with TX_NOTFOUND)"
+                        )
+                        typer.echo(
+                            "  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND"
                         )
             except Exception as e:
                 typer.echo(
