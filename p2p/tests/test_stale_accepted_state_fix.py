@@ -228,5 +228,64 @@ async def test_watchdog_fetches_after_clearing_stale_state():
     assert send_tx_get_mock.call_count >= 1, "Watchdog should have fetched the transaction"
 
 
+@pytest.mark.asyncio
+async def test_force_request_bypasses_retry_guards():
+    """Manual import should re-request tx even when cooldown/inflight/reject guards are set."""
+
+    has_tx_mock = AsyncMock(return_value=False)
+    has_chain_tx_mock = AsyncMock(return_value=False)
+    get_tx_mock = AsyncMock(return_value=None)
+    admit_tx_mock = AsyncMock(return_value=(True, None))
+    list_mempool_hashes_mock = AsyncMock(return_value=[])
+
+    peer_ids_mock = MagicMock(return_value=["peer1"])
+    peer_eligible_mock = MagicMock(return_value=True)
+
+    send_tx_inv_mock = AsyncMock()
+    send_tx_get_mock = AsyncMock()
+    send_tx_data_mock = AsyncMock()
+    send_tx_notfound_mock = AsyncMock()
+    send_mempool_req_mock = AsyncMock()
+    send_mempool_resp_mock = AsyncMock()
+
+    service = TxRelayService(
+        max_tx_bytes=1_000_000,
+        inflight_timeout_s=30.0,
+        request_cooldown_s=30.0,
+        peer_ids=peer_ids_mock,
+        peer_eligible=peer_eligible_mock,
+        send_tx_inv=send_tx_inv_mock,
+        send_tx_get=send_tx_get_mock,
+        send_tx_data=send_tx_data_mock,
+        send_tx_notfound=send_tx_notfound_mock,
+        send_mempool_req=send_mempool_req_mock,
+        send_mempool_resp=send_mempool_resp_mock,
+        has_tx=has_tx_mock,
+        has_chain_tx=has_chain_tx_mock,
+        get_tx_raw=get_tx_mock,
+        admit_tx=admit_tx_mock,
+        list_mempool_hashes=list_mempool_hashes_mock,
+    )
+
+    conn_id = "peer1"
+    tx1 = hashlib.sha3_256(b"tx-force").digest()
+
+    async with service._lock:
+        state = service._ensure_peer(conn_id)
+        state.known_txids.add(tx1)
+
+    now = time.time()
+    service._request_mgr.mark_requested(tx1, peer=conn_id, now=now)
+    service._set_inflight(tx1, conn_id=conn_id, peer_node_id=None, now=now, attempts=1)
+    service._reject_cache[tx1] = now + 60.0
+
+    requested = await service.request_missing_known(limit=10, trigger="test_no_force", force=False)
+    assert requested == 0
+
+    requested = await service.request_missing_known(limit=10, trigger="test_force", force=True)
+    assert requested == 1
+    assert send_tx_get_mock.call_count == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
