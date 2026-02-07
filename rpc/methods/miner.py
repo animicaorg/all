@@ -4197,6 +4197,30 @@ def miner_mine(
     allow_unsynced_flag = bool(allow_unsynced_mining)
     force_empty_flag = bool(force_empty_template)
     instant_block_flag = bool(instant_block)
+
+    def _mempool_has_pending() -> bool:
+        if force_empty_flag:
+            return False
+        try:
+            mempool_service = getattr(ctx, "mempool", None)
+            if mempool_service is None:
+                return False
+            stats_fn = getattr(mempool_service, "stats", None)
+            if not callable(stats_fn):
+                return False
+            stats = stats_fn() or {}
+            return int(stats.get("count", 0) or 0) > 0
+        except Exception:
+            return False
+
+    mempool_instant_mode = (
+        include_mempool is not False and not instant_block_flag and _mempool_has_pending()
+    )
+    if mempool_instant_mode:
+        log.info(
+            "Enabling instant block mode: pending mempool transactions detected",
+            extra={"trigger": "mempool_non_empty"},
+        )
     
     if force_empty_flag:
         include_mempool = False
@@ -4207,7 +4231,7 @@ def miner_mine(
 
     # Instant blocks bypass all safety checks - they are used for immediate tx persistence
     # and do not produce rewards or count towards supply
-    if not instant_block_flag:
+    if not instant_block_flag and not mempool_instant_mode:
         if allow_offline_mining or allow_unsynced_flag:
             log.warning(
                 "Unsafe mining override requested; ignoring.",
@@ -4304,8 +4328,9 @@ def miner_mine(
     max_failures = int(os.getenv("ANIMICA_MINER_MINE_MAX_FAILURES", "0") or 0)
     failures = 0
     while mined < target:
+        effective_instant_block = bool(instant_block_flag or _mempool_has_pending())
         min_spacing_s = _min_block_spacing_s()
-        if min_spacing_s > 0:
+        if min_spacing_s > 0 and not effective_instant_block:
             head_ts = _head_timestamp_seconds()
             if head_ts is not None:
                 now = time.time()
@@ -4329,7 +4354,7 @@ def miner_mine(
             include_mempool=include_mempool_flag,
             allow_offline_mining=allow_offline_flag,
             allow_unsynced_mining=allow_unsynced_flag,
-            instant_block=instant_block_flag,
+            instant_block=effective_instant_block,
             verbose=bool(verbose),
         )
         if isinstance(mine_result, tuple) and len(mine_result) == 2:
