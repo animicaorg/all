@@ -136,7 +136,7 @@ TX_VALIDATION_FAILURES = Counter(
 TX_DECODER_SUCCESS = Counter(
     "animica_tx_decoder_success_total",
     "Total successful transaction decodes by decoder type.",
-    ["decoder"],  # decoder ∈ {"primary", "cbor2", "msgspec", "json"}
+    ["decoder"],  # decoder can be: primary, cbor2, msgspec, or json
     registry=REG,
 )
 
