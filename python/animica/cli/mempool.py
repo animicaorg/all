@@ -11,6 +11,7 @@ Commands:
 from __future__ import annotations
 
 import json as json_lib
+import time
 from typing import Optional
 
 import typer
@@ -288,6 +289,12 @@ def list_pending(
                 )
                 requested = import_result.get("requested", 0) if isinstance(import_result, dict) else 0
                 if requested > 0:
+                    # Wait for transactions to arrive and be admitted to mempool
+                    # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
+                    # Typical network latency: 10-100ms, validation: <10ms
+                    # Use 500ms to handle slow networks and busy nodes
+                    time.sleep(0.5)
+                    
                     refreshed = call_rpc(
                         "mempool.getPending",
                         [True],
