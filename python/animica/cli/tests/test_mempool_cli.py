@@ -145,10 +145,69 @@ def test_mempool_list_shows_rejection_reasons_when_transactions_fail(monkeypatch
 
     assert result.exit_code == 0
     assert "Auto-imported peer transactions: requested=2, newly_visible=0" in result.stdout
-    assert "Rejection details:" in result.stdout
+    assert "Transaction Status Summary" in result.stdout
+    assert "Rejected Transaction Details:" in result.stdout
     assert "0xabc123" in result.stdout
-    assert "state=received_invalid" in result.stdout
-    assert "reason=invalid_signature" in result.stdout
+    assert "[received_invalid]" in result.stdout
+    assert "invalid_signature" in result.stdout
     assert "0xdef456" in result.stdout
-    assert "state=dropped_evicted" in result.stdout
-    assert "reason=insufficient_balance" in result.stdout
+    assert "[dropped_evicted]" in result.stdout
+    assert "insufficient_balance" in result.stdout
+    # Verify the enhanced empty mempool message
+    assert "Local mempool is empty" in result.stdout
+    assert "peers advertise 2 transaction(s)" in result.stdout
+
+
+def test_mempool_list_shows_context_when_empty_with_peer_transactions(monkeypatch) -> None:
+    """Test that enhanced messaging is shown when mempool is empty but peers have transactions."""
+    calls: list[tuple[str, tuple]] = []
+
+    def fake_resolve_rpc_url(url):
+        return "http://test/rpc"
+
+    def fake_call_rpc(method, params, rpc_url=None, no_cache=True):
+        calls.append((method, tuple(params or [])))
+        if method == "mempool.getPending":
+            return []  # Empty mempool
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1, "genesisHash": "0xdeadbeef"}
+        if method == "chain.getHead":
+            return {"height": 42, "hash": "0xhead"}
+        if method == "p2p.getStatus":
+            return {"peer_id": "0xnode"}
+        if method == "p2p.debugStatus":
+            return {
+                "peers": [
+                    {
+                        "peer_id": "0xpeer1",
+                        "conn_id": "0xconn1",
+                        "txrelay_known_txids": 5,
+                        "txrelay_known_txids_sample": ["0xtx1", "0xtx2"],
+                    }
+                ]
+            }
+        if method == "mempool.getInfo":
+            return {"mempool_id": "mp1", "mempool_path": "/tmp/pending.jsonl"}
+        if method == "p2p.importPeerKnownTxs":
+            return {
+                "requested": 5,
+                "tx_state_sample": [],  # No state info available
+            }
+        raise AssertionError(f"Unexpected RPC method: {method}")
+
+    def fake_sleep(duration):
+        pass
+
+    monkeypatch.setattr("animica.cli.mempool._resolve_rpc_url", fake_resolve_rpc_url)
+    monkeypatch.setattr("animica.cli.mempool.call_rpc", fake_call_rpc)
+    monkeypatch.setattr("time.sleep", fake_sleep)
+
+    result = runner.invoke(app, ["mempool", "list"])
+
+    assert result.exit_code == 0
+    # Verify enhanced empty mempool message
+    assert "Local mempool is empty (0 pending), but peers advertise 5 transaction(s)" in result.stdout
+    assert "Possible reasons:" in result.stdout
+    assert "Transactions were rejected" in result.stdout
+    # Verify fallback message when no tx_state_sample
+    assert "Transaction Status: Unable to retrieve detailed status" in result.stdout
