@@ -215,3 +215,47 @@ def test_mempool_list_shows_context_when_empty_with_peer_transactions(monkeypatc
     assert "Transactions were rejected" in result.stdout
     # Verify fallback message when no tx_state_sample
     assert "Transaction Status: Unable to retrieve detailed status" in result.stdout
+
+
+def test_mempool_list_import_uses_all_eligible_peers_by_default(monkeypatch) -> None:
+    calls: list[tuple[str, tuple]] = []
+
+    def fake_resolve_rpc_url(url):
+        return "http://test/rpc"
+
+    def fake_call_rpc(method, params, rpc_url=None, no_cache=True):
+        calls.append((method, tuple(params or [])))
+        if method == "mempool.getPending":
+            return []
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1, "genesisHash": "0xdeadbeef"}
+        if method == "chain.getHead":
+            return {"height": 42, "hash": "0xhead"}
+        if method == "p2p.getStatus":
+            return {"peer_id": "0xnode"}
+        if method == "p2p.debugStatus":
+            return {
+                "peers": [
+                    {
+                        "peer_id": "0xpeer",
+                        "conn_id": "0xconn",
+                        "txrelay_known_txids": 1,
+                        "txrelay_known_txids_sample": ["0xabc123"],
+                    }
+                ]
+            }
+        if method == "mempool.getInfo":
+            return {"mempool_id": "mp1", "mempool_path": "/tmp/pending.jsonl"}
+        if method == "p2p.importPeerKnownTxs":
+            return {"requested": 0, "tx_state_sample": []}
+        raise AssertionError(f"Unexpected RPC method: {method}")
+
+    monkeypatch.setattr("animica.cli.mempool._resolve_rpc_url", fake_resolve_rpc_url)
+    monkeypatch.setattr("animica.cli.mempool.call_rpc", fake_call_rpc)
+
+    result = runner.invoke(app, ["mempool", "list"])
+
+    assert result.exit_code == 0
+    import_calls = [params for method, params in calls if method == "p2p.importPeerKnownTxs"]
+    assert import_calls
+    assert import_calls[0] == (128, 12.0, 0, 64)

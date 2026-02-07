@@ -306,7 +306,10 @@ def list_pending(
             try:
                 import_result = call_rpc(
                     "p2p.importPeerKnownTxs",
-                    [128, 12.0, 2, 64],
+                    # Use all eligible peers by default (max_peers=0).
+                    # Limiting to the first 2 peers can miss advertised txids
+                    # when those peers have zero known transactions.
+                    [128, 12.0, 0, 64],
                     rpc_url=resolved_rpc_url,
                     no_cache=True,
                 )
