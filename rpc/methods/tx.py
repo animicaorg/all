@@ -27,7 +27,12 @@ _TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHA
 
 # ——— Validation failure metrics ———
 try:
-    from rpc.metrics import TX_VALIDATION_FAILURES
+    from rpc.metrics import (
+        TX_VALIDATION_FAILURES,
+        TX_DECODER_SUCCESS,
+        TX_DECODER_FALLBACK,
+        TX_DECODER_ALL_FAILED,
+    )
 except Exception:  # pragma: no cover
     class _Counter:
         def labels(self, **kwargs):
@@ -37,6 +42,9 @@ except Exception:  # pragma: no cover
             pass
 
     TX_VALIDATION_FAILURES = _Counter()  # type: ignore[assignment]
+    TX_DECODER_SUCCESS = _Counter()  # type: ignore[assignment]
+    TX_DECODER_FALLBACK = _Counter()  # type: ignore[assignment]
+    TX_DECODER_ALL_FAILED = _Counter()  # type: ignore[assignment]
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -131,6 +139,20 @@ try:
 except Exception:  # pragma: no cover
     _ALG_ID = None  # type: ignore
     _ALG_NAME = None  # type: ignore
+
+# Alternative CBOR decoders (for defensive import fallback)
+try:
+    import cbor2 as _cbor2_module  # type: ignore
+except Exception:  # pragma: no cover
+    _cbor2_module = None  # type: ignore
+
+try:
+    import msgspec as _msgspec_module  # type: ignore
+except Exception:  # pragma: no cover
+    _msgspec_module = None  # type: ignore
+
+# JSON codec (always available in standard library, used for defensive fallback)
+import json as _json_module
 
 
 # ——— Local fallback pending store (development only) ———
@@ -596,6 +618,12 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
 
 
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
+    """
+    Legacy single-decoder transaction decoder.
+    
+    This function is kept for backward compatibility and direct calls that don't
+    need defensive decoding. New code should use _decode_tx_defensive() instead.
+    """
     if _cbor_loads is None:
         raise rpc_errors.InternalError("CBOR decoder unavailable")
     obj = _cbor_loads(raw)
@@ -663,6 +691,212 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
+
+
+def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, str]]]:
+    """
+    Try alternative CBOR/JSON decoders when primary decoder fails.
+    
+    Returns:
+        (decoded_obj, failure_reasons) where decoded_obj is None if all failed,
+        and failure_reasons is a list of (decoder_name, error_message) tuples.
+    """
+    failure_reasons: list[tuple[str, str]] = []
+    
+    # Try cbor2 library
+    if _cbor2_module is not None:
+        try:
+            obj = _cbor2_module.loads(raw)
+            if isinstance(obj, dict):
+                log.info("Transaction decoded successfully using cbor2 fallback decoder")
+                TX_DECODER_FALLBACK.labels(fallback_decoder="cbor2").inc()
+                TX_DECODER_SUCCESS.labels(decoder="cbor2").inc()
+                return obj, failure_reasons
+            failure_reasons.append(("cbor2", f"Decoded to {type(obj).__name__}, expected dict"))
+        except Exception as e:
+            failure_reasons.append(("cbor2", f"{type(e).__name__}: {str(e)}"))
+    else:
+        failure_reasons.append(("cbor2", "library not available"))
+    
+    # Try msgspec library
+    if _msgspec_module is not None:
+        try:
+            obj = _msgspec_module.msgpack.decode(raw)
+            if isinstance(obj, dict):
+                log.info("Transaction decoded successfully using msgspec fallback decoder")
+                TX_DECODER_FALLBACK.labels(fallback_decoder="msgspec").inc()
+                TX_DECODER_SUCCESS.labels(decoder="msgspec").inc()
+                return obj, failure_reasons
+            failure_reasons.append(("msgspec", f"Decoded to {type(obj).__name__}, expected dict"))
+        except Exception as e:
+            failure_reasons.append(("msgspec", f"{type(e).__name__}: {str(e)}"))
+    else:
+        failure_reasons.append(("msgspec", "library not available"))
+    
+    # Try JSON as last resort (in case someone sent JSON instead of CBOR)
+    if _json_module is not None:
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError as e:
+            failure_reasons.append(("json", f"not valid UTF-8: {str(e)}"))
+        else:
+            try:
+                # Check if it looks like JSON (starts with '{' or '[' after stripping whitespace)
+                stripped = text.lstrip()
+                if stripped.startswith('{') or stripped.startswith('['):
+                    obj = _json_module.loads(text)
+                    if isinstance(obj, dict):
+                        log.info("Transaction decoded successfully using JSON fallback decoder")
+                        TX_DECODER_FALLBACK.labels(fallback_decoder="json").inc()
+                        TX_DECODER_SUCCESS.labels(decoder="json").inc()
+                        return obj, failure_reasons
+                    failure_reasons.append(("json", f"Decoded to {type(obj).__name__}, expected dict"))
+                else:
+                    failure_reasons.append(("json", "data does not appear to be JSON"))
+            except Exception as e:
+                failure_reasons.append(("json", f"{type(e).__name__}: {str(e)}"))
+    else:
+        failure_reasons.append(("json", "library not available"))
+    
+    return None, failure_reasons
+
+
+def _process_decoded_obj(obj: dict, raw: bytes) -> tuple[t.Any, dict]:
+    """
+    Process a decoded transaction object (from any decoder) into normalized form.
+    
+    This is the common path for all decoders after successful decoding.
+    """
+    if _normalize_tx_envelope is None:
+        raise rpc_errors.InternalError("tx envelope normalization unavailable")
+    
+    try:
+        normalized_env = _normalize_tx_envelope(obj)
+    except Exception as exc:
+        if _TxNormalizationError is not None and isinstance(exc, _TxNormalizationError):
+            raise rpc_errors.InvalidTx(
+                "Transaction envelope normalization failed",
+                **_error_data(
+                    exc.reason,
+                    exc,
+                    "_process_decoded_obj.normalize",
+                    "Ensure tx envelope has tx/body and sigs fields",
+                ),
+            ) from exc
+        raise
+    
+    if isinstance(obj, dict):
+        raw_body = obj.get("body")
+        if isinstance(raw_body, dict):
+            normalized_env.setdefault("body", raw_body)
+    
+    raw_canonical = normalized_env.get("raw") or raw
+    tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
+    
+    if _Tx is not None:
+        try:
+            tx_payload = {"tx": normalized_env.get("tx"), "sigs": normalized_env.get("sigs", [])}
+            if hasattr(_Tx, "from_obj"):
+                tx = _Tx.from_obj(tx_payload)  # type: ignore[attr-defined]
+            elif hasattr(_Tx, "from_dict"):
+                tx = _Tx.from_dict(tx_payload)  # type: ignore[attr-defined]
+            else:
+                tx = _Tx(**tx_payload)  # type: ignore[call-arg]
+            
+            if hasattr(tx, "to_cbor"):
+                raw_canonical = tx.to_cbor()
+                tx_hash_hex = _hex(_sha3_256(raw_canonical)) or ""
+            
+            enriched_obj = dict(normalized_env)
+            enriched_obj["hash"] = tx_hash_hex
+            enriched_obj["raw"] = raw_canonical
+            return tx, enriched_obj
+        except Exception:
+            pass
+    
+    enriched_obj = dict(normalized_env)
+    if isinstance(obj, dict) and "body" in obj and isinstance(obj.get("body"), dict):
+        enriched_obj["body"] = obj["body"]
+    enriched_obj["hash"] = tx_hash_hex
+    enriched_obj["raw"] = raw_canonical
+    return enriched_obj, enriched_obj
+
+
+def _decode_tx_defensive(raw: bytes) -> tuple[t.Any, dict]:
+    """
+    Defensive transaction decoder that tries multiple decoding methods.
+    
+    This is the primary entry point for transaction decoding. It tries:
+    1. Primary CBOR decoder (core.encoding.cbor)
+    2. Alternative CBOR decoders (cbor2, msgspec)
+    3. JSON fallback (if data appears to be JSON)
+    
+    If all methods fail, raises InvalidTx with details about all attempted methods.
+    """
+    all_failures: list[tuple[str, str]] = []
+    
+    # Try primary CBOR decoder first
+    if _cbor_loads is not None:
+        try:
+            obj = _cbor_loads(raw)
+            if not isinstance(obj, dict):
+                all_failures.append((
+                    "core.encoding.cbor (primary)",
+                    f"Decoded to {type(obj).__name__}, expected dict"
+                ))
+            else:
+                # Primary decoder succeeded, process the object
+                TX_DECODER_SUCCESS.labels(decoder="primary").inc()
+                return _process_decoded_obj(obj, raw)
+        except Exception as e:
+            all_failures.append((
+                "core.encoding.cbor (primary)",
+                f"{type(e).__name__}: {str(e)}"
+            ))
+    else:
+        all_failures.append(("core.encoding.cbor (primary)", "decoder unavailable"))
+    
+    # Try alternative decoders
+    log.info("Primary CBOR decoder failed, trying alternative decoders...")
+    fallback_obj, fallback_failures = _try_alternative_decoders(raw)
+    all_failures.extend(fallback_failures)
+    
+    if fallback_obj is not None:
+        # One of the fallback decoders succeeded
+        try:
+            return _process_decoded_obj(fallback_obj, raw)
+        except Exception as e:
+            # Decoding succeeded but normalization failed
+            all_failures.append((
+                "normalization (after fallback decode)",
+                f"{type(e).__name__}: {str(e)}"
+            ))
+    
+    # All decoders failed - build comprehensive error message
+    TX_DECODER_ALL_FAILED.inc()
+    
+    failure_summary = "\n".join([
+        f"  - {decoder}: {reason}"
+        for decoder, reason in all_failures
+    ])
+    
+    hint_parts = [
+        "Transaction could not be decoded by any available method.",
+        "Attempted decoders and their failures:",
+        failure_summary,
+        "",
+        "Ensure the transaction is properly encoded as CBOR with structure: {body: {...}, sigs: [...]}"
+    ]
+    
+    raise rpc_errors.InvalidTx(
+        "Transaction decode failed after trying all available decoders",
+        **_error_data(
+            "decode_all_failed",
+            ValueError(f"All {len(all_failures)} decoder(s) failed"),
+            "_decode_tx_defensive",
+            "\n".join(hint_parts),
+        ),
+    )
 
 
 def _validate_sufficient_balance(obj: dict) -> None:
@@ -1395,14 +1629,14 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
             ) from e
 
         try:
-            tx_like, obj = _decode_tx(raw)
+            tx_like, obj = _decode_tx_defensive(raw)
         except rpc_errors.RpcError:
             raise
         except Exception as e:
-            TX_VALIDATION_FAILURES.labels(reason="cbor_decode_failed").inc()
+            TX_VALIDATION_FAILURES.labels(reason="decode_failed").inc()
             raise rpc_errors.InvalidTx(
                 "Transaction decode failed",
-                **_error_data("decode", e, "_decode_tx", "Ensure rawTx is CBOR {body, sig}"),
+                **_error_data("decode", e, "_decode_tx_defensive", "Ensure rawTx is CBOR {body, sig}"),
             ) from e
 
         # chainId and PQ verify
@@ -1705,7 +1939,7 @@ def tx_decode_raw_transaction(rawTx: str) -> dict:
         raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
 
     raw = _b(rawTx)
-    tx_like, obj = _decode_tx(raw)
+    tx_like, obj = _decode_tx_defensive(raw)
 
     decoded_obj = obj if isinstance(obj, dict) else _dcd(obj)
     return {
@@ -1730,7 +1964,7 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
         raise rpc_errors.InternalError("PQ verification unavailable")
 
     raw = _b(rawTx)
-    tx_like, obj = _decode_tx(raw)
+    tx_like, obj = _decode_tx_defensive(raw)
     chain_id = _validate_chain_id(obj)
 
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
@@ -1791,7 +2025,7 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     raw = _mempool_get_raw(tx_hash_hex)
     if raw is not None:
         try:
-            tx_like, obj = _decode_tx(raw)
+            tx_like, obj = _decode_tx_defensive(raw)
             decoded_obj = obj if isinstance(obj, dict) else _dcd(obj)
             return _tx_view(tx_like, decoded_obj, pending=True)
         except Exception:
