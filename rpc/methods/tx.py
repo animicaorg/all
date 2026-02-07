@@ -151,11 +151,8 @@ try:
 except Exception:  # pragma: no cover
     _msgspec_module = None  # type: ignore
 
-# JSON codec (for defensive fallback when CBOR fails)
-try:
-    import json as _json_module
-except Exception:  # pragma: no cover
-    _json_module = None  # type: ignore
+# JSON codec (always available in standard library, used for defensive fallback)
+import json as _json_module
 
 
 # ——— Local fallback pending store (development only) ———
@@ -739,15 +736,14 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
     # Try JSON as last resort (in case someone sent JSON instead of CBOR)
     if _json_module is not None:
         try:
-            # Strip whitespace so we can reliably check if data starts with '{' or '['
-            # The JSON parser itself handles whitespace correctly
-            text = raw.decode('utf-8').strip()
+            text = raw.decode('utf-8')
         except UnicodeDecodeError as e:
             failure_reasons.append(("json", f"not valid UTF-8: {str(e)}"))
         else:
             try:
-                # Check if it looks like JSON (starts with '{' or '[')
-                if text.startswith('{') or text.startswith('['):
+                # Check if it looks like JSON (starts with '{' or '[' after stripping whitespace)
+                stripped = text.lstrip()
+                if stripped.startswith('{') or stripped.startswith('['):
                     obj = _json_module.loads(text)
                     if isinstance(obj, dict):
                         log.info("Transaction decoded successfully using JSON fallback decoder")
