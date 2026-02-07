@@ -289,23 +289,31 @@ def list_pending(
                 )
                 requested = import_result.get("requested", 0) if isinstance(import_result, dict) else 0
                 if requested > 0:
-                    # Wait for transactions to arrive and be admitted to mempool
+                    # Poll for transactions to arrive with exponential backoff
                     # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
-                    # Typical network latency: 10-100ms, validation: <10ms
-                    # Use 500ms to handle slow networks and busy nodes
-                    time.sleep(0.5)
-                    
-                    refreshed = call_rpc(
-                        "mempool.getPending",
-                        [True],
-                        rpc_url=resolved_rpc_url,
-                        no_cache=True,
-                    )
-                    if isinstance(refreshed, list):
-                        added = max(0, len(refreshed) - len(result))
-                        result = refreshed
+                    # Start with short delays to be responsive, increase if needed
+                    delays = [0.05, 0.1, 0.15, 0.2]  # Total: 0.5 seconds max
+                    for delay in delays:
+                        time.sleep(delay)
+                        
+                        refreshed = call_rpc(
+                            "mempool.getPending",
+                            [True],
+                            rpc_url=resolved_rpc_url,
+                            no_cache=True,
+                        )
+                        if isinstance(refreshed, list) and len(refreshed) > len(result):
+                            # Transactions arrived!
+                            added = max(0, len(refreshed) - len(result))
+                            result = refreshed
+                            typer.echo(
+                                f"Auto-imported peer transactions: requested={requested}, newly_visible={added}"
+                            )
+                            break
+                    else:
+                        # Timeout: no new transactions after polling
                         typer.echo(
-                            f"Auto-imported peer transactions: requested={requested}, newly_visible={added}"
+                            f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
                         )
             except Exception as e:
                 typer.echo(
