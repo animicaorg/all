@@ -298,6 +298,7 @@ class TxRelayService:
         send_tx_notfound: SendFn,
         send_mempool_req: SendFn,
         send_mempool_resp: SendFn,
+        send_mempool_summary: Optional[SendFn] = None,
         has_tx: HasTxFn,
         has_chain_tx: HasChainTxFn,
         get_tx_raw: GetTxFn,
@@ -332,6 +333,7 @@ class TxRelayService:
         self._send_tx_notfound = send_tx_notfound
         self._send_mempool_req = send_mempool_req
         self._send_mempool_resp = send_mempool_resp
+        self._send_mempool_summary = send_mempool_summary or send_mempool_resp
         self._has_tx = has_tx
         self._has_chain_tx = has_chain_tx
         self._get_tx_raw = get_tx_raw
@@ -377,6 +379,10 @@ class TxRelayService:
             "mempool_sync_req_sent": 0,
             "mempool_sync_resp_sent": 0,
             "mempool_sync_resp_recv": 0,
+            "reconcile_runs": 0,
+            "reconcile_missing_found": 0,
+            "mempool_summary_sent": 0,
+            "mempool_summary_recv": 0,
             "last_announced_at": None,
             "last_received_at": None,
             "last_requested_at": None,
@@ -1344,6 +1350,22 @@ class TxRelayService:
                     },
                 )
 
+    async def on_mempool_summary(
+        self, conn_id: str, txids: Iterable[bytes], count: int = 0
+    ) -> None:
+        tx_list = list(txids)
+        self._metrics["mempool_summary_recv"] += 1
+        self._record_event(
+            "TX_RELAY_MEMPOOL_SUMMARY_RECV",
+            extra={
+                "peer": conn_id,
+                "count": int(count or len(tx_list)),
+                "txids": len(tx_list),
+                **self._peer_log_extra(conn_id),
+            },
+        )
+        await self.on_mempool_resp(conn_id, tx_list)
+
     async def _broadcast_inv(
         self, txids: Iterable[bytes], *, exclude_peer: Optional[str]
     ) -> None:
@@ -1702,12 +1724,22 @@ class TxRelayService:
         while self._running:
             try:
                 await asyncio.sleep(self.reconcile_interval_s)
+                self._metrics["reconcile_runs"] += 1
                 async with self._lock:
                     peers = [p.conn_id for p in self._peer_state.values() if self._peer_eligible(p.conn_id)]
                 if not peers:
                     continue
+                summary_txids = await self._list_mempool_hashes(self.reconcile_batch_size)
+                for peer_id in peers:
+                    await self._send_mempool_summary(peer_id, summary_txids)
+                    self._metrics["mempool_summary_sent"] += 1
                 recent = list(self._recent_txids)[-self.reconcile_batch_size :]
                 if not recent:
+                    requested = await self.request_missing_known(
+                        limit=self.mempool_watchdog_limit, trigger="reconcile_loop"
+                    )
+                    if requested:
+                        self._metrics["reconcile_missing_found"] += int(requested)
                     continue
                 sample_peers = random.sample(peers, k=min(2, len(peers)))
                 for peer_id in sample_peers:
@@ -1727,6 +1759,7 @@ class TxRelayService:
                     limit=self.mempool_watchdog_limit, trigger="reconcile_loop"
                 )
                 if requested:
+                    self._metrics["reconcile_missing_found"] += int(requested)
                     self._record_event(
                         "TX_RELAY_RECONCILE_REQUEST",
                         extra={"requested": requested, "trigger": "reconcile_loop"},
