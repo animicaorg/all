@@ -132,6 +132,27 @@ TX_VALIDATION_FAILURES = Counter(
     registry=REG,
 )
 
+# Transaction decoder metrics
+TX_DECODER_SUCCESS = Counter(
+    "animica_tx_decoder_success_total",
+    "Total successful transaction decodes by decoder type.",
+    ["decoder"],  # decoder can be: primary, cbor2, msgspec, or json
+    registry=REG,
+)
+
+TX_DECODER_FALLBACK = Counter(
+    "animica_tx_decoder_fallback_total",
+    "Total times fallback decoders were used (primary decoder failed).",
+    ["fallback_decoder"],  # fallback_decoder ∈ {"cbor2", "msgspec", "json"}
+    registry=REG,
+)
+
+TX_DECODER_ALL_FAILED = Counter(
+    "animica_tx_decoder_all_failed_total",
+    "Total times all decoders failed to decode a transaction.",
+    registry=REG,
+)
+
 # Head / chain (optional helpers)
 CHAIN_HEIGHT = Gauge(
     "animica_chain_height",
