@@ -739,7 +739,8 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
     # Try JSON as last resort (in case someone sent JSON instead of CBOR)
     if _json_module is not None:
         try:
-            # Strip whitespace to check format, JSON parser handles whitespace correctly
+            # Strip whitespace so we can reliably check if data starts with '{' or '['
+            # The JSON parser itself handles whitespace correctly
             text = raw.decode('utf-8').strip()
         except UnicodeDecodeError as e:
             failure_reasons.append(("json", f"not valid UTF-8: {str(e)}"))
