@@ -337,21 +337,36 @@ def list_pending(
                         typer.echo(
                             f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
                         )
+                        typer.echo("-" * 60)
                         
                         # Show specific rejection reasons if available
                         if tx_state_sample:
                             # Group transactions by state and reason
                             rejected_txs = []
+                            accepted_txs = []
+                            pending_txs = []
+                            
                             for tx_state in tx_state_sample:
                                 if not isinstance(tx_state, dict):
                                     continue
                                 state = tx_state.get("state", "")
-                                # Show transactions that weren't accepted into mempool
-                                if state not in {"accepted_in_mempool"}:
+                                
+                                if state in {"accepted_in_mempool"}:
+                                    accepted_txs.append(tx_state)
+                                elif state in {"requested", "inflight"}:
+                                    pending_txs.append(tx_state)
+                                else:
                                     rejected_txs.append(tx_state)
                             
+                            # Show summary first
+                            typer.echo(f"Transaction Status Summary (showing {len(tx_state_sample)} most recent):")
+                            typer.echo(f"  ✓ Accepted:  {len(accepted_txs)}")
+                            typer.echo(f"  ⏳ Pending:   {len(pending_txs)}")
+                            typer.echo(f"  ✗ Rejected:  {len(rejected_txs)}")
+                            typer.echo("")
+                            
                             if rejected_txs:
-                                typer.echo("  Rejection details:")
+                                typer.echo("Rejected Transaction Details:")
                                 # Limit output to avoid overwhelming the user
                                 for tx_state in rejected_txs[:20]:
                                     txid = tx_state.get("txid", "unknown")
@@ -360,20 +375,43 @@ def list_pending(
                                     peer = tx_state.get("last_peer", "n/a")
                                     attempts = tx_state.get("attempts", 0)
                                     
-                                    # Format the rejection info
-                                    reason_text = f" reason={reason}" if reason else ""
+                                    # Format the rejection info with better readability
+                                    reason_text = f" → {reason}" if reason else ""
                                     typer.echo(
-                                        f"    {_short_id(txid, 10)} state={state}{reason_text} peer={_short_id(peer, 10) or 'n/a'} attempts={attempts}"
+                                        f"  • {_short_id(txid, 16)} [{state}]{reason_text} (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
                                     )
                                 
                                 if len(rejected_txs) > 20:
-                                    typer.echo(f"    ... and {len(rejected_txs) - 20} more (see node logs for full details)")
-                            else:
-                                # No rejected transactions in sample, show generic note
-                                _print_generic_rejection_note(include_log_check=False)
+                                    typer.echo(f"  ... and {len(rejected_txs) - 20} more rejected transactions")
+                                    typer.echo(f"  (Check node logs for details)")
+                            
+                            if pending_txs:
+                                typer.echo("")
+                                typer.echo("Pending Transaction Details:")
+                                for tx_state in pending_txs[:10]:
+                                    txid = tx_state.get("txid", "unknown")
+                                    state = tx_state.get("state", "unknown")
+                                    peer = tx_state.get("last_peer", "n/a")
+                                    attempts = tx_state.get("attempts", 0)
+                                    typer.echo(
+                                        f"  • {_short_id(txid, 16)} [{state}] (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
+                                    )
+                                if len(pending_txs) > 10:
+                                    typer.echo(f"  ... and {len(pending_txs) - 10} more pending transactions")
+                            
+                            if not rejected_txs and not pending_txs and accepted_txs:
+                                # All transactions in sample accepted, but they're not showing in mempool
+                                typer.echo("Note: Transaction state shows accepted, but not visible in mempool.")
+                                typer.echo("  This may indicate:")
+                                typer.echo("    • Transactions were already included in a block")
+                                typer.echo("    • Transactions were evicted due to mempool limits")
+                                typer.echo("    • State tracking is out of sync")
                         else:
                             # Fallback to generic note if no state info available
+                            typer.echo("Transaction Status: Unable to retrieve detailed status")
                             _print_generic_rejection_note(include_log_check=True)
+                        
+                        typer.echo("-" * 60)
             except Exception as e:
                 typer.echo(
                     f"⚠ Could not auto-import peer transactions: {e}\n"
@@ -381,7 +419,18 @@ def list_pending(
                 )
 
         if not result:
-            typer.echo("Mempool is empty (no pending transactions)")
+            # Check if peers have advertised transactions that weren't imported
+            if total_peer_known_txids > 0:
+                typer.echo(
+                    f"Local mempool is empty (0 pending), but peers advertise {total_peer_known_txids} transaction(s)"
+                )
+                typer.echo("  Possible reasons:")
+                typer.echo("    • Transactions were rejected (validation failed, nonce conflicts)")
+                typer.echo("    • Transactions are not yet imported (use 'animica mempool sync-status' to check)")
+                typer.echo("    • Network delays or peer disconnections")
+                typer.echo("  Use 'animica rpc call p2p.importPeerKnownTxs' to retry importing")
+            else:
+                typer.echo("Mempool is empty (no pending transactions)")
         else:
             typer.echo(f"Pending transactions ({len(result)}):")
             for i, entry in enumerate(result, 1):
