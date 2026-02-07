@@ -392,7 +392,7 @@ async def test_tx_propagation_and_mining():
             pending_entries.append(
                 PendingTxEntry(
                     hash_hex=tx_hash_hex,
-                    raw=entry.tx.raw if hasattr(entry.tx, 'raw') else b"",
+                    raw=getattr(entry.tx, 'raw', b""),
                     tx=entry.tx,
                 )
             )
@@ -451,7 +451,9 @@ async def test_tx_propagation_and_mining():
         # 4. Node A receives block and removes txs from mempool
         
         # For this test, we simulate by removing selected txs from both mempools
-        mined_txids = [bytes.fromhex(h[2:]) for h in block_selection.selected_hashes[:10]]
+        # Limit to 10 txs for simulation to keep it manageable
+        MAX_SIMULATED_MINED_TXS = 10
+        mined_txids = [bytes.fromhex(h[2:]) for h in block_selection.selected_hashes[:MAX_SIMULATED_MINED_TXS]]
         
         # Remove from Node B's mempool
         pool_b.remove_included(mined_txids)
