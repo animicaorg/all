@@ -222,6 +222,21 @@ async def test_tx_propagation_and_mining():
             pass
         
         # Create TxRelayService for Node A
+        async def node_a_has_tx(txid: bytes) -> bool:
+            return mempool_a.has_hash("0x" + txid.hex())
+        
+        async def node_a_get_tx(txid: bytes) -> Optional[bytes]:
+            return mempool_a.get_raw("0x" + txid.hex())
+        
+        async def node_a_list_hashes(limit: int) -> List[bytes]:
+            # Get all tx hashes from pool
+            hashes = []
+            for entry in pool_a.index.all_items():
+                hashes.append(entry[0])  # tx_hash bytes
+                if len(hashes) >= limit:
+                    break
+            return hashes
+        
         relay_a = TxRelayService(
             max_tx_bytes=10 * 1024 * 1024,
             inv_batch_size=200,
@@ -234,18 +249,29 @@ async def test_tx_propagation_and_mining():
             send_tx_notfound=send_noop,
             send_mempool_req=send_noop,
             send_mempool_resp=send_noop,
-            has_tx=lambda txid: asyncio.create_task(mempool_a.has_hash("0x" + txid.hex()).__bool__()),
-            has_chain_tx=lambda _: asyncio.sleep(0, False),
-            get_tx_raw=lambda txid: asyncio.create_task(
-                mempool_a.get_raw("0x" + txid.hex()) or asyncio.sleep(0, None)
-            ),
+            has_tx=node_a_has_tx,
+            has_chain_tx=lambda _: asyncio.coroutine(lambda: False)(),
+            get_tx_raw=node_a_get_tx,
             admit_tx=mempool_a.admit_tx,
-            list_mempool_hashes=lambda limit: asyncio.create_task(
-                [bytes.fromhex(h[2:]) for h in list(pool_a.index._by_hash.keys())[:limit]]
-            ),
+            list_mempool_hashes=node_a_list_hashes,
         )
         
         # Create TxRelayService for Node B
+        async def node_b_has_tx(txid: bytes) -> bool:
+            return mempool_b.has_hash("0x" + txid.hex())
+        
+        async def node_b_get_tx(txid: bytes) -> Optional[bytes]:
+            return mempool_b.get_raw("0x" + txid.hex())
+        
+        async def node_b_list_hashes(limit: int) -> List[bytes]:
+            # Get all tx hashes from pool
+            hashes = []
+            for entry in pool_b.index.all_items():
+                hashes.append(entry[0])  # tx_hash bytes
+                if len(hashes) >= limit:
+                    break
+            return hashes
+        
         relay_b = TxRelayService(
             max_tx_bytes=10 * 1024 * 1024,
             inv_batch_size=200,
@@ -258,15 +284,11 @@ async def test_tx_propagation_and_mining():
             send_tx_notfound=send_noop,
             send_mempool_req=send_noop,
             send_mempool_resp=send_noop,
-            has_tx=lambda txid: asyncio.create_task(mempool_b.has_hash("0x" + txid.hex()).__bool__()),
-            has_chain_tx=lambda _: asyncio.sleep(0, False),
-            get_tx_raw=lambda txid: asyncio.create_task(
-                mempool_b.get_raw("0x" + txid.hex()) or asyncio.sleep(0, None)
-            ),
+            has_tx=node_b_has_tx,
+            has_chain_tx=lambda _: asyncio.coroutine(lambda: False)(),
+            get_tx_raw=node_b_get_tx,
             admit_tx=mempool_b.admit_tx,
-            list_mempool_hashes=lambda limit: asyncio.create_task(
-                [bytes.fromhex(h[2:]) for h in list(pool_b.index._by_hash.keys())[:limit]]
-            ),
+            list_mempool_hashes=node_b_list_hashes,
         )
         
         # Wire mempool callbacks for P2P broadcast
@@ -364,16 +386,16 @@ async def test_tx_propagation_and_mining():
         
         # Collect pending entries from Node B's mempool
         pending_entries = []
-        for tx_hash_hex in list(pool_b.index._by_hash.keys()):
-            entry = pool_b.index.get(bytes.fromhex(tx_hash_hex[2:]))
-            if entry:
-                pending_entries.append(
-                    PendingTxEntry(
-                        hash_hex=tx_hash_hex,
-                        raw=entry.tx.raw if hasattr(entry.tx, 'raw') else b"",
-                        tx=entry.tx,
-                    )
+        # Use the public all_items() iterator instead of accessing private _by_hash
+        for tx_hash_bytes, entry in pool_b.index.all_items():
+            tx_hash_hex = "0x" + tx_hash_bytes.hex()
+            pending_entries.append(
+                PendingTxEntry(
+                    hash_hex=tx_hash_hex,
+                    raw=entry.tx.raw if hasattr(entry.tx, 'raw') else b"",
+                    tx=entry.tx,
                 )
+            )
         
         # Select transactions for block (simplified, no chain state)
         block_selection = select_for_block(
