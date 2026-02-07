@@ -5562,14 +5562,29 @@ class P2PService:
         )
         return "0x" + txh.hex()
 
-    async def request_missing_txids(self, limit: int = 128, force: bool = False) -> int:
+    async def request_missing_txids(
+        self,
+        limit: int = 128,
+        force: bool = False,
+        *,
+        max_peers: int = 2,
+        batch_size: int = 64,
+        include_details: bool = False,
+    ) -> int | dict[str, Any]:
         if (
             not self._tx_relay_enabled
             or not self._p2p_tx_enabled
             or not self._tx_relay_v2_enabled
         ):
-            return 0
-        return await self._txrelay.request_missing_known(limit=limit, force=force, trigger="request_missing_txids")
+            return {"requested": 0, "requested_txids": [], "requested_peers": []} if include_details else 0
+        return await self._txrelay.request_missing_known(
+            limit=limit,
+            force=force,
+            trigger="request_missing_txids",
+            max_peers=max_peers,
+            batch_size=batch_size,
+            include_details=include_details,
+        )
 
     async def sync_all_peer_mempools(self, timeout_s: float = 2.0) -> int:
         """
