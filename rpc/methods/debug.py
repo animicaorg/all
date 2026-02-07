@@ -361,8 +361,251 @@ def debug_mempool_tx_trace(params: Any) -> Dict[str, Any]:
     return result
 
 
+@method(
+    "tx.explainReject",
+    desc="Explain why a transaction would be rejected by the mempool",
+    aliases=("debug.explainReject", "tx.explain_reject"),
+)
+def tx_explain_reject(params: Any) -> Dict[str, Any]:
+    """
+    Dry-run validation for a transaction to explain why it would be rejected.
+    
+    This is useful for debugging transaction submission issues without actually
+    submitting the transaction to the mempool.
+    
+    Args:
+        params: Either raw transaction bytes (hex string) or dict with "raw" key
+    
+    Returns:
+        {
+            "valid": bool,
+            "reason": str | null,
+            "details": {
+                "chain_id": int | null,
+                "sender": str | null,
+                "nonce": int | null,
+                "gas_limit": int | null,
+                "checks": {
+                    "chain_id_match": bool,
+                    "sender_valid": bool,
+                    "nonce_valid": bool,
+                    "balance_sufficient": bool,
+                    "gas_price_sufficient": bool,
+                    "signature_valid": bool
+                }
+            }
+        }
+    """
+    # Parse params
+    if isinstance(params, dict):
+        raw_tx = params.get("raw") or params.get("rawTx") or params.get("raw_tx")
+    elif isinstance(params, (list, tuple)) and len(params) > 0:
+        raw_tx = params[0]
+    elif isinstance(params, str):
+        raw_tx = params
+    else:
+        raise ValueError("raw transaction parameter required")
+    
+    if not raw_tx:
+        raise ValueError("raw transaction parameter required")
+    
+    # Normalize raw_tx to bytes
+    if isinstance(raw_tx, str):
+        if raw_tx.startswith("0x"):
+            raw_tx = raw_tx[2:]
+        try:
+            raw_bytes = bytes.fromhex(raw_tx)
+        except ValueError as e:
+            return {
+                "valid": False,
+                "reason": "invalid_hex_encoding",
+                "details": {"error": str(e)},
+            }
+    elif isinstance(raw_tx, (bytes, bytearray)):
+        raw_bytes = bytes(raw_tx)
+    else:
+        return {
+            "valid": False,
+            "reason": "invalid_parameter_type",
+            "details": {"type": type(raw_tx).__name__},
+        }
+    
+    result: Dict[str, Any] = {
+        "valid": True,
+        "reason": None,
+        "details": {
+            "chain_id": None,
+            "sender": None,
+            "nonce": None,
+            "gas_limit": None,
+            "checks": {},
+        },
+    }
+    
+    # Try to decode transaction
+    try:
+        from core.encoding.cbor import loads as cbor_loads
+        from core.utils.tx import normalize_tx_envelope
+        from mempool.tx_hash import tx_hash_hex as compute_tx_hash
+        
+        try:
+            tx_obj = cbor_loads(raw_bytes)
+        except Exception as e:
+            result["valid"] = False
+            result["reason"] = "cbor_decode_error"
+            result["details"]["error"] = str(e)
+            return result
+        
+        # Compute txid
+        try:
+            txid = compute_tx_hash(raw_bytes)
+            result["details"]["txid"] = txid
+        except Exception as e:
+            result["details"]["txid_error"] = str(e)
+        
+        # Normalize envelope
+        try:
+            normalized = normalize_tx_envelope(tx_obj)
+        except Exception as e:
+            result["valid"] = False
+            result["reason"] = "normalization_error"
+            result["details"]["error"] = str(e)
+            return result
+        
+        # Extract transaction fields
+        tx_body = normalized.get("tx", {})
+        
+        # Chain ID check
+        chain_id = tx_body.get("chainId") or tx_body.get("chain_id")
+        result["details"]["chain_id"] = chain_id
+        
+        try:
+            ctx = deps.get_ctx()
+            if ctx:
+                expected_chain_id = getattr(ctx, "chain_id", None)
+                if expected_chain_id is not None:
+                    result["details"]["checks"]["chain_id_match"] = (
+                        int(chain_id) == int(expected_chain_id)
+                    )
+                    if not result["details"]["checks"]["chain_id_match"]:
+                        result["valid"] = False
+                        result["reason"] = "chain_id_mismatch"
+                        result["details"]["expected_chain_id"] = expected_chain_id
+        except Exception:
+            pass
+        
+        # Sender extraction
+        sender = tx_body.get("from") or tx_body.get("sender")
+        result["details"]["sender"] = sender
+        result["details"]["checks"]["sender_valid"] = sender is not None
+        
+        if not sender:
+            result["valid"] = False
+            result["reason"] = "missing_sender"
+            return result
+        
+        # Nonce check (v1 transactions)
+        nonce = tx_body.get("nonce")
+        result["details"]["nonce"] = nonce
+        
+        # Gas limit check
+        gas_limit = tx_body.get("gasLimit") or tx_body.get("gas_limit") or tx_body.get("gas")
+        result["details"]["gas_limit"] = gas_limit
+        result["details"]["checks"]["gas_limit_valid"] = gas_limit is not None and int(gas_limit or 0) > 0
+        
+        if not gas_limit or int(gas_limit) <= 0:
+            result["valid"] = False
+            result["reason"] = "invalid_gas_limit"
+            return result
+        
+        # Gas price check
+        max_fee = tx_body.get("maxFee") or tx_body.get("max_fee") or tx_body.get("gasPrice")
+        result["details"]["max_fee"] = max_fee
+        
+        try:
+            from rpc.mempool_service import get_mempool_service_singleton
+            
+            mempool_service = get_mempool_service_singleton()
+            if mempool_service is not None:
+                min_gas_price = mempool_service.min_gas_price_wei
+                result["details"]["min_gas_price_wei"] = min_gas_price
+                
+                if max_fee and min_gas_price:
+                    result["details"]["checks"]["gas_price_sufficient"] = (
+                        int(max_fee) >= min_gas_price
+                    )
+                    if not result["details"]["checks"]["gas_price_sufficient"]:
+                        result["valid"] = False
+                        result["reason"] = "gas_price_too_low"
+        except Exception:
+            pass
+        
+        # Balance check (if state DB available)
+        try:
+            from rpc.mempool_service import get_mempool_service_singleton
+            
+            mempool_service = get_mempool_service_singleton()
+            if mempool_service is not None and mempool_service.state_db is not None:
+                sender_bytes = bytes.fromhex(sender[2:] if sender.startswith("0x") else sender)
+                
+                try:
+                    balance = mempool_service.state_db.get_balance(sender_bytes)
+                    result["details"]["balance"] = int(balance)
+                    
+                    # Estimate spend
+                    value = tx_body.get("value", 0)
+                    max_gas_cost = int(gas_limit) * int(max_fee or 0)
+                    total_spend = int(value) + max_gas_cost
+                    
+                    result["details"]["estimated_spend"] = total_spend
+                    result["details"]["checks"]["balance_sufficient"] = balance >= total_spend
+                    
+                    if balance < total_spend:
+                        result["valid"] = False
+                        result["reason"] = "insufficient_balance"
+                except Exception as e:
+                    result["details"]["balance_check_error"] = str(e)
+        except Exception:
+            pass
+        
+        # Nonce check (if state DB available)
+        if nonce is not None:
+            try:
+                from rpc.mempool_service import get_mempool_service_singleton
+                
+                mempool_service = get_mempool_service_singleton()
+                if mempool_service is not None:
+                    sender_bytes = bytes.fromhex(sender[2:] if sender.startswith("0x") else sender)
+                    
+                    confirmed_nonce = mempool_service._confirmed_nonce(sender_bytes)
+                    if confirmed_nonce is not None:
+                        result["details"]["confirmed_nonce"] = confirmed_nonce
+                        
+                        expected_nonce = mempool_service.get_next_nonce(sender_bytes, confirmed_nonce)
+                        result["details"]["expected_nonce"] = expected_nonce
+                        result["details"]["checks"]["nonce_valid"] = int(nonce) == expected_nonce
+                        
+                        if int(nonce) < expected_nonce:
+                            result["valid"] = False
+                            result["reason"] = "nonce_too_low"
+                        elif int(nonce) > expected_nonce:
+                            result["valid"] = False
+                            result["reason"] = "nonce_gap"
+            except Exception as e:
+                result["details"]["nonce_check_error"] = str(e)
+        
+    except Exception as e:
+        result["valid"] = False
+        result["reason"] = "validation_error"
+        result["details"]["error"] = str(e)
+        log.debug(f"Error validating transaction: {e}", exc_info=True)
+    
+    return result
+
+
 __all__ = [
     "debug_trace_tx",
     "debug_tx_status",
     "debug_mempool_tx_trace",
+    "tx_explain_reject",
 ]
