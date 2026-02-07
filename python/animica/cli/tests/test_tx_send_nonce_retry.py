@@ -25,6 +25,8 @@ def test_send_retries_on_nonce_too_low(monkeypatch) -> None:
             return {"synchronized": True}
         if method == "chain.getChainIdentity":
             return {"chainId": 1337, "forkId": None}
+        if method == "chain.getHead":
+            return {"height": 100}
         if method in {"state.getNextNonce", "state_getNextNonce"}:
             nonce_calls += 1
             return 18 if nonce_calls == 1 else 19
@@ -104,6 +106,8 @@ def test_send_retries_with_advancing_pending_nonce(monkeypatch) -> None:
             return {"synchronized": True}
         if method == "chain.getChainIdentity":
             return {"chainId": 1337, "forkId": None}
+        if method == "chain.getHead":
+            return {"height": 100}
         if method in {"state.getNextNonce", "state_getNextNonce"}:
             nonce_calls += 1
             # First call returns 63 (initial), second call returns 65 (mempool advanced)
@@ -207,6 +211,8 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
             return {"synchronized": True}
         if method == "chain.getChainIdentity":
             return {"chainId": 1337, "forkId": None}
+        if method == "chain.getHead":
+            return {"height": 100}
         if method in {"state.getNextNonce", "state_getNextNonce"}:
             nonce_calls += 1
             # Always return the correct next nonce: 64
@@ -276,3 +282,135 @@ def test_send_no_off_by_one_chase(monkeypatch) -> None:
     assert nonces == [64], f"Expected nonces [64] (no retry needed) but got {nonces}"
     # Should succeed on first try without retries
     assert len(nonces) == 1, f"Should succeed on first try, but got {len(nonces)} attempts"
+
+
+def test_send_min_peers_auto_raises_to_connected_peers(monkeypatch) -> None:
+    send_calls = 0
+    requested_replication_txids: list[str] = []
+
+    def fake_rpc(_url: str, method: str, params):  # noqa: ANN001
+        nonlocal send_calls
+        if method == "sync.getStatus":
+            return {"synchronized": True}
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1337, "forkId": None}
+        if method == "chain.getHead":
+            return {"height": 100}
+        if method in {"state.getNextNonce", "state_getNextNonce"}:
+            return 1
+        if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice"}:
+            return 1
+        if method == "tx.sendRawTransaction":
+            send_calls += 1
+            return "0xhash"
+        if method == "mempool.getStatus":
+            return {"hash": params[0], "known": True, "state": "pending", "reason": None}
+        if method == "p2p.getStatus":
+            return {"peers_total": 3}
+        if method == "ptl.replicationStatus":
+            requested_replication_txids.append(params[0]["txid"])
+            return {
+                "tx_hash": params[0]["txid"],
+                "local_status": "eligible",
+                "quorum": {"observed_acks": 3, "required_acks": 1, "quorum_met": True},
+                "peers": [],
+            }
+        return None
+
+    class DummySig:
+        alg_id = 1
+        sig = b"\x01" * 64
+
+    monkeypatch.setattr(tx, "_rpc", fake_rpc)
+    monkeypatch.setattr(tx, "_load_wallet_entry", lambda _addr: {"public_key_hex": "11" * 32, "secret_key_hex": "22" * 32})
+    monkeypatch.setattr(tx, "build_sign_bytes", lambda *_args, **_kwargs: b"signbytes")
+    monkeypatch.setattr(tx, "pq_sign_detached", lambda *_args, **_kwargs: DummySig())
+    monkeypatch.setattr(tx, "verify_detached", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(tx, "_nonce_lock", lambda _addr: nullcontext())
+
+    result = runner.invoke(
+        tx.app,
+        [
+            "send",
+            "--from",
+            "0x" + "11" * 32,
+            "--to",
+            "0x" + "22" * 32,
+            "--value-nanm",
+            "1",
+            "--rpc-url",
+            "http://node",
+            "--min-peers",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Raising --min-peers from 1 to connected peer count (3)" in result.output
+    assert "Waiting for 3 peer acknowledgments" in result.output
+    assert requested_replication_txids == ["0xhash"]
+
+
+def test_send_min_peers_keeps_explicit_higher_target(monkeypatch) -> None:
+    ptl_calls = 0
+
+    def fake_rpc(_url: str, method: str, params):  # noqa: ANN001
+        nonlocal ptl_calls
+        if method == "sync.getStatus":
+            return {"synchronized": True}
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1337, "forkId": None}
+        if method == "chain.getHead":
+            return {"height": 100}
+        if method in {"state.getNextNonce", "state_getNextNonce"}:
+            return 2
+        if method in {"tx.gasPrice", "gasPrice", "fee.getGasPrice"}:
+            return 1
+        if method == "tx.sendRawTransaction":
+            return "0xhash2"
+        if method == "mempool.getStatus":
+            return {"hash": params[0], "known": True, "state": "pending", "reason": None}
+        if method == "p2p.getStatus":
+            return {"peers_total": 2}
+        if method == "ptl.replicationStatus":
+            ptl_calls += 1
+            return {
+                "tx_hash": params[0]["txid"],
+                "local_status": "eligible",
+                "quorum": {"observed_acks": 5, "required_acks": 5, "quorum_met": True},
+                "peers": [],
+            }
+        return None
+
+    class DummySig:
+        alg_id = 1
+        sig = b"\x01" * 64
+
+    monkeypatch.setattr(tx, "_rpc", fake_rpc)
+    monkeypatch.setattr(tx, "_load_wallet_entry", lambda _addr: {"public_key_hex": "11" * 32, "secret_key_hex": "22" * 32})
+    monkeypatch.setattr(tx, "build_sign_bytes", lambda *_args, **_kwargs: b"signbytes")
+    monkeypatch.setattr(tx, "pq_sign_detached", lambda *_args, **_kwargs: DummySig())
+    monkeypatch.setattr(tx, "verify_detached", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(tx, "_nonce_lock", lambda _addr: nullcontext())
+
+    result = runner.invoke(
+        tx.app,
+        [
+            "send",
+            "--from",
+            "0x" + "11" * 32,
+            "--to",
+            "0x" + "22" * 32,
+            "--value-nanm",
+            "1",
+            "--rpc-url",
+            "http://node",
+            "--min-peers",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Raising --min-peers" not in result.output
+    assert "Waiting for 5 peer acknowledgments" in result.output
+    assert ptl_calls == 1
