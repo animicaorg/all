@@ -130,28 +130,38 @@ def debug_trace_tx(params: Any) -> Dict[str, Any]:
         if p2p_service is not None:
             txrelay = getattr(p2p_service, "_txrelay", None)
             if txrelay is not None:
-                # Get tx relay state
-                tx_state = txrelay._tx_store.get(txid_bytes)
-                if tx_state:
-                    result["lifecycle"]["p2p"] = {
-                        "arrival_time": tx_state.arrival_time,
-                        "source": tx_state.source,
-                        "validation_status": tx_state.validation_status,
-                        "mempool_status": tx_state.mempool_status,
-                        "last_peer": tx_state.last_peer,
-                    }
+                # Get tx relay state (note: accessing internal state for debug purposes)
+                try:
+                    tx_store = getattr(txrelay, "_tx_store", None)
+                    if tx_store:
+                        tx_state = tx_store.get(txid_bytes)
+                        if tx_state:
+                            result["lifecycle"]["p2p"] = {
+                                "arrival_time": tx_state.arrival_time,
+                                "source": tx_state.source,
+                                "validation_status": tx_state.validation_status,
+                                "mempool_status": tx_state.mempool_status,
+                                "last_peer": tx_state.last_peer,
+                            }
+                except Exception:
+                    pass
                 
-                # Get request state
-                request_state = txrelay._request_mgr.get_state(txid_bytes)
-                if request_state:
-                    result["lifecycle"]["request_tracking"] = {
-                        "state": request_state.state,
-                        "attempts": request_state.attempts,
-                        "first_seen_at": request_state.first_seen_at,
-                        "last_updated_at": request_state.last_updated_at,
-                        "last_peer": request_state.last_peer,
-                        "last_reason": request_state.last_reason,
-                    }
+                # Get request state (note: accessing internal state for debug purposes)
+                try:
+                    request_mgr = getattr(txrelay, "_request_mgr", None)
+                    if request_mgr:
+                        request_state = request_mgr.get_state(txid_bytes)
+                        if request_state:
+                            result["lifecycle"]["request_tracking"] = {
+                                "state": request_state.state,
+                                "attempts": request_state.attempts,
+                                "first_seen_at": request_state.first_seen_at,
+                                "last_updated_at": request_state.last_updated_at,
+                                "last_peer": request_state.last_peer,
+                                "last_reason": request_state.last_reason,
+                            }
+                except Exception:
+                    pass
     except Exception as e:
         log.debug(f"Error checking P2P relay service: {e}", exc_info=True)
     
@@ -577,20 +587,24 @@ def tx_explain_reject(params: Any) -> Dict[str, Any]:
                 if mempool_service is not None:
                     sender_bytes = bytes.fromhex(sender[2:] if sender.startswith("0x") else sender)
                     
-                    confirmed_nonce = mempool_service._confirmed_nonce(sender_bytes)
-                    if confirmed_nonce is not None:
-                        result["details"]["confirmed_nonce"] = confirmed_nonce
-                        
-                        expected_nonce = mempool_service.get_next_nonce(sender_bytes, confirmed_nonce)
-                        result["details"]["expected_nonce"] = expected_nonce
-                        result["details"]["checks"]["nonce_valid"] = int(nonce) == expected_nonce
-                        
-                        if int(nonce) < expected_nonce:
-                            result["valid"] = False
-                            result["reason"] = "nonce_too_low"
-                        elif int(nonce) > expected_nonce:
-                            result["valid"] = False
-                            result["reason"] = "nonce_gap"
+                    # Use private method safely for debug purposes
+                    try:
+                        confirmed_nonce = getattr(mempool_service, "_confirmed_nonce", lambda x: None)(sender_bytes)
+                        if confirmed_nonce is not None:
+                            result["details"]["confirmed_nonce"] = confirmed_nonce
+                            
+                            expected_nonce = mempool_service.get_next_nonce(sender_bytes, confirmed_nonce)
+                            result["details"]["expected_nonce"] = expected_nonce
+                            result["details"]["checks"]["nonce_valid"] = int(nonce) == expected_nonce
+                            
+                            if int(nonce) < expected_nonce:
+                                result["valid"] = False
+                                result["reason"] = "nonce_too_low"
+                            elif int(nonce) > expected_nonce:
+                                result["valid"] = False
+                                result["reason"] = "nonce_gap"
+                    except Exception:
+                        pass
             except Exception as e:
                 result["details"]["nonce_check_error"] = str(e)
         
