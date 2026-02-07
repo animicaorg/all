@@ -19,6 +19,14 @@ import typer
 from .rpc import _resolve_rpc_url, call_rpc
 
 
+# Default parameters for importing peer-known transactions
+# These values are used both for automatic import and in user-facing command suggestions
+IMPORT_PEER_TXS_LIMIT = 128  # Maximum number of transactions to request
+IMPORT_PEER_TXS_TIMEOUT = 12.0  # Timeout in seconds for waiting for responses
+IMPORT_PEER_TXS_MAX_PEERS = 2  # Maximum number of peers to query
+IMPORT_PEER_TXS_BATCH_SIZE = 64  # Batch size for requests
+
+
 def _short_id(value: Optional[str], length: int = 10) -> Optional[str]:
     if not value:
         return None
@@ -28,6 +36,17 @@ def _short_id(value: Optional[str], length: int = 10) -> Optional[str]:
     if len(text) <= length:
         return "0x" + text
     return "0x" + text[:length]
+
+
+def _import_peer_txs_command() -> str:
+    """
+    Return the properly formatted command for manually importing peer-known transactions.
+    
+    Returns:
+        A shell command string that users can copy-paste to manually trigger peer transaction import
+    """
+    params = f"[{IMPORT_PEER_TXS_LIMIT}, {IMPORT_PEER_TXS_TIMEOUT}, {IMPORT_PEER_TXS_MAX_PEERS}, {IMPORT_PEER_TXS_BATCH_SIZE}]"
+    return f"animica rpc call p2p.importPeerKnownTxs '{params}'"
 
 
 def _print_generic_rejection_note(include_log_check: bool = False) -> None:
@@ -306,7 +325,7 @@ def list_pending(
             try:
                 import_result = call_rpc(
                     "p2p.importPeerKnownTxs",
-                    [128, 12.0, 2, 64],
+                    [IMPORT_PEER_TXS_LIMIT, IMPORT_PEER_TXS_TIMEOUT, IMPORT_PEER_TXS_MAX_PEERS, IMPORT_PEER_TXS_BATCH_SIZE],
                     rpc_url=resolved_rpc_url,
                     no_cache=True,
                 )
@@ -425,14 +444,16 @@ def list_pending(
                         
                         typer.echo("-" * 60)
             except Exception as e:
+                cmd = _import_peer_txs_command()
                 typer.echo(
                     f"⚠ Could not auto-import peer transactions: {e}\n"
-                    "  You can manually trigger this with: animica rpc call p2p.importPeerKnownTxs '[128, 12.0, 2, 64]'"
+                    f"  You can manually trigger this with: {cmd}"
                 )
 
         if not result:
             # Check if peers have advertised transactions that weren't imported
             if total_peer_known_txids > 0:
+                cmd = _import_peer_txs_command()
                 typer.echo(
                     f"Local mempool is empty (0 pending), but peers advertise {total_peer_known_txids} transaction(s)"
                 )
@@ -440,7 +461,7 @@ def list_pending(
                 typer.echo("    • Transactions were rejected (validation failed, nonce conflicts)")
                 typer.echo("    • Transactions are not yet imported (use 'animica mempool sync-status' to check)")
                 typer.echo("    • Network delays or peer disconnections")
-                typer.echo('  Use "animica rpc call p2p.importPeerKnownTxs \'[128, 12.0, 2, 64]\'" to retry importing')
+                typer.echo(f'  Use "{cmd}" to retry importing')
             else:
                 typer.echo("Mempool is empty (no pending transactions)")
         else:
