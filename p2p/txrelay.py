@@ -354,6 +354,11 @@ class TxRelayService:
             max(5.0, min(self.inflight_timeout_s, 30.0))
         )
         self._reject_cache_cap = int(max(1000, min(self.known_txids_cap, 50_000)))
+        # Cache for transactions that received NOTFOUND responses from peers
+        # Prevents re-adding them via INV messages when peers keep advertising txids they don't have
+        self._notfound_cache: "OrderedDict[bytes, float]" = OrderedDict()
+        self._notfound_cache_ttl_s = 60.0  # 60 seconds cooldown before accepting re-announcements
+        self._notfound_cache_cap = int(max(1000, min(self.known_txids_cap, 50_000)))
         self._inv_limiter = TokenBucket(inv_rate_per_sec, inv_burst)
         self._tx_data_limiter = TokenBucket(
             tx_data_rate_bytes_per_sec, tx_data_burst_bytes
@@ -536,6 +541,25 @@ class TxRelayService:
             return False
         return True
 
+    def _notfound_remember(self, txid: bytes) -> None:
+        """Remember that a transaction received a NOTFOUND response."""
+        expire_at = time.time() + self._notfound_cache_ttl_s
+        self._notfound_cache[txid] = expire_at
+        self._notfound_cache.move_to_end(txid, last=True)
+        while len(self._notfound_cache) > self._notfound_cache_cap:
+            self._notfound_cache.popitem(last=False)
+
+    def _notfound_recent(self, txid: bytes) -> bool:
+        """Check if a transaction recently received a NOTFOUND response."""
+        now = time.time()
+        expire_at = self._notfound_cache.get(txid)
+        if expire_at is None:
+            return False
+        if expire_at <= now:
+            self._notfound_cache.pop(txid, None)
+            return False
+        return True
+
     def _record_source(self, txid: bytes, conn_id: str) -> None:
         self._tx_sources.setdefault(txid, set()).add(conn_id)
         order = self._tx_sources_order.setdefault(txid, [])
@@ -637,6 +661,20 @@ class TxRelayService:
         async with self._lock:
             state = self._ensure_peer(conn_id)
             for txid in tx_list:
+                # Skip re-adding transactions that recently received NOTFOUND responses
+                # This prevents infinite loops where peers keep advertising txids they don't have
+                if self._notfound_recent(txid):
+                    log.debug(
+                        "TX_INV_SKIP_NOTFOUND_RECENT",
+                        extra={
+                            "peer": conn_id,
+                            "txid": txid.hex()[:16],
+                            "reason": "recently_notfound",
+                            **self._peer_log_extra(conn_id),
+                        },
+                    )
+                    continue
+                
                 state.known_txids.add(txid)
                 self._record_source(txid, conn_id)
                 self._set_peer_tx_state(conn_id, txid, "ANNOUNCED_BY_PEER")
@@ -1211,6 +1249,7 @@ class TxRelayService:
             for txid in tx_list:
                 self._clear_inflight(txid)
                 self._reject_remember(txid)
+                self._notfound_remember(txid)  # Remember this txid received NOTFOUND
                 self._request_mgr.mark_dropped(
                     txid, peer=conn_id, reason="notfound", now=time.time()
                 )
@@ -1292,6 +1331,20 @@ class TxRelayService:
         async with self._lock:
             state = self._ensure_peer(conn_id)
             for txid in tx_list:
+                # Skip re-adding transactions that recently received NOTFOUND responses
+                # This prevents infinite loops where peers keep advertising txids they don't have
+                if self._notfound_recent(txid):
+                    log.debug(
+                        "TX_MEMPOOL_RESP_SKIP_NOTFOUND_RECENT",
+                        extra={
+                            "peer": conn_id,
+                            "txid": txid.hex()[:16],
+                            "reason": "recently_notfound",
+                            **self._peer_log_extra(conn_id),
+                        },
+                    )
+                    continue
+                
                 state.known_txids.add(txid)
                 self._record_source(txid, conn_id)
                 self._set_peer_tx_state(conn_id, txid, "ANNOUNCED_BY_PEER")
