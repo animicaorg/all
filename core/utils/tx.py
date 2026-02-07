@@ -360,6 +360,19 @@ def normalize_tx_bytes(tx_like: Any) -> bytes:
     raise ValueError(f"unsupported tx type: {type(tx_like).__name__}")
 
 
+def serialize_tx_canonical(tx_like: Any) -> bytes:
+    """
+    Canonical transaction serialization used for txid hashing, signatures,
+    and P2P payloads.
+    """
+    return normalize_tx_bytes(tx_like)
+
+
+def txid(tx_like: Any) -> bytes:
+    """Canonical txid: sha3_256 over canonical transaction bytes."""
+    return sha3_256(serialize_tx_canonical(tx_like))
+
+
 def normalize_tx(tx_like: Any) -> bytes:
     """
     Normalize a transaction-like object to canonical raw CBOR bytes.
@@ -379,6 +392,8 @@ def normalize_tx(tx_like: Any) -> bytes:
 
 __all__ = [
     "normalize_tx_bytes",
+    "serialize_tx_canonical",
+    "txid",
     "normalize_tx",
     "normalize_tx_envelope",
     "normalize_tx_body",

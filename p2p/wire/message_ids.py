@@ -111,6 +111,7 @@ class MsgID(IntEnum):
     TXBLOCK_INV = 0x040D  # announce instant tx block ids
     TXBLOCK_GET = 0x040E  # request instant tx blocks by id
     TXBLOCK_DATA = 0x040F  # instant tx block payload(s)
+    TX_MEMPOOL_SUMMARY = 0x0410  # periodic mempool summary for reconciliation
 
     # ---------------------------
     # 0x05xx — Useful-work Shares

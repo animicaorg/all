@@ -44,6 +44,7 @@ from p2p.messages_tx import (
     TxInv,
     TxMempoolReq,
     TxMempoolResp,
+    TxMempoolSummary,
     TxNotFound,
     parse_tx_data_items,
     parse_txids,
@@ -1063,6 +1064,7 @@ class P2PService:
                 send_tx_notfound=self._txrelay_send_notfound,
                 send_mempool_req=self._txrelay_send_mempool_req,
                 send_mempool_resp=self._txrelay_send_mempool_resp,
+                send_mempool_summary=self._txrelay_send_mempool_summary,
                 has_tx=self._txrelay_has_tx,
                 has_chain_tx=self._txrelay_has_chain_tx,
                 get_tx_raw=self._txrelay_get_tx_raw,
@@ -6286,6 +6288,9 @@ class P2PService:
         if mid == int(MsgID.TX_MEMPOOL_RESP):
             await self._handle_tx_mempool_resp(peer, payload)
             return
+        if mid == int(MsgID.TX_MEMPOOL_SUMMARY):
+            await self._handle_tx_mempool_summary(peer, payload)
+            return
         if mid == int(MsgID.TXBLOCK_INV):
             await self._handle_txblock_inv(peer, payload)
             return
@@ -7428,6 +7433,15 @@ class P2PService:
         txids = parse_txids(data.get("txids") or [])
         peer_key = self._peer_tx_key(peer)
         await self._txrelay.on_mempool_resp(peer_key, txids)
+
+    async def _handle_tx_mempool_summary(self, peer: _PeerState, payload: bytes) -> None:
+        if not self._tx_relay_enabled or not self._p2p_tx_enabled or not self._tx_relay_v2_enabled:
+            return
+        data = self._decode_payload_map(payload)
+        txids = parse_txids(data.get("txids") or [])
+        count = int(data.get("count") or len(txids))
+        peer_key = self._peer_tx_key(peer)
+        await self._txrelay.on_mempool_summary(peer_key, txids, count=count)
 
     async def _handle_getdata(self, peer: _PeerState, payload: bytes) -> None:
         data = self._decode_map(payload)
@@ -14369,6 +14383,13 @@ class P2PService:
             return
         payload = TxMempoolResp(txids=txids).to_payload()
         await self._send(peer, MsgID.TX_MEMPOOL_RESP, payload)
+
+    async def _txrelay_send_mempool_summary(self, peer_key: str, txids: list[bytes]) -> None:
+        peer = self._txrelay_find_peer(peer_key)
+        if peer is None:
+            return
+        payload = TxMempoolSummary(txids=txids, count=len(txids)).to_payload()
+        await self._send(peer, MsgID.TX_MEMPOOL_SUMMARY, payload)
 
     async def _txrelay_has_tx(self, txid: bytes) -> bool:
         if self.deps is None:

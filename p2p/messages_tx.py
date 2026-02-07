@@ -109,6 +109,23 @@ class TxMempoolResp:
         return {"msg_id": self.msg_id, "timestamp": int(self.timestamp), "txids": self.txids}
 
 
+@dataclass(frozen=True)
+class TxMempoolSummary:
+    msg_id: int = int(MsgID.TX_MEMPOOL_SUMMARY)
+    timestamp: int = field(default_factory=_now_ts)
+    txids: List[bytes] = field(default_factory=list)
+    count: int = 0
+
+    def to_payload(self) -> dict[str, Any]:
+        txids = _ensure_hashes(self.txids)
+        return {
+            "msg_id": self.msg_id,
+            "timestamp": int(self.timestamp),
+            "count": int(self.count if self.count else len(txids)),
+            "txids": txids,
+        }
+
+
 def parse_txids(value: Any) -> list[bytes]:
     if not isinstance(value, list):
         raise ValueError("txids must be list")
@@ -139,6 +156,7 @@ __all__ = [
     "TxNotFound",
     "TxMempoolReq",
     "TxMempoolResp",
+    "TxMempoolSummary",
     "parse_txids",
     "parse_tx_data_items",
 ]

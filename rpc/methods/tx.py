@@ -1761,6 +1761,22 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
 
 
 @method(
+    "tx.explainNotIncluded",
+    desc="Explain why a transaction is not included in a block yet.",
+    aliases=("tx_explainNotIncluded",),
+)
+def tx_explain_not_included(tx_hash: str) -> dict:
+    try:
+        from rpc.methods.mempool import mempool_explain
+    except Exception as exc:
+        raise rpc_errors.InternalError(
+            "mempool explain unavailable",
+            data={"error": str(exc)},
+        ) from exc
+    return mempool_explain(tx_hash)
+
+
+@method(
     "tx.getTransactionByHash",
     desc="Get a transaction by hash. Returns full object with pending/persisted context.",
     aliases=("tx_getTransactionByHash",),
