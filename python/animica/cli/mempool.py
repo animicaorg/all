@@ -292,7 +292,11 @@ def list_pending(
                     # Poll for transactions to arrive with increasing delays
                     # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
                     # Start with short delays to be responsive, increase if needed
-                    delays = [0.05, 0.1, 0.15, 0.2]  # Total: 0.5 seconds max
+                    # Increased timeout from 0.5s to 2.0s to handle:
+                    # - Higher network latency in production (100-300ms roundtrip)
+                    # - TX_DATA validation overhead (hashing, signatures)
+                    # - Mempool admission delays (nonce checks, balance verification)
+                    delays = [0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7]  # Total: 2.0 seconds max
                     for delay in delays:
                         time.sleep(delay)
 
@@ -314,6 +318,21 @@ def list_pending(
                         # Timeout: no new transactions after polling
                         typer.echo(
                             f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
+                        )
+                        typer.echo(
+                            "  Note: Transactions may have been:"
+                        )
+                        typer.echo(
+                            "    • Rejected during validation (hash mismatch, invalid signature)"
+                        )
+                        typer.echo(
+                            "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
+                        )
+                        typer.echo(
+                            "    • Not available on peers (responded with TX_NOTFOUND)"
+                        )
+                        typer.echo(
+                            "  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND"
                         )
             except Exception as e:
                 typer.echo(
