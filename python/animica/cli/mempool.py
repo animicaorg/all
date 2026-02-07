@@ -288,6 +288,8 @@ def list_pending(
                     no_cache=True,
                 )
                 requested = import_result.get("requested", 0) if isinstance(import_result, dict) else 0
+                tx_state_sample = import_result.get("tx_state_sample", []) if isinstance(import_result, dict) else []
+                
                 if requested > 0:
                     # Poll for transactions to arrive with increasing delays
                     # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
@@ -319,21 +321,68 @@ def list_pending(
                         typer.echo(
                             f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
                         )
-                        typer.echo(
-                            "  Note: Transactions may have been:"
-                        )
-                        typer.echo(
-                            "    • Rejected during validation (hash mismatch, invalid signature)"
-                        )
-                        typer.echo(
-                            "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
-                        )
-                        typer.echo(
-                            "    • Not available on peers (responded with TX_NOTFOUND)"
-                        )
-                        typer.echo(
-                            "  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND"
-                        )
+                        
+                        # Show specific rejection reasons if available
+                        if tx_state_sample:
+                            # Group transactions by state and reason
+                            rejected_txs = []
+                            for tx_state in tx_state_sample:
+                                if not isinstance(tx_state, dict):
+                                    continue
+                                state = tx_state.get("state", "")
+                                # Show transactions that weren't accepted into mempool
+                                if state not in {"accepted_in_mempool"}:
+                                    rejected_txs.append(tx_state)
+                            
+                            if rejected_txs:
+                                typer.echo("  Rejection details:")
+                                # Limit output to avoid overwhelming the user
+                                for tx_state in rejected_txs[:20]:
+                                    txid = tx_state.get("txid", "unknown")
+                                    state = tx_state.get("state", "unknown")
+                                    reason = tx_state.get("last_reason")
+                                    peer = tx_state.get("last_peer", "n/a")
+                                    attempts = tx_state.get("attempts", 0)
+                                    
+                                    # Format the rejection info
+                                    reason_text = f" reason={reason}" if reason else ""
+                                    typer.echo(
+                                        f"    {_short_id(txid, 10)} state={state}{reason_text} peer={_short_id(peer, 10) or 'n/a'} attempts={attempts}"
+                                    )
+                                
+                                if len(rejected_txs) > 20:
+                                    typer.echo(f"    ... and {len(rejected_txs) - 20} more (see node logs for full details)")
+                            else:
+                                # No rejected transactions in sample, show generic note
+                                typer.echo(
+                                    "  Note: Transactions may have been:"
+                                )
+                                typer.echo(
+                                    "    • Rejected during validation (hash mismatch, invalid signature)"
+                                )
+                                typer.echo(
+                                    "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
+                                )
+                                typer.echo(
+                                    "    • Not available on peers (responded with TX_NOTFOUND)"
+                                )
+                        else:
+                            # Fallback to generic note if no state info available
+                            typer.echo(
+                                "  Note: Transactions may have been:"
+                            )
+                            typer.echo(
+                                "    • Rejected during validation (hash mismatch, invalid signature)"
+                            )
+                            typer.echo(
+                                "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
+                            )
+                            typer.echo(
+                                "    • Not available on peers (responded with TX_NOTFOUND)"
+                            )
+                            typer.echo(
+                                "  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND"
+                            )
             except Exception as e:
                 typer.echo(
                     f"⚠ Could not auto-import peer transactions: {e}\n"
