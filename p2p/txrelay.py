@@ -1089,6 +1089,10 @@ class TxRelayService:
                 last_peer=origin_label or conn_id,
             )
             
+            # Mark peer as knowing about this transaction BEFORE admitting to mempool
+            # This prevents the P2P broadcast callback from trying to send it back to the originating peer
+            self._mark_known(conn_id, txid_bytes)
+            
             try:
                 ok, reason = await self._admit_tx(normalized_raw, origin_label or conn_id)
                 log.info(
@@ -1117,7 +1121,7 @@ class TxRelayService:
                 reason = f"exception:{type(exc).__name__}"
             
             self._clear_inflight(txid_bytes)
-            self._mark_known(conn_id, txid_bytes)
+            # Note: _mark_known() is called BEFORE admit_tx to prevent re-broadcast to sender
             if ok:
                 broadcast.append(txid_bytes)
                 self._reject_cache.pop(txid_bytes, None)
