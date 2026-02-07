@@ -984,7 +984,7 @@ async def import_peer_known_txs(limit: int | None = None) -> dict[str, t.Any]:
         return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
     lim = 128 if limit is None else int(limit)
     try:
-        requested = await p2p_svc.request_missing_txids(limit=lim)
+        requested = await p2p_svc.request_missing_txids(limit=lim, force=True)
         return {"success": True, "requested": requested, "limit": lim}
     except Exception as exc:  # pragma: no cover - defensive
         return {"success": False, "error": str(exc), "limit": lim}
