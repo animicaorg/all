@@ -52,8 +52,13 @@ def test_mempool_list_auto_imports_peer_transactions_and_displays_them(monkeypat
             return {"requested": 1}
         raise AssertionError(f"Unexpected RPC method: {method}")
 
+    def fake_sleep(duration):
+        # Skip actual sleep in tests
+        pass
+
     monkeypatch.setattr("animica.cli.mempool._resolve_rpc_url", fake_resolve_rpc_url)
     monkeypatch.setattr("animica.cli.mempool.call_rpc", fake_call_rpc)
+    monkeypatch.setattr("time.sleep", fake_sleep)
 
     result = runner.invoke(app, ["mempool", "list"])
 
