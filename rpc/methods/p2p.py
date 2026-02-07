@@ -985,7 +985,23 @@ async def import_peer_known_txs(limit: int | None = None) -> dict[str, t.Any]:
     lim = 128 if limit is None else int(limit)
     try:
         requested = await p2p_svc.request_missing_txids(limit=lim, force=True)
-        return {"success": True, "requested": requested, "limit": lim}
+        
+        # Get transaction state details to show rejection reasons
+        tx_state_sample = []
+        relay_svc = _get_tx_relay_service(p2p_svc)
+        if relay_svc is not None and hasattr(relay_svc, "tx_state_snapshot"):
+            try:
+                # Get a larger sample to capture recent transaction states
+                tx_state_sample = relay_svc.tx_state_snapshot(limit=min(lim, 100))
+            except Exception:
+                pass  # Silently fail if snapshot unavailable
+        
+        return {
+            "success": True,
+            "requested": requested,
+            "limit": lim,
+            "tx_state_sample": tx_state_sample,
+        }
     except Exception as exc:  # pragma: no cover - defensive
         return {"success": False, "error": str(exc), "limit": lim}
 
