@@ -71,6 +71,7 @@ class TxGlobalState:
     arrival_time: float
     source: str
     tx_bytes: Optional[bytes] = None
+    canonical_bytes: Optional[bytes] = None
     validation_status: str = "unknown"
     validation_reason: Optional[str] = None
     mempool_status: str = "not_in_pool"
@@ -101,8 +102,9 @@ class TxRequestState:
 
 
 class TxRequestManager:
-    def __init__(self, *, cooldown_s: float, cap: int) -> None:
+    def __init__(self, *, cooldown_s: float, invalid_cooldown_s: float, cap: int) -> None:
         self.cooldown_s = float(cooldown_s)
+        self.invalid_cooldown_s = float(invalid_cooldown_s)
         self.cap = int(cap)
         self._states: "OrderedDict[bytes, TxRequestState]" = OrderedDict()
 
@@ -157,7 +159,8 @@ class TxRequestManager:
     def mark_received_invalid(
         self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
     ) -> None:
-        self._touch(txid, now=now, state="received_invalid", peer=peer, reason=reason)
+        entry = self._touch(txid, now=now, state="invalid_final", peer=peer, reason=reason)
+        entry.next_retry_at = now + max(self.invalid_cooldown_s, self.cooldown_s)
 
     def mark_accepted(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
         self._touch(txid, now=now, state="accepted_in_mempool", peer=peer)
@@ -175,7 +178,7 @@ class TxRequestManager:
         entry = self._states.get(txid)
         if entry is None:
             return True
-        if entry.state in {"accepted_in_mempool"}:
+        if entry.state in {"accepted_in_mempool", "invalid_final"}:
             return False
         return entry.next_retry_at <= now
 
@@ -274,6 +277,7 @@ class TxRelayService:
         inflight_timeout_s: float = 10.0,
         inflight_max_retries: int = 2,
         request_cooldown_s: float = 3.5,
+        invalid_tx_cooldown_s: float = 1800.0,
         max_inflight_total: int = 2048,
         max_inflight_per_peer: int = 128,
         tx_state_cap: int = 50_000,
@@ -312,6 +316,7 @@ class TxRelayService:
         self.inflight_timeout_s = float(inflight_timeout_s)
         self.inflight_max_retries = int(inflight_max_retries)
         self.request_cooldown_s = float(request_cooldown_s)
+        self.invalid_tx_cooldown_s = float(invalid_tx_cooldown_s)
         self.max_inflight_total = int(max_inflight_total)
         self.max_inflight_per_peer = int(max_inflight_per_peer)
         self.tx_state_cap = int(tx_state_cap)
@@ -342,6 +347,10 @@ class TxRelayService:
         self._on_tx_accepted = on_tx_accepted
 
         self._peer_state: Dict[str, PeerTxState] = {}
+        self._peer_invalid_counts: Dict[str, int] = {}
+        self._peer_penalty_until: Dict[str, float] = {}
+        self._peer_penalty_threshold = 3
+        self._peer_penalty_ttl_s = 300.0
         self._inflight: Dict[bytes, InflightEntry] = {}
         self._inflight_by_peer: Dict[str, int] = {}
         self._tx_sources: Dict[bytes, Set[str]] = {}
@@ -364,7 +373,9 @@ class TxRelayService:
             tx_data_rate_bytes_per_sec, tx_data_burst_bytes
         )
         self._request_mgr = TxRequestManager(
-            cooldown_s=self.request_cooldown_s, cap=self.tx_state_cap
+            cooldown_s=self.request_cooldown_s,
+            invalid_cooldown_s=self.invalid_tx_cooldown_s,
+            cap=self.tx_state_cap,
         )
         self._running = False
         self._lock = asyncio.Lock()
@@ -427,7 +438,19 @@ class TxRelayService:
                 self._clear_inflight(txid)
 
     def _eligible_peers(self) -> List[str]:
-        return [p for p in self._peer_ids() if self._peer_eligible(p)]
+        now = time.time()
+        return [
+            p
+            for p in self._peer_ids()
+            if self._peer_eligible(p) and self._peer_penalty_until.get(p, 0.0) <= now
+        ]
+
+    def _note_invalid_peer(self, conn_id: str) -> None:
+        now = time.time()
+        count = self._peer_invalid_counts.get(conn_id, 0) + 1
+        self._peer_invalid_counts[conn_id] = count
+        if count >= self._peer_penalty_threshold:
+            self._peer_penalty_until[conn_id] = now + self._peer_penalty_ttl_s
 
     def _ensure_peer(self, conn_id: str) -> PeerTxState:
         state = self._peer_state.get(conn_id)
@@ -486,6 +509,7 @@ class TxRelayService:
         *,
         source: Optional[str] = None,
         tx_bytes: Optional[bytes] = None,
+        canonical_bytes: Optional[bytes] = None,
         validation_status: Optional[str] = None,
         validation_reason: Optional[str] = None,
         mempool_status: Optional[str] = None,
@@ -500,6 +524,7 @@ class TxRelayService:
                 arrival_time=now,
                 source=source or "unknown",
                 tx_bytes=tx_bytes,
+                canonical_bytes=canonical_bytes,
                 validation_status=validation_status or "unknown",
                 validation_reason=validation_reason,
                 mempool_status=mempool_status or "not_in_pool",
@@ -514,6 +539,8 @@ class TxRelayService:
             entry.source = source
         if tx_bytes is not None:
             entry.tx_bytes = tx_bytes
+        if canonical_bytes is not None:
+            entry.canonical_bytes = canonical_bytes
         if validation_status is not None:
             entry.validation_status = validation_status
         if validation_reason is not None:
@@ -994,6 +1021,7 @@ class TxRelayService:
                 self._request_mgr.mark_received_invalid(
                     txid_bytes, peer=conn_id, reason="oversize", now=time.time()
                 )
+                self._note_invalid_peer(conn_id)
                 self._set_peer_tx_state(conn_id, txid_bytes, "VALIDATED_FAIL", reason="oversize")
                 self._touch_tx_store(
                     txid_bytes,
@@ -1037,6 +1065,7 @@ class TxRelayService:
                 self._request_mgr.mark_received_invalid(
                     txid_bytes, peer=conn_id, reason="hash_mismatch", now=time.time()
                 )
+                self._note_invalid_peer(conn_id)
                 self._set_peer_tx_state(conn_id, txid_bytes, "VALIDATED_FAIL", reason="hash_mismatch")
                 self._touch_tx_store(
                     txid_bytes,
@@ -1087,6 +1116,7 @@ class TxRelayService:
                 txid_bytes,
                 source=f"peer:{origin_label or conn_id}",
                 tx_bytes=normalized_raw,
+                canonical_bytes=normalized_raw,
                 last_peer=origin_label or conn_id,
             )
             
@@ -1139,6 +1169,7 @@ class TxRelayService:
                     validation_status="valid",
                     mempool_status="in_pool",
                     mempool_reason=None,
+                    canonical_bytes=normalized_raw,
                     last_peer=origin_label or conn_id,
                 )
                 self._record_event(
@@ -1181,6 +1212,7 @@ class TxRelayService:
                     now=time.time(),
                 )
                 self._metrics["rejected_count"] += 1
+                self._note_invalid_peer(conn_id)
                 self._metrics["last_rejected_at"] = time.time()
                 self._set_peer_tx_state(
                     conn_id, txid_bytes, "VALIDATED_FAIL", reason=reason or "reject"
@@ -1960,6 +1992,8 @@ class TxRelayService:
             # Skip ineligible peers (disconnected, duplicate connections, etc.)
             if not self._peer_eligible(state.conn_id):
                 continue
+            if self._peer_penalty_until.get(state.conn_id, 0.0) > now:
+                continue
             candidates = state.known_txids.sample(limit=remaining)
             for txid in candidates:
                 if remaining <= 0:
@@ -2094,6 +2128,12 @@ class TxRelayService:
             "tx_store_count": len(self._tx_store),
             "inflight_timeout_s": self.inflight_timeout_s,
             "request_cooldown_s": self.request_cooldown_s,
+            "invalid_tx_cooldown_s": self.invalid_tx_cooldown_s,
+            "peer_penalties": {
+                peer: until
+                for peer, until in self._peer_penalty_until.items()
+                if until > time.time()
+            },
             "reconcile_interval_s": self.reconcile_interval_s,
             "peers": peers,
         }
@@ -2138,6 +2178,7 @@ class TxRelayService:
                 "source": store.source,
                 "arrival_time": store.arrival_time,
                 "has_bytes": store.tx_bytes is not None,
+                "has_canonical_bytes": store.canonical_bytes is not None,
                 "validation_status": store.validation_status,
                 "validation_reason": store.validation_reason,
                 "mempool_status": store.mempool_status,

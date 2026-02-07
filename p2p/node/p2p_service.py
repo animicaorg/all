@@ -1044,6 +1044,9 @@ class P2PService:
                 inv_flush_interval_s=0.2,
                 inflight_timeout_s=10.0,
                 inflight_max_retries=2,
+                invalid_tx_cooldown_s=float(
+                    os.environ.get("ANIMICA_P2P_TX_INVALID_COOLDOWN_SEC", "1800") or 1800
+                ),
                 mempool_sync_interval_s=self._tx_mempool_sync_interval_s,
                 mempool_sync_limit=self._tx_mempool_sync_limit,
                 mempool_watchdog_interval_s=self._tx_mempool_watchdog_interval_s,
