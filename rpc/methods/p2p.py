@@ -978,29 +978,93 @@ async def debug_tx_relay_metrics() -> dict[str, t.Any]:
     "p2p.importPeerKnownTxs",
     desc="Fetch peer-known transaction IDs and admit missing transactions to the local mempool.",
 )
-async def import_peer_known_txs(limit: int | None = None) -> dict[str, t.Any]:
+async def import_peer_known_txs(
+    limit: int | None = None,
+    timeout_s: float | None = None,
+    max_peers: int = 2,
+    batch_size: int = 64,
+) -> dict[str, t.Any]:
     p2p_svc = _get_p2p_service()
     if p2p_svc is None or not hasattr(p2p_svc, "request_missing_txids"):
         return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
     lim = 128 if limit is None else int(limit)
+    timeout = float(timeout_s if timeout_s is not None else 12.0)
+    timeout = max(2.0, min(timeout, 30.0))
     try:
-        requested = await p2p_svc.request_missing_txids(limit=lim, force=True)
-        
-        # Get transaction state details to show rejection reasons
-        tx_state_sample = []
+        request_result = await p2p_svc.request_missing_txids(
+            limit=lim,
+            force=True,
+            max_peers=max_peers,
+            batch_size=batch_size,
+            include_details=True,
+        )
+        if not isinstance(request_result, dict):
+            request_result = {"requested": int(request_result)}
+
+        requested = int(request_result.get("requested", 0) or 0)
+        requested_txids = [x for x in request_result.get("requested_txids", []) if isinstance(x, str)]
+        requested_peers = [x for x in request_result.get("requested_peers", []) if isinstance(x, str)]
+
         relay_svc = _get_tx_relay_service(p2p_svc)
-        if relay_svc is not None and hasattr(relay_svc, "tx_state_snapshot"):
-            try:
-                # Get a larger sample to capture recent transaction states
-                tx_state_sample = relay_svc.tx_state_snapshot(limit=min(lim, 100))
-            except Exception:
-                pass  # Silently fail if snapshot unavailable
-        
+        tx_state_sample: list[dict[str, t.Any]] = []
+        by_outcome: dict[str, list[dict[str, t.Any]]] = {
+            "admitted": [],
+            "rejected": [],
+            "notfound": [],
+            "pending": [],
+        }
+
+        started = time.time()
+        while requested > 0 and (time.time() - started) < timeout:
+            all_done = True
+            for txid_hex in requested_txids:
+                txid_raw = txid_hex[2:] if txid_hex.startswith("0x") else txid_hex
+                try:
+                    txid = bytes.fromhex(txid_raw)
+                except Exception:
+                    continue
+                tx_state = relay_svc.tx_state_for(txid) if relay_svc and hasattr(relay_svc, "tx_state_for") else None
+                if not isinstance(tx_state, dict):
+                    all_done = False
+                    continue
+                tx_state_sample.append(tx_state)
+                state = str(tx_state.get("state") or "")
+                row = {
+                    "txid": txid_hex,
+                    "state": state,
+                    "last_peer": tx_state.get("last_peer"),
+                    "reason": tx_state.get("last_reason") or tx_state.get("validation_reason") or tx_state.get("mempool_reason"),
+                }
+                if state == "accepted_in_mempool":
+                    by_outcome["admitted"].append(row)
+                elif "notfound" in state or "not_found" in state:
+                    by_outcome["notfound"].append(row)
+                elif "reject" in state or state in {"dropped", "invalid", "rejected"}:
+                    by_outcome["rejected"].append(row)
+                else:
+                    all_done = False
+                    by_outcome["pending"].append(row)
+            if all_done:
+                break
+            await asyncio.sleep(0.2)
+
+        timed_out = requested > 0 and (time.time() - started) >= timeout and len(by_outcome["pending"]) > 0
         return {
             "success": True,
             "requested": requested,
+            "requested_txids": requested_txids,
+            "requested_peers": requested_peers,
+            "timeout_s": timeout,
+            "timed_out": timed_out,
+            "summary": {
+                "admitted": len(by_outcome["admitted"]),
+                "rejected": len(by_outcome["rejected"]),
+                "notfound": len(by_outcome["notfound"]),
+                "pending": len(by_outcome["pending"]),
+            },
+            "outcomes": by_outcome,
             "limit": lim,
-            "tx_state_sample": tx_state_sample,
+            "tx_state_sample": tx_state_sample or (relay_svc.tx_state_snapshot(limit=min(lim, 100)) if relay_svc and hasattr(relay_svc, "tx_state_snapshot") else []),
         }
     except Exception as exc:  # pragma: no cover - defensive
         return {"success": False, "error": str(exc), "limit": lim}
@@ -1658,6 +1722,13 @@ async def mempool_sync_status() -> dict[str, t.Any]:
         "dropped_count": txrelay_metrics.get("dropped_count", 0),
         "inv_queue_depth": inv_queue_depth or 0,
         "inflight": txrelay_metrics.get("inflight", 0),
+        "inflight_by_peer": txrelay_snapshot.get("inflight_by_peer", {}) if isinstance(txrelay_snapshot, dict) else {},
+        "last_reconcile_at": txrelay_metrics.get("last_reconcile_at"),
+        "timeouts": {
+            "inflight_timeout_s": txrelay_snapshot.get("inflight_timeout_s") if isinstance(txrelay_snapshot, dict) else None,
+            "request_cooldown_s": txrelay_snapshot.get("request_cooldown_s") if isinstance(txrelay_snapshot, dict) else None,
+            "reconcile_interval_s": txrelay_snapshot.get("reconcile_interval_s") if isinstance(txrelay_snapshot, dict) else None,
+        },
         "mempool": mempool_info,
         "peers": peers,
         "txrelay": {

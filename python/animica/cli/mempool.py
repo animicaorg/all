@@ -110,6 +110,13 @@ def sync_status(
             inv_queue=result.get("inv_queue_depth", 0),
         )
     )
+    typer.echo(
+        "Reconcile: last={last} inflight_by_peer={inflight_by_peer} timeouts={timeouts}".format(
+            last=result.get("last_reconcile_at"),
+            inflight_by_peer=result.get("inflight_by_peer", {}),
+            timeouts=result.get("timeouts", {}),
+        )
+    )
     peers = result.get("peers") if isinstance(result, dict) else []
     if peers:
         typer.echo("Peers:")
@@ -299,47 +306,52 @@ def list_pending(
             try:
                 import_result = call_rpc(
                     "p2p.importPeerKnownTxs",
-                    [128],
+                    [128, 12.0, 2, 64],
                     rpc_url=resolved_rpc_url,
                     no_cache=True,
                 )
                 requested = import_result.get("requested", 0) if isinstance(import_result, dict) else 0
                 tx_state_sample = import_result.get("tx_state_sample", []) if isinstance(import_result, dict) else []
-                
-                if requested > 0:
-                    # Poll for transactions to arrive with increasing delays
-                    # TX_GET -> network roundtrip -> TX_DATA -> validation -> mempool admission
-                    # Start with short delays to be responsive, increase if needed
-                    # Increased timeout from 0.5s to 2.0s to handle:
-                    # - Higher network latency in production (100-300ms roundtrip)
-                    # - TX_DATA validation overhead (hashing, signatures)
-                    # - Mempool admission delays (nonce checks, balance verification)
-                    delays = [0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7]  # Total: 2.0 seconds max
-                    for delay in delays:
-                        time.sleep(delay)
 
-                        refreshed = call_rpc(
-                            "mempool.getPending",
-                            [True],
-                            rpc_url=resolved_rpc_url,
-                            no_cache=True,
-                        )
-                        if isinstance(refreshed, list) and len(refreshed) > len(result):
-                            # Transactions arrived!
-                            added = max(0, len(refreshed) - len(result))
-                            result = refreshed
-                            typer.echo(
-                                f"Auto-imported peer transactions: requested={requested}, newly_visible={added}"
-                            )
-                            break
+                if requested > 0:
+                    refreshed = call_rpc(
+                        "mempool.getPending",
+                        [True],
+                        rpc_url=resolved_rpc_url,
+                        no_cache=True,
+                    )
+                    if isinstance(refreshed, list):
+                        added = max(0, len(refreshed) - len(result))
+                        result = refreshed
                     else:
-                        # Timeout: no new transactions after polling
+                        added = 0
+                    requested_txids = import_result.get("requested_txids", []) if isinstance(import_result, dict) else []
+                    requested_peers = import_result.get("requested_peers", []) if isinstance(import_result, dict) else []
+                    summary = import_result.get("summary", {}) if isinstance(import_result, dict) else {}
+                    timed_out = bool(import_result.get("timed_out")) if isinstance(import_result, dict) else False
+                    timeout_s = import_result.get("timeout_s") if isinstance(import_result, dict) else None
+
+                    if timed_out and added == 0:
                         typer.echo(
-                            f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
+                            f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {timeout_s}s)"
                         )
+                    else:
+                        typer.echo(
+                            f"Auto-imported peer transactions: requested={requested}, newly_visible={added}"
+                        )
+                    typer.echo(f"  requested_txids={requested_txids}")
+                    typer.echo(f"  peers_queried={requested_peers}")
+                    typer.echo(
+                        "  outcomes: admitted={admitted} rejected={rejected} notfound={notfound} pending={pending}".format(
+                            admitted=summary.get("admitted", 0),
+                            rejected=summary.get("rejected", 0),
+                            notfound=summary.get("notfound", 0),
+                            pending=summary.get("pending", 0),
+                        )
+                    )
+
+                    if added == 0:
                         typer.echo("-" * 60)
-                        
-                        # Show specific rejection reasons if available
                         if tx_state_sample:
                             # Group transactions by state and reason
                             rejected_txs = []

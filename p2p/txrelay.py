@@ -388,6 +388,7 @@ class TxRelayService:
             "reconcile_missing_found": 0,
             "mempool_summary_sent": 0,
             "mempool_summary_recv": 0,
+            "last_reconcile_at": None,
             "last_announced_at": None,
             "last_received_at": None,
             "last_requested_at": None,
@@ -1883,6 +1884,7 @@ class TxRelayService:
             try:
                 await asyncio.sleep(self.reconcile_interval_s)
                 self._metrics["reconcile_runs"] += 1
+                self._metrics["last_reconcile_at"] = time.time()
                 async with self._lock:
                     peers = [p.conn_id for p in self._peer_state.values() if self._peer_eligible(p.conn_id)]
                 if not peers:
@@ -1937,12 +1939,19 @@ class TxRelayService:
         limit: int = 128,
         trigger: str = "request_missing_known",
         force: bool = False,
-    ) -> int:
+        *,
+        max_peers: int = 2,
+        batch_size: int = 64,
+        include_details: bool = False,
+    ) -> int | Dict[str, Any]:
         if limit <= 0:
             return 0
         requests_by_peer: Dict[str, List[bytes]] = {}
         async with self._lock:
             peer_states = list(self._peer_state.values())
+        if max_peers > 0:
+            peer_states = peer_states[:max_peers]
+        batch_size = max(1, min(int(batch_size), 256))
         now = time.time()
         remaining = int(limit)
         for state in peer_states:
@@ -2017,14 +2026,18 @@ class TxRelayService:
                 requests_by_peer.setdefault(state.conn_id, []).append(txid)
                 remaining -= 1
         total = 0
+        requested_txids: list[str] = []
+        requested_peers: list[str] = []
         for conn_id, txids in requests_by_peer.items():
-            for idx in range(0, len(txids), 256):
-                batch = txids[idx : idx + 256]
+            requested_peers.append(conn_id)
+            for idx in range(0, len(txids), batch_size):
+                batch = txids[idx : idx + batch_size]
                 self._metrics["get_sent"] += len(batch)
                 self._metrics["requested_count"] += len(batch)
                 self._metrics["last_requested_at"] = time.time()
                 await self._send_tx_get(conn_id, batch)
                 total += len(batch)
+                requested_txids.extend(f"0x{txid.hex()}" for txid in batch)
                 for txid in batch:
                     self._record_event(
                         "TX_RELAY_RECONCILE_GET_SENT",
@@ -2040,10 +2053,19 @@ class TxRelayService:
                     extra={
                         "peer": conn_id,
                         "count": len(batch),
+                        "txids": [f"0x{txid.hex()}" for txid in batch],
                         "trigger": trigger,
                         **self._peer_log_extra(conn_id),
                     },
                 )
+        if include_details:
+            return {
+                "requested": total,
+                "requested_txids": requested_txids,
+                "requested_peers": requested_peers,
+                "batch_size": batch_size,
+                "max_peers": max_peers,
+            }
         return total
 
     def snapshot(self) -> dict[str, Any]:
@@ -2070,6 +2092,9 @@ class TxRelayService:
             "tx_state_counts": self._request_mgr.counts(),
             "tx_state_sample": self._request_mgr.snapshot(limit=10),
             "tx_store_count": len(self._tx_store),
+            "inflight_timeout_s": self.inflight_timeout_s,
+            "request_cooldown_s": self.request_cooldown_s,
+            "reconcile_interval_s": self.reconcile_interval_s,
             "peers": peers,
         }
 
