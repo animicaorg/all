@@ -141,6 +141,12 @@ def test_defensive_decode_logs_fallback_usage():
                     except Exception:
                         pass  # We expect this to fail due to missing dependencies
                     
-                    # Check that fallback was logged
-                    # The log should mention trying alternative decoders
+                    # Verify that fallback decoder attempt was logged
+                    # Check for the "Primary CBOR decoder failed" info message
+                    info_calls = [call for call in mock_log.info.call_args_list]
+                    assert any(
+                        "Primary CBOR decoder failed" in str(call) or 
+                        "alternative decoders" in str(call).lower()
+                        for call in info_calls
+                    ), "Expected log message about trying alternative decoders"
 
