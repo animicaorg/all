@@ -762,6 +762,8 @@ def _get_tx_relay_service(p2p_svc: t.Any) -> t.Any | None:
     relay_svc = getattr(p2p_svc, "tx_relay_service", None)
     if relay_svc is None:
         relay_svc = getattr(p2p_svc, "_tx_relay", None)
+    if relay_svc is None:
+        relay_svc = getattr(p2p_svc, "_txrelay", None)
     return relay_svc
 
 
