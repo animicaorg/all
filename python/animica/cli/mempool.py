@@ -440,7 +440,7 @@ def list_pending(
                 typer.echo("    • Transactions were rejected (validation failed, nonce conflicts)")
                 typer.echo("    • Transactions are not yet imported (use 'animica mempool sync-status' to check)")
                 typer.echo("    • Network delays or peer disconnections")
-                typer.echo("  Use 'animica rpc call p2p.importPeerKnownTxs '[128, 12.0, 2, 64]'' to retry importing")
+                typer.echo('  Use "animica rpc call p2p.importPeerKnownTxs \'[128, 12.0, 2, 64]\'" to retry importing')
             else:
                 typer.echo("Mempool is empty (no pending transactions)")
         else:
