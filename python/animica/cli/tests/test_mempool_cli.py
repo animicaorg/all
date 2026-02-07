@@ -146,6 +146,10 @@ def test_mempool_list_shows_rejection_reasons_when_transactions_fail(monkeypatch
     assert result.exit_code == 0
     assert "Auto-imported peer transactions: requested=2, newly_visible=0" in result.stdout
     assert "Transaction Status Summary" in result.stdout
+    # Verify specific counts
+    assert "✓ Accepted:  0" in result.stdout
+    assert "⏳ Pending:   0" in result.stdout
+    assert "✗ Rejected:  2" in result.stdout
     assert "Rejected Transaction Details:" in result.stdout
     assert "0xabc123" in result.stdout
     assert "[received_invalid]" in result.stdout

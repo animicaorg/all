@@ -337,7 +337,7 @@ def list_pending(
                         typer.echo(
                             f"Auto-imported peer transactions: requested={requested}, newly_visible=0 (timed out after {sum(delays)}s)"
                         )
-                        typer.echo("─" * 60)
+                        typer.echo("-" * 60)
                         
                         # Show specific rejection reasons if available
                         if tx_state_sample:
@@ -359,7 +359,7 @@ def list_pending(
                                     rejected_txs.append(tx_state)
                             
                             # Show summary first
-                            typer.echo(f"Transaction Status Summary (sampled {len(tx_state_sample)} recent):")
+                            typer.echo(f"Transaction Status Summary (showing {len(tx_state_sample)} most recent):")
                             typer.echo(f"  ✓ Accepted:  {len(accepted_txs)}")
                             typer.echo(f"  ⏳ Pending:   {len(pending_txs)}")
                             typer.echo(f"  ✗ Rejected:  {len(rejected_txs)}")
@@ -383,7 +383,7 @@ def list_pending(
                                 
                                 if len(rejected_txs) > 20:
                                     typer.echo(f"  ... and {len(rejected_txs) - 20} more rejected transactions")
-                                    typer.echo(f"  (Check node logs for complete details: TX_DATA_ADMIT_RESULT, TX_REJECTED)")
+                                    typer.echo(f"  (Check node logs for details)")
                             
                             if pending_txs:
                                 typer.echo("")
@@ -399,8 +399,8 @@ def list_pending(
                                 if len(pending_txs) > 10:
                                     typer.echo(f"  ... and {len(pending_txs) - 10} more pending transactions")
                             
-                            if not rejected_txs and not pending_txs:
-                                # All transactions accepted, but they're not showing in mempool
+                            if not rejected_txs and not pending_txs and accepted_txs:
+                                # All transactions in sample accepted, but they're not showing in mempool
                                 typer.echo("Note: Transaction state shows accepted, but not visible in mempool.")
                                 typer.echo("  This may indicate:")
                                 typer.echo("    • Transactions were already included in a block")
@@ -411,7 +411,7 @@ def list_pending(
                             typer.echo("Transaction Status: Unable to retrieve detailed status")
                             _print_generic_rejection_note(include_log_check=True)
                         
-                        typer.echo("─" * 60)
+                        typer.echo("-" * 60)
             except Exception as e:
                 typer.echo(
                     f"⚠ Could not auto-import peer transactions: {e}\n"
