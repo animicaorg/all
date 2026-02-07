@@ -15,28 +15,6 @@ from unittest.mock import MagicMock, patch
 # For unit testing, we'll test the logic directly
 
 
-def test_defensive_decode_with_primary_cbor_success():
-    """Test that primary CBOR decoder is used when it succeeds."""
-    # We'll test the actual implementation when dependencies are available
-    # For now, this is a placeholder to establish the test pattern
-    pass
-
-
-def test_defensive_decode_fallback_to_cbor2():
-    """Test that cbor2 is tried when primary CBOR fails."""
-    pass
-
-
-def test_defensive_decode_fallback_to_json():
-    """Test that JSON is tried as last resort when all CBOR decoders fail."""
-    pass
-
-
-def test_defensive_decode_all_fail_clear_message():
-    """Test that when all decoders fail, a clear error message is provided."""
-    pass
-
-
 def test_try_alternative_decoders_cbor2_success():
     """Test _try_alternative_decoders with cbor2 succeeding."""
     from rpc.methods.tx import _try_alternative_decoders
