@@ -29,6 +29,22 @@ def _short_id(value: Optional[str], length: int = 10) -> Optional[str]:
         return "0x" + text
     return "0x" + text[:length]
 
+
+def _print_generic_rejection_note(include_log_check: bool = False) -> None:
+    """
+    Print a generic note about why transactions may not have been imported.
+    
+    Args:
+        include_log_check: Whether to include the log checking instruction
+    """
+    typer.echo("  Note: Transactions may have been:")
+    typer.echo("    • Rejected during validation (hash mismatch, invalid signature)")
+    typer.echo("    • Failed mempool admission (insufficient balance, nonce conflict, low fee)")
+    typer.echo("    • Not available on peers (responded with TX_NOTFOUND)")
+    if include_log_check:
+        typer.echo("  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND")
+
+
 app = typer.Typer(
     name="mempool",
     help="Mempool inspection and management",
@@ -354,35 +370,10 @@ def list_pending(
                                     typer.echo(f"    ... and {len(rejected_txs) - 20} more (see node logs for full details)")
                             else:
                                 # No rejected transactions in sample, show generic note
-                                typer.echo(
-                                    "  Note: Transactions may have been:"
-                                )
-                                typer.echo(
-                                    "    • Rejected during validation (hash mismatch, invalid signature)"
-                                )
-                                typer.echo(
-                                    "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
-                                )
-                                typer.echo(
-                                    "    • Not available on peers (responded with TX_NOTFOUND)"
-                                )
+                                _print_generic_rejection_note(include_log_check=False)
                         else:
                             # Fallback to generic note if no state info available
-                            typer.echo(
-                                "  Note: Transactions may have been:"
-                            )
-                            typer.echo(
-                                "    • Rejected during validation (hash mismatch, invalid signature)"
-                            )
-                            typer.echo(
-                                "    • Failed mempool admission (insufficient balance, nonce conflict, low fee)"
-                            )
-                            typer.echo(
-                                "    • Not available on peers (responded with TX_NOTFOUND)"
-                            )
-                            typer.echo(
-                                "  Check node logs for: TX_DATA_ADMIT_RESULT, TX_REJECTED, TX_NOTFOUND"
-                            )
+                            _print_generic_rejection_note(include_log_check=True)
             except Exception as e:
                 typer.echo(
                     f"⚠ Could not auto-import peer transactions: {e}\n"
