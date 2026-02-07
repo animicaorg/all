@@ -27,7 +27,12 @@ _TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHA
 
 # ——— Validation failure metrics ———
 try:
-    from rpc.metrics import TX_VALIDATION_FAILURES
+    from rpc.metrics import (
+        TX_VALIDATION_FAILURES,
+        TX_DECODER_SUCCESS,
+        TX_DECODER_FALLBACK,
+        TX_DECODER_ALL_FAILED,
+    )
 except Exception:  # pragma: no cover
     class _Counter:
         def labels(self, **kwargs):
@@ -37,6 +42,9 @@ except Exception:  # pragma: no cover
             pass
 
     TX_VALIDATION_FAILURES = _Counter()  # type: ignore[assignment]
+    TX_DECODER_SUCCESS = _Counter()  # type: ignore[assignment]
+    TX_DECODER_FALLBACK = _Counter()  # type: ignore[assignment]
+    TX_DECODER_ALL_FAILED = _Counter()  # type: ignore[assignment]
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -698,6 +706,8 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
             obj = _cbor2_module.loads(raw)
             if isinstance(obj, dict):
                 log.info("Transaction decoded successfully using cbor2 fallback decoder")
+                TX_DECODER_FALLBACK.labels(fallback_decoder="cbor2").inc()
+                TX_DECODER_SUCCESS.labels(decoder="cbor2").inc()
                 return obj, failure_reasons
             failure_reasons.append(("cbor2", f"Decoded to {type(obj).__name__}, expected dict"))
         except Exception as e:
@@ -711,6 +721,8 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
             obj = _msgspec_module.msgpack.decode(raw)
             if isinstance(obj, dict):
                 log.info("Transaction decoded successfully using msgspec fallback decoder")
+                TX_DECODER_FALLBACK.labels(fallback_decoder="msgspec").inc()
+                TX_DECODER_SUCCESS.labels(decoder="msgspec").inc()
                 return obj, failure_reasons
             failure_reasons.append(("msgspec", f"Decoded to {type(obj).__name__}, expected dict"))
         except Exception as e:
@@ -728,6 +740,8 @@ def _try_alternative_decoders(raw: bytes) -> tuple[dict | None, list[tuple[str, 
                     obj = _json_module.loads(text)
                     if isinstance(obj, dict):
                         log.info("Transaction decoded successfully using JSON fallback decoder")
+                        TX_DECODER_FALLBACK.labels(fallback_decoder="json").inc()
+                        TX_DECODER_SUCCESS.labels(decoder="json").inc()
                         return obj, failure_reasons
                     failure_reasons.append(("json", f"Decoded to {type(obj).__name__}, expected dict"))
                 else:
@@ -827,6 +841,7 @@ def _decode_tx_defensive(raw: bytes) -> tuple[t.Any, dict]:
                 ))
             else:
                 # Primary decoder succeeded, process the object
+                TX_DECODER_SUCCESS.labels(decoder="primary").inc()
                 return _process_decoded_obj(obj, raw)
         except Exception as e:
             all_failures.append((
@@ -853,6 +868,8 @@ def _decode_tx_defensive(raw: bytes) -> tuple[t.Any, dict]:
             ))
     
     # All decoders failed - build comprehensive error message
+    TX_DECODER_ALL_FAILED.inc()
+    
     failure_summary = "\n".join([
         f"  - {decoder}: {reason}"
         for decoder, reason in all_failures
