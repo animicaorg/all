@@ -4237,11 +4237,7 @@ class P2PService:
             bdb = self._block_db()
         except Exception:
             return self._local_head()
-        head = None
-        if hasattr(bdb, "get_canonical_head"):
-            head = bdb.get_canonical_head()
-        if head is None:
-            head = bdb.get_head()
+        head = self._safe_db_head(bdb)
         if head:
             height = int(head[0])
             head_hash = bytes(head[1])
@@ -4252,6 +4248,17 @@ class P2PService:
                 recovered_height, recovered_hash = recovered
                 return recovered_height, "0x" + recovered_hash.hex()
         return self._local_head()
+
+    def _safe_db_head(self, bdb: Any) -> Any:
+        """Best-effort block-db head lookup for mixed DB adapter shapes."""
+        head = None
+        if hasattr(bdb, "get_canonical_head"):
+            with contextlib.suppress(Exception):
+                head = bdb.get_canonical_head()
+        if head is None and hasattr(bdb, "get_head"):
+            with contextlib.suppress(Exception):
+                head = bdb.get_head()
+        return head
 
     def _maybe_mark_block_stalled(self, now: float) -> None:
         if self._sync_best_header is None:
@@ -12631,11 +12638,7 @@ class P2PService:
         self, locator: list[bytes]
     ) -> tuple[int, Optional[bytes], int, int, dict[int, _SyncHeader]]:
         bdb = self._block_db()
-        head = None
-        if hasattr(bdb, "get_canonical_head"):
-            head = bdb.get_canonical_head()
-        if head is None:
-            head = bdb.get_head()
+        head = self._safe_db_head(bdb)
         if not head:
             genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
             return 0, bytes(genesis) if genesis else None, 0, 0, {}
@@ -12862,7 +12865,7 @@ class P2PService:
             return
         try:
             bdb = self._block_db()
-            head = bdb.get_head()
+            head = self._safe_db_head(bdb)
             head_height = int(head[0]) if head else 0
         except Exception:
             head_height = 0
