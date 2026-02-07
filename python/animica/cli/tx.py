@@ -1169,6 +1169,28 @@ def _maybe_force_sync(rpc: str, *, verbose: bool = False) -> None:
             console.print(f"[dim]sync.force failed: {exc}[/dim]")
 
 
+def _connected_peer_count(rpc: str, *, verbose: bool = False) -> int:
+    """Best-effort lookup of currently connected peer count."""
+    try:
+        status = _rpc(rpc, "p2p.getStatus", [])
+    except Exception as exc:
+        if verbose:
+            console.print(f"[dim]p2p.getStatus unavailable: {exc}[/dim]")
+        return 0
+
+    if not isinstance(status, dict):
+        return 0
+
+    for key in ("peers_total", "peer_count", "connected_peers"):
+        value = status.get(key)
+        try:
+            if value is not None:
+                return max(0, int(value))
+        except Exception:
+            continue
+    return 0
+
+
 def _ensure_node_ready_for_tx(rpc: str) -> int | None:
     try:
         status = _rpc(rpc, "sync.getStatus", [{"source": "refresh"}])
@@ -1673,9 +1695,20 @@ def send(
         }
     )
     
+    # Ensure optional peer-ack wait can cover all currently connected peers.
+    effective_min_peers = min_peers
+    if effective_min_peers is not None and effective_min_peers > 0:
+        connected_peers = _connected_peer_count(rpc, verbose=verbose)
+        if connected_peers > effective_min_peers:
+            console.print(
+                f"[yellow]Info:[/yellow] Raising --min-peers from {effective_min_peers} "
+                f"to connected peer count ({connected_peers}) to enforce full mempool propagation."
+            )
+            effective_min_peers = connected_peers
+
     # Wait for PTL peer acknowledgments if requested
-    if min_peers is not None and min_peers > 0:
-        console.print(f"\n[bold]Waiting for {min_peers} peer acknowledgments...[/bold]")
+    if effective_min_peers is not None and effective_min_peers > 0:
+        console.print(f"\n[bold]Waiting for {effective_min_peers} peer acknowledgments...[/bold]")
         start_wait = time.time()
         ack_count = 0
         
@@ -1688,7 +1721,7 @@ def send(
                     ack_count = quorum.get('observed_acks', 0)
                     local_status = repl_result.get('local_status', 'unknown')
                     
-                    if ack_count >= min_peers:
+                    if ack_count >= effective_min_peers:
                         console.print(f"[green]✓ Received {ack_count} acknowledgments[/green]")
                         console.print(f"Status: {local_status}")
                         
@@ -1701,7 +1734,7 @@ def send(
                         break
                     
                     if verbose:
-                        console.print(f"[dim]Acks: {ack_count}/{min_peers} (waiting...)[/dim]")
+                        console.print(f"[dim]Acks: {ack_count}/{effective_min_peers} (waiting...)[/dim]")
                     
                     time.sleep(1)
                 else:
@@ -1721,9 +1754,9 @@ def send(
                     console.print(f"[dim]Error checking replication: {e.message}[/dim]")
                 time.sleep(1)
         
-        if ack_count < min_peers:
+        if ack_count < effective_min_peers:
             elapsed = time.time() - start_wait
-            console.print(f"[yellow]Warning: Only {ack_count}/{min_peers} acks after {elapsed:.1f}s[/yellow]")
+            console.print(f"[yellow]Warning: Only {ack_count}/{effective_min_peers} acks after {elapsed:.1f}s[/yellow]")
             console.print("[yellow]Transaction may still replicate. Use 'animica tx replicate' to check status.[/yellow]")
 
     
