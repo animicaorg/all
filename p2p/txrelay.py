@@ -1774,7 +1774,12 @@ class TxRelayService:
             except Exception:
                 log.warning("tx reconcile loop error", exc_info=True)
 
-    async def request_missing_known(self, limit: int = 128, trigger: str = "request_missing_known") -> int:
+    async def request_missing_known(
+        self,
+        limit: int = 128,
+        trigger: str = "request_missing_known",
+        force: bool = False,
+    ) -> int:
         if limit <= 0:
             return 0
         requests_by_peer: Dict[str, List[bytes]] = {}
@@ -1796,10 +1801,18 @@ class TxRelayService:
                 if inflight_entry is not None:
                     if inflight_entry.deadline <= now:
                         self._clear_inflight(txid)
+                    elif force:
+                        # Manual/import-triggered recovery: clear active inflight so
+                        # we can re-request immediately in case the original request
+                        # got stuck or the response was lost.
+                        self._clear_inflight(txid)
                     else:
                         continue
                 if self._reject_recent(txid):
-                    continue
+                    if force:
+                        self._reject_cache.pop(txid, None)
+                    else:
+                        continue
                 # Check if we actually have the transaction in mempool or chain
                 has_tx = await self._has_tx(txid)
                 if has_tx:
@@ -1828,7 +1841,7 @@ class TxRelayService:
                             "trigger": trigger,
                         },
                     )
-                if not self._request_mgr.can_request(txid, now=now):
+                if not force and not self._request_mgr.can_request(txid, now=now):
                     continue
                 if not self._set_inflight(
                     txid,
