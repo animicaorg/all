@@ -1318,7 +1318,7 @@ def _mempool_submit(
             svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
             return
     if hasattr(svc, "submit_atomic"):
-        accepted, reason, _hash_hex = svc.submit_atomic(
+        accepted, reject, _hash_hex = svc.submit_atomic(
             tx=tx_obj,
             raw=raw,
             tx_hash_hex=tx_hash_hex,
@@ -1326,20 +1326,16 @@ def _mempool_submit(
             origin_peer=origin_peer,
         )
         if not accepted:
-            # Build a detailed error message that includes the reason
-            reason_str = reason or "admission_failed"
-            message = f"mempool admission failed: {reason_str}"
-            
+            reject = reject or {
+                "code": 1000,
+                "reason": "admission_failed",
+                "message": "mempool admission failed",
+                "hint": "check transaction and retry",
+                "context": {"tx_hash": _hash_hex},
+            }
             raise rpc_errors.InvalidTx(
-                message,
-                data={
-                    "mempoolError": {
-                        "code": 1000,
-                        "reason": reason_str,
-                        "message": message,
-                        "context": {"tx_hash": _hash_hex},
-                    }
-                },
+                f"mempool admission failed: {reject.get('reason','admission_failed')}",
+                data={"mempoolError": reject},
             )
         return
     if hasattr(svc, "admit"):
@@ -1366,6 +1362,37 @@ def _mempool_submit(
         svc.add(tx_obj)
         return
     raise AttributeError("No supported mempool admission method found")
+
+
+def _mempool_simulate_submit(
+    svc: t.Any,
+    *,
+    tx_obj: t.Any,
+    raw: bytes,
+    tx_hash_hex: str,
+) -> None:
+    if hasattr(svc, "submit_atomic"):
+        accepted, reject, _hash_hex = svc.submit_atomic(
+            tx=tx_obj,
+            raw=raw,
+            tx_hash_hex=tx_hash_hex,
+            local=True,
+            simulate=True,
+        )
+        if not accepted:
+            reject = reject or {
+                "code": 1000,
+                "reason": "admission_failed",
+                "message": "mempool admission failed",
+                "hint": "check transaction and retry",
+                "context": {"tx_hash": _hash_hex},
+            }
+            raise rpc_errors.InvalidTx(
+                f"mempool admission failed: {reject.get('reason','admission_failed')}",
+                data={"mempoolError": reject},
+            )
+        return
+    raise rpc_errors.MethodNotFound("mempool simulation not supported by current mempool service")
 
 
 def _gossip_tx_to_peers(raw_tx: bytes) -> None:
@@ -1608,7 +1635,16 @@ def tx_send_raw_transaction(rawTx: str) -> t.Any:
         ) from e
 
 
-def _tx_send_raw_transaction(rawTx: str) -> t.Any:
+
+
+@method(
+    "mempool.simulateAdmission",
+    desc="Simulate mempool admission for a signed CBOR tx without insertion.",
+)
+def mempool_simulate_admission(rawTx: str) -> t.Any:
+    return _tx_send_raw_transaction(rawTx, simulate=True)
+
+def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
     start_s = time.time()
     tx_hash_hex = ""
     tx_view: dict[str, t.Any] = {}
@@ -1812,7 +1848,7 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
 
         # Admit to mempool using robust method probing
         try:
-            _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex, local=True)
+            _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex, local=True) if not simulate else _mempool_simulate_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
         except Exception as exc:
             if ReplacementUnsupported is not None and isinstance(exc, ReplacementUnsupported):
                 existing = exc.context.get("existing_tx_hash") if hasattr(exc, "context") else None
@@ -1891,13 +1927,14 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
         )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
-            "mempool admission failed",
+            "mempool admission failed: internal_error",
             data={
                 "mempoolError": {
                     "code": 1000,
-                    "reason": "admission_failed",
+                    "reason": "internal_error",
                     "message": "mempool admission failed",
-                    "context": {"tx_hash": tx_hash_hex},
+                    "hint": "check node logs",
+                    "context": {"tx_hash": tx_hash_hex, "error_class": type(exc).__name__},
                 }
             },
         ) from exc
@@ -1905,6 +1942,8 @@ def _tx_send_raw_transaction(rawTx: str) -> t.Any:
         "Mempool admission accepted",
         extra={"tx_hash": tx_hash_hex},
     )
+    if simulate:
+        return {"tx_hash": tx_hash_hex, "accepted_to_mempool": False, "simulated": True, "status": "would_admit"}
     tx_view = _tx_view(tx_obj, obj, pending=True)
     mempool_size = _mempool_size(svc)
     log.info(
