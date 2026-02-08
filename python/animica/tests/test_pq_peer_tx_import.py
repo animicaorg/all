@@ -141,5 +141,153 @@ def test_extract_body_handles_normalized_envelope() -> None:
     assert extracted_body == extracted_tx
 
 
+def test_extract_body_prioritizes_normalized_tx_over_body() -> None:
+    """
+    Test that _extract_body prioritizes "tx" over "body" when both are present.
+    
+    This is the critical fix: when an envelope has both "tx" (normalized) and
+    "body" (original/unnormalized), we must use "tx" for verification to match
+    what was signed.
+    """
+    from animica.tx.signing import _extract_body
+    
+    normalized_body = {
+        "chainId": 1,
+        "from": "anim1test",
+        "to": "anim1dest",
+        "nonce": 4,
+        "value": 4000,
+        "gasLimit": 21000,
+        "maxFee": 1000000000,
+        "data": b"",
+    }
+    
+    # Simulate an envelope that has BOTH keys (can happen during decoding/normalization)
+    # The "body" might have slightly different formatting from "tx"
+    original_body = {
+        "chainId": 1,
+        "from": "anim1test",
+        "to": "anim1dest",
+        "nonce": 4,
+        "value": 4000,
+        "gasLimit": 21000,
+        "maxFee": 1000000000,
+        "data": "",  # Different representation: empty string vs empty bytes
+    }
+    
+    envelope_with_both = {
+        "tx": normalized_body,  # Normalized (canonical)
+        "body": original_body,  # Original (non-canonical)
+        "sigs": []
+    }
+    
+    # Should extract "tx" (normalized), not "body" (original)
+    extracted = _extract_body(envelope_with_both)
+    assert extracted["chainId"] == 1
+    assert extracted["nonce"] == 4
+    # Verify it used the normalized body (which has bytes for data)
+    assert extracted["data"] == b"", f"Expected bytes b'', got {extracted['data']!r}"
+    # The normalized body should have been extracted
+    assert extracted == normalized_body
+
+
+def test_peer_tx_verification_after_normalization() -> None:
+    """
+    Integration test simulating peer transaction import flow.
+    
+    Tests the full flow:
+    1. Sign a transaction (CLI creates {"body": ..., "sig": ...})
+    2. Encode to CBOR
+    3. Decode from CBOR (as peer would receive it)
+    4. Normalize envelope (creates {"tx": ..., "sigs": ...})
+    5. Verify signature (should work with normalized envelope)
+    
+    This test verifies that the fix correctly handles the peer import scenario.
+    """
+    from pq.py.keygen import keygen_sig
+    from animica.tx.signing import ChainContext, pq_sign_tx, pq_verify_tx, _extract_body
+    import cbor2
+    
+    kp = keygen_sig("sphincs_shake_128s")
+    
+    # Step 1: Create transaction body (as CLI would)
+    body = {
+        "chainId": 1,
+        "from": "anim1test",
+        "to": "anim1dest",
+        "nonce": 5,
+        "value": 5000,
+        "gasLimit": 21000,
+        "maxFee": 1000000000,
+        "data": b"",
+    }
+    
+    ctx = ChainContext(
+        chain_id=1,
+        genesis_hash=b"\x99" * 32,
+        network="devnet",
+        fork_id=None,
+        domain="tx",
+        prehash="sha3-512",
+    )
+    
+    # Step 2: Sign the transaction
+    sig = pq_sign_tx(body, kp.secret_key, kp.public_key, kp.alg_id, ctx)
+    
+    # Step 3: Create envelope (as CLI would before sending)
+    cli_envelope = {
+        "body": body,
+        "sig": {
+            "algId": sig.alg_id,
+            "pk": kp.public_key,
+            "sig": sig.sig,
+            "domain": sig.domain,
+            "prehash": sig.prehash,
+            "chainId": 1,
+        },
+    }
+    
+    # Step 4: Encode to CBOR (as would be transmitted over network)
+    cbor_bytes = cbor2.dumps(cli_envelope, canonical=True)
+    
+    # Step 5: Decode from CBOR (as peer receives it)
+    decoded = cbor2.loads(cbor_bytes)
+    
+    # Step 6: Simulate normalization (what _decode_tx would do)
+    # Normalize creates {"tx": <normalized_body>, "sigs": [...]}
+    from core.utils.tx import normalize_tx_body
+    normalized_body = normalize_tx_body(decoded.get("body"))
+    
+    # Create normalized envelope (as _normalize_tx_envelope would)
+    normalized_envelope = {
+        "tx": normalized_body,
+        "sigs": [decoded.get("sig")],
+    }
+    
+    # Step 7: Verify with normalized envelope (the critical test)
+    # Before fix: would fail because _extract_body would use "body" if present
+    # After fix: should work because _extract_body prioritizes "tx"
+    verify_result = pq_verify_tx(normalized_envelope, sig, kp.public_key, ctx)
+    assert verify_result.ok is True, f"Verification failed with normalized envelope: {verify_result.reason}"
+    
+    # Step 8: Verify that _extract_body uses the normalized body
+    extracted = _extract_body(normalized_envelope)
+    assert extracted == normalized_body, "Should extract normalized tx body"
+    
+    # Step 9: Also test the case where BOTH keys are present (the problematic case before fix)
+    envelope_with_both = {
+        "tx": normalized_body,      # Normalized (canonical) - should be used
+        "body": decoded.get("body"), # Original (as decoded) - should be ignored
+        "sigs": [decoded.get("sig")],
+    }
+    
+    verify_result_both = pq_verify_tx(envelope_with_both, sig, kp.public_key, ctx)
+    assert verify_result_both.ok is True, f"Verification failed with both keys present: {verify_result_both.reason}"
+    
+    # Verify consistency: both verification paths should produce same preimage
+    assert verify_result.preimage_hex == verify_result_both.preimage_hex
+    assert verify_result.sign_hash_hex == verify_result_both.sign_hash_hex
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

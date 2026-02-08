@@ -194,12 +194,13 @@ def extract_chain_id(tx: Any) -> int:
 def _extract_body(tx: Any) -> dict:
     obj = _as_dict(tx)
 
-    # If it's already an envelope, respect it
-    if isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
-        body = dict(obj["body"])
-    elif isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
+    # Check normalized envelope format FIRST (canonical representation)
+    if isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
         # Handle normalized envelope format {"tx": {...}, "sigs": [...]}
         body = dict(obj["tx"])
+    elif isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
+        # Legacy envelope format {"body": {...}, "sig": {...}}
+        body = dict(obj["body"])
     else:
         # fall back to canonical extraction
         try:
