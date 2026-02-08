@@ -197,6 +197,9 @@ def _extract_body(tx: Any) -> dict:
     # If it's already an envelope, respect it
     if isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
         body = dict(obj["body"])
+    elif isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
+        # Handle normalized envelope format {"tx": {...}, "sigs": [...]}
+        body = dict(obj["tx"])
     else:
         # fall back to canonical extraction
         try:
