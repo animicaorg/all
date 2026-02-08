@@ -7,6 +7,7 @@ import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Set, Tuple
+from uuid import UUID
 
 from core.utils.hash import sha3_256
 
@@ -78,6 +79,8 @@ class TxGlobalState:
     mempool_reason: Optional[str] = None
     last_updated_at: float = 0.0
     last_peer: Optional[str] = None
+    last_peer_node_id: Optional[str] = None
+    last_peer_conn_id: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -95,6 +98,8 @@ class TxRequestState:
     last_updated_at: float
     state: str
     last_peer: Optional[str] = None
+    last_peer_node_id: Optional[str] = None
+    last_peer_conn_id: Optional[str] = None
     last_reason: Optional[str] = None
     attempts: int = 0
     next_retry_at: float = 0.0
@@ -108,6 +113,38 @@ class TxRequestManager:
         self.invalid_cooldown_s = float(invalid_cooldown_s)
         self.cap = int(cap)
         self._states: "OrderedDict[bytes, TxRequestState]" = OrderedDict()
+        self._state_rank: Dict[str, int] = {
+            "announced_only": 10,
+            "requested": 20,
+            "received_bytes": 30,
+            "received_valid_pending": 40,
+            "dropped_evicted": 15,
+            "unavailable": 15,
+            "accepted_in_mempool": 90,
+            "invalid_final": 90,
+        }
+
+    def _rank(self, state: str) -> int:
+        return self._state_rank.get(state, 0)
+
+    def _is_terminal(self, state: str) -> bool:
+        return state in {"invalid_final", "accepted_in_mempool", "mined", "confirmed"}
+
+    def _parse_peer(self, peer: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        if not peer:
+            return None, None, None
+        peer = str(peer)
+        if peer.startswith("0x"):
+            return peer.lower(), None, peer.lower()
+        raw = peer.lower()
+        if len(raw) == 64 and all(ch in "0123456789abcdef" for ch in raw):
+            node_id = f"0x{raw}"
+            return node_id, None, node_id
+        try:
+            UUID(peer)
+            return None, peer, None
+        except Exception:
+            return None, peer, None
 
     def _touch(
         self,
@@ -126,15 +163,32 @@ class TxRequestManager:
                 last_updated_at=now,
                 state=state,
                 last_peer=peer,
+                last_peer_node_id=None,
+                last_peer_conn_id=None,
                 last_reason=reason,
                 attempts=0,
                 next_retry_at=0.0,
             )
             self._states[txid] = entry
+        current_rank = self._rank(entry.state)
+        target_rank = self._rank(state)
+        if target_rank < current_rank:
+            log.info(
+                "TX_STATE_TRANSITION_IGNORED",
+                extra={"txid": txid.hex(), "current": entry.state, "target": state},
+            )
+            return entry
+        if self._is_terminal(entry.state) and not self._is_terminal(state):
+            return entry
         entry.last_updated_at = now
         entry.state = state
         if peer is not None:
-            entry.last_peer = peer
+            node_id, conn_id, normalized = self._parse_peer(peer)
+            entry.last_peer = normalized or peer
+            if node_id is not None:
+                entry.last_peer_node_id = node_id
+            if conn_id is not None:
+                entry.last_peer_conn_id = conn_id
         if clear_reason:
             entry.last_reason = None
         elif reason is not None:
@@ -152,6 +206,8 @@ class TxRequestManager:
 
     def mark_requested(self, txid: bytes, *, peer: str, now: float) -> TxRequestState:
         entry = self._touch(txid, now=now, state="requested", peer=peer, clear_reason=True)
+        if entry.state != "requested":
+            return entry
         entry.attempts += 1
         entry.requested_peers.add(peer)
         entry.next_retry_at = now + self.cooldown_s
@@ -231,6 +287,8 @@ class TxRequestManager:
                 "txid": "0x" + txid.hex(),
                 "state": entry.state,
                 "last_peer": entry.last_peer,
+                "last_peer_node_id": entry.last_peer_node_id,
+                "last_peer_conn_id": entry.last_peer_conn_id,
                 "last_reason": entry.last_reason,
                 "attempts": entry.attempts,
                 "first_seen_at": entry.first_seen_at,
@@ -401,6 +459,7 @@ class TxRelayService:
         )
         self._running = False
         self._lock = asyncio.Lock()
+        self._tx_locks: Dict[bytes, asyncio.Lock] = {}
         self._metrics: Dict[str, Any] = {
             "announced_count": 0,
             "received_count": 0,
@@ -503,6 +562,37 @@ class TxRelayService:
         counts[event_id] = counts.get(event_id, 0) + 1
         log.info(event_id, extra=extra or {})
 
+    def _tx_lock(self, txid: bytes) -> asyncio.Lock:
+        lock = self._tx_locks.get(txid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._tx_locks[txid] = lock
+        return lock
+
+    def _normalize_peer_id(self, peer: Optional[str]) -> Optional[str]:
+        if peer is None:
+            return None
+        peer = str(peer)
+        if peer.startswith("0x"):
+            return peer.lower()
+        raw = peer.lower()
+        if len(raw) == 64 and all(ch in "0123456789abcdef" for ch in raw):
+            return f"0x{raw}"
+        return peer
+
+    def _parse_peer_meta(self, peer: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        if not peer:
+            return None, None, None
+        peer = str(peer)
+        normalized = self._normalize_peer_id(peer)
+        if normalized and normalized.startswith("0x"):
+            return normalized, None, normalized
+        try:
+            UUID(peer)
+            return None, peer, normalized
+        except Exception:
+            return None, peer, normalized
+
     def _set_peer_tx_state(
         self,
         conn_id: str,
@@ -537,6 +627,8 @@ class TxRelayService:
         mempool_status: Optional[str] = None,
         mempool_reason: Optional[str] = None,
         last_peer: Optional[str] = None,
+        last_peer_node_id: Optional[str] = None,
+        last_peer_conn_id: Optional[str] = None,
     ) -> None:
         now = time.time()
         entry = self._tx_store.get(txid)
@@ -552,7 +644,9 @@ class TxRelayService:
                 mempool_status=mempool_status or "not_in_pool",
                 mempool_reason=mempool_reason,
                 last_updated_at=now,
-                last_peer=last_peer,
+                last_peer=self._normalize_peer_id(last_peer),
+                last_peer_node_id=self._normalize_peer_id(last_peer_node_id),
+                last_peer_conn_id=last_peer_conn_id,
             )
             self._tx_store[txid] = entry
             return
@@ -572,7 +666,11 @@ class TxRelayService:
         if mempool_reason is not None:
             entry.mempool_reason = mempool_reason
         if last_peer is not None:
-            entry.last_peer = last_peer
+            entry.last_peer = self._normalize_peer_id(last_peer)
+        if last_peer_node_id is not None:
+            entry.last_peer_node_id = self._normalize_peer_id(last_peer_node_id)
+        if last_peer_conn_id is not None:
+            entry.last_peer_conn_id = last_peer_conn_id
 
     def _reject_remember(self, txid: bytes) -> None:
         expire_at = time.time() + self._reject_cache_ttl_s
@@ -2123,6 +2221,12 @@ class TxRelayService:
                             "trigger": trigger,
                         },
                     )
+                req_state = self._request_mgr.get_state(txid)
+                if req_state is not None and req_state.state == "invalid_final":
+                    log.info("TX_REQUEST_SUPPRESSED_TERMINAL_INVALID", extra={"hash": txid.hex(), "trigger": trigger, "peer": state.conn_id})
+                    continue
+                if req_state is not None and req_state.state in {"accepted_in_mempool", "mined", "confirmed"}:
+                    continue
                 if not force and not self._request_mgr.can_request(txid, now=now):
                     continue
                 if not self._set_inflight(
@@ -2216,9 +2320,21 @@ class TxRelayService:
                     "knows_txid": bool(pstate and txid in pstate.known_txids),
                 }
             )
+        current_state = self.tx_state_for(txid)
+        req_state_name = req.state if req is not None else None
+        terminal_invalid = req_state_name in {"invalid_final"}
+        terminal_success = req_state_name in {"accepted_in_mempool", "mined", "confirmed"}
         return {
             "txid": "0x" + txid.hex(),
-            "state": self.tx_state_for(txid),
+            "state": current_state,
+            "internal_records_for_txid": 1 if self._request_mgr.get_state(txid) is not None else 0,
+            "bug_duplicate_records": False,
+            "terminal": {
+                "terminal_invalid": terminal_invalid,
+                "terminal_success": terminal_success,
+                "reason": req.last_reason if req is not None else None,
+                "would_request": False if (terminal_invalid or terminal_success) else self._request_mgr.can_request(txid, now=time.time()),
+            },
             "peers_advertised": peers,
             "inflight": {
                 "active": inflight is not None,
@@ -2298,6 +2414,8 @@ class TxRelayService:
                 "txid": "0x" + txid.hex(),
                 "state": entry.state,
                 "last_peer": entry.last_peer,
+                "last_peer_node_id": entry.last_peer_node_id,
+                "last_peer_conn_id": entry.last_peer_conn_id,
                 "last_reason": entry.last_reason,
                 "attempts": entry.attempts,
                 "first_seen_at": entry.first_seen_at,
@@ -2319,6 +2437,8 @@ class TxRelayService:
                 "mempool_status": store.mempool_status,
                 "mempool_reason": store.mempool_reason,
                 "last_peer": store.last_peer or (base or {}).get("last_peer"),
+                "last_peer_node_id": store.last_peer_node_id or (base or {}).get("last_peer_node_id"),
+                "last_peer_conn_id": store.last_peer_conn_id or (base or {}).get("last_peer_conn_id"),
             }
         )
         return payload

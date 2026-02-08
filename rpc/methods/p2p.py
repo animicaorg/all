@@ -1023,9 +1023,14 @@ async def import_peer_known_txs(
             "pending_count": 0,
         }
 
+        terminal_invalid = {"invalid_final"}
+        terminal_success = {"accepted_in_mempool", "admitted", "mined", "confirmed"}
+        pending_states = {"requested", "received_bytes", "received_valid_pending", "announced_only", "unavailable"}
+
         started = time.time()
         while requested > 0 and (time.time() - started) < timeout:
             all_done = True
+            tx_rows: dict[str, dict[str, t.Any]] = {}
             for txid_hex in requested_txids:
                 txid_raw = txid_hex[2:] if txid_hex.startswith("0x") else txid_hex
                 try:
@@ -1038,22 +1043,37 @@ async def import_peer_known_txs(
                     continue
                 tx_state_sample.append(tx_state)
                 state = str(tx_state.get("state") or "")
+                tx_key = str(tx_state.get("txid") or txid_hex).lower()
                 row = {
-                    "txid": txid_hex,
+                    "txid": tx_key,
                     "state": state,
                     "last_peer": tx_state.get("last_peer"),
+                    "last_peer_node_id": tx_state.get("last_peer_node_id"),
+                    "last_peer_conn_id": tx_state.get("last_peer_conn_id"),
                     "reason": tx_state.get("last_reason") or tx_state.get("validation_reason") or tx_state.get("mempool_reason"),
                 }
-                if state in {"received_bytes", "received_valid_pending", "accepted_in_mempool", "invalid_final"}:
+                tx_rows[tx_key] = row
+
+            by_outcome = {"admitted": [], "rejected": [], "notfound": [], "pending": []}
+            summary_counts["bytes_received_count"] = 0
+            summary_counts["validated_ok_count"] = 0
+            summary_counts["validated_fail_count"] = 0
+
+            for row in tx_rows.values():
+                state = row.get("state", "")
+                if state in {"received_bytes", "received_valid_pending", *terminal_success, *terminal_invalid}:
                     summary_counts["bytes_received_count"] += 1
-                if state == "accepted_in_mempool":
+                if state in terminal_success:
                     summary_counts["validated_ok_count"] += 1
                     by_outcome["admitted"].append(row)
-                elif "notfound" in state or "not_found" in state:
-                    by_outcome["notfound"].append(row)
-                elif state in {"invalid_final", "rejected", "dropped", "dropped_evicted"} or "reject" in state:
+                elif state in terminal_invalid or state in {"rejected", "dropped", "dropped_evicted"} or "reject" in state:
                     summary_counts["validated_fail_count"] += 1
                     by_outcome["rejected"].append(row)
+                elif "notfound" in state or "not_found" in state:
+                    by_outcome["notfound"].append(row)
+                elif state in pending_states:
+                    all_done = False
+                    by_outcome["pending"].append(row)
                 else:
                     all_done = False
                     by_outcome["pending"].append(row)
