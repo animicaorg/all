@@ -67,12 +67,16 @@ except Exception:  # pragma: no cover
 try:
     from animica.tx.signing import (
         DOMAIN_TX_SIGN_V1 as _DOMAIN_TX_SIGN_V1,
+        ChainContext as _ChainContext,
         build_signable_tx_bytes as _build_signable_tx_bytes,
+        pq_verify_tx as _pq_verify_tx,
         tx_signing_preimage as _tx_signing_preimage,
     )
 except Exception:  # pragma: no cover
     _DOMAIN_TX_SIGN_V1 = "animica.tx.v1"
+    _ChainContext = None  # type: ignore
     _build_signable_tx_bytes = None  # type: ignore
+    _pq_verify_tx = None  # type: ignore
     _tx_signing_preimage = None  # type: ignore
 
 # SDK SignBytes helper (fallback for defensive verification)
@@ -582,25 +586,47 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
-    candidates = _collect_sign_bytes(obj, chain_id=chain_id)
-    if not candidates:
-        raise rpc_errors.InvalidTx("No sign-bytes candidates found for PQ verification")
-    msg_label, msg = candidates[0]
-
     sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
-    ok, used_label, verify_errors = _verify_pq_candidates(
-        candidates, sig_env, pub, chain_id=chain_id, fork_id=_fork_id_required()
-    )
+    ident = deps.get_chain_identity() if hasattr(deps, "get_chain_identity") else {}
+    genesis_hex = ident.get("genesisHash") if isinstance(ident, dict) else None
+    genesis = _b(genesis_hex) if isinstance(genesis_hex, str) and genesis_hex else b""
+    network = str((ident or {}).get("network") or (ident or {}).get("name") or "unknown") if isinstance(ident, dict) else "unknown"
+
+    verify_result = None
+    if _pq_verify_tx is not None and _ChainContext is not None:
+        ctx = _ChainContext(
+            chain_id=int(chain_id),
+            genesis_hash=genesis,
+            network=network,
+            fork_id=_fork_id_required(),
+            domain=domain,
+            prehash=prehash,
+        )
+        verify_result = _pq_verify_tx(
+            obj.get("body", obj),
+            sig_env,
+            pub,
+            ctx,
+        )
+        ok = bool(verify_result.ok)
+        used_label = "animica.tx.v1.preimage"
+        verify_errors: list[str] = [] if ok else [verify_result.reason or "verification failed"]
+    else:
+        candidates = _collect_sign_bytes(obj, chain_id=chain_id)
+        if not candidates:
+            raise rpc_errors.InvalidTx("No sign-bytes candidates found for PQ verification")
+        msg_label, msg = candidates[0]
+        ok, used_label, verify_errors = _verify_pq_candidates(
+            candidates, sig_env, pub, chain_id=chain_id, fork_id=_fork_id_required()
+        )
 
     if _PQ_VERIFY_DEBUG:
         log.info(
-            "PQ VERIFY DEBUG ok=%s alg=%s used=%s primary=%s msg_len=%d pub_len=%d sig_len=%d chain_id=%d",
+            "PQ VERIFY DEBUG ok=%s alg=%s used=%s pub_len=%d sig_len=%d chain_id=%d",
             ok,
             alg_name,
             used_label,
-            msg_label,
-            len(msg),
             len(pub),
             len(sig),
             chain_id,
@@ -609,23 +635,8 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         log.debug("PQ verify helper errors: %s", "; ".join(verify_errors))
 
     if not ok:
-        body_hash = None
-        try:
-            raw_canonical = _cbor_dumps(obj) if _cbor_dumps is not None else b""
-            body_hash = "0x" + hashlib.sha3_256(raw_canonical).hexdigest() if raw_canonical else None
-        except Exception:
-            body_hash = None
-        pub_fp = "0x" + hashlib.sha3_256(pub).hexdigest()[:16]
-        sign_hash = "0x" + hashlib.sha3_256(msg).hexdigest()
-        log.warning(
-            "PQ verify failed: alg=%s label=%s sign_hash=%s pub_fp=%s tx_body_hash=%s sig_len=%d",
-            alg_name,
-            used_label or msg_label,
-            sign_hash,
-            pub_fp,
-            body_hash,
-            len(sig),
-        )
+        pub_fp = verify_result.pub_fingerprint if verify_result is not None else "0x" + hashlib.sha3_256(pub).hexdigest()[:16]
+        sign_hash = verify_result.sign_hash_hex if verify_result is not None else None
         err = _error_data(
             "pq_verify",
             ValueError("verification failed"),
@@ -2040,7 +2051,7 @@ def tx_debug_verify(target: str) -> dict:
     return tx_debug_verify_raw_transaction(target)
 
 
-@method("tx.debugSigningPreimage", desc="Return canonical tx signing preimage diagnostics.")
+@method("tx.debugSigningPreimage", desc="Return canonical tx signing preimage diagnostics.", aliases=("tx.debugSignBytes", "tx_debugSignBytes"))
 def tx_debug_signing_preimage(txid: str) -> dict:
     if not isinstance(txid, str):
         raise rpc_errors.InvalidParams("txid must be hex string")
