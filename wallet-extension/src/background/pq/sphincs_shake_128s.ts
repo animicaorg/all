@@ -19,7 +19,7 @@ import { hkdfExpand } from './hkdf';
 export const ALG_ID = 'SPHINCS+-SHAKE-128s';
 // Canonical sizes for SPHINCS+-SHAKE-128s (NIST PQC Round 3 parameters).
 // These constants are validated against the WASM module when available.
-export const PK_BYTES = 32;      // public key bytes
+export const PK_BYTES = 64;      // public key bytes (32-byte root || 32-byte pub-seed)
 export const SK_BYTES = 64;      // secret key bytes
 export const SIG_BYTES = 7856;   // signature bytes
 
