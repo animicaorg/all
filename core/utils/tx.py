@@ -63,6 +63,55 @@ def _extract_hash_bytes(obj: Mapping[str, Any]) -> bytes | None:
     return None
 
 
+# PQ algorithm pubkey size requirements (from pq/alg_ids.yaml)
+_PQ_PUBKEY_SIZES = {
+    0x1001: 1952,  # dilithium3
+    0x1002: 64,    # sphincs_shake_128s
+    4097: 1952,    # dilithium3 (decimal)
+    4098: 64,      # sphincs_shake_128s (decimal)
+}
+
+
+def _validate_pubkey_size(alg_id: int, pubkey: bytes) -> None:
+    """
+    Validate that pubkey size matches algorithm requirements.
+    
+    Raises TxNormalizationError if the pubkey size is incorrect for the algorithm.
+    This prevents address hashes (32 bytes) from being mistaken for actual public keys.
+    """
+    expected_size = _PQ_PUBKEY_SIZES.get(alg_id)
+    if expected_size is None:
+        # Unknown algorithm, skip validation (backward compatibility)
+        return
+    
+    actual_size = len(pubkey)
+    if actual_size != expected_size:
+        # Special case: if we got 32 bytes for an algorithm requiring more,
+        # it's likely an address hash was incorrectly used instead of the full pubkey
+        if actual_size == 32 and expected_size > 32:
+            raise TxNormalizationError(
+                "invalid_pubkey_size",
+                f"Public key appears to be an address hash (32 bytes) instead of full pubkey. "
+                f"Algorithm {hex(alg_id)} requires {expected_size}-byte public keys.",
+                details={
+                    "alg_id": hex(alg_id),
+                    "expected_size": expected_size,
+                    "actual_size": actual_size,
+                    "hint": "Use the full public key, not the address hash, in signature fields"
+                }
+            )
+        # General size mismatch
+        raise TxNormalizationError(
+            "invalid_pubkey_size",
+            f"Public key size mismatch for algorithm {hex(alg_id)}",
+            details={
+                "alg_id": hex(alg_id),
+                "expected_size": expected_size,
+                "actual_size": actual_size,
+            }
+        )
+
+
 def _normalize_sig_entry(sig: Any) -> Any:
     if hasattr(sig, "to_obj") and callable(getattr(sig, "to_obj")):
         sig = sig.to_obj()
@@ -83,10 +132,29 @@ def _normalize_sig_entry(sig: Any) -> Any:
                 return value
         return value
 
+    normalized_pubkey = _maybe_hex_to_bytes(pubkey)
+    normalized_sig = _maybe_hex_to_bytes(sig_bytes)
+    
+    # Validate pubkey size matches algorithm requirements
+    if alg is not None and isinstance(normalized_pubkey, (bytes, bytearray)):
+        alg_id = None
+        if isinstance(alg, int):
+            alg_id = alg
+        elif isinstance(alg, str) and alg.isdigit():
+            alg_id = int(alg)
+        elif isinstance(alg, str) and alg.startswith("0x"):
+            try:
+                alg_id = int(alg, 16)
+            except ValueError:
+                pass
+        
+        if alg_id is not None:
+            _validate_pubkey_size(alg_id, normalized_pubkey)
+
     return {
         "alg": alg,
-        "pubkey": _maybe_hex_to_bytes(pubkey),
-        "sig": _maybe_hex_to_bytes(sig_bytes),
+        "pubkey": normalized_pubkey,
+        "sig": normalized_sig,
     }
 
 
