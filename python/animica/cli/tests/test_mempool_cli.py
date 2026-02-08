@@ -307,3 +307,62 @@ def test_mempool_list_does_not_show_pending_for_invalid_final(monkeypatch) -> No
     assert "⏳ Pending:   0" in result.stdout
     assert "✗ Rejected:  1" in result.stdout
     assert "[invalid_final]" in result.stdout
+
+
+def test_mempool_list_shows_invalid_final_details_even_when_requested_is_zero(monkeypatch) -> None:
+    calls: list[tuple[str, tuple]] = []
+
+    def fake_resolve_rpc_url(url):
+        return "http://test/rpc"
+
+    def fake_call_rpc(method, params, rpc_url=None, no_cache=True):
+        calls.append((method, tuple(params or [])))
+        if method == "mempool.getPending":
+            return []
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1, "genesisHash": "0xdeadbeef"}
+        if method == "chain.getHead":
+            return {"height": 42, "hash": "0xhead"}
+        if method == "p2p.getStatus":
+            return {"peer_id": "0xnode"}
+        if method == "p2p.debugStatus":
+            return {
+                "peers": [
+                    {
+                        "peer_id": "0xpeer",
+                        "conn_id": "0xconn",
+                        "txrelay_known_txids": 1,
+                        "txrelay_known_txids_sample": ["0xc588"],
+                    }
+                ]
+            }
+        if method == "mempool.getInfo":
+            return {"mempool_id": "mp1", "mempool_path": "/tmp/pending.jsonl"}
+        if method == "p2p.importPeerKnownTxs":
+            return {
+                "requested": 0,
+                "summary": {"admitted": 0, "rejected": 0, "notfound": 0, "pending": 0},
+                "tx_state_sample": [
+                    {
+                        "txid": "0xc588bce9702bb39b21a0f06b648f43c540e8fdcb1df2ef4219909951c19f9152",
+                        "state": "invalid_final",
+                        "last_peer_node_id": "0x1369322564",
+                        "last_peer_conn_id": "f81dad83-be31-45f4-89bb-ff12ae294907",
+                        "last_reason": "verify_failed:[-32012] Invalid post-quantum signature",
+                        "attempts": 1,
+                    }
+                ],
+            }
+        raise AssertionError(f"Unexpected RPC method: {method}")
+
+    monkeypatch.setattr("animica.cli.mempool._resolve_rpc_url", fake_resolve_rpc_url)
+    monkeypatch.setattr("animica.cli.mempool.call_rpc", fake_call_rpc)
+
+    result = runner.invoke(app, ["mempool", "list"])
+
+    assert result.exit_code == 0
+    assert "Auto-imported peer transactions: requested=0, newly_visible=0" in result.stdout
+    assert "Transaction Status Summary" in result.stdout
+    assert "✗ Rejected:  1" in result.stdout
+    assert "[invalid_final]" in result.stdout
+    assert "Invalid post-quantum signature" in result.stdout
