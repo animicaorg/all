@@ -13,7 +13,7 @@ def _fake_oqs(enabled_names: list[str]):
     class FakeSignature:
         def __init__(self, mechanism=None, secret_key=None, public_key=None):
             self.mech = mechanism
-            self.length_public_key = 32
+            self.length_public_key = 64
             self.length_secret_key = 64
             self.length_signature = 7856
 
@@ -64,7 +64,7 @@ def test_prefers_robust_variant_when_both_available(monkeypatch):
     mod = importlib.import_module("pq.py.algs.sphincs_shake_128s")
 
     assert mod._OQS_MECH == "SPHINCS+-SHAKE-128s-robust"
-    assert mod.sizes["pk"] == 32
+    assert mod.sizes["pk"] == 64
 
 
 def test_env_can_force_simple_variant(monkeypatch):

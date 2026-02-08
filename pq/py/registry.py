@@ -194,7 +194,7 @@ ALG_NAME = ALG_NAMES_BY_ID
 
 # Sizes taken from NIST PQC finalists/standards (approx, may vary by impl):
 # Dilithium3: pk=1952, sk=4000, sig=3293
-# SPHINCS+-SHAKE-128s: pk=32, sk=64, sig=7856
+# SPHINCS+-SHAKE-128s: pk=64, sk=64, sig=7856
 # Kyber-768 (ML-KEM-768): pk=1184, sk=2400, ct=1088, ss=32
 
 
@@ -263,7 +263,7 @@ _SIGS: Dict[str, SigAlgInfo] = {
         "sphincs_shake_128s",
         "SPHINCS+ SHAKE-128s",
         128,
-        pk=32,
+        pk=64,
         sk=64,
         sig=7856,
         notes="L1; stateless hash-based; SHAKE variant",

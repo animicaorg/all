@@ -90,7 +90,7 @@ class KemLens:
 
 
 DILITHIUM3 = SigLens(pk=1952, sk=4000, sig=3293)  # typical liboqs sizes
-SPHINCS_SHAKE_128S = SigLens(pk=32, sk=64, sig=7856)  # "simple" variant
+SPHINCS_SHAKE_128S = SigLens(pk=64, sk=64, sig=7856)  # "simple" variant (32-byte root || 32-byte pub-seed)
 ML_KEM_768 = KemLens(pk=1184, sk=2400, ct=1088, ss=32)  # Kyber/ML-KEM-768
 
 # --------------------------------------------------------------------------------------
