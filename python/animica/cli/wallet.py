@@ -354,7 +354,22 @@ def _generate_entry(
 
             if public == secret:
                 raise RuntimeError("Refusing wallet: PQ keygen produced sk==pk (fake/broken)")
-            if len(secret) <= len(public):
+            
+            # Validate key sizes against expected algorithm metadata
+            # Some algorithms like SPHINCS+ have equal-sized keys (pk=64, sk=64)
+            expected_pk_size = alg_info.pubkey_size
+            expected_sk_size = alg_info.seckey_size
+            
+            if len(public) != expected_pk_size or len(secret) != expected_sk_size:
+                raise RuntimeError(
+                    f"Refusing wallet: key sizes don't match algorithm spec. "
+                    f"Got pk={len(public)} sk={len(secret)}, "
+                    f"expected pk={expected_pk_size} sk={expected_sk_size} for {alg_info.name}"
+                )
+            
+            # For algorithms where sk should be larger than pk, enforce that
+            # (but allow equal sizes for algorithms like SPHINCS+ where this is normal)
+            if expected_sk_size > expected_pk_size and len(secret) <= len(public):
                 raise RuntimeError(
                     f"Refusing wallet: suspicious PQ sizes pk={len(public)} sk={len(secret)}"
                 )
@@ -373,12 +388,28 @@ def _generate_entry(
                 try:
                     kp = keygen_sig(DILITHIUM3_ID)
                     
+                    # Get Dilithium3 algorithm info for validation
+                    dilithium3_info = require_sig(DILITHIUM3_ID)
+                    
                     # HARD SAFETY CHECKS
                     public = kp.public_key
                     secret = kp.secret_key
                     if public == secret:
                         raise RuntimeError("Refusing wallet: PQ keygen produced sk==pk (fake/broken)")
-                    if len(secret) <= len(public):
+                    
+                    # Validate key sizes against expected algorithm metadata
+                    expected_pk_size = dilithium3_info.pubkey_size
+                    expected_sk_size = dilithium3_info.seckey_size
+                    
+                    if len(public) != expected_pk_size or len(secret) != expected_sk_size:
+                        raise RuntimeError(
+                            f"Refusing wallet: key sizes don't match algorithm spec. "
+                            f"Got pk={len(public)} sk={len(secret)}, "
+                            f"expected pk={expected_pk_size} sk={expected_sk_size} for {dilithium3_info.name}"
+                        )
+                    
+                    # For algorithms where sk should be larger than pk, enforce that
+                    if expected_sk_size > expected_pk_size and len(secret) <= len(public):
                         raise RuntimeError(
                             f"Refusing wallet: suspicious PQ sizes pk={len(public)} sk={len(secret)}"
                         )
