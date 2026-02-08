@@ -1305,7 +1305,21 @@ class MempoolService:
                 origin_peer=origin_peer,
             )
         except Exception as exc:
-            return False, str(exc), computed_hash
+            # Extract detailed reason from structured errors if available
+            reason_str = str(exc)
+            if hasattr(exc, "reason"):
+                reason_str = str(exc.reason)
+            elif hasattr(exc, "message"):
+                reason_str = str(exc.message)
+            
+            # Log the full exception for debugging
+            log.warning(
+                "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s",
+                computed_hash,
+                reason_str,
+                exc_info=log.isEnabledFor(logging.DEBUG),
+            )
+            return False, reason_str, computed_hash
 
         if not self.has_hash(admitted_hash):
             return False, "pool_missing", admitted_hash
