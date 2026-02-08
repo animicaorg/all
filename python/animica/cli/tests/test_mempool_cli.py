@@ -259,3 +259,51 @@ def test_mempool_list_import_uses_all_eligible_peers_by_default(monkeypatch) -> 
     import_calls = [params for method, params in calls if method == "p2p.importPeerKnownTxs"]
     assert import_calls
     assert import_calls[0] == (128, 12.0, 0, 64)
+
+
+def test_mempool_list_does_not_show_pending_for_invalid_final(monkeypatch) -> None:
+    calls: list[tuple[str, tuple]] = []
+
+    def fake_resolve_rpc_url(url):
+        return "http://test/rpc"
+
+    def fake_call_rpc(method, params, rpc_url=None, no_cache=True):
+        calls.append((method, tuple(params or [])))
+        if method == "mempool.getPending":
+            return []
+        if method == "chain.getChainIdentity":
+            return {"chainId": 1, "genesisHash": "0xdeadbeef"}
+        if method == "chain.getHead":
+            return {"height": 42, "hash": "0xhead"}
+        if method == "p2p.getStatus":
+            return {"peer_id": "0xnode"}
+        if method == "p2p.debugStatus":
+            return {"peers": [{"peer_id": "0xpeer", "conn_id": "conn-1", "txrelay_known_txids": 1, "txrelay_known_txids_sample": ["0xabc123"]}]}
+        if method == "mempool.getInfo":
+            return {"mempool_id": "mp1", "mempool_path": "/tmp/pending.jsonl"}
+        if method == "p2p.importPeerKnownTxs":
+            return {
+                "requested": 1,
+                "summary": {"admitted": 0, "rejected": 1, "notfound": 0, "pending": 0},
+                "tx_state_sample": [
+                    {
+                        "txid": "0xabc123",
+                        "state": "invalid_final",
+                        "last_peer_node_id": "0xpeer",
+                        "last_peer_conn_id": "conn-1",
+                        "last_reason": "pq_verify",
+                        "attempts": 1,
+                    }
+                ],
+            }
+        raise AssertionError(f"Unexpected RPC method: {method}")
+
+    monkeypatch.setattr("animica.cli.mempool._resolve_rpc_url", fake_resolve_rpc_url)
+    monkeypatch.setattr("animica.cli.mempool.call_rpc", fake_call_rpc)
+
+    result = runner.invoke(app, ["mempool", "list"])
+
+    assert result.exit_code == 0
+    assert "⏳ Pending:   0" in result.stdout
+    assert "✗ Rejected:  1" in result.stdout
+    assert "[invalid_final]" in result.stdout
