@@ -163,7 +163,7 @@ def intrinsic_gas(tx: "Tx", cfg: AccountingConfig | None = None) -> int:
 
     kind = (getattr(tx, "kind", "") or "").lower()
     data = bytes(getattr(tx, "data", b"") or b"")
-    gas_limit = int(getattr(tx, "gas_limit", 0) or 0)
+    gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
 
     zero, nonzero = _count_zero_nonzero(data)
     base = g.base_tx + zero * g.data_zero + nonzero * g.data_nonzero
@@ -197,7 +197,7 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     """
     gp = getattr(tx, "gas_price", None)
     if gp is not None:
-        gas_price = int(gp)
+        gas_price = _safe_int_from_value(gp)
         if base_fee > 0 and gas_price < int(base_fee):
             raise AccountingError(
                 "FeeTooLow",
@@ -208,8 +208,8 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     max_fee = getattr(tx, "max_fee_per_gas", None)
     max_tip = getattr(tx, "max_priority_fee_per_gas", None)
     if max_fee is not None and max_tip is not None:
-        mf = int(max_fee)
-        tip = int(max_tip)
+        mf = _safe_int_from_value(max_fee)
+        tip = _safe_int_from_value(max_tip)
         if base_fee > 0 and mf < int(base_fee):
             raise AccountingError(
                 "FeeTooLow",
@@ -218,6 +218,36 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
         return min(mf, base_fee + tip)
 
     return 0
+
+
+def _safe_int_from_value(val: Any) -> int:
+    """
+    Safely convert a transaction value/amount field to int.
+    
+    Handles:
+    - None or 0 -> 0
+    - int -> int
+    - hex strings (e.g., "0xa") -> int
+    - decimal strings (e.g., "10") -> int
+    
+    Raises:
+        ValueError: If the value cannot be converted to int
+    """
+    if val is None:
+        return 0
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return 0
+        # Handle hex strings
+        if val.startswith(("0x", "0X")):
+            return int(val, 16)
+        # Handle decimal strings
+        return int(val)
+    # For any other type, try direct conversion
+    return int(val)
 
 
 def estimate_max_spend(
@@ -236,11 +266,11 @@ def estimate_max_spend(
     """
     cfg = cfg or AccountingConfig()
     ig = intrinsic_gas(tx, cfg=cfg)
-    gas_limit = int(getattr(tx, "gas_limit", 0) or 0)
+    gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
     price = effective_gas_price(tx, base_fee=base_fee)
     max_fee_paid = gas_limit * price
 
-    value = int(getattr(tx, "value", getattr(tx, "amount", 0)) or 0)
+    value = _safe_int_from_value(getattr(tx, "value", getattr(tx, "amount", 0)))
     total = value + max_fee_paid
 
     return SpendEstimate(
