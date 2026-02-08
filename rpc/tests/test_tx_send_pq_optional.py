@@ -20,7 +20,7 @@ def _clear_optional(monkeypatch: pytest.MonkeyPatch) -> None:
 def _sample_raw() -> bytes:
     obj = {
         "body": {"chainId": 1, "nonce": 0},
-        "sig": {"algId": 4097, "pubkey": b"\x01" * 32, "sig": b"\x02" * 64},
+        "sig": {"algId": 4097, "pubkey": b"\x01" * 1952, "sig": b"\x02" * 3293},  # Fixed: Dilithium3 requires 1952-byte pubkey
     }
     return tx._cbor_dumps(obj)
 
