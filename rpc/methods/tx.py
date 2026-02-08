@@ -719,10 +719,9 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ) from exc
         raise
 
-    if isinstance(obj, dict):
-        raw_body = obj.get("body")
-        if isinstance(raw_body, dict):
-            normalized_env.setdefault("body", raw_body)
+    # Note: Do NOT add the original "body" key back to normalized_env.
+    # The normalized "tx" key is canonical and should be used for verification.
+    # Adding "body" back causes _extract_body() to use unnormalized data.
 
     raw_canonical = normalized_env.get("raw") or raw
     tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
@@ -749,8 +748,7 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             pass
 
     enriched_obj = dict(normalized_env)
-    if isinstance(obj, dict) and "body" in obj and isinstance(obj.get("body"), dict):
-        enriched_obj["body"] = obj["body"]
+    # Note: Do NOT add original "body" back - use normalized "tx" key only
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
