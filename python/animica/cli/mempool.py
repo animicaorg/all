@@ -368,7 +368,7 @@ def list_pending(
                                 
                                 if state in {"accepted_in_mempool"}:
                                     accepted_txs.append(tx_state)
-                                elif state in {"requested", "inflight"}:
+                                elif state in {"announced_only", "requested", "inflight", "received_bytes", "received_valid_pending", "unavailable"}:
                                     pending_txs.append(tx_state)
                                 else:
                                     rejected_txs.append(tx_state)
@@ -387,13 +387,14 @@ def list_pending(
                                     txid = tx_state.get("txid", "unknown")
                                     state = tx_state.get("state", "unknown")
                                     reason = tx_state.get("last_reason")
-                                    peer = tx_state.get("last_peer", "n/a")
+                                    peer = tx_state.get("last_peer_node_id") or tx_state.get("last_peer", "n/a")
+                                    conn_id = tx_state.get("last_peer_conn_id")
                                     attempts = tx_state.get("attempts", 0)
                                     
                                     # Format the rejection info with better readability
                                     reason_text = f" → {reason}" if reason else ""
                                     typer.echo(
-                                        f"  • {_short_id(txid, 16)} [{state}]{reason_text} (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
+                                        f"  • {_short_id(txid, 16)} [{state}]{reason_text} (peer={_short_id(peer, 10) or 'n/a'} conn_id={conn_id or 'n/a'}, attempts={attempts})"
                                     )
                                 
                                 if len(rejected_txs) > 20:
@@ -406,10 +407,11 @@ def list_pending(
                                 for tx_state in pending_txs[:10]:
                                     txid = tx_state.get("txid", "unknown")
                                     state = tx_state.get("state", "unknown")
-                                    peer = tx_state.get("last_peer", "n/a")
+                                    peer = tx_state.get("last_peer_node_id") or tx_state.get("last_peer", "n/a")
+                                    conn_id = tx_state.get("last_peer_conn_id")
                                     attempts = tx_state.get("attempts", 0)
                                     typer.echo(
-                                        f"  • {_short_id(txid, 16)} [{state}] (peer={_short_id(peer, 10) or 'n/a'}, attempts={attempts})"
+                                        f"  • {_short_id(txid, 16)} [{state}] (peer={_short_id(peer, 10) or 'n/a'} conn_id={conn_id or 'n/a'}, attempts={attempts})"
                                     )
                                 if len(pending_txs) > 10:
                                     typer.echo(f"  ... and {len(pending_txs) - 10} more pending transactions")
