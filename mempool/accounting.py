@@ -233,7 +233,7 @@ def _safe_int_from_value(val: Any) -> int:
     Raises:
         ValueError: If the value cannot be converted to int
     """
-    if val is None or val == 0:
+    if val is None:
         return 0
     if isinstance(val, int):
         return val
