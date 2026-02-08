@@ -544,6 +544,35 @@ def test_rpc_error_constructor_fix():
     assert err3.data == {"reason": "nonce too low"}
 
 
+def test_format_rpc_error_prints_mempool_reason_and_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    from animica.cli.tx import RpcError, _format_rpc_error
+
+    err = RpcError(
+        code=-32010,
+        message="mempool admission failed",
+        data={
+            "mempoolError": {
+                "code": 1001,
+                "reason": "invalid_signature",
+                "message": "signature verification failed",
+                "context": {
+                    "tx_hash": "0xabc",
+                    "from": "anim1from",
+                    "to": "anim1to",
+                    "nonce": 7,
+                    "chain_id": 1,
+                },
+            }
+        },
+    )
+
+    _format_rpc_error(err)
+    captured = capsys.readouterr().out
+    assert "Mempool rejection" in captured
+    assert "invalid_signature" in captured
+    assert "Hint:" in captured
+
+
 # ============================================================================
 # Integration-style Tests
 # ============================================================================
