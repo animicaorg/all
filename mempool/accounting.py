@@ -220,6 +220,36 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     return 0
 
 
+def _safe_int_from_value(val: Any) -> int:
+    """
+    Safely convert a transaction value/amount field to int.
+    
+    Handles:
+    - None or 0 -> 0
+    - int -> int
+    - hex strings (e.g., "0xa") -> int
+    - decimal strings (e.g., "10") -> int
+    
+    Raises:
+        ValueError: If the value cannot be converted to int
+    """
+    if val is None or val == 0:
+        return 0
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return 0
+        # Handle hex strings
+        if val.startswith(("0x", "0X")):
+            return int(val, 16)
+        # Handle decimal strings
+        return int(val)
+    # For any other type, try direct conversion
+    return int(val)
+
+
 def estimate_max_spend(
     tx: "Tx",
     *,
@@ -240,7 +270,7 @@ def estimate_max_spend(
     price = effective_gas_price(tx, base_fee=base_fee)
     max_fee_paid = gas_limit * price
 
-    value = int(getattr(tx, "value", getattr(tx, "amount", 0)) or 0)
+    value = _safe_int_from_value(getattr(tx, "value", getattr(tx, "amount", 0)))
     total = value + max_fee_paid
 
     return SpendEstimate(
