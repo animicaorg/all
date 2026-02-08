@@ -65,9 +65,15 @@ except Exception:  # pragma: no cover
 
 # Shared Animica helper for deterministic tx sign-bytes
 try:
-    from animica.tx.signing import build_signable_tx_bytes as _build_signable_tx_bytes
+    from animica.tx.signing import (
+        DOMAIN_TX_SIGN_V1 as _DOMAIN_TX_SIGN_V1,
+        build_signable_tx_bytes as _build_signable_tx_bytes,
+        tx_signing_preimage as _tx_signing_preimage,
+    )
 except Exception:  # pragma: no cover
+    _DOMAIN_TX_SIGN_V1 = "animica.tx.v1"
     _build_signable_tx_bytes = None  # type: ignore
+    _tx_signing_preimage = None  # type: ignore
 
 # SDK SignBytes helper (fallback for defensive verification)
 try:
@@ -337,7 +343,7 @@ def _extract_nonce(obj: dict) -> int | None:
     return None
 
 
-def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
+def _collect_sign_bytes(tx_like: t.Any, *, chain_id: int) -> list[tuple[str, bytes]]:
     candidates: list[tuple[str, bytes]] = []
 
     def _as_map(val: t.Any) -> dict[str, t.Any]:
@@ -357,21 +363,27 @@ def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
         return {}
 
     tx_obj = _as_map(tx_like)
-    body_obj = tx_obj.get("body") if isinstance(tx_obj.get("body"), dict) else None
-    sign_target = dict(body_obj) if isinstance(body_obj, dict) else dict(tx_obj)
-    for k in ("sig", "signature", "sigs"):
-        sign_target.pop(k, None)
+    ident = deps.get_chain_identity() if hasattr(deps, "get_chain_identity") else {}
+    genesis_hex = ident.get("genesisHash") if isinstance(ident, dict) else None
+    genesis = _b(genesis_hex) if isinstance(genesis_hex, str) and genesis_hex else b""
+    network = str((ident or {}).get("network") or (ident or {}).get("name") or "unknown") if isinstance(ident, dict) else "unknown"
 
-    canonical_body = None
-    if sign_target and _cbor_dumps is not None:
-        canonical_body = _cbor_dumps(sign_target)
-    if canonical_body is None and _build_signable_tx_bytes is not None:
-        canonical_body = _build_signable_tx_bytes(tx_like)
+    if _tx_signing_preimage is not None:
+        preimage = _tx_signing_preimage(
+            tx_obj,
+            chain_id=int(chain_id),
+            genesis=genesis,
+            network=network,
+            domain=_DOMAIN_TX_SIGN_V1,
+            message_type="tx",
+        )
+        candidates.append(("animica.tx.v1.preimage", preimage))
+        return candidates
+
+    canonical_body = _build_signable_tx_bytes(tx_like) if _build_signable_tx_bytes is not None else None
     if canonical_body is None:
         raise rpc_errors.InternalError("No canonical encoder for SignBytes")
-
-    candidates.append(("txsig_legacy.body_cbor", canonical_body))
-    candidates.append(("txsig_v1.domain_prefixed", b"ANIMICA_TXSIG_V1" + canonical_body))
+    candidates.append(("legacy.body_cbor", canonical_body))
     return candidates
 
 
@@ -570,7 +582,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
     alg_id, pub, sig, domain, prehash = _extract_sig(obj)
-    candidates = _collect_sign_bytes(obj)
+    candidates = _collect_sign_bytes(obj, chain_id=chain_id)
     if not candidates:
         raise rpc_errors.InvalidTx("No sign-bytes candidates found for PQ verification")
     msg_label, msg = candidates[0]
@@ -614,14 +626,27 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             body_hash,
             len(sig),
         )
+        err = _error_data(
+            "pq_verify",
+            ValueError("verification failed"),
+            "_verify_pq_signature",
+            "Ensure signature, prehash, and pubkey match the tx body",
+        )
+        err.update(
+            {
+                "scheme_id": alg_id,
+                "pubkey_len": len(pub),
+                "sig_len": len(sig),
+                "prehash": prehash,
+                "domain": domain,
+                "chain_id": chain_id,
+                "sign_hash": sign_hash,
+                "pub_fingerprint": pub_fp,
+            }
+        )
         raise rpc_errors.BadSignature(
             "Invalid post-quantum signature: verification failed",
-            **_error_data(
-                "pq_verify",
-                ValueError("verification failed"),
-                "_verify_pq_signature",
-                "Ensure signature, prehash, and pubkey match the tx body",
-            ),
+            **err,
         )
 
 
@@ -1979,7 +2004,7 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     candidate_source = obj
     if not (isinstance(candidate_source, dict) and isinstance(candidate_source.get("body"), dict)):
         candidate_source = tx_like
-    candidates = _collect_sign_bytes(candidate_source)
+    candidates = _collect_sign_bytes(candidate_source, chain_id=chain_id)
     sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
     ok, used_label, verify_errors = _verify_pq_candidates(
@@ -2013,6 +2038,43 @@ def tx_debug_verify(target: str) -> dict:
             raise rpc_errors.InvalidParams("tx not found in mempool/pending cache")
         return tx_debug_verify_raw_transaction("0x" + raw.hex())
     return tx_debug_verify_raw_transaction(target)
+
+
+@method("tx.debugSigningPreimage", desc="Return canonical tx signing preimage diagnostics.")
+def tx_debug_signing_preimage(txid: str) -> dict:
+    if not isinstance(txid, str):
+        raise rpc_errors.InvalidParams("txid must be hex string")
+    tx_hash_hex = txid.lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+
+    raw = _mempool_get_raw(tx_hash_hex) or _pending_get(tx_hash_hex)
+    if raw is None:
+        raise rpc_errors.InvalidParams("tx not found in mempool/pending cache")
+
+    tx_like, obj = _decode_tx_defensive(raw)
+    chain_id = _extract_chain_id(tx_like, obj)
+    candidates = _collect_sign_bytes(obj, chain_id=chain_id)
+    if not candidates:
+        raise rpc_errors.InvalidTx("no signing preimage candidates")
+    label, preimage = candidates[0]
+
+    ident = deps.get_chain_identity() if hasattr(deps, "get_chain_identity") else {}
+    return {
+        "txid": tx_hash_hex,
+        "label": label,
+        "preimageHex": "0x" + preimage.hex(),
+        "domain": _DOMAIN_TX_SIGN_V1,
+        "chainId": chain_id,
+        "network": (ident or {}).get("network") if isinstance(ident, dict) else None,
+        "genesisHash": (ident or {}).get("genesisHash") if isinstance(ident, dict) else None,
+        "canonicalRules": {
+            "encoding": "cbor-canonical",
+            "definiteLengths": True,
+            "mapKeyOrder": "deterministic",
+            "excludeSignatureFields": True,
+        },
+    }
 
 
 @method(
