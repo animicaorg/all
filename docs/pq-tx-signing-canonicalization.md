@@ -1,31 +1,32 @@
-# PQ Tx signing canonicalization
+# PQ TX signing canonicalization (v1)
 
-This document defines the transaction-signing canonicalization used by RPC tx verification and P2P relay handling.
+Canonical signing preimage for transactions is defined in `python/animica/tx/signing.py::tx_signing_preimage`.
 
-## TXSIG_V1
+## Preimage format
 
-- **Domain tag:** `ANIMICA_TXSIG_V1`
-- **Serialization:** canonical CBOR of transaction `body` only.
-- **Excluded fields:** all signature fields (`sig`, `signature`, `sigs`) and transport-only wrapper fields.
-- **Hashing for diagnostics:** `sha3_256`.
+Encoding: canonical CBOR (deterministic key ordering, definite lengths, no floats).
 
-## Verification strategy
+CBOR map (int keys):
 
-To keep backward compatibility while converging to deterministic behavior, verification tries:
+1. domain (text) = `animica.tx.v1`
+2. chain_id (uint)
+3. genesis_hash (bytes)
+4. network_name (text)
+5. message_type (text) = `tx`
+6. tx_version (uint)
+7. tx_body (canonical body map, signatures excluded)
 
-1. `txsig_legacy.body_cbor`: canonical CBOR of signable body.
-2. `txsig_v1.domain_prefixed`: `b"ANIMICA_TXSIG_V1" + body_cbor`.
+## Rules
 
-The first path preserves existing mainnet/client behavior. The second is available for explicit TXSIG_V1 migration.
+- Signature fields are excluded from preimage.
+- Domain separation is explicit via `domain + chain_id + genesis_hash + network_name + message_type + tx_version`.
+- The same preimage function must be used by signing and verification.
 
-## Relay v2 expectations
+## TXID
 
-- Relay carries signed tx bytes.
-- Receivers normalize tx bytes once and keep the canonical bytes in tx relay store (`canonical_bytes`).
-- Signature checks use canonical body bytes derived from the received envelope body (not lossy object reconstruction).
+`txid = sha3_256(canonical_signed_tx_bytes)` where canonical signed tx bytes are full canonical tx envelope bytes, including signature(s).
 
-## Anti-storm behavior
+## Migration / compatibility
 
-When a tx is definitively invalid (hash mismatch, oversize, or mempool reject), tx relay marks request state as `invalid_final` and applies invalid cooldown (`ANIMICA_P2P_TX_INVALID_COOLDOWN_SEC`, default `1800s`).
-
-Peers repeatedly sending invalid tx data are temporarily penalized and excluded from request candidate selection.
+- v1 canonical preimage is active for node verification paths using `tx_signing_preimage`.
+- Legacy body-only sign-bytes remain available in helper APIs for compatibility (`build_signable_tx_bytes`) but should not be used for new tooling.
