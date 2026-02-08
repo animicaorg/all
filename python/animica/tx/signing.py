@@ -1,13 +1,6 @@
-"""
-Canonical transaction signing bytes.
+"""Canonical transaction signing and txid helpers.
 
-This module defines `build_signable_tx_bytes`, a single source of truth for constructing
-the exact byte payload that is signed for an Animica transaction.
-
-Important:
-- The payload for TX signing is the deterministic CBOR of the transaction *body*.
-- Domain separation / replay protection is handled by the PQ signing layer, which
-  prefixes the payload with the chain-bound DomainTag per spec/domains.yaml.
+This module is the single source of truth for transaction signing preimages.
 """
 
 from __future__ import annotations
@@ -18,7 +11,20 @@ from typing import Any, Mapping
 
 import cbor2
 
-__all__ = ["build_signable_tx_bytes", "extract_chain_id"]
+try:
+    from core.encoding.cbor import dumps as _canonical_cbor_dumps
+except Exception:  # pragma: no cover
+    _canonical_cbor_dumps = None
+
+DOMAIN_TX_SIGN_V1 = "animica.tx.v1"
+
+__all__ = [
+    "DOMAIN_TX_SIGN_V1",
+    "build_signable_tx_bytes",
+    "extract_chain_id",
+    "tx_signing_preimage",
+    "txid_from_canonical_bytes",
+]
 
 
 _HEX_RE = re.compile(r"^[0-9a-fA-F]*$")
@@ -182,17 +188,56 @@ def _extract_body(tx: Any) -> dict:
     return body
 
 
-def build_signable_tx_bytes(tx: Any, chain_id: int | None = None) -> bytes:
-    """
-    Build the deterministic signable bytes for a transaction: canonical CBOR(body).
+def _canonical_cbor(obj: Any) -> bytes:
+    if _canonical_cbor_dumps is not None:
+        return _canonical_cbor_dumps(obj)
+    return cbor2.dumps(obj, canonical=True)
 
-    Args:
-      tx: Transaction body or envelope (dict/dataclass).
-      chain_id: Optional explicit chain ID; when provided, must match tx's chainId.
+
+def tx_signing_preimage(
+    tx: Any,
+    *,
+    chain_id: int,
+    genesis: bytes,
+    network: str,
+    domain: str = DOMAIN_TX_SIGN_V1,
+    message_type: str = "tx",
+) -> bytes:
+    """Build the canonical, versioned tx signing preimage.
+
+    The preimage intentionally excludes signatures and includes explicit domain
+    separators plus chain/genesis bindings.
+    """
+    body = _extract_body(tx)
+    tx_version = int(body.get("v", body.get("version", 1)))
+    preimage_obj = {
+        1: str(domain),
+        2: int(chain_id),
+        3: bytes(genesis),
+        4: str(network),
+        5: str(message_type),
+        6: int(tx_version),
+        7: body,
+    }
+    return _canonical_cbor(preimage_obj)
+
+
+def build_signable_tx_bytes(tx: Any, chain_id: int | None = None) -> bytes:
+    """Backward-compatible alias used by existing callers.
+
+    Returns canonical CBOR(tx body), i.e. the payload embedded into
+    ``tx_signing_preimage(...)[7]``.
     """
     cid = extract_chain_id(tx)
     if chain_id is not None and int(chain_id) != cid:
         raise ValueError(f"Transaction chain_id mismatch: tx={cid}, override={int(chain_id)}")
 
     body = _extract_body(tx)
-    return cbor2.dumps(body, canonical=True)
+    return _canonical_cbor(body)
+
+
+def txid_from_canonical_bytes(tx_canonical_bytes: bytes) -> bytes:
+    """Consensus txid definition: sha3-256(full canonical signed tx bytes)."""
+    import hashlib
+
+    return hashlib.sha3_256(bytes(tx_canonical_bytes)).digest()
