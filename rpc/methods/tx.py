@@ -1300,10 +1300,15 @@ def _tx_reject_category(reason: str | None) -> str:
 
 def _function_accepts_params(func: t.Any, param_names: list[str]) -> bool:
     """
-    Check if a function accepts the given parameter names.
+    Check if a function accepts ALL of the given parameter names.
     
     Returns True if the function signature explicitly includes all parameter names
-    or accepts **kwargs.
+    or accepts **kwargs. Returns False if the signature is missing any of the
+    parameters or cannot be inspected.
+    
+    Note: This requires ALL parameters in param_names to be present (not just any).
+    This is appropriate for checking optional parameter sets that should be
+    supported together (e.g., both 'local' and 'origin_peer' in mempool methods).
     """
     try:
         sig = inspect.signature(func)
@@ -1337,7 +1342,10 @@ def _mempool_submit(
     """
     if hasattr(svc, "submit"):
         kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
-        # Check if the function accepts the optional parameters
+        # Check if the function accepts the optional parameters.
+        # We check for both params together because mempool methods either support
+        # the full extended signature (local + origin_peer) or the basic signature.
+        # There's no intermediate case in the codebase where only one is supported.
         accepts_extended = _function_accepts_params(svc.submit, ["local", "origin_peer"])
         if accepts_extended:
             if local is not None:
@@ -1368,7 +1376,10 @@ def _mempool_submit(
             )
         return
     if hasattr(svc, "admit"):
-        # Check if the function accepts the optional parameters
+        # Check if the function accepts the optional parameters.
+        # We check for both params together because mempool methods either support
+        # the full extended signature (local + origin_peer) or the basic signature.
+        # There's no intermediate case in the codebase where only one is supported.
         accepts_extended = _function_accepts_params(svc.admit, ["local", "origin_peer"])
         if accepts_extended:
             svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex, local=local, origin_peer=origin_peer)
