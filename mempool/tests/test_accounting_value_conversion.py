@@ -5,7 +5,6 @@ Ensures that estimate_max_spend can handle different value formats
 that might come from CLI/RPC submissions (strings, hex strings, ints).
 """
 
-import pytest
 from mempool.accounting import estimate_max_spend, _safe_int_from_value, _safe_bytes_from_value
 
 
