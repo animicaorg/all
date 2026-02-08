@@ -1326,13 +1326,17 @@ def _mempool_submit(
             origin_peer=origin_peer,
         )
         if not accepted:
+            # Build a detailed error message that includes the reason
+            reason_str = reason or "admission_failed"
+            message = f"mempool admission failed: {reason_str}" if reason else "mempool admission failed"
+            
             raise rpc_errors.InvalidTx(
-                "mempool admission rejected",
+                message,
                 data={
                     "mempoolError": {
                         "code": 1000,
-                        "reason": reason or "admission_failed",
-                        "message": "mempool admission rejected",
+                        "reason": reason_str,
+                        "message": message,
                         "context": {"tx_hash": _hash_hex},
                     }
                 },
