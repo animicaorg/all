@@ -53,7 +53,7 @@ def make_tx_dict(sender_hex: str, nonce: int, chain_id: int = 1337) -> tuple[dic
     
     # Create a mock signature
     sig = {
-        "algId": 2,  # Dilithium3 (note: actual alg_id should be 0x1001/4097)
+        "algId": 4097,  # Dilithium3 (0x1001)
         "pubkey": bytes(1952),  # Fixed: Dilithium3 requires 1952-byte pubkey
         "sig": bytes(3293),  # Fixed: Dilithium3 requires 3293-byte signature
         "prehash": "sha3-512",
