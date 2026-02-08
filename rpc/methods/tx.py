@@ -1364,10 +1364,10 @@ def _mempool_submit(
         )
         if not accepted:
             reject = reject or {
-                "code": 1000,
-                "reason": "admission_failed",
+                "code": 2999,
+                "reason": "internal_error",
                 "message": "mempool admission failed",
-                "hint": "check transaction and retry",
+                "hint": "check node logs",
                 "context": {"tx_hash": _hash_hex},
             }
             raise rpc_errors.InvalidTx(
@@ -1423,10 +1423,10 @@ def _mempool_simulate_submit(
         )
         if not accepted:
             reject = reject or {
-                "code": 1000,
-                "reason": "admission_failed",
+                "code": 2999,
+                "reason": "internal_error",
                 "message": "mempool admission failed",
-                "hint": "check transaction and retry",
+                "hint": "check node logs",
                 "context": {"tx_hash": _hash_hex},
             }
             raise rpc_errors.InvalidTx(
@@ -1972,9 +1972,10 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
             "mempool admission failed: internal_error",
             data={
                 "mempoolError": {
-                    "code": 1000,
+                    "code": 2999,
                     "reason": "internal_error",
                     "message": "mempool admission failed",
+                    "error_class": type(exc).__name__,
                     "hint": "check node logs",
                     "context": {"tx_hash": tx_hash_hex, "error_class": type(exc).__name__},
                 }

@@ -272,6 +272,19 @@ def _address_to_32_bytes(address: str) -> bytes:
     return addr_bytes
 
 
+
+
+def _debug_tx_event(event: str, payload: dict[str, Any]) -> None:
+    if os.getenv("ANIMICA_DEBUG_TX", "0") != "1":
+        return
+    safe_payload = dict(payload)
+    for k in ("secret_key", "secret_key_hex", "signature", "sig", "pubkey", "public_key"):
+        safe_payload.pop(k, None)
+    try:
+        console.print(json.dumps({"event": event, **safe_payload}, sort_keys=True, separators=(",", ":")))
+    except Exception:
+        pass
+
 def _format_insufficient_funds_error(e: RpcError) -> None:
     """Format and display an insufficient funds error in a user-friendly way."""
     data = e.data or {}
@@ -305,10 +318,17 @@ def _format_rpc_error(e: RpcError) -> None:
         message = str(mempool_error.get("message") or e.message)
         context = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
         hint = mempool_error.get("hint")
-        console.print(f"[red]Rejected:[/red] {reason} — {message}" + (f" (hint: {hint})" if hint else ""))
+        console.print(f"Rejected: {reason} — {message}")
+        if hint:
+            console.print(f"Hint: {hint}")
         tx_hash = context.get("tx_hash") or context.get("txHash")
         if tx_hash:
-            console.print(f"  tx_hash: {tx_hash}")
+            console.print(f"Tx: {tx_hash}")
+        if reason == "internal_error":
+            error_class = mempool_error.get("error_class") or context.get("error_class")
+            if error_class:
+                console.print(f"Error class: {error_class}")
+            console.print("Enable ANIMICA_DEBUG_TX=1 ANIMICA_DEBUG_MEMPOOL=1 for diagnostics.")
         for field in ("from", "to", "value", "nonce", "chain_id", "fee_reserved", "reserve_amount"):
             if field in context:
                 console.print(f"  {field}: {context[field]}")
@@ -1512,9 +1532,11 @@ def send(
                     }
                 )
 
+            _debug_tx_event("tx_build", {"chain_id": cid, "nonce": attempt_nonce, "from": from_addr, "to": to_addr, "value": value_base, "fee": fee})
             # Sign
             pq = pq_sign_tx(body, sk, pk, used_alg_id, chain_ctx)
 
+            _debug_tx_event("tx_sign", {"chain_id": cid, "nonce": attempt_nonce, "scheme_id": pq.alg_id})
             verify_result = pq_verify_tx(body, pq, pk, chain_ctx, from_addr=from_addr)
             if not verify_result.ok:
                 console.print("[bold red]Local PQ verify failed before broadcast.[/bold red]")
@@ -1568,6 +1590,7 @@ def send(
 
             try:
                 send_method = "mempool.simulateAdmission" if dry_run else "tx.sendRawTransaction"
+                _debug_tx_event("tx_submit", {"rpc": rpc, "method": send_method, "raw_len": len(raw)})
                 send_result = _rpc(rpc, send_method, [raw_hex])
                 tx_hash = _extract_send_hash(send_result)
                 if isinstance(send_result, dict):
