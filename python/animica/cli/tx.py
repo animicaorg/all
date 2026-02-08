@@ -298,6 +298,30 @@ def _format_insufficient_funds_error(e: RpcError) -> None:
 
 def _format_rpc_error(e: RpcError) -> None:
     console.print(f"\n[bold red]RPC Error {e.code}[/bold red]: {e.message}")
+    data = e.data if isinstance(e.data, dict) else None
+    mempool_error = data.get("mempoolError") if isinstance(data, dict) else None
+    if isinstance(mempool_error, dict):
+        reason = str(mempool_error.get("reason") or "admission_failed")
+        message = str(mempool_error.get("message") or e.message)
+        context = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
+        console.print(f"[red]Mempool rejection:[/red] {reason} - {message}")
+        tx_hash = context.get("tx_hash") or context.get("txHash")
+        if tx_hash:
+            console.print(f"  tx_hash: {tx_hash}")
+        for field in ("from", "to", "value", "nonce", "chain_id", "fee_reserved", "reserve_amount"):
+            if field in context:
+                console.print(f"  {field}: {context[field]}")
+        hints = {
+            "invalid_signature": "Check signer scheme and wallet keypair; retry with --debug-signing.",
+            "nonce_too_low": "Retry without --nonce to auto-refresh pending nonce.",
+            "nonce_gap": "Submit missing lower nonce transactions first.",
+            "insufficient_funds": "Fund sender account for value + fee reserve.",
+            "chain_id_mismatch": "Set --chain-id to the node's chain id.",
+            "tx_already_known": "Transaction already in mempool; wait for inclusion.",
+            "fee_too_low": "Increase --max-fee.",
+        }
+        if reason in hints:
+            console.print(f"[yellow]Hint:[/yellow] {hints[reason]}")
     if e.data is not None:
         console.print(Pretty(e.data))
 
