@@ -1015,6 +1015,13 @@ async def import_peer_known_txs(
             "notfound": [],
             "pending": [],
         }
+        summary_counts = {
+            "requested_count": requested,
+            "bytes_received_count": 0,
+            "validated_ok_count": 0,
+            "validated_fail_count": 0,
+            "pending_count": 0,
+        }
 
         started = time.time()
         while requested > 0 and (time.time() - started) < timeout:
@@ -1037,11 +1044,15 @@ async def import_peer_known_txs(
                     "last_peer": tx_state.get("last_peer"),
                     "reason": tx_state.get("last_reason") or tx_state.get("validation_reason") or tx_state.get("mempool_reason"),
                 }
+                if state in {"received_bytes", "received_valid_pending", "accepted_in_mempool", "invalid_final"}:
+                    summary_counts["bytes_received_count"] += 1
                 if state == "accepted_in_mempool":
+                    summary_counts["validated_ok_count"] += 1
                     by_outcome["admitted"].append(row)
                 elif "notfound" in state or "not_found" in state:
                     by_outcome["notfound"].append(row)
-                elif "reject" in state or state in {"dropped", "invalid", "rejected"}:
+                elif state in {"invalid_final", "rejected", "dropped", "dropped_evicted"} or "reject" in state:
+                    summary_counts["validated_fail_count"] += 1
                     by_outcome["rejected"].append(row)
                 else:
                     all_done = False
@@ -1051,6 +1062,7 @@ async def import_peer_known_txs(
             await asyncio.sleep(0.2)
 
         timed_out = requested > 0 and (time.time() - started) >= timeout and len(by_outcome["pending"]) > 0
+        summary_counts["pending_count"] = len(by_outcome["pending"])
         return {
             "success": True,
             "requested": requested,
@@ -1063,6 +1075,7 @@ async def import_peer_known_txs(
                 "rejected": len(by_outcome["rejected"]),
                 "notfound": len(by_outcome["notfound"]),
                 "pending": len(by_outcome["pending"]),
+                **summary_counts,
             },
             "outcomes": by_outcome,
             "limit": lim,
@@ -2091,6 +2104,24 @@ async def p2p_get_verifier_seeds() -> dict[str, t.Any]:
     }
 
 
+@method("p2p.debugTxImport", desc="Debug transaction import state and peer mapping")
+async def debug_tx_import(txid: str) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    relay_svc = _get_tx_relay_service(p2p_svc)
+    if relay_svc is None or not hasattr(relay_svc, "debug_tx_import"):
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
+    try:
+        txid_raw = txid[2:] if txid.startswith("0x") else txid
+        txid_bytes = bytes.fromhex(txid_raw)
+    except Exception:
+        return {"success": False, "error": "invalid txid"}
+    try:
+        payload = relay_svc.debug_tx_import(txid_bytes)
+        return {"success": True, **(payload if isinstance(payload, dict) else {"payload": payload})}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 # Export for RPC method discovery
 __all__ = [
     "list_peers",
@@ -2108,4 +2139,5 @@ __all__ = [
     "import_peers",
     "add_peers",
     "p2p_get_verifier_seeds",
+    "debug_tx_import",
 ]
