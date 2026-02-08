@@ -46,7 +46,7 @@ def submit_atomic(self, *, tx, raw, tx_hash_hex=None, local=True, origin_peer=No
             "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s",
             computed_hash,
             reason_str,
-            exc_info=True if log.isEnabledFor(logging.DEBUG) else False,
+            exc_info=log.isEnabledFor(logging.DEBUG),
         )
         return False, reason_str, computed_hash
 ```
@@ -61,7 +61,7 @@ def submit_atomic(self, *, tx, raw, tx_hash_hex=None, local=True, origin_peer=No
 ```python
 if not accepted:
     reason_str = reason or "admission_failed"
-    message = f"mempool admission failed: {reason_str}" if reason else "mempool admission failed"
+    message = f"mempool admission failed: {reason_str}"
     
     raise rpc_errors.InvalidTx(
         message,
