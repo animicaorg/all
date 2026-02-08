@@ -56,6 +56,13 @@ def test_safe_int_from_value_handles_empty_string():
     assert _safe_int_from_value("  ") == 0
 
 
+def test_safe_int_from_value_handles_zero_string():
+    """Test that _safe_int_from_value handles the string '0'."""
+    assert _safe_int_from_value("0") == 0
+    assert _safe_int_from_value("0x0") == 0
+    assert _safe_int_from_value(0) == 0
+
+
 def test_estimate_max_spend_with_int_value():
     """Test estimate_max_spend with integer value (original behavior)."""
     tx = MockTx(value=1000000, gas_limit=21000, gas_price=1000000000)
@@ -104,7 +111,7 @@ def test_estimate_max_spend_with_none_value():
     assert estimate.total_max_spend == (21000 * 1000000000)
 
 
-def test_estimate_max_spend_with_amount_field():
+def test_estimate_max_spend_falls_back_to_amount_when_value_missing():
     """Test estimate_max_spend falls back to 'amount' field if 'value' not present."""
     class TxWithAmount:
         def __init__(self):
