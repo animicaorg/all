@@ -995,7 +995,7 @@ async def import_peer_known_txs(
     try:
         request_result = await p2p_svc.request_missing_txids(
             limit=lim,
-            force=True,
+            force=False,
             max_peers=max_peers,
             batch_size=batch_size,
             include_details=True,
@@ -1051,6 +1051,7 @@ async def import_peer_known_txs(
                     "last_peer_node_id": tx_state.get("last_peer_node_id"),
                     "last_peer_conn_id": tx_state.get("last_peer_conn_id"),
                     "reason": tx_state.get("last_reason") or tx_state.get("validation_reason") or tx_state.get("mempool_reason"),
+                    "retry_after": tx_state.get("retry_after"),
                 }
                 tx_rows[tx_key] = row
 
@@ -1059,24 +1060,39 @@ async def import_peer_known_txs(
             summary_counts["validated_ok_count"] = 0
             summary_counts["validated_fail_count"] = 0
 
+            seen_by_txid: dict[str, str] = {}
             for row in tx_rows.values():
-                state = row.get("state", "")
+                state = str(row.get("state", "") or "")
+                txid_key = str(row.get("txid") or "")
+                retry_after = row.get("retry_after")
                 if state in {"received_bytes", "received_valid_pending", *terminal_success, *terminal_invalid}:
                     summary_counts["bytes_received_count"] += 1
                 if state in terminal_success:
                     summary_counts["validated_ok_count"] += 1
-                    by_outcome["admitted"].append(row)
-                elif state in terminal_invalid or state in {"rejected", "dropped", "dropped_evicted"} or "reject" in state:
+                    if seen_by_txid.get(txid_key) is None:
+                        by_outcome["admitted"].append(row)
+                        seen_by_txid[txid_key] = "admitted"
+                elif state in terminal_invalid:
                     summary_counts["validated_fail_count"] += 1
-                    by_outcome["rejected"].append(row)
+                    if seen_by_txid.get(txid_key) is None:
+                        by_outcome["rejected"].append(row)
+                        seen_by_txid[txid_key] = "rejected"
                 elif "notfound" in state or "not_found" in state:
-                    by_outcome["notfound"].append(row)
+                    if seen_by_txid.get(txid_key) is None:
+                        by_outcome["notfound"].append(row)
+                        seen_by_txid[txid_key] = "notfound"
                 elif state in pending_states:
+                    if retry_after:
+                        row["pending_reason"] = "pending_transient"
                     all_done = False
-                    by_outcome["pending"].append(row)
+                    if seen_by_txid.get(txid_key) is None:
+                        by_outcome["pending"].append(row)
+                        seen_by_txid[txid_key] = "pending"
                 else:
                     all_done = False
-                    by_outcome["pending"].append(row)
+                    if seen_by_txid.get(txid_key) is None:
+                        by_outcome["pending"].append(row)
+                        seen_by_txid[txid_key] = "pending"
             if all_done:
                 break
             await asyncio.sleep(0.2)

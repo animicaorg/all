@@ -366,8 +366,10 @@ def list_pending(
                                     continue
                                 state = tx_state.get("state", "")
                                 
-                                if state in {"accepted_in_mempool"}:
+                                if state in {"accepted_in_mempool", "admitted", "mined", "confirmed"}:
                                     accepted_txs.append(tx_state)
+                                elif state in {"invalid_final"}:
+                                    rejected_txs.append(tx_state)
                                 elif state in {"announced_only", "requested", "inflight", "received_bytes", "received_valid_pending", "unavailable"}:
                                     pending_txs.append(tx_state)
                                 else:
