@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses as _dc
 import hashlib
+import inspect
 import logging
 import os
 import time
@@ -256,9 +257,11 @@ def _sync_gate_tx_submit() -> None:
         return
 
     try:
-        try:
+        # Check if the function accepts the refresh parameter
+        accepts_refresh = _function_accepts_params(svc.sync_status_snapshot, ["refresh"])
+        if accepts_refresh:
             snap = svc.sync_status_snapshot(refresh=True)
-        except TypeError:
+        else:
             snap = svc.sync_status_snapshot()
         status = snap.to_dict() if hasattr(snap, "to_dict") else t.cast(dict[str, t.Any], snap)
     except Exception:
@@ -1096,9 +1099,11 @@ def _force_sync_before_tx_submit() -> None:
 
     if svc is not None and hasattr(svc, "sync_status_snapshot"):
         try:
-            try:
+            # Check if the function accepts the refresh parameter
+            accepts_refresh = _function_accepts_params(svc.sync_status_snapshot, ["refresh"])
+            if accepts_refresh:
                 snap = svc.sync_status_snapshot(refresh=True)
-            except TypeError:
+            else:
                 snap = svc.sync_status_snapshot()
             status = snap.to_dict() if hasattr(snap, "to_dict") else t.cast(dict[str, t.Any], snap)
             allowed, _info = assess_tx_submission_readiness(status)
@@ -1293,6 +1298,31 @@ def _tx_reject_category(reason: str | None) -> str:
     return "POLICY"
 
 
+def _function_accepts_params(func: t.Any, param_names: list[str]) -> bool:
+    """
+    Check if a function accepts the given parameter names.
+    
+    Returns True if the function signature explicitly includes all parameter names
+    or accepts **kwargs.
+    """
+    try:
+        sig = inspect.signature(func)
+        params = sig.parameters
+        
+        # If function has **kwargs, it accepts any parameter
+        for param in params.values():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        
+        # Check if all required param names are in the signature
+        param_set = set(params.keys())
+        return all(name in param_set for name in param_names)
+    except (ValueError, TypeError):
+        # If we can't inspect the signature, assume it doesn't accept the params
+        # This is conservative and will fall back to the simpler call
+        return False
+
+
 def _mempool_submit(
     svc: t.Any,
     *,
@@ -1307,16 +1337,15 @@ def _mempool_submit(
     """
     if hasattr(svc, "submit"):
         kwargs: dict[str, t.Any] = {"tx": tx_obj, "raw": raw, "tx_hash_hex": tx_hash_hex}
-        if local is not None:
-            kwargs["local"] = local
-        if origin_peer is not None:
-            kwargs["origin_peer"] = origin_peer
-        try:
-            svc.submit(**kwargs)
-            return
-        except TypeError:
-            svc.submit(tx=tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
-            return
+        # Check if the function accepts the optional parameters
+        accepts_extended = _function_accepts_params(svc.submit, ["local", "origin_peer"])
+        if accepts_extended:
+            if local is not None:
+                kwargs["local"] = local
+            if origin_peer is not None:
+                kwargs["origin_peer"] = origin_peer
+        svc.submit(**kwargs)
+        return
     if hasattr(svc, "submit_atomic"):
         accepted, reject, _hash_hex = svc.submit_atomic(
             tx=tx_obj,
@@ -1339,9 +1368,11 @@ def _mempool_submit(
             )
         return
     if hasattr(svc, "admit"):
-        try:
+        # Check if the function accepts the optional parameters
+        accepts_extended = _function_accepts_params(svc.admit, ["local", "origin_peer"])
+        if accepts_extended:
             svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex, local=local, origin_peer=origin_peer)
-        except TypeError:
+        else:
             svc.admit(tx_obj, raw=raw, tx_hash_hex=tx_hash_hex)
         return
     if hasattr(svc, "add_raw"):
