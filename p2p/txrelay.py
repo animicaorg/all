@@ -103,8 +103,13 @@ class TxRequestState:
     last_reason: Optional[str] = None
     attempts: int = 0
     next_retry_at: float = 0.0
+    has_bytes: bool = False
+    validated_ok: bool = False
+    validated_fail: bool = False
+    terminal: bool = False
     requested_peers: Set[str] = field(default_factory=set)
     unavailable_failures: int = 0
+    unavailable_failure_times: Deque[float] = field(default_factory=deque)
 
 
 class TxRequestManager:
@@ -208,25 +213,31 @@ class TxRequestManager:
         entry = self._touch(txid, now=now, state="requested", peer=peer, clear_reason=True)
         if entry.state != "requested":
             return entry
-        entry.attempts += 1
+        entry.attempts = min(entry.attempts + 1, 10_000)
         entry.requested_peers.add(peer)
         entry.next_retry_at = now + self.cooldown_s
         return entry
 
     def mark_received_valid(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
-        self._touch(txid, now=now, state="received_valid_pending", peer=peer)
+        entry = self._touch(txid, now=now, state="received_valid_pending", peer=peer)
+        entry.has_bytes = True
 
     def mark_received_bytes(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
-        self._touch(txid, now=now, state="received_bytes", peer=peer)
+        entry = self._touch(txid, now=now, state="received_bytes", peer=peer)
+        entry.has_bytes = True
 
     def mark_received_invalid(
         self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
     ) -> None:
         entry = self._touch(txid, now=now, state="invalid_final", peer=peer, reason=reason)
+        entry.validated_fail = True
+        entry.terminal = True
         entry.next_retry_at = now + max(self.invalid_cooldown_s, self.cooldown_s)
 
     def mark_accepted(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
-        self._touch(txid, now=now, state="accepted_in_mempool", peer=peer)
+        entry = self._touch(txid, now=now, state="accepted_in_mempool", peer=peer)
+        entry.validated_ok = True
+        entry.terminal = True
 
     def mark_dropped(
         self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
@@ -247,9 +258,21 @@ class TxRequestManager:
         backoff_s: float,
     ) -> TxRequestState:
         entry = self._touch(txid, now=now, state="unavailable", peer=peer, reason=reason)
-        entry.unavailable_failures += 1
+        entry.unavailable_failure_times.append(now)
+        while entry.unavailable_failure_times and (now - entry.unavailable_failure_times[0]) > 300.0:
+            entry.unavailable_failure_times.popleft()
+        entry.unavailable_failures = len(entry.unavailable_failure_times)
         entry.next_retry_at = now + max(1.0, float(backoff_s))
         return entry
+
+    def should_skip_unavailable(self, txid: bytes, *, now: float, threshold: int = 3) -> bool:
+        entry = self._states.get(txid)
+        if entry is None:
+            return False
+        while entry.unavailable_failure_times and (now - entry.unavailable_failure_times[0]) > 300.0:
+            entry.unavailable_failure_times.popleft()
+        entry.unavailable_failures = len(entry.unavailable_failure_times)
+        return entry.unavailable_failures >= threshold
 
     def can_request(self, txid: bytes, *, now: float) -> bool:
         entry = self._states.get(txid)
@@ -291,6 +314,10 @@ class TxRequestManager:
                 "last_peer_conn_id": entry.last_peer_conn_id,
                 "last_reason": entry.last_reason,
                 "attempts": entry.attempts,
+                "has_bytes": entry.has_bytes,
+                "validated_ok": entry.validated_ok,
+                "validated_fail": entry.validated_fail,
+                "terminal": entry.terminal,
                 "first_seen_at": entry.first_seen_at,
                 "last_updated_at": entry.last_updated_at,
                 "requested_peers": len(entry.requested_peers),
@@ -1137,13 +1164,31 @@ class TxRelayService:
                 continue
             txid_bytes = bytes(txid)
             raw_bytes = bytes(raw)
+            req_state = self._request_mgr.get_state(txid_bytes)
+            if req_state is not None and req_state.state in {"invalid_final", "accepted_in_mempool", "admitted"}:
+                log.info(
+                    "TX_IMPORT_SKIP_TERMINAL",
+                    extra={
+                        "peer": conn_id,
+                        "hash": txid_bytes.hex(),
+                        "skip_reason": "terminal_state",
+                        "state": req_state.state,
+                        **self._peer_log_extra(conn_id),
+                    },
+                )
+                self._clear_inflight(txid_bytes)
+                continue
             normalized_raw = raw_bytes
-            try:
-                from core.utils.tx import normalize_tx_bytes
+            store_entry = self._tx_store.get(txid_bytes)
+            if store_entry is not None and store_entry.canonical_bytes is not None:
+                normalized_raw = store_entry.canonical_bytes
+            else:
+                try:
+                    from core.utils.tx import normalize_tx_bytes
 
-                normalized_raw = normalize_tx_bytes(raw_bytes)
-            except Exception:
-                normalized_raw = raw_bytes
+                    normalized_raw = normalize_tx_bytes(raw_bytes)
+                except Exception:
+                    normalized_raw = raw_bytes
             log.info(
                 "TX_DATA_RECV",
                 extra={
@@ -1267,7 +1312,6 @@ class TxRelayService:
                 txid_bytes,
                 source=f"peer:{origin_label or conn_id}",
                 tx_bytes=normalized_raw,
-                canonical_bytes=normalized_raw,
                 last_peer=origin_label or conn_id,
             )
             
@@ -2146,6 +2190,8 @@ class TxRelayService:
         if limit <= 0:
             return 0
         requests_by_peer: Dict[str, List[bytes]] = {}
+        skip_reasons: Dict[str, str] = {}
+        seen_txids: Set[bytes] = set()
         async with self._lock:
             peer_states = list(self._peer_state.values())
         eligible_states = [
@@ -2177,6 +2223,9 @@ class TxRelayService:
             for txid in candidates:
                 if remaining <= 0:
                     break
+                if txid in seen_txids:
+                    continue
+                seen_txids.add(txid)
                 inflight_entry = self._inflight.get(txid)
                 if inflight_entry is not None:
                     if inflight_entry.deadline <= now:
@@ -2187,21 +2236,25 @@ class TxRelayService:
                         # got stuck or the response was lost.
                         self._clear_inflight(txid)
                     else:
+                        skip_reasons[f"0x{txid.hex()}"] = "inflight_backoff"
                         continue
                 if self._reject_recent(txid):
                     if force:
                         self._reject_cache.pop(txid, None)
                     else:
+                        skip_reasons[f"0x{txid.hex()}"] = "recent_reject"
                         continue
                 # Check if we actually have the transaction in mempool or chain
                 has_tx = await self._has_tx(txid)
                 if has_tx:
                     self._request_mgr.mark_accepted(txid, peer="local", now=now)
+                    skip_reasons[f"0x{txid.hex()}"] = "terminal_ok"
                     continue
                 if await self._has_chain_tx(txid):
                     self._request_mgr.mark_dropped(
                         txid, peer="chain", reason="in_chain", now=now
                     )
+                    skip_reasons[f"0x{txid.hex()}"] = "in_chain"
                     continue
                 # IMPORTANT: If transaction is marked as accepted but we don't actually have it,
                 # clear the state so we can re-request it. This handles cases where:
@@ -2224,10 +2277,19 @@ class TxRelayService:
                 req_state = self._request_mgr.get_state(txid)
                 if req_state is not None and req_state.state == "invalid_final":
                     log.info("TX_REQUEST_SUPPRESSED_TERMINAL_INVALID", extra={"hash": txid.hex(), "trigger": trigger, "peer": state.conn_id})
+                    skip_reasons[f"0x{txid.hex()}"] = "terminal_invalid"
                     continue
                 if req_state is not None and req_state.state in {"accepted_in_mempool", "mined", "confirmed"}:
+                    skip_reasons[f"0x{txid.hex()}"] = "terminal_ok"
+                    continue
+                if not force and req_state is not None and req_state.state == "requested" and req_state.next_retry_at > now:
+                    skip_reasons[f"0x{txid.hex()}"] = "requested_backoff"
+                    continue
+                if not force and self._request_mgr.should_skip_unavailable(txid, now=now):
+                    skip_reasons[f"0x{txid.hex()}"] = "unavailable_backoff"
                     continue
                 if not force and not self._request_mgr.can_request(txid, now=now):
+                    skip_reasons[f"0x{txid.hex()}"] = "retry_backoff"
                     continue
                 if not self._set_inflight(
                     txid,
@@ -2236,6 +2298,7 @@ class TxRelayService:
                     now=now,
                     attempts=1,
                 ):
+                    skip_reasons[f"0x{txid.hex()}"] = "inflight_limit"
                     continue
                 self._request_mgr.mark_requested(txid, peer=state.conn_id, now=now)
                 self._record_source(txid, state.conn_id)
@@ -2291,6 +2354,7 @@ class TxRelayService:
                 "requested": total,
                 "requested_txids": requested_txids,
                 "requested_peers": requested_peers,
+                "skip_reasons": skip_reasons,
                 "eligible_peers": [s.conn_id for s in eligible_states],
                 "eligible_peers_count": len(eligible_states),
                 "batch_size": batch_size,
@@ -2421,6 +2485,11 @@ class TxRelayService:
                 "first_seen_at": entry.first_seen_at,
                 "last_updated_at": entry.last_updated_at,
                 "requested_peers": len(entry.requested_peers),
+                "has_bytes": entry.has_bytes,
+                "validated_ok": entry.validated_ok,
+                "validated_fail": entry.validated_fail,
+                "terminal": entry.terminal,
+                "retry_after": entry.next_retry_at if entry.next_retry_at > time.time() else None,
             }
         store = self._tx_store.get(txid)
         if store is None:
