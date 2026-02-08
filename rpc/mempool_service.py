@@ -31,6 +31,7 @@ from mempool.pool import Pool, PoolConfig
 from mempool.select import PendingTxEntry, select_for_block
 from mempool.types import EffectiveFee, PoolTx, TxMeta
 from mempool.accounting import estimate_max_spend
+from mempool.rejects import MempoolReject, RejectReason, reject as mk_reject, REJECT_CODE
 
 try:
     from core.types.tx import Tx  # type: ignore
@@ -122,6 +123,20 @@ def _hint_for_reason(reason: str) -> str:
         "internal_error": "check node logs",
     }
     return hints.get(reason, "check transaction fields and retry")
+
+
+def _to_mempool_reject(*, reason: str, message: str, context: dict[str, Any], exc: Exception | None = None) -> MempoolReject:
+    try:
+        reason_enum = RejectReason(reason)
+    except Exception:
+        reason_enum = RejectReason.internal_error if exc is not None else RejectReason.policy_reject
+    return mk_reject(
+        reason_enum,
+        message=message or "mempool admission failed",
+        hint=_hint_for_reason(reason_enum.value),
+        context=context,
+        error_class=(exc.__class__.__name__ if exc is not None else None),
+    )
 
 
 @dataclass(frozen=True)
@@ -1406,13 +1421,15 @@ class MempoolService:
             if reason == "admission_failed" and context.get("reason"):
                 reason = str(context.get("reason"))
             norm_reason, norm_message, norm_context = _normalize_reject(str(reason), str(message), context)
-            reject = {
-                "code": getattr(exc, "code", 1000),
-                "reason": norm_reason,
-                "message": norm_message,
-                "hint": _hint_for_reason(norm_reason),
-                "context": norm_context,
-            }
+            reject_obj = _to_mempool_reject(
+                reason=norm_reason,
+                message=norm_message,
+                context=norm_context,
+                exc=exc if norm_reason == "internal_error" else None,
+            )
+            reject = reject_obj.to_dict()
+            if "code" not in reject or reject.get("code") == 1000:
+                reject["code"] = int(REJECT_CODE.get(reject_obj.reason, REJECT_CODE[RejectReason.internal_error]))
             if os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1":
                 try:
                     log.info(json.dumps({"mempool_reject": reject}, sort_keys=True, separators=(",", ":")))
@@ -1429,13 +1446,13 @@ class MempoolService:
             return False, reject, computed_hash
 
         if not self.has_hash(admitted_hash):
-            return False, {
-                "code": 1000,
-                "reason": "internal_error",
-                "message": "pool missing admitted transaction",
-                "hint": "retry submission",
-                "context": {"tx_hash": admitted_hash, "error_class": "PoolMissing"},
-            }, admitted_hash
+            return False, mk_reject(
+                RejectReason.internal_error,
+                message="pool missing admitted transaction",
+                hint="retry submission",
+                context={"tx_hash": admitted_hash},
+                error_class="PoolMissing",
+            ).to_dict(), admitted_hash
 
         return True, None, admitted_hash
 
