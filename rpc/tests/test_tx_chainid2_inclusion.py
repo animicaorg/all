@@ -31,8 +31,8 @@ def test_tx_view_extracts_all_fields_from_chainid2_envelope():
         },
         "sig": {
             "algId": 4098,
-            "pubkey": b"test_pubkey_32bytes_" + b"\x00" * 12,
-            "sig": b"test_signature_64bytes_" + b"\x00" * 41,
+            "pubkey": b"test_pubkey_64bytes_" + b"\x00" * 44,  # Fixed: SPHINCS+ requires 64-byte pubkey
+            "sig": b"test_signature_7856bytes_" + b"\x00" * 7833,  # Fixed: SPHINCS+ requires 7856-byte signature
         }
     }
     
@@ -78,8 +78,8 @@ def test_tx_view_extracts_chainid_from_core_envelope():
         "sigs": [
             {
                 "alg": 4098,
-                "pubkey": b"test_pubkey_32bytes_" + b"\x00" * 12,
-                "sig": b"test_signature_64bytes_" + b"\x00" * 41,
+                "pubkey": b"test_pubkey_64bytes_" + b"\x00" * 44,  # Fixed: SPHINCS+ requires 64-byte pubkey
+                "sig": b"test_signature_7856bytes_" + b"\x00" * 7833,  # Fixed: SPHINCS+ requires 7856-byte signature
             }
         ]
     }
@@ -142,8 +142,8 @@ def test_normalize_tx_envelope_handles_rpc_format():
         },
         "sig": {
             "algId": 4098,
-            "pubkey": b"test_pubkey_32bytes_" + b"\x00" * 12,
-            "sig": b"test_signature_64bytes_" + b"\x00" * 41,
+            "pubkey": b"test_pubkey_64bytes_" + b"\x00" * 44,  # Fixed: SPHINCS+ requires 64-byte pubkey
+            "sig": b"test_signature_7856bytes_" + b"\x00" * 7833,  # Fixed: SPHINCS+ requires 7856-byte signature
         }
     }
     

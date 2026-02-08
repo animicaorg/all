@@ -152,9 +152,9 @@ def make_mock_tx(nonce: int = 0, value: int = 100) -> bytes:
         },
         "sigs": [
             {
-                "alg": 2,  # Dilithium3
-                "pubkey": b"\x00" * 32,
-                "sig": b"\x00" * 64,
+                "alg": 2,  # Dilithium3 (note: this test uses a mock format, actual alg_id should be 0x1001/4097)
+                "pubkey": b"\x00" * 1952,  # Fixed: Dilithium3 requires 1952-byte pubkey
+                "sig": b"\x00" * 3293,  # Fixed: Dilithium3 requires 3293-byte signature
             }
         ],
     }
