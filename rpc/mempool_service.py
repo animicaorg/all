@@ -1317,7 +1317,7 @@ class MempoolService:
                 "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s",
                 computed_hash,
                 reason_str,
-                exc_info=True if log.isEnabledFor(logging.DEBUG) else False,
+                exc_info=log.isEnabledFor(logging.DEBUG),
             )
             return False, reason_str, computed_hash
 
