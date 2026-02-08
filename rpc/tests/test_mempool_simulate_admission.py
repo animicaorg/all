@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+from rpc.mempool_service import MempoolService
+from mempool.errors import AdmissionError
+
+
+class _DummyPool:
+    def __len__(self):
+        return 0
+
+    def get(self, _):
+        return None
+
+
+class _RejectingService(MempoolService):
+    def submit(self, **kwargs):  # type: ignore[override]
+        raise AdmissionError("bad signature", context={"reason": "invalid_signature"})
+
+
+class _AcceptingService(MempoolService):
+    def submit(self, **kwargs):  # type: ignore[override]
+        return kwargs.get("tx_hash_hex") or "0x" + "11" * 32
+
+    def has_hash(self, _tx_hash_hex: str) -> bool:
+        return True
+
+
+def test_submit_atomic_reject_payload_is_typed() -> None:
+    svc = _RejectingService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, txh = svc.submit_atomic(tx={}, raw=b"\x80", tx_hash_hex="0x" + "22" * 32)
+    assert ok is False
+    assert txh == "0x" + "22" * 32
+    assert isinstance(reject, dict)
+    assert reject["reason"] == "invalid_signature"
+    assert "hint" in reject
+
+
+def test_submit_atomic_simulate_accepts_without_insert() -> None:
+    svc = _AcceptingService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, _ = svc.submit_atomic(tx={}, raw=b"\x80", tx_hash_hex="0x" + "33" * 32, simulate=True)
+    assert ok is True
+    assert reject is None
