@@ -2177,3 +2177,63 @@ __all__ = [
     "p2p_get_verifier_seeds",
     "debug_tx_import",
 ]
+
+
+@method(
+    "p2p.revalidateTxs",
+    desc="Re-run TX validation for peer-imported transactions with stored bytes.",
+)
+async def p2p_revalidate_txs(txids: list[str] | str | None = None) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    relay_svc = _get_tx_relay_service(p2p_svc) if p2p_svc is not None else None
+    if relay_svc is None:
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
+
+    store = getattr(relay_svc, "_tx_store", {}) or {}
+    if txids in (None, "all", "quarantined", "unverified"):
+        targets = [
+            txid for txid, entry in store.items()
+            if getattr(entry, "tx_bytes", None) is not None
+            and getattr(entry, "validation_status", "unknown") in {"unknown", "invalid"}
+        ]
+    else:
+        if not isinstance(txids, list):
+            txids = [str(txids)]
+        targets = []
+        for h in txids:
+            if not isinstance(h, str):
+                continue
+            try:
+                raw = h[2:] if h.startswith("0x") else h
+                targets.append(bytes.fromhex(raw))
+            except Exception:
+                continue
+
+    admitted: list[dict[str, t.Any]] = []
+    rejected: list[dict[str, t.Any]] = []
+    unverified: list[dict[str, t.Any]] = []
+
+    admit_fn = getattr(relay_svc, "_admit_tx", None)
+    for txid in targets:
+        entry = store.get(txid)
+        raw = getattr(entry, "tx_bytes", None)
+        if raw is None or not callable(admit_fn):
+            unverified.append({"txid": "0x" + txid.hex(), "reason": "missing_bytes_or_admitter"})
+            continue
+        try:
+            ok, reason = await admit_fn(bytes(raw), "rpc.revalidate")
+        except Exception as exc:
+            rejected.append({"txid": "0x" + txid.hex(), "reason": f"exception:{exc}"})
+            continue
+        if ok:
+            admitted.append({"txid": "0x" + txid.hex(), "reason": reason or "admitted"})
+        else:
+            rejected.append({"txid": "0x" + txid.hex(), "reason": reason or "rejected"})
+
+    return {
+        "success": True,
+        "requested": len(targets),
+        "admitted": admitted,
+        "rejected": rejected,
+        "unverified": unverified,
+    }
