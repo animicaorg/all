@@ -173,20 +173,27 @@ def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     return (pk, sk)
 
 
-def sign(sk: bytes, msg: bytes) -> bytes:
+def sign(sk: bytes, msg: bytes, pk: bytes | None = None) -> bytes:
     """
     Sign a message.
 
     Security:
       • Real signatures when python-oqs is present.
       • DEV-ONLY fallback returns sha3_512(tag || pk || msg) and is NOT secure.
+      
+    Args:
+        sk: Secret key bytes
+        msg: Message bytes to sign
+        pk: Optional public key bytes. Required for fallback implementations when
+            the wallet was created with real liboqs. If not provided, fallback
+            will derive pk from sk (for backward compatibility with old fallback wallets).
     """
     if _OQS_OK and _OQS_MECH:
         with oqs.Signature(_OQS_MECH, secret_key=sk) as signer:  # type: ignore[arg-type]
             return signer.sign(msg)
 
     if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
-        return _CUSTOM_FALLBACK.fallback_sig_sign("sphincs-shake-128s", msg, sk)
+        return _CUSTOM_FALLBACK.fallback_sig_sign("sphincs-shake-128s", msg, sk, pk)
 
     if _DEV_FAKE_OK:
         # Derive pk from sk to make verify work (matches keypair derivation)
