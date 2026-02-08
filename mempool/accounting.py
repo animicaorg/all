@@ -163,7 +163,7 @@ def intrinsic_gas(tx: "Tx", cfg: AccountingConfig | None = None) -> int:
 
     kind = (getattr(tx, "kind", "") or "").lower()
     data = bytes(getattr(tx, "data", b"") or b"")
-    gas_limit = int(getattr(tx, "gas_limit", 0) or 0)
+    gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
 
     zero, nonzero = _count_zero_nonzero(data)
     base = g.base_tx + zero * g.data_zero + nonzero * g.data_nonzero
@@ -197,7 +197,7 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     """
     gp = getattr(tx, "gas_price", None)
     if gp is not None:
-        gas_price = int(gp)
+        gas_price = _safe_int_from_value(gp)
         if base_fee > 0 and gas_price < int(base_fee):
             raise AccountingError(
                 "FeeTooLow",
@@ -208,8 +208,8 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
     max_fee = getattr(tx, "max_fee_per_gas", None)
     max_tip = getattr(tx, "max_priority_fee_per_gas", None)
     if max_fee is not None and max_tip is not None:
-        mf = int(max_fee)
-        tip = int(max_tip)
+        mf = _safe_int_from_value(max_fee)
+        tip = _safe_int_from_value(max_tip)
         if base_fee > 0 and mf < int(base_fee):
             raise AccountingError(
                 "FeeTooLow",
@@ -266,7 +266,7 @@ def estimate_max_spend(
     """
     cfg = cfg or AccountingConfig()
     ig = intrinsic_gas(tx, cfg=cfg)
-    gas_limit = int(getattr(tx, "gas_limit", 0) or 0)
+    gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
     price = effective_gas_price(tx, base_fee=base_fee)
     max_fee_paid = gas_limit * price
 

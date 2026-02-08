@@ -119,3 +119,31 @@ def test_estimate_max_spend_with_amount_field():
     
     assert estimate.value == 100
     assert estimate.total_max_spend == 100 + (21000 * 1000000000)
+
+
+def test_estimate_max_spend_with_hex_gas_limit():
+    """Test estimate_max_spend with hex string gas_limit."""
+    tx = MockTx(value=100, gas_limit="0x5208", gas_price=1000000000)  # 0x5208 = 21000
+    estimate = estimate_max_spend(tx)
+    
+    assert estimate.gas_limit == 21000
+    assert estimate.total_max_spend == 100 + (21000 * 1000000000)
+
+
+def test_estimate_max_spend_with_string_gas_price():
+    """Test estimate_max_spend with string gas_price."""
+    tx = MockTx(value=100, gas_limit=21000, gas_price="1000000000")
+    estimate = estimate_max_spend(tx)
+    
+    assert estimate.effective_gas_price == 1000000000
+    assert estimate.total_max_spend == 100 + (21000 * 1000000000)
+
+
+def test_estimate_max_spend_with_hex_gas_price():
+    """Test estimate_max_spend with hex string gas_price."""
+    tx = MockTx(value=100, gas_limit=21000, gas_price="0x3b9aca00")  # 0x3b9aca00 = 1000000000
+    estimate = estimate_max_spend(tx)
+    
+    assert estimate.effective_gas_price == 1000000000
+    assert estimate.total_max_spend == 100 + (21000 * 1000000000)
+
