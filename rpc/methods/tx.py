@@ -603,8 +603,12 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             domain=domain,
             prehash=prehash,
         )
+        # Pass full tx object (not just body) to pq_verify_tx.
+        # The _extract_body() function inside pq_verify_tx handles envelope extraction.
+        # Previously: obj.get("body", obj) would extract only the body if envelope had "body" key,
+        # causing mismatch with signing which passes full tx to pq_sign_tx.
         verify_result = _pq_verify_tx(
-            obj.get("body", obj),
+            obj,
             sig_env,
             pub,
             ctx,
@@ -622,14 +626,29 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         )
 
     if _PQ_VERIFY_DEBUG:
+        # Enhanced debug instrumentation (no secret leakage)
+        pub_fp = "0x" + hashlib.sha3_256(pub).hexdigest()[:16]
+        sig_fp = "0x" + hashlib.sha3_256(sig).hexdigest()[:16]
+        sign_hash_val = verify_result.sign_hash_hex if verify_result is not None else "N/A"
+        preimage_prefix = (verify_result.preimage_hex[:66] + "...") if verify_result is not None else "N/A"
         log.info(
-            "PQ VERIFY DEBUG ok=%s alg=%s used=%s pub_len=%d sig_len=%d chain_id=%d",
+            "PQ VERIFY DEBUG ok=%s alg=%s(id=%d) used=%s pub_len=%d pub_fp=%s sig_len=%d sig_fp=%s "
+            "chain_id=%d genesis_len=%d network=%s domain=%s prehash=%s sign_hash=%s preimage_prefix=%s",
             ok,
             alg_name,
+            alg_id,
             used_label,
             len(pub),
+            pub_fp,
             len(sig),
+            sig_fp,
             chain_id,
+            len(genesis),
+            network,
+            domain,
+            prehash,
+            sign_hash_val,
+            preimage_prefix,
         )
     if verify_errors:
         log.debug("PQ verify helper errors: %s", "; ".join(verify_errors))
