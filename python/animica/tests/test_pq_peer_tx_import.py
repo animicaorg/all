@@ -141,5 +141,55 @@ def test_extract_body_handles_normalized_envelope() -> None:
     assert extracted_body == extracted_tx
 
 
+def test_extract_body_prioritizes_normalized_tx_over_body() -> None:
+    """
+    Test that _extract_body prioritizes "tx" over "body" when both are present.
+    
+    This is the critical fix: when an envelope has both "tx" (normalized) and
+    "body" (original/unnormalized), we must use "tx" for verification to match
+    what was signed.
+    """
+    from animica.tx.signing import _extract_body
+    
+    normalized_body = {
+        "chainId": 1,
+        "from": "anim1test",
+        "to": "anim1dest",
+        "nonce": 4,
+        "value": 4000,
+        "gasLimit": 21000,
+        "maxFee": 1000000000,
+        "data": b"",
+    }
+    
+    # Simulate an envelope that has BOTH keys (can happen during decoding/normalization)
+    # The "body" might have slightly different formatting from "tx"
+    original_body = {
+        "chainId": 1,
+        "from": "anim1test",
+        "to": "anim1dest",
+        "nonce": 4,
+        "value": 4000,
+        "gasLimit": 21000,
+        "maxFee": 1000000000,
+        "data": "",  # Different representation: empty string vs empty bytes
+    }
+    
+    envelope_with_both = {
+        "tx": normalized_body,  # Normalized (canonical)
+        "body": original_body,  # Original (non-canonical)
+        "sigs": []
+    }
+    
+    # Should extract "tx" (normalized), not "body" (original)
+    extracted = _extract_body(envelope_with_both)
+    assert extracted["chainId"] == 1
+    assert extracted["nonce"] == 4
+    # Verify it used the normalized body (which has bytes for data)
+    assert extracted["data"] == b"", f"Expected bytes b'', got {extracted['data']!r}"
+    # The normalized body should have been extracted
+    assert extracted == normalized_body
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
