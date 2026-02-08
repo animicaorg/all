@@ -158,10 +158,17 @@ def fallback_sig_keypair(alg: str) -> Tuple[bytes, bytes]:
     return sk, pk
 
 
-def fallback_sig_sign(alg: str, msg: bytes, sk: bytes) -> bytes:
+def fallback_sig_sign(alg: str, msg: bytes, sk: bytes, pk: bytes | None = None) -> bytes:
     """
     Produce a *forgeable* deterministic signature with correct length.
-    sig = XOF("sig" | pk | msg) where pk = H("pk"|sk).
+    sig = XOF("sig" | pk | msg) where pk is provided or derived as H("pk"|sk).
+    
+    Args:
+        alg: Algorithm name (e.g., "sphincs-shake-128s", "dilithium3")
+        msg: Message bytes to sign
+        sk: Secret key bytes
+        pk: Optional public key bytes. If provided, use it directly instead of deriving
+            from sk. This allows compatibility with wallets created using real PQ libraries.
     """
     _check_allowed()
     alg_l = alg.lower()
@@ -172,7 +179,10 @@ def fallback_sig_sign(alg: str, msg: bytes, sk: bytes) -> bytes:
     else:
         raise ValueError(f"Unknown signature alg for fallback: {alg}")
 
-    pk = _h(b"pk", sk, out_len=lens.pk)
+    # Use provided pk if available, otherwise derive from sk for backward compatibility
+    if pk is None:
+        pk = _h(b"pk", sk, out_len=lens.pk)
+    
     sig = _xof_shake256(b"sig", pk, msg, out_len=lens.sig)
     return sig
 
@@ -255,8 +265,8 @@ def dilithium3_keypair() -> Tuple[bytes, bytes]:
     return fallback_sig_keypair("dilithium3")
 
 
-def dilithium3_sign(msg: bytes, sk: bytes) -> bytes:
-    return fallback_sig_sign("dilithium3", msg, sk)
+def dilithium3_sign(msg: bytes, sk: bytes, pk: bytes | None = None) -> bytes:
+    return fallback_sig_sign("dilithium3", msg, sk, pk)
 
 
 def dilithium3_verify(msg: bytes, sig: bytes, pk: bytes) -> bool:
@@ -267,8 +277,8 @@ def sphincs_shake_128s_keypair() -> Tuple[bytes, bytes]:
     return fallback_sig_keypair("sphincs-shake-128s")
 
 
-def sphincs_shake_128s_sign(msg: bytes, sk: bytes) -> bytes:
-    return fallback_sig_sign("sphincs-shake-128s", msg, sk)
+def sphincs_shake_128s_sign(msg: bytes, sk: bytes, pk: bytes | None = None) -> bytes:
+    return fallback_sig_sign("sphincs-shake-128s", msg, sk, pk)
 
 
 def sphincs_shake_128s_verify(msg: bytes, sig: bytes, pk: bytes) -> bool:
