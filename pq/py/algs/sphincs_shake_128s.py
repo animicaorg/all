@@ -106,8 +106,8 @@ if not _OQS_OK:
 _DEV_FAKE_OK = False
 if not _OQS_OK and os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
     _DEV_FAKE_OK = True
-    # Chosen arbitrarily for local-only operation
-    _sizes = {"pk": 32, "sk": 32, "sig": 64}
+    # Chosen arbitrarily for local-only operation (must match spec for validation)
+    _sizes = {"pk": 64, "sk": 64, "sig": 7856}
 
 
 # Local SHA3 helpers for the fake mode (avoid importing our higher-level utils here)
@@ -158,8 +158,10 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     if _DEV_FAKE_OK:
         if seed is None:
             seed = os.urandom(32)
-        sk = _sha3_256(b"animica-dev-fake-sphincs-sk|" + seed)
-        pk = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
+        sk = _sha3_512(b"animica-dev-fake-sphincs-sk|" + seed)[:64]
+        pk_part1 = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
+        pk_part2 = _sha3_256(b"animica-dev-fake-sphincs-pk2|" + sk)
+        pk = pk_part1 + pk_part2  # 64 bytes total (32 + 32)
         return (sk, pk)
 
     raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
@@ -188,7 +190,9 @@ def sign(sk: bytes, msg: bytes) -> bytes:
 
     if _DEV_FAKE_OK:
         # Derive pk from sk to make verify work (matches keypair derivation)
-        pk = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
+        pk_part1 = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
+        pk_part2 = _sha3_256(b"animica-dev-fake-sphincs-pk2|" + sk)
+        pk = pk_part1 + pk_part2  # 64 bytes total
         return _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
 
     raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
