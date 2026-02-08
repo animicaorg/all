@@ -108,3 +108,47 @@ def test_debug_tx_import_includes_peer_mapping():
     payload = service.debug_tx_import(txid)
     assert payload["txid"].startswith("0x")
     assert payload["peers_advertised"][0]["resolved_conn_id"] == "conn-1"
+
+
+@pytest.mark.asyncio
+async def test_no_duplicate_tx_state_records():
+    service, _ = _mk_service([])
+    txid = hashlib.sha3_256(b"same-txid").digest()
+    service.register_peer("123e4567-e89b-12d3-a456-426614174000", peer_node_id="0x" + "ab" * 32)
+
+    service._request_mgr.mark_requested(txid, peer="123e4567-e89b-12d3-a456-426614174000", now=1.0)
+    service._request_mgr.mark_received_invalid(txid, peer="0x" + "ab" * 32, reason="pq_verify", now=2.0)
+
+    state = service.tx_state_for(txid)
+    assert state is not None
+    assert state["state"] == "invalid_final"
+    # single authoritative record keyed by txid
+    assert len(service._request_mgr._states) == 1
+
+
+@pytest.mark.asyncio
+async def test_validated_fail_transitions_remove_from_pending():
+    service, _ = _mk_service([])
+    txid = hashlib.sha3_256(b"fail-not-pending").digest()
+
+    service._request_mgr.mark_requested(txid, peer="peer-a", now=1.0)
+    assert service._request_mgr.get_state(txid).state == "requested"
+    service._request_mgr.mark_received_invalid(txid, peer="peer-a", reason="pq_verify", now=2.0)
+
+    st = service._request_mgr.get_state(txid)
+    assert st is not None
+    assert st.state == "invalid_final"
+    assert service._request_mgr.can_request(txid, now=3.0) is False
+
+
+@pytest.mark.asyncio
+async def test_race_requested_cannot_override_invalid_final():
+    service, _ = _mk_service([])
+    txid = hashlib.sha3_256(b"race").digest()
+
+    service._request_mgr.mark_received_invalid(txid, peer="peer-a", reason="pq_verify", now=2.0)
+    service._request_mgr.mark_requested(txid, peer="peer-a", now=1.0)
+
+    st = service._request_mgr.get_state(txid)
+    assert st is not None
+    assert st.state == "invalid_final"
