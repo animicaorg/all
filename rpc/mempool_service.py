@@ -41,6 +41,89 @@ except Exception:  # pragma: no cover - runtime fallback when core not available
 log = logging.getLogger("animica.rpc.mempool")
 
 
+def _normalize_reject(reason: str, message: str, context: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    r = (reason or "").strip() or "internal_error"
+    m = message or "mempool admission failed"
+    l = (m + " " + r).lower()
+    if r == "admission_failed":
+        if "signature" in l:
+            r = "invalid_signature"
+        elif "chain_id" in l or "chain id" in l:
+            r = "chain_id_mismatch"
+        elif "nonce" in l and "low" in l:
+            r = "nonce_too_low"
+        elif "nonce" in l and ("gap" in l or "high" in l):
+            r = "nonce_gap"
+        elif "insufficient" in l and "fund" in l:
+            r = "insufficient_funds"
+        elif "fee" in l or "gas price" in l:
+            r = "fee_too_low"
+        elif "known" in l or "duplicate" in l:
+            r = "tx_already_known"
+        elif "decode" in l or "format" in l or "normalization" in l:
+            r = "invalid_format"
+    if r == "replacement_unsupported":
+        r = "nonce_conflict"
+    if r == "insufficient_funds_pending":
+        r = "insufficient_funds"
+    return r, m, context
+
+def _tx_context_fields(tx: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    try:
+        nonce = _tx_nonce(tx)
+        if nonce is not None:
+            out["nonce"] = int(nonce)
+    except Exception:
+        pass
+    try:
+        cid = _tx_chain_id(tx)
+        if cid is not None:
+            out["chain_id"] = int(cid)
+    except Exception:
+        pass
+    body = tx.get("body") if isinstance(tx, dict) else None
+    if isinstance(body, dict):
+        for key in ("from", "to", "value", "fee", "fee_reserved", "reserve_amount"):
+            if key in body:
+                out[key] = body.get(key)
+    if isinstance(tx, dict):
+        sigs = tx.get("sigs")
+        if isinstance(sigs, list) and sigs:
+            s0 = sigs[0]
+            if isinstance(s0, dict):
+                alg = s0.get("algId") if "algId" in s0 else s0.get("alg_id")
+                if alg is not None:
+                    out["scheme_id"] = alg
+                pub = s0.get("pubkey")
+                sig = s0.get("sig")
+                if isinstance(pub, (bytes, bytearray)):
+                    out["pubkey_len"] = len(pub)
+                if isinstance(sig, (bytes, bytearray)):
+                    out["sig_len"] = len(sig)
+    return out
+
+
+def _hint_for_reason(reason: str) -> str:
+    hints = {
+        "invalid_signature": "check signer scheme/domain and keypair",
+        "invalid_format": "ensure tx envelope is canonical CBOR",
+        "chain_id_mismatch": "set --chain-id to node chain id",
+        "insufficient_funds": "fund sender for value + fee reserve",
+        "insufficient_funds_pending": "fund sender for value + fee reserve",
+        "nonce_too_low": "retry without --nonce to use latest pending nonce",
+        "nonce_too_high": "submit lower nonce transaction first",
+        "nonce_gap": "submit missing lower nonce transaction first",
+        "nonce_conflict": "wait for existing same-nonce tx or replace with policy",
+        "fee_too_low": "increase --max-fee",
+        "fee_reserved_invalid": "set non-negative reserve fields",
+        "tx_already_known": "tx is already in mempool",
+        "policy_reject": "inspect mempool policy and retry",
+        "internal_error": "check node logs",
+    }
+    return hints.get(reason, "check transaction fields and retry")
+
+
 @dataclass(frozen=True)
 class MempoolSnapshot:
     entries: list[PendingTxEntry]
@@ -662,6 +745,7 @@ class MempoolService:
         tx_hash_hex: str | None = None,
         local: bool = True,
         origin_peer: str | None = None,
+        simulate: bool = False,
     ) -> str:
         try:
             raw_bytes = normalized_tx_bytes(raw)
@@ -768,7 +852,10 @@ class MempoolService:
                 "MempoolService.submit: duplicate (already in pool), tx_hash=%s",
                 tx_hash_hex,
             )
-            return tx_hash_hex
+            raise AdmissionError(
+                "transaction already known",
+                context={"tx_hash": tx_hash_hex},
+            )
 
         chain_id = _tx_chain_id(tx)
         if chain_id is not None and chain_id != self.chain_id:
@@ -1125,6 +1212,9 @@ class MempoolService:
                 fee=fee,
             )
             
+            if simulate:
+                return tx_hash_hex
+
             log.info(
                 "MempoolService.submit: calling pool.add(), tx_hash=%s, sender=%s",
                 tx_hash_hex,
@@ -1282,12 +1372,12 @@ class MempoolService:
         tx_hash_hex: str | None = None,
         local: bool = True,
         origin_peer: str | None = None,
-    ) -> tuple[bool, str | None, str]:
+        simulate: bool = False,
+    ) -> tuple[bool, dict[str, Any] | None, str]:
         """
         Atomically submit a transaction and report admission status.
 
-        Returns (accepted, reason, tx_hash_hex). On rejection, reason is a
-        short string suitable for RPC error surfaces.
+        Returns (accepted, reject_payload, tx_hash_hex).
         """
         computed_hash = tx_hash_hex
         if computed_hash is None:
@@ -1303,28 +1393,54 @@ class MempoolService:
                 tx_hash_hex=computed_hash,
                 local=local,
                 origin_peer=origin_peer,
+                simulate=simulate,
             )
         except Exception as exc:
-            # Extract detailed reason from structured errors if available
-            reason_str = str(exc)
-            if hasattr(exc, "reason"):
-                reason_str = str(exc.reason)
-            elif hasattr(exc, "message"):
-                reason_str = str(exc.message)
+            reason = getattr(exc, "reason", None) or "internal_error"
+            message = getattr(exc, "message", None) or str(exc)
+            context = getattr(exc, "context", None)
+            if not isinstance(context, dict):
+                context = {"error_class": exc.__class__.__name__}
+            context = {**_tx_context_fields(tx), **context}
+            context.setdefault("tx_hash", computed_hash)
+            if reason == "admission_failed" and context.get("reason"):
+                reason = str(context.get("reason"))
+            norm_reason, norm_message, norm_context = _normalize_reject(str(reason), str(message), context)
+            reject = {
+                "code": getattr(exc, "code", 1000),
+                "reason": norm_reason,
+                "message": norm_message,
+                "hint": _hint_for_reason(norm_reason),
+                "context": norm_context,
+            }
+            if os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1":
+                try:
+                    log.info(json.dumps({"mempool_reject": reject}, sort_keys=True, separators=(",", ":")))
+                except Exception:
+                    pass
             
             # Log the full exception for debugging
             log.warning(
                 "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s",
                 computed_hash,
-                reason_str,
+                reason,
                 exc_info=log.isEnabledFor(logging.DEBUG),
             )
-            return False, reason_str, computed_hash
+            return False, reject, computed_hash
 
         if not self.has_hash(admitted_hash):
-            return False, "pool_missing", admitted_hash
+            return False, {
+                "code": 1000,
+                "reason": "internal_error",
+                "message": "pool missing admitted transaction",
+                "hint": "retry submission",
+                "context": {"tx_hash": admitted_hash, "error_class": "PoolMissing"},
+            }, admitted_hash
 
         return True, None, admitted_hash
+
+
+
 
     def snapshot(self, *, limit: int = 1000) -> MempoolSnapshot:
         raw_by_hash: dict[str, bytes] = {}

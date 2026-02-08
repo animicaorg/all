@@ -304,7 +304,8 @@ def _format_rpc_error(e: RpcError) -> None:
         reason = str(mempool_error.get("reason") or "admission_failed")
         message = str(mempool_error.get("message") or e.message)
         context = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
-        console.print(f"[red]Mempool rejection:[/red] {reason} - {message}")
+        hint = mempool_error.get("hint")
+        console.print(f"[red]Rejected:[/red] {reason} — {message}" + (f" (hint: {hint})" if hint else ""))
         tx_hash = context.get("tx_hash") or context.get("txHash")
         if tx_hash:
             console.print(f"  tx_hash: {tx_hash}")
@@ -1310,6 +1311,7 @@ def send(
     wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Simulate mempool admission without inserting"),
     secret_key_hex: Optional[str] = typer.Option(
         None, "--secret-key-hex", help="Secret key hex (for external wallets, bypasses wallets.json lookup)"
     ),
@@ -1565,7 +1567,8 @@ def send(
                 raise ValueError(f"Unexpected tx.sendRawTransaction result: {result!r}")
 
             try:
-                send_result = _rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+                send_method = "mempool.simulateAdmission" if dry_run else "tx.sendRawTransaction"
+                send_result = _rpc(rpc, send_method, [raw_hex])
                 tx_hash = _extract_send_hash(send_result)
                 if isinstance(send_result, dict):
                     accepted = send_result.get("accepted_to_mempool")
@@ -1634,7 +1637,10 @@ def send(
                     _format_rpc_error(e)
                     raise typer.Exit(code=1) from e
 
-            tx_in_mempool, mempool_status = _get_mempool_status(rpc, tx_hash, verbose=verbose)
+            if dry_run:
+                tx_in_mempool, mempool_status = False, None
+            else:
+                tx_in_mempool, mempool_status = _get_mempool_status(rpc, tx_hash, verbose=verbose)
             if tx_in_mempool:
                 last_body = body
                 last_nonce = attempt_nonce
@@ -1707,7 +1713,7 @@ def send(
     _maybe_force_sync(rpc, verbose=verbose)
 
     console.print("\n[bold green]=== Transaction Sent ===[/bold green]")
-    console.print("Transaction Submitted")
+    console.print("Transaction Simulated" if dry_run else "Transaction Submitted")
     console.print(f"Tx Hash: {tx_hash}")
     console.print("Transaction broadcast successfully")
     console.print(
