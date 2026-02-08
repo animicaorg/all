@@ -6,10 +6,14 @@ This module is the single source of truth for transaction signing preimages.
 from __future__ import annotations
 
 import dataclasses as _dc
+import hashlib
 import re
 from typing import Any, Mapping
 
 import cbor2
+from pq.py.address import address_from_pubkey
+from pq.py.sign import Signature, sign_detached
+from pq.py.verify import verify_detached
 
 try:
     from core.encoding.cbor import dumps as _canonical_cbor_dumps
@@ -20,14 +24,38 @@ DOMAIN_TX_SIGN_V1 = "animica.tx.v1"
 
 __all__ = [
     "DOMAIN_TX_SIGN_V1",
+    "ChainContext",
+    "VerifyResult",
     "build_signable_tx_bytes",
     "extract_chain_id",
+    "pq_sign_tx",
+    "pq_verify_tx",
+    "tx_sign_hash",
     "tx_signing_preimage",
     "txid_from_canonical_bytes",
 ]
 
 
 _HEX_RE = re.compile(r"^[0-9a-fA-F]*$")
+
+
+@_dc.dataclass(frozen=True)
+class ChainContext:
+    chain_id: int
+    genesis_hash: bytes = b""
+    network: str = "unknown"
+    fork_id: int | None = None
+    domain: str = "tx"
+    prehash: str = "sha3-512"
+
+
+@_dc.dataclass(frozen=True)
+class VerifyResult:
+    ok: bool
+    sign_hash_hex: str
+    preimage_hex: str
+    pub_fingerprint: str
+    reason: str | None = None
 
 
 def _as_dict(obj: Any) -> Any:
@@ -220,6 +248,93 @@ def tx_signing_preimage(
         7: body,
     }
     return _canonical_cbor(preimage_obj)
+
+
+def tx_sign_hash(tx: Any, ctx: ChainContext) -> bytes:
+    return hashlib.sha3_512(
+        tx_signing_preimage(
+            tx,
+            chain_id=int(ctx.chain_id),
+            genesis=bytes(ctx.genesis_hash),
+            network=str(ctx.network),
+            domain=DOMAIN_TX_SIGN_V1,
+            message_type="tx",
+        )
+    ).digest()
+
+
+def pq_sign_tx(tx: Any, privkey: bytes, pubkey: bytes, alg_id: int, ctx: ChainContext) -> Signature:
+    preimage = tx_signing_preimage(
+        tx,
+        chain_id=int(ctx.chain_id),
+        genesis=bytes(ctx.genesis_hash),
+        network=str(ctx.network),
+        domain=DOMAIN_TX_SIGN_V1,
+        message_type="tx",
+    )
+    return sign_detached(
+        preimage,
+        alg=alg_id,
+        sk=privkey,
+        pk=pubkey,
+        domain=ctx.domain,
+        chain_id=int(ctx.chain_id),
+        fork_id=ctx.fork_id,
+        prehash=ctx.prehash,  # type: ignore[arg-type]
+    )
+
+
+def pq_verify_tx(tx: Any, signature: Signature, pubkey: bytes, ctx: ChainContext, *, from_addr: str | None = None) -> VerifyResult:
+    preimage = tx_signing_preimage(
+        tx,
+        chain_id=int(ctx.chain_id),
+        genesis=bytes(ctx.genesis_hash),
+        network=str(ctx.network),
+        domain=DOMAIN_TX_SIGN_V1,
+        message_type="tx",
+    )
+    sign_hash = hashlib.sha3_512(preimage).digest()
+    pub_fp = "0x" + hashlib.sha3_256(pubkey).hexdigest()[:16]
+    try:
+        ok = verify_detached(
+            preimage,
+            signature,
+            pubkey,
+            domain=ctx.domain,
+            chain_id=int(ctx.chain_id),
+            fork_id=ctx.fork_id,
+            prehash=ctx.prehash,  # type: ignore[arg-type]
+        )
+    except Exception as exc:
+        return VerifyResult(
+            ok=False,
+            sign_hash_hex="0x" + sign_hash.hex(),
+            preimage_hex="0x" + preimage.hex(),
+            pub_fingerprint=pub_fp,
+            reason=str(exc),
+        )
+
+    if ok and from_addr:
+        try:
+            expected = address_from_pubkey(pubkey, signature.alg_id)
+            if expected != from_addr:
+                return VerifyResult(
+                    ok=False,
+                    sign_hash_hex="0x" + sign_hash.hex(),
+                    preimage_hex="0x" + preimage.hex(),
+                    pub_fingerprint=pub_fp,
+                    reason="from address does not match signature public key",
+                )
+        except Exception:
+            pass
+
+    return VerifyResult(
+        ok=bool(ok),
+        sign_hash_hex="0x" + sign_hash.hex(),
+        preimage_hex="0x" + preimage.hex(),
+        pub_fingerprint=pub_fp,
+        reason=None if ok else "verification failed",
+    )
 
 
 def build_signable_tx_bytes(tx: Any, chain_id: int | None = None) -> bytes:
