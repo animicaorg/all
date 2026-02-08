@@ -1,247 +1,55 @@
 from __future__ import annotations
 
 """
-Animica PQ: SPHINCS+ SHAKE-128s signature backend (native wrapper)
+Animica PQ: SPHINCS+ SHAKE-128s signature backend (pure-Python only).
 
-Priority of implementations:
-  1) python-oqs (Open Quantum Safe) — production-capable if installed
-  2) Explicitly opted-in DEV-ONLY fallback (ANIMICA_UNSAFE_PQ_FAKE=1), which is NOT secure
-     and exists purely to let the rest of the stack run on machines without liboqs.
-     Do not use on real networks.
-
-Uniform surface exposed to higher layers (see pq/py/algs/__init__.py):
-  - sizes: dict {"pk","sk","sig"} (ints)
-  - is_available() -> bool
-  - keypair(seed: bytes|None) -> (sk: bytes, pk: bytes)
-  - sign(sk: bytes, msg: bytes) -> sig: bytes
-  - verify(pk: bytes, msg: bytes, sig: bytes) -> bool
+This backend intentionally uses only the in-repo pure-Python implementation to
+avoid cross-environment backend drift.
 """
 
 import os
 from typing import Dict, Optional, Tuple
 
-# --------------------------------------------------------------------------------------
-# Try python-oqs first
-# --------------------------------------------------------------------------------------
-_OQS_OK = False
-_OQS_MECH = None  # type: Optional[str]
-_sizes: Dict[str, int] = {"pk": 0, "sk": 0, "sig": 0}
-_CUSTOM_FALLBACK_OK = False
+from . import pure_python_fallbacks as _custom_fallbacks
 
-# A few possible mechanism names used across oqs/liboqs versions
-# Note: liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
-_POSSIBLE_MECH_NAMES = {
-    # Prefer "robust" for cross-version compatibility with existing nodes.
-    "robust": [
-        "SPHINCS+-SHAKE-128s-robust",
-        "SPHINCS+-shake-128s-robust",
-        "SPHINCS+-SHAKE-128s",  # older versions without suffix default to robust
-        "SPHINCS+-shake-128s",
-    ],
-    # Fallback to "simple" (liboqs 0.15+ default) when robust isn't available.
-    "simple": [
-        "SPHINCS+-SHAKE-128s-simple",
-        "SPHINCS+-shake-128s-simple",
-    ],
+os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+
+_sizes: Dict[str, int] = {
+    "pk": _custom_fallbacks.SPHINCS_SHAKE_128S.pk,
+    "sk": _custom_fallbacks.SPHINCS_SHAKE_128S.sk,
+    "sig": _custom_fallbacks.SPHINCS_SHAKE_128S.sig,
 }
 
-
-def _select_spx_mechanism(enabled: set[str]) -> Optional[str]:
-    """Choose a deterministic SPHINCS+ mechanism from the enabled set."""
-
-    preferred_variant = os.environ.get("ANIMICA_SPHINCS_VARIANT", "robust").strip().lower()
-    # Default preference keeps compatibility with nodes built against older liboqs
-    # releases that only ship the "robust" parameter set.
-    variant_order = ["robust", "simple"]
-    if preferred_variant == "simple":
-        variant_order = ["simple", "robust"]
-
-    for variant in variant_order:
-        for name in _POSSIBLE_MECH_NAMES.get(variant, []):
-            if name in enabled:
-                return name
-    return None
-
-try:
-    import oqs  # type: ignore
-
-    enabled = set(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
-    _OQS_MECH = _select_spx_mechanism(enabled)
-    if _OQS_MECH:
-        with oqs.Signature(_OQS_MECH) as _probe:  # type: ignore[arg-type]
-            _sizes = {
-                "pk": _probe.length_public_key,  # type: ignore[attr-defined]
-                "sk": _probe.length_secret_key,  # type: ignore[attr-defined]
-                "sig": _probe.length_signature,  # type: ignore[attr-defined]
-            }
-        _OQS_OK = True
-except Exception:
-    _OQS_OK = False
-    _OQS_MECH = None
-
-# --------------------------------------------------------------------------------------
-# Custom pure-Python fallback (default when liboqs is unavailable)
-# --------------------------------------------------------------------------------------
-_CUSTOM_FALLBACK = None
-if not _OQS_OK:
-    try:
-        from . import pure_python_fallbacks as _custom_fallbacks
-
-        os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
-        if os.environ.get("ANIMICA_ALLOW_PQ_PURE_FALLBACK") == "1":
-            _sizes = {
-                "pk": _custom_fallbacks.SPHINCS_SHAKE_128S.pk,
-                "sk": _custom_fallbacks.SPHINCS_SHAKE_128S.sk,
-                "sig": _custom_fallbacks.SPHINCS_SHAKE_128S.sig,
-            }
-            _CUSTOM_FALLBACK = _custom_fallbacks
-            _CUSTOM_FALLBACK_OK = True
-    except Exception:
-        _CUSTOM_FALLBACK = None
-        _CUSTOM_FALLBACK_OK = False
-
-# --------------------------------------------------------------------------------------
-# Unsafe dev fallback (only if explicitly enabled)
-# --------------------------------------------------------------------------------------
-_DEV_FAKE_OK = False
-if not _OQS_OK and os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
-    _DEV_FAKE_OK = True
-    # Chosen arbitrarily for local-only operation (must match spec for validation)
-    _sizes = {"pk": 64, "sk": 64, "sig": 7856}
-
-
-# Local SHA3 helpers for the fake mode (avoid importing our higher-level utils here)
-def _sha3_256(data: bytes) -> bytes:
-    import hashlib
-
-    return hashlib.sha3_256(data).digest()
-
-
-def _sha3_512(data: bytes) -> bytes:
-    import hashlib
-
-    return hashlib.sha3_512(data).digest()
-
-
-# --------------------------------------------------------------------------------------
-# Public API (uniform)
-# --------------------------------------------------------------------------------------
 sizes = _sizes.copy()
 
 
 def is_available() -> bool:
-    """
-    Return True if a working SPHINCS+-SHAKE-128s implementation is available.
-    True when python-oqs exposes a compatible mechanism, or when the explicit
-    ANIMICA_UNSAFE_PQ_FAKE=1 dev-only fallback is enabled.
-    """
-    return _OQS_OK or _CUSTOM_FALLBACK_OK or _DEV_FAKE_OK
+    return True
 
 
 def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
-    """
-    Generate a SPHINCS+-SHAKE-128s keypair.
-
-    Notes:
-      • With python-oqs, RNG is internal; the optional seed is ignored.
-      • In DEV-ONLY fallback, we derive (sk, pk) deterministically from seed or OS RNG.
-    """
-    if _OQS_OK and _OQS_MECH:
-        with oqs.Signature(_OQS_MECH) as signer:  # type: ignore[arg-type]
-            pk = signer.generate_keypair()
-            sk = signer.export_secret_key()
-            return (sk, pk)
-
-    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
-        return _CUSTOM_FALLBACK.fallback_sig_keypair("sphincs-shake-128s")
-
-    if _DEV_FAKE_OK:
-        if seed is None:
-            seed = os.urandom(32)
-        sk = _sha3_512(b"animica-dev-fake-sphincs-sk|" + seed)[:64]
-        pk_part1 = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
-        pk_part2 = _sha3_256(b"animica-dev-fake-sphincs-pk2|" + sk)
-        pk = pk_part1 + pk_part2  # 64 bytes total (32 + 32)
-        return (sk, pk)
-
-    raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
+    # `seed` is accepted for API compatibility, but the pure-python fallback uses
+    # os.urandom internally.
+    return _custom_fallbacks.fallback_sig_keypair("sphincs-shake-128s")
 
 
 def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
-    """Compatibility wrapper returning (pk, sk)."""
     sk, pk = keypair(seed)
     return (pk, sk)
 
 
 def sign(sk: bytes, msg: bytes, pk: bytes | None = None) -> bytes:
-    """
-    Sign a message.
-
-    Security:
-      • Real signatures when python-oqs is present.
-      • DEV-ONLY fallback returns sha3_512(tag || pk || msg) and is NOT secure.
-      
-    Args:
-        sk: Secret key bytes
-        msg: Message bytes to sign
-        pk: Optional public key bytes. Required for fallback implementations when
-            the wallet was created with real liboqs. If not provided, fallback
-            will derive pk from sk (for backward compatibility with old fallback wallets).
-    """
-    if _OQS_OK and _OQS_MECH:
-        with oqs.Signature(_OQS_MECH, secret_key=sk) as signer:  # type: ignore[arg-type]
-            return signer.sign(msg)
-
-    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
-        return _CUSTOM_FALLBACK.fallback_sig_sign("sphincs-shake-128s", msg, sk, pk)
-
-    if _DEV_FAKE_OK:
-        # Derive pk from sk to make verify work (matches keypair derivation)
-        pk_part1 = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
-        pk_part2 = _sha3_256(b"animica-dev-fake-sphincs-pk2|" + sk)
-        pk = pk_part1 + pk_part2  # 64 bytes total
-        return _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
-
-    raise NotImplementedError("SPHINCS+-SHAKE-128s unavailable: no backend available")
+    return _custom_fallbacks.fallback_sig_sign("sphincs-shake-128s", msg, sk, pk)
 
 
 def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
-    """
-    Verify a signature. Returns True if valid, False otherwise.
-    """
-    if _OQS_OK and _OQS_MECH:
-        try:
-            with oqs.Signature(_OQS_MECH, public_key=pk) as verifier:  # type: ignore[arg-type]
-                try:
-                    return bool(verifier.verify(msg, sig))
-                except Exception:
-                    return False
-        except TypeError:
-            with oqs.Signature(_OQS_MECH) as verifier:  # type: ignore[arg-type]
-                try:
-                    return bool(verifier.verify(msg, sig, pk))
-                except Exception:
-                    return False
-
-    if _CUSTOM_FALLBACK_OK and _CUSTOM_FALLBACK is not None:
-        return _CUSTOM_FALLBACK.fallback_sig_verify("sphincs-shake-128s", msg, sig, pk)
-
-    if _DEV_FAKE_OK:
-        # In fake mode we don't have the real sk; accept signature tied to pk directly
-        # (signer used sk, but we reconstruct expected sig from pk for verification)
-        expect = _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
-        return sig == expect
-
-    return False
+    return _custom_fallbacks.fallback_sig_verify("sphincs-shake-128s", msg, sig, pk)
 
 
 if __name__ == "__main__":
     print("[sphincs_shake_128s] available:", is_available(), "sizes:", sizes)
-    try:
-        sk, pk = keypair()
-        m = b"hello animica (sphincs)"
-        s = sign(sk, m)
-        print("verify(ok):", verify(pk, m, s))
-        print("verify(bad):", verify(pk, m + b"x", s))
-    except NotImplementedError as e:
-        print(str(e))
+    sk, pk = keypair()
+    m = b"hello animica (sphincs)"
+    s = sign(sk, m)
+    print("verify(ok):", verify(pk, m, s))
+    print("verify(bad):", verify(pk, m + b"x", s))
