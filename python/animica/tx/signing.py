@@ -194,13 +194,18 @@ def extract_chain_id(tx: Any) -> int:
 def _extract_body(tx: Any) -> dict:
     obj = _as_dict(tx)
 
-    # Check normalized envelope format FIRST (canonical representation)
-    if isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
-        # Handle normalized envelope format {"tx": {...}, "sigs": [...]}
-        body = dict(obj["tx"])
-    elif isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
-        # Legacy envelope format {"body": {...}, "sig": {...}}
+    # Check for original "body" key FIRST (for signature verification)
+    # The "body" key contains the original transaction as signed by the CLI,
+    # while "tx" contains the normalized canonical format used for execution.
+    # Signature verification MUST use the original body that was signed.
+    if isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
+        # Original envelope format {"body": {...}, "sig": {...}}
+        # This is what was actually signed, so use it for verification
         body = dict(obj["body"])
+    elif isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
+        # Normalized envelope format {"tx": {...}, "sigs": [...]}
+        # Only use this if no original "body" is present
+        body = dict(obj["tx"])
     else:
         # fall back to canonical extraction
         try:

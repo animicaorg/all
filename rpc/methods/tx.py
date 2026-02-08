@@ -719,9 +719,14 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ) from exc
         raise
 
-    # Note: Do NOT add the original "body" key back to normalized_env.
-    # The normalized "tx" key is canonical and should be used for verification.
-    # Adding "body" back causes _extract_body() to use unnormalized data.
+    # IMPORTANT: Preserve the original "body" key for signature verification.
+    # The signature was created over the original body format from the CLI,
+    # NOT the normalized "tx" format. For signature verification to work,
+    # we must keep both:
+    #   - "body": original format (for signature verification)
+    #   - "tx": normalized format (for execution and canonical hashing)
+    if "body" in obj and isinstance(obj.get("body"), dict):
+        normalized_env["body"] = obj["body"]
 
     raw_canonical = normalized_env.get("raw") or raw
     tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
@@ -748,7 +753,9 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             pass
 
     enriched_obj = dict(normalized_env)
-    # Note: Do NOT add original "body" back - use normalized "tx" key only
+    # Preserve original "body" for signature verification if present
+    if "body" in obj and isinstance(obj.get("body"), dict):
+        enriched_obj["body"] = obj["body"]
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
