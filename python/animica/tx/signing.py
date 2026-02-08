@@ -16,6 +16,11 @@ from pq.py.sign import Signature, sign_detached
 from pq.py.verify import verify_detached
 
 try:
+    from core.utils.tx import normalize_tx_body as _normalize_tx_body
+except Exception:  # pragma: no cover
+    _normalize_tx_body = None
+
+try:
     from core.encoding.cbor import dumps as _canonical_cbor_dumps
 except Exception:  # pragma: no cover
     _canonical_cbor_dumps = None
@@ -194,18 +199,15 @@ def extract_chain_id(tx: Any) -> int:
 def _extract_body(tx: Any) -> dict:
     obj = _as_dict(tx)
 
-    # Check for original "body" key FIRST (for signature verification)
-    # The "body" key contains the original transaction as signed by the CLI,
-    # while "tx" contains the normalized canonical format used for execution.
-    # Signature verification MUST use the original body that was signed.
-    if isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
-        # Original envelope format {"body": {...}, "sig": {...}}
-        # This is what was actually signed, so use it for verification
-        body = dict(obj["body"])
-    elif isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
-        # Normalized envelope format {"tx": {...}, "sigs": [...]}
-        # Only use this if no original "body" is present
+    # Check normalized envelope format FIRST (canonical representation).
+    # During peer import/normalization both keys can exist, but verification
+    # must use the normalized body to match canonical signing preimage bytes.
+    if isinstance(obj, Mapping) and "tx" in obj and isinstance(obj["tx"], Mapping):
+        # Normalized envelope format {"tx": {...}, "sigs": [...]}.
         body = dict(obj["tx"])
+    elif isinstance(obj, Mapping) and "body" in obj and isinstance(obj["body"], Mapping):
+        # Legacy/original envelope format {"body": {...}, "sig": {...}}.
+        body = dict(obj["body"])
     else:
         # fall back to canonical extraction
         try:
@@ -245,7 +247,14 @@ def tx_signing_preimage(
     The preimage intentionally excludes signatures and includes explicit domain
     separators plus chain/genesis bindings.
     """
-    body = _extract_body(tx)
+    extracted_body = _extract_body(tx)
+    body = extracted_body
+    if _normalize_tx_body is not None and isinstance(extracted_body, Mapping):
+        try:
+            body = _normalize_tx_body(extracted_body)
+        except Exception:
+            body = extracted_body
+
     tx_version = int(body.get("v", body.get("version", 1)))
     preimage_obj = {
         1: str(domain),

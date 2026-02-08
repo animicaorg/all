@@ -719,14 +719,9 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             ) from exc
         raise
 
-    # IMPORTANT: Preserve the original "body" key for signature verification.
-    # The signature was created over the original body format from the CLI,
-    # NOT the normalized "tx" format. For signature verification to work,
-    # we must keep both:
-    #   - "body": original format (for signature verification)
-    #   - "tx": normalized format (for execution and canonical hashing)
-    if "body" in obj and isinstance(obj.get("body"), dict):
-        normalized_env["body"] = obj["body"]
+    # NOTE: Do not re-introduce original "body" after normalization.
+    # The normalized "tx" representation is canonical and required for
+    # deterministic signing preimage reconstruction during verification.
 
     raw_canonical = normalized_env.get("raw") or raw
     tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
@@ -753,9 +748,7 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             pass
 
     enriched_obj = dict(normalized_env)
-    # Preserve original "body" for signature verification if present
-    if "body" in obj and isinstance(obj.get("body"), dict):
-        enriched_obj["body"] = obj["body"]
+    # Keep normalized envelope canonical; avoid adding legacy "body".
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
@@ -853,10 +846,8 @@ def _process_decoded_obj(obj: dict, raw: bytes) -> tuple[t.Any, dict]:
             ) from exc
         raise
     
-    if isinstance(obj, dict):
-        raw_body = obj.get("body")
-        if isinstance(raw_body, dict):
-            normalized_env.setdefault("body", raw_body)
+    # NOTE: Do not add legacy/original "body" into normalized envelopes.
+    # Verification/signing preimage logic should consume canonical "tx" only.
     
     raw_canonical = normalized_env.get("raw") or raw
     tx_hash_hex = normalized_env.get("hash") or (_hex(_sha3_256(raw_canonical)) or "")
@@ -883,8 +874,6 @@ def _process_decoded_obj(obj: dict, raw: bytes) -> tuple[t.Any, dict]:
             pass
     
     enriched_obj = dict(normalized_env)
-    if isinstance(obj, dict) and "body" in obj and isinstance(obj.get("body"), dict):
-        enriched_obj["body"] = obj["body"]
     enriched_obj["hash"] = tx_hash_hex
     enriched_obj["raw"] = raw_canonical
     return enriched_obj, enriched_obj
