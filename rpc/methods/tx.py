@@ -1328,7 +1328,7 @@ def _mempool_submit(
         if not accepted:
             # Build a detailed error message that includes the reason
             reason_str = reason or "admission_failed"
-            message = f"mempool admission failed: {reason_str}" if reason else "mempool admission failed"
+            message = f"mempool admission failed: {reason_str}"
             
             raise rpc_errors.InvalidTx(
                 message,
