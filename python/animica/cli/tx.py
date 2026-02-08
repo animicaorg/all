@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -15,7 +14,7 @@ import typer
 from rich.console import Console
 from rich.pretty import Pretty
 
-from pq.py.sign import build_sign_bytes, pq_sign_detached, verify_detached  # type: ignore
+from animica.tx.signing import ChainContext, pq_sign_tx, pq_verify_tx
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.cli.rpc_guard import guard_bootstrap_rpc
@@ -1076,6 +1075,27 @@ def _build_raw_tx(
     return _cbor({"sig": sig_env, "body": body})
 
 
+
+
+def _chain_context_from_identity(chain_identity: dict[str, Any], *, chain_id: int, domain: str, prehash: str) -> ChainContext:
+    genesis_raw = chain_identity.get("genesisHash") or chain_identity.get("genesis") or ""
+    genesis = b""
+    if isinstance(genesis_raw, str) and genesis_raw.strip():
+        try:
+            genesis = _hex_to_bytes(genesis_raw)
+        except Exception:
+            genesis = b""
+    network = str(chain_identity.get("network") or chain_identity.get("name") or "unknown")
+    fork_id = _coerce_int(chain_identity.get("forkId") or chain_identity.get("fork_id"))
+    return ChainContext(
+        chain_id=int(chain_id),
+        genesis_hash=genesis,
+        network=network,
+        fork_id=fork_id,
+        domain=domain,
+        prehash=prehash,
+    )
+
 def _warn_if_unsynced(rpc: str, *, threshold: int = 5) -> bool:
     try:
         status = _rpc(rpc, "sync.getStatus", [])
@@ -1298,6 +1318,7 @@ def send(
     chain_identity = chain_resolution.identity
     cid = int(chain_id) if chain_id is not None else int(chain_identity.get("chainId"))
     fork_id = _coerce_int(chain_identity.get("forkId") or chain_identity.get("fork_id"))
+    chain_ctx = _chain_context_from_identity(chain_identity, chain_id=cid, domain=domain, prehash=prehash)
     if chain_resolution.source != "rpc:chain.getChainIdentity":
         console.print(
             f"[yellow]RPC chain identity unavailable; using chainId={cid} "
@@ -1429,15 +1450,6 @@ def send(
             )
             body_bytes = _cbor(body)
 
-            sign_bytes = build_sign_bytes(
-                body_bytes,
-                domain=domain,
-                chain_id=cid,
-                fork_id=fork_id,
-                alg_id=used_alg_id,
-                prehash=prehash,  # type: ignore[arg-type]
-            )
-
             if verbose or debug_signing:
                 console.print("\n[bold]CHAIN CONTEXT DEBUG[/bold]")
                 console.print(
@@ -1465,44 +1477,36 @@ def send(
                         "prehash": prehash,
                         "chain_id_in_pq": cid,
                         "fork_id_in_pq": fork_id,
+                        "genesis_len": len(chain_ctx.genesis_hash),
+                        "network": chain_ctx.network,
                         "pubkey_len": len(pk),
                         "seckey_len": len(sk),
                         "message_len": len(body_bytes),
                         "message_prefix": body_bytes[:32].hex(),
-                        "sign_bytes_hash": hashlib.sha3_256(sign_bytes).hexdigest(),
-                        "sign_bytes_len": len(sign_bytes),
                     }
                 )
 
             # Sign
-            pq = pq_sign_detached(
-                body_bytes,
-                alg=used_alg_id,
-                sk=sk,
-                pk=pk,
-                domain=domain,
-                chain_id=cid,
-                fork_id=fork_id,
-                prehash=prehash,  # type: ignore[arg-type]
-            )
+            pq = pq_sign_tx(body, sk, pk, used_alg_id, chain_ctx)
 
-            try:
-                local_ok = verify_detached(
-                    body_bytes,
-                    pq,
-                    pk,
-                    domain=domain,
-                    chain_id=cid,
-                    fork_id=fork_id,
-                    prehash=prehash,  # type: ignore[arg-type]
+            verify_result = pq_verify_tx(body, pq, pk, chain_ctx, from_addr=from_addr)
+            if not verify_result.ok:
+                console.print("[bold red]Local PQ verify failed before broadcast.[/bold red]")
+                console.print(
+                    {
+                        "reason": verify_result.reason,
+                        "sign_hash": verify_result.sign_hash_hex,
+                        "preimage_prefix": verify_result.preimage_hex[:66] + "…",
+                        "pub_fingerprint": verify_result.pub_fingerprint,
+                        "scheme_id": pq.alg_id,
+                        "sig_len": len(pq.sig),
+                        "domain": chain_ctx.domain,
+                        "prehash": chain_ctx.prehash,
+                        "chain_id": chain_ctx.chain_id,
+                        "network": chain_ctx.network,
+                    }
                 )
-            except Exception as e:
-                raise RuntimeError(f"Local PQ verify failed before broadcast: {e}") from e
-
-            if not local_ok:
-                raise RuntimeError(
-                    "Local PQ verify failed before broadcast (sign-bytes mismatch)."
-                )
+                raise RuntimeError("Local PQ verify failed before broadcast (signing mismatch).")
 
             raw = _build_raw_tx(
                 body=body,
