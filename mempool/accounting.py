@@ -162,7 +162,7 @@ def intrinsic_gas(tx: "Tx", cfg: AccountingConfig | None = None) -> int:
     g = cfg.gas
 
     kind = (getattr(tx, "kind", "") or "").lower()
-    data = bytes(getattr(tx, "data", b"") or b"")
+    data = _safe_bytes_from_value(getattr(tx, "data", b"") or b"")
     gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
 
     zero, nonzero = _count_zero_nonzero(data)
@@ -248,6 +248,49 @@ def _safe_int_from_value(val: Any) -> int:
         return int(val)
     # For any other type, try direct conversion
     return int(val)
+
+
+def _safe_bytes_from_value(val: Any) -> bytes:
+    """
+    Safely convert a transaction data field to bytes.
+    
+    Handles:
+    - None or empty -> b""
+    - bytes/bytearray -> bytes
+    - hex strings (e.g., "0xabcd") -> bytes
+    - list/dict/other types -> b"" (defensive fallback)
+    
+    Returns:
+        bytes: The data as bytes, or empty bytes if conversion fails
+    """
+    if val is None:
+        return b""
+    if isinstance(val, bytes):
+        return val
+    if isinstance(val, bytearray):
+        return bytes(val)
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return b""
+        # Handle hex strings
+        if val.startswith(("0x", "0X")):
+            try:
+                return bytes.fromhex(val[2:])
+            except (ValueError, TypeError):
+                return b""
+        # Try to interpret as hex without prefix
+        try:
+            return bytes.fromhex(val)
+        except (ValueError, TypeError):
+            # Fall back to UTF-8 encoding for non-hex strings
+            try:
+                return val.encode("utf-8")
+            except (UnicodeEncodeError, AttributeError):
+                return b""
+    # For any other type (dict, list, int, etc.), return empty bytes
+    # rather than raising TypeError
+    return b""
 
 
 def estimate_max_spend(
