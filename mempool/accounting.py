@@ -260,6 +260,9 @@ def _safe_bytes_from_value(val: Any) -> bytes:
     - hex strings (e.g., "0xabcd") -> bytes
     - list/dict/other types -> b"" (defensive fallback)
     
+    Note: Non-hex strings return b"" rather than UTF-8 encoding, since
+    transaction data fields should be hex-encoded or binary.
+    
     Returns:
         bytes: The data as bytes, or empty bytes if conversion fails
     """
@@ -283,11 +286,8 @@ def _safe_bytes_from_value(val: Any) -> bytes:
         try:
             return bytes.fromhex(val)
         except (ValueError, TypeError):
-            # Fall back to UTF-8 encoding for non-hex strings
-            try:
-                return val.encode("utf-8")
-            except (UnicodeEncodeError, AttributeError):
-                return b""
+            # Non-hex strings are not valid transaction data
+            return b""
     # For any other type (dict, list, int, etc.), return empty bytes
     # rather than raising TypeError
     return b""

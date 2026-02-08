@@ -190,8 +190,10 @@ def test_safe_bytes_from_value_handles_invalid_types():
 
 
 def test_safe_bytes_from_value_handles_utf8_string():
-    """Test that _safe_bytes_from_value falls back to UTF-8 encoding for non-hex strings."""
+    """Test that _safe_bytes_from_value returns empty bytes for non-hex strings."""
+    # Non-hex strings should return empty bytes since transaction data should be hex-encoded
     result = _safe_bytes_from_value("hello")
-    # Should either be b"" or UTF-8 encoded
-    assert isinstance(result, bytes)
+    assert result == b""
+    result = _safe_bytes_from_value("not hex")
+    assert result == b""
 
