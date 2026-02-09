@@ -200,6 +200,8 @@ def _sender_from_signature(tx: Any) -> Optional[bytes]:
 
     if pubkey is None:
         return None
+    
+    # Convert pubkey to bytes safely
     if isinstance(pubkey, str):
         if pubkey.startswith("0x"):
             try:
@@ -208,8 +210,30 @@ def _sender_from_signature(tx: Any) -> Optional[bytes]:
                 return None
         else:
             return None
+    
+    # Safe conversion to bytes - handle various types
     try:
-        return account_key_from_pubkey(bytes(pubkey), int(alg_id) if alg_id is not None else None)
+        if not isinstance(pubkey, (bytes, bytearray, memoryview)):
+            # Try generic bytes() conversion for buffer protocol types
+            try:
+                pubkey = bytes(pubkey)
+            except (TypeError, ValueError):
+                return None
+        else:
+            pubkey = bytes(pubkey)
+    except (TypeError, ValueError):
+        return None
+    
+    # Safe conversion of alg_id to int
+    alg_id_int = None
+    if alg_id is not None:
+        try:
+            alg_id_int = int(alg_id)
+        except (TypeError, ValueError):
+            return None
+    
+    try:
+        return account_key_from_pubkey(pubkey, alg_id_int)
     except (AccountKeyError, ValueError, TypeError):
         return None
 
