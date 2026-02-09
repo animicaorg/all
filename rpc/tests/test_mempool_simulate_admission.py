@@ -117,3 +117,57 @@ def test_submit_atomic_bad_field_type_is_structured() -> None:
     assert reject["reason_code"] == "bad_field_type"
     assert reject["context"]["field"] == "nonce"
     assert reject["context"]["received_type"] == "dict"
+
+
+class _NonceDictService(MempoolService):
+    def submit(self, **kwargs):  # type: ignore[override]
+        tx = kwargs.get("tx") or {}
+        _ = int(((tx.get("body") or {}).get("nonce")))  # reproduces historical crash
+        return "0x" + "66" * 32
+
+
+def test_submit_atomic_nonce_dict_is_bad_field_type_not_internal_error() -> None:
+    svc = _NonceDictService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, _ = svc.submit_atomic(
+        tx={"body": {"nonce": {"nonce": 7}}},
+        raw=bytes([0x80]),
+        tx_hash_hex="0x" + "66" * 32,
+    )
+    assert ok is False
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "bad_field_type"
+    assert reject["context"]["field"] == "nonce"
+
+
+class _FeeReservedDictService(MempoolService):
+    def submit(self, **kwargs):  # type: ignore[override]
+        tx = kwargs.get("tx") or {}
+        _ = int(((tx.get("body") or {}).get("fee_reserved")))  # reproduces historical crash
+        return "0x" + "77" * 32
+
+
+def test_submit_atomic_fee_reserved_dict_is_bad_field_type_not_internal_error() -> None:
+    svc = _FeeReservedDictService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, _ = svc.submit_atomic(
+        tx={"body": {"fee_reserved": {"amount": 1}}},
+        raw=bytes([0x80]),
+        tx_hash_hex="0x" + "77" * 32,
+    )
+    assert ok is False
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "bad_field_type"
+    assert reject["context"]["field"] == "fee_reserved"

@@ -22,7 +22,7 @@ class TxNormalizationError(ValueError):
         self.details = details or {}
 
 
-def _coerce_int(name: str, value: Any) -> int:
+def coerce_int(name: str, value: Any) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -54,7 +54,7 @@ def _coerce_int(name: str, value: Any) -> int:
     if isinstance(value, Mapping):
         accepted_keys = [k for k in ("value", "amount", "nonce", name) if k in value]
         if len(accepted_keys) == 1:
-            return _coerce_int(name, value[accepted_keys[0]])
+            return coerce_int(name, value[accepted_keys[0]])
         raise TxNormalizationError(
             "bad_field_type",
             f"{name} must be an integer",
@@ -69,6 +69,11 @@ def _coerce_int(name: str, value: Any) -> int:
         f"{name} must be an integer",
         details={"field": name, "received_type": type(value).__name__},
     )
+
+
+def _coerce_int(name: str, value: Any) -> int:
+    """Backward-compatible alias for legacy internal call sites."""
+    return coerce_int(name, value)
 
 
 def _decode_hex_str(value: str) -> bytes:
