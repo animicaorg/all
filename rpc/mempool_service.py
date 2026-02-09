@@ -13,7 +13,7 @@ from typing import Any, Iterable, Optional
 
 from rpc import deps
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
-from core.utils.tx import normalize_tx_envelope, TxNormalizationError
+from core.utils.tx import normalize_tx_envelope, TxNormalizationError, coerce_int
 from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import (
@@ -70,6 +70,28 @@ def _normalize_reject(reason: str, message: str, context: dict[str, Any]) -> tup
         r = "insufficient_funds"
     return r, m, context
 
+
+
+def _infer_bad_field_type_from_exception(tx: Any, exc: Exception) -> dict[str, Any] | None:
+    msg = str(exc)
+    if not isinstance(exc, TypeError) or "int() argument" not in msg:
+        return None
+    numeric_types = _tx_numeric_field_types(tx)
+    dict_fields = [name for name, info in numeric_types.items() if info.get("type") == "dict"]
+    if not dict_fields:
+        return None
+    field = dict_fields[0]
+    info = numeric_types.get(field, {})
+    keys: list[str] | None = None
+    value = info.get("value")
+    if isinstance(value, dict):
+        keys = sorted(str(k) for k in value.keys())
+    return {
+        "reason": "bad_field_type",
+        "field": field,
+        "received_type": "dict",
+        "received_keys": keys,
+    }
 def _tx_numeric_field_types(tx: Any) -> dict[str, dict[str, Any]]:
     body = _tx_body(tx)
     if not isinstance(body, dict):
@@ -92,6 +114,21 @@ def _tx_numeric_field_types(tx: Any) -> dict[str, dict[str, Any]]:
             _add("payload.v.amount", v.get("amount"))
     return out
 
+
+
+def log_exception(trace_id: str, tx: Any, exc: Exception) -> None:
+    """Log full traceback and useful locals snapshot for admission failures."""
+    numeric_types = _tx_numeric_field_types(tx)
+    context = _tx_context_fields(tx)
+    log.error(
+        "mempool exception trace_id=%s class=%s message=%s context=%s numeric_types=%s",
+        trace_id,
+        exc.__class__.__name__,
+        str(exc),
+        context,
+        numeric_types,
+        exc_info=True,
+    )
 def _tx_context_fields(tx: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     try:
@@ -1022,7 +1059,7 @@ class MempoolService:
             tx_version = 1
             if isinstance(normalized_env.get("tx"), dict):
                 try:
-                    tx_version = int(normalized_env["tx"].get("v", 1))
+                    tx_version = coerce_int("v", normalized_env["tx"].get("v", 1))
                 except Exception:
                     tx_version = 1
 
@@ -1071,16 +1108,31 @@ class MempoolService:
                 # Convert nonce to int before use to prevent TypeError in comparisons and dict lookups
                 nonce_original_type = type(nonce).__name__
                 try:
-                    nonce = int(nonce)
-                except (TypeError, ValueError) as exc:
+                    nonce = coerce_int("nonce", nonce)
+                except TxNormalizationError as exc:
+                    details = exc.details or {}
                     self._record_rejection(
                         tx_hash_hex,
-                        "invalid_format",
-                        {"sender": sender_hex, "nonce": str(nonce), "nonce_type": nonce_original_type, "error": str(exc)},
+                        "bad_field_type",
+                        {
+                            "sender": sender_hex,
+                            "nonce": str(nonce),
+                            "nonce_type": nonce_original_type,
+                            "field": details.get("field", "nonce"),
+                            "received_type": details.get("received_type", nonce_original_type),
+                            "received_keys": details.get("received_keys"),
+                        },
                     )
                     raise AdmissionError(
                         "invalid nonce type",
-                        context={"tx_hash": tx_hash_hex, "sender": sender_hex, "nonce_type": nonce_original_type},
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "sender": sender_hex,
+                            "reason": "bad_field_type",
+                            "field": details.get("field", "nonce"),
+                            "received_type": details.get("received_type", nonce_original_type),
+                            "received_keys": details.get("received_keys"),
+                        },
                     ) from exc
 
                 confirmed_nonce = self._confirmed_nonce(sender)
@@ -1491,6 +1543,10 @@ class MempoolService:
             if reason == "admission_failed" and context.get("reason"):
                 reason = str(context.get("reason"))
             norm_reason, norm_message, norm_context = _normalize_reject(str(reason), str(message), context)
+            inferred_bad_type = _infer_bad_field_type_from_exception(tx, exc)
+            if inferred_bad_type and norm_reason == "internal_error":
+                norm_reason = "bad_field_type"
+                norm_context.update({k: v for k, v in inferred_bad_type.items() if k != "reason" and v is not None})
             if norm_reason == "internal_error":
                 norm_context.setdefault("error_class", exc.__class__.__name__)
                 norm_context.setdefault("error_message", str(exc))
@@ -1512,6 +1568,8 @@ class MempoolService:
                     pass
             
             # Log the full exception for debugging
+            if norm_reason == "internal_error":
+                log_exception(norm_context.get("trace_id") or trace_id, tx, exc)
             log.warning(
                 "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s, trace_id=%s",
                 computed_hash,
@@ -1767,6 +1825,7 @@ class MempoolService:
             return False, reason_code
         except Exception as exc:
             trace_id = uuid.uuid4().hex
+            log_exception(trace_id, raw, exc)
             log.error(
                 "Unexpected error in admit_tx trace_id=%s",
                 trace_id,
