@@ -119,6 +119,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.net",
         "rpc.methods.node",
         "rpc.methods.tx",
+        "rpc.methods.tx2",  # New mempool2-based transaction methods
         "rpc.methods.receipt",  # tx.getTransactionReceipt
         "rpc.methods.state",
         "rpc.methods.chain",
