@@ -33,7 +33,7 @@ Design notes
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # -----------------------------
 # Optional/guarded imports
@@ -350,11 +350,14 @@ def _precheck_pq_signature(tx: "Tx") -> None:
     the sender/account or check address matching.
 
     Raises StatelessValidationError if verification fails or fields are missing.
+    
+    Note: Uses safe conversion helpers (_extract_sig_tuple) so isinstance checks
+    are no longer needed - values are already validated and converted.
     """
     alg_id, pubkey, signature = _extract_sig_tuple(tx)
 
-    # Validate signature components before verification
-    if not isinstance(alg_id, int) or alg_id < 0:
+    # Validate alg_id range (already converted to int by _extract_sig_tuple)
+    if alg_id < 0:
         raise StatelessValidationError(
             "InvalidAlgId", f"Invalid algorithm ID: {alg_id}"
         )
@@ -362,18 +365,14 @@ def _precheck_pq_signature(tx: "Tx") -> None:
         raise StatelessValidationError(
             "InvalidAlgId", f"Algorithm ID too large: {alg_id}"
         )
-    if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) == 0:
-        raise StatelessValidationError(
-            "InvalidPubkey", "Public key must be non-empty bytes"
-        )
+    
+    # Validate pubkey size (already converted to bytes by _extract_sig_tuple)
     if len(pubkey) > 10000:  # Sanity check (largest PQ keys are ~2KB)
         raise StatelessValidationError(
             "InvalidPubkey", f"Public key too large: {len(pubkey)} bytes"
         )
-    if not isinstance(signature, (bytes, bytearray)) or len(signature) == 0:
-        raise StatelessValidationError(
-            "InvalidSignature", "Signature must be non-empty bytes"
-        )
+    
+    # Validate signature size (already converted to bytes by _extract_sig_tuple)
     if len(signature) > 50000:  # Sanity check (largest PQ sigs are ~16KB)
         raise StatelessValidationError(
             "InvalidSignature", f"Signature too large: {len(signature)} bytes"
@@ -422,41 +421,169 @@ def _derive_cfg(
     return StatelessConfig(chain_id=1)
 
 
+def _safe_to_int(value: Any, field_name: str = "value") -> int:
+    """
+    Safely convert a value to int, with clear error messages.
+    
+    Args:
+        value: The value to convert
+        field_name: Name of the field for error reporting
+        
+    Returns:
+        int: The converted value
+        
+    Raises:
+        StatelessValidationError: If conversion fails
+    """
+    if value is None:
+        raise StatelessValidationError(
+            "MissingField", f"Missing {field_name}"
+        )
+    
+    # If already an int, return it
+    if isinstance(value, int):
+        return value
+    
+    # Try converting string representations
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            raise StatelessValidationError(
+                "InvalidFormat", f"{field_name} must be a valid integer, got: {value!r}"
+            )
+    
+    # Try converting bytes (could be CBOR-encoded)
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            # Try interpreting as string first
+            return int(value.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            # Try big-endian int
+            try:
+                return int.from_bytes(bytes(value), 'big')
+            except Exception:
+                raise StatelessValidationError(
+                    "InvalidFormat", f"{field_name} bytes cannot be converted to int"
+                )
+    
+    # Try generic int() conversion for numeric types
+    try:
+        return int(value)
+    except (TypeError, ValueError) as e:
+        raise StatelessValidationError(
+            "InvalidFormat", 
+            f"{field_name} must be int-compatible, got {type(value).__name__}: {e}"
+        )
+
+
+def _safe_to_bytes(value: Any, field_name: str = "value") -> bytes:
+    """
+    Safely convert a value to bytes, with clear error messages.
+    
+    Args:
+        value: The value to convert
+        field_name: Name of the field for error reporting
+        
+    Returns:
+        bytes: The converted value
+        
+    Raises:
+        StatelessValidationError: If conversion fails or value is empty
+    """
+    if value is None or value == b"" or value == "":
+        raise StatelessValidationError(
+            "MissingField", f"Missing or empty {field_name}"
+        )
+    
+    # If already bytes, return it
+    if isinstance(value, bytes):
+        return value
+    
+    # Convert bytearray or memoryview
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    
+    # Try converting hex strings
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            raise StatelessValidationError(
+                "MissingField", f"Empty {field_name}"
+            )
+        # Handle hex strings with or without 0x prefix
+        if value.startswith(("0x", "0X")):
+            try:
+                return bytes.fromhex(value[2:])
+            except ValueError as e:
+                raise StatelessValidationError(
+                    "InvalidFormat", f"{field_name} invalid hex string: {e}"
+                )
+        # Try hex without prefix
+        try:
+            return bytes.fromhex(value)
+        except ValueError:
+            # Not hex, try UTF-8 encoding
+            try:
+                return value.encode('utf-8')
+            except UnicodeEncodeError as e:
+                raise StatelessValidationError(
+                    "InvalidFormat", f"{field_name} cannot be encoded: {e}"
+                )
+    
+    # Try converting list/tuple of integers
+    if isinstance(value, (list, tuple)):
+        try:
+            return bytes(value)
+        except (TypeError, ValueError) as e:
+            raise StatelessValidationError(
+                "InvalidFormat", 
+                f"{field_name} list/tuple cannot be converted to bytes: {e}"
+            )
+    
+    # For any other type, try generic bytes() conversion
+    try:
+        return bytes(value)
+    except (TypeError, ValueError) as e:
+        raise StatelessValidationError(
+            "InvalidFormat", 
+            f"{field_name} must be bytes-compatible, got {type(value).__name__}: {e}"
+        )
+
+
 def _extract_sig_tuple(tx: "Tx") -> Tuple[int, bytes, bytes]:
     """
     Extract (alg_id, pubkey, signature) from a Tx object that may use slightly
     different attribute names across drafts.
+    
+    Uses safe conversion helpers to provide clear error messages and handle
+    various input types gracefully.
     """
     # Common names
     alg_id = getattr(tx, "alg_id", None)
     if alg_id is None:
         alg_id = getattr(tx, "sig_alg_id", None)
-    if alg_id is None:
-        raise StatelessValidationError(
-            "MissingField", "Transaction missing 'alg_id'/'sig_alg_id'."
-        )
+    
+    # Use safe conversion with clear error message
+    alg_id_int = _safe_to_int(alg_id, "alg_id")
 
     pubkey = (
         getattr(tx, "pubkey", None)
         or getattr(tx, "sender_pubkey", None)
         or getattr(tx, "pk", None)
     )
-    if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) == 0:
-        raise StatelessValidationError(
-            "MissingField", "Transaction missing 'pubkey' bytes."
-        )
+    # Use safe conversion with clear error message
+    pubkey_bytes = _safe_to_bytes(pubkey, "pubkey")
 
     signature = (
         getattr(tx, "signature", None)
         or getattr(tx, "sig", None)
         or getattr(tx, "pq_signature", None)
     )
-    if not isinstance(signature, (bytes, bytearray)) or len(signature) == 0:
-        raise StatelessValidationError(
-            "MissingField", "Transaction missing 'signature' bytes."
-        )
+    # Use safe conversion with clear error message
+    signature_bytes = _safe_to_bytes(signature, "signature")
 
-    return int(alg_id), bytes(pubkey), bytes(signature)
+    return alg_id_int, pubkey_bytes, signature_bytes
 
 
 def _sign_bytes_for_tx(tx: "Tx") -> bytes:
