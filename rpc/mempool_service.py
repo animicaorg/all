@@ -394,7 +394,10 @@ def _tx_gas_limit(tx: Any) -> int:
     if gas is None:
         gas = getattr(tx, "gas_limit", None)
 
-    return int(gas or 0)
+    try:
+        return int(gas or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _tx_chain_id(tx: Any) -> Optional[int]:
