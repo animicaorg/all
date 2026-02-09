@@ -8,6 +8,7 @@ import logging
 import os
 import time
 import traceback
+import uuid
 import typing as t
 
 from rpc import deps
@@ -1366,8 +1367,9 @@ def _mempool_submit(
             reject = reject or {
                 "code": 2999,
                 "reason": "internal_error",
+                "reason_code": "internal_error",
                 "message": "mempool admission failed",
-                "hint": "check node logs",
+                "hint": "run animica node logs --network <network>",
                 "context": {"tx_hash": _hash_hex},
             }
             raise rpc_errors.InvalidTx(
@@ -1425,8 +1427,9 @@ def _mempool_simulate_submit(
             reject = reject or {
                 "code": 2999,
                 "reason": "internal_error",
+                "reason_code": "internal_error",
                 "message": "mempool admission failed",
-                "hint": "check node logs",
+                "hint": "run animica node logs --network <network>",
                 "context": {"tx_hash": _hash_hex},
             }
             raise rpc_errors.InvalidTx(
@@ -1967,6 +1970,13 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
                 "traceback": short_trace,
             },
         )
+        trace_id = uuid.uuid4().hex
+        log.error(
+            "Mempool admission internal error trace_id=%s",
+            trace_id,
+            extra={"tx_hash": tx_hash_hex, "trace_id": trace_id},
+            exc_info=True,
+        )
         # Surface as a mempool admission failure (so CLI sees a real error)
         raise rpc_errors.InvalidTx(
             "mempool admission failed: internal_error",
@@ -1974,10 +1984,16 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
                 "mempoolError": {
                     "code": 2999,
                     "reason": "internal_error",
+                    "reason_code": "internal_error",
                     "message": "mempool admission failed",
                     "error_class": type(exc).__name__,
-                    "hint": "check node logs",
-                    "context": {"tx_hash": tx_hash_hex, "error_class": type(exc).__name__},
+                    "hint": "run animica node logs --network <network>",
+                    "context": {
+                        "tx_hash": tx_hash_hex,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc),
+                        "trace_id": trace_id,
+                    },
                 }
             },
         ) from exc

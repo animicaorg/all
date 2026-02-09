@@ -782,6 +782,31 @@ def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
     return True
 
 
+
+
+def _tail_file_path() -> Path:
+    env_path = os.environ.get("ANIMICA_NODE_LOG_FILE")
+    if env_path:
+        return Path(env_path).expanduser()
+    return _repo_root() / "logs" / "animica-p2p.log"
+
+
+def _run_tail(path: Path, *, lines: int, follow: bool) -> int:
+    if not path.exists():
+        typer.secho(f"Log file not found: {path}", fg=typer.colors.YELLOW)
+        typer.echo("Set ANIMICA_NODE_LOG_FILE to the correct file and retry.")
+        return 1
+    tail_bin = shutil.which("tail")
+    if tail_bin is None:
+        typer.echo(f"Logs file: {path}")
+        typer.echo("'tail' is not installed; open this file directly.")
+        return 0
+    cmd = [tail_bin, "-n", str(lines)]
+    if follow:
+        cmd.append("-f")
+    cmd.append(str(path))
+    return subprocess.run(cmd, check=False).returncode
+
 def _compose_base_cmd(compose_file: Path, network: str) -> list[str]:
     cmd = [
         "docker",
@@ -1575,6 +1600,63 @@ def _get_compose_file(network: str) -> Path:
     
     return compose_file
 
+
+
+
+@app.command("logs")
+def logs(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="Network to inspect (mainnet/testnet/devnet/local-devnet)"
+    ),
+    lines: int = typer.Option(200, "--lines", min=1, help="Number of log lines to show"),
+    follow: bool = typer.Option(False, "-f", "--follow", help="Follow logs"),
+) -> None:
+    """Show node logs for docker-compose nodes or local logfile fallback."""
+    resolved_network = network or _ensure_network_set()
+    defaults = get_network_defaults(resolved_network)
+    compose_file = defaults["compose_file"]
+
+    docker_bin = shutil.which("docker")
+    if docker_bin and compose_file.exists():
+        compose_cmd = _compose_base_cmd(compose_file, resolved_network)
+        cmd = compose_cmd + ["logs", f"--tail={lines}"]
+        if follow:
+            cmd.append("-f")
+        cmd.append("node")
+        result = subprocess.run(cmd, check=False, cwd=compose_file.parent)
+        if result.returncode == 0:
+            return
+        container_name = _container_name_for_network(resolved_network)
+        typer.secho("docker compose logs failed; falling back to docker container logs.", fg=typer.colors.YELLOW)
+        ccmd = [docker_bin, "logs", f"--tail={lines}"]
+        if follow:
+            ccmd.append("-f")
+        ccmd.append(container_name)
+        cresult = subprocess.run(ccmd, check=False)
+        if cresult.returncode == 0:
+            return
+        typer.secho(
+            "Unable to fetch docker logs. Ensure docker daemon is running and container exists.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if docker_bin is None:
+        typer.secho(
+            "Docker is not installed or not on PATH; using local log file fallback.",
+            fg=typer.colors.YELLOW,
+        )
+    else:
+        typer.secho(
+            f"Compose file not found for {resolved_network}: {compose_file}; using local log file fallback.",
+            fg=typer.colors.YELLOW,
+        )
+
+    log_path = _tail_file_path()
+    rc = _run_tail(log_path, lines=lines, follow=follow)
+    if rc != 0:
+        raise typer.Exit(code=rc)
 
 @app.command()
 def status(
