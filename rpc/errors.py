@@ -132,7 +132,7 @@ def _extract_data_param(**kwargs: Any) -> Optional[Mapping[str, Any]]:
     if len(kwargs) == 1 and 'data' in kwargs:
         return kwargs['data']
     # Otherwise return all kwargs as-is (e.g., from **_error_data(...))
-    return kwargs or None
+    return kwargs
 
 
 @dataclass(frozen=True)
@@ -191,11 +191,15 @@ class ServerError(RpcError):
 
 class RateLimited(RpcError):
     def __init__(self, retry_after_ms: Optional[int] = None, **data: Any) -> None:
-        payload = _extract_data_param(**data) or {}
+        payload = _extract_data_param(**data)
         if retry_after_ms is not None:
-            # Create a new dict to avoid mutating the input
-            payload = {**payload, "retryAfterMs": int(retry_after_ms)}
-        super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload or None)
+            # Add retry_after_ms to the payload
+            if payload is None:
+                payload = {"retryAfterMs": int(retry_after_ms)}
+            else:
+                # Create a new dict to avoid mutating the input
+                payload = {**payload, "retryAfterMs": int(retry_after_ms)}
+        super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload)
 
 
 class RpcMethodRestricted(RpcError):

@@ -93,6 +93,26 @@ def test_rate_limited_with_data():
         assert "data" not in e.data
 
 
+def test_rate_limited_retry_only():
+    """Test RateLimited with only retry_after_ms."""
+    try:
+        raise rpc_errors.RateLimited(retry_after_ms=5000)
+    except rpc_errors.RpcError as e:
+        assert e.data is not None
+        assert "retryAfterMs" in e.data
+        assert e.data["retryAfterMs"] == 5000
+        assert len(e.data) == 1  # Only retryAfterMs
+
+
+def test_rate_limited_no_params():
+    """Test RateLimited with no parameters."""
+    try:
+        raise rpc_errors.RateLimited()
+    except rpc_errors.RpcError as e:
+        # Should have None data since no retry_after_ms and no data kwargs
+        assert e.data is None
+
+
 def test_bad_signature_with_multiple_kwargs():
     """Test BadSignature with unpacked kwargs."""
     try:
