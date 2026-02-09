@@ -218,18 +218,47 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     if not isinstance(body_dict, dict):
         raise TypeError(f"body must be dict, got {type(body_dict)}")
     
+    # Convert numeric fields to int to prevent TypeError
+    # CBOR may decode numbers as different types (float, etc)
+    try:
+        version = int(body_dict["version"])
+        chain_id = int(body_dict["chain_id"])
+        nonce = int(body_dict["nonce"])
+        value = int(body_dict["value"])
+        fee = int(body_dict["fee"])
+        gas_limit = int(body_dict["gas_limit"])
+        timestamp = int(body_dict["timestamp"])
+    except (ValueError, TypeError, KeyError) as e:
+        raise TypeError(f"Invalid numeric field in transaction body: {e}") from e
+    
+    # Ensure bytes fields are bytes
+    from_addr = body_dict["from_addr"]
+    to_addr = body_dict["to_addr"]
+    data = body_dict["data"]
+    if not isinstance(from_addr, bytes):
+        raise TypeError(f"from_addr must be bytes, got {type(from_addr)}")
+    if not isinstance(to_addr, bytes):
+        raise TypeError(f"to_addr must be bytes, got {type(to_addr)}")
+    if not isinstance(data, bytes):
+        raise TypeError(f"data must be bytes, got {type(data)}")
+    
+    # Ensure memo is string
+    memo = body_dict["memo"]
+    if not isinstance(memo, str):
+        raise TypeError(f"memo must be str, got {type(memo)}")
+    
     body = TxBody(
-        version=body_dict["version"],
-        chain_id=body_dict["chain_id"],
-        nonce=body_dict["nonce"],
-        from_addr=body_dict["from_addr"],
-        to_addr=body_dict["to_addr"],
-        value=body_dict["value"],
-        fee=body_dict["fee"],
-        gas_limit=body_dict["gas_limit"],
-        data=body_dict["data"],
-        memo=body_dict["memo"],
-        timestamp=body_dict["timestamp"],
+        version=version,
+        chain_id=chain_id,
+        nonce=nonce,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        value=value,
+        fee=fee,
+        gas_limit=gas_limit,
+        data=data,
+        memo=memo,
+        timestamp=timestamp,
         kind=TxKind(body_dict.get("kind", 0)),
     )
     
@@ -238,11 +267,26 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     if not isinstance(auth_dict, dict):
         raise TypeError(f"auth must be dict, got {type(auth_dict)}")
     
+    # Convert numeric fields to int
+    try:
+        scheme_id = int(auth_dict["scheme_id"])
+        prehash_id = int(auth_dict["prehash_id"])
+    except (ValueError, TypeError, KeyError) as e:
+        raise TypeError(f"Invalid numeric field in auth: {e}") from e
+    
+    # Ensure bytes fields are bytes
+    pubkey_bytes = auth_dict["pubkey_bytes"]
+    signature_bytes = auth_dict["signature_bytes"]
+    if not isinstance(pubkey_bytes, bytes):
+        raise TypeError(f"pubkey_bytes must be bytes, got {type(pubkey_bytes)}")
+    if not isinstance(signature_bytes, bytes):
+        raise TypeError(f"signature_bytes must be bytes, got {type(signature_bytes)}")
+    
     auth = TxAuth(
-        scheme_id=auth_dict["scheme_id"],
-        pubkey_bytes=auth_dict["pubkey_bytes"],
-        signature_bytes=auth_dict["signature_bytes"],
-        prehash_id=auth_dict["prehash_id"],
+        scheme_id=scheme_id,
+        pubkey_bytes=pubkey_bytes,
+        signature_bytes=signature_bytes,
+        prehash_id=prehash_id,
     )
     
     # Compute txid
