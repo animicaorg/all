@@ -83,11 +83,8 @@ def _to_account_key_bytes(addr: str) -> bytes | None:
     """
     if addr.lower().startswith("anim") and _bech32 is not None:
         try:
-            hrp, data = _bech32.decode(addr)
-            if hrp and data:
-                return bytes(
-                    data
-                )  # payload = (alg_id || sha3_256(pubkey)) per pq/address
+            # Use decode_address which properly converts 5-bit data to bytes
+            return _bech32.decode_address(addr)  # payload = (alg_id || sha3_256(pubkey)) per pq/address
         except Exception:
             return None
     # hex

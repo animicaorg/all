@@ -52,8 +52,16 @@ async def tx_submit_raw(params: Dict[str, Any]) -> Dict[str, Any]:
         if tx_data.startswith("0x"):
             tx_data = tx_data[2:]
         tx_bytes = bytes.fromhex(tx_data)
-    else:
+    elif isinstance(tx_data, (bytes, bytearray)):
         tx_bytes = bytes(tx_data)
+    elif isinstance(tx_data, (list, tuple)):
+        # If it's a list/tuple of integers, convert to bytes
+        try:
+            tx_bytes = bytes(tx_data)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid tx_data format: cannot convert {type(tx_data).__name__} to bytes") from e
+    else:
+        raise ValueError(f"Invalid tx_data format: expected str, bytes, or list, got {type(tx_data).__name__}")
     
     origin = params.get("origin", "rpc")
     
