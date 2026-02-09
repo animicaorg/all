@@ -1018,17 +1018,18 @@ class MempoolService:
                     )
 
                 # Convert nonce to int before use to prevent TypeError in comparisons and dict lookups
+                nonce_original_type = type(nonce).__name__
                 try:
                     nonce = int(nonce)
                 except (TypeError, ValueError) as exc:
                     self._record_rejection(
                         tx_hash_hex,
                         "invalid_format",
-                        {"sender": sender_hex, "nonce": str(nonce), "error": str(exc)},
+                        {"sender": sender_hex, "nonce": str(nonce), "nonce_type": nonce_original_type, "error": str(exc)},
                     )
                     raise AdmissionError(
                         "invalid nonce type",
-                        context={"tx_hash": tx_hash_hex, "sender": sender_hex, "nonce_type": type(nonce).__name__},
+                        context={"tx_hash": tx_hash_hex, "sender": sender_hex, "nonce_type": nonce_original_type},
                     ) from exc
 
                 confirmed_nonce = self._confirmed_nonce(sender)
