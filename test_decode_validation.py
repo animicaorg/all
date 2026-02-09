@@ -51,7 +51,11 @@ def test_reject_non_numeric_nonce():
             print(f"  ❌ ERROR: Should have raised TypeError but got: {decoded}")
             return False
         except TypeError as e:
-            if "Invalid numeric field" in str(e):
+            # Check for field-specific error message
+            if "nonce" in str(e).lower():
+                print(f"  ✅ Correctly rejected with TypeError mentioning nonce: {e}")
+                return True
+            elif "Invalid" in str(e) or "numeric field" in str(e):
                 print(f"  ✅ Correctly rejected with TypeError: {e}")
                 return True
             else:

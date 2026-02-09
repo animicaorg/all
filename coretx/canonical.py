@@ -222,14 +222,40 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     # CBOR may decode numbers as different types (float, etc)
     try:
         version = int(body_dict["version"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid version in transaction body: {e}") from e
+    except KeyError as e:
+        raise TypeError(f"Missing required field in transaction body: {e}") from e
+    
+    try:
         chain_id = int(body_dict["chain_id"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid chain_id in transaction body: {e}") from e
+    
+    try:
         nonce = int(body_dict["nonce"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid nonce in transaction body: {e}") from e
+    
+    try:
         value = int(body_dict["value"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid value in transaction body: {e}") from e
+    
+    try:
         fee = int(body_dict["fee"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid fee in transaction body: {e}") from e
+    
+    try:
         gas_limit = int(body_dict["gas_limit"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid gas_limit in transaction body: {e}") from e
+    
+    try:
         timestamp = int(body_dict["timestamp"])
-    except (ValueError, TypeError, KeyError) as e:
-        raise TypeError(f"Invalid numeric field in transaction body: {e}") from e
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid timestamp in transaction body: {e}") from e
     
     # Ensure bytes fields are bytes
     from_addr = body_dict["from_addr"]
@@ -270,9 +296,15 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     # Convert numeric fields to int
     try:
         scheme_id = int(auth_dict["scheme_id"])
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid scheme_id in auth: {e}") from e
+    except KeyError as e:
+        raise TypeError(f"Missing required field in auth: {e}") from e
+    
+    try:
         prehash_id = int(auth_dict["prehash_id"])
-    except (ValueError, TypeError, KeyError) as e:
-        raise TypeError(f"Invalid numeric field in auth: {e}") from e
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid prehash_id in auth: {e}") from e
     
     # Ensure bytes fields are bytes
     pubkey_bytes = auth_dict["pubkey_bytes"]
