@@ -59,8 +59,7 @@ def test_nonce_dict_type_raises_admission_error():
                     )
                 
                 # Verify the error message mentions invalid nonce type
-                assert "invalid nonce type" in str(exc_info.value).lower() or \
-                       "invalid" in str(exc_info.value).lower()
+                assert "invalid nonce type" in str(exc_info.value).lower()
 
 
 def test_nonce_string_type_converts_successfully():
@@ -158,14 +157,18 @@ def test_nonce_bytes_type_raises_admission_error():
         with patch("rpc.mempool_service._sender_from_signature", return_value=bytes(32)):
             # Mock _tx_version to return version 1 (which requires nonce)
             with patch("rpc.mempool_service._tx_version", return_value=1):
-                # Should raise AdmissionError or TypeError -> AdmissionError
-                with pytest.raises((AdmissionError, TypeError)):
+                # Should raise AdmissionError (TypeError is caught and converted)
+                with pytest.raises(AdmissionError) as exc_info:
                     svc.submit(
                         tx=tx,
                         raw=raw_bytes,
                         tx_hash_hex=tx_hash_hex,
                         local=True,
                     )
+                
+                # Verify it mentions invalid nonce type or format
+                error_msg = str(exc_info.value).lower()
+                assert "invalid nonce type" in error_msg or "invalid" in error_msg
 
 
 if __name__ == "__main__":
