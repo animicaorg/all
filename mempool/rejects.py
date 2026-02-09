@@ -50,6 +50,7 @@ class MempoolReject:
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "reason": self.reason.value,
+            "reason_code": self.reason.value,
             "code": int(self.code),
             "message": self.message,
             "hint": self.hint,
