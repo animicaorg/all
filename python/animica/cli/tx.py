@@ -314,21 +314,30 @@ def _format_rpc_error(e: RpcError) -> None:
     data = e.data if isinstance(e.data, dict) else None
     mempool_error = data.get("mempoolError") if isinstance(data, dict) else None
     if isinstance(mempool_error, dict):
-        reason = str(mempool_error.get("reason") or "admission_failed")
+        reason_code = str(mempool_error.get("reason_code") or mempool_error.get("reason") or "admission_failed")
+        reason = str(mempool_error.get("reason") or reason_code)
         message = str(mempool_error.get("message") or e.message)
         context = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
         hint = mempool_error.get("hint")
-        console.print(f"Rejected: {reason} — {message}")
-        if hint:
-            console.print(f"Hint: {hint}")
+        console.print(f"Rejected: {reason_code} — {message}")
         tx_hash = context.get("tx_hash") or context.get("txHash")
         if tx_hash:
             console.print(f"Tx: {tx_hash}")
-        if reason == "internal_error":
+        if hint:
+            console.print(f"Hint: {hint}")
+        if reason_code == "internal_error":
             error_class = mempool_error.get("error_class") or context.get("error_class")
             if error_class:
                 console.print(f"Error class: {error_class}")
-            console.print("Enable ANIMICA_DEBUG_TX=1 ANIMICA_DEBUG_MEMPOOL=1 for diagnostics.")
+            if context.get("trace_id"):
+                console.print(f"Trace ID: {context.get('trace_id')}")
+        console.print("Context:")
+        console.print(Pretty(context))
+        console.print("Debug now:")
+        console.print("  animica node logs --network mainnet")
+        console.print("  animica node logs --network devnet")
+        console.print("  animica node logs --network local-devnet")
+        console.print("  ANIMICA_DEBUG_TX=1 ANIMICA_DEBUG_MEMPOOL=1 animica tx send ...")
         for field in ("from", "to", "value", "nonce", "chain_id", "fee_reserved", "reserve_amount"):
             if field in context:
                 console.print(f"  {field}: {context[field]}")
@@ -341,8 +350,8 @@ def _format_rpc_error(e: RpcError) -> None:
             "tx_already_known": "Transaction already in mempool; wait for inclusion.",
             "fee_too_low": "Increase --max-fee.",
         }
-        if reason in hints:
-            console.print(f"[yellow]Hint:[/yellow] {hints[reason]}")
+        if reason_code in hints:
+            console.print(f"[yellow]Hint:[/yellow] {hints[reason_code]}")
     if e.data is not None:
         console.print(Pretty(e.data))
 

@@ -54,3 +54,27 @@ def test_submit_atomic_simulate_accepts_without_insert() -> None:
     ok, reject, _ = svc.submit_atomic(tx={}, raw=b"\x80", tx_hash_hex="0x" + "33" * 32, simulate=True)
     assert ok is True
     assert reject is None
+
+
+class _TypeErrorService(MempoolService):
+    def submit(self, **kwargs):  # type: ignore[override]
+        raise TypeError("'<' not supported between instances of 'dict' and 'int'")
+
+
+def test_submit_atomic_internal_error_has_trace_id_and_reason_code() -> None:
+    svc = _TypeErrorService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, _ = svc.submit_atomic(tx={"body": {"nonce": {"bad": 1}}}, raw=b"\x80", tx_hash_hex="0x" + "44" * 32)
+    assert ok is False
+    assert isinstance(reject, dict)
+    assert reject["reason"] == "internal_error"
+    assert reject["reason_code"] == "internal_error"
+    assert reject["context"]["error_class"] == "TypeError"
+    assert isinstance(reject["context"].get("trace_id"), str)
+    assert reject["context"].get("error_message")

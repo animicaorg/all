@@ -14891,11 +14891,21 @@ class P2PService:
                 except TypeError:
                     res = fn(raw)
         except Exception as exc:
-            return False, f"admit_error:{exc}"
+            trace_id = uuid.uuid4().hex
+            log.error(
+                "txrelay admit_tx internal error trace_id=%s",
+                trace_id,
+                extra={"trace_id": trace_id, "error": str(exc), "error_class": type(exc).__name__},
+                exc_info=True,
+            )
+            return False, f"internal_error:trace_id={trace_id}"
         if isinstance(res, tuple):
             ok = bool(res[0]) if res else False
             reason = res[1] if len(res) > 1 else None
-
+            if isinstance(reason, str) and reason.startswith("admit_error:"):
+                trace_id = uuid.uuid4().hex
+                log.error("txrelay received legacy admit_error reason trace_id=%s", trace_id, extra={"trace_id": trace_id, "reason": reason})
+                return ok, f"internal_error:trace_id={trace_id}"
             return ok, reason
         return bool(res), None
 

@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -120,7 +121,7 @@ def _hint_for_reason(reason: str) -> str:
         "fee_reserved_invalid": "set non-negative reserve fields",
         "tx_already_known": "tx is already in mempool",
         "policy_reject": "inspect mempool policy and retry",
-        "internal_error": "check node logs",
+        "internal_error": "run `animica node logs --network <network>` and grep by trace_id",
     }
     return hints.get(reason, "check transaction fields and retry")
 
@@ -1446,6 +1447,7 @@ class MempoolService:
         except Exception as exc:
             reason = getattr(exc, "reason", None) or "internal_error"
             message = getattr(exc, "message", None) or str(exc)
+            trace_id = uuid.uuid4().hex
             context = getattr(exc, "context", None)
             if not isinstance(context, dict):
                 context = {"error_class": exc.__class__.__name__}
@@ -1454,6 +1456,10 @@ class MempoolService:
             if reason == "admission_failed" and context.get("reason"):
                 reason = str(context.get("reason"))
             norm_reason, norm_message, norm_context = _normalize_reject(str(reason), str(message), context)
+            if norm_reason == "internal_error":
+                norm_context.setdefault("error_class", exc.__class__.__name__)
+                norm_context.setdefault("error_message", str(exc))
+                norm_context["trace_id"] = trace_id
             reject_obj = _to_mempool_reject(
                 reason=norm_reason,
                 message=norm_message,
@@ -1471,9 +1477,10 @@ class MempoolService:
             
             # Log the full exception for debugging
             log.warning(
-                "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s",
+                "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s, trace_id=%s",
                 computed_hash,
                 reason,
+                norm_context.get("trace_id"),
                 exc_info=log.isEnabledFor(logging.DEBUG),
             )
             return False, reject, computed_hash
@@ -1694,62 +1701,44 @@ class MempoolService:
         origin_peer: str | None = None,
     ) -> tuple[bool, str | None]:
         """
-        Async wrapper for submit() to be used by P2P TX relay.
-        
-        Args:
-            raw: Raw transaction bytes (canonical CBOR)
-            local: Whether this is a locally-submitted tx
-            origin_peer: Peer ID that provided the tx (if not local)
-        
-        Returns:
-            (accepted, reason) tuple
-            - accepted: True if tx was admitted to mempool
-            - reason: None if accepted, error code/message if rejected
+        Async wrapper for submit_atomic() used by P2P TX relay.
+
+        Returns (accepted, reason_code) where reason_code is stable and actionable.
         """
         try:
-            # Parse tx structure from raw bytes
             from core.encoding.cbor import loads as cbor_loads
-            
+
             try:
                 tx_obj = cbor_loads(raw)
             except Exception as exc:
-                return False, f"cbor_decode_error:{type(exc).__name__}"
-            
-            # Submit to mempool (synchronous)
-            tx_hash = self.submit(
+                return False, f"decode_error:{type(exc).__name__}"
+
+            accepted, reject, _ = self.submit_atomic(
                 tx=tx_obj,
                 raw=raw,
                 tx_hash_hex=None,
                 local=bool(local),
                 origin_peer=origin_peer,
+                simulate=False,
             )
-            
-            # If submit succeeded, it returns the hash
-            if tx_hash:
+            if accepted:
                 return True, None
-            else:
-                return False, "submit_failed"
-        
-        except AdmissionError as exc:
-            # Structured admission errors
-            reason = str(exc)
-            if hasattr(exc, "context"):
-                ctx = getattr(exc, "context")
-                if isinstance(ctx, dict) and "tx_hash" in ctx:
-                    # Extract specific error reasons
-                    for key in ["reason", "error", "message"]:
-                        if key in ctx:
-                            return False, str(ctx[key])
-            return False, reason
-        
+            payload = reject or {}
+            reason_code = str(payload.get("reason_code") or payload.get("reason") or "internal_error")
+            context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+            if reason_code == "internal_error" and context.get("trace_id"):
+                return False, f"internal_error:trace_id={context['trace_id']}"
+            return False, reason_code
         except Exception as exc:
-            # Unexpected errors
+            trace_id = uuid.uuid4().hex
             log.error(
-                "Unexpected error in admit_tx",
-                extra={"error": str(exc), "error_type": type(exc).__name__},
+                "Unexpected error in admit_tx trace_id=%s",
+                trace_id,
+                extra={"error": str(exc), "error_type": type(exc).__name__, "trace_id": trace_id},
                 exc_info=True,
             )
-            return False, f"unexpected_error:{type(exc).__name__}"
+            return False, f"internal_error:trace_id={trace_id}"
+
 
     def stats(self) -> dict[str, t.Any]:
         """Get mempool statistics."""
