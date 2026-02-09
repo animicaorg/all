@@ -282,7 +282,9 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
             "v": {
                 "to": _pad_addr(to_addr),
                 "amount": int(value),
-                "data": data,  # Already bytes from _safe_to_bytes()
+                # data is already bytes from _safe_to_bytes(), no need for bytes() call
+                # Previously: bytes(data) could raise TypeError if data was a dict/list of non-ints
+                "data": data,
             },
         },
         "accessList": [],
@@ -292,7 +294,9 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     else:
         normalized["validAfter"] = int(valid_after or 0)
         normalized["validUntil"] = int(valid_until or 0)
-        normalized["salt"] = salt  # Already bytes from _safe_to_bytes()
+        # salt is already bytes from _safe_to_bytes(), no need for bytes() call
+        # Previously: bytes(salt or b"") was redundant and could mask issues
+        normalized["salt"] = salt
         if fork_id is not None:
             normalized["forkId"] = int(fork_id)
     return normalized
@@ -437,6 +441,8 @@ def normalize_tx_envelope(tx_like: Any) -> dict:
         "tx": canonical_tx,
         "sigs": sigs,
         "hash": "0x" + computed_hash.hex(),
+        # sender_bytes is guaranteed to be non-None here (would have raised TxNormalizationError above)
+        # but could be bytes or bytearray from _addr_to_bytes() or account_key_from_pubkey()
         "sender": "0x" + (sender_bytes if isinstance(sender_bytes, bytes) else bytes(sender_bytes)).hex(),
         **({"nonce": nonce_int} if nonce_int is not None else {}),
         "raw": raw_canonical,
