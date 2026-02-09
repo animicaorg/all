@@ -78,3 +78,42 @@ def test_submit_atomic_internal_error_has_trace_id_and_reason_code() -> None:
     assert reject["context"]["error_class"] == "TypeError"
     assert isinstance(reject["context"].get("trace_id"), str)
     assert reject["context"].get("error_message")
+
+
+def test_submit_atomic_bad_field_type_is_structured() -> None:
+    svc = _RejectingService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    err = AdmissionError(
+        "tx envelope normalization failed",
+        context={
+            "reason": "bad_field_type",
+            "field": "nonce",
+            "received_type": "dict",
+            "received_keys": ["unexpected"],
+        },
+    )
+
+    class _Svc(_RejectingService):
+        def submit(self, **kwargs):  # type: ignore[override]
+            raise err
+
+    svc = _Svc(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    ok, reject, _ = svc.submit_atomic(tx={"body": {"nonce": {"unexpected": 1}}}, raw=bytes([0x80]), tx_hash_hex="0x" + "55" * 32)
+    assert ok is False
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "bad_field_type"
+    assert reject["context"]["field"] == "nonce"
+    assert reject["context"]["received_type"] == "dict"
