@@ -211,18 +211,12 @@ def _sender_from_signature(tx: Any) -> Optional[bytes]:
         else:
             return None
     
-    # Safe conversion to bytes - handle various types
-    try:
-        if not isinstance(pubkey, (bytes, bytearray, memoryview)):
-            # Try generic bytes() conversion for buffer protocol types
-            try:
-                pubkey = bytes(pubkey)
-            except (TypeError, ValueError):
-                return None
-        else:
+    # Ensure pubkey is bytes - handle buffer protocol types
+    if not isinstance(pubkey, bytes):
+        try:
             pubkey = bytes(pubkey)
-    except (TypeError, ValueError):
-        return None
+        except (TypeError, ValueError):
+            return None
     
     # Safe conversion of alg_id to int
     alg_id_int = None
