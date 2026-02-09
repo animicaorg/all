@@ -114,6 +114,27 @@ if not hasattr(AnimicaCode, "DUPLICATE_TX"):
 # ───────────────────────────────────────────────────────────────────────────────
 
 
+def _extract_data_param(**kwargs: Any) -> Optional[Mapping[str, Any]]:
+    """
+    Extract data parameter from keyword arguments.
+    
+    Handles two calling patterns:
+    1. Single 'data' keyword: MyError(..., data={'key': 'value'})
+       Returns: {'key': 'value'}
+    2. Multiple keywords: MyError(..., **{'kind': 'x', 'cause': 'y'})
+       Returns: {'kind': 'x', 'cause': 'y'}
+    
+    This prevents double-wrapping when callers use `data=` keyword argument.
+    """
+    if not kwargs:
+        return None
+    # If there's exactly one key named 'data', unwrap it
+    if len(kwargs) == 1 and 'data' in kwargs:
+        return kwargs['data']
+    # Otherwise return all kwargs as-is (e.g., from **_error_data(...))
+    return kwargs
+
+
 @dataclass(frozen=True)
 class RpcError(Exception):
     code: int
@@ -137,12 +158,12 @@ class RpcError(Exception):
 
 class ParseError(RpcError):
     def __init__(self, detail: str = "Parse error", **data: Any) -> None:
-        super().__init__(JsonRpcCode.PARSE_ERROR, detail, data or None)
+        super().__init__(JsonRpcCode.PARSE_ERROR, detail, _extract_data_param(**data))
 
 
 class InvalidRequest(RpcError):
     def __init__(self, detail: str = "Invalid request", **data: Any) -> None:
-        super().__init__(JsonRpcCode.INVALID_REQUEST, detail, data or None)
+        super().__init__(JsonRpcCode.INVALID_REQUEST, detail, _extract_data_param(**data))
 
 
 class MethodNotFound(RpcError):
@@ -154,59 +175,64 @@ class MethodNotFound(RpcError):
 
 class InvalidParams(RpcError):
     def __init__(self, detail: str = "Invalid params", **data: Any) -> None:
-        super().__init__(JsonRpcCode.INVALID_PARAMS, detail, data or None)
+        super().__init__(JsonRpcCode.INVALID_PARAMS, detail, _extract_data_param(**data))
 
 
 class InternalError(RpcError):
     def __init__(self, detail: str = "Internal error", **data: Any) -> None:
-        super().__init__(JsonRpcCode.INTERNAL_ERROR, detail, data or None)
+        super().__init__(JsonRpcCode.INTERNAL_ERROR, detail, _extract_data_param(**data))
 
 
 # Server errors
 class ServerError(RpcError):
     def __init__(self, detail: str = "Server error", **data: Any) -> None:
-        super().__init__(AnimicaCode.SERVER_ERROR, detail, data or None)
+        super().__init__(AnimicaCode.SERVER_ERROR, detail, _extract_data_param(**data))
 
 
 class RateLimited(RpcError):
     def __init__(self, retry_after_ms: Optional[int] = None, **data: Any) -> None:
-        payload = dict(data or {})
+        payload = _extract_data_param(**data)
         if retry_after_ms is not None:
-            payload["retryAfterMs"] = int(retry_after_ms)
-        super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload or None)
+            # Add retry_after_ms to the payload
+            if payload is None:
+                payload = {"retryAfterMs": int(retry_after_ms)}
+            else:
+                # Create a new dict to avoid mutating the input
+                payload = {**payload, "retryAfterMs": int(retry_after_ms)}
+        super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload)
 
 
 class RpcMethodRestricted(RpcError):
     def __init__(self, detail: str = "RPC method restricted", **data: Any) -> None:
-        super().__init__(AnimicaCode.RPC_METHOD_RESTRICTED, detail, data or None)
+        super().__init__(AnimicaCode.RPC_METHOD_RESTRICTED, detail, _extract_data_param(**data))
 
 
 class TemporarilyUnavailable(RpcError):
     def __init__(self, detail: str = "Temporarily unavailable", **data: Any) -> None:
-        super().__init__(AnimicaCode.TEMPORARILY_UNAVAILABLE, detail, data or None)
+        super().__init__(AnimicaCode.TEMPORARILY_UNAVAILABLE, detail, _extract_data_param(**data))
 
 
 class AccessDenied(RpcError):
     def __init__(self, detail: str = "Access denied", **data: Any) -> None:
-        super().__init__(AnimicaCode.ACCESS_DENIED, detail, data or None)
+        super().__init__(AnimicaCode.ACCESS_DENIED, detail, _extract_data_param(**data))
 
 
 class NotFound(RpcError):
     def __init__(self, what: str = "resource", **data: Any) -> None:
-        super().__init__(AnimicaCode.NOT_FOUND, f"{what} not found", data or None)
+        super().__init__(AnimicaCode.NOT_FOUND, f"{what} not found", _extract_data_param(**data))
 
 
 class AlreadyExists(RpcError):
     def __init__(self, what: str = "resource", **data: Any) -> None:
         super().__init__(
-            AnimicaCode.ALREADY_EXISTS, f"{what} already exists", data or None
+            AnimicaCode.ALREADY_EXISTS, f"{what} already exists", _extract_data_param(**data)
         )
 
 
 # Tx & state
 class InvalidTx(RpcError):
     def __init__(self, reason: str = "Invalid transaction", **data: Any) -> None:
-        super().__init__(AnimicaCode.INVALID_TX, reason, data or None)
+        super().__init__(AnimicaCode.INVALID_TX, reason, _extract_data_param(**data))
 
 
 class ChainIdMismatch(RpcError):
@@ -222,7 +248,7 @@ class BadSignature(RpcError):
     def __init__(
         self, detail: str = "Bad or unsupported signature", **data: Any
     ) -> None:
-        super().__init__(AnimicaCode.BAD_SIGNATURE, detail, data or None)
+        super().__init__(AnimicaCode.BAD_SIGNATURE, detail, _extract_data_param(**data))
 
 
 class InsufficientFunds(RpcError):
@@ -313,13 +339,13 @@ class PoIESRejected(RpcError):
 
 class PqPolicyViolation(RpcError):
     def __init__(self, detail: str = "PQ policy violation", **data: Any) -> None:
-        super().__init__(AnimicaCode.PQ_POLICY_VIOLATION, detail, data or None)
+        super().__init__(AnimicaCode.PQ_POLICY_VIOLATION, detail, _extract_data_param(**data))
 
 
 # DA
 class DaError(RpcError):
     def __init__(self, detail: str = "Data-availability error", **data: Any) -> None:
-        super().__init__(AnimicaCode.DA_ERROR, detail, data or None)
+        super().__init__(AnimicaCode.DA_ERROR, detail, _extract_data_param(**data))
 
 
 class DaNotAvailable(RpcError):
@@ -336,12 +362,12 @@ class RandWindowError(RpcError):
     def __init__(
         self, detail: str = "Commit/reveal outside window", **data: Any
     ) -> None:
-        super().__init__(AnimicaCode.RAND_WINDOW_ERROR, detail, data or None)
+        super().__init__(AnimicaCode.RAND_WINDOW_ERROR, detail, _extract_data_param(**data))
 
 
 class VdfInvalid(RpcError):
     def __init__(self, detail: str = "Invalid VDF proof", **data: Any) -> None:
-        super().__init__(AnimicaCode.VDF_INVALID, detail, data or None)
+        super().__init__(AnimicaCode.VDF_INVALID, detail, _extract_data_param(**data))
 
 
 # ───────────────────────────────────────────────────────────────────────────────
