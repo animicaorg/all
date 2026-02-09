@@ -455,6 +455,13 @@ def _safe_to_int(value: Any, field_name: str = "value") -> int:
     
     # Try converting bytes (could be CBOR-encoded)
     if isinstance(value, (bytes, bytearray)):
+        # Reject unreasonably long byte sequences for algorithm IDs
+        # Algorithm IDs should fit in a 32-bit int (4 bytes max)
+        if len(value) > 4:
+            raise StatelessValidationError(
+                "InvalidFormat", 
+                f"{field_name} byte sequence too long for int conversion: {len(value)} bytes"
+            )
         try:
             # Try interpreting as string first
             return int(value.decode('utf-8'))
@@ -519,17 +526,20 @@ def _safe_to_bytes(value: Any, field_name: str = "value") -> bytes:
                 raise StatelessValidationError(
                     "InvalidFormat", f"{field_name} invalid hex string: {e}"
                 )
-        # Try hex without prefix
-        try:
-            return bytes.fromhex(value)
-        except ValueError:
-            # Not hex, try UTF-8 encoding
+        # Try hex without prefix (but be more explicit about it)
+        # Check if the string looks like hex (only [0-9a-fA-F])
+        if all(c in '0123456789abcdefABCDEF' for c in value):
             try:
-                return value.encode('utf-8')
-            except UnicodeEncodeError as e:
-                raise StatelessValidationError(
-                    "InvalidFormat", f"{field_name} cannot be encoded: {e}"
-                )
+                return bytes.fromhex(value)
+            except ValueError:
+                pass  # Fall through to UTF-8
+        # Not hex, treat as UTF-8 text
+        try:
+            return value.encode('utf-8')
+        except UnicodeEncodeError as e:
+            raise StatelessValidationError(
+                "InvalidFormat", f"{field_name} cannot be encoded: {e}"
+            )
     
     # Try converting list/tuple of integers
     if isinstance(value, (list, tuple)):

@@ -39,6 +39,35 @@ def test_safe_to_int():
             print(f"❌ {desc}: unexpected error: {e}")
             return False
     
+    # Edge case: bytes that are valid UTF-8 digits vs big-endian
+    try:
+        # b"42" should be interpreted as UTF-8 "42" -> 42 (not as big-endian 0x3432 = 13362)
+        result = _safe_to_int(b"42", "test_field")
+        if result == 42:
+            print(f"✓ UTF-8 priority: b'42' correctly interpreted as 42 (not 13362)")
+        else:
+            print(f"❌ UTF-8 priority: b'42' interpreted as {result}, expected 42")
+            return False
+    except Exception as e:
+        print(f"❌ UTF-8 priority test: unexpected error: {e}")
+        return False
+    
+    # Edge case: byte sequence too long for alg_id
+    try:
+        long_bytes = b"\x00" * 10  # 10 bytes is too long for an alg_id
+        result = _safe_to_int(long_bytes, "alg_id")
+        print(f"❌ Long byte sequence: should have rejected, got {result}")
+        return False
+    except StatelessValidationError as e:
+        if "too long" in str(e):
+            print(f"✓ Long byte sequence: correctly rejected - {e}")
+        else:
+            print(f"❌ Long byte sequence: wrong error message: {e}")
+            return False
+    except Exception as e:
+        print(f"❌ Long byte sequence: wrong error type: {type(e).__name__}: {e}")
+        return False
+    
     # Invalid cases (should raise StatelessValidationError)
     test_cases_invalid = [
         (None, "None"),
@@ -87,6 +116,31 @@ def test_safe_to_bytes():
         except Exception as e:
             print(f"❌ {desc}: unexpected error: {e}")
             return False
+    
+    # Edge case: string that looks like hex vs non-hex
+    try:
+        # "48656c6c6f" should be interpreted as hex
+        result = _safe_to_bytes("48656c6c6f", "test_field")
+        if result == b"Hello":
+            print(f"✓ Hex detection: '48656c6c6f' correctly interpreted as hex")
+        else:
+            print(f"❌ Hex detection: got {result!r}, expected b'Hello'")
+            return False
+    except Exception as e:
+        print(f"❌ Hex detection test: unexpected error: {e}")
+        return False
+    
+    try:
+        # "hello world" should be interpreted as UTF-8 (has non-hex chars)
+        result = _safe_to_bytes("hello world", "test_field")
+        if result == b"hello world":
+            print(f"✓ UTF-8 fallback: 'hello world' correctly interpreted as UTF-8")
+        else:
+            print(f"❌ UTF-8 fallback: got {result!r}, expected b'hello world'")
+            return False
+    except Exception as e:
+        print(f"❌ UTF-8 fallback test: unexpected error: {e}")
+        return False
     
     # Invalid cases
     test_cases_invalid = [
