@@ -191,6 +191,32 @@ def compute_txid(envelope: TxEnvelope) -> TxId:
     return TxId(bytes32=txid_bytes)
 
 
+def _extract_int_field(data: dict, field_name: str, context: str) -> int:
+    """
+    Extract and convert a field to int, with clear error messages.
+    
+    Args:
+        data: Dictionary containing the field
+        field_name: Name of the field to extract
+        context: Context for error messages (e.g., "transaction body", "auth")
+    
+    Returns:
+        Field value as int
+    
+    Raises:
+        TypeError: If field is missing or cannot be converted to int
+    """
+    try:
+        value = data[field_name]
+    except KeyError as e:
+        raise TypeError(f"Missing required field '{field_name}' in {context}") from e
+    
+    try:
+        return int(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid {field_name} in {context}: {e}") from e
+
+
 def decode_tx_envelope(data: bytes) -> TxEnvelope:
     """
     Decode a CBOR-encoded transaction envelope.
@@ -218,18 +244,44 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     if not isinstance(body_dict, dict):
         raise TypeError(f"body must be dict, got {type(body_dict)}")
     
+    # Convert numeric fields to int to prevent TypeError
+    # CBOR may decode numbers as different types (float, etc)
+    version = _extract_int_field(body_dict, "version", "transaction body")
+    chain_id = _extract_int_field(body_dict, "chain_id", "transaction body")
+    nonce = _extract_int_field(body_dict, "nonce", "transaction body")
+    value = _extract_int_field(body_dict, "value", "transaction body")
+    fee = _extract_int_field(body_dict, "fee", "transaction body")
+    gas_limit = _extract_int_field(body_dict, "gas_limit", "transaction body")
+    timestamp = _extract_int_field(body_dict, "timestamp", "transaction body")
+    
+    # Ensure bytes fields are bytes
+    from_addr = body_dict["from_addr"]
+    to_addr = body_dict["to_addr"]
+    data = body_dict["data"]
+    if not isinstance(from_addr, bytes):
+        raise TypeError(f"from_addr must be bytes, got {type(from_addr)}")
+    if not isinstance(to_addr, bytes):
+        raise TypeError(f"to_addr must be bytes, got {type(to_addr)}")
+    if not isinstance(data, bytes):
+        raise TypeError(f"data must be bytes, got {type(data)}")
+    
+    # Ensure memo is string
+    memo = body_dict["memo"]
+    if not isinstance(memo, str):
+        raise TypeError(f"memo must be str, got {type(memo)}")
+    
     body = TxBody(
-        version=body_dict["version"],
-        chain_id=body_dict["chain_id"],
-        nonce=body_dict["nonce"],
-        from_addr=body_dict["from_addr"],
-        to_addr=body_dict["to_addr"],
-        value=body_dict["value"],
-        fee=body_dict["fee"],
-        gas_limit=body_dict["gas_limit"],
-        data=body_dict["data"],
-        memo=body_dict["memo"],
-        timestamp=body_dict["timestamp"],
+        version=version,
+        chain_id=chain_id,
+        nonce=nonce,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        value=value,
+        fee=fee,
+        gas_limit=gas_limit,
+        data=data,
+        memo=memo,
+        timestamp=timestamp,
         kind=TxKind(body_dict.get("kind", 0)),
     )
     
@@ -238,11 +290,23 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     if not isinstance(auth_dict, dict):
         raise TypeError(f"auth must be dict, got {type(auth_dict)}")
     
+    # Convert numeric fields to int
+    scheme_id = _extract_int_field(auth_dict, "scheme_id", "auth")
+    prehash_id = _extract_int_field(auth_dict, "prehash_id", "auth")
+    
+    # Ensure bytes fields are bytes
+    pubkey_bytes = auth_dict["pubkey_bytes"]
+    signature_bytes = auth_dict["signature_bytes"]
+    if not isinstance(pubkey_bytes, bytes):
+        raise TypeError(f"pubkey_bytes must be bytes, got {type(pubkey_bytes)}")
+    if not isinstance(signature_bytes, bytes):
+        raise TypeError(f"signature_bytes must be bytes, got {type(signature_bytes)}")
+    
     auth = TxAuth(
-        scheme_id=auth_dict["scheme_id"],
-        pubkey_bytes=auth_dict["pubkey_bytes"],
-        signature_bytes=auth_dict["signature_bytes"],
-        prehash_id=auth_dict["prehash_id"],
+        scheme_id=scheme_id,
+        pubkey_bytes=pubkey_bytes,
+        signature_bytes=signature_bytes,
+        prehash_id=prehash_id,
     )
     
     # Compute txid
