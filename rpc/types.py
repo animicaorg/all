@@ -213,8 +213,8 @@ def decode_address(
         raise ValueError(f"convertbits returned invalid type: {type(payload).__name__}")
     try:
         payload_bytes = bytes(payload)
-    except (TypeError, ValueError) as e:
-        # If bytes() conversion fails, payload contains invalid elements
+    except TypeError as e:
+        # If bytes() conversion fails, payload contains invalid elements (e.g., non-integers)
         raise ValueError(f"Invalid bech32m payload data: {e}") from e
     return _parts_from_payload(hrp, payload_bytes)
 

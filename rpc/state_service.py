@@ -89,8 +89,8 @@ def parse_address(addr: str) -> bytes:
             raise ValueError(f"convertbits returned invalid type: {type(payload).__name__}")
         try:
             payload_bytes = bytes(payload)
-        except (TypeError, ValueError) as e:
-            # If bytes() conversion fails, payload contains invalid elements
+        except TypeError as e:
+            # If bytes() conversion fails, payload contains invalid elements (e.g., non-integers)
             raise ValueError(f"Invalid bech32m payload data: {e}") from e
         # CRITICAL: Bech32 payload format is: alg_id (2 bytes) || digest (32 bytes)
         # State DB stores accounts by 32-byte digest only, matching how rewards are credited.
