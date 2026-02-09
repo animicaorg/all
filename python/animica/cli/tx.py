@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
@@ -101,6 +102,7 @@ def _rpc(
     timeout: Optional[float] = None,
 ) -> Any:
     payload = {"jsonrpc": "2.0", "id": int(time.time() * 1000) % 1_000_000, "method": method, "params": params or []}
+    _debug_tx_event("cli_rpc_request", {"method": method, "url": url, "payload": payload})
     resolved_timeout = resolve_timeout("RPC timeout", timeout, env_var=RPC_TIMEOUT_ENV, default=DEFAULT_RPC_TIMEOUT)
     r = requests.post(url, json=payload, timeout=resolved_timeout)
     r.raise_for_status()
@@ -1467,6 +1469,7 @@ def send(
     tx_hash = None
     last_body = None
     last_nonce = None
+    cli_trace_id = uuid.uuid4().hex
     tx_in_mempool = False
     nonce_lock = _nonce_lock(from_addr) if nonce_value is None else nullcontext()
 
@@ -1541,7 +1544,7 @@ def send(
                     }
                 )
 
-            _debug_tx_event("tx_build", {"chain_id": cid, "nonce": attempt_nonce, "from": from_addr, "to": to_addr, "value": value_base, "fee": fee})
+            _debug_tx_event("tx_build", {"trace_id": cli_trace_id, "chain_id": cid, "nonce": attempt_nonce, "from": from_addr, "to": to_addr, "value": value_base, "fee": fee, "body": body})
             # Sign
             pq = pq_sign_tx(body, sk, pk, used_alg_id, chain_ctx)
 
@@ -1599,7 +1602,7 @@ def send(
 
             try:
                 send_method = "mempool.simulateAdmission" if dry_run else "tx.sendRawTransaction"
-                _debug_tx_event("tx_submit", {"rpc": rpc, "method": send_method, "raw_len": len(raw)})
+                _debug_tx_event("tx_submit", {"trace_id": cli_trace_id, "rpc": rpc, "method": send_method, "raw_len": len(raw), "rpc_params": [raw_hex]})
                 send_result = _rpc(rpc, send_method, [raw_hex])
                 tx_hash = _extract_send_hash(send_result)
                 if isinstance(send_result, dict):

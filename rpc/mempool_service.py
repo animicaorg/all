@@ -70,6 +70,28 @@ def _normalize_reject(reason: str, message: str, context: dict[str, Any]) -> tup
         r = "insufficient_funds"
     return r, m, context
 
+def _tx_numeric_field_types(tx: Any) -> dict[str, dict[str, Any]]:
+    body = _tx_body(tx)
+    if not isinstance(body, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    def _add(name: str, value: Any) -> None:
+        out[name] = {"type": type(value).__name__, "value": value}
+    for field in ("chainId", "chain_id", "nonce", "value", "fee_reserved", "reserve_amount", "gasLimit", "maxFee", "validAfter", "validUntil"):
+        if field in body:
+            _add(field, body.get(field))
+    gas = body.get("gas")
+    if isinstance(gas, dict):
+        for sub in ("price", "limit"):
+            if sub in gas:
+                _add(f"gas.{sub}", gas.get(sub))
+    payload = body.get("payload")
+    if isinstance(payload, dict):
+        v = payload.get("v")
+        if isinstance(v, dict) and "amount" in v:
+            _add("payload.v.amount", v.get("amount"))
+    return out
+
 def _tx_context_fields(tx: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     try:
@@ -821,14 +843,21 @@ class MempoolService:
         try:
             normalized_env = normalize_tx_envelope(raw_bytes)
         except TxNormalizationError as exc:
+            detail_ctx = dict(exc.details or {})
+            detail_ctx.update({"step": "normalize_envelope", "error": str(exc)})
             self._record_rejection(
                 tx_hash_hex,
                 exc.reason or "decode_error",
-                {"step": "normalize_envelope", "error": str(exc)},
+                detail_ctx,
             )
             raise AdmissionError(
                 "tx envelope normalization failed",
-                context={"tx_hash": tx_hash_hex, "error": str(exc)},
+                context={
+                    "tx_hash": tx_hash_hex,
+                    "error": str(exc),
+                    "reason": exc.reason or "invalid_format",
+                    **(exc.details or {}),
+                },
             ) from exc
 
         env_hash = normalized_env.get("hash")
@@ -1452,6 +1481,9 @@ class MempoolService:
             if not isinstance(context, dict):
                 context = {"error_class": exc.__class__.__name__}
             context = {**_tx_context_fields(tx), **context}
+            numeric_types = _tx_numeric_field_types(tx)
+            if numeric_types:
+                context.setdefault("numeric_field_types", numeric_types)
             context.setdefault("tx_hash", computed_hash)
             if reason == "admission_failed" and context.get("reason"):
                 reason = str(context.get("reason"))
@@ -1467,11 +1499,12 @@ class MempoolService:
                 exc=exc if norm_reason == "internal_error" else None,
             )
             reject = reject_obj.to_dict()
+            reject["reason_code"] = norm_reason
             if "code" not in reject or reject.get("code") == 1000:
                 reject["code"] = int(REJECT_CODE.get(reject_obj.reason, REJECT_CODE[RejectReason.internal_error]))
             if os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1":
                 try:
-                    log.info(json.dumps({"mempool_reject": reject}, sort_keys=True, separators=(",", ":")))
+                    log.info(json.dumps({"mempool_reject": reject}, sort_keys=True, separators=(",", ":"), default=str))
                 except Exception:
                     pass
             
