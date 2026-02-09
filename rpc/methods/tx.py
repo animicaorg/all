@@ -17,6 +17,7 @@ from rpc.methods import method
 from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
 from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
+from core.utils.tx import coerce_int as _coerce_tx_int, TxNormalizationError as _TxNormalizationError
 from rpc.instant_tx import get_instant_tx_service_singleton
 
 log = logging.getLogger(__name__)
@@ -238,6 +239,30 @@ def _record_reorged_txs(tx_hashes: t.Iterable[bytes | str]) -> None:
             if not hex_str.startswith("0x"):
                 hex_str = "0x" + hex_str
     _REORGED_TXS[hex_str.lower()] = now
+
+
+def _coerce_optional_tx_int(field_name: str, value: t.Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return _coerce_tx_int(field_name, value)
+    except _TxNormalizationError as exc:
+        details = exc.details or {}
+        raise rpc_errors.InvalidTx(
+            f"bad numeric field: {field_name}",
+            data={
+                "mempoolError": {
+                    "reason": "bad_field_type",
+                    "reason_code": "bad_field_type",
+                    "message": str(exc),
+                    "context": {
+                        "field": details.get("field", field_name),
+                        "received_type": details.get("received_type"),
+                        "received_keys": details.get("received_keys"),
+                    },
+                }
+            },
+        ) from exc
 
 
 def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
@@ -1637,21 +1662,21 @@ def _tx_view(
         "hash": hash_hex,
         "from": _hex(_from) if isinstance(_from, (bytes, bytearray)) else _from,
         "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
-        "gas": int(gas) if gas is not None else None,
-        "gasLimit": int(gas) if gas is not None else None,
-        "tip": int(tip) if tip is not None else None,
-        "gasPrice": int(tip) if tip is not None else None,
-        "maxFee": int(max_fee) if max_fee is not None else None,
-        "validAfter": int(valid_after) if valid_after is not None else None,
-        "validUntil": int(valid_until) if valid_until is not None else None,
+        "gas": _coerce_optional_tx_int("gasLimit", gas),
+        "gasLimit": _coerce_optional_tx_int("gasLimit", gas),
+        "tip": _coerce_optional_tx_int("tip", tip),
+        "gasPrice": _coerce_optional_tx_int("gasPrice", tip),
+        "maxFee": _coerce_optional_tx_int("maxFee", max_fee),
+        "validAfter": _coerce_optional_tx_int("validAfter", valid_after),
+        "validUntil": _coerce_optional_tx_int("validUntil", valid_until),
         "salt": _hex(salt) if isinstance(salt, (bytes, bytearray)) else salt,
-        "forkId": int(fork_id) if fork_id is not None else None,
-        "value": int(value) if value is not None else None,
-        "chainId": int(chain_id) if chain_id is not None else None,
+        "forkId": _coerce_optional_tx_int("forkId", fork_id),
+        "value": _coerce_optional_tx_int("value", value),
+        "chainId": _coerce_optional_tx_int("chainId", chain_id),
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
         "blockHash": None if pending else (_hex(block_hash) if isinstance(block_hash, (bytes, bytearray)) else block_hash),
-        "blockNumber": None if pending else (int(block_number) if block_number is not None else None),
-        "transactionIndex": None if pending else (int(tx_index) if tx_index is not None else None),
+        "blockNumber": None if pending else (_coerce_optional_tx_int("blockNumber", block_number)),
+        "transactionIndex": None if pending else (_coerce_optional_tx_int("transactionIndex", tx_index)),
     }
     return {k: vv for k, vv in v.items() if vv is not None}
 
