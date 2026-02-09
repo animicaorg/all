@@ -191,6 +191,32 @@ def compute_txid(envelope: TxEnvelope) -> TxId:
     return TxId(bytes32=txid_bytes)
 
 
+def _extract_int_field(data: dict, field_name: str, context: str) -> int:
+    """
+    Extract and convert a field to int, with clear error messages.
+    
+    Args:
+        data: Dictionary containing the field
+        field_name: Name of the field to extract
+        context: Context for error messages (e.g., "transaction body", "auth")
+    
+    Returns:
+        Field value as int
+    
+    Raises:
+        TypeError: If field is missing or cannot be converted to int
+    """
+    try:
+        value = data[field_name]
+    except KeyError as e:
+        raise TypeError(f"Missing required field '{field_name}' in {context}") from e
+    
+    try:
+        return int(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid {field_name} in {context}: {e}") from e
+
+
 def decode_tx_envelope(data: bytes) -> TxEnvelope:
     """
     Decode a CBOR-encoded transaction envelope.
@@ -220,42 +246,13 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     
     # Convert numeric fields to int to prevent TypeError
     # CBOR may decode numbers as different types (float, etc)
-    try:
-        version = int(body_dict["version"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid version in transaction body: {e}") from e
-    except KeyError as e:
-        raise TypeError(f"Missing required field in transaction body: {e}") from e
-    
-    try:
-        chain_id = int(body_dict["chain_id"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid chain_id in transaction body: {e}") from e
-    
-    try:
-        nonce = int(body_dict["nonce"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid nonce in transaction body: {e}") from e
-    
-    try:
-        value = int(body_dict["value"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid value in transaction body: {e}") from e
-    
-    try:
-        fee = int(body_dict["fee"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid fee in transaction body: {e}") from e
-    
-    try:
-        gas_limit = int(body_dict["gas_limit"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid gas_limit in transaction body: {e}") from e
-    
-    try:
-        timestamp = int(body_dict["timestamp"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid timestamp in transaction body: {e}") from e
+    version = _extract_int_field(body_dict, "version", "transaction body")
+    chain_id = _extract_int_field(body_dict, "chain_id", "transaction body")
+    nonce = _extract_int_field(body_dict, "nonce", "transaction body")
+    value = _extract_int_field(body_dict, "value", "transaction body")
+    fee = _extract_int_field(body_dict, "fee", "transaction body")
+    gas_limit = _extract_int_field(body_dict, "gas_limit", "transaction body")
+    timestamp = _extract_int_field(body_dict, "timestamp", "transaction body")
     
     # Ensure bytes fields are bytes
     from_addr = body_dict["from_addr"]
@@ -294,17 +291,8 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
         raise TypeError(f"auth must be dict, got {type(auth_dict)}")
     
     # Convert numeric fields to int
-    try:
-        scheme_id = int(auth_dict["scheme_id"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid scheme_id in auth: {e}") from e
-    except KeyError as e:
-        raise TypeError(f"Missing required field in auth: {e}") from e
-    
-    try:
-        prehash_id = int(auth_dict["prehash_id"])
-    except (ValueError, TypeError) as e:
-        raise TypeError(f"Invalid prehash_id in auth: {e}") from e
+    scheme_id = _extract_int_field(auth_dict, "scheme_id", "auth")
+    prehash_id = _extract_int_field(auth_dict, "prehash_id", "auth")
     
     # Ensure bytes fields are bytes
     pubkey_bytes = auth_dict["pubkey_bytes"]
