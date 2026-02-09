@@ -193,6 +193,58 @@ def _pad_addr(addr: Any) -> bytes:
     return addr_bytes
 
 
+def _safe_to_bytes(val: Any) -> bytes:
+    """
+    Safely convert a value to bytes without raising TypeError.
+    
+    Handles:
+    - None or empty -> b""
+    - bytes/bytearray -> bytes
+    - hex strings (e.g., "0xabcd") -> bytes
+    - UTF-8 strings -> bytes (encoded)
+    - list/tuple of valid integers (0-255) -> bytes
+    - invalid types -> b"" (defensive fallback)
+    
+    Returns:
+        bytes: The value as bytes, or empty bytes if conversion fails
+    """
+    if val is None:
+        return b""
+    if isinstance(val, bytes):
+        return val
+    if isinstance(val, bytearray):
+        return bytes(val)
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return b""
+        # Handle hex strings
+        if val.startswith(("0x", "0X")):
+            try:
+                return bytes.fromhex(val[2:])
+            except (ValueError, TypeError):
+                return b""
+        # Try to interpret as hex without prefix
+        try:
+            return bytes.fromhex(val)
+        except (ValueError, TypeError):
+            # Fall back to UTF-8 encoding for non-hex strings
+            try:
+                return val.encode("utf-8")
+            except (UnicodeEncodeError, AttributeError):
+                return b""
+    if isinstance(val, (list, tuple)):
+        # Attempt to convert list/tuple to bytes
+        # Only works if all elements are integers in range 0-255
+        try:
+            return bytes(val)
+        except (TypeError, ValueError):
+            # If conversion fails (e.g., non-integer elements), return empty bytes
+            return b""
+    # For any other type (dict, int, etc.), return empty bytes
+    return b""
+
+
 def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     if "v" in body and "gas" in body and "payload" in body:
         return dict(body)
@@ -209,27 +261,15 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
             "max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 1)))
         ),
     )
-    data = body.get("data", b"")
-    if isinstance(data, str):
-        if data.startswith("0x"):
-            data = bytes.fromhex(data[2:])
-        else:
-            data = data.encode("utf-8")
-    elif isinstance(data, (list, tuple)):
-        data = bytes(data)
-    elif not isinstance(data, (bytes, bytearray)):
-        data = b""
+    data = _safe_to_bytes(body.get("data", b""))
 
     valid_after = body.get("validAfter", body.get("valid_after"))
     valid_until = body.get("validUntil", body.get("valid_until"))
-    salt = body.get("salt")
+    salt_raw = body.get("salt")
+    salt = _safe_to_bytes(salt_raw)
     fork_id = body.get("forkId", body.get("fork_id"))
-    if isinstance(salt, str):
-        salt = bytes.fromhex(salt[2:]) if salt.startswith("0x") else salt.encode("utf-8")
-    elif isinstance(salt, (list, tuple)):
-        salt = bytes(salt)
     version = int(body.get("v", 2))
-    if version == 2 and (valid_after is None or valid_until is None or salt is None):
+    if version == 2 and (valid_after is None or valid_until is None or salt_raw is None):
         version = 1
 
     normalized = {
@@ -242,7 +282,7 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
             "v": {
                 "to": _pad_addr(to_addr),
                 "amount": int(value),
-                "data": bytes(data),
+                "data": data,  # Already bytes from _safe_to_bytes()
             },
         },
         "accessList": [],
@@ -252,7 +292,7 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     else:
         normalized["validAfter"] = int(valid_after or 0)
         normalized["validUntil"] = int(valid_until or 0)
-        normalized["salt"] = bytes(salt or b"")
+        normalized["salt"] = salt  # Already bytes from _safe_to_bytes()
         if fork_id is not None:
             normalized["forkId"] = int(fork_id)
     return normalized
@@ -397,7 +437,7 @@ def normalize_tx_envelope(tx_like: Any) -> dict:
         "tx": canonical_tx,
         "sigs": sigs,
         "hash": "0x" + computed_hash.hex(),
-        "sender": "0x" + bytes(sender_bytes).hex(),
+        "sender": "0x" + (sender_bytes if isinstance(sender_bytes, bytes) else bytes(sender_bytes)).hex(),
         **({"nonce": nonce_int} if nonce_int is not None else {}),
         "raw": raw_canonical,
     }
