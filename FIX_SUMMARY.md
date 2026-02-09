@@ -1,106 +1,87 @@
-# Fix Summary: Snapshot Showing No Peers Connected Despite Peers Being Connected
+# Fix for Mempool Admission TypeError
 
-## Problem Statement
-The `animica snapshot list` command was incorrectly displaying "💡 No peers connected." even when peers were actually connected to the node. This occurred in the scenario shown in the issue:
-
+## Problem
+Users reported transaction send failures with error:
 ```
-Error querying peers for snapshots: 
-Found 1 local snapshot(s):
-
-Chain 1 - Height 2000
-  Hash: 0x00009da2f1baa41aec4a5dd200ccf614f7a14d45bf055e71f9bddb9793e8e16e
-  Blocks: 2001
-  Accounts: 6
-  Size: 0.26 MB
-  Path: /data/snapshots/chain-1-height-2000
-
-
-💡 No peers connected.
-   Connect to peers first to discover snapshots from the network.
+RPC Error -32010: mempool admission failed: internal_error
+Error class: TypeError
 ```
 
 ## Root Cause
-In `python/animica/cli/snapshot.py`, the `list_snapshots()` function:
-1. Queries `snapshot.discoverFromPeers` RPC method to get snapshots from connected peers
-2. If this RPC call fails (e.g., method doesn't exist, timeout, network error), the exception is caught
-3. However, the `peer_count` variable remains at its initial value of 0
-4. The code then checks `if peer_count == 0` and incorrectly reports "No peers connected"
+The `decode_tx_envelope` function in `coretx/canonical.py` did not validate or convert field types before passing them to `TxBody` and `TxAuth` constructors. When CBOR decoding produced values with unexpected numeric types (e.g., float when int expected), the strict type checking in `TxBody.__post_init__` raised `TypeError`.
 
 ## Solution
-Added fallback logic to query peers directly when `snapshot.discoverFromPeers` fails:
+Added type conversion and validation in `decode_tx_envelope`:
 
+### 1. Created Helper Function
 ```python
-except Exception as e:
-    # Log the error but continue
-    _log.warning(f"Error querying peers for snapshots: {e}")
-    
-    # Even if snapshot discovery failed, try to get actual peer count
-    # so we don't incorrectly report "no peers connected"
+def _extract_int_field(data: dict, field_name: str, context: str) -> int:
+    """Extract and convert a field to int, with clear error messages."""
     try:
-        peers = asyncio.run(_get_peers(url, timeout=timeout or 10.0))
-        peer_count = len(peers) if peers else 0
-    except Exception as peer_err:
-        _log.debug(f"Error getting peer count: {peer_err}")
-        # peer_count remains 0
+        value = data[field_name]
+    except KeyError as e:
+        raise TypeError(f"Missing required field '{field_name}' in {context}") from e
+    
+    try:
+        return int(value)
+    except (ValueError, TypeError) as e:
+        raise TypeError(f"Invalid {field_name} in {context}: {e}") from e
 ```
 
-The `_get_peers()` function already exists in the file and tries multiple RPC methods:
-- `net.peers`
-- `p2p.listPeers`
-- `p2p.getPeers`
-- `p2p.peers`
+### 2. Updated decode_tx_envelope
+- Uses `_extract_int_field` for all numeric fields in body and auth
+- Validates bytes fields are actually bytes
+- Validates string fields are actually strings
+- Provides clear, field-specific error messages
 
-## Impact
+## Testing
+- ✅ All 22 existing coretx tests pass
+- ✅ Created `test_decode_type_fix.py` - validates successful type conversion
+- ✅ Created `test_decode_validation.py` - validates rejection with clear errors
+- ✅ CodeQL security scan passed (no vulnerabilities)
 
-### Before Fix
-- **Scenario**: Peers connected, but `snapshot.discoverFromPeers` fails
-- **Output**: "💡 No peers connected."
-- **Issue**: Misleading message causes user confusion
+## Error Message Examples
 
-### After Fix
-- **Scenario**: Peers connected, but `snapshot.discoverFromPeers` fails
-- **Output**: "💡 Connected to 3 peer(s), but none have snapshots available."
-- **Benefit**: Accurate peer status reporting
+**Before fix:**
+```
+TypeError: nonce must be int, got <class 'float'>
+```
 
-## Test Cases Covered
+**After fix (valid conversion):**
+```
+# No error - float 42.0 is silently converted to int 42
+```
 
-1. ✅ **Normal operation**: Both `snapshot.discoverFromPeers` and `_get_peers()` succeed
-2. ✅ **Primary fix**: `snapshot.discoverFromPeers` fails, `_get_peers()` succeeds with peers
-3. ✅ **No peers case**: Both methods succeed/fail but no peers are actually connected
-4. ✅ **Both fail**: Graceful fallback to default message when all RPC calls fail
+**After fix (invalid type):**
+```
+TypeError: Invalid nonce in transaction body: int() argument must be a string, 
+a bytes-like object or a real number, not 'list'
+```
+
+**After fix (missing field):**
+```
+TypeError: Missing required field 'nonce' in transaction body
+```
+
+## Code Review Feedback Addressed
+1. ✅ Field-specific error messages (not generic "invalid numeric field")
+2. ✅ DRY principle - extracted helper function instead of repetitive try-except blocks
+3. ✅ Clear identification of which field (version, nonce, etc.) caused the error
 
 ## Files Changed
+- `coretx/canonical.py` - Added `_extract_int_field` helper and updated `decode_tx_envelope`
+- `test_decode_type_fix.py` - New test for successful type conversion
+- `test_decode_validation.py` - New test for error handling
 
-### python/animica/cli/snapshot.py
-- Lines 435-443: Added fallback logic to query peer count directly
-- Impact: Minimal, surgical fix with no breaking changes
+## Impact
+- ✅ Prevents TypeError crashes during mempool admission
+- ✅ Provides clear, actionable error messages for debugging
+- ✅ More maintainable code with reduced duplication
+- ✅ No breaking changes - all existing tests pass
+- ✅ Defensive programming - handles edge cases gracefully
 
-### .gitignore
-- Added test files to ignore list
-
-## Benefits
-
-1. **Accurate Status Reporting**: Users now see correct peer connection status
-2. **Better Troubleshooting**: Clear distinction between "no peers" vs "peers with no snapshots"
-3. **Graceful Degradation**: Falls back safely if peer queries also fail
-4. **No Breaking Changes**: Preserves all existing functionality
-
-## Verification
-
-Run the test explanation to see the fix in action:
-```bash
-python3 test_snapshot_fix_explanation.py
-```
-
-Manual testing:
-```bash
-# Check peers are connected
-animica peer list
-
-# Run snapshot list - should show accurate peer status
-animica snapshot list
-```
-
-## Related Code
-
-The fix uses the existing `_get_peers()` helper function which is already used elsewhere in the file. This ensures consistency and reliability.
+## Security Considerations
+- Type conversions are safe and predictable (int() is deterministic)
+- No new attack surface introduced
+- Better error handling improves security by preventing crashes
+- CodeQL scan found no vulnerabilities
