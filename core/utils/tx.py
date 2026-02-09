@@ -22,6 +22,55 @@ class TxNormalizationError(ValueError):
         self.details = details or {}
 
 
+def _coerce_int(name: str, value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        if len(value) == 0:
+            raise TxNormalizationError(
+                "bad_field_type",
+                f"{name} must be an integer",
+                details={"field": name, "received_type": type(value).__name__},
+            )
+        return int.from_bytes(bytes(value), byteorder="big", signed=False)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise TxNormalizationError(
+                "bad_field_type",
+                f"{name} must be an integer",
+                details={"field": name, "received_type": "str"},
+            )
+        try:
+            return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
+        except ValueError as exc:
+            raise TxNormalizationError(
+                "bad_field_type",
+                f"{name} must be an integer",
+                details={"field": name, "received_type": "str", "value": value},
+            ) from exc
+    if isinstance(value, Mapping):
+        accepted_keys = [k for k in ("value", "amount", "nonce", name) if k in value]
+        if len(accepted_keys) == 1:
+            return _coerce_int(name, value[accepted_keys[0]])
+        raise TxNormalizationError(
+            "bad_field_type",
+            f"{name} must be an integer",
+            details={
+                "field": name,
+                "received_type": "dict",
+                "received_keys": sorted(str(k) for k in value.keys()),
+            },
+        )
+    raise TxNormalizationError(
+        "bad_field_type",
+        f"{name} must be an integer",
+        details={"field": name, "received_type": type(value).__name__},
+    )
+
+
 def _decode_hex_str(value: str) -> bytes:
     s = value.strip()
     if s.startswith("0x"):
@@ -274,14 +323,17 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
 
     normalized = {
         "v": version,
-        "chainId": int(chain_id),
+        "chainId": _coerce_int("chainId", chain_id),
         "from": _pad_addr(from_addr),
-        "gas": {"price": int(gas_price), "limit": int(gas_limit)},
+        "gas": {
+            "price": _coerce_int("maxFee", gas_price),
+            "limit": _coerce_int("gasLimit", gas_limit),
+        },
         "payload": {
             "t": 0,
             "v": {
                 "to": _pad_addr(to_addr),
-                "amount": int(value),
+                "amount": _coerce_int("value", value),
                 # data is already bytes from _safe_to_bytes(), no need for bytes() call
                 # Previously: bytes(data) could raise TypeError if data was a dict/list of non-ints
                 "data": data,
@@ -290,15 +342,15 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
         "accessList": [],
     }
     if version == 1:
-        normalized["nonce"] = int(nonce or 0)
+        normalized["nonce"] = _coerce_int("nonce", nonce or 0)
     else:
-        normalized["validAfter"] = int(valid_after or 0)
-        normalized["validUntil"] = int(valid_until or 0)
+        normalized["validAfter"] = _coerce_int("validAfter", valid_after or 0)
+        normalized["validUntil"] = _coerce_int("validUntil", valid_until or 0)
         # salt is already bytes from _safe_to_bytes(), no need for bytes() call
         # Previously: bytes(salt or b"") was redundant and could mask issues
         normalized["salt"] = salt
         if fork_id is not None:
-            normalized["forkId"] = int(fork_id)
+            normalized["forkId"] = _coerce_int("forkId", fork_id)
     return normalized
 
 
