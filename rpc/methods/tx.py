@@ -1691,6 +1691,7 @@ def mempool_simulate_admission(rawTx: str) -> t.Any:
 
 def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
     start_s = time.time()
+    trace_id = uuid.uuid4().hex
     tx_hash_hex = ""
     tx_view: dict[str, t.Any] = {}
     sender = None
@@ -1699,6 +1700,12 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
     gas_limit = None
     reason = None
     raw = b""
+
+    if os.getenv("ANIMICA_DEBUG_TX", "0") == "1":
+        try:
+            log.info(json.dumps({"trace_id": trace_id, "event": "rpc_tx_submit_request", "method": "tx.sendRawTransaction", "raw_type": type(rawTx).__name__, "raw_len": len(rawTx) if isinstance(rawTx, str) else None}, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            pass
 
     def _log_decision(decision: str, reason_value: str | None) -> None:
         latency_ms = int((time.time() - start_s) * 1000)
@@ -1772,6 +1779,25 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
 
         try:
             tx_like, obj = _decode_tx_defensive(raw)
+            if os.getenv("ANIMICA_DEBUG_TX", "0") == "1":
+                try:
+                    body = obj.get("tx") if isinstance(obj, dict) else None
+                    type_map = {}
+                    if isinstance(body, dict):
+                        for fld in ("chainId", "nonce", "validAfter", "validUntil"):
+                            if fld in body:
+                                type_map[fld] = type(body.get(fld)).__name__
+                        gas = body.get("gas")
+                        if isinstance(gas, dict):
+                            for fld in ("price", "limit"):
+                                if fld in gas:
+                                    type_map[f"gas.{fld}"] = type(gas.get(fld)).__name__
+                        payload_v = (body.get("payload") or {}).get("v") if isinstance(body.get("payload"), dict) else None
+                        if isinstance(payload_v, dict) and "amount" in payload_v:
+                            type_map["payload.v.amount"] = type(payload_v.get("amount")).__name__
+                    log.info(json.dumps({"trace_id": trace_id, "event": "rpc_tx_decoded", "tx_hash": obj.get("hash") if isinstance(obj, dict) else None, "numeric_types": type_map}, sort_keys=True, separators=(",", ":")))
+                except Exception:
+                    pass
         except rpc_errors.RpcError:
             raise
         except Exception as e:
@@ -1970,7 +1996,6 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
                 "traceback": short_trace,
             },
         )
-        trace_id = uuid.uuid4().hex
         log.error(
             "Mempool admission internal error trace_id=%s",
             trace_id,
