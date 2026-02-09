@@ -84,7 +84,14 @@ def parse_address(addr: str) -> bytes:
         payload = bech.convertbits(data, 5, 8, False)  # type: ignore[attr-defined]
         if payload is None:
             raise ValueError("bad bech32m data")
-        payload_bytes = bytes(payload)
+        # Safe bytes conversion: validate that payload is a list of valid integers
+        if not isinstance(payload, (list, tuple)):
+            raise ValueError(f"convertbits returned invalid type: {type(payload).__name__}")
+        try:
+            payload_bytes = bytes(payload)
+        except TypeError as e:
+            # If bytes() conversion fails, payload contains invalid elements (e.g., non-integers)
+            raise ValueError(f"Invalid bech32m payload data: {e}") from e
         # CRITICAL: Bech32 payload format is: alg_id (2 bytes) || digest (32 bytes)
         # State DB stores accounts by 32-byte digest only, matching how rewards are credited.
         # Strip the 2-byte alg_id prefix to get the 32-byte digest.
