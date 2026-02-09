@@ -208,7 +208,15 @@ def decode_address(
     payload = convertbits(data, frombits=5, tobits=8, pad=False)
     if payload is None:
         raise ValueError("convertbits failed (5→8)")
-    return _parts_from_payload(hrp, bytes(payload))
+    # Safe bytes conversion: validate that payload is a list of valid integers
+    if not isinstance(payload, (list, tuple)):
+        raise ValueError(f"convertbits returned invalid type: {type(payload).__name__}")
+    try:
+        payload_bytes = bytes(payload)
+    except TypeError as e:
+        # If bytes() conversion fails, payload contains invalid elements (e.g., non-integers)
+        raise ValueError(f"Invalid bech32m payload data: {e}") from e
+    return _parts_from_payload(hrp, payload_bytes)
 
 
 def is_address(addr: str, *, allowed_hrps: Optional[Iterable[str]] = None) -> bool:
