@@ -1502,3 +1502,34 @@ def test_up_all_with_miner_flag(monkeypatch: Any) -> None:
                 if network in ["mainnet", "testnet"]:
                     assert "--profile" in cmd
                     assert "miner" in cmd
+
+
+def test_node_help_includes_logs_command() -> None:
+    result = runner.invoke(node.app, ["--help"])
+    assert result.exit_code == 0
+    assert "logs" in result.output
+
+
+def test_logs_command_falls_back_when_docker_missing(monkeypatch: Any, tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    state = CLIState(state_file)
+    state.set("active_network", "mainnet")
+    monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+    monkeypatch.setattr(node.shutil, "which", lambda name: None if name == "docker" else "/usr/bin/tail")
+
+    log_file = tmp_path / "node.log"
+    log_file.write_text("line1\nline2\n", encoding="utf-8")
+    monkeypatch.setenv("ANIMICA_NODE_LOG_FILE", str(log_file))
+
+    calls = []
+    class R:
+        returncode = 0
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return R()
+    monkeypatch.setattr(node.subprocess, "run", fake_run)
+
+    result = runner.invoke(node.app, ["logs", "--network", "mainnet", "--lines", "10"])
+    assert result.exit_code == 0
+    assert "Docker is not installed" in result.output
+    assert any(cmd[0].endswith("tail") or cmd[0] == "/usr/bin/tail" for cmd in calls)
