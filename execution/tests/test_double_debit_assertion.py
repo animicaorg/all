@@ -105,14 +105,26 @@ def test_double_debit_assertion_catches_bug(monkeypatch):
     error = exc_info.value
     assert error.code == "DOUBLE_DEBIT_BUG"
     assert "2 debits" in str(error)
+    
+    # Verify complete error structure
     assert "FIRST_DEBIT" in str(error.data)
     assert "SECOND_DEBIT" in str(error.data)
-    
-    # Verify the error data contains diagnostic information
     assert error.data["num_debits"] == 2
     assert len(error.data["callsites"]) == 2
     assert "test.first_debit" in error.data["callsites"]
     assert "test.second_debit" in error.data["callsites"]
+    
+    # Verify diagnosis field
+    assert "diagnosis" in error.data
+    assert "Multiple code paths" in error.data["diagnosis"]
+    
+    # Verify debits array structure
+    assert "debits" in error.data
+    assert len(error.data["debits"]) == 2
+    for debit in error.data["debits"]:
+        assert "delta" in debit
+        assert "reason" in debit
+        assert "site" in debit
 
 
 def test_single_debit_assertion_passes(monkeypatch):
