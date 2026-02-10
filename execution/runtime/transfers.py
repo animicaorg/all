@@ -43,7 +43,7 @@ from core.utils.address_codec import (
     account_key_from_pubkey,
     account_key_from_raw,
 )
-from ..state.apply_balance import InsufficientBalance, credit as state_credit, debit as state_debit
+from ..state.apply_balance import InsufficientBalance, credit as state_credit, debit as state_debit, assert_single_tx_balance_deltas
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -436,39 +436,7 @@ def _debit_balance(
         )
 
 
-def _assert_single_tx_balance_deltas(
-    *,
-    tx_hash: str | None,
-    sender: bytes,
-    recipient: bytes,
-    amount: int,
-    total_fee: int,
-) -> None:
-    if os.getenv("ANIMICA_DEBUG_BALANCE", "0") != "1" or not tx_hash:
-        return
-    from ..state.apply_balance import get_debug_balance_events
-
-    events = get_debug_balance_events(tx_hash=tx_hash)
-    sender_neg = [e for e in events if e.get("address") == sender.hex() and int(e.get("delta", 0)) < 0]
-    sender_total = sum(int(e.get("delta", 0)) for e in sender_neg)
-    recipient_pos = [e for e in events if e.get("address") == recipient.hex() and int(e.get("delta", 0)) > 0]
-    recipient_total = sum(int(e.get("delta", 0)) for e in recipient_pos)
-
-    expected_sender = -(int(amount) + int(total_fee)) if sender != recipient else -int(total_fee)
-    expected_recipient = int(amount) if sender != recipient else 0
-    if len(sender_neg) != 1 or sender_total != expected_sender or recipient_total != expected_recipient:
-        raise ExecError(
-            "transfer debug balance assertion failed",
-            code="TRANSFER_DEBUG_BALANCE_ASSERT",
-            data={
-                "tx_hash": tx_hash,
-                "sender_negative_events": sender_neg,
-                "sender_total": sender_total,
-                "expected_sender": expected_sender,
-                "recipient_positive_total": recipient_total,
-                "expected_recipient": expected_recipient,
-            },
-        )
+# Assertion function is now imported from apply_balance
 
 
 def _increment_nonce(state: Any, addr: bytes) -> None:
@@ -817,6 +785,7 @@ def apply_transfer(
                 },
             )
 
+    _assert_single_tx_balance_deltas = assert_single_tx_balance_deltas
     _assert_single_tx_balance_deltas(
         tx_hash=tx_hash_hex,
         sender=sender,

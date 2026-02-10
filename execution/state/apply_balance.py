@@ -335,6 +335,108 @@ def apply_gas_fees(
     }
 
 
+def assert_single_tx_balance_deltas(
+    *,
+    tx_hash: str | None,
+    sender: bytes,
+    recipient: bytes,
+    amount: int,
+    total_fee: int,
+) -> None:
+    """
+    Assert that a transaction results in exactly ONE sender debit and ONE recipient credit.
+    
+    This debug assertion is enabled when ANIMICA_DEBUG_BALANCE=1 and validates:
+    1. Sender has exactly ONE negative delta event
+    2. Sender total delta equals -(amount + total_fee)
+    3. Recipient has exactly ONE positive delta event (if sender != recipient)
+    4. Recipient total delta equals +amount
+    
+    Raises ExecError if the assertion fails, providing detailed diagnostics about
+    which callsites are performing the double debit.
+    """
+    if not _is_debug_balance_enabled() or not tx_hash:
+        return
+    
+    events = get_debug_balance_events(tx_hash=tx_hash)
+    sender_neg = [e for e in events if e.get("address") == sender.hex() and int(e.get("delta", 0)) < 0]
+    sender_total = sum(int(e.get("delta", 0)) for e in sender_neg)
+    recipient_pos = [e for e in events if e.get("address") == recipient.hex() and int(e.get("delta", 0)) > 0]
+    recipient_total = sum(int(e.get("delta", 0)) for e in recipient_pos)
+
+    expected_sender = -(int(amount) + int(total_fee)) if sender != recipient else -int(total_fee)
+    expected_recipient = int(amount) if sender != recipient else 0
+    
+    # Check for multiple sender debits (the DOUBLE-DEBIT BUG)
+    if len(sender_neg) > 1:
+        callsites = [e.get("callsite", "unknown") for e in sender_neg]
+        reasons = [e.get("reason", "unknown") for e in sender_neg]
+        raise ExecError(
+            f"❌ DOUBLE DEBIT DETECTED: Sender has {len(sender_neg)} debits for same tx",
+            code="DOUBLE_DEBIT_BUG",
+            data={
+                "tx_hash": tx_hash,
+                "sender": sender.hex(),
+                "num_debits": len(sender_neg),
+                "debits": [
+                    {
+                        "delta": e.get("delta"),
+                        "reason": e.get("reason"),
+                        "site": e.get("callsite"),
+                    }
+                    for e in sender_neg
+                ],
+                "callsites": callsites,
+                "reasons": reasons,
+                "total_debited": sender_total,
+                "expected_debit": expected_sender,
+                "diagnosis": "Multiple code paths are debiting the sender. Check callsites above.",
+            },
+        )
+    
+    # Check sender debit count
+    if len(sender_neg) == 0:
+        raise ExecError(
+            "Sender has NO negative delta events (expected exactly 1)",
+            code="SENDER_DEBIT_MISSING",
+            data={
+                "tx_hash": tx_hash,
+                "sender": sender.hex(),
+                "expected": 1,
+                "actual": 0,
+            },
+        )
+    
+    # Check sender debit amount
+    if sender_total != expected_sender:
+        raise ExecError(
+            f"Sender total delta {sender_total} != expected {expected_sender}",
+            code="SENDER_DEBIT_AMOUNT_MISMATCH",
+            data={
+                "tx_hash": tx_hash,
+                "sender": sender.hex(),
+                "actual": sender_total,
+                "expected": expected_sender,
+                "amount": amount,
+                "total_fee": total_fee,
+            },
+        )
+    
+    # Check recipient credit (only if not self-transfer)
+    if sender != recipient:
+        if recipient_total != expected_recipient:
+            raise ExecError(
+                f"Recipient total delta {recipient_total} != expected {expected_recipient}",
+                code="RECIPIENT_CREDIT_MISMATCH",
+                data={
+                    "tx_hash": tx_hash,
+                    "recipient": recipient.hex(),
+                    "actual": recipient_total,
+                    "expected": expected_recipient,
+                },
+            )
+
+
 __all__ = [
     "BalanceAccess",
     "InsufficientBalance",
@@ -343,4 +445,7 @@ __all__ = [
     "debit",
     "safe_transfer",
     "apply_gas_fees",
+    "assert_single_tx_balance_deltas",
+    "get_debug_balance_events",
+    "reset_debug_balance_events",
 ]
