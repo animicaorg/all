@@ -658,12 +658,6 @@ def show(
         "--allow-remote-rpc",
         help="Allow using bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
-    source: str = typer.Option(
-        "chain",
-        "--source",
-        help="Balance source: chain (default, query via RPC) or cached (from wallet file)",
-        case_sensitive=False,
-    ),
     show_secret: bool = typer.Option(False, "--show-secret", help="Include secret key in output (WARNING: sensitive)"),
     i_know_what_im_doing: bool = typer.Option(
         False,
@@ -682,13 +676,8 @@ def show(
     raw_entry = _find_wallet_raw(store, identifier=lookup_id)
     entry = _entry_from_dict(raw_entry)
 
-    source_choice = source.lower()
-    if source_choice not in {"chain", "cached"}:
-        typer.echo("Error: --source must be one of chain, cached", err=True)
-        raise typer.Exit(code=1)
-
     balance_confirmed: Optional[int] = None
-    balance_source = source_choice
+    balance_source = "chain"
     head_info: Optional[Dict[str, Any]] = None
     queried_at: Optional[str] = None
     confirmations_required = _wallet_confirmations_required()
@@ -697,45 +686,36 @@ def show(
         pending_entries = []
         raw_entry["pending_txs"] = pending_entries
 
-    # Query chain for balance and head info
-    if source_choice == "chain":
-        rpc_endpoint = _resolve_rpc_url(rpc_url)
-        guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
-        
-        # Get head info
-        try:
-            head_result = _request_rpc("chain.getHead", [], rpc_endpoint)
-            if head_result and isinstance(head_result, dict):
-                head_info = {
-                    "height": head_result.get("height"),
-                    "hash": head_result.get("hash"),
-                    "rpc_url": rpc_endpoint,
-                }
-            queried_at = datetime.now(timezone.utc).isoformat()
-        except Exception as exc:
-            typer.echo(f"Warning: Failed to fetch head info: {exc}", err=True)
-        
-        # Get balance with tag="head"
-        try:
-            balance_confirmed = get_balance(entry.address, rpc_endpoint)
-        except Exception as exc:
-            typer.echo(f"Error: Failed to fetch balance from chain: {exc}", err=True)
-            raise typer.Exit(code=1)
+    rpc_endpoint = _resolve_rpc_url(rpc_url)
+    guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
 
-        pending_entries, pending_changed = _refresh_pending_txs(pending_entries, rpc_endpoint)
-        if pending_changed:
-            for idx, candidate in enumerate(store.get("wallets", [])):
-                if candidate.get("address") == entry.address:
-                    store["wallets"][idx]["pending_txs"] = pending_entries
-                    break
-            _save_store(path, store)
-    else:
-        # Cached balance from wallet file
-        cached_balance = raw_entry.get("balance")
-        try:
-            balance_confirmed = int(cached_balance) if cached_balance is not None else None
-        except Exception:
-            balance_confirmed = None
+    # Get head info
+    try:
+        head_result = _request_rpc("chain.getHead", [], rpc_endpoint)
+        if head_result and isinstance(head_result, dict):
+            head_info = {
+                "height": head_result.get("height"),
+                "hash": head_result.get("hash"),
+                "rpc_url": rpc_endpoint,
+            }
+        queried_at = datetime.now(timezone.utc).isoformat()
+    except Exception as exc:
+        typer.echo(f"Warning: Failed to fetch head info: {exc}", err=True)
+
+    # Get balance directly from chain
+    try:
+        balance_confirmed = get_balance(entry.address, rpc_endpoint)
+    except Exception as exc:
+        typer.echo(f"Error: Failed to fetch balance from chain: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    pending_entries, pending_changed = _refresh_pending_txs(pending_entries, rpc_endpoint)
+    if pending_changed:
+        for idx, candidate in enumerate(store.get("wallets", [])):
+            if candidate.get("address") == entry.address:
+                store["wallets"][idx]["pending_txs"] = pending_entries
+                break
+        _save_store(path, store)
 
     output = entry.to_dict()
 
