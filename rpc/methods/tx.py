@@ -18,6 +18,7 @@ from rpc.methods import miner as miner_methods
 from animica.sync.readiness import assess_tx_submission_readiness
 from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
 from core.utils.tx import coerce_int as _coerce_tx_int, TxNormalizationError as _TxNormalizationError
+from core.utils.tx import normalize_tx_fields as _normalize_tx_fields
 from rpc.instant_tx import get_instant_tx_service_singleton
 
 log = logging.getLogger(__name__)
@@ -1740,6 +1741,7 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
     gas_limit = None
     reason = None
     raw = b""
+    tx_warnings: list[dict[str, t.Any]] = []
 
     if os.getenv("ANIMICA_DEBUG_TX", "0") == "1":
         try:
@@ -1771,6 +1773,7 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
         reason_value: str | None = None,
         existing_tx_hash: str | None = None,
         hint: str | None = None,
+        warnings: list[dict[str, t.Any]] | None = None,
     ) -> t.Any:
         if (
             not _TX_SEND_FORCE_CHAIN
@@ -1795,6 +1798,9 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
             payload["existing_tx_hash"] = existing_tx_hash
         if hint:
             payload["hint"] = hint
+        if warnings:
+            payload.setdefault("context", {})
+            payload["context"]["warnings"] = warnings
         return payload
     def _safe_hash_hex(raw_bytes: bytes) -> str:
         try:
@@ -1848,6 +1854,24 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
             ) from e
 
         # chainId and PQ verify
+        if isinstance(obj, dict) and isinstance(obj.get("tx"), dict):
+            try:
+                tx_norm, tx_warnings = _normalize_tx_fields(obj["tx"])
+                obj["tx"] = tx_norm
+            except _TxNormalizationError as exc:
+                raise rpc_errors.InvalidTx(
+                    "tx numeric field validation failed",
+                    data={
+                        "mempoolError": {
+                            "code": 1004,
+                            "reason": str(getattr(exc, "reason", None) or "bad_field_type"),
+                            "reason_code": str(getattr(exc, "reason", None) or "bad_field_type"),
+                            "message": str(exc),
+                            "context": getattr(exc, "details", {}) or {},
+                        }
+                    },
+                ) from exc
+
         tx_view = _tx_view(tx_like, obj, pending=True)
         sender = tx_view.get("from")
         nonce = _extract_nonce(obj) if isinstance(obj, dict) else None
@@ -2067,7 +2091,10 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
         extra={"tx_hash": tx_hash_hex},
     )
     if simulate:
-        return {"tx_hash": tx_hash_hex, "accepted_to_mempool": False, "simulated": True, "status": "would_admit"}
+        out = {"tx_hash": tx_hash_hex, "accepted_to_mempool": False, "simulated": True, "status": "would_admit"}
+        if tx_warnings:
+            out["context"] = {"warnings": tx_warnings}
+        return out
     tx_view = _tx_view(tx_obj, obj, pending=True)
     mempool_size = _mempool_size(svc)
     log.info(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Mapping
 
 from core.encoding.cbor import dumps as cbor_dumps
@@ -20,6 +22,11 @@ class TxNormalizationError(ValueError):
         super().__init__(message)
         self.reason = reason
         self.details = details or {}
+
+
+_log = logging.getLogger(__name__)
+_LAST_GASLIMIT_DICT_WARNING_TS = 0.0
+_GASLIMIT_DICT_WARNING_INTERVAL_S = 60.0
 
 
 def _field_error(
@@ -48,7 +55,7 @@ def _field_error(
 
 def coerce_int(name: str, value: Any) -> int:
     if isinstance(value, bool):
-        return int(value)
+        raise _field_error(reason_code="bad_field_type", field=name, message=f"{name} must be an integer", got_value=value)
     if isinstance(value, int):
         return value
     if isinstance(value, (bytes, bytearray)):
@@ -331,7 +338,55 @@ def _safe_to_bytes(val: Any) -> bytes:
     return b""
 
 
+def normalize_tx_fields(tx: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    tx2 = dict(tx)
+    warnings: list[dict[str, str]] = []
+
+    gas_limit = tx2.get("gasLimit")
+    if isinstance(gas_limit, Mapping):
+        keys = {str(k) for k in gas_limit.keys()}
+        if "limit" not in keys:
+            raise _field_error(
+                reason_code="bad_field_value",
+                field="gasLimit",
+                message="gasLimit dict must include 'limit'",
+                got_value=gas_limit,
+                got_keys=sorted(keys),
+            )
+
+        limit_int = coerce_int("gasLimit.limit", gas_limit.get("limit"))
+        price_int = None
+        if "price" in keys:
+            price_int = coerce_int("gasLimit.price", gas_limit.get("price"))
+
+        tx2["gasLimit"] = limit_int
+        if "gasPrice" not in tx2 and "gas_price" not in tx2 and price_int is not None:
+            tx2["gasPrice"] = price_int
+
+        global _LAST_GASLIMIT_DICT_WARNING_TS
+        now = time.time()
+        if now - _LAST_GASLIMIT_DICT_WARNING_TS >= _GASLIMIT_DICT_WARNING_INTERVAL_S:
+            _LAST_GASLIMIT_DICT_WARNING_TS = now
+            _log.warning(
+                "DEPRECATED_TX_FIELD_SHAPE gasLimit=dict keys=%s",
+                sorted(keys),
+            )
+
+        warnings.append(
+            {
+                "code": "deprecated_field_shape",
+                "field": "gasLimit",
+                "detail": "gasLimit provided as {limit,price} dict; please send gasLimit=int and gasPrice=int",
+                "used": "{limit,price} dict",
+            }
+        )
+
+    return tx2, warnings
+
+
 def normalize_tx_body(body: Mapping[str, Any]) -> dict:
+    body, _ = normalize_tx_fields(body)
+
     if "v" in body and "gas" in body and "payload" in body:
         return dict(body)
 
@@ -468,6 +523,7 @@ def normalize_tx_envelope(tx_like: Any) -> dict:
             details={"decoded_keys": list(cleaned.keys())},
         )
 
+    tx_body, warnings = normalize_tx_fields(tx_body)
     canonical_tx = normalize_tx_body(tx_body)
     sigs = _normalize_sigs(cleaned)
     envelope = {"tx": canonical_tx, "sigs": sigs}
@@ -541,6 +597,7 @@ def normalize_tx_envelope(tx_like: Any) -> dict:
         # but could be bytes or bytearray from _addr_to_bytes() or account_key_from_pubkey()
         "sender": "0x" + (sender_bytes if isinstance(sender_bytes, bytes) else bytes(sender_bytes)).hex(),
         **({"nonce": nonce_int} if nonce_int is not None else {}),
+        **({"warnings": warnings} if warnings else {}),
         "raw": raw_canonical,
     }
 
@@ -607,5 +664,6 @@ __all__ = [
     "normalize_tx",
     "normalize_tx_envelope",
     "normalize_tx_body",
+    "normalize_tx_fields",
     "TxNormalizationError",
 ]
