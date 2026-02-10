@@ -13,7 +13,7 @@ from typing import Any, Iterable, Optional
 
 from rpc import deps
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
-from core.utils.tx import normalize_tx_envelope, TxNormalizationError, coerce_int
+from core.utils.tx import normalize_tx_envelope, TxNormalizationError, coerce_int, normalize_tx_fields
 from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import (
@@ -41,6 +41,14 @@ except Exception:  # pragma: no cover - runtime fallback when core not available
         pass
 
 log = logging.getLogger("animica.rpc.mempool")
+
+try:
+    from rpc.metrics import TX_LEGACY_GASLIMIT_DICT_TOTAL
+except Exception:  # pragma: no cover
+    class _Counter:
+        def inc(self, *args, **kwargs):
+            pass
+    TX_LEGACY_GASLIMIT_DICT_TOTAL = _Counter()  # type: ignore[assignment]
 
 
 def _normalize_reject(reason: str, message: str, context: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -963,6 +971,30 @@ class MempoolService:
                     context={"tx_hash": tx_hash_hex},
                 )
 
+        if isinstance(tx, dict):
+            legacy_target = tx.get("tx") if isinstance(tx.get("tx"), dict) else tx.get("body") if isinstance(tx.get("body"), dict) else tx
+            if isinstance(legacy_target, dict):
+                try:
+                    normalized_fields, warnings = normalize_tx_fields(legacy_target)
+                except TxNormalizationError as exc:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        exc.reason or "bad_field_type",
+                        {"step": "normalize_fields", "error": str(exc), **(exc.details or {})},
+                    )
+                    raise AdmissionError(
+                        "tx field normalization failed",
+                        context={"tx_hash": tx_hash_hex, "reason": exc.reason, **(exc.details or {})},
+                    ) from exc
+                if warnings:
+                    TX_LEGACY_GASLIMIT_DICT_TOTAL.inc()
+                    if isinstance(tx.get("tx"), dict):
+                        tx["tx"] = normalized_fields
+                    elif isinstance(tx.get("body"), dict):
+                        tx["body"] = normalized_fields
+                    else:
+                        tx.update(normalized_fields)
+
         origin_label = "local" if local else f"peer:{origin_peer or 'unknown'}"
         log.info(
             "MempoolService.submit: entry, tx_hash=%s, local=%s, pool_size=%d",
@@ -976,10 +1008,7 @@ class MempoolService:
                 "MempoolService.submit: duplicate (already in pool), tx_hash=%s",
                 tx_hash_hex,
             )
-            raise AdmissionError(
-                "transaction already known",
-                context={"tx_hash": tx_hash_hex},
-            )
+            return tx_hash_hex
 
         chain_id = _tx_chain_id(tx)
         if chain_id is not None and chain_id != self.chain_id:
