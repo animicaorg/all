@@ -996,8 +996,21 @@ def _validate_sufficient_balance(obj: dict) -> None:
 
     try:
         value = _coerce_tx_int("value", tx_obj.get("value", 0) or 0)
-        gas_limit = _coerce_tx_int("gasLimit", (tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0) or 0)
-        max_fee = _coerce_tx_int("maxFee", (tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price") or 0) or 0)
+        
+        # Handle gasLimit - may be int or dict {"limit": int, "price": int}
+        gas_limit_raw = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0
+        if isinstance(gas_limit_raw, dict):
+            # Extract 'limit' from fee quote dict format
+            gas_limit = _coerce_tx_int("gasLimit", gas_limit_raw.get("limit", 0) or 0)
+        else:
+            gas_limit = _coerce_tx_int("gasLimit", gas_limit_raw or 0)
+        
+        # Handle maxFee - may be in gasLimit dict as "price"
+        max_fee_raw = tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price")
+        if max_fee_raw is None and isinstance(gas_limit_raw, dict):
+            # If maxFee not set but gasLimit is a dict, try to get price from it
+            max_fee_raw = gas_limit_raw.get("price")
+        max_fee = _coerce_tx_int("maxFee", max_fee_raw or 0)
     except _TxNormalizationError as exc:
         details = exc.details if isinstance(getattr(exc, "details", None), dict) else {}
         raise rpc_errors.InvalidTx(
