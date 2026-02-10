@@ -1870,12 +1870,14 @@ def send(
         raise typer.Exit(code=1)
 
     try:
+        # Calculate total fee: gas_limit * gas_price
+        total_fee = resolved_gas_limit * resolved_max_fee
         _record_pending_tx(
             from_addr=from_addr,
             to_addr=to_addr,
             tx_hash=tx_hash,
             value_base=value_base,
-            fee_base=resolved_max_fee,
+            fee_base=total_fee,
             chain_id=cid,
             nonce=last_nonce,
             status="mempool_accepted" if tx_in_mempool else "broadcast",
