@@ -102,13 +102,13 @@ def resolve_tx_kind(tx: Any) -> str:
       3) Fallback: 'transfer'
     """
     explicit = _get(tx, "kind", "tx_kind", "type", "txType")
-    
+
     # Also check nested structure: tx.unsigned.kind (for Tx dataclass)
     if explicit is None:
         unsigned = _get(tx, "unsigned")
         if unsigned is not None:
             explicit = _get(unsigned, "kind")
-    
+
     if explicit is not None:
         # numeric → map; string → normalize
         if isinstance(explicit, int):
