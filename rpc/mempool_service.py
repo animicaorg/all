@@ -1330,40 +1330,26 @@ class MempoolService:
                         pending_entries = []
 
                     pending_spend = 0
-                    pending_by_fee: list[tuple[int, bytes, int]] = []
                     for entry in pending_entries:
                         try:
                             spend = int(estimate_max_spend(entry.tx).total_max_spend)
                         except Exception:
                             spend = 0
                         pending_spend += spend
-                        fee_val = int(getattr(entry.meta, "effective_fee_wei", 0))
-                        pending_by_fee.append((fee_val, entry.tx_hash, spend))
 
                     available = balance - pending_spend
                     if available < new_spend:
-                        pending_by_fee.sort(key=lambda item: (item[0], item[1].hex()))
-                        for fee_val, tx_hash_bytes, spend in pending_by_fee:
-                            if available >= new_spend:
-                                break
-                            if offered <= fee_val:
-                                break
-                            self.pool.remove_included([tx_hash_bytes])
-                            pending_spend -= spend
-                            available = balance - pending_spend
-
-                        if available < new_spend:
-                            self._record_rejection(
-                                tx_hash_hex,
-                                "insufficient_funds_pending",
-                                {"required": new_spend, "available": max(0, available)},
-                            )
-                            raise InsufficientFundsPending(
-                                sender=sender_hex,
-                                tx_hash=tx_hash_hex,
-                                required=new_spend,
-                                available=max(0, available),
-                            )
+                        self._record_rejection(
+                            tx_hash_hex,
+                            "insufficient_funds_pending",
+                            {"required": new_spend, "available": max(0, available)},
+                        )
+                        raise InsufficientFundsPending(
+                            sender=sender_hex,
+                            tx_hash=tx_hash_hex,
+                            required=new_spend,
+                            available=max(0, available),
+                        )
 
             tx_to_store: Any = tx
             if not isinstance(tx, Tx):
