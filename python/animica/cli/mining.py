@@ -50,6 +50,13 @@ SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
 VERIFIER_MINING_WARNING_SUFFIX = "mined blocks may be reorged."
 
 
+def _is_truthy_env(var_name: str, default: bool = False) -> bool:
+    raw = os.environ.get(var_name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _parse_hex_bytes(value: str) -> bytes:
     hex_value = value[2:] if value.startswith("0x") else value
     if len(hex_value) % 2:
@@ -1212,6 +1219,7 @@ def mine_blocks(
         timeout_value = None if no_timeout else base_timeout
         
         with rpc_client(url, timeout=timeout_value) as client:
+            strict_credit = _is_truthy_env("ANIMICA_MINER_STRICT_CREDIT", default=False)
             total_mined = 0
             final_height = 0
             total_reward = 0
@@ -1571,6 +1579,13 @@ def mine_blocks(
                     _emit_mining_summary(summary, verbose=verbose)
 
                     # Submit block to node
+                    balance_before_submit = None
+                    try:
+                        bal_hex = client.request("state.getBalance", [resolved_address])
+                        balance_before_submit = int(bal_hex, 16) if isinstance(bal_hex, str) else int(bal_hex)
+                    except Exception:
+                        balance_before_submit = None
+
                     try:
                         if proxy:
                             submit_result = proxy.sync_forward_request(
@@ -1650,27 +1665,50 @@ def mine_blocks(
                         stale_attempts = 0
                         break
                     
-                    # ACCEPTED - block fully validated, persisted, and reward credited
+                    # ACCEPTED - block fully validated and committed to canonical state
                     total_mined += 1
                     blocks_attempted += 1
-                    block_reward = template.get("coinbase", {}).get("amount") or 0
-                    total_reward += int(block_reward or 0)
-                    reward_anm = int(block_reward or 0) / COIN_UNIT
+                    block_reward = int(template.get("coinbase", {}).get("amount") or 0)
+                    total_reward += block_reward
+                    reward_anm = block_reward / COIN_UNIT
                     
-                    # Extract credited_amount and height from submit_result
-                    credited_amount = submit_result.get("credited_amount", block_reward)
                     new_head_hash = submit_result.get("new_head") or submit_result.get("block_hash")
                     final_height = int(submit_result.get("new_head", 0))
                     if final_height > 0:
                         last_accepted_height = final_height
 
+                    balance_now = None
+                    credited_delta = None
+                    try:
+                        balance_now_hex = client.request("state.getBalance", [resolved_address])
+                        balance_now = int(balance_now_hex, 16) if isinstance(balance_now_hex, str) else int(balance_now_hex)
+                    except Exception:
+                        balance_now = submit_result.get("balance_now")
+                        if balance_now is not None:
+                            try:
+                                balance_now = int(balance_now)
+                            except Exception:
+                                balance_now = None
+
+                    if isinstance(balance_now, int) and isinstance(balance_before_submit, int):
+                        credited_delta = balance_now - balance_before_submit
+
+                    credited_display = int(credited_delta if credited_delta is not None else submit_result.get("credited_amount", block_reward) or 0)
                     typer.secho(
                         f"  ACCEPTED: Block {total_mined}/{count} (height: {final_height}, "
                         f"reward: {reward_anm:.9f} ANM = {block_reward} nANM, "
-                        f"credited: {credited_amount} nANM)",
+                        f"credited: {credited_display} nANM, balance_now: {balance_now if balance_now is not None else 'unknown'})",
                         fg=typer.colors.GREEN,
                         bold=True,
                     )
+
+                    if strict_credit and (balance_now is None or credited_display < block_reward):
+                        typer.secho(
+                            "  WARNING: strict credit check failed; RPC balance did not reflect expected reward delta",
+                            fg=typer.colors.RED,
+                            err=True,
+                        )
+                        raise typer.Exit(1)
 
                     if include_mempool and pending_before > 0 and selected == 0:
                         exclusions = template.get("excluded", []) or []

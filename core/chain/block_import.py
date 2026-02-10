@@ -72,6 +72,7 @@ from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
+from execution.state.apply_balance import credit as state_credit
 
 # Import difficulty adjustment functions
 try:
@@ -89,6 +90,7 @@ except Exception:  # pragma: no cover - consensus optional
 log = logging.getLogger("animica.chain.block_import")
 _POW_LOG_MIN_S = float(os.getenv("ANIMICA_POW_LOG_MIN_S", "5.0") or 5.0)
 _POW_LOG_AT: dict[str, float] = {}
+_BLOCK_COINBASE_CREDIT_TOTAL = 0
 
 # Fork choice reorg depth limit
 # This prevents excessive chain switching by limiting how deep a reorganization can be.
@@ -308,6 +310,89 @@ def _normalize_tx_envelope(decoded: Dict[str, Any]) -> Dict[str, Any]:
         return normalize_tx_envelope({"tx": tx_body, "sigs": sigs or []})
 
     return normalize_tx_envelope(decoded)
+
+
+def _tx_unsigned(tx: Any) -> Any:
+    if hasattr(tx, "unsigned"):
+        return getattr(tx, "unsigned")
+    if isinstance(tx, dict):
+        return tx.get("unsigned")
+    return None
+
+
+def _is_coinbase_tx(tx: Any) -> bool:
+    unsigned = _tx_unsigned(tx)
+    if unsigned is None:
+        return False
+    kind = getattr(unsigned, "kind", None)
+    if kind is None and isinstance(unsigned, dict):
+        kind = unsigned.get("kind")
+    try:
+        return int(kind) == int(TxKind.COINBASE)
+    except Exception:
+        return False
+
+
+def _compute_block_fees_total(block: Block) -> int:
+    """
+    Compute total explicit transaction fees in a block.
+
+    Coinbase transactions are excluded by definition. Fees in this codebase are
+    transferred during tx execution (tip to coinbase / base to treasury or burn),
+    so this helper intentionally returns only the explicit fee fields to keep
+    deterministic accounting.
+    """
+    total = 0
+    for tx in block.txs:
+        if _is_coinbase_tx(tx):
+            continue
+        unsigned = _tx_unsigned(tx)
+        if unsigned is None:
+            continue
+        fee = getattr(unsigned, "fee", None)
+        if fee is None and isinstance(unsigned, dict):
+            fee = unsigned.get("fee")
+        if fee is None:
+            continue
+        try:
+            fee_i = int(fee)
+        except Exception:
+            continue
+        if fee_i > 0:
+            total += fee_i
+    return int(total)
+
+
+def _compute_block_reward_amount(
+    *,
+    chain_id: int,
+    height: int,
+    params: Mapping[str, Any],
+    header: Header,
+) -> int:
+    if height <= 0:
+        return 0
+    try:
+        from consensus.rewards import compute_block_reward
+
+        canonical_height = None
+        if not _is_instant_block(header):
+            canonical_height = max(1, height)
+        rewards = compute_block_reward(
+            chain_id=chain_id,
+            height=height,
+            params=params,
+            instant_block=_is_instant_block(header),
+            canonical_height=canonical_height,
+        )
+    except Exception:
+        return 0
+    if not rewards:
+        return 0
+    try:
+        return max(0, int(rewards[0][1]))
+    except Exception:
+        return 0
 
 
 def block_from_mapping(m: Dict[str, Any]) -> Block:
@@ -1643,11 +1728,33 @@ class BlockImporter:
 
         try:
             block_env = make_block_env(block.header, self.params)
-            # Apply all transactions including coinbase transactions (which handle block rewards)
-            # Coinbase transactions are prepended to block.txs during block creation in miner.py
-            # This ensures rewards are included in state snapshots and survive rebuilds
-            apply_block(block.txs, self.state_db, block_env, params=self.params)
-            
+            non_coinbase_txs = [tx for tx in block.txs if not _is_coinbase_tx(tx)]
+            apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
+
+            reward_amount = _compute_block_reward_amount(
+                chain_id=int(self.params.chain_id),
+                height=int(getattr(block.header, "height", 0) or 0),
+                params=self.full_params_dict or {},
+                header=block.header,
+            )
+            fee_amount = _compute_block_fees_total(block)
+            credit_amount = int(reward_amount) + int(fee_amount)
+            if credit_amount > 0:
+                new_balance = state_credit(self.state_db, bytes(block_env.coinbase), credit_amount)
+                global _BLOCK_COINBASE_CREDIT_TOTAL
+                _BLOCK_COINBASE_CREDIT_TOTAL += credit_amount
+                log.info(
+                    "STATE_CREDIT coinbase=%s amount=%d height=%d new_balance=%d",
+                    block_env.coinbase.hex(),
+                    credit_amount,
+                    int(getattr(block.header, "height", 0) or 0),
+                    new_balance,
+                )
+                log.info(
+                    "metric block_coinbase_credit_total=%d",
+                    _BLOCK_COINBASE_CREDIT_TOTAL,
+                )
+
             return True
         except Exception as exc:
             log.error(
