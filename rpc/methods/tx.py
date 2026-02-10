@@ -1854,23 +1854,25 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
             ) from e
 
         # chainId and PQ verify
-        if isinstance(obj, dict) and isinstance(obj.get("tx"), dict):
-            try:
-                tx_norm, tx_warnings = _normalize_tx_fields(obj["tx"])
-                obj["tx"] = tx_norm
-            except _TxNormalizationError as exc:
-                raise rpc_errors.InvalidTx(
-                    "tx numeric field validation failed",
-                    data={
-                        "mempoolError": {
-                            "code": 1004,
-                            "reason": str(getattr(exc, "reason", None) or "bad_field_type"),
-                            "reason_code": str(getattr(exc, "reason", None) or "bad_field_type"),
-                            "message": str(exc),
-                            "context": getattr(exc, "details", {}) or {},
-                        }
-                    },
-                ) from exc
+        if isinstance(obj, dict):
+            tx_payload_key = "tx" if isinstance(obj.get("tx"), dict) else "body" if isinstance(obj.get("body"), dict) else None
+            if tx_payload_key is not None:
+                try:
+                    tx_norm, tx_warnings = _normalize_tx_fields(obj[tx_payload_key])
+                    obj[tx_payload_key] = tx_norm
+                except _TxNormalizationError as exc:
+                    raise rpc_errors.InvalidTx(
+                        "tx numeric field validation failed",
+                        data={
+                            "mempoolError": {
+                                "code": 1004,
+                                "reason": str(getattr(exc, "reason", None) or "bad_field_type"),
+                                "reason_code": str(getattr(exc, "reason", None) or "bad_field_type"),
+                                "message": str(exc),
+                                "context": getattr(exc, "details", {}) or {},
+                            }
+                        },
+                    ) from exc
 
         tx_view = _tx_view(tx_like, obj, pending=True)
         sender = tx_view.get("from")
