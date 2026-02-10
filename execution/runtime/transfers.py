@@ -43,7 +43,7 @@ from core.utils.address_codec import (
     account_key_from_pubkey,
     account_key_from_raw,
 )
-from ..state.apply_balance import InsufficientBalance
+from ..state.apply_balance import InsufficientBalance, credit as state_credit, debit as state_debit
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -379,29 +379,96 @@ def _compute_fee_parts(
     return total_fee, base_component, tip_component
 
 
-def _credit_balance(state: Any, addr: bytes, amount: int) -> None:
+def _credit_balance(
+    state: Any,
+    addr: bytes,
+    amount: int,
+    *,
+    reason: str,
+    tx_hash: str | None,
+    height: int | None,
+) -> None:
     if amount < 0:
         raise ExecError("negative credit amount", code="NEGATIVE_AMOUNT")
     if amount == 0:
         return
-    cur = _get_balance(state, addr)
-    _set_balance(state, addr, cur + amount)
+    state_credit(
+        state,
+        addr,
+        amount,
+        reason=reason,
+        tx_hash=tx_hash,
+        height=height,
+        callsite="execution.runtime.transfers._credit_balance",
+    )
 
 
-def _debit_balance(state: Any, addr: bytes, amount: int) -> None:
+def _debit_balance(
+    state: Any,
+    addr: bytes,
+    amount: int,
+    *,
+    reason: str,
+    tx_hash: str | None,
+    height: int | None,
+) -> None:
     if amount < 0:
         raise ExecError("negative debit amount", code="NEGATIVE_AMOUNT")
     if amount == 0:
         return
-    cur = _get_balance(state, addr)
-    if cur < amount:
+    try:
+        state_debit(
+            state,
+            addr,
+            amount,
+            reason=reason,
+            tx_hash=tx_hash,
+            height=height,
+            callsite="execution.runtime.transfers._debit_balance",
+        )
+    except InsufficientBalance:
+        cur = _get_balance(state, addr)
         raise InsufficientBalance(
             "Insufficient balance for transfer",
             required=amount,
             available=cur,
             shortfall=amount - cur,
         )
-    _set_balance(state, addr, cur - amount)
+
+
+def _assert_single_tx_balance_deltas(
+    *,
+    tx_hash: str | None,
+    sender: bytes,
+    recipient: bytes,
+    amount: int,
+    total_fee: int,
+) -> None:
+    if os.getenv("ANIMICA_DEBUG_BALANCE", "0") != "1" or not tx_hash:
+        return
+    from ..state.apply_balance import get_debug_balance_events
+
+    events = get_debug_balance_events(tx_hash=tx_hash)
+    sender_neg = [e for e in events if e.get("address") == sender.hex() and int(e.get("delta", 0)) < 0]
+    sender_total = sum(int(e.get("delta", 0)) for e in sender_neg)
+    recipient_pos = [e for e in events if e.get("address") == recipient.hex() and int(e.get("delta", 0)) > 0]
+    recipient_total = sum(int(e.get("delta", 0)) for e in recipient_pos)
+
+    expected_sender = -(int(amount) + int(total_fee)) if sender != recipient else -int(total_fee)
+    expected_recipient = int(amount) if sender != recipient else 0
+    if len(sender_neg) != 1 or sender_total != expected_sender or recipient_total != expected_recipient:
+        raise ExecError(
+            "transfer debug balance assertion failed",
+            code="TRANSFER_DEBUG_BALANCE_ASSERT",
+            data={
+                "tx_hash": tx_hash,
+                "sender_negative_events": sender_neg,
+                "sender_total": sender_total,
+                "expected_sender": expected_sender,
+                "recipient_positive_total": recipient_total,
+                "expected_recipient": expected_recipient,
+            },
+        )
 
 
 def _increment_nonce(state: Any, addr: bytes) -> None:
@@ -548,6 +615,8 @@ def apply_transfer(
         tx_hash_hex = "0x" + bytes(tx_hash_value).hex()
     elif isinstance(tx_hash_value, str):
         tx_hash_hex = tx_hash_value
+    block_height = _as_int(getattr(block_env, "height", None), default=0) or None
+
     if tx_nonce is not None:
         get_nonce = getattr(state, "get_nonce", None)
         if callable(get_nonce):
@@ -653,44 +722,44 @@ def apply_transfer(
     # Coinbase transactions don't debit sender (they mint new value)
     # Regular transactions debit fees and value from sender
     if not is_coinbase:
-        # Debit fees first (burn base, tip to coinbase)
+        # Single sender debit for confirmed state: value + fee
+        total_sender_debit = total_fee + (amount if sender != to else 0)
         _debug_tx_balance_event(
             tx_hash=tx_hash_hex,
             address=sender,
-            delta=-int(total_fee),
-            reason="BLOCK_APPLY_FEE",
+            delta=-int(total_sender_debit),
+            reason="BLOCK_APPLY_SENDER_TOTAL",
             callsite="execution.runtime.transfers.apply_transfer",
         )
-        _debit_balance(state, sender, total_fee)
+        _debit_balance(
+            state,
+            sender,
+            total_sender_debit,
+            reason="BLOCK_APPLY_SENDER_TOTAL",
+            tx_hash=tx_hash_hex,
+            height=block_height,
+        )
 
         # Tip → coinbase
         if tip_fee_part > 0 and any(coinbase) and coinbase != b"\x00" * ADDRESS_LEN:
             _ensure_account(state, coinbase)
-            _credit_balance(state, coinbase, tip_fee_part)
+            _credit_balance(state, coinbase, tip_fee_part, reason="BLOCK_APPLY_TIP", tx_hash=tx_hash_hex, height=block_height)
 
         # Optional: send base fee to a treasury if exposed
         if base_fee_part > 0:
             if any(t_addr):
                 _ensure_account(state, t_addr)
-                _credit_balance(state, t_addr, base_fee_part)
+                _credit_balance(state, t_addr, base_fee_part, reason="BLOCK_APPLY_BASE_FEE", tx_hash=tx_hash_hex, height=block_height)
             # Else burned (no credit)
 
-        # Value transfer (skip if sending to self; fees already debited)
+        # Value transfer (skip if sending to self; sender already debited above)
         if sender != to and amount > 0:
-            _debug_tx_balance_event(
-                tx_hash=tx_hash_hex,
-                address=sender,
-                delta=-int(amount),
-                reason="BLOCK_APPLY_VALUE",
-                callsite="execution.runtime.transfers.apply_transfer",
-            )
-            _debit_balance(state, sender, amount)
-            _credit_balance(state, to, amount)
+            _credit_balance(state, to, amount, reason="BLOCK_APPLY_VALUE_RECEIVER", tx_hash=tx_hash_hex, height=block_height)
     else:
         # Coinbase: just credit recipient (miner) with the reward amount
         # No debit from sender (protocol issuance)
         if amount > 0:
-            _credit_balance(state, to, amount)
+            _credit_balance(state, to, amount, reason="BLOCK_APPLY_COINBASE_REWARD", tx_hash=tx_hash_hex, height=block_height)
 
     # Logs
     logs: List[LogEvent] = []
@@ -747,6 +816,14 @@ def apply_transfer(
                     "actual_sum": actual_sum,
                 },
             )
+
+    _assert_single_tx_balance_deltas(
+        tx_hash=tx_hash_hex,
+        sender=sender,
+        recipient=to,
+        amount=amount,
+        total_fee=total_fee,
+    )
 
     return ApplyResult(
         status=TxStatus.SUCCESS,
