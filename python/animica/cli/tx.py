@@ -1045,6 +1045,39 @@ def _extract_fee_quote(value: Any) -> tuple[int | None, int | None]:
     return None, None
 
 
+def _parse_gas_limit_override(value: Any) -> tuple[int | None, int | None]:
+    """
+    Parse --gas-limit/--gas input.
+
+    Supports:
+      - integer-like values (e.g. 21000, "21000")
+      - quote-like dict/json payloads (e.g. '{"limit":21000,"price":1}')
+        to preserve compatibility with callers that pass a fee quote object.
+    Returns (limit, price_hint).
+    """
+    if value is None:
+        return None, None
+
+    candidate = value
+    if isinstance(candidate, str):
+        s = candidate.strip()
+        if not s:
+            return None, None
+        if s.isdigit():
+            return int(s), None
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                candidate = json.loads(s)
+            except Exception:
+                candidate = s
+
+    if isinstance(candidate, dict):
+        return _extract_fee_quote(candidate)
+
+    parsed = _coerce_fee_int("gasLimit", candidate)
+    return parsed, None
+
+
 def _estimate_fee_quote(rpc_url: str) -> tuple[int | None, int | None]:
     for method_name in (
         "mempool.getFeeQuote",
@@ -1394,7 +1427,7 @@ def send(
         help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
     chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Chain ID override"),
-    gas_limit: Optional[int] = typer.Option(21000, "--gas-limit", "--gas", help="Gas limit"),
+    gas_limit: Optional[str] = typer.Option("21000", "--gas-limit", "--gas", help="Gas limit (int) or fee quote JSON object"),
     gas_price: Optional[int] = typer.Option(
         None,
         "--gas-price",
@@ -1463,7 +1496,7 @@ def send(
     if nonce_source not in {"confirmed", "pending"}:
         raise typer.BadParameter("Nonce source must be 'confirmed' or 'pending'.")
     nonce_source_label = "override" if nonce_value is not None else nonce_source
-    gas_limit_override = int(gas_limit) if gas_limit is not None else None
+    gas_limit_override, gas_price_from_gas_limit = _parse_gas_limit_override(gas_limit)
     max_fee_override = int(max_fee) if max_fee is not None else None
     gas_price_override = int(gas_price) if gas_price is not None else None
 
@@ -1477,6 +1510,8 @@ def send(
         resolved_max_fee = max_fee_override
     elif gas_price_override is not None:
         resolved_max_fee = gas_price_override
+    elif gas_price_from_gas_limit is not None:
+        resolved_max_fee = gas_price_from_gas_limit
     elif quote_price is not None:
         resolved_max_fee = quote_price
     else:
@@ -1616,6 +1651,8 @@ def send(
                     if max_fee_override is not None
                     else "--gas-price"
                     if gas_price_override is not None
+                    else "--gas-limit quote"
+                    if gas_price_from_gas_limit is not None
                     else "fee quote"
                     if quote_price is not None
                     else "default"
