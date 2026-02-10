@@ -169,3 +169,60 @@ def test_wallet_show_balance_none_is_json_null(wallet_with_entry, monkeypatch):
     # Verify balance is JSON null (None in Python)
     assert output_data["balance_confirmed"] is None, "Balance should be null when RPC fails"
     assert output_data["balance_source"] == "cached"
+
+
+def test_wallet_show_pending_outgoing_uses_active_statuses_only(wallet_with_entry, monkeypatch):
+    """pending_outgoing should include only active, not dropped/not_found/rejected txs."""
+    wallet_file, label = wallet_with_entry
+    wallet_data = json.loads(wallet_file.read_text())
+    wallet_data["wallets"][0]["balance"] = 100
+    wallet_data["wallets"][0]["pending_txs"] = [
+        {"tx_hash": "0x01", "status": "reserved", "reserve_amount": 11},
+        {"tx_hash": "0x02", "status": "mempool_accepted", "reserve_amount": 5},
+        {"tx_hash": "0x03", "status": "pending", "reserve_amount": 7},
+        {"tx_hash": "0x04", "status": "broadcast", "reserve_amount": 13},
+        {"tx_hash": "0x05", "status": "in_block_pending_confirm", "reserve_amount": 3},
+        {"tx_hash": "0x06", "status": "dropped", "reserve_amount": 999},
+        {"tx_hash": "0x07", "status": "not_found", "reserve_amount": 999},
+        {"tx_hash": "0x08", "status": "rejected", "reserve_amount": 999},
+        {"tx_hash": "0x09", "status": "expired", "reserve_amount": 999},
+    ]
+    wallet_file.write_text(json.dumps(wallet_data, indent=2))
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
+    result = runner.invoke(wallet.app, ["show", label, "--source", "cached"])
+    assert result.exit_code == 0, result.output
+    output_data = json.loads(result.output)
+
+    assert output_data["balance"] == 100
+    assert output_data["balance_confirmed"] == 100
+    assert output_data["pending_outgoing"] == (11 + 5 + 7 + 13 + 3)
+    assert output_data["pending_outgoing_count"] == 5
+    assert output_data["available_balance"] == (100 - (11 + 5 + 7 + 13 + 3))
+
+
+def test_wallet_show_pending_outgoing_counts_reserve_amount_once(wallet_with_entry, monkeypatch):
+    """pending_outgoing must sum reserve_amount only (not reserve+fee)."""
+    wallet_file, label = wallet_with_entry
+    wallet_data = json.loads(wallet_file.read_text())
+    wallet_data["wallets"][0]["balance"] = 100
+    wallet_data["wallets"][0]["pending_txs"] = [
+        {
+            "tx_hash": "0xabc",
+            "status": "mempool_accepted",
+            "value": 10,
+            "fee_reserved": 1,
+            "reserve_amount": 11,
+        }
+    ]
+    wallet_file.write_text(json.dumps(wallet_data, indent=2))
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
+    result = runner.invoke(wallet.app, ["show", label, "--source", "cached"])
+    assert result.exit_code == 0, result.output
+    output_data = json.loads(result.output)
+
+    assert output_data["pending_outgoing"] == 11
+    assert output_data["available_balance"] == 89
+    # If fee_reserved were double-counted we'd see 12 and 88.
+    assert output_data["balance_confirmed"] == 100
