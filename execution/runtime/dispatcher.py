@@ -93,6 +93,7 @@ def resolve_tx_kind(tx: Any) -> str:
 
     Resolution order:
       1) Explicit field: kind / tx_kind / type / txType (string or numeric).
+         Also checks tx.unsigned.kind for nested Tx structure.
       2) Heuristics:
            - has code/init_code/bytecode → 'deploy'
            - to == None and has data/input → 'deploy'
@@ -101,6 +102,13 @@ def resolve_tx_kind(tx: Any) -> str:
       3) Fallback: 'transfer'
     """
     explicit = _get(tx, "kind", "tx_kind", "type", "txType")
+    
+    # Also check nested structure: tx.unsigned.kind (for Tx dataclass)
+    if explicit is None:
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            explicit = _get(unsigned, "kind")
+    
     if explicit is not None:
         # numeric → map; string → normalize
         if isinstance(explicit, int):
