@@ -153,6 +153,13 @@ TX_DECODER_ALL_FAILED = Counter(
     registry=REG,
 )
 
+
+TX_LEGACY_GASLIMIT_DICT_TOTAL = Counter(
+    "animica_tx_legacy_gaslimit_dict_total",
+    "Total transactions seen with deprecated gasLimit={limit,price} dict shape.",
+    registry=REG,
+)
+
 # Head / chain (optional helpers)
 CHAIN_HEIGHT = Gauge(
     "animica_chain_height",

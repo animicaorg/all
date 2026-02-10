@@ -124,3 +124,15 @@ def test_load_eviction_writes_quarantine(tmp_path) -> None:
     assert reloaded.has_hash(tx_hash) is True
     quarantine = persist_path.with_suffix(".bad.jsonl")
     assert quarantine.exists()
+
+
+def test_accepts_legacy_gaslimit_dict_shape_in_admission(tmp_path) -> None:
+    service = _new_service(tmp_path)
+    body = _build_body()
+    body["gasLimit"] = {"limit": 21000, "price": 1, "extra": 99}
+    raw = cbor_dumps({"body": body, "sigs": []})
+
+    accepted, reject, tx_hash = service.submit_atomic(tx={"body": body, "sigs": []}, raw=raw, local=True, simulate=False)
+    assert accepted is True
+    assert reject is None
+    assert isinstance(tx_hash, str) and tx_hash.startswith("0x")
