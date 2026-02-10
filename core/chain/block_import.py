@@ -72,7 +72,12 @@ from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
-from execution.state.apply_balance import credit as state_credit
+from execution.state.apply_balance import (
+    assert_block_apply_deltas,
+    begin_apply_block,
+    credit as state_credit,
+    end_apply_block,
+)
 
 # Import difficulty adjustment functions
 try:
@@ -1773,7 +1778,40 @@ class BlockImporter:
         try:
             block_env = make_block_env(block.header, self.params)
             non_coinbase_txs = [tx for tx in block.txs if not _is_coinbase_tx(tx)]
+            height = int(getattr(block.header, "height", 0) or 0)
+            block_hash_hex = "0x" + block.header.hash().hex()
+            begin_apply_block(height, block_hash_hex)
+
+            tx_expectations: list[dict[str, Any]] = []
+            for tx in non_coinbase_txs:
+                tx_hash_hex = self._extract_tx_hash(tx)
+                if tx_hash_hex is None:
+                    continue
+
+                sender = getattr(getattr(tx, "unsigned", tx), "sender", None)
+                payload = getattr(getattr(tx, "unsigned", tx), "payload", None)
+                to = getattr(payload, "to", None) if payload is not None else None
+                amount = int(getattr(payload, "amount", 0) or 0) if payload is not None else 0
+                gas_limit = int(getattr(getattr(tx, "unsigned", tx), "gas_limit", 0) or 0)
+                gas_price = int(getattr(getattr(tx, "unsigned", tx), "gas_price", 0) or 0)
+                fee_charged = gas_limit * gas_price
+
+                sender_hex = bytes(sender).hex() if isinstance(sender, (bytes, bytearray)) else ""
+                to_hex = bytes(to).hex() if isinstance(to, (bytes, bytearray)) else ""
+                sender_delta = -(int(amount) + int(fee_charged)) if sender_hex else 0
+                recipient_delta = int(amount) if to_hex and to_hex != sender_hex else 0
+
+                tx_expectations.append({
+                    "tx_hash": tx_hash_hex,
+                    "sender": sender_hex,
+                    "recipient": to_hex,
+                    "sender_delta": sender_delta,
+                    "recipient_delta": recipient_delta,
+                })
+
             apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
+            apply_events = end_apply_block()
+            assert_block_apply_deltas(tx_expectations=tx_expectations, events=apply_events)
 
             reward_amount = _compute_block_reward_amount(
                 chain_id=int(self.params.chain_id),
@@ -1809,6 +1847,10 @@ class BlockImporter:
 
             return True
         except Exception as exc:
+            try:
+                end_apply_block()
+            except Exception:
+                pass
             log.error(
                 "state: block execution failed",
                 extra={"error": str(exc), "height": getattr(block.header, "height", None)},
