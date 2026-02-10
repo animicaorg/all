@@ -49,6 +49,7 @@ from .kv import KV, Batch, ReadOnlyKV
 PFX_ACC = b"\x01"
 PFX_CODE = b"\x02"
 PFX_STO = b"\x03"
+PFX_APPLIED_TX = b"\x04"  # New prefix for tx idempotency tracking
 
 
 def _u8(n: int) -> bytes:
@@ -84,6 +85,15 @@ def _k_sto_prefix(addr: bytes) -> bytes:
 
 def _k_sto(addr: bytes, skey: bytes) -> bytes:
     return _k_sto_prefix(addr) + _u8(len(skey)) + skey
+
+
+def _k_applied_tx(tx_hash: bytes) -> bytes:
+    """Key for tracking applied transactions (idempotency guard).
+    
+    Format: PFX_APPLIED_TX | tx_hash_len:u8 | tx_hash:bytes
+    Value: height:int (encoded as canonical CBOR)
+    """
+    return PFX_APPLIED_TX + _u8(len(tx_hash)) + tx_hash
 
 
 def _parse_acc_key(key: bytes) -> bytes:
@@ -280,6 +290,59 @@ class StateDB:
 
     def close(self) -> None:
         self.kv.close()
+
+    # --- Transaction idempotency (prevent double application) ---
+
+    def has_applied_tx(self, tx_hash: bytes) -> bool:
+        """
+        Check if a transaction has already been applied (idempotency guard).
+        
+        Args:
+            tx_hash: Transaction hash (typically 32 bytes)
+            
+        Returns:
+            True if transaction was previously applied, False otherwise
+        """
+        k = _k_applied_tx(tx_hash)
+        return self.kv.get(k) is not None
+
+    def mark_tx_applied(
+        self, tx_hash: bytes, height: int, batch: Optional[Batch] = None
+    ) -> None:
+        """
+        Mark a transaction as applied at a specific height (idempotency guard).
+        
+        This should be called atomically with balance mutations to ensure
+        that if a transaction is applied, it's only applied once.
+        
+        Args:
+            tx_hash: Transaction hash (typically 32 bytes)
+            height: Block height at which tx was applied
+            batch: Optional batch for atomic writes
+        """
+        k = _k_applied_tx(tx_hash)
+        v = cbor_dumps({"height": int(height)})
+        if batch is None:
+            self.kv.put(k, v)
+        else:
+            batch.put(k, v)
+
+    def get_tx_applied_height(self, tx_hash: bytes) -> Optional[int]:
+        """
+        Get the height at which a transaction was applied, if any.
+        
+        Args:
+            tx_hash: Transaction hash
+            
+        Returns:
+            Block height if transaction was applied, None otherwise
+        """
+        k = _k_applied_tx(tx_hash)
+        v = self.kv.get(k)
+        if v is None:
+            return None
+        data = cbor_loads(v)
+        return int(data.get("height", 0)) if isinstance(data, dict) else None
 
     # --- Snapshot ---
 
