@@ -34,7 +34,9 @@ Dependencies
 
 """
 
+import inspect
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
@@ -50,6 +52,15 @@ PFX_ACC = b"\x01"
 PFX_CODE = b"\x02"
 PFX_STO = b"\x03"
 PFX_APPLIED_TX = b"\x04"  # New prefix for tx idempotency tracking
+
+
+def _assert_confirmed_balance_chokepoint() -> None:
+    if os.getenv("ANIMICA_DEBUG_BALANCE", "0") != "1":
+        return
+    for frame in inspect.stack()[1:8]:
+        if frame.function == "confirmed_balance_mutate" and "execution/state/apply_balance.py" in frame.filename.replace("\\", "/"):
+            return
+    raise RuntimeError("Direct confirmed balance write detected; use execution.state.apply_balance.confirmed_balance_mutate")
 
 
 def _u8(n: int) -> bytes:
@@ -178,6 +189,7 @@ class StateDB:
     def set_balance(
         self, addr: bytes, amount: int, batch: Optional[Batch] = None
     ) -> None:
+        _assert_confirmed_balance_chokepoint()
         acc = self.ensure_account(addr, batch=batch)
         acc.balance = int(amount)
         self.put_account(addr, acc, batch=batch)
@@ -185,6 +197,7 @@ class StateDB:
     def add_balance(
         self, addr: bytes, delta: int, batch: Optional[Batch] = None
     ) -> int:
+        _assert_confirmed_balance_chokepoint()
         acc = self.ensure_account(addr, batch=batch)
         new_balance = acc.balance + int(delta)
         if new_balance < 0:
@@ -321,8 +334,11 @@ class StateDB:
             batch: Optional batch for atomic writes
         """
         k = _k_applied_tx(tx_hash)
-        # Store height directly as CBOR integer
-        v = cbor_dumps(int(height))
+        # Store rich metadata for idempotency/audit compatibility.
+        v = cbor_dumps({
+            "included_height": int(height),
+            "applied_at": int(__import__("time").time()),
+        })
         if batch is None:
             self.kv.put(k, v)
         else:
@@ -342,8 +358,10 @@ class StateDB:
         v = self.kv.get(k)
         if v is None:
             return None
-        # Height is stored as CBOR integer
-        return int(cbor_loads(v))
+        loaded = cbor_loads(v)
+        if isinstance(loaded, dict):
+            return int(loaded.get("included_height", 0))
+        return int(loaded)
 
     # --- Snapshot ---
 

@@ -83,6 +83,7 @@ class NegativeAmount(ExecError):
 MAX_BALANCE = 2**256 - 1
 _log = logging.getLogger(__name__)
 _DEBUG_BALANCE_EVENTS: list[dict[str, Any]] = []
+_CURRENT_APPLY_CONTEXT: dict[str, Any] | None = None
 
 
 def _is_debug_balance_enabled() -> bool:
@@ -101,6 +102,24 @@ def get_debug_balance_events(*, tx_hash: str | None = None) -> list[dict[str, An
 
 def reset_debug_balance_events() -> None:
     _DEBUG_BALANCE_EVENTS.clear()
+
+
+def begin_apply_block(height: int, block_hash: str | None) -> None:
+    global _CURRENT_APPLY_CONTEXT
+    _CURRENT_APPLY_CONTEXT = {
+        "height": int(height),
+        "block_hash": block_hash,
+        "events": [],
+    }
+
+
+def end_apply_block() -> list[dict[str, Any]]:
+    global _CURRENT_APPLY_CONTEXT
+    events: list[dict[str, Any]] = []
+    if _CURRENT_APPLY_CONTEXT is not None:
+        events = list(_CURRENT_APPLY_CONTEXT.get("events") or [])
+    _CURRENT_APPLY_CONTEXT = None
+    return events
 
 
 def _ensure_non_negative(amount: int) -> None:
@@ -134,7 +153,7 @@ def _safe_sub(a: int, b: int) -> int:
     return res
 
 
-def _mutate_balance(
+def confirmed_balance_mutate(
     state: BalanceAccess,
     address: bytes,
     delta: int,
@@ -151,18 +170,21 @@ def _mutate_balance(
         new = _safe_sub(cur, -delta)
     state.set_balance(address, new)
 
+    if callsite is None:
+        frame = inspect.stack()[1]
+        callsite = f"{frame.filename}:{frame.lineno}#{frame.function}"
+    event = {
+        "tx_hash": tx_hash,
+        "height": height,
+        "address": address.hex(),
+        "delta": int(delta),
+        "reason": reason,
+        "callsite": callsite,
+    }
+    if _CURRENT_APPLY_CONTEXT is not None:
+        _CURRENT_APPLY_CONTEXT.setdefault("events", []).append(dict(event))
+
     if _is_debug_balance_enabled():
-        if callsite is None:
-            frame = inspect.stack()[1]
-            callsite = f"{frame.filename}:{frame.lineno}"
-        event = {
-            "tx_hash": tx_hash,
-            "height": height,
-            "address": address.hex(),
-            "delta": int(delta),
-            "reason": reason,
-            "callsite": callsite,
-        }
         _record_debug_balance_event(event)
         _log.info(
             "BAL_MUT %s",
@@ -202,7 +224,7 @@ def credit(
     _ensure_non_negative(amount)
     if amount == 0:
         return state.get_balance(address)
-    return _mutate_balance(
+    return confirmed_balance_mutate(
         state,
         address,
         amount,
@@ -230,7 +252,7 @@ def debit(
     _ensure_non_negative(amount)
     if amount == 0:
         return state.get_balance(address)
-    return _mutate_balance(
+    return confirmed_balance_mutate(
         state,
         address,
         -amount,
@@ -437,6 +459,56 @@ def assert_single_tx_balance_deltas(
             )
 
 
+def assert_block_apply_deltas(
+    *,
+    tx_expectations: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> None:
+    if os.getenv("ANIMICA_ASSERT_BALANCE", "0") != "1":
+        return
+
+    for txe in tx_expectations:
+        tx_hash = txe.get("tx_hash")
+        sender = str(txe.get("sender") or "")
+        recipient = str(txe.get("recipient") or "")
+        expected_sender_delta = int(txe.get("sender_delta") or 0)
+        expected_recipient_delta = int(txe.get("recipient_delta") or 0)
+
+        tx_events = [e for e in events if e.get("tx_hash") == tx_hash]
+        sender_events = [e for e in tx_events if e.get("address") == sender and int(e.get("delta", 0)) < 0]
+        recipient_events = [e for e in tx_events if e.get("address") == recipient and int(e.get("delta", 0)) > 0]
+
+        sender_total = sum(int(e.get("delta", 0)) for e in sender_events)
+        recipient_total = sum(int(e.get("delta", 0)) for e in recipient_events)
+
+        if len(sender_events) != 1 or sender_total != expected_sender_delta:
+            raise ExecError(
+                "block apply sender debit invariant failed",
+                code="BLOCK_DOUBLE_DEBIT",
+                data={
+                    "tx_hash": tx_hash,
+                    "sender": sender,
+                    "expected_sender_delta": expected_sender_delta,
+                    "actual_sender_delta": sender_total,
+                    "sender_events": sender_events,
+                    "all_tx_events": tx_events,
+                },
+            )
+        if recipient and sender != recipient and (len(recipient_events) != 1 or recipient_total != expected_recipient_delta):
+            raise ExecError(
+                "block apply recipient credit invariant failed",
+                code="BLOCK_CREDIT_INVARIANT",
+                data={
+                    "tx_hash": tx_hash,
+                    "recipient": recipient,
+                    "expected_recipient_delta": expected_recipient_delta,
+                    "actual_recipient_delta": recipient_total,
+                    "recipient_events": recipient_events,
+                    "all_tx_events": tx_events,
+                },
+            )
+
+
 __all__ = [
     "BalanceAccess",
     "InsufficientBalance",
@@ -445,7 +517,11 @@ __all__ = [
     "debit",
     "safe_transfer",
     "apply_gas_fees",
+    "begin_apply_block",
+    "end_apply_block",
+    "confirmed_balance_mutate",
     "assert_single_tx_balance_deltas",
+    "assert_block_apply_deltas",
     "get_debug_balance_events",
     "reset_debug_balance_events",
 ]

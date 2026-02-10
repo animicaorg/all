@@ -43,7 +43,12 @@ from core.utils.address_codec import (
     account_key_from_pubkey,
     account_key_from_raw,
 )
-from ..state.apply_balance import InsufficientBalance, credit as state_credit, debit as state_debit, assert_single_tx_balance_deltas
+from ..state.apply_balance import (
+    InsufficientBalance,
+    assert_single_tx_balance_deltas,
+    credit as state_credit,
+    debit as state_debit,
+)
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -75,6 +80,36 @@ def _debug_tx_balance_event(*, tx_hash: str | None, address: bytes, delta: int, 
         },
     )
 
+
+
+def _tx_hash_bytes(tx_hash_hex: str | None) -> bytes | None:
+    if not tx_hash_hex:
+        return None
+    h = tx_hash_hex[2:] if tx_hash_hex.startswith("0x") else tx_hash_hex
+    try:
+        return bytes.fromhex(h)
+    except ValueError:
+        return None
+
+
+def _already_applied(state: Any, tx_hash_hex: str | None) -> bool:
+    txh = _tx_hash_bytes(tx_hash_hex)
+    if txh is None or not hasattr(state, "has_applied_tx"):
+        return False
+    try:
+        return bool(state.has_applied_tx(txh))  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
+def _mark_applied(state: Any, tx_hash_hex: str | None, height: int | None) -> None:
+    txh = _tx_hash_bytes(tx_hash_hex)
+    if txh is None or not hasattr(state, "mark_tx_applied"):
+        return
+    try:
+        state.mark_tx_applied(txh, int(height or 0))  # type: ignore[attr-defined]
+    except Exception:
+        return
 
 # ------------------------------------------------------------------------------
 # Tolerant getters/coercers
@@ -583,6 +618,17 @@ def apply_transfer(
         tx_hash_hex = "0x" + bytes(tx_hash_value).hex()
     elif isinstance(tx_hash_value, str):
         tx_hash_hex = tx_hash_value
+
+    # Engine-level idempotency guard: once a tx hash has been applied to confirmed
+    # state, never apply its balance deltas again.
+    if _already_applied(state, tx_hash_hex):
+        return ApplyResult(
+            status=TxStatus.SUCCESS,
+            gas_used=0,
+            logs=[],
+            state_root=_maybe_state_root(state),
+            receipt=None,
+        )
     block_height = _as_int(getattr(block_env, "height", None), default=0) or None
 
     if tx_nonce is not None:
@@ -793,6 +839,8 @@ def apply_transfer(
         amount=amount,
         total_fee=total_fee,
     )
+
+    _mark_applied(state, tx_hash_hex, block_height)
 
     return ApplyResult(
         status=TxStatus.SUCCESS,
