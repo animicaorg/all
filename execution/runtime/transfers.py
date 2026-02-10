@@ -486,7 +486,14 @@ def apply_transfer(
         if unsigned is not None:
             payload = _get(unsigned, "payload")
             if payload is not None:
-                to = _get(payload, "to", "recipient")
+                # For discriminated union payloads {"t": kind, "v": value}, extract the "v" field
+                payload_value = _get(payload, "v")
+                if payload_value is not None:
+                    # This is a serialized/dict payload, get to from "v" field
+                    to = _get(payload_value, "to", "recipient")
+                else:
+                    # This is a direct TxTransfer object, get to directly
+                    to = _get(payload, "to", "recipient")
     
     to = _account_key_from_value(to)
     
@@ -512,7 +519,14 @@ def apply_transfer(
         if unsigned is not None:
             payload = _get(unsigned, "payload")
             if payload is not None:
-                amount = _get(payload, "amount", "value")
+                # For discriminated union payloads {"t": kind, "v": value}, extract the "v" field
+                payload_value = _get(payload, "v")
+                if payload_value is not None:
+                    # This is a serialized/dict payload, get amount from "v" field
+                    amount = _get(payload_value, "amount", "value")
+                else:
+                    # This is a direct TxTransfer object, get amount directly
+                    amount = _get(payload, "amount", "value")
     amount = _as_int(amount, default=0)
     
     # Extract gas limit from tx (check multiple locations for compatibility)
