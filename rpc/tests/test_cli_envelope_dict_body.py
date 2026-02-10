@@ -14,7 +14,13 @@ from rpc.tests import new_test_client, rpc_call
 pytestmark = pytest.mark.anyio
 
 
-def _build_cli_style_envelope(chain_id: int, from_nonce: int = 0) -> tuple[bytes, str, bytes]:
+def _build_cli_style_envelope(
+    chain_id: int,
+    from_nonce: int = 0,
+    *,
+    gas_limit: int | dict[str, int] = 21000,
+    max_fee: int | None = 1,
+) -> tuple[bytes, str, bytes]:
     """
     Build a transaction envelope in CLI format:
       {"body": {"from": bytes, "to": bytes, "nonce": int, ...}, "sig": {...}}
@@ -54,11 +60,12 @@ def _build_cli_style_envelope(chain_id: int, from_nonce: int = 0) -> tuple[bytes
         "from": sender_bytes,
         "value": 17_000_000_000,  # 17 ANM
         "nonce": from_nonce,
-        "gasLimit": 21000,
-        "maxFee": 1,
+        "gasLimit": gas_limit,
         "data": b"",
         "chainId": chain_id,
     }
+    if max_fee is not None:
+        body["maxFee"] = max_fee
     
     # CBOR-encode body for signing
     body_bytes = cbor2.dumps(body, canonical=True)
@@ -188,3 +195,22 @@ async def test_cli_dict_envelope_appears_in_block_template(client_and_cfg):
     assert len(template_txs) > 0, (
         f"mempoolTotal={mempool_total} but template has 0 transactions"
     )
+
+
+async def test_cli_dict_envelope_accepts_legacy_gaslimit_quote_dict(client_and_cfg):
+    """CLI envelope body should accept deprecated gasLimit={limit,price} dict shape."""
+    client, cfg = client_and_cfg
+
+    cbor_envelope, _, _ = _build_cli_style_envelope(
+        cfg.chain_id,
+        from_nonce=0,
+        gas_limit={"limit": 21000, "price": 1},
+        max_fee=None,
+    )
+    raw_hex = "0x" + cbor_envelope.hex()
+
+    submit_res = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
+
+    assert submit_res["jsonrpc"] == "2.0"
+    assert "error" not in submit_res, f"Expected success for gasLimit quote dict, got: {submit_res.get('error')}"
+    assert isinstance(submit_res["result"], str) and submit_res["result"].startswith("0x")
