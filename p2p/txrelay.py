@@ -514,6 +514,9 @@ class TxRelayService:
             "last_accepted_at": None,
             "last_rejected_at": None,
             "last_dropped_at": None,
+            "imported_ok": 0,
+            "imported_internal_errors": 0,
+            "imported_reject_reason_counts": {},
             "event_counts": {},
         }
 
@@ -1349,6 +1352,7 @@ class TxRelayService:
             self._clear_inflight(txid_bytes)
             # Note: _mark_known() is called BEFORE admit_tx to prevent re-broadcast to sender
             if ok:
+                self._metrics["imported_ok"] = int(self._metrics.get("imported_ok", 0)) + 1
                 broadcast.append(txid_bytes)
                 self._reject_cache.pop(txid_bytes, None)
                 self._request_mgr.mark_accepted(
@@ -1407,6 +1411,12 @@ class TxRelayService:
                     now=time.time(),
                 )
                 self._metrics["rejected_count"] += 1
+                reason_key = str(reason or "unknown")
+                rr = self._metrics.setdefault("imported_reject_reason_counts", {})
+                if isinstance(rr, dict):
+                    rr[reason_key] = int(rr.get(reason_key, 0)) + 1
+                if reason_key.startswith("internal_error") or reason_key.startswith("exception:"):
+                    self._metrics["imported_internal_errors"] = int(self._metrics.get("imported_internal_errors", 0)) + 1
                 self._note_invalid_peer(conn_id)
                 self._metrics["last_rejected_at"] = time.time()
                 self._set_peer_tx_state(

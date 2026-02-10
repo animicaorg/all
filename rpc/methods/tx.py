@@ -993,9 +993,24 @@ def _validate_sufficient_balance(obj: dict) -> None:
         log.debug("_validate_sufficient_balance: cannot determine sender address, skipping")
         return
 
-    value = int(tx_obj.get("value", 0) or 0)
-    gas_limit = int((tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0) or 0)
-    max_fee = int((tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price") or 0) or 0)
+    try:
+        value = _coerce_tx_int("value", tx_obj.get("value", 0) or 0)
+        gas_limit = _coerce_tx_int("gasLimit", (tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0) or 0)
+        max_fee = _coerce_tx_int("maxFee", (tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price") or 0) or 0)
+    except _TxNormalizationError as exc:
+        details = exc.details if isinstance(getattr(exc, "details", None), dict) else {}
+        raise rpc_errors.InvalidTx(
+            "tx numeric field validation failed",
+            data={
+                "mempoolError": {
+                    "code": 1004,
+                    "reason": "bad_field_type",
+                    "reason_code": str(details.get("reason_code") or "bad_field_type"),
+                    "message": str(exc),
+                    "context": details,
+                }
+            },
+        ) from exc
 
     required = value + (gas_limit * max_fee)
 

@@ -31,7 +31,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+import uuid
 import time
 from dataclasses import dataclass
 import shutil
@@ -934,16 +936,38 @@ class P2PDeps:
                         tx_obj = tx_like
 
             try:
-                tx_methods._mempool_submit(  # type: ignore[attr-defined]
-                    svc,
-                    tx_obj=tx_obj,
-                    raw=raw_cbor,
-                    tx_hash_hex=tx_hash_hex,
-                    local=local,
-                    origin_peer=origin_peer,
-                )
+                if hasattr(svc, "submit_atomic"):
+                    accepted, reject, _ = svc.submit_atomic(  # type: ignore[attr-defined]
+                        tx=tx_obj,
+                        raw=raw_cbor,
+                        tx_hash_hex=tx_hash_hex,
+                        local=local,
+                        origin_peer=origin_peer,
+                        simulate=False,
+                    )
+                    if not accepted:
+                        reason_code = None
+                        if isinstance(reject, dict):
+                            reason_code = reject.get("reason_code") or reject.get("reason")
+                        return False, f"mempool_reject:{reason_code or 'rejected'}"
+                else:
+                    tx_methods._mempool_submit(  # type: ignore[attr-defined]
+                        svc,
+                        tx_obj=tx_obj,
+                        raw=raw_cbor,
+                        tx_hash_hex=tx_hash_hex,
+                        local=local,
+                        origin_peer=origin_peer,
+                    )
             except Exception as e:
-                return False, f"mempool_reject:{e}"
+                trace_id = uuid.uuid4().hex
+                logging.getLogger("animica.p2p.deps").error(
+                    "p2p admit_tx unexpected exception trace_id=%s",
+                    trace_id,
+                    extra={"trace_id": trace_id, "error": str(e), "error_type": type(e).__name__},
+                    exc_info=True,
+                )
+                return False, f"internal_error:trace_id={trace_id}"
 
             try:
                 tx_methods._pending_put(tx_hash_hex, raw_cbor)  # type: ignore[attr-defined]
