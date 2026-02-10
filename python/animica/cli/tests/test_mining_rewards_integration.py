@@ -210,11 +210,13 @@ def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_w
     )
     
     assert result.exit_code == 0, f"Command failed: {result.output}"
-    assert len(rpc_calls) == 2, f"Expected 2 RPC calls, got {len(rpc_calls)}"
-    
+    assert len(rpc_calls) >= 2, f"Expected at least 2 RPC calls, got {len(rpc_calls)}"
+    methods = [c["method"] for c in rpc_calls]
+    assert "miner.getBlockTemplate" in methods
+    assert "miner.submitBlock" in methods
+
     # Verify RPC call used resolved Bech32 address
-    rpc_call = rpc_calls[0]
-    assert rpc_call["method"] == "miner.getBlockTemplate"
+    rpc_call = next(c for c in rpc_calls if c["method"] == "miner.getBlockTemplate")
     assert isinstance(rpc_call["params"], dict)
     assert rpc_call["params"]["address"] == test_address, \
         f"RPC should use resolved address {test_address}, got {rpc_call['params']['address']}"
@@ -264,11 +266,13 @@ def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
     )
     
     assert result.exit_code == 0, f"Command failed: {result.output}"
-    assert len(rpc_calls) == 2, f"Expected 2 RPC calls, got {len(rpc_calls)}"
-    
+    assert len(rpc_calls) >= 2, f"Expected at least 2 RPC calls, got {len(rpc_calls)}"
+    methods = [c["method"] for c in rpc_calls]
+    assert "miner.getBlockTemplate" in methods
+    assert "miner.submitBlock" in methods
+
     # Verify RPC call used the raw Bech32 address
-    rpc_call = rpc_calls[0]
-    assert rpc_call["method"] == "miner.getBlockTemplate"
+    rpc_call = next(c for c in rpc_calls if c["method"] == "miner.getBlockTemplate")
     assert isinstance(rpc_call["params"], dict)
     assert rpc_call["params"]["address"] == test_address, \
         f"RPC should use raw address {test_address}, got {rpc_call['params']['address']}"
@@ -463,3 +467,96 @@ def test_mine_blocks_cli_output_shows_reward_details(monkeypatch: Any):
     
     # Verify chain height is shown
     assert "height" in output.lower(), "Output should show chain height"
+
+
+def test_mine_blocks_reports_balance_delta_from_rpc(monkeypatch: Any):
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            self.balance = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method == "state.getBalance":
+                return hex(self.balance)
+            if method == "miner.getBlockTemplate":
+                t = _mock_template(height=1)
+                t["coinbase"] = {"amount": 300_000_000_000}
+                return t
+            if method == "miner.submitBlock":
+                self.balance += 300_000_000_000
+                return {"accepted": True, "new_head": 1}
+            return {}
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    monkeypatch.setattr("time.sleep", lambda x: None)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address",
+            TEST_BECH32_ADDRESS,
+            "--count",
+            "1",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "credited: 300000000000 nANM" in result.output
+    assert "balance_now: 300000000000" in result.output
+
+
+def test_mine_blocks_strict_credit_fails_when_balance_does_not_move(monkeypatch: Any):
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            self.balance = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method == "state.getBalance":
+                return hex(self.balance)
+            if method == "miner.getBlockTemplate":
+                t = _mock_template(height=1)
+                t["coinbase"] = {"amount": 300_000_000_000}
+                return t
+            if method == "miner.submitBlock":
+                return {"accepted": True, "new_head": 1}
+            return {}
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    monkeypatch.setattr("time.sleep", lambda x: None)
+    monkeypatch.setenv("ANIMICA_MINER_STRICT_CREDIT", "1")
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address",
+            TEST_BECH32_ADDRESS,
+            "--count",
+            "1",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "strict credit check failed" in result.output
