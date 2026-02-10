@@ -272,7 +272,11 @@ Transactions
 
   # One-shot: build, sign, and send
   animica tx send --from anim1... --to anim1... --value 1 \
-    --gas 200000 --key-file ~/.animica/keys/mykey.json
+    --gas 200000 --gas-price 1 --key-file ~/.animica/keys/mykey.json
+
+  # Fee field model (canonical): gasLimit and maxFee are integer scalars.
+  # If a node returns a fee quote object {limit, price}, CLI maps it to:
+  #   gasLimit = limit, maxFee = price
 
   # Send and wait for peer acknowledgments (PTL replication)
   animica tx send --from anim1... --to anim1... --value 0.1 \

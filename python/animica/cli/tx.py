@@ -1004,6 +1004,66 @@ def _get_default_max_fee(rpc_url: str) -> int:
     return 1
 
 
+def _coerce_fee_int(name: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _extract_fee_quote(value: Any) -> tuple[int | None, int | None]:
+    """
+    Canonical tx fee model used by the CLI send pipeline:
+      - gasLimit: integer execution unit bound
+      - maxFee: integer per-unit price (compatible with legacy gasPrice quote names)
+
+    Compatibility note: fee estimators may return either scalar price values or a quote
+    object like {"limit": 21000, "price": 1}. This helper normalizes those shapes into
+    scalar numeric fields for tx construction.
+    """
+    if isinstance(value, dict):
+        limit = _coerce_fee_int("limit", value.get("limit") or value.get("gasLimit"))
+        price = _coerce_fee_int(
+            "price",
+            value.get("price")
+            or value.get("gasPrice")
+            or value.get("maxFee")
+            or value.get("max_fee"),
+        )
+        if limit is not None or price is not None:
+            return limit, price
+        return None, None
+
+    scalar = _coerce_fee_int("price", value)
+    if scalar is not None:
+        return None, scalar
+    return None, None
+
+
+def _estimate_fee_quote(rpc_url: str) -> tuple[int | None, int | None]:
+    for method_name in (
+        "mempool.getFeeQuote",
+        "fee.quote",
+        "tx.estimateFee",
+        "tx.gasPrice",
+        "gasPrice",
+        "fee.getGasPrice",
+    ):
+        try:
+            result = _rpc(rpc_url, method_name, [])
+        except Exception:
+            continue
+        limit, price = _extract_fee_quote(result)
+        if limit is not None or price is not None:
+            return limit, price
+    return None, None
+
+
 def _extract_head_height(status: Any) -> int | None:
     if isinstance(status, dict):
         for key in (
@@ -1334,7 +1394,12 @@ def send(
         help="Allow using remote bootstrap RPC (requires ANIMICA_I_UNDERSTAND_REMOTE_RISK=1)",
     ),
     chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Chain ID override"),
-    gas_limit: int = typer.Option(21000, "--gas-limit", help="Gas limit"),
+    gas_limit: Optional[int] = typer.Option(21000, "--gas-limit", "--gas", help="Gas limit"),
+    gas_price: Optional[int] = typer.Option(
+        None,
+        "--gas-price",
+        help="Gas price / fee price (base units, mapped to tx maxFee)",
+    ),
     max_fee: Optional[int] = typer.Option(None, "--max-fee", help="Max fee (base units)"),
     domain: str = typer.Option(DEFAULT_DOMAIN, "--domain", help="PQ signing domain"),
     prehash: str = typer.Option(DEFAULT_PREHASH, "--prehash", help="Prehash: sha3-512 | sha3-256"),
@@ -1398,7 +1463,34 @@ def send(
     if nonce_source not in {"confirmed", "pending"}:
         raise typer.BadParameter("Nonce source must be 'confirmed' or 'pending'.")
     nonce_source_label = "override" if nonce_value is not None else nonce_source
-    fee = int(max_fee) if max_fee is not None else _get_default_max_fee(rpc)
+    gas_limit_override = int(gas_limit) if gas_limit is not None else None
+    max_fee_override = int(max_fee) if max_fee is not None else None
+    gas_price_override = int(gas_price) if gas_price is not None else None
+
+    quote_limit, quote_price = _estimate_fee_quote(rpc)
+    resolved_gas_limit = (
+        gas_limit_override if gas_limit_override is not None else (quote_limit if quote_limit is not None else 21000)
+    )
+
+    resolved_max_fee: int
+    if max_fee_override is not None:
+        resolved_max_fee = max_fee_override
+    elif gas_price_override is not None:
+        resolved_max_fee = gas_price_override
+    elif quote_price is not None:
+        resolved_max_fee = quote_price
+    else:
+        resolved_max_fee = _get_default_max_fee(rpc)
+
+    # Defensive assertion: tx numeric fields must be scalar ints, never fee quote objects.
+    if not isinstance(resolved_gas_limit, int):
+        raise typer.BadParameter(
+            f"BUG: gasLimit must be int; got {type(resolved_gas_limit).__name__}. Please update CLI."
+        )
+    if not isinstance(resolved_max_fee, int):
+        raise typer.BadParameter(
+            f"BUG: gasPrice/maxFee must be int; got {type(resolved_max_fee).__name__}. Please update CLI."
+        )
 
     try:
         valid_after, valid_until = _resolve_validity_window(
@@ -1499,8 +1591,8 @@ def send(
                 to_addr=to_addr,
                 nonce=attempt_nonce,
                 value_base_units=value_base,
-                gas_limit=gas_limit,
-                max_fee=fee,
+                gas_limit=resolved_gas_limit,
+                max_fee=resolved_max_fee,
                 data=b"",
                 valid_after=valid_after,
                 valid_until=valid_until,
@@ -1519,7 +1611,17 @@ def send(
                 )
                 console.print("")
                 console.print(f"nonce: using {nonce_source_label} => {attempt_nonce}")
-                console.print(f"maxFee: using {'override' if max_fee is not None else 'default'} => {fee}")
+                max_fee_source = (
+                    "--max-fee"
+                    if max_fee_override is not None
+                    else "--gas-price"
+                    if gas_price_override is not None
+                    else "fee quote"
+                    if quote_price is not None
+                    else "default"
+                )
+                console.print(f"gasLimit: using {'override' if gas_limit_override is not None else ('fee quote' if quote_limit is not None else 'default')} => {resolved_gas_limit}")
+                console.print(f"maxFee: using {max_fee_source} => {resolved_max_fee}")
                 console.print(f"valid_from: {valid_after}")
                 console.print(f"valid_until: {valid_until}")
                 console.print(f"ttl_blocks: {valid_until - valid_after}")
@@ -1544,7 +1646,7 @@ def send(
                     }
                 )
 
-            _debug_tx_event("tx_build", {"trace_id": cli_trace_id, "chain_id": cid, "nonce": attempt_nonce, "from": from_addr, "to": to_addr, "value": value_base, "fee": fee, "body": body})
+            _debug_tx_event("tx_build", {"trace_id": cli_trace_id, "chain_id": cid, "nonce": attempt_nonce, "from": from_addr, "to": to_addr, "value": value_base, "fee": resolved_max_fee, "body": body})
             # Sign
             pq = pq_sign_tx(body, sk, pk, used_alg_id, chain_ctx)
 
@@ -1736,7 +1838,7 @@ def send(
             to_addr=to_addr,
             tx_hash=tx_hash,
             value_base=value_base,
-            fee_base=fee,
+            fee_base=resolved_max_fee,
             chain_id=cid,
             nonce=last_nonce,
             status="mempool_accepted" if tx_in_mempool else "broadcast",
