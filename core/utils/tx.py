@@ -340,13 +340,20 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
     to_addr = body.get("to")
     nonce = body.get("nonce")
     value = body.get("value", body.get("amount", 0))
-    gas_limit = body.get("gasLimit", body.get("gas_limit", body.get("gas", 21000)))
-    gas_price = body.get(
-        "maxFee",
-        body.get(
-            "max_fee", body.get("gasPrice", body.get("gas_price", body.get("tip", 1)))
-        ),
-    )
+    gas_field = body.get("gas")
+    gas_limit = body.get("gasLimit", body.get("gas_limit"))
+    if gas_limit is None and isinstance(gas_field, Mapping):
+        gas_limit = gas_field.get("limit")
+    if gas_limit is None:
+        gas_limit = 21000
+
+    gas_price = body.get("maxFee", body.get("max_fee"))
+    if gas_price is None:
+        gas_price = body.get("gasPrice", body.get("gas_price"))
+    if gas_price is None and isinstance(gas_field, Mapping):
+        gas_price = gas_field.get("price")
+    if gas_price is None:
+        gas_price = body.get("tip", 1)
     data = _safe_to_bytes(body.get("data", b""))
 
     valid_after = body.get("validAfter", body.get("valid_after"))
