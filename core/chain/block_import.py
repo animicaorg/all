@@ -1784,7 +1784,15 @@ class BlockImporter:
             fee_amount = _compute_block_fees_total(block)
             credit_amount = int(reward_amount) + int(fee_amount)
             if credit_amount > 0:
-                new_balance = state_credit(self.state_db, bytes(block_env.coinbase), credit_amount)
+                new_balance = state_credit(
+                    self.state_db,
+                    bytes(block_env.coinbase),
+                    credit_amount,
+                    reason="BLOCK_APPLY_COINBASE_TOTAL",
+                    tx_hash=None,
+                    height=int(getattr(block.header, "height", 0) or 0),
+                    callsite="core.chain.block_import._apply_block_state",
+                )
                 global _BLOCK_COINBASE_CREDIT_TOTAL
                 _BLOCK_COINBASE_CREDIT_TOTAL += credit_amount
                 log.info(
