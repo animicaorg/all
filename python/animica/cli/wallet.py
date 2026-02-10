@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,35 @@ if not HAVE_PQ:
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
 _ALLOW_SECRET_ENV = "ANIMICA_ALLOW_SECRET"
+log = logging.getLogger(__name__)
+
+# Wallet availability accounting model:
+# - balance_confirmed: authoritative confirmed chain-state balance from RPC
+# - pending_outgoing: sum of reserve_amount for locally-tracked active outbound txs
+# - available_balance: balance_confirmed - pending_outgoing
+# reserve_amount is expected to be (value + fee_reserved) and must be counted once.
+_ACTIVE_PENDING_STATUSES = {
+    "reserved",
+    "broadcast",
+    "pending",
+    "mempool_accepted",
+    "in_block_pending_confirm",
+}
+
+
+def _debug_tx_balance_event(*, tx_hash: str | None, address: str | None, delta: int, reason: str, callsite: str) -> None:
+    if os.getenv("ANIMICA_DEBUG_TX", "0") != "1":
+        return
+    log.info(
+        "tx_balance_event",
+        extra={
+            "tx_hash": tx_hash,
+            "address": address,
+            "delta": int(delta),
+            "reason": reason,
+            "callsite": callsite,
+        },
+    )
 
 BALANCE_METHODS = [
     "state.getBalance",
@@ -229,6 +259,11 @@ def _refresh_pending_txs(
         if new_state == "confirmed":
             if entry.get("status") != "confirmed":
                 entry["status"] = "confirmed"
+                changed = True
+            continue
+        if new_state == "in_block_pending_confirm":
+            if entry.get("status") != "in_block_pending_confirm":
+                entry["status"] = "in_block_pending_confirm"
                 changed = True
             continue
         if new_state == "pending":
@@ -729,13 +764,20 @@ def show(
     pending_outgoing_count = 0
     for pending in pending_entries:
         status = pending.get("status")
-        if status in {"reserved", "broadcast", "mempool_accepted"}:
+        if status in _ACTIVE_PENDING_STATUSES:
             reserve_amount = pending.get("reserve_amount")
             try:
                 reserved_outgoing += int(reserve_amount or 0)
             except Exception:
                 continue
             pending_outgoing_count += 1
+            _debug_tx_balance_event(
+                tx_hash=pending.get("tx_hash"),
+                address=entry.address,
+                delta=-int(reserve_amount or 0),
+                reason="WALLET_VIEW_ADJUST",
+                callsite="wallet.show",
+            )
     output["pending_outgoing"] = reserved_outgoing
     output["pending_outgoing_count"] = pending_outgoing_count
     if balance_confirmed is not None:
