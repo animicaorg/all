@@ -522,59 +522,31 @@ def test_wallet_show_rpc_success(premine_wallet_store: Path) -> None:
 
 
 @respx.mock
-def test_wallet_show_rpc_failure(premine_wallet_store: Path) -> None:
-    """Test wallet show handles RPC failure gracefully."""
+def test_wallet_show_rpc_failure_errors(premine_wallet_store: Path) -> None:
+    """Test wallet show fails when chain RPC returns an error."""
     rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to return error
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Node unreachable"}})
-    
-    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    data = json.loads(output)
-
-    # Verify balance falls back to cached and warning is present
-    assert data["balance_confirmed"] is None, "Balance should be null on RPC error"
-    assert data["balance_confirmed_formatted"] is None
-    assert data["balance_source"] == "cached"
-    assert "balance_warning" in data
-    assert "Failed to fetch balance" in data["balance_warning"]
-
-
-@respx.mock
-def test_wallet_show_rpc_network_timeout(premine_wallet_store: Path) -> None:
-    """Test wallet show handles network timeout gracefully."""
-    rpc_url = "http://localhost:9999/rpc"
-    # Mock RPC to timeout
-    import httpx
-    respx.post(rpc_url).side_effect = httpx.TimeoutException("Connection timeout")
-    
-    output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
-    data = json.loads(output)
-
-    # Verify balance is null and warning is reported
-    assert data["balance_confirmed"] is None
-    assert data["balance_confirmed_formatted"] is None
-    assert "balance_warning" in data
-
-
-@respx.mock
-def test_wallet_show_chain_source_errors_on_failure(premine_wallet_store: Path) -> None:
-    """--source=chain should fail hard when RPC cannot be reached."""
-
-    rpc_url = "http://localhost:9999/rpc"
-    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32000}})
 
     result = runner.invoke(
         wallet.app,
-        [
-            "--wallet-file",
-            str(premine_wallet_store),
-            "show",
-            "premine",
-            "--rpc-url",
-            rpc_url,
-            "--source",
-            "chain",
-        ],
+        ["--wallet-file", str(premine_wallet_store), "show", "premine", "--rpc-url", rpc_url],
+    )
+
+    assert result.exit_code != 0
+    assert "Failed to fetch balance from chain" in result.output
+
+
+@respx.mock
+def test_wallet_show_rpc_network_timeout_errors(premine_wallet_store: Path) -> None:
+    """Test wallet show fails when chain RPC times out."""
+    rpc_url = "http://localhost:9999/rpc"
+    import httpx
+
+    respx.post(rpc_url).side_effect = httpx.TimeoutException("Connection timeout")
+
+    result = runner.invoke(
+        wallet.app,
+        ["--wallet-file", str(premine_wallet_store), "show", "premine", "--rpc-url", rpc_url],
     )
 
     assert result.exit_code != 0
