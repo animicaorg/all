@@ -46,9 +46,10 @@ def test_simulate_balance_validation_with_dict_gaslimit():
     This verifies the fix works correctly.
     """
     # Simulate a transaction body with gasLimit as dict
+    # Using placeholder addresses (all zeros) for simplicity
     tx_obj = {
-        "from": b"\x00" * 32,
-        "to": b"\x00" * 32,
+        "from": b"\x00" * 32,  # Placeholder sender address
+        "to": b"\x00" * 32,  # Placeholder recipient address
         "value": 1_000_000_000,
         "gasLimit": {"limit": 21000, "price": 1},
         "data": b"",
@@ -86,9 +87,10 @@ def test_simulate_balance_validation_with_int_gaslimit():
     Verify the fix doesn't break the normal case with integer gasLimit.
     """
     # Simulate a transaction body with gasLimit as int (normal case)
+    # Using placeholder addresses (all zeros) for simplicity
     tx_obj = {
-        "from": b"\x00" * 32,
-        "to": b"\x00" * 32,
+        "from": b"\x00" * 32,  # Placeholder sender address
+        "to": b"\x00" * 32,  # Placeholder recipient address
         "value": 1_000_000_000,
         "gasLimit": 21000,  # Integer, not dict
         "maxFee": 1,
