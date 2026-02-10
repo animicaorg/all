@@ -1280,6 +1280,76 @@ def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
 
 
 @respx.mock
+def test_send_fee_quote_dict_maps_to_scalar_gas_fields(wallet_store: Path) -> None:
+    """Fee quote objects must be unpacked to scalar tx fields, not assigned to gasLimit directly."""
+    rpc_url = "http://localhost:9999/rpc"
+    captured_raw_hex: str | None = None
+
+    def capture_and_respond(request):
+        nonlocal captured_raw_hex
+        request_data = json.loads(request.content.decode())
+        method = request_data.get("method")
+
+        if method == "sync.getStatus":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": request_data["id"], "result": {"synchronized": True, "head_height": 100}},
+            )
+        if method == "chain.getChainIdentity":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": request_data["id"],
+                    "result": {"chainId": 1, "forkId": 0, "network": "devnet", "genesisHash": "0x" + "00" * 32},
+                },
+            )
+        if method == "state.getTransactionCount":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": request_data["id"], "result": 0})
+        if method == "mempool.getFeeQuote":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": request_data["id"], "result": {"limit": 21000, "price": 1}},
+            )
+        if method == "tx.sendRawTransaction":
+            params = request_data.get("params") or []
+            if params:
+                captured_raw_hex = params[0]
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": request_data["id"], "result": "0xabc123"})
+
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": request_data["id"], "result": None})
+
+    respx.post(rpc_url).mock(side_effect=capture_and_respond)
+
+    exit_code, output = run_tx_cli(
+        [
+            "send",
+            "--from",
+            "alice",
+            "--to",
+            "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+            "--value",
+            "1.0",
+            "--rpc-url",
+            rpc_url,
+        ],
+        wallet_store,
+        expect_success=True,
+    )
+
+    assert exit_code == 0
+    assert "Transaction Submitted" in output or "Transaction broadcast successfully" in output
+    assert captured_raw_hex is not None
+
+    envelope = cbor_loads(bytes.fromhex(captured_raw_hex[2:]))
+    body = envelope["body"]
+    assert isinstance(body["gasLimit"], int)
+    assert isinstance(body["maxFee"], int)
+    assert body["gasLimit"] == 21000
+    assert body["maxFee"] == 1
+
+
+@respx.mock
 def test_send_signature_preimage_matches_node_verification(wallet_store: Path) -> None:
     """
     Test that the signature preimage produced by CLI matches what the node expects.
