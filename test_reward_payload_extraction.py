@@ -8,18 +8,14 @@ This test specifically checks:
 """
 
 import sys
-sys.path.insert(0, "/home/runner/work/all/all")
-
 from core.types.tx import UnsignedTx, Tx, TxTransfer
 
+# Import the actual _get function from transfers.py to ensure consistency
+from execution.runtime.transfers import _get as transfers_get
+
 def _get(obj, *names, default=None):
-    """Same _get implementation from transfers.py"""
-    for n in names:
-        if isinstance(obj, dict) and n in obj:
-            return obj[n]
-        if hasattr(obj, n):
-            return getattr(obj, n)
-    return default
+    """Wrapper around the actual _get from transfers.py for consistency"""
+    return transfers_get(obj, *names, default=default)
 
 
 def extract_amount_from_tx(tx):
