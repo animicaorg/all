@@ -907,6 +907,50 @@ class BlockImporter:
             height = _height_of(header, hdr_map)
             parent_hash = _parent_hash_of(header, hdr_map)
 
+            tx_hashes = self._canonical_tx_hashes(block)
+            duplicate_hash = self._first_duplicate_hash(tx_hashes)
+            if duplicate_hash is not None:
+                log.warning(
+                    "duplicate tx hash detected inside block",
+                    extra={
+                        "height": height,
+                        "block_hash": h.hex(),
+                        "tx_hash": duplicate_hash.hex(),
+                        "caller": "BlockImporter.import_block",
+                    },
+                )
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    height,
+                    h,
+                    False,
+                    f"duplicate tx hash in block: 0x{duplicate_hash.hex()}",
+                )
+
+            if self.tx_index is not None:
+                for tx_hash in tx_hashes:
+                    try:
+                        already_applied = bool(self.tx_index.exists(tx_hash))
+                    except Exception:
+                        already_applied = False
+                    if already_applied:
+                        log.warning(
+                            "duplicate tx apply attempt rejected",
+                            extra={
+                                "height": height,
+                                "block_hash": h.hex(),
+                                "tx_hash": tx_hash.hex(),
+                                "caller": "BlockImporter.import_block",
+                            },
+                        )
+                        return ImportResult(
+                            ImportErrorCode.INVALID,
+                            height,
+                            h,
+                            False,
+                            f"tx already applied on canonical chain: 0x{tx_hash.hex()}",
+                        )
+
             # Genesis vs non-genesis
             if height == 0:
                 # Must match configured genesis in DB (or DB empty)
@@ -2037,12 +2081,9 @@ class BlockImporter:
     ) -> None:
         if self.tx_index is None or not getattr(block, "txs", None):
             return
-        tx_hashes = []
-        for tx in block.txs:
-            try:
-                tx_hashes.append(self._tx_hash(tx))
-            except Exception:  # pragma: no cover
-                return
+        tx_hashes = self._canonical_tx_hashes(block)
+        if not tx_hashes and block.txs:
+            return
         if hasattr(self.tx_index, "index_block"):
             try:
                 self.tx_index.index_block(height, block_hash, tx_hashes)
@@ -2055,6 +2096,24 @@ class BlockImporter:
                     self.tx_index.put(tx_hash, height, idx)
                 except Exception:  # pragma: no cover
                     continue
+
+    def _canonical_tx_hashes(self, block: Block) -> list[bytes]:
+        tx_hashes: list[bytes] = []
+        for tx in getattr(block, "txs", ()):
+            try:
+                tx_hashes.append(self._tx_hash(tx))
+            except Exception:  # pragma: no cover
+                return []
+        return tx_hashes
+
+    @staticmethod
+    def _first_duplicate_hash(tx_hashes: list[bytes]) -> Optional[bytes]:
+        seen: set[bytes] = set()
+        for tx_hash in tx_hashes:
+            if tx_hash in seen:
+                return tx_hash
+            seen.add(tx_hash)
+        return None
 
     def _remove_block_index(self, height: int) -> None:
         if self.tx_index is None:
