@@ -62,6 +62,16 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     
     # Mock get_balance to return a test balance
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
+
+    # Mock head/status RPC calls to avoid network traffic
+    def _mock_request_rpc(method, params, rpc_url):
+        if method == "chain.getHead":
+            return {"height": 1, "hash": "0xabc"}
+        if method == "tx.getStatus":
+            return {"status": "pending"}
+        raise RuntimeError("unexpected method")
+
+    monkeypatch.setattr(wallet, "_request_rpc", _mock_request_rpc)
     
     # Run wallet show command
     result = runner.invoke(
@@ -93,7 +103,7 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     
     # Verify all values are valid JSON types (strings, ints, etc.)
     for key, value in output_data.items():
-        assert isinstance(value, (str, int, float, bool, type(None))), \
+        assert isinstance(value, (str, int, float, bool, type(None), list, dict)), \
             f"Field {key} has invalid type: {type(value)}"
     
     # Verify hex fields are valid hex strings
@@ -117,6 +127,9 @@ def test_wallet_show_with_address_arg_outputs_clean_json(wallet_with_entry, monk
     
     # Mock get_balance to return a test balance
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
+
+    # Mock head/status RPC calls to avoid network traffic
+    monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
     
     # Run wallet show command with address
     result = runner.invoke(
@@ -141,34 +154,19 @@ def test_wallet_show_with_address_arg_outputs_clean_json(wallet_with_entry, monk
     assert output_data["balance_source"] == "chain"
 
 
-def test_wallet_show_balance_none_is_json_null(wallet_with_entry, monkeypatch):
-    """Test that wallet show outputs null for balance when RPC fails."""
+def test_wallet_show_rpc_failure_exits_nonzero(wallet_with_entry, monkeypatch):
+    """Test that wallet show exits non-zero when RPC balance query fails."""
     wallet_file, label = wallet_with_entry
-    
-    # Mock _wallet_file_path to use our test file
+
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    
-    # Mock _resolve_rpc_url to avoid network calls
     monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
-    
-    # Mock get_balance to raise an error (RPC failure)
+    monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: (_ for _ in ()).throw(RuntimeError("rpc")))
-    
-    # Run wallet show command
-    result = runner.invoke(
-        wallet.app,
-        ["show", label],
-    )
-    
-    # Check exit code
-    assert result.exit_code == 0, f"Command failed: {result.output}"
-    
-    # Verify output is valid JSON
-    output_data = json.loads(result.output)
-    
-    # Verify balance is JSON null (None in Python)
-    assert output_data["balance_confirmed"] is None, "Balance should be null when RPC fails"
-    assert output_data["balance_source"] == "cached"
+
+    result = runner.invoke(wallet.app, ["show", label])
+
+    assert result.exit_code != 0
+    assert "Failed to fetch balance from chain" in result.output
 
 
 def test_wallet_show_pending_outgoing_uses_active_statuses_only(wallet_with_entry, monkeypatch):
@@ -190,7 +188,10 @@ def test_wallet_show_pending_outgoing_uses_active_statuses_only(wallet_with_entr
     wallet_file.write_text(json.dumps(wallet_data, indent=2))
 
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    result = runner.invoke(wallet.app, ["show", label, "--source", "cached"])
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
+    monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
+    result = runner.invoke(wallet.app, ["show", label])
     assert result.exit_code == 0, result.output
     output_data = json.loads(result.output)
 
@@ -218,7 +219,10 @@ def test_wallet_show_pending_outgoing_counts_reserve_amount_once(wallet_with_ent
     wallet_file.write_text(json.dumps(wallet_data, indent=2))
 
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    result = runner.invoke(wallet.app, ["show", label, "--source", "cached"])
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
+    monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
+    result = runner.invoke(wallet.app, ["show", label])
     assert result.exit_code == 0, result.output
     output_data = json.loads(result.output)
 
