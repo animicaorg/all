@@ -27,7 +27,7 @@ This chain reset was performed on **2026-02-10**, introducing new genesis blocks
 | **Genesis Time** | `2026-02-10T04:22:00Z` |
 | **Genesis Version** | `reset-2026-02-10` |
 | **State Root** | `0xa8322f6bf020ae533a48d3df61909783805e823b1c9fd0b8945082566babb05c` |
-| **Beacon Seed** | `0x1b44ad163b01df0d2fc55ec542c03ffe10e42e9e5ebdf5e3c4cdaae4f0b6f1fb` |
+| **Beacon Seed** | `0x03e71a6bf35f45ec28ddc0e5e7dea5136e299a34cdf3eae200ee283209458636` |
 | **Seed Message** | `Animica Testnet Genesis 2026-02-10` |
 
 ### Devnet
@@ -39,7 +39,7 @@ This chain reset was performed on **2026-02-10**, introducing new genesis blocks
 | **Genesis Time** | `2026-02-10T04:22:00Z` |
 | **Genesis Version** | `reset-2026-02-10` |
 | **State Root** | `0xa8322f6bf020ae533a48d3df61909783805e823b1c9fd0b8945082566babb05c` |
-| **Beacon Seed** | `0x26dbe9c7ec0e9f69f45ad5d1e9e08e03deb34d9c18b8ef93bb6e16bc11d77aad` |
+| **Beacon Seed** | `0x790bf4599cdcadc4c49eed9d626e413b14b466eec8622ff04f3127b8e4021d8b` |
 | **Seed Message** | `Animica Devnet Genesis 2026-02-10` |
 
 ## What Changed
