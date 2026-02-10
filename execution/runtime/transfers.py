@@ -204,6 +204,20 @@ def _payload_sender_value(tx: Any, tx_env: Any) -> Any:
     return None
 
 
+def _extract_tx_nonce(tx: Any) -> Optional[int]:
+    unsigned = _get(tx, "unsigned")
+    nonce = _get(unsigned, "nonce") if unsigned is not None else None
+    if nonce is None:
+        nonce = _get(tx, "nonce", "n")
+    if nonce is None and isinstance(tx, Mapping):
+        body = tx.get("body")
+        if isinstance(body, Mapping):
+            nonce = body.get("nonce")
+    if nonce is None:
+        return None
+    return _as_int(nonce, default=0)
+
+
 # ------------------------------------------------------------------------------
 # State access (duck-typed)
 # ------------------------------------------------------------------------------
@@ -510,6 +524,18 @@ def apply_transfer(
     
     if len(to) != ADDRESS_LEN:
         raise ExecError(f"Recipient address must be {ADDRESS_LEN} bytes, got {len(to)}")
+
+    tx_nonce = _extract_tx_nonce(tx)
+    if tx_nonce is not None:
+        get_nonce = getattr(state, "get_nonce", None)
+        if callable(get_nonce):
+            expected_nonce = int(get_nonce(sender))
+            if int(tx_nonce) != expected_nonce:
+                raise ExecError(
+                    "nonce mismatch",
+                    code="NONCE_MISMATCH",
+                    data={"expected": expected_nonce, "got": int(tx_nonce)},
+                )
 
     # Extract transfer amount from tx (check multiple locations for compatibility)
     amount = _get(tx, "value", "amount")

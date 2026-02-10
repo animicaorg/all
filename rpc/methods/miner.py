@@ -5315,34 +5315,13 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             except Exception as e:
                 log.warning("Failed to decode accepted block for state execution", extra={"err": str(e)})
             else:
-                payout_bytes = None
-                if payout_address:
-                    try:
-                        payout_bytes = _as_bytes32_addr(payout_address)
-                    except Exception:
-                        payout_bytes = None
-                try:
-                    from execution.runtime.env import BlockEnv
-
-                    block_env = BlockEnv(
-                        height=block_obj.header.height,
-                        timestamp=block_obj.header.timestamp,
-                        coinbase=payout_bytes if payout_bytes is not None else _get_miner_address(),
-                        chain_id=block_obj.header.chainId,
-                    )
-                    receipts_dict = _execute_transactions(
-                        txs=list(block_obj.txs),
-                        state_db=ctx.state_db,
-                        block_env=block_env,
-                        logger=log,
-                    )
-                    _convert_receipts_dict_to_objects(receipts_dict)
-                except Exception as e:
-                    log.warning(
-                        "Failed to execute txs for submitted block",
-                        extra={"err": str(e)},
-                        exc_info=True,
-                    )
+                log.info(
+                    "Skipping post-import tx execution; state already applied by BlockImporter",
+                    extra={
+                        "height": block_obj.header.height,
+                        "block_hash": result.block_hash.hex() if result.block_hash else None,
+                    },
+                )
 
                 # Block rewards are now applied during block import in BlockImporter._apply_block_state
                 # No need to apply them again here (would cause double-crediting)
