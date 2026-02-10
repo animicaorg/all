@@ -13,6 +13,13 @@ from rpc.tests import new_test_client, rpc_call
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(scope="function")
+def client_and_cfg():
+    """Fixture to create a test client and configuration."""
+    client, cfg, app = new_test_client()
+    return client, cfg
+
+
 def _build_tx_with_dict_gaslimit(
     chain_id: int,
     gas_limit_dict: dict[str, int],
@@ -36,9 +43,8 @@ def _build_tx_with_dict_gaslimit(
     alg_id = ALG_ID[alg] if isinstance(alg, str) else alg
     sender_addr = kp.address
     
-    # Generate recipient address
-    to_pub_digest = sha3_256(b"recipient_gaslimit_dict_test")
-    to_addr = kp.address  # Send to self for simplicity
+    # Send to self for simplicity in this test
+    to_addr = kp.address
     
     # Convert addresses to 32-byte format
     sender_rec = decode_address(sender_addr)
