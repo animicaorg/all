@@ -18,6 +18,10 @@ methods. All amounts are integers in the smallest unit (e.g. wei-like).
 
 from __future__ import annotations
 
+import inspect
+import json
+import logging
+import os
 from typing import Any, Dict, Optional, Protocol
 
 from ..errors import ExecError
@@ -77,6 +81,26 @@ class NegativeAmount(ExecError):
 
 # Maximum safe balance value to prevent overflow (2^256 - 1)
 MAX_BALANCE = 2**256 - 1
+_log = logging.getLogger(__name__)
+_DEBUG_BALANCE_EVENTS: list[dict[str, Any]] = []
+
+
+def _is_debug_balance_enabled() -> bool:
+    return os.getenv("ANIMICA_DEBUG_BALANCE", "0") == "1"
+
+
+def _record_debug_balance_event(event: dict[str, Any]) -> None:
+    _DEBUG_BALANCE_EVENTS.append(event)
+
+
+def get_debug_balance_events(*, tx_hash: str | None = None) -> list[dict[str, Any]]:
+    if tx_hash is None:
+        return list(_DEBUG_BALANCE_EVENTS)
+    return [evt for evt in _DEBUG_BALANCE_EVENTS if evt.get("tx_hash") == tx_hash]
+
+
+def reset_debug_balance_events() -> None:
+    _DEBUG_BALANCE_EVENTS.clear()
 
 
 def _ensure_non_negative(amount: int) -> None:
@@ -110,25 +134,95 @@ def _safe_sub(a: int, b: int) -> int:
     return res
 
 
+def _mutate_balance(
+    state: BalanceAccess,
+    address: bytes,
+    delta: int,
+    *,
+    reason: str,
+    tx_hash: str | None,
+    height: int | None,
+    callsite: str | None = None,
+) -> int:
+    cur = state.get_balance(address)
+    if delta >= 0:
+        new = _safe_add(cur, delta)
+    else:
+        new = _safe_sub(cur, -delta)
+    state.set_balance(address, new)
+
+    if _is_debug_balance_enabled():
+        if callsite is None:
+            frame = inspect.stack()[1]
+            callsite = f"{frame.filename}:{frame.lineno}"
+        event = {
+            "tx_hash": tx_hash,
+            "height": height,
+            "address": address.hex(),
+            "delta": int(delta),
+            "reason": reason,
+            "callsite": callsite,
+        }
+        _record_debug_balance_event(event)
+        _log.info(
+            "BAL_MUT %s",
+            json.dumps(
+                {
+                    "tx": tx_hash,
+                    "h": height,
+                    "addr": address.hex(),
+                    "delta": int(delta),
+                    "reason": reason,
+                    "site": callsite,
+                },
+                separators=(",", ":"),
+            ),
+        )
+    return new
+
+
 # =============================================================================
 # Public balance operations
 # =============================================================================
 
 
-def credit(state: BalanceAccess, address: bytes, amount: int) -> int:
+def credit(
+    state: BalanceAccess,
+    address: bytes,
+    amount: int,
+    *,
+    reason: str = "CREDIT",
+    tx_hash: str | None = None,
+    height: int | None = None,
+    callsite: str | None = None,
+) -> int:
     """
     Increase `address` balance by `amount` and return the new balance.
     """
     _ensure_non_negative(amount)
     if amount == 0:
         return state.get_balance(address)
-    cur = state.get_balance(address)
-    new = _safe_add(cur, amount)
-    state.set_balance(address, new)
-    return new
+    return _mutate_balance(
+        state,
+        address,
+        amount,
+        reason=reason,
+        tx_hash=tx_hash,
+        height=height,
+        callsite=callsite,
+    )
 
 
-def debit(state: BalanceAccess, address: bytes, amount: int) -> int:
+def debit(
+    state: BalanceAccess,
+    address: bytes,
+    amount: int,
+    *,
+    reason: str = "DEBIT",
+    tx_hash: str | None = None,
+    height: int | None = None,
+    callsite: str | None = None,
+) -> int:
     """
     Decrease `address` balance by `amount` and return the new balance.
     Raises InsufficientBalance if the account cannot cover the debit.
@@ -136,10 +230,15 @@ def debit(state: BalanceAccess, address: bytes, amount: int) -> int:
     _ensure_non_negative(amount)
     if amount == 0:
         return state.get_balance(address)
-    cur = state.get_balance(address)
-    new = _safe_sub(cur, amount)
-    state.set_balance(address, new)
-    return new
+    return _mutate_balance(
+        state,
+        address,
+        -amount,
+        reason=reason,
+        tx_hash=tx_hash,
+        height=height,
+        callsite=callsite,
+    )
 
 
 def safe_transfer(
