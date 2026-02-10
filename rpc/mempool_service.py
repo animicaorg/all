@@ -116,31 +116,52 @@ def _tx_numeric_field_types(tx: Any) -> dict[str, dict[str, Any]]:
 
 
 
-def log_exception(trace_id: str, tx: Any, exc: Exception) -> None:
+def log_exception(trace_id: str, tx: Any, exc: Exception, *, field_hint: str | None = None, field_value: Any | None = None) -> None:
     """Log full traceback and useful locals snapshot for admission failures."""
     numeric_types = _tx_numeric_field_types(tx)
     context = _tx_context_fields(tx)
-    log.error(
-        "mempool exception trace_id=%s class=%s message=%s context=%s numeric_types=%s",
-        trace_id,
-        exc.__class__.__name__,
-        str(exc),
-        context,
-        numeric_types,
-        exc_info=True,
-    )
+    debug_tx = os.getenv("ANIMICA_DEBUG_TX", "0") == "1"
+    debug_mempool = os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1"
+    if field_hint is None and isinstance(exc, TypeError) and "int() argument" in str(exc):
+        for fname, info in numeric_types.items():
+            if info.get("type") == "dict":
+                field_hint = fname
+                field_value = info.get("value")
+                break
+    payload: dict[str, Any] = {
+        "trace_id": trace_id,
+        "error_class": exc.__class__.__name__,
+        "error_message": str(exc),
+        "context": context,
+    }
+    if field_hint is not None:
+        payload["int_conversion_field"] = field_hint
+    if field_value is not None:
+        payload["int_conversion_value_preview"] = repr(field_value)[:160]
+    if debug_tx:
+        payload["numeric_types"] = numeric_types
+    if debug_mempool or debug_tx:
+        log.error("mempool admission exception %s", json.dumps(payload, sort_keys=True, default=str), exc_info=True)
+    else:
+        log.error(
+            "mempool admission exception trace_id=%s class=%s message=%s",
+            trace_id,
+            exc.__class__.__name__,
+            str(exc),
+            exc_info=True,
+        )
 def _tx_context_fields(tx: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     try:
         nonce = _tx_nonce(tx)
         if nonce is not None:
-            out["nonce"] = int(nonce)
+            out["nonce"] = coerce_int("nonce", nonce)
     except Exception:
         pass
     try:
         cid = _tx_chain_id(tx)
         if cid is not None:
-            out["chain_id"] = int(cid)
+            out["chain_id"] = coerce_int("chain_id", cid)
     except Exception:
         pass
     body = tx.get("body") if isinstance(tx, dict) else None
@@ -1567,9 +1588,15 @@ class MempoolService:
                 except Exception:
                     pass
             
-            # Log the full exception for debugging
-            if norm_reason == "internal_error":
-                log_exception(norm_context.get("trace_id") or trace_id, tx, exc)
+            # Log the full exception for debugging and trace correlation
+            if norm_reason == "internal_error" or os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1":
+                log_exception(
+                    norm_context.get("trace_id") or trace_id,
+                    tx,
+                    exc,
+                    field_hint=norm_context.get("field"),
+                    field_value=norm_context.get("got_value_preview"),
+                )
             log.warning(
                 "MempoolService.submit_atomic: admission rejected, tx_hash=%s, reason=%s, trace_id=%s",
                 computed_hash,
