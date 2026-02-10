@@ -71,6 +71,7 @@ _NUMERIC_KIND = {
     0: "transfer",
     1: "deploy",
     2: "call",
+    3: "coinbase",  # Mining reward transaction (protocol-generated)
 }
 
 _ALIAS_KIND = {
@@ -81,15 +82,18 @@ _ALIAS_KIND = {
     "invoke": "call",
     "exec": "call",
     "call": "call",
+    "coinbase": "coinbase",
+    "reward": "coinbase",
 }
 
 
 def resolve_tx_kind(tx: Any) -> str:
     """
-    Determine the transaction kind: 'transfer' | 'deploy' | 'call'.
+    Determine the transaction kind: 'transfer' | 'deploy' | 'call' | 'coinbase'.
 
     Resolution order:
       1) Explicit field: kind / tx_kind / type / txType (string or numeric).
+         Also checks tx.unsigned.kind for nested Tx structure.
       2) Heuristics:
            - has code/init_code/bytecode → 'deploy'
            - to == None and has data/input → 'deploy'
@@ -98,6 +102,13 @@ def resolve_tx_kind(tx: Any) -> str:
       3) Fallback: 'transfer'
     """
     explicit = _get(tx, "kind", "tx_kind", "type", "txType")
+
+    # Also check nested structure: tx.unsigned.kind (for Tx dataclass)
+    if explicit is None:
+        unsigned = _get(tx, "unsigned")
+        if unsigned is not None:
+            explicit = _get(unsigned, "kind")
+
     if explicit is not None:
         # numeric → map; string → normalize
         if isinstance(explicit, int):
@@ -105,7 +116,7 @@ def resolve_tx_kind(tx: Any) -> str:
                 return _NUMERIC_KIND[explicit]
         else:
             k = str(explicit).strip().lower()
-            if k in ("transfer", "deploy", "call"):
+            if k in ("transfer", "deploy", "call", "coinbase"):
                 return k
             if k in _ALIAS_KIND:
                 return _ALIAS_KIND[k]
@@ -190,7 +201,9 @@ def dispatch(
     """
     kind = resolve_tx_kind(tx)
 
-    if kind == "transfer":
+    # Coinbase transactions are special transfers from ZERO_ADDRESS
+    # They should be handled by the transfer handler
+    if kind == "coinbase" or kind == "transfer":
         from . import transfers as _transfers
 
         if not hasattr(_transfers, "apply_transfer"):
