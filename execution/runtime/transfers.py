@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import OOG, ExecError, Revert
@@ -58,6 +59,21 @@ DEFAULT_INTRINSIC_TRANSFER = 21_000  # sane default; may be overridden by gas.ta
 ADDRESS_LEN = 32  # Animica uses 32-byte addresses (matches core/types/tx.py)
 
 log = logging.getLogger(__name__)
+
+
+def _debug_tx_balance_event(*, tx_hash: str | None, address: bytes, delta: int, reason: str, callsite: str) -> None:
+    if os.getenv("ANIMICA_DEBUG_TX", "0") != "1":
+        return
+    log.info(
+        "tx_balance_event",
+        extra={
+            "tx_hash": tx_hash,
+            "address": address.hex(),
+            "delta": int(delta),
+            "reason": reason,
+            "callsite": callsite,
+        },
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -526,6 +542,12 @@ def apply_transfer(
         raise ExecError(f"Recipient address must be {ADDRESS_LEN} bytes, got {len(to)}")
 
     tx_nonce = _extract_tx_nonce(tx)
+    tx_hash_value = _get(tx, "hash", "tx_hash")
+    tx_hash_hex = None
+    if isinstance(tx_hash_value, (bytes, bytearray)):
+        tx_hash_hex = "0x" + bytes(tx_hash_value).hex()
+    elif isinstance(tx_hash_value, str):
+        tx_hash_hex = tx_hash_value
     if tx_nonce is not None:
         get_nonce = getattr(state, "get_nonce", None)
         if callable(get_nonce):
@@ -632,6 +654,13 @@ def apply_transfer(
     # Regular transactions debit fees and value from sender
     if not is_coinbase:
         # Debit fees first (burn base, tip to coinbase)
+        _debug_tx_balance_event(
+            tx_hash=tx_hash_hex,
+            address=sender,
+            delta=-int(total_fee),
+            reason="BLOCK_APPLY_FEE",
+            callsite="execution.runtime.transfers.apply_transfer",
+        )
         _debit_balance(state, sender, total_fee)
 
         # Tip → coinbase
@@ -648,6 +677,13 @@ def apply_transfer(
 
         # Value transfer (skip if sending to self; fees already debited)
         if sender != to and amount > 0:
+            _debug_tx_balance_event(
+                tx_hash=tx_hash_hex,
+                address=sender,
+                delta=-int(amount),
+                reason="BLOCK_APPLY_VALUE",
+                callsite="execution.runtime.transfers.apply_transfer",
+            )
             _debit_balance(state, sender, amount)
             _credit_balance(state, to, amount)
     else:
