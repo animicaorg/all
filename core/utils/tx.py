@@ -22,6 +22,30 @@ class TxNormalizationError(ValueError):
         self.details = details or {}
 
 
+def _field_error(
+    *,
+    reason_code: str,
+    field: str,
+    message: str,
+    got_value: Any,
+    got_keys: list[str] | None = None,
+) -> TxNormalizationError:
+    preview = repr(got_value)
+    if len(preview) > 120:
+        preview = preview[:117] + "..."
+    details: dict[str, Any] = {
+        "reason_code": reason_code,
+        "field": field,
+        "received_type": type(got_value).__name__,
+        "got_type": type(got_value).__name__,
+        "got_value_preview": preview,
+    }
+    if got_keys is not None:
+        details["received_keys"] = got_keys
+        details["got_keys"] = got_keys
+    return TxNormalizationError(reason_code, message, details=details)
+
+
 def coerce_int(name: str, value: Any) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -29,46 +53,54 @@ def coerce_int(name: str, value: Any) -> int:
         return value
     if isinstance(value, (bytes, bytearray)):
         if len(value) == 0:
-            raise TxNormalizationError(
-                "bad_field_type",
-                f"{name} must be an integer",
-                details={"field": name, "received_type": type(value).__name__},
-            )
+            raise _field_error(reason_code="bad_field_type", field=name, message=f"{name} must be an integer", got_value=value)
         return int.from_bytes(bytes(value), byteorder="big", signed=False)
     if isinstance(value, str):
         text = value.strip()
         if not text:
-            raise TxNormalizationError(
-                "bad_field_type",
-                f"{name} must be an integer",
-                details={"field": name, "received_type": "str"},
-            )
+            raise _field_error(reason_code="bad_field_type", field=name, message=f"{name} must be an integer", got_value=value)
         try:
             return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
         except ValueError as exc:
-            raise TxNormalizationError(
-                "bad_field_type",
-                f"{name} must be an integer",
-                details={"field": name, "received_type": "str", "value": value},
-            ) from exc
+            raise _field_error(reason_code="bad_field_value", field=name, message=f"{name} must be an integer", got_value=value) from exc
     if isinstance(value, Mapping):
-        accepted_keys = [k for k in ("value", "amount", "nonce", name) if k in value]
+        accepted_keys = [k for k in ("value", "amount", "nonce", "n") if k in value]
         if len(accepted_keys) == 1:
+            if len(value) != 1:
+                raise _field_error(
+                    reason_code="bad_field_type",
+                    field=name,
+                    message=f"{name} dict wrapper must contain exactly one key",
+                    got_value=value,
+                    got_keys=sorted(str(k) for k in value.keys()),
+                )
             return coerce_int(name, value[accepted_keys[0]])
-        raise TxNormalizationError(
-            "bad_field_type",
-            f"{name} must be an integer",
-            details={
-                "field": name,
-                "received_type": "dict",
-                "received_keys": sorted(str(k) for k in value.keys()),
-            },
+        raise _field_error(
+            reason_code="bad_field_type",
+            field=name,
+            message=f"{name} must be an integer",
+            got_value=value,
+            got_keys=sorted(str(k) for k in value.keys()),
         )
-    raise TxNormalizationError(
-        "bad_field_type",
-        f"{name} must be an integer",
-        details={"field": name, "received_type": type(value).__name__},
-    )
+    raise _field_error(reason_code="bad_field_type", field=name, message=f"{name} must be an integer", got_value=value)
+
+
+def coerce_hex_int(name: str, value: Any) -> int:
+    return coerce_int(name, value)
+
+
+def coerce_u64(name: str, value: Any) -> int:
+    parsed = coerce_int(name, value)
+    if parsed < 0 or parsed > ((1 << 64) - 1):
+        raise _field_error(reason_code="bad_field_value", field=name, message=f"{name} must fit in u64", got_value=value)
+    return parsed
+
+
+def coerce_u256(name: str, value: Any) -> int:
+    parsed = coerce_int(name, value)
+    if parsed < 0 or parsed > ((1 << 256) - 1):
+        raise _field_error(reason_code="bad_field_value", field=name, message=f"{name} must fit in u256", got_value=value)
+    return parsed
 
 
 def _coerce_int(name: str, value: Any) -> int:
