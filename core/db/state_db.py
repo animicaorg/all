@@ -321,7 +321,8 @@ class StateDB:
             batch: Optional batch for atomic writes
         """
         k = _k_applied_tx(tx_hash)
-        v = cbor_dumps({"height": int(height)})
+        # Store height directly as CBOR integer
+        v = cbor_dumps(int(height))
         if batch is None:
             self.kv.put(k, v)
         else:
@@ -341,8 +342,8 @@ class StateDB:
         v = self.kv.get(k)
         if v is None:
             return None
-        data = cbor_loads(v)
-        return int(data.get("height", 0)) if isinstance(data, dict) else None
+        # Height is stored as CBOR integer
+        return int(cbor_loads(v))
 
     # --- Snapshot ---
 
