@@ -3316,5 +3316,115 @@ def p2p_config() -> None:
 app.add_typer(p2p_app, name="p2p")
 
 
+@app.command(name="reset")
+def reset(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="Network to reset (defaults to current network)", envvar="ANIMICA_NETWORK"
+    ),
+    hard: bool = typer.Option(False, "--hard", help="Hard reset: delete all chain data and reset to genesis"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """
+    Reset chain state to genesis.
+    
+    WARNING: This will delete all blockchain data and reset to a fresh genesis state.
+    Use --hard for a complete reset including DBs.
+    
+    Example:
+        animica node reset --hard --yes
+    """
+    net_cfg = load_network_config(network)
+    db_path = _db_path(net_cfg)
+    data_dir = Path(net_cfg.data_dir)
+    
+    typer.secho("\n⚠️  CHAIN RESET WARNING ⚠️", fg=typer.colors.YELLOW, bold=True)
+    typer.echo(f"Network: {net_cfg.name}")
+    typer.echo(f"Data dir: {data_dir}")
+    typer.echo(f"DB path: {db_path}")
+    
+    if hard:
+        typer.echo("\n🔥 HARD RESET will delete:")
+        typer.echo(f"  - Chain database: {db_path}")
+        typer.echo(f"  - All blocks and transactions")
+        typer.echo(f"  - All state data")
+        typer.echo(f"  - AICF pool state")
+        typer.echo("\n⚠️  This action CANNOT be undone!")
+    else:
+        typer.echo("\nThis will reset the chain to genesis (use --hard to also delete DB)")
+    
+    if not confirm:
+        proceed = typer.confirm("\nAre you sure you want to proceed?")
+        if not proceed:
+            typer.echo("❌ Reset cancelled.")
+            raise typer.Exit(0)
+    
+    # Stop node if running
+    typer.echo("\n📍 Stopping node if running...")
+    try:
+        pid_file = _resolve_pid_file()
+        pids = _parse_pid_file(pid_file)
+        node_pid = pids.get("node")
+        
+        if node_pid and _pid_is_running(node_pid):
+            typer.echo(f"   Stopping node process (PID {node_pid})...")
+            _terminate_process(node_pid)
+            time.sleep(2)  # Give it time to shutdown cleanly
+    except Exception as e:
+        typer.echo(f"   ⚠️  Could not stop node: {e}")
+    
+    # Delete database if hard reset
+    if hard:
+        typer.echo(f"\n🗑️  Deleting chain database...")
+        try:
+            if db_path.exists():
+                if db_path.is_file():
+                    db_path.unlink()
+                    typer.echo(f"   ✅ Deleted: {db_path}")
+                elif db_path.is_dir():
+                    shutil.rmtree(db_path)
+                    typer.echo(f"   ✅ Deleted directory: {db_path}")
+            else:
+                typer.echo(f"   ℹ️  Database does not exist: {db_path}")
+            
+            # Also delete any related files (WAL, journals, etc.)
+            for related in db_path.parent.glob(f"{db_path.name}*"):
+                if related.exists() and related != db_path:
+                    if related.is_file():
+                        related.unlink()
+                        typer.echo(f"   ✅ Deleted related file: {related.name}")
+                    elif related.is_dir():
+                        shutil.rmtree(related)
+                        typer.echo(f"   ✅ Deleted related directory: {related.name}")
+        
+        except Exception as e:
+            typer.echo(f"   ❌ Error deleting database: {e}")
+            raise typer.Exit(1)
+    
+    typer.secho("\n✅ Chain reset complete!", fg=typer.colors.GREEN, bold=True)
+    typer.echo("\nNext steps:")
+    typer.echo("  1. Start node: animica node up")
+    typer.echo("  2. Node will initialize with new genesis")
+    typer.echo("  3. AICF pool starts at balance=0")
+    typer.echo("  4. Use 'animica aicf status' to check AICF state\n")
+
+
+def _db_path(net_cfg) -> Path:
+    """Get database path for a network configuration."""
+    data_dir = Path(net_cfg.data_dir)
+    # Common DB locations
+    candidates = [
+        data_dir / "animica.db",
+        data_dir / f"chain-{net_cfg.chain_id}" / "animica.db",
+        data_dir / "db" / "animica.db",
+    ]
+    
+    # Return first existing, or default to first candidate
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    
+    return candidates[0]
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()
