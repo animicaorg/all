@@ -1,0 +1,117 @@
+/* Wallet Status Styles */
+
+.wallet-status {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+.wallet-status.error {
+  background: #fee;
+  border-color: #fcc;
+}
+
+.wallet-status.connected {
+  background: #efe;
+  border-color: #cfc;
+}
+
+.status-icon {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.status-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.status-subtitle {
+  font-size: 12px;
+  color: #666;
+}
+
+.connect-button {
+  width: 100%;
+  padding: 10px 20px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.connect-button:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.connect-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.wallet-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.account-icon {
+  font-size: 20px;
+}
+
+.account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.account-address {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.network-name {
+  font-size: 11px;
+  color: #666;
+}
+
+.disconnect-button {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.disconnect-button:hover {
+  background: #fff;
+  border-color: #999;
+  color: #333;
+}
+
+.error-message {
+  margin-top: 8px;
+  padding: 8px;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #c00;
+}
