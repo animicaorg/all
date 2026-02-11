@@ -158,17 +158,39 @@ class AicfPoolState:
     
     @staticmethod
     def from_dict(d: Mapping[str, Any]) -> AicfPoolState:
-        """Import from dict"""
+        """Import from dict with validation"""
+        # Validate and convert miner_credits
+        miner_credits = {}
+        for k, v in d.get("miner_credits", {}).items():
+            try:
+                miner_credits[bytes.fromhex(k)] = v
+            except (ValueError, AttributeError) as e:
+                log.warning(f"Invalid miner_credits key '{k}': {e}")
+                continue
+        
+        # Validate and convert epoch_proofs
+        epoch_proofs = {}
+        for epoch, miners in d.get("epoch_proofs", {}).items():
+            try:
+                epoch_int = int(epoch)
+                epoch_proofs[epoch_int] = {}
+                for k, v in miners.items():
+                    try:
+                        epoch_proofs[epoch_int][bytes.fromhex(k)] = v
+                    except (ValueError, AttributeError) as e:
+                        log.warning(f"Invalid epoch_proofs miner key '{k}' in epoch {epoch}: {e}")
+                        continue
+            except (ValueError, TypeError) as e:
+                log.warning(f"Invalid epoch key '{epoch}': {e}")
+                continue
+        
         return AicfPoolState(
             balance=int(d.get("balance", 0)),
             cap=int(d.get("cap", 0)),
             issued_total=int(d.get("issued_total", 0)),
             spent_total=int(d.get("spent_total", 0)),
-            miner_credits={bytes.fromhex(k): v for k, v in d.get("miner_credits", {}).items()},
-            epoch_proofs={
-                int(epoch): {bytes.fromhex(k): v for k, v in miners.items()}
-                for epoch, miners in d.get("epoch_proofs", {}).items()
-            },
+            miner_credits=miner_credits,
+            epoch_proofs=epoch_proofs,
         )
 
 

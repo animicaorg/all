@@ -81,7 +81,7 @@ async def get_pool_state(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]
 
 
 @method("aicf.getParams", desc="Get AICF parameters")
-async def get_params(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def get_params(deps: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.getParams() -> AICF parameters
     
@@ -97,7 +97,7 @@ async def get_params(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     - fee_routing_pct: percentage of fees routed to AICF pool
     """
     # Get chain ID from state or params
-    chain_id = getattr(d, "chain_id", 1)
+    chain_id = getattr(deps, "chain_id", 1)
     
     try:
         # Load network-specific params from params.yaml
@@ -132,7 +132,7 @@ async def get_params(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @method("aicf.submitProof", desc="Submit AICF proof for verification")
-async def submit_proof(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def submit_proof(deps: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.submitProof(miner_addr, work_units, proof_data, timestamp, nonce) -> result
     
@@ -186,8 +186,8 @@ async def submit_proof(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams(f"Invalid proof data: {e}")
     
     # Get current height and chain params
-    state = StateDB(d.kv)
-    chain_id = getattr(d, "chain_id", 1)
+    state = StateDB(deps.kv)
+    chain_id = getattr(deps, "chain_id", 1)
     
     try:
         # Load network-specific params from params.yaml
@@ -211,9 +211,9 @@ async def submit_proof(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     pool_state = AicfPoolState.from_dict(pool_data)
     
     # Get current height from deps or block db
-    current_height = getattr(d, "height", 0)
-    if hasattr(d, "blocks") and d.blocks:
-        head_height, _ = d.blocks.get_head()
+    current_height = getattr(deps, "height", 0)
+    if hasattr(deps, "blocks") and deps.blocks:
+        head_height, _ = deps.blocks.get_head()
         current_height = head_height if head_height is not None else 0
     
     # Verify proof

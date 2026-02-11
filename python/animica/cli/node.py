@@ -3316,6 +3316,10 @@ def p2p_config() -> None:
 app.add_typer(p2p_app, name="p2p")
 
 
+# Node shutdown grace period
+NODE_SHUTDOWN_GRACE_PERIOD_SECONDS = 2
+
+
 @app.command(name="reset")
 def reset(
     network: Optional[str] = typer.Option(
@@ -3368,7 +3372,7 @@ def reset(
         if node_pid and _pid_is_running(node_pid):
             typer.echo(f"   Stopping node process (PID {node_pid})...")
             _terminate_process(node_pid)
-            time.sleep(2)  # Give it time to shutdown cleanly
+            time.sleep(NODE_SHUTDOWN_GRACE_PERIOD_SECONDS)  # Give it time to shutdown cleanly
     except Exception as e:
         typer.echo(f"   ⚠️  Could not stop node: {e}")
     
