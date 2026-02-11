@@ -7,7 +7,9 @@ packages:
   - wallet-extension
   - wallet
   - apps/miner-dashboard
+  - apps/dapp-ide
   - explorer2
   - explorer2/*
   - services/exchange-api
   - apps/admin-web
+  - apps/dapp-ide

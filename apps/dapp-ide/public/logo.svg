@@ -1,0 +1,20 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#007bff" opacity="0.1"/>
+  
+  <!-- Code brackets -->
+  <path d="M 60 60 L 40 100 L 60 140" stroke="#007bff" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <path d="M 140 60 L 160 100 L 140 140" stroke="#007bff" stroke-width="8" stroke-linecap="round" fill="none"/>
+  
+  <!-- Python symbol (simplified) -->
+  <circle cx="85" cy="100" r="15" fill="#FFD43B"/>
+  <circle cx="115" cy="100" r="15" fill="#306998"/>
+  
+  <!-- Sparkles for "smart" -->
+  <path d="M 100 40 L 105 50 L 115 55 L 105 60 L 100 70 L 95 60 L 85 55 L 95 50 Z" fill="#FFD43B"/>
+  <path d="M 170 80 L 173 85 L 178 88 L 173 91 L 170 96 L 167 91 L 162 88 L 167 85 Z" fill="#FFD43B"/>
+  <path d="M 30 120 L 33 125 L 38 128 L 33 131 L 30 136 L 27 131 L 22 128 L 27 125 Z" fill="#FFD43B"/>
+  
+  <!-- Text -->
+  <text x="100" y="175" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#007bff">DAPP IDE</text>
+</svg>
