@@ -1,0 +1,158 @@
+name: PQ Policy Check (NO LIBOQS)
+
+on:
+  push:
+    branches: [ main, develop, 'copilot/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  check-no-liboqs:
+    name: Enforce NO LIBOQS Policy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check for liboqs in package.json files
+        run: |
+          echo "🔍 Checking for liboqs in package.json files..."
+          if find . -name "package.json" -type f -exec grep -l "liboqs\|\"oqs\"\|open-quantum-safe\|pqclean" {} \;; then
+            echo "❌ ERROR: liboqs or related PQ libraries found in package.json!"
+            echo ""
+            echo "Matches:"
+            find . -name "package.json" -type f -exec grep -Hn "liboqs\|\"oqs\"\|open-quantum-safe\|pqclean" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            exit 1
+          fi
+          echo "✅ No liboqs found in package.json files"
+      
+      - name: Check for liboqs in requirements.txt files
+        run: |
+          echo "🔍 Checking for liboqs in requirements.txt files..."
+          if find . -name "requirements*.txt" -type f -exec grep -l "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;; then
+            echo "❌ ERROR: liboqs or related PQ libraries found in requirements.txt!"
+            echo ""
+            echo "Matches:"
+            find . -name "requirements*.txt" -type f -exec grep -Hn "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            exit 1
+          fi
+          echo "✅ No liboqs found in requirements.txt files"
+      
+      - name: Check for liboqs in Cargo.toml files
+        run: |
+          echo "🔍 Checking for liboqs in Cargo.toml files..."
+          if find . -name "Cargo.toml" -type f -exec grep -l "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;; then
+            echo "❌ ERROR: liboqs or related PQ libraries found in Cargo.toml!"
+            echo ""
+            echo "Matches:"
+            find . -name "Cargo.toml" -type f -exec grep -Hn "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            exit 1
+          fi
+          echo "✅ No liboqs found in Cargo.toml files"
+      
+      - name: Check for liboqs in Dockerfiles
+        run: |
+          echo "🔍 Checking for liboqs in Dockerfiles..."
+          if find . -name "Dockerfile*" -type f -exec grep -l "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;; then
+            echo "❌ ERROR: liboqs or related PQ libraries found in Dockerfiles!"
+            echo ""
+            echo "Matches:"
+            find . -name "Dockerfile*" -type f -exec grep -Hn "liboqs\|oqs\|open-quantum-safe\|pqclean" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            exit 1
+          fi
+          echo "✅ No liboqs found in Dockerfiles"
+      
+      - name: Check for liboqs imports in Python files
+        run: |
+          echo "🔍 Checking for liboqs imports in Python files..."
+          # Exclude vendored/legacy code and allow comments
+          if find . -name "*.py" -type f \
+            ! -path "*/\.git/*" \
+            ! -path "*/node_modules/*" \
+            ! -path "*/\.deps/*" \
+            ! -path "*/__pycache__/*" \
+            -exec grep -l "^import oqs\|^from oqs\|import liboqs\|from liboqs" {} \;; then
+            echo "❌ ERROR: liboqs imports found in Python files!"
+            echo ""
+            echo "Matches:"
+            find . -name "*.py" -type f \
+              ! -path "*/\.git/*" \
+              ! -path "*/node_modules/*" \
+              ! -path "*/\.deps/*" \
+              ! -path "*/__pycache__/*" \
+              -exec grep -Hn "^import oqs\|^from oqs\|import liboqs\|from liboqs" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            echo "Use python/animica/pq/ or pq/py/ instead."
+            exit 1
+          fi
+          echo "✅ No liboqs imports found in Python files"
+      
+      - name: Check for liboqs imports in TypeScript/JavaScript files
+        run: |
+          echo "🔍 Checking for liboqs imports in TypeScript/JavaScript files..."
+          if find . \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" -o -name "*.jsx" \) -type f \
+            ! -path "*/\.git/*" \
+            ! -path "*/node_modules/*" \
+            ! -path "*/dist/*" \
+            ! -path "*/build/*" \
+            -exec grep -l "from ['\"].*liboqs\|require(.*liboqs\|from ['\"].*oqs['\"]" {} \;; then
+            echo "❌ ERROR: liboqs imports found in TypeScript/JavaScript files!"
+            echo ""
+            echo "Matches:"
+            find . \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" -o -name "*.jsx" \) -type f \
+              ! -path "*/\.git/*" \
+              ! -path "*/node_modules/*" \
+              ! -path "*/dist/*" \
+              ! -path "*/build/*" \
+              -exec grep -Hn "from ['\"].*liboqs\|require(.*liboqs\|from ['\"].*oqs['\"]" {} \;
+            echo ""
+            echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+            echo "Use @animica/crypto instead."
+            exit 1
+          fi
+          echo "✅ No liboqs imports found in TypeScript/JavaScript files"
+      
+      - name: Verify @animica/crypto has no liboqs dependencies
+        run: |
+          echo "🔍 Verifying @animica/crypto package.json..."
+          if [ -f "packages/animica-crypto/package.json" ]; then
+            if grep -q "liboqs\|\"oqs\"\|open-quantum-safe\|pqclean" packages/animica-crypto/package.json; then
+              echo "❌ ERROR: @animica/crypto has forbidden dependencies!"
+              echo ""
+              grep -Hn "liboqs\|\"oqs\"\|open-quantum-safe\|pqclean" packages/animica-crypto/package.json
+              echo ""
+              echo "See docs/PQ_POLICY.md for the NO LIBOQS policy."
+              exit 1
+            fi
+            echo "✅ @animica/crypto is clean"
+          else
+            echo "⚠️  @animica/crypto not found (may be in progress)"
+          fi
+      
+      - name: Policy check summary
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ PQ POLICY CHECK PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "No liboqs or related PQ libraries detected."
+          echo ""
+          echo "Animica uses ONLY custom PQ implementations from:"
+          echo "  - python/animica/pq/"
+          echo "  - python/animica/_vendor/dilithium_py/"
+          echo "  - python/animica/_vendor/kyber_py/"
+          echo "  - packages/animica-crypto/"
+          echo ""
+          echo "See docs/PQ_POLICY.md for more information."
+          echo ""
