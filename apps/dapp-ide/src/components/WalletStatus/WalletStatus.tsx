@@ -1,66 +1,85 @@
-import { useState, useEffect } from "react";
+/**
+ * Wallet Status Component
+ * Displays connection status and provides connect/disconnect functionality
+ */
+
+import { useWallet } from "../../animica/wallet/adapter";
 
 export default function WalletStatus() {
-  const [connected, setConnected] = useState(false);
-  const [account, setAccount] = useState<string | null>(null);
-  const [chainId, setChainId] = useState<number | null>(null);
+  const {
+    isAvailable,
+    isConnected,
+    isConnecting,
+    accounts,
+    chainId,
+    error,
+    connect,
+    disconnect,
+  } = useWallet();
 
-  useEffect(() => {
-    checkWalletConnection();
-  }, []);
+  const formatAddress = (address: string) => {
+    if (!address) return "";
+    return `${address.slice(0, 10)}...${address.slice(-8)}`;
+  };
 
-  const checkWalletConnection = async () => {
-    if (typeof window !== "undefined" && (window as any).animica) {
-      try {
-        const accounts = await (window as any).animica.animica_accounts();
-        if (accounts && accounts.length > 0) {
-          setConnected(true);
-          setAccount(accounts[0]);
-          const chain = await (window as any).animica.animica_chainId();
-          setChainId(chain);
-        }
-      } catch (error) {
-        console.error("Failed to check wallet connection:", error);
-      }
+  const getNetworkName = (id: number | null) => {
+    if (id === null) return "Unknown";
+    switch (id) {
+      case 1:
+        return "Mainnet";
+      case 1337:
+        return "Local";
+      default:
+        return `Chain ${id}`;
     }
   };
 
-  const handleConnect = async () => {
-    if (typeof window !== "undefined" && (window as any).animica) {
-      try {
-        const accounts = await (window as any).animica.animica_requestAccounts();
-        if (accounts && accounts.length > 0) {
-          setConnected(true);
-          setAccount(accounts[0]);
-          const chain = await (window as any).animica.animica_chainId();
-          setChainId(chain);
-        }
-      } catch (error) {
-        console.error("Failed to connect wallet:", error);
-      }
-    } else {
-      alert("Animica wallet extension not detected. Please install it first.");
-    }
-  };
-
-  if (!connected) {
+  if (!isAvailable) {
     return (
-      <button onClick={handleConnect}>
-        Connect Wallet
-      </button>
+      <div className="wallet-status error">
+        <div className="status-icon">⚠️</div>
+        <div className="status-text">
+          <div className="status-title">Wallet Not Found</div>
+          <div className="status-subtitle">
+            Please install the Animica wallet extension
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="wallet-status disconnected">
+        <button
+          onClick={connect}
+          disabled={isConnecting}
+          className="connect-button"
+        >
+          {isConnecting ? "Connecting..." : "Connect Wallet"}
+        </button>
+        {error && <div className="error-message">{error}</div>}
+      </div>
     );
   }
 
   return (
-    <div style={{ 
-      display: "flex", 
-      alignItems: "center", 
-      gap: "0.5rem",
-      fontSize: "0.9rem"
-    }}>
-      <span>🟢</span>
-      <span>{account?.slice(0, 6)}...{account?.slice(-4)}</span>
-      {chainId && <span style={{ color: "#666" }}>Chain: {chainId}</span>}
+    <div className="wallet-status connected">
+      <div className="wallet-info">
+        <div className="account-info">
+          <div className="account-icon">👤</div>
+          <div className="account-details">
+            <div className="account-address" title={accounts[0]}>
+              {formatAddress(accounts[0])}
+            </div>
+            <div className="network-name">{getNetworkName(chainId)}</div>
+          </div>
+        </div>
+        <button onClick={disconnect} className="disconnect-button" title="Disconnect">
+          ✕
+        </button>
+      </div>
+      {error && <div className="error-message">{error}</div>}
     </div>
   );
 }
