@@ -50,11 +50,44 @@ async function getDB(): Promise<IDBPDatabase<DappIDEDB>> {
 }
 
 /**
+ * Create a new project
+ */
+export async function createProject(project: Omit<Project, "id">): Promise<string> {
+  const db = await getDB();
+  const id = crypto.randomUUID();
+  const newProject: Project = {
+    ...project,
+    id,
+  };
+  await db.put("projects", newProject);
+  return id;
+}
+
+/**
  * Save a project
  */
 export async function saveProject(project: Project): Promise<void> {
   const db = await getDB();
   await db.put("projects", project);
+}
+
+/**
+ * Update a project
+ */
+export async function updateProject(id: string, updates: Partial<Project>): Promise<void> {
+  const db = await getDB();
+  const existing = await db.get("projects", id);
+  if (!existing) {
+    throw new Error(`Project ${id} not found`);
+  }
+  
+  const updated = {
+    ...existing,
+    ...updates,
+    id,
+  };
+  
+  await db.put("projects", updated);
 }
 
 /**
@@ -105,50 +138,4 @@ export async function getArtifact(
 ): Promise<CompiledArtifact | undefined> {
   const db = await getDB();
   return db.get("artifacts", projectId);
-}
-
-/**
- * Create a new project
- */
-export function createProject(name: string, description?: string): Project {
-  const now = Date.now();
-  return {
-    id: `project-${now}-${Math.random().toString(36).substr(2, 9)}`,
-    name,
-    description: description || "",
-    createdAt: now,
-    updatedAt: now,
-    files: [
-      {
-        path: "src/main.py",
-        content: "# Write your contract here\n",
-        type: "python",
-        lastModified: now,
-      },
-      {
-        path: "manifest.json",
-        content: JSON.stringify(
-          {
-            manifestVersion: "1.0.0",
-            encoding: "animica-manifest/1",
-            package: {
-              name: name.toLowerCase().replace(/\s+/g, "-"),
-              version: "0.1.0",
-              description: description || "",
-            },
-            target: {
-              vm: "python",
-              vmVersion: "1.0.0",
-              abiVersion: "1.0.0",
-            },
-            entrypoint: "src/main.py",
-          },
-          null,
-          2
-        ),
-        type: "json",
-        lastModified: now,
-      },
-    ],
-  };
 }
