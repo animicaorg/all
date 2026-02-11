@@ -188,19 +188,33 @@ function wrapCAbi(
 /**
  * Try to load Dilithium3 WASM. Returns null if unavailable or malformed.
  * Higher layers should feature-gate and/or use dev fallback paths.
+ * 
+ * UPDATED: First attempts WASM, then falls back to TypeScript implementation.
  */
 export async function loadDilithium3(): Promise<DilithiumBindings | null> {
+  // Try WASM first
   const inst = await instantiateWasm(dilithiumUrl);
-  if (!inst) return null;
-  const ex = inst.exports as unknown as LowLevelExports;
-  if (!hasCAbi(ex)) {
-    if (DEBUG) console.warn('[pq/wasm] Dilithium3 exports missing expected C ABI, falling back');
-    return null;
+  if (inst) {
+    const ex = inst.exports as unknown as LowLevelExports;
+    if (hasCAbi(ex)) {
+      try {
+        return wrapCAbi(ex as Required<LowLevelExports>, 'Dilithium3') as DilithiumBindings;
+      } catch (err) {
+        if (DEBUG) console.warn('[pq/wasm] Dilithium3 wrap error', err);
+      }
+    } else {
+      if (DEBUG) console.warn('[pq/wasm] Dilithium3 exports missing expected C ABI, falling back');
+    }
   }
+  
+  // Fall back to TypeScript implementation
   try {
-    return wrapCAbi(ex as Required<LowLevelExports>, 'Dilithium3') as DilithiumBindings;
+    const { createBackend } = await import('../dilithium3-ts');
+    const backend = createBackend();
+    if (DEBUG) console.log('[pq/wasm] Using TypeScript Dilithium3 implementation');
+    return backend as DilithiumBindings;
   } catch (err) {
-    if (DEBUG) console.warn('[pq/wasm] Dilithium3 wrap error', err);
+    if (DEBUG) console.warn('[pq/wasm] Failed to load TypeScript Dilithium3', err);
     return null;
   }
 }
