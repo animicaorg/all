@@ -1,0 +1,61 @@
+{
+  "name": "@animica/crypto",
+  "version": "0.1.0",
+  "description": "Animica custom post-quantum cryptography for browser and Node.js - NO liboqs",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "animica",
+    "post-quantum",
+    "dilithium",
+    "sphincs",
+    "cryptography",
+    "blockchain",
+    "no-liboqs"
+  ],
+  "author": "Animica Team",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/hashes": "^1.4.0",
+    "bech32": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vitest/coverage-v8": "^1.2.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/animicaorg/all.git",
+    "directory": "packages/animica-crypto"
+  },
+  "bugs": {
+    "url": "https://github.com/animicaorg/all/issues"
+  },
+  "homepage": "https://github.com/animicaorg/all/tree/main/packages/animica-crypto#readme"
+}
