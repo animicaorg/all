@@ -27,13 +27,24 @@ networks:
     name: "Animica Mainnet"
     symbol: "ANM"
     decimals: 9                # 1 ANM = 1_000_000_000 nANM
-    genesis_time_utc: "2026-01-27T00:00:00Z"
+    genesis_time_utc: "2026-02-11T00:00:00Z"
     # Addresses below are placeholders; final values are set at genesis build
     system_addresses:
       treasury: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       aicf_treasury: "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1foundationxxxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    # AICF (AI Compute Fund) pool parameters
+    aicf_pool:
+      enabled: true
+      cap_anm: 119000000.0       # 119M ANM cap (earned via AICF mining, not premined)
+      reward_per_proof_anm: 10.0 # 10 ANM per accepted AICF proof
+      max_proofs_per_block: 10   # Rate limiting
+      max_proofs_per_miner_per_epoch: 1000
+      epoch_blocks: 1440         # ~5 days at 5min blocks
+      min_work_difficulty: 20    # Minimum work units required for valid proof
+      verification_timeout_ms: 5000
+      fee_routing_pct: 100       # % of contract fees routed to AICF pool
     monetary:
       premine:
         total_anm: 81000000.0   # ANM (human units)
@@ -155,6 +166,17 @@ networks:
       aicf_treasury: "anim1taicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1tfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1tcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    # AICF (AI Compute Fund) pool parameters
+    aicf_pool:
+      enabled: true
+      cap_anm: 10000000.0        # 10M ANM cap for testnet
+      reward_per_proof_anm: 5.0  # 5 ANM per accepted AICF proof
+      max_proofs_per_block: 20
+      max_proofs_per_miner_per_epoch: 2000
+      epoch_blocks: 720          # ~2.5 days
+      min_work_difficulty: 15
+      verification_timeout_ms: 5000
+      fee_routing_pct: 100
     monetary:
       premine:
         total_anm: 1250000.0
@@ -229,6 +251,17 @@ networks:
       aicf_treasury: "anim1daicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1dfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1dcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    # AICF (AI Compute Fund) pool parameters
+    aicf_pool:
+      enabled: true
+      cap_anm: 1000000.0         # 1M ANM cap for devnet
+      reward_per_proof_anm: 1.0  # 1 ANM per accepted AICF proof
+      max_proofs_per_block: 50
+      max_proofs_per_miner_per_epoch: 5000
+      epoch_blocks: 144          # ~12 hours
+      min_work_difficulty: 10    # Lower difficulty for testing
+      verification_timeout_ms: 5000
+      fee_routing_pct: 100
     monetary:
       premine:
         total_anm: 1250000.0

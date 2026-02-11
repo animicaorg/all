@@ -256,6 +256,40 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
             state.set_balance(addr_bytes, bal)
 
 
+def _init_aicf_pool_state(state: StateDB, params: ChainParams) -> None:
+    """
+    Initialize AICF pool state at genesis (starts at 0, not premined).
+    
+    The AICF pool is a protocol-level accounting object that:
+    - Starts with balance = 0
+    - Has a cap (e.g., 119M ANM for mainnet)
+    - Fills via AICF mining (not premine)
+    """
+    # Get AICF parameters from chain params
+    aicf_config = params.get("aicf_pool", {})
+    
+    if not aicf_config.get("enabled", False):
+        # AICF pool not enabled for this network
+        return
+    
+    # Cap in base units (nANM)
+    cap_anm = float(aicf_config.get("cap_anm", 0))
+    cap_base_units = int(cap_anm * 1_000_000_000)  # 1 ANM = 1B nANM
+    
+    # Initialize pool state at 0 (not premined)
+    pool_state = {
+        "balance": 0,
+        "cap": cap_base_units,
+        "issued_total": 0,
+        "spent_total": 0,
+        "miner_credits": {},  # miner_addr_hex -> credits
+        "epoch_proofs": {},  # epoch -> miner_addr_hex -> count
+    }
+    
+    # Store in state DB
+    state.set_aicf_pool_state(pool_state)
+
+
 # -------------------------
 # Header/Block builders
 # -------------------------
@@ -421,6 +455,13 @@ def load_genesis(
             import logging
             logging.info(f"[genesis] Seeding state DB with {len(genesis['alloc'])} alloc entries")
         _init_state_from_alloc(state, genesis["alloc"])
+        
+        # Initialize AICF pool state (starts at 0, not premined)
+        _init_aicf_pool_state(state, params)
+        if log:
+            import logging
+            logging.info(f"[genesis] Initialized AICF pool state")
+        
         if log:
             # Verify a sample entry was written
             if genesis["alloc"]:
@@ -573,6 +614,14 @@ def load_and_init_genesis(
         import logging
         logging.info(f"[genesis] Writing {len(genesis['alloc'])} alloc entries to state DB")
     _init_state_from_alloc(state, genesis["alloc"])
+    
+    # Initialize AICF pool state (starts at 0, not premined)
+    from core.types.params import load_chain_params
+    params = load_chain_params(chain_id=int(genesis["chainId"]))
+    _init_aicf_pool_state(state, params)
+    if log:
+        import logging
+        logging.info(f"[genesis] Initialized AICF pool state")
     
     if log:
         # Verify a sample account was written correctly

@@ -52,6 +52,7 @@ PFX_ACC = b"\x01"
 PFX_CODE = b"\x02"
 PFX_STO = b"\x03"
 PFX_APPLIED_TX = b"\x04"  # New prefix for tx idempotency tracking
+PFX_SYSTEM = b"\x05"  # System state (AICF pool, etc.)
 
 
 def _assert_confirmed_balance_chokepoint() -> None:
@@ -362,6 +363,37 @@ class StateDB:
         if isinstance(loaded, dict):
             return int(loaded.get("included_height", 0))
         return int(loaded)
+
+    # --- System State (AICF pool, etc.) ---
+
+    def get_aicf_pool_state(self) -> Optional[Dict[str, Any]]:
+        """
+        Get AICF pool state from system storage.
+        
+        Returns dict with: balance, cap, issued_total, spent_total, miner_credits, epoch_proofs
+        """
+        k = PFX_SYSTEM + b"aicf_pool"
+        v = self.kv.get(k)
+        if v is None:
+            return None
+        return cbor_loads(v)
+
+    def set_aicf_pool_state(
+        self, pool_state: Dict[str, Any], batch: Optional[Batch] = None
+    ) -> None:
+        """
+        Set AICF pool state in system storage.
+        
+        Args:
+            pool_state: Dict with balance, cap, issued_total, spent_total, etc.
+            batch: Optional batch for atomic writes
+        """
+        k = PFX_SYSTEM + b"aicf_pool"
+        v = cbor_dumps(pool_state)
+        if batch is None:
+            self.kv.put(k, v)
+        else:
+            batch.put(k, v)
 
     # --- Snapshot ---
 

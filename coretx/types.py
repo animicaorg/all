@@ -27,6 +27,7 @@ class TxKind(IntEnum):
     DEPLOY = 1
     CALL = 2
     COINBASE = 3
+    AICF_PROOF = 4  # AICF proof submission for mining rewards
 
 
 @dataclass(frozen=True)
