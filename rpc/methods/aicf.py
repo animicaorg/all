@@ -16,10 +16,8 @@ from typing import Any, Dict, Optional
 
 from core.aicf_pool import AicfPoolState, AicfProof, apply_aicf_proof, verify_aicf_proof
 from core.db.state_db import StateDB
-from core.types.params import load_chain_params
-from core.utils.address import bytes_to_address
-from rpc.deps import Deps
-from rpc.errors import InvalidParams, RpcError
+from rpc import deps
+from rpc import errors as rpc_errors
 from rpc.methods import method
 
 log = logging.getLogger("rpc.methods.aicf")
@@ -30,7 +28,7 @@ log = logging.getLogger("rpc.methods.aicf")
 
 
 @method("aicf.getPoolState", desc="Get AICF pool state")
-async def get_pool_state(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def get_pool_state(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.getPoolState() -> pool state dict
     
@@ -83,7 +81,7 @@ async def get_pool_state(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @method("aicf.getParams", desc="Get AICF parameters")
-async def get_params(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def get_params(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.getParams() -> AICF parameters
     
@@ -99,15 +97,23 @@ async def get_params(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     - fee_routing_pct: percentage of fees routed to AICF pool
     """
     # Get chain ID from state or params
-    chain_id = getattr(deps, "chain_id", 1)
+    chain_id = getattr(d, "chain_id", 1)
     
     try:
-        chain_params = load_chain_params(chain_id=chain_id)
+        # Load network-specific params from params.yaml
+        import yaml
+        from pathlib import Path
+        params_path = Path(__file__).parents[2] / "spec" / "params.yaml"
+        with open(params_path) as f:
+            params_yaml = yaml.safe_load(f)
+        
+        # Get network-specific config
+        network_key = f"animica:{chain_id}"
+        network_params = params_yaml.get("networks", {}).get(network_key, {})
+        aicf_config = network_params.get("aicf_pool", {})
     except Exception as e:
-        log.warning(f"Failed to load chain params: {e}")
-        chain_params = {}
-    
-    aicf_config = chain_params.get("aicf_pool", {})
+        log.warning(f"Failed to load AICF params: {e}")
+        aicf_config = {}
     
     if not aicf_config.get("enabled", False):
         return {"enabled": False}
@@ -126,7 +132,7 @@ async def get_params(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @method("aicf.submitProof", desc="Submit AICF proof for verification")
-async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def submit_proof(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.submitProof(miner_addr, work_units, proof_data, timestamp, nonce) -> result
     
@@ -152,7 +158,7 @@ async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         miner_addr_str = params.get("miner_addr")
         if not miner_addr_str:
-            raise InvalidParams("miner_addr required")
+            raise rpc_errors.InvalidParams("miner_addr required")
         
         # Convert address to bytes
         from core.utils.address import address_to_bytes
@@ -165,7 +171,7 @@ async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
         nonce = int(params.get("nonce", 0))
         
     except (ValueError, TypeError) as e:
-        raise InvalidParams(f"Invalid parameters: {e}")
+        raise rpc_errors.InvalidParams(f"Invalid parameters: {e}")
     
     # Create proof object
     try:
@@ -177,33 +183,42 @@ async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
             nonce=nonce,
         )
     except Exception as e:
-        raise InvalidParams(f"Invalid proof data: {e}")
+        raise rpc_errors.InvalidParams(f"Invalid proof data: {e}")
     
     # Get current height and chain params
-    state = StateDB(deps.kv)
-    chain_id = getattr(deps, "chain_id", 1)
+    state = StateDB(d.kv)
+    chain_id = getattr(d, "chain_id", 1)
     
     try:
-        chain_params = load_chain_params(chain_id=chain_id)
+        # Load network-specific params from params.yaml
+        import yaml
+        from pathlib import Path
+        params_path = Path(__file__).parents[2] / "spec" / "params.yaml"
+        with open(params_path) as f:
+            params_yaml = yaml.safe_load(f)
+        
+        # Get network-specific config
+        network_key = f"animica:{chain_id}"
+        network_params = params_yaml.get("networks", {}).get(network_key, {})
     except Exception as e:
-        raise RpcError(f"Failed to load chain params: {e}")
+        raise rpc_errors.RpcError(f"Failed to load chain params: {e}")
     
     # Get current pool state
     pool_data = state.get_aicf_pool_state()
     if pool_data is None:
-        raise RpcError("AICF pool not initialized")
+        raise rpc_errors.RpcError("AICF pool not initialized")
     
     pool_state = AicfPoolState.from_dict(pool_data)
     
     # Get current height from deps or block db
-    current_height = getattr(deps, "height", 0)
-    if hasattr(deps, "blocks") and deps.blocks:
-        head_height, _ = deps.blocks.get_head()
+    current_height = getattr(d, "height", 0)
+    if hasattr(d, "blocks") and d.blocks:
+        head_height, _ = d.blocks.get_head()
         current_height = head_height if head_height is not None else 0
     
     # Verify proof
     is_valid, reason, reward_amount = verify_aicf_proof(
-        proof, chain_params, current_height, pool_state
+        proof, network_params, current_height, pool_state
     )
     
     COIN = 1_000_000_000
@@ -224,7 +239,7 @@ async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     # For now, just return the validation result
     
     log.info(
-        f"Valid AICF proof from {bytes_to_address(miner_addr)[:16]}... "
+        f"Valid AICF proof from {miner_addr.hex()[:16]}... "
         f"work={work_units}, reward={reward_amount} nANM"
     )
     
@@ -234,7 +249,7 @@ async def submit_proof(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @method("aicf.getUsageStats", desc="Get AICF usage statistics")
-async def get_usage_stats(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
+async def get_usage_stats(d: deps.Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     aicf.getUsageStats() -> usage statistics
     
@@ -270,13 +285,8 @@ async def get_usage_stats(deps: Deps, params: Dict[str, Any]) -> Dict[str, Any]:
     COIN = 1_000_000_000
     top_miners = []
     for miner_hex, credits in sorted(miner_credits.items(), key=lambda x: x[1], reverse=True)[:10]:
-        try:
-            miner_addr = bytes_to_address(bytes.fromhex(miner_hex))
-        except Exception:
-            miner_addr = miner_hex
-        
         top_miners.append({
-            "address": miner_addr,
+            "address": "0x" + miner_hex if not miner_hex.startswith("0x") else miner_hex,
             "credits": credits,
             "credits_anm": credits / COIN,
         })

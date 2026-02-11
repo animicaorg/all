@@ -256,7 +256,7 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
             state.set_balance(addr_bytes, bal)
 
 
-def _init_aicf_pool_state(state: StateDB, params: ChainParams) -> None:
+def _init_aicf_pool_state(state: StateDB, params: Mapping[str, Any]) -> None:
     """
     Initialize AICF pool state at genesis (starts at 0, not premined).
     
@@ -265,7 +265,8 @@ def _init_aicf_pool_state(state: StateDB, params: ChainParams) -> None:
     - Has a cap (e.g., 119M ANM for mainnet)
     - Fills via AICF mining (not premine)
     """
-    # Get AICF parameters from chain params
+    # Get AICF parameters from network-specific config
+    # params is the network-specific dict from spec/params.yaml (e.g., networks.animica:1)
     aicf_config = params.get("aicf_pool", {})
     
     if not aicf_config.get("enabled", False):
@@ -616,9 +617,19 @@ def load_and_init_genesis(
     _init_state_from_alloc(state, genesis["alloc"])
     
     # Initialize AICF pool state (starts at 0, not premined)
-    from core.types.params import load_chain_params
-    params = load_chain_params(chain_id=int(genesis["chainId"]))
-    _init_aicf_pool_state(state, params)
+    # Load network-specific params from params.yaml
+    import yaml
+    from pathlib import Path
+    params_path = Path(__file__).parents[2] / "spec" / "params.yaml"
+    with open(params_path) as f:
+        params_yaml = yaml.safe_load(f)
+    
+    # Get network-specific config
+    chain_id = int(genesis["chainId"])
+    network_key = f"animica:{chain_id}"
+    network_params = params_yaml.get("networks", {}).get(network_key, {})
+    
+    _init_aicf_pool_state(state, network_params)
     if log:
         import logging
         logging.info(f"[genesis] Initialized AICF pool state")
