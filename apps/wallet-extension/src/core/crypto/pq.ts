@@ -1,5 +1,19 @@
-// Mock PQ cryptography with TODOs for actual Dilithium3 implementation
-// TODO: Replace with actual liboqs WASM build when available
+/**
+ * Animica Custom Post-Quantum Cryptography
+ * 
+ * IMPORTANT: This file contains MOCK implementations.
+ * 
+ * Per docs/PQ_POLICY.md, we MUST NOT use liboqs or any third-party PQ library.
+ * Instead, the full Dilithium3/SPHINCS+ implementation must be either:
+ * 1. Ported from python/animica/_vendor/dilithium_py/ to TypeScript
+ * 2. Compiled from Python to WASM (using Emscripten or similar)
+ * 3. Loaded via Pyodide (Python in WASM)
+ * 
+ * For now, this is a DEVELOPMENT MOCK that allows the wallet UI to function.
+ * DO NOT USE IN PRODUCTION until real PQ backend is implemented.
+ * 
+ * See apps/dapp-ide/docs/PQ_DISCOVERY.md for implementation guidance.
+ */
 
 import { sha3_256 } from 'js-sha3';
 
@@ -11,15 +25,26 @@ export const DILITHIUM3_PUBLIC_KEY_SIZE = 1952;
 export const DILITHIUM3_SECRET_KEY_SIZE = 4000;
 export const DILITHIUM3_SIGNATURE_SIZE = 3293;
 
-// Mock key generation
-// TODO: Replace with actual Dilithium3 keygen from liboqs
+/**
+ * Generate Dilithium3 keypair
+ * 
+ * ⚠️ MOCK IMPLEMENTATION - NOT FOR PRODUCTION ⚠️
+ * 
+ * TODO: Replace with actual Dilithium3 keygen from:
+ * - TypeScript port of python/animica/_vendor/dilithium_py/dilithium3.py
+ * - WASM-compiled Python implementation
+ * - Pyodide runtime
+ * 
+ * NEVER use liboqs per docs/PQ_POLICY.md
+ */
 export function generateKeyPair(): {
   publicKey: Uint8Array;
   secretKey: Uint8Array;
   algId: number;
 } {
   // MOCK: Generate random bytes as placeholder
-  // Real implementation should use liboqs-wasm Dilithium3
+  console.warn('[PQ] Using MOCK key generation - NOT SECURE FOR PRODUCTION');
+  
   const publicKey = new Uint8Array(DILITHIUM3_PUBLIC_KEY_SIZE);
   const secretKey = new Uint8Array(DILITHIUM3_SECRET_KEY_SIZE);
   
@@ -33,15 +58,31 @@ export function generateKeyPair(): {
   };
 }
 
-// Mock signing
-// TODO: Replace with actual Dilithium3 signing from liboqs
+/**
+ * Sign message with Dilithium3
+ * 
+ * ⚠️ MOCK IMPLEMENTATION - NOT FOR PRODUCTION ⚠️
+ * 
+ * TODO: Replace with actual Dilithium3 signing from:
+ * - TypeScript port of python/animica/_vendor/dilithium_py/dilithium3.py
+ * - WASM-compiled Python implementation
+ * - Pyodide runtime
+ * 
+ * Real implementation must match the Python signing exactly, including:
+ * - Domain separation (domain string prefix)
+ * - Prehashing with SHA3-512
+ * - Canonical SignBytes construction (see pq/py/sign.py)
+ * 
+ * NEVER use liboqs per docs/PQ_POLICY.md
+ */
 export async function sign(
   message: Uint8Array,
   secretKey: Uint8Array,
   algId: number = DILITHIUM3_ALG_ID
 ): Promise<Uint8Array> {
   // MOCK: Generate deterministic signature from message + key hash
-  // Real implementation should use liboqs-wasm Dilithium3.sign()
+  console.warn('[PQ] Using MOCK signing - NOT SECURE FOR PRODUCTION');
+  
   const keyHash = sha3_256.array(secretKey);
   const msgHash = sha3_256.array(message);
   
@@ -53,8 +94,20 @@ export async function sign(
   return sig;
 }
 
-// Mock verification
-// TODO: Replace with actual Dilithium3 verification from liboqs
+/**
+ * Verify Dilithium3 signature
+ * 
+ * ⚠️ MOCK IMPLEMENTATION - NOT FOR PRODUCTION ⚠️
+ * 
+ * TODO: Replace with actual Dilithium3 verification from:
+ * - TypeScript port of python/animica/_vendor/dilithium_py/dilithium3.py
+ * - WASM-compiled Python implementation
+ * - Pyodide runtime
+ * 
+ * Real implementation must match the Python verification exactly.
+ * 
+ * NEVER use liboqs per docs/PQ_POLICY.md
+ */
 export async function verify(
   message: Uint8Array,
   signature: Uint8Array,
@@ -62,7 +115,8 @@ export async function verify(
   algId: number = DILITHIUM3_ALG_ID
 ): Promise<boolean> {
   // MOCK: Always return true for development
-  // Real implementation should use liboqs-wasm Dilithium3.verify()
+  console.warn('[PQ] Using MOCK verification - NOT SECURE FOR PRODUCTION');
+  
   return signature.length === DILITHIUM3_SIGNATURE_SIZE;
 }
 
