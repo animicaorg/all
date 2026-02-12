@@ -2,6 +2,33 @@
 
 const RPC_TIMEOUT_MS = 10000;
 
+function toRpcInteger(value: unknown, fieldName: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(`RPC ${fieldName} was empty`);
+    }
+
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) {
+      return Number(BigInt(trimmed));
+    }
+
+    if (/^-?\d+$/.test(trimmed)) {
+      return Number(BigInt(trimmed));
+    }
+  }
+
+  throw new Error(`RPC ${fieldName} had invalid numeric value: ${String(value)}`);
+}
+
 function getFetch(): typeof fetch {
   const fetchImpl = (globalThis as any)?.fetch;
   if (typeof fetchImpl !== 'function') {
@@ -89,7 +116,8 @@ export class RpcClient {
   }
 
   async getNonce(address: string, tag: string = 'latest'): Promise<number> {
-    return this.call('state.getNonce', [address, tag]);
+    const result = await this.call('state.getNonce', [address, tag]);
+    return toRpcInteger(result, 'nonce');
   }
 
   async sendRawTransaction(rawTx: string): Promise<string> {
@@ -109,7 +137,8 @@ export class RpcClient {
   }
 
   async getChainId(): Promise<number> {
-    return this.call('chain.getChainId', []);
+    const result = await this.call('chain.getChainId', []);
+    return toRpcInteger(result, 'chainId');
   }
 
   async getHead(): Promise<any> {
