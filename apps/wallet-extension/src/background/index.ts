@@ -24,6 +24,37 @@ function debugLog(message: string, details?: unknown): void {
   console.debug(`[wallet-bg] ${message}`, details);
 }
 
+
+
+function shouldDebugTxLogs(): boolean {
+  try {
+    const envFlag = (import.meta as any)?.env?.VITE_DEBUG_TX;
+    if (envFlag === '1' || envFlag === 'true') return true;
+  } catch {}
+
+  try {
+    const g = globalThis as any;
+    return g.__ANIMICA_DEBUG_TX__ === true || g.__ANIMICA_DEBUG_TX__ === '1';
+  } catch {
+    return false;
+  }
+}
+
+function txDebugLog(message: string, payload: Record<string, unknown>): void {
+  if (!shouldDebugTxLogs()) return;
+  console.debug(`[wallet-bg][tx-debug] ${message}`, payload);
+}
+
+function summarizeRawTx(rawTx: string): Record<string, unknown> {
+  const normalized = rawTx.startsWith('0x') ? rawTx.slice(2) : rawTx;
+  return {
+    length: rawTx.length,
+    has0xPrefix: rawTx.startsWith('0x'),
+    hexLength: normalized.length,
+    first16BytesHex: normalized.slice(0, 32),
+    last16BytesHex: normalized.slice(Math.max(0, normalized.length - 32)),
+  };
+}
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Animica Wallet installed');
@@ -419,6 +450,14 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     
     // Encode and send
     const rawTx = encodeTxForRpc(signedTx);
+    txDebugLog('pre-send', {
+      rpcUrl: client.getActiveUrl(),
+      rpcMethod: 'tx.sendRawTransaction',
+      from: params.from,
+      algId: account.algId,
+      txBody: signedTx.tx,
+      rawTx: summarizeRawTx(rawTx),
+    });
     await client.sendRawTransaction(rawTx);
     
     // Store in tx cache
