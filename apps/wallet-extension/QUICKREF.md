@@ -337,3 +337,21 @@ apps/wallet-extension/
 ---
 
 **Ready for Testing**: Load in Chrome and test with local devnet!
+
+## Transaction send RPC/codec requirements (wallet-extension)
+
+- RPC method: `tx.sendRawTransaction`
+- Parameter format: single `rawTx` string in params array, `"0x" + even-length-hex`.
+- Payload bytes: canonical CBOR of signed tx envelope map:
+  - top-level: `{ "tx": <UnsignedTx>, "sigs": [ {"alg": <int>, "pubkey": <bytes>, "sig": <bytes>} ] }`
+  - unsigned tx body keys: `v`, `chainId`, `from`, `gas`, `payload`, `accessList`, and v2 fields `validAfter`, `validUntil`, `salt`.
+- Unsupported/forbidden formats:
+  - base64 (`0b:`), JSON bytes arrays, hex-encoded-string-of-hex (`0x3078...`), Ethereum `eth_sendRawTransaction` formats.
+
+### Debugging rawTx (development only)
+
+Set `VITE_DEBUG_TX=1` (or `globalThis.__ANIMICA_DEBUG_TX__ = true` in worker context) to print tx send diagnostics from the background worker:
+- active RPC URL and method name
+- sender address and `algId`
+- tx body before serialization
+- `rawTx` shape summary (length, prefix, first/last 16 bytes)

@@ -4,7 +4,7 @@ import type { UnsignedTxV2, TxKind, TxTransfer, SignedTx, PqSignature } from '..
 import { addressToBytes } from '../crypto/address';
 import { sign } from '../crypto/pq';
 import { getSigningBytes, encodeCanonical, getTxHash, getUnsignedHash } from './cbor';
-import { bytesToHex } from '../crypto/pq';
+import { bytesToHexRaw } from '../crypto/convert';
 
 export interface TxParams {
   chainId: number;
@@ -99,5 +99,14 @@ export async function buildAndSignTransfer(
 
 export function encodeTxForRpc(signedTx: SignedTx): string {
   const encoded = encodeCanonical(signedTx);
-  return '0x' + bytesToHex(encoded);
+  const rawTx = '0x' + bytesToHexRaw(encoded, 'encodedTx');
+
+  if (!rawTx.startsWith('0x')) {
+    throw new Error('rawTx must be 0x-prefixed hex');
+  }
+  if ((rawTx.length - 2) % 2 !== 0) {
+    throw new Error('rawTx hex length must be even');
+  }
+
+  return rawTx;
 }
