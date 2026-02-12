@@ -442,7 +442,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     // Get nonce from RPC
     const nonce = await client.getNonce(params.from, 'latest');
     
-    // Convert algId to schemeId
+    // Convert algId to schemeId for signing
     const schemeId = algIdToSchemeId(account.algId);
     if (schemeId === null) {
       throw new Error(`Unsupported algorithm ID: ${account.algId}`);
@@ -472,7 +472,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       context,
       account.secretKey,
       account.publicKey,
-      schemeId,
+      account.algId, // Pass algId, not schemeId
       sign
     );
     

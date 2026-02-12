@@ -5,22 +5,19 @@
  */
 
 import type { TxBody, TxAuth, TxEnvelope, ChainContext, TxBuildParams, SignedTxResult } from './types';
-import { DOMAIN_TX_SIGN, PREHASH_SHA3_512, getSchemeInfo } from './types';
+import { DOMAIN_TX_SIGN, PREHASH_SHA3_512, getSchemeInfo, algIdToSchemeId } from './types';
 import { signTxBody, computeTxId, bytesToHex } from './signing';
 import { encodeTxEnvelope } from './encode';
+import { addressFromPubkey, addressToBytes as coreAddressToBytes } from '../core/crypto/address';
 
 /**
- * Derive address from public key
+ * Derive address from public key using canonical algorithm
  * 
- * TODO: This should use the same derivation as the node (pq/py/address.py)
- * For now, this is a placeholder that returns empty string.
- * Real implementation should use Blake2b hash + bech32m encoding.
+ * This matches the node's pq/py/address.py implementation:
+ * - address = bech32m(hrp="anim", alg_id(2 bytes) || sha3_256(pubkey))
  */
-export function deriveAddress(publicKey: Uint8Array, schemeId: number): string {
-  // TODO: Implement proper address derivation
-  // This is a critical guardrail that prevents signing with wrong keys
-  console.warn('deriveAddress not yet implemented - address validation skipped');
-  return '';
+export function deriveAddress(publicKey: Uint8Array, algId: number): string {
+  return addressFromPubkey(publicKey, algId);
 }
 
 /**
@@ -31,13 +28,14 @@ export function deriveAddress(publicKey: Uint8Array, schemeId: number): string {
 export function validateAddressBinding(
   fromAddr: string,
   publicKey: Uint8Array,
-  schemeId: number
+  algId: number
 ): void {
-  const derived = deriveAddress(publicKey, schemeId);
-  if (derived && derived !== fromAddr) {
+  const derived = deriveAddress(publicKey, algId);
+  if (derived !== fromAddr) {
     throw new Error(
       `Address/pubkey mismatch: from=${fromAddr}, derived=${derived}. ` +
-      `Refusing to sign with mismatched key.`
+      `Refusing to sign with mismatched key. ` +
+      `This indicates the wallet is trying to sign with the wrong private key.`
     );
   }
 }
@@ -71,19 +69,12 @@ export function validateScheme(
 }
 
 /**
- * Convert bech32 address to raw bytes
+ * Convert bech32 address to raw bytes (digest only)
  * 
- * TODO: Implement proper bech32m decoding
- * For now, this is a placeholder.
+ * This decodes the bech32m address to the 32-byte digest.
  */
 export function addressToBytes(address: string): Uint8Array {
-  // TODO: Implement bech32m decode
-  // This should decode the bech32m address to raw bytes
-  console.warn('addressToBytes not yet fully implemented');
-  
-  // Placeholder: return empty bytes for now
-  // Real implementation should decode bech32m format
-  return new Uint8Array(32); // Placeholder
+  return coreAddressToBytes(address);
 }
 
 /**
@@ -95,7 +86,7 @@ export function addressToBytes(address: string): Uint8Array {
  * @param context - Chain context (must include genesis_hash, network)
  * @param secretKey - Secret key bytes
  * @param publicKey - Public key bytes
- * @param schemeId - Signature scheme ID
+ * @param algId - Algorithm ID (4097=Dilithium3, 4098=SPHINCS+)
  * @param signFunc - PQ signing function
  * @returns Signed transaction ready for submission
  */
@@ -104,7 +95,7 @@ export async function buildAndSignTransaction(
   context: ChainContext,
   secretKey: Uint8Array,
   publicKey: Uint8Array,
-  schemeId: number,
+  algId: number,
   signFunc: (message: Uint8Array, secretKey: Uint8Array, algId: number) => Promise<Uint8Array>
 ): Promise<SignedTxResult> {
   // Validate inputs
@@ -127,12 +118,18 @@ export async function buildAndSignTransaction(
     throw new Error('context.network is required');
   }
   
+  // Convert algId to schemeId
+  const schemeId = algIdToSchemeId(algId);
+  if (schemeId === null) {
+    throw new Error(`Unsupported algorithm ID: 0x${algId.toString(16)}`);
+  }
+  
   // Validate scheme and key lengths
   validateScheme(schemeId, publicKey);
   
-  // Validate address/pubkey binding
-  // (This will be a no-op until deriveAddress is implemented)
-  validateAddressBinding(params.from, publicKey, schemeId);
+  // CRITICAL: Validate address/pubkey binding
+  // This prevents signing with the wrong key
+  validateAddressBinding(params.from, publicKey, algId);
   
   // Build transaction body
   const body: TxBody = {
