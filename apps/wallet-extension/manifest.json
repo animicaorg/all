@@ -9,7 +9,7 @@
     "alarms"
   ],
   "host_permissions": [
-    "http://144.126.133.21/*",
+    "https://mainnet.animica.org/*",
     "http://127.0.0.1/*"
   ],
   "background": {
