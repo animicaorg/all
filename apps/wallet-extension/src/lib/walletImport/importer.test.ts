@@ -66,8 +66,9 @@ describe('wallet importer', () => {
   });
 
 
-  it('maps bech32m excess padding errors to actionable guidance', async () => {
-    const decodeSpy = vi.spyOn(animicaAddressModule, 'decodeAnimAddress').mockImplementation(() => {
+  it('imports wallets with excess bech32m padding by canonicalizing address from pubkey', async () => {
+    const decodeSpy = vi.spyOn(animicaAddressModule, 'decodeAnimAddress');
+    decodeSpy.mockImplementationOnce(() => {
       throw new Error('Excess padding');
     });
 
@@ -76,12 +77,33 @@ describe('wallet importer', () => {
       wallets: [testWallet('bad-padding', 60, 1, true)],
     };
 
-    const result = await importWalletRecords(JSON.stringify(payload), []);
-    expect(result.summary.imported_count).toBe(0);
-    expect(result.summary.invalid_records).toHaveLength(1);
-    expect(result.summary.invalid_records[0].reason).toContain('Invalid bech32m address encoding (Excess padding)');
+    try {
+      const result = await importWalletRecords(JSON.stringify(payload), []);
+      expect(result.summary.imported_count).toBe(1);
+      expect(result.summary.invalid_records).toHaveLength(0);
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
 
-    decodeSpy.mockRestore();
+  it('still reports non-padding address errors as invalid records', async () => {
+    const decodeSpy = vi.spyOn(animicaAddressModule, 'decodeAnimAddress').mockImplementationOnce(() => {
+      throw new Error('Invalid checksum');
+    });
+
+    const payload = {
+      version: 1,
+      wallets: [testWallet('bad-checksum', 70, 1, true)],
+    };
+
+    try {
+      const result = await importWalletRecords(JSON.stringify(payload), []);
+      expect(result.summary.imported_count).toBe(0);
+      expect(result.summary.invalid_records).toHaveLength(1);
+      expect(result.summary.invalid_records[0].reason).toContain('Invalid checksum');
+    } finally {
+      decodeSpy.mockRestore();
+    }
   });
   it('supports single-wallet object and array payloads', async () => {
     const single = testWallet('single', 40, 1, false);
