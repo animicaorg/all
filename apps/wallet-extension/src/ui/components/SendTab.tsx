@@ -64,6 +64,10 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         },
       });
 
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
       setSuccess(`Transaction sent! TXID: ${result.txid.slice(0, 16)}...`);
       setTo('');
       setAmount('');
