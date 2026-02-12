@@ -33,21 +33,15 @@ function versionCompatibilityMessage(reason: string): string {
     return `Invalid bech32m address encoding (${reason}). Re-export the wallet file from the source wallet and retry import.`;
   }
 
-  if (reason.includes('Unsupported address version: 2') || reason.includes('Unsupported address version 2')) {
-    return 'Your wallet file contains address version 2; this extension now supports v1/v2. If you still see this, update and retry.';
-  }
-
   return reason;
 }
 
 function normalizeWalletRecord(record: NormalizedWalletRecord, network?: NetworkConfig): Account {
-  let decodedAddress: ReturnType<typeof decodeAnimAddress>;
   let normalizedAddress = record.address;
 
   try {
-    decodedAddress = decodeAnimAddress(record.address, {
+    decodeAnimAddress(record.address, {
       expectedHrp: network?.addressHrp ?? 'anim',
-      supportedVersions: [1, 2],
     });
   } catch (error: any) {
     const reason = String(error?.message || '');
@@ -60,24 +54,18 @@ function normalizeWalletRecord(record: NormalizedWalletRecord, network?: Network
     const fallbackPublicKey = hexToBytes(record.publicKeyHex);
     normalizedAddress = addressFromPubkey(fallbackPublicKey, record.algId, {
       expectedHrp: network?.addressHrp ?? 'anim',
-      supportedVersions: network?.supportedAddressVersions ?? [1, 2],
     });
-    decodedAddress = decodeAnimAddress(normalizedAddress, {
-      expectedHrp: network?.addressHrp ?? 'anim',
-      supportedVersions: [1, 2],
-    });
-  }
-
-  if (network && !network.supportedAddressVersions.includes(decodedAddress.version)) {
-    throw new Error(`Unsupported address version ${decodedAddress.version} (supported: ${network.supportedAddressVersions.join(',')})`);
   }
 
   const publicKey = hexToBytes(record.publicKeyHex);
   const secretKey = record.secretKeyHex ? hexToBytes(record.secretKeyHex) : undefined;
 
+  const decodedAddress = decodeAnimAddress(normalizedAddress, {
+    expectedHrp: network?.addressHrp ?? 'anim',
+  });
+
   const expectedAddress = addressFromPubkey(publicKey, record.algId, {
     expectedHrp: decodedAddress.hrp,
-    supportedVersions: [decodedAddress.version],
   });
 
   if (expectedAddress !== normalizedAddress) {
