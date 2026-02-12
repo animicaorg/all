@@ -6,11 +6,7 @@
  * - Used by background/network/rpc.ts and UI network selectors
  */
 
-export type NetworkId =
-  | "animica-mainnet"
-  | "animica-testnet"
-  | "animica-devnet"
-  | "custom-env";
+export type NetworkId = 'animica-mainnet' | 'animica-testnet' | 'animica-devnet' | 'custom-env';
 
 /** Minimal shape the rest of the wallet relies on */
 export interface Network {
@@ -24,11 +20,11 @@ export interface Network {
   currencySymbol: string; // native token symbol
   currencyDecimals: number; // display decimals
   features: {
-    da: boolean;          // Data Availability
-    aicf: boolean;        // AI/Quantum compute
-    randomness: boolean;  // beacon available
-    zkVerify: boolean;    // on-chain zk.verify available
-    blobs: boolean;       // blob/rollup txs
+    da: boolean; // Data Availability
+    aicf: boolean; // AI/Quantum compute
+    randomness: boolean; // beacon available
+    zkVerify: boolean; // on-chain zk.verify available
+    blobs: boolean; // blob/rollup txs
   };
 }
 
@@ -38,48 +34,47 @@ const asNumber = (v: string | undefined): number | undefined => {
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 };
-const isHttpLike = (s: string | undefined) =>
-  !!s && /^(http|https):\/\//i.test(s);
+const isHttpLike = (s: string | undefined) => !!s && /^(http|https):\/\//i.test(s);
 
 /**
  * Built-ins. Replace the example hostnames with your actual endpoints in ops/.
  * These are safe defaults for local dev + illustrative placeholders for others.
  */
-const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
-  "animica-mainnet": {
-    id: "animica-mainnet",
-    name: "Animica Mainnet",
+const BUILTIN: Record<Exclude<NetworkId, 'custom-env'>, Network> = {
+  'animica-mainnet': {
+    id: 'animica-mainnet',
+    name: 'Animica Mainnet',
     chainId: 1,
-    rpcHttp: "https://rpc.mainnet.animica.example", // replace in ops config
-    rpcWs: "wss://ws.mainnet.animica.example",
-    explorer: "https://explorer.animica.example",
-    bech32Prefix: "anim",
-    currencySymbol: "ANM",
+    rpcHttp: 'https://mainnet.animica.org',
+    rpcWs: 'wss://mainnet.animica.org/ws',
+    explorer: 'https://explorer.animica.example',
+    bech32Prefix: 'anim',
+    currencySymbol: 'ANM',
     currencyDecimals: 18,
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
-  "animica-testnet": {
-    id: "animica-testnet",
-    name: "Animica Testnet",
+  'animica-testnet': {
+    id: 'animica-testnet',
+    name: 'Animica Testnet',
     chainId: 2,
-    rpcHttp: "https://rpc.testnet.animica.example",
-    rpcWs: "wss://ws.testnet.animica.example",
-    explorer: "https://explorer.testnet.animica.example",
-    bech32Prefix: "anim",
-    currencySymbol: "ANMT",
+    rpcHttp: 'https://rpc.testnet.animica.example',
+    rpcWs: 'wss://ws.testnet.animica.example',
+    explorer: 'https://explorer.testnet.animica.example',
+    bech32Prefix: 'anim',
+    currencySymbol: 'ANMT',
     currencyDecimals: 18,
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
-  "animica-devnet": {
-    id: "animica-devnet",
-    name: "Animica Devnet (local)",
+  'animica-devnet': {
+    id: 'animica-devnet',
+    name: 'Animica Devnet (local)',
     chainId: 1337,
     // JSON-RPC POST handler lives at /rpc on the devnet node
-    rpcHttp: "http://localhost:8545/rpc",
-    rpcWs: "ws://localhost:8546",
-    explorer: "http://localhost:8080",
-    bech32Prefix: "anim",
-    currencySymbol: "ANMD",
+    rpcHttp: 'http://localhost:8545/rpc',
+    rpcWs: 'ws://localhost:8546',
+    explorer: 'http://localhost:8080',
+    bech32Prefix: 'anim',
+    currencySymbol: 'ANMD',
     currencyDecimals: 18,
     features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
   },
@@ -94,16 +89,16 @@ const envChainId = asNumber((import.meta as any)?.env?.VITE_CHAIN_ID as string |
 const envName = ((import.meta as any)?.env?.VITE_NETWORK_NAME as string | undefined)?.trim();
 
 const CUSTOM_ENV: Network | undefined =
-  isHttpLike(envRpc) && typeof envChainId === "number"
+  isHttpLike(envRpc) && typeof envChainId === 'number'
     ? {
-        id: "custom-env",
-        name: envName || "Custom (env)",
+        id: 'custom-env',
+        name: envName || 'Custom (env)',
         chainId: envChainId!,
         rpcHttp: envRpc!,
         rpcWs: undefined,
         explorer: undefined,
-        bech32Prefix: "anim",
-        currencySymbol: "ANM",
+        bech32Prefix: 'anim',
+        currencySymbol: 'ANM',
         currencyDecimals: 18,
         features: { da: true, aicf: true, randomness: true, zkVerify: true, blobs: true },
       }
@@ -111,9 +106,9 @@ const CUSTOM_ENV: Network | undefined =
 
 /** Exported registry */
 export const KNOWN_NETWORKS: Network[] = [
-  BUILTIN["animica-mainnet"],
-  BUILTIN["animica-testnet"],
-  BUILTIN["animica-devnet"],
+  BUILTIN['animica-mainnet'],
+  BUILTIN['animica-testnet'],
+  BUILTIN['animica-devnet'],
   ...(CUSTOM_ENV ? [CUSTOM_ENV] : []),
 ];
 
@@ -131,9 +126,8 @@ export const NETWORK_MAP: Record<NetworkId, Network> = KNOWN_NETWORKS.reduce(
  * - Else prefer testnet for safety in non-production builds
  */
 export function getDefaultNetworkId(): NetworkId {
-  if (CUSTOM_ENV) return "custom-env";
-  // You can switch this to "animica-mainnet" for production builds.
-  return "animica-testnet";
+  if (CUSTOM_ENV) return 'custom-env';
+  return 'animica-mainnet';
 }
 
 export function getNetwork(id: NetworkId): Network {
