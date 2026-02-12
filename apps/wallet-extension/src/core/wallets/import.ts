@@ -63,6 +63,11 @@ function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: 
       : undefined
     );
   } catch (error) {
+    if (error instanceof Error && /excess padding/i.test(error.message)) {
+      throw new Error(
+        `wallet[${idx}] has invalid bech32m address encoding (${error.message}). Re-export the wallet file and retry import.`
+      );
+    }
     if (network && error instanceof Error && error.message.startsWith('Unsupported address version')) {
       throw new Error(`wallet[${idx}] ${error.message}. Switch network and retry import.`);
     }
