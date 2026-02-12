@@ -42,6 +42,30 @@ describe('balance service', () => {
     expect(parseBaseUnits({ balance: '123' })).toBe(123n);
   });
 
+  it('handles object-wrapped RPC response {"balance":"0x7b"}', async () => {
+    getChainIdMock.mockResolvedValue(1);
+    callMock.mockResolvedValue({ balance: '0x7b' }); // 123 in hex
+
+    const balance = await getBalance('anim1testaddress', {
+      rpcUrl: 'https://rpc.animica.io',
+      chainId: 1,
+    });
+
+    expect(balance).toBe(123n);
+  });
+
+  it('handles direct string RPC response "0x7b"', async () => {
+    getChainIdMock.mockResolvedValue(1);
+    callMock.mockResolvedValue('0x7b'); // 123 in hex
+
+    const balance = await getBalance('anim1testaddress', {
+      rpcUrl: 'https://rpc.animica.io',
+      chainId: 1,
+    });
+
+    expect(balance).toBe(123n);
+  });
+
   it('surfaces rpc errors instead of returning 0', async () => {
     getChainIdMock.mockResolvedValue(1);
     callMock.mockRejectedValue(new Error('RPC -32010: failure'));
