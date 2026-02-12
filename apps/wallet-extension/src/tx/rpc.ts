@@ -1,0 +1,130 @@
+/**
+ * RPC helpers for transaction submission
+ */
+
+import type { ChainContext } from './types';
+import { DOMAIN_TX_SIGN } from './types';
+import { hexToBytes } from './signing';
+
+/**
+ * Fetch chain identity from RPC node
+ * 
+ * This is REQUIRED before signing any transaction.
+ */
+export async function fetchChainContext(
+  rpcCall: (method: string, params: any[]) => Promise<any>
+): Promise<ChainContext> {
+  try {
+    const identity = await rpcCall('chain.getChainIdentity', []);
+    
+    if (!identity) {
+      throw new Error('chain.getChainIdentity returned empty result');
+    }
+    
+    // Extract fields
+    const chainId = identity.chainId || identity.chain_id;
+    const genesisHashHex = identity.genesisHash || identity.genesis_hash;
+    const network = identity.network || identity.name || 'unknown';
+    const forkId = identity.forkId || identity.fork_id || null;
+    
+    if (typeof chainId !== 'number') {
+      throw new Error(`Invalid chain_id: ${chainId}`);
+    }
+    
+    if (typeof genesisHashHex !== 'string' || !genesisHashHex) {
+      throw new Error(`Invalid genesis_hash: ${genesisHashHex}`);
+    }
+    
+    const genesisHash = hexToBytes(genesisHashHex);
+    if (genesisHash.length !== 32) {
+      throw new Error(`genesis_hash must be 32 bytes, got ${genesisHash.length}`);
+    }
+    
+    return {
+      chain_id: chainId,
+      genesis_hash: genesisHash,
+      network: String(network),
+      fork_id: forkId !== null ? Number(forkId) : null,
+      domain: DOMAIN_TX_SIGN,
+      prehash: 'sha3-512',
+    };
+  } catch (error: any) {
+    throw new Error(`Failed to fetch chain context: ${error.message || error}`);
+  }
+}
+
+/**
+ * Submit a raw transaction to the RPC node
+ * 
+ * @param rawTx - 0x-prefixed hex encoded transaction envelope
+ * @param rpcCall - RPC call function
+ * @returns Transaction hash
+ */
+export async function submitTransaction(
+  rawTx: string,
+  rpcCall: (method: string, params: any[]) => Promise<any>
+): Promise<string> {
+  if (!rawTx.startsWith('0x')) {
+    throw new Error('rawTx must start with 0x');
+  }
+  
+  try {
+    const result = await rpcCall('tx.sendRawTransaction', [rawTx]);
+    return result;
+  } catch (error: any) {
+    // Enhanced error handling for signature verification failures
+    const message = error.message || String(error);
+    
+    if (message.includes('Invalid post-quantum signature')) {
+      throw new Error(
+        'Transaction signature verification failed on node. ' +
+        'This indicates a mismatch in signing process. ' +
+        'Original error: ' + message
+      );
+    }
+    
+    if (message.includes('verification failed')) {
+      throw new Error(
+        'PQ signature verification failed. ' +
+        'Ensure you are signing with the correct key and algorithm. ' +
+        'Original error: ' + message
+      );
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * Parse RPC error to extract useful information
+ */
+export function parseRpcError(error: any): {
+  code?: number;
+  message: string;
+  data?: any;
+} {
+  if (error && typeof error === 'object') {
+    return {
+      code: error.code,
+      message: error.message || String(error),
+      data: error.data,
+    };
+  }
+  
+  return {
+    message: String(error),
+  };
+}
+
+/**
+ * Check if an error is a signature verification error
+ */
+export function isSignatureError(error: any): boolean {
+  const message = String(error.message || error).toLowerCase();
+  return (
+    message.includes('signature') ||
+    message.includes('pq_verify') ||
+    message.includes('-32012') ||
+    message.includes('verification failed')
+  );
+}
