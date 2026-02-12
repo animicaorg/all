@@ -27,6 +27,7 @@ _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
     os.environ.get("ANIMICA_SKIP_PQ_VERIFY") == "1"
 )
 _RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
+_DEBUG_RPC = os.environ.get("ANIMICA_DEBUG_RPC") == "1"
 _TX_SEND_FORCE_CHAIN = os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN", "0") == "1"
 _TX_SEND_FORCE_CHAIN_TIMEOUT_S = float(os.environ.get("ANIMICA_TX_SEND_FORCE_CHAIN_TIMEOUT_S", "5") or 5)
 
@@ -624,6 +625,13 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     network = str((ident or {}).get("network") or (ident or {}).get("name") or "unknown") if isinstance(ident, dict) else "unknown"
 
     verify_result = None
+    from_addr: str | None = None
+    if isinstance(obj, dict):
+        tx_obj = obj.get("tx") if isinstance(obj.get("tx"), dict) else obj.get("body")
+        if isinstance(tx_obj, dict):
+            from_raw = tx_obj.get("from") or tx_obj.get("from_addr")
+            if isinstance(from_raw, str) and from_raw:
+                from_addr = from_raw
     if _pq_verify_tx is not None and _ChainContext is not None:
         ctx = _ChainContext(
             chain_id=int(chain_id),
@@ -642,6 +650,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             sig_env,
             pub,
             ctx,
+            from_addr=from_addr,
         )
         ok = bool(verify_result.ok)
         used_label = "animica.tx.v1.preimage"
@@ -2263,8 +2272,37 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     }
 
 
-@method("tx.debugVerify", desc="Verify tx signature diagnostics by txid or raw bytes.")
-def tx_debug_verify(target: str) -> dict:
+@method("tx.debugVerify", desc="Verify tx signature diagnostics by txid/rawTx or explicit tx+sig fields.")
+def tx_debug_verify(target: t.Any) -> dict:
+    if not _DEBUG_RPC:
+        raise rpc_errors.MethodNotFound("Debug RPC is disabled (set ANIMICA_DEBUG_RPC=1)")
+    if isinstance(target, dict):
+        tx_body = target.get("tx") or target.get("body")
+        pub = target.get("pubkey") or target.get("pk")
+        sig = target.get("signature") or target.get("sig")
+        scheme_id = target.get("scheme_id") or target.get("algId") or target.get("alg")
+        if not isinstance(tx_body, dict) or not isinstance(pub, str) or not isinstance(sig, str) or scheme_id is None:
+            raise rpc_errors.InvalidParams("dict target requires tx/body + pubkey + signature + scheme_id")
+        chain_id = int(target.get("chain_id") or tx_body.get("chainId") or tx_body.get("chain_id") or _chain_id_required())
+
+        tx_env = {
+            "body": tx_body,
+            "sig": {
+                "algId": int(scheme_id),
+                "pubkey": _b(pub),
+                "sig": _b(sig),
+                "domain": str(target.get("domain") or "tx"),
+                "prehash": str(target.get("prehash") or "sha3-512"),
+                "chainId": chain_id,
+            },
+        }
+        try:
+            _verify_pq_signature(tx_env, tx_env, chain_id=chain_id)
+            return {"ok": True, "reason": None, "chain_id": chain_id}
+        except rpc_errors.BadSignature as exc:
+            data = getattr(exc, "data", {}) or {}
+            return {"ok": False, "reason": str(exc), "chain_id": chain_id, "details": data}
+
     if isinstance(target, str) and target.startswith("0x") and len(target) == 66:
         raw = _mempool_get_raw(target.lower()) or _pending_get(target.lower())
         if raw is None:
@@ -2275,6 +2313,8 @@ def tx_debug_verify(target: str) -> dict:
 
 @method("tx.debugSigningPreimage", desc="Return canonical tx signing preimage diagnostics.", aliases=("tx.debugSignBytes", "tx_debugSignBytes"))
 def tx_debug_signing_preimage(txid: str) -> dict:
+    if not _DEBUG_RPC:
+        raise rpc_errors.MethodNotFound("Debug RPC is disabled (set ANIMICA_DEBUG_RPC=1)")
     if not isinstance(txid, str):
         raise rpc_errors.InvalidParams("txid must be hex string")
     tx_hash_hex = txid.lower()
@@ -2307,6 +2347,39 @@ def tx_debug_signing_preimage(txid: str) -> dict:
             "mapKeyOrder": "deterministic",
             "excludeSignatureFields": True,
         },
+    }
+
+
+@method("tx.debugSignHash", desc="Compute canonical body/sign-bytes/sign-hash for tx body.")
+def tx_debug_sign_hash(tx_body: dict) -> dict:
+    if not _DEBUG_RPC:
+        raise rpc_errors.MethodNotFound("Debug RPC is disabled (set ANIMICA_DEBUG_RPC=1)")
+    if not isinstance(tx_body, dict):
+        raise rpc_errors.InvalidParams("tx body json object required")
+    chain_id = int(tx_body.get("chainId") or tx_body.get("chain_id") or _chain_id_required())
+
+    body = dict(tx_body)
+    if _normalize_tx_fields is not None:
+        body = _normalize_tx_fields(body)
+
+    ident = deps.get_chain_identity() if hasattr(deps, "get_chain_identity") else {}
+    genesis_hex = ident.get("genesisHash") if isinstance(ident, dict) else None
+    genesis = _b(genesis_hex) if isinstance(genesis_hex, str) and genesis_hex else b""
+    network = str((ident or {}).get("network") or (ident or {}).get("name") or "unknown") if isinstance(ident, dict) else "unknown"
+
+    if _tx_signing_preimage is None:
+        raise rpc_errors.InternalError("tx signing preimage helper unavailable")
+    sign_bytes = _tx_signing_preimage(body, chain_id=chain_id, genesis=genesis, network=network)
+    sign_hash = hashlib.sha3_512(sign_bytes).digest()
+    canonical_body = _cbor_dumps(body) if _cbor_dumps is not None else sign_bytes
+
+    return {
+        "canonical_body_hex": "0x" + bytes(canonical_body).hex(),
+        "sign_bytes_hex": "0x" + sign_bytes.hex(),
+        "sign_hash_hex": "0x" + sign_hash.hex(),
+        "chain_id": chain_id,
+        "domain": "tx",
+        "prehash": "sha3-512",
     }
 
 
