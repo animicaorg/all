@@ -68,6 +68,11 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         throw new Error(result.error);
       }
 
+      // Validate result has required fields
+      if (!result || typeof result.txid !== 'string') {
+        throw new Error('Invalid response from wallet: missing txid');
+      }
+
       setSuccess(`Transaction sent! TXID: ${result.txid.slice(0, 16)}...`);
       setTo('');
       setAmount('');

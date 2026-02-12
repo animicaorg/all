@@ -24,6 +24,20 @@ export async function buildAndSignTransfer(
   publicKey: Uint8Array,
   algId: number
 ): Promise<{ signedTx: SignedTx; txid: string; unsignedHash: string }> {
+  // Validate inputs
+  if (!secretKey || secretKey.length === 0) {
+    throw new Error('secretKey is required for signing');
+  }
+  if (!publicKey || publicKey.length === 0) {
+    throw new Error('publicKey is required for signing');
+  }
+  if (!params.from || typeof params.from !== 'string') {
+    throw new Error('from address is required');
+  }
+  if (!params.to || typeof params.to !== 'string') {
+    throw new Error('to address is required');
+  }
+  
   // Generate salt for replay protection
   const salt = crypto.getRandomValues(new Uint8Array(32));
   
@@ -71,6 +85,14 @@ export async function buildAndSignTransfer(
   
   const txid = getTxHash(signedTx);
   const unsignedHash = getUnsignedHash(unsignedTx);
+  
+  // Validate outputs
+  if (!txid || typeof txid !== 'string') {
+    throw new Error('Failed to compute transaction hash');
+  }
+  if (!unsignedHash || typeof unsignedHash !== 'string') {
+    throw new Error('Failed to compute unsigned hash');
+  }
   
   return { signedTx, txid, unsignedHash };
 }
