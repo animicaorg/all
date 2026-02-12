@@ -7,10 +7,13 @@ import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
 import { buildAndSignTransfer, encodeTxForRpc } from '../core/tx/builder';
 import { createAccount } from '../core/wallets/account';
+import { parseWalletsJson, exportWalletsJson, mergeAccounts, deduplicateAccounts } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
+
+let unlockedPassword: string | null = null;
 
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -40,6 +43,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     
     case 'wallet_create':
       return handleCreate(params.password);
+
+    case 'wallet_importWalletsJson':
+      return handleImportWalletsJson(params.json);
+
+    case 'wallet_exportWalletsJson':
+      return handleExportWalletsJson(!!params?.includeSecrets);
     
     case 'wallet_hasVault':
       return { hasVault: !!(await loadVault()) };
@@ -94,6 +103,7 @@ async function handleUnlock(password: string): Promise<{ success: boolean }> {
     const vaultData: VaultData = JSON.parse(decrypted);
     
     setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
+    unlockedPassword = password;
     
     await saveState({
       isLocked: false,
@@ -108,6 +118,7 @@ async function handleUnlock(password: string): Promise<{ success: boolean }> {
 
 async function handleLock(): Promise<{ success: boolean }> {
   lockVault();
+  unlockedPassword = null;
   
   await saveState({
     isLocked: true,
@@ -144,6 +155,7 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
   });
   
   setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
+  unlockedPassword = password;
   
   await saveState({
     isLocked: false,
@@ -151,6 +163,39 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
   });
   
   return { success: true };
+}
+
+async function handleImportWalletsJson(json: string): Promise<{ imported: number; total: number }> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  const importedAccounts = deduplicateAccounts(parseWalletsJson(json));
+  const mergedAccounts = mergeAccounts(vaultData.accounts, importedAccounts);
+
+  vaultData.accounts = mergedAccounts;
+  if (!vaultData.currentAccount && mergedAccounts.length > 0) {
+    vaultData.currentAccount = mergedAccounts[0].address;
+  }
+
+  await saveVaultData(vaultData);
+
+  return {
+    imported: importedAccounts.length,
+    total: mergedAccounts.length,
+  };
+}
+
+async function handleExportWalletsJson(includeSecrets: boolean): Promise<{ json: string }> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  return {
+    json: exportWalletsJson(vaultData.accounts, includeSecrets),
+  };
 }
 
 async function handleGetAccounts(): Promise<Account[]> {
@@ -368,12 +413,16 @@ async function handleProviderSendTransaction(origin: string, params: any): Promi
 }
 
 async function saveVaultData(vaultData: VaultData): Promise<void> {
-  // Re-encrypt and save
-  const json = JSON.stringify(vaultData);
-  
-  // Get current password (we need to store this in memory)
-  // For now, just update the unlocked vault
+  if (!unlockedPassword) {
+    throw new Error('Vault password unavailable; please lock and unlock again');
+  }
+
+  const encrypted = await encrypt(JSON.stringify(vaultData), unlockedPassword);
+
+  await saveVault({
+    version: 1,
+    ...encrypted,
+  });
+
   setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
-  
-  // TODO: Implement proper vault re-encryption
 }
