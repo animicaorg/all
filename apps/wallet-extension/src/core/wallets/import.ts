@@ -1,6 +1,7 @@
 // wallets.json import/export (canonical v2 + legacy support)
 
 import type { WalletsJson, WalletEntry, Account } from '../../types/wallet';
+import type { NetworkConfig } from '../../types/network';
 import { addressFromPubkey, decodeAddress } from '../crypto/address';
 import { hexToBytes, bytesToHex } from '../crypto/pq';
 
@@ -17,7 +18,6 @@ function normalizeWalletEntry(wallet: any, idx: number): WalletEntry {
   const label = String(wallet.label ?? wallet.name ?? `wallet-${idx + 1}`);
   const address = String(wallet.address ?? wallet.addr ?? '');
   if (!address) throw new Error(`wallet[${idx}] missing address`);
-  decodeAddress(address);
 
   const algIdRaw = wallet.alg_id ?? wallet.algId ?? wallet.alg;
   const algId = Number(algIdRaw);
@@ -51,7 +51,43 @@ function normalizeWalletEntry(wallet: any, idx: number): WalletEntry {
   return out;
 }
 
-export function parseWalletsJson(json: string): Account[] {
+interface ParseWalletsJsonOptions {
+  network?: NetworkConfig;
+}
+
+function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: NetworkConfig) {
+  let decoded;
+  try {
+    decoded = decodeAddress(wallet.address, network
+      ? { expectedHrp: network.addressHrp, supportedVersions: network.supportedAddressVersions }
+      : undefined
+    );
+  } catch (error) {
+    if (network && error instanceof Error && error.message.startsWith('Unsupported address version')) {
+      throw new Error(`wallet[${idx}] ${error.message}. Switch network and retry import.`);
+    }
+    throw error;
+  }
+
+  if (!network) return decoded;
+
+  const metaChainId = wallet.meta?.chain_id ?? wallet.meta?.chainId ?? wallet.meta?.network_id ?? wallet.meta?.networkId;
+  if (metaChainId !== undefined && Number(metaChainId) !== network.chainId) {
+    throw new Error(
+      `wallet[${idx}] targets chain_id ${metaChainId}, but current network is ${network.chainId}. Switch network and retry import.`
+    );
+  }
+
+  if (!network.supportedAddressVersions.includes(decoded.version)) {
+    throw new Error(
+      `wallet[${idx}] uses address version ${decoded.version}, but network ${network.name} supports: ${network.supportedAddressVersions.join(',')}. Switch network and retry import.`
+    );
+  }
+
+  return decoded;
+}
+
+export function parseWalletsJson(json: string, options: ParseWalletsJsonOptions = {}): Account[] {
   const data: any = JSON.parse(json);
 
   let walletsRaw: any[];
@@ -73,11 +109,16 @@ export function parseWalletsJson(json: string): Account[] {
 
   walletsRaw.forEach((wallet, idx) => {
     const normalized = normalizeWalletEntry(wallet, idx);
+    const decodedAddress = assertWalletMatchesNetwork(idx, normalized, options.network);
+
     const publicKey = hexToBytes(normalized.public_key_hex);
     const secretHex = normalized.secret_key_hex ?? normalized.private_key_enc;
     const secretKey = secretHex ? hexToBytes(secretHex) : undefined;
 
-    const expectedAddress = addressFromPubkey(publicKey, normalized.alg_id);
+    const expectedAddress = addressFromPubkey(publicKey, normalized.alg_id, {
+      expectedHrp: options.network?.addressHrp,
+      supportedVersions: decodedAddress ? [decodedAddress.version] : options.network?.supportedAddressVersions,
+    });
     if (expectedAddress !== normalized.address) {
       console.warn(`Address mismatch for ${normalized.label}: expected ${expectedAddress}, got ${normalized.address}`);
     }
