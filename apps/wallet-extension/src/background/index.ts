@@ -6,7 +6,7 @@ import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
 import { buildAndSignTransfer, encodeTxForRpc } from '../core/tx/builder';
 import { createAccount } from '../core/wallets/account';
-import { parseWalletsJson, exportWalletsJson, mergeAccounts, deduplicateAccounts } from '../core/wallets/import';
+import { importWalletsJson, exportWalletsJson } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
 import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl } from '../services/rpcConfig';
 import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
@@ -194,27 +194,23 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
   return { success: true };
 }
 
-async function handleImportWalletsJson(json: string): Promise<{ imported: number; total: number }> {
+async function handleImportWalletsJson(json: string): Promise<any> {
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
 
   const currentNetwork = vaultData.networkConfigs[vaultData.currentNetwork];
-  const importedAccounts = deduplicateAccounts(parseWalletsJson(json, { network: currentNetwork }));
-  const mergedAccounts = mergeAccounts(vaultData.accounts, importedAccounts);
+  const { accounts, summary } = await importWalletsJson(json, vaultData.accounts, { network: currentNetwork });
 
-  vaultData.accounts = mergedAccounts;
-  if (!vaultData.currentAccount && mergedAccounts.length > 0) {
-    vaultData.currentAccount = mergedAccounts[0].address;
+  vaultData.accounts = accounts;
+  if (!vaultData.currentAccount && accounts.length > 0) {
+    vaultData.currentAccount = accounts[0].address;
   }
 
   await saveVaultData(vaultData);
 
-  return {
-    imported: importedAccounts.length,
-    total: mergedAccounts.length,
-  };
+  return summary;
 }
 
 async function handleExportWalletsJson(includeSecrets: boolean): Promise<{ json: string }> {
