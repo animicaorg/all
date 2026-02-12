@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Account } from '../../types/wallet';
+import { formatANM } from '../../services/balances';
+import { useBalancesStore } from '../../store/balances';
 
 interface AccountsTabProps {
   accounts: Account[];
@@ -13,6 +15,26 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
   const [newAccountLabel, setNewAccountLabel] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
+  const loadingByAddress = useBalancesStore(store => store.loadingByAddress);
+  const errorByAddress = useBalancesStore(store => store.errorByAddress);
+  const refreshBalances = useBalancesStore(store => store.refreshBalances);
+
+  useEffect(() => {
+    if (accounts.length === 0) {
+      return;
+    }
+
+    const addresses = accounts.map(account => account.address);
+    refreshBalances(addresses, false);
+
+    const interval = window.setInterval(() => {
+      refreshBalances(addresses, false);
+    }, 10000);
+
+    return () => window.clearInterval(interval);
+  }, [accounts, refreshBalances]);
 
   async function handleCreateAccount() {
     if (!newAccountLabel.trim()) {
@@ -43,17 +65,48 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
     navigator.clipboard.writeText(address);
   }
 
+  async function handleRefreshBalances() {
+    await refreshBalances(accounts.map(account => account.address), true);
+  }
+
+  function getBalanceText(address: string): string {
+    if (loadingByAddress[address]) {
+      return 'Balance: …';
+    }
+
+    if (errorByAddress[address]) {
+      return 'Balance: unavailable';
+    }
+
+    const balance = balancesByAddress[address];
+    if (typeof balance === 'bigint') {
+      return `Balance: ${formatANM(balance)} ANM`;
+    }
+
+    return 'Balance: …';
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <h3 style={{ margin: 0, fontSize: '16px' }}>Your Accounts</h3>
-        <button
-          className="button"
-          style={{ width: 'auto', padding: '8px 16px', fontSize: '12px' }}
-          onClick={() => setShowCreate(!showCreate)}
-        >
-          {showCreate ? 'Cancel' : '+ New Account'}
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            className="button"
+            style={{ width: 'auto', padding: '8px 12px', fontSize: '12px' }}
+            onClick={handleRefreshBalances}
+            title="Refresh balances"
+          >
+            ↻ Refresh
+          </button>
+          <button
+            className="button"
+            style={{ width: 'auto', padding: '8px 16px', fontSize: '12px' }}
+            onClick={() => setShowCreate(!showCreate)}
+          >
+            {showCreate ? 'Cancel' : '+ New Account'}
+          </button>
+        </div>
       </div>
 
       {showCreate && (
@@ -67,9 +120,9 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
             onChange={(e) => setNewAccountLabel(e.target.value)}
             disabled={loading}
           />
-          
+
           {error && <div className="error">{error}</div>}
-          
+
           <button
             className="button"
             onClick={handleCreateAccount}
@@ -97,6 +150,9 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
             </div>
             <div className="address">
               {account.address.slice(0, 20)}...{account.address.slice(-10)}
+            </div>
+            <div style={{ marginTop: '4px', fontSize: '12px', color: '#666' }}>
+              {getBalanceText(account.address)}
             </div>
           </div>
           <button
