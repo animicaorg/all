@@ -1,28 +1,31 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "./App";
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import RecoverableErrorBoundary from '../shared/components/RecoverableErrorBoundary';
 
 // Global theme + page-local styles
-import "../shared/theme.css";
-import "./styles.css";
+import '../shared/theme.css';
+import './styles.css';
 
 // In MV3 pages we should be resilient to DOM readiness
 function mount() {
-  const el = document.getElementById("root");
+  const el = document.getElementById('root');
   if (!el) {
-    console.error("[onboarding] #root not found");
+    console.error('[onboarding] #root not found');
     return;
   }
   const root = createRoot(el);
   root.render(
     <React.StrictMode>
-      <App />
+      <RecoverableErrorBoundary context="onboarding">
+        <App />
+      </RecoverableErrorBoundary>
     </React.StrictMode>
   );
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", mount, { once: true });
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mount, { once: true });
 } else {
   mount();
 }
@@ -32,6 +35,6 @@ if (document.readyState === "loading") {
 if (import.meta && (import.meta as any).hot) {
   (import.meta as any).hot.accept(() => {
     // eslint-disable-next-line no-console
-    console.log("[onboarding] HMR update");
+    console.log('[onboarding] HMR update');
   });
 }

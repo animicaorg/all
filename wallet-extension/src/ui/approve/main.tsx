@@ -1,9 +1,10 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "./App";
-import "../shared/theme.css";
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import RecoverableErrorBoundary from '../shared/components/RecoverableErrorBoundary';
+import '../shared/theme.css';
 
-export type ApproveKind = "connect" | "sign" | "tx";
+export type ApproveKind = 'connect' | 'sign' | 'tx';
 
 export interface InitialApproveState {
   requestId?: string;
@@ -17,15 +18,15 @@ export interface InitialApproveState {
  */
 function parseInitial(): InitialApproveState {
   const q = new URLSearchParams(window.location.search);
-  const kind = (q.get("type") || "connect") as ApproveKind;
-  const requestId = q.get("req") || q.get("requestId") || undefined;
-  const origin = q.get("origin") || undefined;
+  const kind = (q.get('type') || 'connect') as ApproveKind;
+  const requestId = q.get('req') || q.get('requestId') || undefined;
+  const origin = q.get('origin') || undefined;
   return { kind, requestId, origin };
 }
 
-const rootEl = document.getElementById("root");
+const rootEl = document.getElementById('root');
 if (!rootEl) {
-  throw new Error("Missing #root element in approve.html");
+  throw new Error('Missing #root element in approve.html');
 }
 
 const initial = parseInitial();
@@ -34,7 +35,7 @@ const initial = parseInitial();
 try {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (chrome as any)?.runtime?.sendMessage?.({
-    type: "approve:opened",
+    type: 'approve:opened',
     requestId: initial.requestId,
     kind: initial.kind,
     origin: initial.origin,
@@ -45,18 +46,20 @@ try {
 
 createRoot(rootEl).render(
   <React.StrictMode>
-    <App initial={initial} />
+    <RecoverableErrorBoundary context="approve">
+      <App initial={initial} />
+    </RecoverableErrorBoundary>
   </React.StrictMode>
 );
 
 // Convenience: allow ESC to signal a cancel intent back to background.
 // Background may close the window upon receiving this message.
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (chrome as any)?.runtime?.sendMessage?.({
-        type: "approve:escape",
+        type: 'approve:escape',
         requestId: initial.requestId,
       });
     } catch {
@@ -74,5 +77,5 @@ function fitContentHeight() {
     window.resizeTo(window.outerWidth, Math.max(420, Math.min(h + 24, 900)));
   });
 }
-window.addEventListener("load", fitContentHeight);
-window.addEventListener("resize", fitContentHeight);
+window.addEventListener('load', fitContentHeight);
+window.addEventListener('resize', fitContentHeight);
