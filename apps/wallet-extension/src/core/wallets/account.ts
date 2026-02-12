@@ -3,6 +3,7 @@
 import type { Account } from '../../types/wallet';
 import { generateKeyPair, DILITHIUM3_ALG_ID } from '../crypto/pq';
 import { addressFromPubkey } from '../crypto/address';
+import { hexToBytes } from '../crypto/convert';
 
 export function createAccount(label: string): Account {
   const { publicKey, secretKey, algId } = generateKeyPair();
@@ -25,8 +26,8 @@ export function importFromPrivateKey(
   publicKeyHex: string,
   algId: number = DILITHIUM3_ALG_ID
 ): Account {
-  const secretKey = hexToBytes(secretKeyHex);
-  const publicKey = hexToBytes(publicKeyHex);
+  const secretKey = hexToBytes(secretKeyHex, 'secretKeyHex');
+  const publicKey = hexToBytes(publicKeyHex, 'publicKeyHex');
   const address = addressFromPubkey(publicKey, algId);
   
   return {
@@ -50,13 +51,4 @@ export function createWatchOnlyAccount(label: string, address: string): Account 
     createdAt: new Date().toISOString(),
     watchOnly: true,
   };
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const cleaned = hex.startsWith('0x') ? hex.slice(2) : hex;
-  const bytes = new Uint8Array(cleaned.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(cleaned.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
 }

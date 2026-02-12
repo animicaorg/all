@@ -16,6 +16,7 @@
  */
 
 import { sha3_256 } from 'js-sha3';
+import { hexToBytes as safeHexToBytes, bytesToHex as safeBytesToHex, bytesToHexRaw } from './convert';
 
 export const DILITHIUM3_ALG_ID = 0x1001; // 4097
 export const SPHINCSPLUS_ALG_ID = 0x1002; // 4098
@@ -122,17 +123,18 @@ export function sha3Hash(data: Uint8Array): Uint8Array {
   return new Uint8Array(sha3_256.array(data));
 }
 
-export function hexToBytes(hex: string): Uint8Array {
-  const cleaned = hex.startsWith('0x') ? hex.slice(2) : hex;
-  const bytes = new Uint8Array(cleaned.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(cleaned.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+/**
+ * Convert hex string to bytes (with validation)
+ * @deprecated Use safeHexToBytes from convert.ts for better error messages
+ */
+export function hexToBytes(hex: string | undefined | null): Uint8Array {
+  return safeHexToBytes(hex, 'hex');
 }
 
-export function bytesToHex(bytes: Uint8Array): string {
-  return '0x' + Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+/**
+ * Convert bytes to hex string with 0x prefix (with validation)
+ * @deprecated Use safeBytesToHex from convert.ts for better error messages
+ */
+export function bytesToHex(bytes: Uint8Array | undefined | null): string {
+  return safeBytesToHex(bytes, 'bytes');
 }
