@@ -450,12 +450,26 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     
     // Encode and send
     const rawTx = encodeTxForRpc(signedTx);
+    const sig0 = signedTx.sigs?.[0];
+    let debugSignHash: string | null = null;
+    try {
+      const diag = await client.call('tx.debugSignHash', [signedTx.tx]);
+      if (diag && typeof diag.sign_hash_hex === 'string') debugSignHash = diag.sign_hash_hex;
+    } catch {
+      // optional debug endpoint (ANIMICA_DEBUG_RPC=1)
+    }
     txDebugLog('pre-send', {
       rpcUrl: client.getActiveUrl(),
       rpcMethod: 'tx.sendRawTransaction',
       from: params.from,
       algId: account.algId,
       txBody: signedTx.tx,
+      scheme_id: sig0?.alg,
+      pubkey_len: sig0?.pubkey?.length,
+      sig_len: sig0?.sig?.length,
+      pubkey_hex: sig0?.pubkey ? '0x' + Array.from(sig0.pubkey).map((b) => b.toString(16).padStart(2, '0')).join('') : null,
+      signature_hex: sig0?.sig ? '0x' + Array.from(sig0.sig).map((b) => b.toString(16).padStart(2, '0')).join('') : null,
+      sign_hash: debugSignHash,
       rawTx: summarizeRawTx(rawTx),
     });
     await client.sendRawTransaction(rawTx);
