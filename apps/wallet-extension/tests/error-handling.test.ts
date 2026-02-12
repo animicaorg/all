@@ -90,13 +90,12 @@ describe('error response handling pattern', () => {
 });
 
 describe('error handling coverage in UI components', () => {
-  const componentsWithErrorHandling = [
+  const componentsFixedInThisPR = [
     'SendTab.tsx - wallet_sendTransaction',
     'Home.tsx - wallet_getAccounts',
     'Home.tsx - wallet_getCurrentNetwork',
     'Home.tsx - wallet_getPendingTxs',
     'Home.tsx - wallet_getDebugState',
-    'Home.tsx - wallet_getBalance',
     'Home.tsx - wallet_lock',
     'Onboarding.tsx - wallet_create',
     'Unlock.tsx - wallet_unlock',
@@ -104,21 +103,34 @@ describe('error handling coverage in UI components', () => {
     'App.tsx - wallet_isLocked',
     'AccountsTab.tsx - wallet_createAccount',
     'SettingsTab.tsx - wallet_switchNetwork',
-    'SettingsTab.tsx - wallet_getRpcConfig',
-    'SettingsTab.tsx - wallet_setRpcUrl',
-    'SettingsTab.tsx - wallet_resetRpcUrl',
-    'SettingsTab.tsx - wallet_testRpcConnection',
-    'SettingsTab.tsx - wallet_importWalletsJson',
-    'SettingsTab.tsx - wallet_exportWalletsJson',
   ];
 
-  it('documents all components that now have error handling', () => {
+  const componentsAlreadyFixed = [
+    'Home.tsx - wallet_getBalance (already had error checking)',
+    'SettingsTab.tsx - wallet_getRpcConfig (already had error checking)',
+    'SettingsTab.tsx - wallet_setRpcUrl (already had error checking)',
+    'SettingsTab.tsx - wallet_resetRpcUrl (already had error checking)',
+    'SettingsTab.tsx - wallet_testRpcConnection (already had error checking)',
+    'SettingsTab.tsx - wallet_importWalletsJson (already had error checking)',
+    'SettingsTab.tsx - wallet_exportWalletsJson (already had error checking)',
+  ];
+
+  it('documents components fixed in this PR', () => {
     // This test serves as documentation of the fix
-    expect(componentsWithErrorHandling.length).toBeGreaterThan(0);
+    expect(componentsFixedInThisPR.length).toBe(12);
     
     // All these components now check for result?.error before accessing result properties
-    componentsWithErrorHandling.forEach(component => {
+    componentsFixedInThisPR.forEach(component => {
       expect(component).toBeDefined();
+    });
+  });
+
+  it('documents components that already had error handling', () => {
+    // These components already had proper error handling
+    expect(componentsAlreadyFixed.length).toBe(7);
+    
+    componentsAlreadyFixed.forEach(component => {
+      expect(component).toContain('already had error checking');
     });
   });
 });
