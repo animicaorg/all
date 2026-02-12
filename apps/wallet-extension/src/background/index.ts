@@ -670,24 +670,41 @@ async function handleProviderGetChainId(): Promise<number> {
   return network.chainId;
 }
 
+function normalizeProviderSendTransactionParams(params: any): any {
+  // EIP-1193 callers typically send params: [txObject]; normalize to a single tx object here.
+  if (Array.isArray(params)) {
+    if (params.length !== 1 || !params[0] || typeof params[0] !== 'object' || Array.isArray(params[0])) {
+      throw new Error('Invalid provider_sendTransaction params: expected [txObject] or txObject');
+    }
+    return params[0];
+  }
+
+  if (!params || typeof params !== 'object') {
+    throw new Error('Invalid provider_sendTransaction params: expected txObject');
+  }
+
+  return params;
+}
+
 async function handleProviderSendTransaction(origin: string, params: any): Promise<string> {
   // Check permission
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
-  
+
+  const normalizedParams = normalizeProviderSendTransactionParams(params);
   const permissions = new PermissionManager(vaultData.permissions);
   const authorized = permissions.getAuthorizedAccounts(origin);
-  
-  if (!authorized.includes(params.from)) {
+
+  if (!authorized.includes(normalizedParams.from)) {
     throw new Error('Not authorized');
   }
-  
+
   // TODO: Show transaction approval popup
   // For now, auto-approve
-  
-  const result = await handleSendTransaction(params);
+
+  const result = await handleSendTransaction(normalizedParams);
   return result.txid;
 }
 

@@ -40,6 +40,30 @@ describe('RpcClient numeric normalization', () => {
 });
 
 describe('RpcClient sendRawTransaction error handling', () => {
+  
+  it('sends tx.sendRawTransaction params as object { rawTx }', async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ result: '0xhash' }),
+    })) as any;
+
+    const client = await createClient(fetchMock);
+    await expect(client.sendRawTransaction('0xabc')).resolves.toBe('0xhash');
+
+    const [, init] = fetchMock.mock.calls[0];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.method).toBe('tx.sendRawTransaction');
+    expect(payload.params).toEqual({ rawTx: '0xabc' });
+  });
+
+  it('throws local validation error for invalid rawTx shape before network call', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ result: 'x' }) })) as any;
+    const client = await createClient(fetchMock);
+
+    await expect(client.sendRawTransaction('abc')).rejects.toThrow('expected 0x-prefixed hex string');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('surfaces RPC response errors without masking them as endpoint failures', async () => {
     const client = await createClient(vi.fn(async () => ({
       ok: true,
