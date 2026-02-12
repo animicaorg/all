@@ -59,6 +59,10 @@ export async function fetchChainContext(
  * @param rawTx - 0x-prefixed hex encoded transaction envelope
  * @param rpcCall - RPC call function
  * @returns Transaction hash
+ * 
+ * NOTE: This function uses array form params: [rawTx] which is valid per the node
+ * dispatcher (see rpc/jsonrpc.py _bind_call_args). The RpcClient.sendRawTransaction()
+ * uses object form params: { rawTx } for consistency with validation. Both work.
  */
 export async function submitTransaction(
   rawTx: string,
@@ -69,6 +73,7 @@ export async function submitTransaction(
   }
   
   try {
+    // Array form: [rawTx] binds to positional parameter in node's tx_send_raw_transaction(rawTx: str)
     const result = await rpcCall('tx.sendRawTransaction', [rawTx]);
     return result;
   } catch (error: any) {
