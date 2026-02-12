@@ -40,7 +40,7 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     name: 'Testnet',
     chainId: 2,
     addressHrp: 'animt',
-    supportedAddressVersions: [1],
+    supportedAddressVersions: [1, 2],
     rpcUrls: ['http://127.0.0.1:18546/rpc'],
     nativeCurrency: {
       name: 'Animica',
@@ -53,7 +53,7 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     name: 'Devnet',
     chainId: 1337,
     addressHrp: 'animd',
-    supportedAddressVersions: [1],
+    supportedAddressVersions: [1, 2],
     rpcUrls: ['http://127.0.0.1:28545/rpc'],
     nativeCurrency: {
       name: 'Animica',
