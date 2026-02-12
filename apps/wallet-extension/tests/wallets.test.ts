@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseWalletsJson, exportWalletsJson, deduplicateAccounts, mergeAccounts } from '../src/core/wallets/import';
 import { addressFromPubkey } from '../src/core/crypto/address';
+import * as addressModule from '../src/core/crypto/address';
 import type { Account } from '../src/types/wallet';
 import { NETWORKS } from '../src/types/network';
 
@@ -101,6 +102,29 @@ describe('wallets.json Import/Export', () => {
 
     expect(() => parseWalletsJson(json, { network: NETWORKS.mainnet }))
       .toThrow('targets chain_id 999, but current network is 1. Switch network and retry import.');
+  });
+
+  it('maps bech32m excess padding errors to actionable import guidance', () => {
+    const decodeSpy = vi.spyOn(addressModule, 'decodeAddress')
+      .mockImplementation(() => {
+        throw new Error('Excess padding');
+      });
+
+    const json = JSON.stringify({
+      wallets: [{
+        label: 'bad-address',
+        address: SAMPLE_ADDRESS_V1,
+        alg_id: 4097,
+        public_key_hex: SAMPLE_PUBKEY_HEX,
+        created_at: '2025-01-01T00:00:00Z',
+      }],
+    });
+
+    expect(() => parseWalletsJson(json)).toThrow(
+      'wallet[0] has invalid bech32m address encoding (Excess padding). Re-export the wallet file and retry import.'
+    );
+
+    decodeSpy.mockRestore();
   });
 
   it('exports canonical version 2 wallets.json', () => {
