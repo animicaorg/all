@@ -53,10 +53,14 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
 
   async function handleNetworkChange(networkId: string) {
     try {
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         method: 'wallet_switchNetwork',
         params: { networkId },
       });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       setSelectedNetwork(networkId);
       onNetworkChange();

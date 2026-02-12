@@ -26,10 +26,14 @@ function Onboarding({ onComplete }: OnboardingProps) {
     setLoading(true);
 
     try {
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         method: 'wallet_create',
         params: { password },
       });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       onComplete();
     } catch (err: any) {

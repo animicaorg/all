@@ -14,10 +14,14 @@ function Unlock({ onUnlock }: UnlockProps) {
     setLoading(true);
 
     try {
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         method: 'wallet_unlock',
         params: { password },
       });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       onUnlock();
     } catch (err: any) {
