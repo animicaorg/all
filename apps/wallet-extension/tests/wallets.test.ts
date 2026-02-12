@@ -1,6 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { parseWalletsJson, exportWalletsJson, deduplicateAccounts, mergeAccounts } from '../src/core/wallets/import';
+import { addressFromPubkey } from '../src/core/crypto/address';
 import type { Account } from '../src/types/wallet';
+import { NETWORKS } from '../src/types/network';
+
+const SAMPLE_PUBKEY_HEX = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+const SAMPLE_SECRET_HEX = '0xfedcba0987654321';
+const SAMPLE_ADDRESS_V1 = addressFromPubkey(
+  Uint8Array.from(Buffer.from(SAMPLE_PUBKEY_HEX.slice(2), 'hex')),
+  4097,
+  { expectedHrp: 'anim', supportedVersions: [1, 2] },
+);
+const SAMPLE_ADDRESS_V2 = addressFromPubkey(
+  Uint8Array.from(Buffer.from(SAMPLE_PUBKEY_HEX.slice(2), 'hex')),
+  4097,
+  { expectedHrp: 'anim', supportedVersions: [2, 1] },
+);
 
 describe('wallets.json Import/Export', () => {
   const sampleWalletsJson = `{
@@ -11,11 +26,11 @@ describe('wallets.json Import/Export', () => {
     "wallets": [
       {
         "label": "test-account",
-        "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz6j8g5",
+        "address": "${SAMPLE_ADDRESS_V1}",
         "alg_id": 4097,
         "alg_name": "dilithium3",
-        "public_key_hex": "0x1234567890abcdef",
-        "secret_key_hex": "0xfedcba0987654321",
+        "public_key_hex": "${SAMPLE_PUBKEY_HEX}",
+        "secret_key_hex": "${SAMPLE_SECRET_HEX}",
         "created_at": "2025-01-01T00:00:00Z"
       }
     ]
@@ -25,18 +40,73 @@ describe('wallets.json Import/Export', () => {
     expect(() => parseWalletsJson(sampleWalletsJson)).not.toThrow();
     const legacy = JSON.stringify({ wallets: [{
       label: 'legacy',
-      address: 'anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz6j8g5',
+      address: SAMPLE_ADDRESS_V1,
       algId: 4097,
-      publicKeyHex: '0x1234567890abcdef',
+      publicKeyHex: SAMPLE_PUBKEY_HEX,
       createdAt: '2025-01-01T00:00:00Z',
     }]});
     expect(() => parseWalletsJson(legacy)).not.toThrow();
   });
 
+  it('accepts v2 addresses when network supports v2', () => {
+    const json = JSON.stringify({
+      format: 'animica.wallets',
+      version: 2,
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
+      wallets: [{
+        label: 'v2-wallet',
+        address: SAMPLE_ADDRESS_V2,
+        alg_id: 4097,
+        public_key_hex: SAMPLE_PUBKEY_HEX,
+        created_at: '2025-01-01T00:00:00Z',
+      }],
+    });
+
+    const accounts = parseWalletsJson(json, { network: NETWORKS.mainnet });
+    expect(accounts).toHaveLength(1);
+  });
+
+  it('shows switch-network guidance for unsupported version on selected network', () => {
+    const json = JSON.stringify({
+      format: 'animica.wallets',
+      version: 2,
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
+      wallets: [{
+        label: 'v2-wallet',
+        address: SAMPLE_ADDRESS_V2,
+        alg_id: 4097,
+        public_key_hex: SAMPLE_PUBKEY_HEX,
+        created_at: '2025-01-01T00:00:00Z',
+      }],
+    });
+
+    const sameHrpV1OnlyNetwork = { ...NETWORKS.mainnet, supportedAddressVersions: [1] };
+    expect(() => parseWalletsJson(json, { network: sameHrpV1OnlyNetwork }))
+      .toThrow('Switch network and retry import.');
+  });
+
+  it('validates chain_id metadata against selected network', () => {
+    const json = JSON.stringify({
+      wallets: [{
+        label: 'wrong-chain',
+        address: SAMPLE_ADDRESS_V1,
+        alg_id: 4097,
+        public_key_hex: SAMPLE_PUBKEY_HEX,
+        created_at: '2025-01-01T00:00:00Z',
+        meta: { chain_id: 999 },
+      }],
+    });
+
+    expect(() => parseWalletsJson(json, { network: NETWORKS.mainnet }))
+      .toThrow('targets chain_id 999, but current network is 1. Switch network and retry import.');
+  });
+
   it('exports canonical version 2 wallets.json', () => {
     const accounts: Account[] = [{
       label: 'test',
-      address: 'anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz6j8g5',
+      address: SAMPLE_ADDRESS_V1,
       algId: 4097,
       algName: 'dilithium3',
       publicKey: new Uint8Array([1, 2, 3, 4]),

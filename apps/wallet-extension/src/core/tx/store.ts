@@ -1,6 +1,6 @@
 // Transaction store with idempotent state machine
 
-import type { PendingTx, TxStatus, SignedTx } from '../../types/tx';
+import { TxStatus, type PendingTx } from '../../types/tx';
 
 export class TxStore {
   private txs: Map<string, PendingTx> = new Map();

@@ -171,7 +171,8 @@ async function handleImportWalletsJson(json: string): Promise<{ imported: number
     throw new Error('Wallet is locked');
   }
 
-  const importedAccounts = deduplicateAccounts(parseWalletsJson(json));
+  const currentNetwork = vaultData.networkConfigs[vaultData.currentNetwork];
+  const importedAccounts = deduplicateAccounts(parseWalletsJson(json, { network: currentNetwork }));
   const mergedAccounts = mergeAccounts(vaultData.accounts, importedAccounts);
 
   vaultData.accounts = mergedAccounts;
