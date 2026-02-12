@@ -1,17 +1,19 @@
 // Bech32m address encoding/decoding for Animica
+// 
+// CANONICAL FORMAT (matches packages/animica-crypto and pq/py/address.py)
+// - No version byte in bech32m encoding
+// - Format: bech32m(hrp="anim", toWords(alg_id || sha3_256(pubkey)))
 
 import { sha3Hash } from './pq';
 import type { AddressRecord } from '../../types/wallet';
 import { decodeAnimAddress, encodeAnimAddress } from '../../lib/address/animicaAddress';
 
 const DEFAULT_HRP = 'anim';
-const DEFAULT_ADDRESS_VERSION = 1;
 const ADDRESS_PAYLOAD_LENGTH = 34;
 const SUPPORTED_ALG_ID_RANGE = { min: 0x1000, max: 0x1fff };
 
 export interface AddressValidationOptions {
   expectedHrp?: string;
-  supportedVersions?: readonly number[];
 }
 
 export function addressFromPubkey(
@@ -20,7 +22,6 @@ export function addressFromPubkey(
   options: AddressValidationOptions = {}
 ): string {
   const hrp = options.expectedHrp ?? DEFAULT_HRP;
-  const version = options.supportedVersions?.[0] ?? DEFAULT_ADDRESS_VERSION;
 
   const digest = sha3Hash(pubkey);
   const payload = new Uint8Array(2 + digest.length);
@@ -28,7 +29,7 @@ export function addressFromPubkey(
   payload[1] = algId & 0xff;
   payload.set(digest, 2);
 
-  return encodeAnimAddress(hrp, version, payload);
+  return encodeAnimAddress(hrp, payload);
 }
 
 export function decodeAddress(address: string, options: AddressValidationOptions = {}): AddressRecord {
@@ -45,7 +46,6 @@ export function decodeAddress(address: string, options: AddressValidationOptions
 
   return {
     hrp: decoded.hrp,
-    version: decoded.version,
     algId,
     digest: decoded.payload.slice(2, ADDRESS_PAYLOAD_LENGTH),
   };

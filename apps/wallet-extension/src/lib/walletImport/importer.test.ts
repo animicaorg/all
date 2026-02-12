@@ -4,10 +4,10 @@ import { bytesToHex } from '../../core/crypto/pq';
 import { importWalletRecords } from './importer';
 import * as animicaAddressModule from '../address/animicaAddress';
 
-function testWallet(label: string, seed: number, version: 1 | 2, withSecret = true) {
+function testWallet(label: string, seed: number, withSecret = true) {
   const publicKey = Uint8Array.from(Array.from({ length: 32 }, (_, idx) => (seed + idx) % 256));
   const secretKey = Uint8Array.from(Array.from({ length: 32 }, (_, idx) => (seed + idx + 64) % 256));
-  const address = addressFromPubkey(publicKey, 0x1001, { expectedHrp: 'anim', supportedVersions: [version] });
+  const address = addressFromPubkey(publicKey, 0x1001, { expectedHrp: 'anim' });
 
   return {
     label,
@@ -21,12 +21,12 @@ function testWallet(label: string, seed: number, version: 1 | 2, withSecret = tr
 }
 
 describe('wallet importer', () => {
-  it('parses versioned wallets file and imports v1/v2 addresses', async () => {
+  it('parses versioned wallets file and imports addresses', async () => {
     const payload = {
       version: 1,
       wallets: [
-        testWallet('wallet-v1', 10, 1),
-        testWallet('wallet-v2', 20, 2),
+        testWallet('wallet-1', 10),
+        testWallet('wallet-2', 20),
       ],
     };
 
@@ -37,7 +37,7 @@ describe('wallet importer', () => {
   });
 
   it('deduplicates and upgrades watch-only account', async () => {
-    const existingWatchOnly = testWallet('watch', 30, 1, false);
+    const existingWatchOnly = testWallet('watch', 30, false);
     const existing = [
       {
         label: existingWatchOnly.label,
@@ -53,8 +53,8 @@ describe('wallet importer', () => {
     const payload = {
       version: 1,
       wallets: [
-        testWallet('watch', 30, 1, true),
-        testWallet('watch-duplicate', 30, 1, true),
+        testWallet('watch', 30, true),
+        testWallet('watch-duplicate', 30, true),
       ],
     };
 
@@ -74,7 +74,7 @@ describe('wallet importer', () => {
 
     const payload = {
       version: 1,
-      wallets: [testWallet('bad-padding', 60, 1, true)],
+      wallets: [testWallet('bad-padding', 60, true)],
     };
 
     try {
@@ -93,7 +93,7 @@ describe('wallet importer', () => {
 
     const payload = {
       version: 1,
-      wallets: [testWallet('bad-checksum', 70, 1, true)],
+      wallets: [testWallet('bad-checksum', 70, true)],
     };
 
     try {
@@ -106,11 +106,11 @@ describe('wallet importer', () => {
     }
   });
   it('supports single-wallet object and array payloads', async () => {
-    const single = testWallet('single', 40, 1, false);
+    const single = testWallet('single', 40, false);
     const fromSingle = await importWalletRecords(JSON.stringify(single), []);
     expect(fromSingle.summary.imported_count).toBe(1);
 
-    const fromArray = await importWalletRecords(JSON.stringify([testWallet('array', 50, 2, false)]), []);
+    const fromArray = await importWalletRecords(JSON.stringify([testWallet('array', 50, false)]), []);
     expect(fromArray.summary.imported_count).toBe(1);
   });
 });

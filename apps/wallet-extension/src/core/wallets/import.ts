@@ -63,7 +63,7 @@ function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: 
   let decoded;
   try {
     decoded = decodeAddress(wallet.address, network
-      ? { expectedHrp: network.addressHrp, supportedVersions: network.supportedAddressVersions }
+      ? { expectedHrp: network.addressHrp }
       : undefined
     );
   } catch (error) {
@@ -71,9 +71,6 @@ function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: 
       throw new Error(
         `wallet[${idx}] has invalid bech32m address encoding (${error.message}). Re-export the wallet file and retry import.`
       );
-    }
-    if (network && error instanceof Error && error.message.startsWith('Unsupported address version')) {
-      throw new Error(`wallet[${idx}] ${error.message}. Switch network and retry import.`);
     }
     throw error;
   }
@@ -116,7 +113,6 @@ export function parseWalletsJson(json: string, options: ParseWalletsJsonOptions 
 
     const expectedAddress = addressFromPubkey(publicKey, normalized.alg_id, {
       expectedHrp: options.network?.addressHrp,
-      supportedVersions: decodedAddress ? [decodedAddress.version] : options.network?.supportedAddressVersions,
     });
     if (expectedAddress !== normalized.address) {
       // Compatibility path for older exports that stored non-canonical addresses.

@@ -7,7 +7,7 @@
   "wallets": [
     {
       "label": "alice",
-      "address": "anim1zzqqu6kl829nzq378n2e8pxrpfgg0t8lkkg9w274plj69f6w8suxk2nq8qdv76",
+      "address": "anim1zqpz90lz6svmarsegk6ptf0svk0glc27ysfgt383wtt5hgq08p4wvdg08p5sf",
       "alg_id": 4098,
       "alg_name": "sphincs_shake_128s",
       "public_key_hex": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
