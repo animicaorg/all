@@ -4,36 +4,76 @@ import { RpcClient } from '../core/rpc/client';
 const DEFAULT_DECIMALS = 9n;
 const DEBUG_BALANCE = false;
 
+export interface BalanceDebugState {
+  lastBalanceResponse?: unknown;
+  lastPingResponse?: unknown;
+  lastBalanceError?: string | null;
+  lastPingError?: string | null;
+  lastBalanceFetchedAt?: number | null;
+}
+
+const balanceDebugState: BalanceDebugState = {
+  lastBalanceResponse: null,
+  lastPingResponse: null,
+  lastBalanceError: null,
+  lastPingError: null,
+  lastBalanceFetchedAt: null,
+};
+
 function debugLog(message: string, data?: unknown): void {
   if (!DEBUG_BALANCE) return;
   console.debug(`[balance-service] ${message}`, data);
 }
 
-export function parseBaseUnits(value: unknown): bigint {
-  if (typeof value === 'bigint') {
-    return value;
-  }
+export function setLastPingDebug(rawResponse: unknown, error: string | null = null): void {
+  balanceDebugState.lastPingResponse = rawResponse;
+  balanceDebugState.lastPingError = error;
+}
 
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
+export function getBalanceDebugState(): BalanceDebugState {
+  return { ...balanceDebugState };
+}
+
+function parseBalanceResult(result: unknown): bigint {
+  if (typeof result === 'bigint') return result;
+
+  if (typeof result === 'number') {
+    if (!Number.isFinite(result)) {
       throw new Error('Invalid balance number');
     }
-    return BigInt(Math.trunc(value));
+    return BigInt(Math.floor(result));
   }
 
-  if (typeof value === 'string') {
-    const normalized = value.trim();
+  if (typeof result === 'string') {
+    const normalized = result.trim();
     if (!normalized) {
       throw new Error('Empty balance value');
     }
+    if (/^0x[0-9a-f]+$/i.test(normalized)) {
+      return BigInt(normalized);
+    }
     return BigInt(normalized);
+  }
+
+  if (result && typeof result === 'object') {
+    const nested = result as Record<string, unknown>;
+    if (nested.balance !== undefined) {
+      return parseBalanceResult(nested.balance);
+    }
+    if (nested.amount !== undefined) {
+      return parseBalanceResult(nested.amount);
+    }
   }
 
   throw new Error('Unsupported balance value type');
 }
 
+export function parseBaseUnits(value: unknown): bigint {
+  return parseBalanceResult(value);
+}
+
 export function formatBalance(baseUnits: bigint, decimals = Number(DEFAULT_DECIMALS)): string {
-  const value = parseBaseUnits(baseUnits);
+  const value = parseBalanceResult(baseUnits);
   const divisor = 10n ** BigInt(decimals);
   const sign = value < 0n ? '-' : '';
   const abs = value < 0n ? -value : value;
@@ -43,26 +83,49 @@ export function formatBalance(baseUnits: bigint, decimals = Number(DEFAULT_DECIM
   return `${sign}${whole.toLocaleString()}.${fraction.toString().padStart(decimals, '0')}`;
 }
 
+export async function getBalanceBaseUnits(
+  address: string,
+  rpcUrl: string,
+  chainId: number
+): Promise<bigint> {
+  if (!/^anim1[0-9a-z]+$/.test(address) || !validateAddress(address)) {
+    throw new Error('Invalid wallet address');
+  }
+
+  const client = new RpcClient([rpcUrl]);
+  const rpcChainId = await client.getChainId();
+  if (rpcChainId !== chainId) {
+    throw new Error(`Network mismatch: expected chain_id ${chainId}, got ${rpcChainId}`);
+  }
+
+  let raw: unknown;
+  try {
+    raw = await client.call('state.getBalance', [address, 'latest']);
+    const parsed = parseBalanceResult(raw);
+
+    balanceDebugState.lastBalanceResponse = raw;
+    balanceDebugState.lastBalanceError = null;
+    balanceDebugState.lastBalanceFetchedAt = Date.now();
+
+    debugLog('state.getBalance response', {
+      address,
+      rpcUrl,
+      chainId,
+      raw,
+    });
+
+    return parsed;
+  } catch (error: any) {
+    balanceDebugState.lastBalanceResponse = raw;
+    balanceDebugState.lastBalanceError = error?.message || 'Unknown balance error';
+    balanceDebugState.lastBalanceFetchedAt = Date.now();
+    throw error;
+  }
+}
+
 export async function getBalance(
   address: string,
   options: { rpcUrl: string; chainId: number }
 ): Promise<bigint> {
-  if (!validateAddress(address)) {
-    throw new Error('Invalid wallet address');
-  }
-
-  const client = new RpcClient([options.rpcUrl]);
-  const rpcChainId = await client.getChainId();
-  if (rpcChainId !== options.chainId) {
-    throw new Error(`RPC chain mismatch (expected ${options.chainId}, got ${rpcChainId})`);
-  }
-
-  const raw = await client.call('state.getBalance', [address, 'latest']);
-  debugLog('state.getBalance response', {
-    address,
-    rpcUrl: options.rpcUrl,
-    chainId: options.chainId,
-    raw,
-  });
-  return parseBaseUnits(raw);
+  return getBalanceBaseUnits(address, options.rpcUrl, options.chainId);
 }

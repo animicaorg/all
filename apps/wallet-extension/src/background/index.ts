@@ -10,7 +10,8 @@ import { importWalletsJson, exportWalletsJson } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
 import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl } from '../services/rpcConfig';
 import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
-import { getBalance } from '../services/balanceService';
+import { getBalance, getBalanceDebugState, setLastPingDebug } from '../services/balanceService';
+import { rpcPing } from '../services/rpcPing';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
@@ -120,6 +121,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     
     case 'wallet_getPendingTxs':
       return handleGetPendingTxs();
+
+    case 'wallet_getDebugState':
+      return handleGetDebugState();
     
     // Provider API
     case 'provider_requestAccounts':
@@ -343,10 +347,10 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   const pendingOutgoing = txStore.getPendingOutgoing(targetAddress);
   
   const available = confirmed - pendingOutgoing;
-  
+
   return {
     confirmed: confirmed.toString(),
-    available: available > 0n ? available.toString() : '0',
+    available: available.toString(),
   };
 }
 
@@ -449,36 +453,43 @@ async function handleTestRpcConnection(url: string): Promise<{
   ok: boolean;
   rpcUrl: string;
   latencyMs: number;
-  chainId?: number;
-  headHeight?: number;
+  chainId: number | null;
+  nodeId: string | null;
   error?: string;
 }> {
   const validation = validateRpcUrl(url);
-  const { RpcClient } = await import('../core/rpc/client');
-  const client = new RpcClient([validation.normalizedUrl], { timeoutMs: 5000 });
+  const result = await rpcPing({ rpcUrl: validation.normalizedUrl, timeoutMs: 5000 });
+  setLastPingDebug(result.rawResponse ?? null, result.error ?? null);
 
-  const start = performance.now();
-  try {
-    const [head, chainId] = await Promise.all([
-      client.getHead(),
-      client.getChainId(),
-    ]);
+  return {
+    ok: result.ok,
+    rpcUrl: validation.normalizedUrl,
+    latencyMs: result.latencyMs,
+    chainId: result.chainId,
+    nodeId: result.nodeId,
+    error: result.error,
+  };
+}
 
-    return {
-      ok: true,
-      rpcUrl: validation.normalizedUrl,
-      latencyMs: Math.round(performance.now() - start),
-      chainId,
-      headHeight: head?.height,
-    };
-  } catch (error: any) {
-    return {
-      ok: false,
-      rpcUrl: validation.normalizedUrl,
-      latencyMs: Math.round(performance.now() - start),
-      error: error?.message || 'Unknown RPC test error',
-    };
+async function handleGetDebugState(): Promise<any> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
   }
+
+  const activeWallet = await resolveActiveWallet(vaultData);
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  const debugState = getBalanceDebugState();
+
+  return {
+    activeWallet: {
+      label: activeWallet.label,
+      address: activeWallet.address,
+    },
+    rpcUrl: await getRpcUrl(network.rpcUrls?.[0]),
+    chainId: network.chainId,
+    ...debugState,
+  };
 }
 
 async function handleGetPendingTxs(): Promise<PendingTx[]> {
