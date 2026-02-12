@@ -41,10 +41,32 @@ function versionCompatibilityMessage(reason: string): string {
 }
 
 function normalizeWalletRecord(record: NormalizedWalletRecord, network?: NetworkConfig): Account {
-  const decodedAddress = decodeAnimAddress(record.address, {
-    expectedHrp: network?.addressHrp ?? 'anim',
-    supportedVersions: [1, 2],
-  });
+  let decodedAddress: ReturnType<typeof decodeAnimAddress>;
+  let normalizedAddress = record.address;
+
+  try {
+    decodedAddress = decodeAnimAddress(record.address, {
+      expectedHrp: network?.addressHrp ?? 'anim',
+      supportedVersions: [1, 2],
+    });
+  } catch (error: any) {
+    const reason = String(error?.message || '');
+    if (!/excess padding/i.test(reason)) {
+      throw error;
+    }
+
+    // Compatibility fallback for legacy/non-canonical wallets.json exports.
+    // Derive a canonical bech32m address from the pubkey and continue import.
+    const fallbackPublicKey = hexToBytes(record.publicKeyHex);
+    normalizedAddress = addressFromPubkey(fallbackPublicKey, record.algId, {
+      expectedHrp: network?.addressHrp ?? 'anim',
+      supportedVersions: network?.supportedAddressVersions ?? [1, 2],
+    });
+    decodedAddress = decodeAnimAddress(normalizedAddress, {
+      expectedHrp: network?.addressHrp ?? 'anim',
+      supportedVersions: [1, 2],
+    });
+  }
 
   if (network && !network.supportedAddressVersions.includes(decodedAddress.version)) {
     throw new Error(`Unsupported address version ${decodedAddress.version} (supported: ${network.supportedAddressVersions.join(',')})`);
@@ -58,13 +80,13 @@ function normalizeWalletRecord(record: NormalizedWalletRecord, network?: Network
     supportedVersions: [decodedAddress.version],
   });
 
-  if (expectedAddress !== record.address) {
+  if (expectedAddress !== normalizedAddress) {
     throw new Error('Address/public key mismatch');
   }
 
   return {
     label: record.label,
-    address: record.address,
+    address: normalizedAddress,
     algId: record.algId,
     algName: record.algName,
     publicKey,
