@@ -43,7 +43,6 @@ export function generateKeyPair(): {
   algId: number;
 } {
   // MOCK: Generate random bytes as placeholder
-  console.warn('[PQ] Using MOCK key generation - NOT SECURE FOR PRODUCTION');
   
   const publicKey = new Uint8Array(DILITHIUM3_PUBLIC_KEY_SIZE);
   const secretKey = new Uint8Array(DILITHIUM3_SECRET_KEY_SIZE);
@@ -81,7 +80,6 @@ export async function sign(
   algId: number = DILITHIUM3_ALG_ID
 ): Promise<Uint8Array> {
   // MOCK: Generate deterministic signature from message + key hash
-  console.warn('[PQ] Using MOCK signing - NOT SECURE FOR PRODUCTION');
   
   const keyHash = sha3_256.array(secretKey);
   const msgHash = sha3_256.array(message);
@@ -115,7 +113,6 @@ export async function verify(
   algId: number = DILITHIUM3_ALG_ID
 ): Promise<boolean> {
   // MOCK: Always return true for development
-  console.warn('[PQ] Using MOCK verification - NOT SECURE FOR PRODUCTION');
   
   return signature.length === DILITHIUM3_SIGNATURE_SIZE;
 }
