@@ -138,7 +138,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
       }
 
       setTestResult(
-        `Connected in ${result.latencyMs}ms • chain_id=${result.chainId ?? 'n/a'} • head=${result.headHeight ?? 'n/a'}`,
+        `Connected in ${result.latencyMs}ms • chain_id=${result.chainId ?? 'n/a'} • node=${result.nodeId ?? 'n/a'}`,
       );
     } catch (error: any) {
       setRpcError(error?.message || 'Failed to test RPC connection');
