@@ -44,11 +44,19 @@ export async function initializeRpcConfig(): Promise<void> {
   await getRpcUrl();
 }
 
-export function getEffectiveRpcUrl(): string {
-  return rpcOverrideCache || DEFAULT_RPC;
+export function getEffectiveRpcUrl(defaultRpcUrl?: string): string {
+  if (rpcOverrideCache) {
+    return rpcOverrideCache;
+  }
+
+  if (defaultRpcUrl) {
+    return normalizeRpcUrl(defaultRpcUrl);
+  }
+
+  return DEFAULT_RPC;
 }
 
-export async function getRpcUrl(): Promise<string> {
+export async function getRpcUrl(defaultRpcUrl?: string): Promise<string> {
   const result = await readStorage([RPC_OVERRIDE_KEY, ...LEGACY_RPC_KEYS]);
 
   let override = result[RPC_OVERRIDE_KEY] ?? null;
@@ -75,7 +83,7 @@ export async function getRpcUrl(): Promise<string> {
   }
 
   rpcOverrideCache = null;
-  return DEFAULT_RPC;
+  return defaultRpcUrl ? normalizeRpcUrl(defaultRpcUrl) : DEFAULT_RPC;
 }
 
 export async function setRpcUrl(url: string): Promise<void> {

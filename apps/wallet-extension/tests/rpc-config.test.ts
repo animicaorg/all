@@ -55,6 +55,13 @@ describe('rpcConfig', () => {
     expect(getEffectiveRpcUrl()).toBe(DEFAULT_RPC);
   });
 
+  it('falls back to provided network RPC when no override exists', async () => {
+    const fallback = 'http://127.0.0.1:18546';
+
+    expect(await getRpcUrl(fallback)).toBe('http://127.0.0.1:18546/rpc');
+    expect(getEffectiveRpcUrl(fallback)).toBe('http://127.0.0.1:18546/rpc');
+  });
+
   it('set/get/reset RPC override works', async () => {
     await setRpcUrl('http://127.0.0.1:8545/rpc');
 
