@@ -36,7 +36,6 @@ export interface Account {
 
 export interface AddressRecord {
   hrp: string;
-  version: number;
   algId: number;
   digest: Uint8Array;
 }

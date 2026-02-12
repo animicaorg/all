@@ -5,7 +5,6 @@ export interface NetworkConfig {
   name: string;
   chainId: number;
   addressHrp: string;
-  supportedAddressVersions: number[];
   rpcUrls: string[];
   blockExplorer?: string;
   nativeCurrency: {
@@ -24,7 +23,6 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     name: 'Mainnet',
     chainId: 1,
     addressHrp: 'anim',
-    supportedAddressVersions: [1, 2],
     rpcUrls: [
       DEFAULT_MAINNET_RPC_URL,
       'http://127.0.0.1:8545/rpc',
@@ -40,7 +38,6 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     name: 'Testnet',
     chainId: 2,
     addressHrp: 'animt',
-    supportedAddressVersions: [1, 2],
     rpcUrls: ['http://127.0.0.1:18546/rpc'],
     nativeCurrency: {
       name: 'Animica',
@@ -53,7 +50,6 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     name: 'Devnet',
     chainId: 1337,
     addressHrp: 'animd',
-    supportedAddressVersions: [1, 2],
     rpcUrls: ['http://127.0.0.1:28545/rpc'],
     nativeCurrency: {
       name: 'Animica',
