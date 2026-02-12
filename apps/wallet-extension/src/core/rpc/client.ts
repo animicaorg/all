@@ -4,6 +4,29 @@ import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
 
 const RPC_TIMEOUT_MS = 10000;
 
+class RpcResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RpcResponseError';
+  }
+}
+
+function normalizeError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  if (typeof error === 'string') {
+    return new Error(error);
+  }
+
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as any).message === 'string') {
+    return new Error((error as any).message);
+  }
+
+  return new Error(`Unknown error: ${String(error)}`);
+}
+
 function toRpcInteger(value: unknown, fieldName: string): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.trunc(value);
@@ -106,16 +129,23 @@ export class RpcClient {
         const json = await response.json();
 
         if (json.error) {
-          throw new Error(json.error.message || 'RPC error');
+          const codePart = typeof json.error.code === 'number' ? ` (code ${json.error.code})` : '';
+          const message = typeof json.error.message === 'string' ? json.error.message : 'RPC error';
+          throw new RpcResponseError(`${message}${codePart}`);
         }
 
         // Success - clear failed status
         this.failedUrls.delete(url);
         return json.result;
-      } catch (error: any) {
-        lastError = error?.name === 'AbortError'
+      } catch (error: unknown) {
+        if (error instanceof RpcResponseError) {
+          throw error;
+        }
+
+        const normalizedError = normalizeError(error);
+        lastError = normalizedError.name === 'AbortError'
           ? new Error(`Request timed out after ${this.timeoutMs}ms`)
-          : (error as Error);
+          : normalizedError;
         this.failedUrls.add(url);
         this.currentIndex = (this.currentIndex + 1) % this.urls.length;
       } finally {
