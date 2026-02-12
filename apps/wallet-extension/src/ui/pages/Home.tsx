@@ -23,6 +23,8 @@ function Home({ onLock }: HomeProps) {
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [network, setNetwork] = useState<any>(null);
   const [pendingTxs, setPendingTxs] = useState<PendingTx[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugState, setDebugState] = useState<any>(null);
 
   const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
   const refreshBalance = useBalancesStore(store => store.refreshBalance);
@@ -40,6 +42,11 @@ function Home({ onLock }: HomeProps) {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!showDebug) return;
+    loadData();
+  }, [showDebug]);
 
   useEffect(() => {
     if (!currentAccount) {
@@ -76,6 +83,11 @@ function Home({ onLock }: HomeProps) {
 
       const txsData = await chrome.runtime.sendMessage({ method: 'wallet_getPendingTxs' });
       setPendingTxs(txsData);
+
+      if (showDebug) {
+        const debugData = await chrome.runtime.sendMessage({ method: 'wallet_getDebugState' });
+        setDebugState(debugData);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       setBalanceError(error instanceof Error ? error.message : 'Failed to load balance');
@@ -212,6 +224,27 @@ function Home({ onLock }: HomeProps) {
               RPC: {network?.effectiveRpcUrl ? new URL(network.effectiveRpcUrl).host : 'unknown'}
             </div>
             <button className="button" style={{ marginTop: 8 }} onClick={refreshCurrentBalance}>Refresh</button>
+            <button className="button" style={{ marginTop: 8 }} onClick={() => setShowDebug(v => !v)}>
+              {showDebug ? 'Hide debug' : 'Show debug'}
+            </button>
+            {showDebug && (
+              <details style={{ marginTop: 8, fontSize: '11px' }} open>
+                <summary>Debug details</summary>
+                <div>Active wallet: {debugState?.activeWallet?.label || 'n/a'} ({debugState?.activeWallet?.address || 'n/a'})</div>
+                <div>Configured RPC: {debugState?.rpcUrl || network?.effectiveRpcUrl || 'n/a'}</div>
+                <div>Configured chain_id: {debugState?.chainId ?? network?.chainId ?? 'n/a'}</div>
+                <div>Last balance fetch: {debugState?.lastBalanceFetchedAt ? new Date(debugState.lastBalanceFetchedAt).toLocaleString() : 'never'}</div>
+                <div>Last RPC error: {debugState?.lastBalanceError || debugState?.lastPingError || 'none'}</div>
+                <details>
+                  <summary>Raw balance response</summary>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2)}</pre>
+                </details>
+                <details>
+                  <summary>Raw ping response</summary>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(debugState?.lastPingResponse ?? null, null, 2)}</pre>
+                </details>
+              </details>
+            )}
           </div>
         )}
 
