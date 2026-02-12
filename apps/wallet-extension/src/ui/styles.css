@@ -172,6 +172,22 @@ body {
   font-size: 14px;
 }
 
+.warning {
+  background: #fff4e6;
+  color: #9a6700;
+  padding: 12px;
+  border-radius: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.settings-rpc-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .network-indicator {
   background: rgba(255,255,255,0.2);
   padding: 4px 12px;

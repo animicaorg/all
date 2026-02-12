@@ -56,9 +56,9 @@ Firefox support is partial due to Manifest V3 differences:
 ### Mainnet (Default)
 
 - **Chain ID**: 1
-- **Primary RPC**: `http://144.126.133.21:8545/rpc`
-- **Fallback RPC**: `http://127.0.0.1:8545/rpc`
-- Production network with automatic failover
+- **Default RPC**: `http://144.126.133.21:8545/rpc`
+- **Optional local RPC**: `http://127.0.0.1:8545/rpc`
+- Production network (runtime RPC override supported in Settings)
 
 ### Testnet
 
@@ -73,6 +73,19 @@ Firefox support is partial due to Manifest V3 differences:
 - Local development network
 
 ## Usage
+
+### Configure RPC Endpoint (Runtime)
+
+1. Open **Settings** → **RPC Endpoint**
+2. Enter any `http://` or `https://` RPC URL (the wallet normalizes bare hosts to `/rpc`)
+3. Click **Test Connection** to verify latency + chain/head response
+4. Click **Save** to switch the running extension to the new endpoint
+5. Click **Reset to default** to restore `http://144.126.133.21:8545/rpc`
+
+Notes:
+- Setting is persisted in `chrome.storage.local` across restarts
+- HTTP endpoints show a warning outside localhost/127.0.0.1
+- If RPC `chain_id` differs from selected wallet network, Settings shows a mismatch warning
 
 ### Creating a Wallet
 
@@ -395,8 +408,8 @@ Auto-approval is currently enabled for development. Production should show:
 
 - Verify RPC endpoint: `http://144.126.133.21:8545/rpc`
 - Check network connectivity
-- Try fallback RPC: `http://127.0.0.1:8545/rpc`
-- View network status in Settings → Network
+- Try custom/local RPC: `http://127.0.0.1:8545/rpc`
+- View network status in Settings → RPC Endpoint
 
 ### Transaction stuck in "submitted"
 
