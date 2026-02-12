@@ -5,24 +5,29 @@ import { decodeAnimAddress, encodeAnimAddress } from './animicaAddress';
 describe('animicaAddress', () => {
   const payload = Uint8Array.from(Array.from({ length: 34 }, (_, idx) => idx + 1));
 
-  it('encodes and decodes v1 address', () => {
-    const address = encodeAnimAddress('anim', 1, payload);
+  it('encodes and decodes address (no version byte)', () => {
+    const address = encodeAnimAddress('anim', payload);
     const decoded = decodeAnimAddress(address);
 
-    expect(decoded.version).toBe(1);
     expect(decoded.hrp).toBe('anim');
     expect(Array.from(decoded.payload)).toEqual(Array.from(payload));
   });
 
-  it('accepts v2 address', () => {
-    const address = encodeAnimAddress('anim', 2, payload);
-    const decoded = decodeAnimAddress(address);
-
-    expect(decoded.version).toBe(2);
+  it('roundtrips address correctly', () => {
+    const address1 = encodeAnimAddress('anim', payload);
+    const decoded = decodeAnimAddress(address1);
+    const address2 = encodeAnimAddress(decoded.hrp, decoded.payload);
+    
+    expect(address1).toBe(address2);
   });
 
-  it('rejects unknown versions', () => {
-    const bad = bech32m.encode('anim', [3, ...bech32m.toWords(payload)]);
-    expect(() => decodeAnimAddress(bad)).toThrow('Unsupported address version: 3');
+  it('rejects invalid payload length', () => {
+    const shortPayload = new Uint8Array(10);
+    expect(() => encodeAnimAddress('anim', shortPayload)).toThrow('Invalid payload length');
+  });
+
+  it('rejects invalid HRP', () => {
+    const address = encodeAnimAddress('test', payload);
+    expect(() => decodeAnimAddress(address, { expectedHrp: 'anim' })).toThrow('Invalid address prefix');
   });
 });
