@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from 'react';
 
 export type NetworkItem = {
   chainId: number;
@@ -25,13 +25,23 @@ type Props = {
 /** Local fallback list; background may return a richer list */
 const FALLBACK_NETWORKS: NetworkItem[] = [
   {
-    chainId: 1337,
-    name: "Animica Devnet",
-    rpcUrl: "http://localhost:8545/rpc", // devnet JSON-RPC handler listens on /rpc
-    key: "animica-devnet",
+    chainId: 1,
+    name: 'Animica Mainnet',
+    rpcUrl: 'https://mainnet.animica.org',
+    key: 'animica-mainnet',
   },
-  { chainId: 2, name: "Animica Testnet", rpcUrl: "https://rpc.testnet.animica.org", key: "animica-testnet" },
-  { chainId: 1, name: "Animica Mainnet", rpcUrl: "http://127.0.0.1:8545", key: "animica-mainnet" },
+  {
+    chainId: 2,
+    name: 'Animica Testnet',
+    rpcUrl: 'https://rpc.testnet.animica.org/rpc',
+    key: 'animica-testnet',
+  },
+  {
+    chainId: 1337,
+    name: 'Animica Devnet',
+    rpcUrl: 'http://localhost:8545/rpc', // devnet JSON-RPC handler listens on /rpc
+    key: 'animica-devnet',
+  },
 ];
 
 type BgListResp =
@@ -44,9 +54,8 @@ async function queryBackgroundNetworks(): Promise<BgListResp | null> {
     const chromeAny = (globalThis as any).chrome;
     if (!chromeAny?.runtime?.id || !chromeAny?.runtime?.sendMessage) return null;
     return await new Promise<BgListResp>((resolve) => {
-      chromeAny.runtime.sendMessage(
-        { kind: "networks:list" },
-        (resp: BgListResp) => resolve(resp ?? { ok: false, error: "no response" })
+      chromeAny.runtime.sendMessage({ kind: 'networks:list' }, (resp: BgListResp) =>
+        resolve(resp ?? { ok: false, error: 'no response' })
       );
     });
   } catch {
@@ -54,13 +63,20 @@ async function queryBackgroundNetworks(): Promise<BgListResp | null> {
   }
 }
 
-async function tellBackgroundSelect(chainId: number) {
+async function tellBackgroundSelect(chainId: number): Promise<boolean> {
   try {
     const chromeAny = (globalThis as any).chrome;
-    if (!chromeAny?.runtime?.id || !chromeAny?.runtime?.sendMessage) return;
-    chromeAny.runtime.sendMessage({ kind: "networks:select", chainId });
+    if (!chromeAny?.runtime?.id || !chromeAny?.runtime?.sendMessage) return false;
+    return await new Promise<boolean>((resolve) => {
+      chromeAny.runtime.sendMessage(
+        { kind: 'networks:select', chainId },
+        (resp: { ok?: boolean } | undefined) => {
+          resolve(!!resp?.ok);
+        }
+      );
+    });
   } catch {
-    // ignore
+    return false;
   }
 }
 
@@ -84,7 +100,7 @@ export default function NetworkSelect({
     queryBackgroundNetworks().then((resp) => {
       if (!mounted || !resp?.ok) return;
       setBgNetworks(resp.networks);
-      if (typeof value === "undefined" && typeof resp.selected === "number") {
+      if (typeof value === 'undefined' && typeof resp.selected === 'number') {
         setSelected(resp.selected);
       }
     });
@@ -104,31 +120,37 @@ export default function NetworkSelect({
     [list, selected]
   );
 
-  function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const cid = Number(e.target.value);
     const net = list.find((n) => n.chainId === cid) ?? { chainId: cid, name: `Chain ${cid}` };
     setSelected(cid);
     // Preferred: let parent manage and persist selection
     onChange?.(cid, net);
     // Also notify background in case parent didn't wire it; best-effort
-    void tellBackgroundSelect(cid);
+    const changed = await tellBackgroundSelect(cid);
+    // Defensive reload to avoid stale React state causing white-screen crashes.
+    if (changed) {
+      window.setTimeout(() => window.location.reload(), 120);
+    }
   }
 
   return (
-    <div className={["ami-field", "ami-network-select", compact ? "ami-compact" : ""].join(" ").trim()}>
+    <div
+      className={['ami-field', 'ami-network-select', compact ? 'ami-compact' : ''].join(' ').trim()}
+    >
       <label className="ami-label">Network</label>
       <div className="ami-select-wrap">
         <select
           className="ami-select"
           onChange={handleChange}
-          value={selectedNet?.chainId ?? ""}
+          value={selectedNet?.chainId ?? ''}
           disabled={disabled}
           aria-label="Select network"
         >
           {list.map((n) => (
             <option key={n.key ?? n.chainId} value={n.chainId}>
               {n.name}
-              {showIds ? ` (${n.chainId})` : ""}
+              {showIds ? ` (${n.chainId})` : ''}
             </option>
           ))}
         </select>
@@ -162,7 +184,8 @@ export default function NetworkSelect({
 
       {selectedNet?.rpcUrl ? (
         <div className="ami-hint" title={selectedNet.rpcUrl}>
-          <span className="ami-dim">RPC:</span> <code className="ami-code">{shortenUrl(selectedNet.rpcUrl)}</code>
+          <span className="ami-dim">RPC:</span>{' '}
+          <code className="ami-code">{shortenUrl(selectedNet.rpcUrl)}</code>
         </div>
       ) : null}
     </div>
