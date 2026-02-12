@@ -14,10 +14,16 @@ function App() {
   async function checkWalletStatus() {
     try {
       const vaultStatus = await chrome.runtime.sendMessage({ method: 'wallet_hasVault' });
+      if (vaultStatus?.error) {
+        throw new Error(vaultStatus.error);
+      }
       setHasVault(vaultStatus.hasVault);
 
       if (vaultStatus.hasVault) {
         const lockStatus = await chrome.runtime.sendMessage({ method: 'wallet_isLocked' });
+        if (lockStatus?.error) {
+          throw new Error(lockStatus.error);
+        }
         setIsLocked(lockStatus.isLocked);
       }
     } catch (error) {
