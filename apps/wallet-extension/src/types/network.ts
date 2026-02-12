@@ -15,6 +15,9 @@ export interface NetworkConfig {
   };
 }
 
+const ENV_DEFAULT_RPC = (import.meta as any)?.env?.VITE_DEFAULT_RPC_URL;
+export const DEFAULT_MAINNET_RPC_URL = ENV_DEFAULT_RPC || 'http://144.126.133.21:8545/rpc';
+
 export const NETWORKS: Record<string, NetworkConfig> = {
   mainnet: {
     id: 'mainnet',
@@ -23,7 +26,7 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     addressHrp: 'anim',
     supportedAddressVersions: [1, 2],
     rpcUrls: [
-      'http://144.126.133.21:8545/rpc',
+      DEFAULT_MAINNET_RPC_URL,
       'http://127.0.0.1:8545/rpc',
     ],
     nativeCurrency: {

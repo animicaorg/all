@@ -1,12 +1,20 @@
 // RPC client for Animica nodes
 
+const RPC_TIMEOUT_MS = 10000;
+
+interface RpcClientOptions {
+  timeoutMs?: number;
+}
+
 export class RpcClient {
   private urls: string[];
   private currentIndex: number = 0;
   private failedUrls: Set<string> = new Set();
+  private timeoutMs: number;
 
-  constructor(urls: string[]) {
+  constructor(urls: string[], options: RpcClientOptions = {}) {
     this.urls = urls;
+    this.timeoutMs = options.timeoutMs ?? RPC_TIMEOUT_MS;
   }
 
   async call(method: string, params: any[] = []): Promise<any> {
@@ -14,11 +22,14 @@ export class RpcClient {
 
     for (let i = 0; i < this.urls.length; i++) {
       const url = this.urls[this.currentIndex];
-      
+
       if (this.failedUrls.has(url)) {
         this.currentIndex = (this.currentIndex + 1) % this.urls.length;
         continue;
       }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
         const response = await fetch(url, {
@@ -26,6 +37,7 @@ export class RpcClient {
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: controller.signal,
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: Date.now(),
@@ -47,15 +59,19 @@ export class RpcClient {
         // Success - clear failed status
         this.failedUrls.delete(url);
         return json.result;
-      } catch (error) {
-        lastError = error as Error;
+      } catch (error: any) {
+        lastError = error?.name === 'AbortError'
+          ? new Error(`Request timed out after ${this.timeoutMs}ms`)
+          : (error as Error);
         this.failedUrls.add(url);
         this.currentIndex = (this.currentIndex + 1) % this.urls.length;
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
     throw new Error(
-      `All RPC endpoints failed. Last error: ${lastError?.message || 'Unknown'}`
+      `All RPC endpoints failed. Last error: ${lastError?.message || 'Unknown'}`,
     );
   }
 
@@ -111,3 +127,5 @@ export class RpcClient {
     return this.urls[this.currentIndex];
   }
 }
+
+export { RPC_TIMEOUT_MS };
