@@ -105,11 +105,12 @@ async function refreshBalanceInternal(address: string, force: boolean): Promise<
         },
       });
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       logFetchError(address, error);
       setPartial({
         errorByAddress: {
           ...state.errorByAddress,
-          [address]: 'unavailable',
+          [address]: errorMsg, // Store actual error message instead of generic 'unavailable'
         },
       });
     } finally {

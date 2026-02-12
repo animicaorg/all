@@ -17,7 +17,7 @@ import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
 
 let unlockedPassword: string | null = null;
-const DEBUG_WALLET = false;
+const DEBUG_WALLET = true; // Always enabled for troubleshooting
 
 function debugLog(message: string, details?: unknown): void {
   if (!DEBUG_WALLET) return;
