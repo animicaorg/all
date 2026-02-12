@@ -17,6 +17,18 @@ declare global {
 }
 
 export type UseBalanceState = {
+  /** Address used for balance lookup. */
+  address: string | null;
+  /** Active network info when available. */
+  network: { chainId?: string | number; name?: string } | null;
+  /** Raw chain units (bigint) used by popup BalanceCard. */
+  balance: bigint | null;
+  /** Symbol displayed in popup BalanceCard. */
+  symbol: string;
+  /** Chain decimals used for display/formatting. */
+  decimals: number;
+  /** Last successful balance refresh timestamp (epoch ms). */
+  lastUpdatedAt: number | null;
   /** Raw chain units (bigint) */
   value: bigint | null;
   /** Human string using provided decimals */
@@ -42,6 +54,22 @@ function formatUnits(value: bigint, decimals = 18): string {
   return neg ? `-${body}` : body;
 }
 
+function parseBalance(raw: unknown): bigint {
+  if (typeof raw === "bigint") return raw;
+  if (typeof raw === "number") return BigInt(raw);
+  if (typeof raw === "string") return BigInt(raw);
+
+  // Some RPC backends wrap the value in an object (e.g., { balance: "0x..." }).
+  if (raw && typeof raw === "object") {
+    const fromObj = (raw as any).balance ?? (raw as any).result ?? (raw as any).free;
+    if (typeof fromObj === "bigint") return fromObj;
+    if (typeof fromObj === "number") return BigInt(fromObj);
+    if (typeof fromObj === "string") return BigInt(fromObj);
+  }
+
+  throw new Error("Unsupported balance format");
+}
+
 /**
  * useBalance — reads balance for an address and keeps it fresh on newHeads.
  * - Uses window.animica provider:
@@ -53,6 +81,8 @@ export function useBalance(address: string | undefined, decimals = 18): UseBalan
   const [value, setValue] = useState<bigint | null>(null);
   const [loading, setLoading] = useState<boolean>(!!address);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [chainId, setChainId] = useState<string | null>(null);
 
   const chainIdRef = useRef<string | null>(null);
   const inFlight = useRef<number>(0);
@@ -79,18 +109,16 @@ export function useBalance(address: string | undefined, decimals = 18): UseBalan
       // Ensure we have chainId (cached) to tie reactivity to network changes
       const cid = chainIdRef.current ?? (await readChainId());
       chainIdRef.current = cid;
+      setChainId(cid);
 
       // Call balance
       // Expect hex or decimal string per node; normalize to bigint
-      const raw = await provider.request<string | number>({ method: "animica_getBalance", params: [address, "latest"] });
-      let bn: bigint;
-      if (typeof raw === "number") bn = BigInt(raw);
-      else if (typeof raw === "string" && raw.startsWith("0x")) bn = BigInt(raw);
-      else if (typeof raw === "string") bn = BigInt(raw);
-      else throw new Error("Unsupported balance format");
+      const raw = await provider.request<unknown>({ method: "animica_getBalance", params: [address, "latest"] });
+      const bn = parseBalance(raw);
 
       if (disposed.current || ticket !== inFlight.current) return;
       setValue(bn);
+      setLastUpdatedAt(Date.now());
     } catch (e: any) {
       if (disposed.current || ticket !== inFlight.current) return;
       setError(e?.message ?? String(e));
@@ -115,6 +143,8 @@ export function useBalance(address: string | undefined, decimals = 18): UseBalan
       setValue(null);
       setLoading(false);
       setError(null);
+      setLastUpdatedAt(null);
+      setChainId(null);
     }
     return () => {
       disposed.current = true;
@@ -127,7 +157,9 @@ export function useBalance(address: string | undefined, decimals = 18): UseBalan
   useEffect(() => {
     if (!provider) return;
     const onChainChanged = async () => {
-      chainIdRef.current = await readChainId();
+      const next = await readChainId();
+      chainIdRef.current = next;
+      setChainId(next);
       void fetchBalance();
     };
     provider.on?.("chainChanged", onChainChanged);
@@ -143,8 +175,21 @@ export function useBalance(address: string | undefined, decimals = 18): UseBalan
   }, [provider, address, fetchBalance]);
 
   const formatted = useMemo(() => (value != null ? formatUnits(value, decimals) : null), [value, decimals]);
+  const network = useMemo(() => (chainId ? { chainId, name: chainId } : null), [chainId]);
 
-  return { value, formatted, loading, error, refresh };
+  return {
+    address: address ?? null,
+    network,
+    balance: value,
+    symbol: "ANIM",
+    decimals,
+    lastUpdatedAt,
+    value,
+    formatted,
+    loading,
+    error,
+    refresh,
+  };
 }
 
 export default useBalance;
