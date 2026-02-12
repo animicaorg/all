@@ -112,13 +112,13 @@ export function toWords(bytes: Uint8Array): number[] {
 }
 
 /** Convert 5-bit words → 8-bit bytes (no padding allowed). */
-export function fromWords(words: number[]): Uint8Array {
-  const out = convertBits(words, 5, 8, false);
+export function fromWords(words: number[], allowExcessPadding = false): Uint8Array {
+  const out = convertBits(words, 5, 8, false, allowExcessPadding);
   return new Uint8Array(out);
 }
 
 /** Helper: generic bit conversion used by BIP-0173. */
-function convertBits(data: number[], fromBits: number, toBits: number, pad: boolean): number[] {
+function convertBits(data: number[], fromBits: number, toBits: number, pad: boolean, allowExcessPadding = false): number[] {
   let acc = 0;
   let bits = 0;
   const ret: number[] = [];
@@ -134,8 +134,12 @@ function convertBits(data: number[], fromBits: number, toBits: number, pad: bool
   }
   if (pad) {
     if (bits) ret.push((acc << (toBits - bits)) & maxv);
-  } else if (bits >= fromBits || ((acc << (toBits - bits)) & maxv)) {
-    throw new Error('invalid padding');
+  } else {
+    const hasExcessGroup = bits >= fromBits;
+    const hasNonZeroPadding = ((acc << (toBits - bits)) & maxv) !== 0;
+    if ((hasExcessGroup || hasNonZeroPadding) && !allowExcessPadding) {
+      throw new Error('invalid padding');
+    }
   }
   return ret;
 }
@@ -155,9 +159,9 @@ export function encodeAddress(bytes: Uint8Array | string, hrp: string = DEFAULT_
 }
 
 /** Decode address → raw bytes and hrp. Throws if invalid. */
-export function decodeAddress(addr: string): { hrp: string; bytes: Uint8Array } {
+export function decodeAddress(addr: string, allowExcessPadding = true): { hrp: string; bytes: Uint8Array } {
   const { hrp, data } = decodeBech32m(addr);
-  return { hrp, bytes: fromWords(data) };
+  return { hrp, bytes: fromWords(data, allowExcessPadding) };
 }
 
 /** Validate address format quickly (optionally enforce HRP). */

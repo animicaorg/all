@@ -67,7 +67,7 @@ export async function encodeAddress(
  */
 export function decodeAddress(addr: string): { hrp: string; algo: KeyAlgo; hash: Uint8Array } {
   const { hrp, words } = decodeBech32m(addr);
-  const payload = fromWords(words); // 5-bit → 8-bit
+  const payload = fromWords(words, true); // 5-bit → 8-bit (legacy excess padding tolerated)
 
   if (payload.length !== 33) {
     throw new Error(`Invalid address payload length: ${payload.length}, expected 33`);
