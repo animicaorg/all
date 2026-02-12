@@ -129,7 +129,19 @@ export async function getBalanceBaseUnits(
       rawType: typeof raw,
     });
 
-    const parsed = parseBalanceResult(raw);
+    // Handle both direct string response and object-wrapped response
+    // Some RPC servers/versions may return {"balance": "0x..."} instead of just "0x..."
+    // This matches the defensive handling in explorer2's rpcChainClient.ts
+    let balanceValue = raw;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const obj = raw as Record<string, unknown>;
+      if ('balance' in obj && obj.balance !== undefined) {
+        balanceValue = obj.balance;
+        debugLog('Unwrapped balance from object response', { original: raw, unwrapped: balanceValue });
+      }
+    }
+
+    const parsed = parseBalanceResult(balanceValue);
 
     balanceDebugState.lastBalanceResponse = raw;
     balanceDebugState.lastBalanceError = null;
