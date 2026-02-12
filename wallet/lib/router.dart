@@ -18,6 +18,7 @@ import 'pages/contracts/contracts_page.dart';
 import 'pages/settings/settings_page.dart';
 import 'pages/settings/security_page.dart';
 import 'pages/dev/dev_tools_page.dart';
+import 'pages/debug/rpc_debug_page.dart';
 import 'pages/onboarding/welcome_page.dart';
 import 'pages/onboarding/create_mnemonic_page.dart';
 import 'pages/onboarding/verify_mnemonic_page.dart';
@@ -45,6 +46,7 @@ abstract class Routes {
   static const String security = '/settings/security';
 
   static const String devTools = '/dev';
+  static const String rpcDebug = '/debug/rpc';
 }
 
 /// Global keys (useful for dialogs/snackbars outside BuildContext)
@@ -207,6 +209,12 @@ GoRouter createRouter(Env env, {String flavor = 'dev'}) {
               path: Routes.devTools,
               name: 'dev_tools',
               builder: (ctx, st) => const DevToolsPage(),
+            ),
+          if (flavor != 'prod')
+            GoRoute(
+              path: Routes.rpcDebug,
+              name: 'rpc_debug',
+              builder: (ctx, st) => const RpcDebugPage(),
             ),
           // Marketplace routes
           ...marketplaceRoutes,

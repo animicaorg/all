@@ -7,6 +7,7 @@ import '../../state/account_state.dart';
 import '../../state/providers.dart';
 import '../../utils/format.dart';
 import '../../widgets/cards/balance_card.dart';
+import '../../widgets/debug/network_debug_info.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -21,6 +22,11 @@ class HomePage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Wallet'),
         actions: [
+          IconButton(
+            tooltip: 'RPC Debug',
+            icon: const Icon(Icons.bug_report),
+            onPressed: () => context.go(Routes.rpcDebug),
+          ),
           IconButton(
             tooltip: 'Refresh balances',
             icon: const Icon(Icons.refresh),
@@ -51,6 +57,11 @@ class HomePage extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
+            NetworkDebugInfo(
+              activeAddress: active?.address,
+              onTap: () => context.go(Routes.rpcDebug),
+            ),
+            const SizedBox(height: 12),
             if (accounts.error != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -367,11 +378,30 @@ class _AccountsSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(shortAddress(a.address)),
-                      if (bal != null)
-                        Text(
-                          formatAmountWithSymbol(bal.amount, precision: 4),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                      if (bal != null) ...[
+                        if (bal.error != null)
+                          Row(
+                            children: [
+                              Icon(Icons.error_outline, size: 14, color: Theme.of(context).colorScheme.error),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  bal.error!,
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          Text(
+                            formatAmountWithSymbol(bal.amount, precision: 4),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                      ],
                     ],
                   ),
                   onTap: () => onMakeActive(a.address),

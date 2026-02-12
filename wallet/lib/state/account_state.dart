@@ -86,12 +86,14 @@ class AccountBalance {
   final int nonce;              // tx nonce
   final DateTime lastUpdated;
   final bool loading;
+  final String? error;          // RPC error message if fetch failed
 
   const AccountBalance({
     required this.amount,
     required this.nonce,
     required this.lastUpdated,
     this.loading = false,
+    this.error,
   });
 
   AccountBalance copyWith({
@@ -99,12 +101,15 @@ class AccountBalance {
     int? nonce,
     DateTime? lastUpdated,
     bool? loading,
+    String? error,
+    bool clearError = false,
   }) {
     return AccountBalance(
       amount: amount ?? this.amount,
       nonce: nonce ?? this.nonce,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
     );
   }
 
@@ -112,6 +117,7 @@ class AccountBalance {
         'amount': amount.toString(), // decimal
         'nonce': nonce,
         'lastUpdated': lastUpdated.toIso8601String(),
+        'error': error,
       };
 
   factory AccountBalance.fromJson(Map<String, dynamic> m) => AccountBalance(
@@ -119,6 +125,7 @@ class AccountBalance {
         nonce: int.tryParse((m['nonce'] ?? '0').toString()) ?? 0,
         lastUpdated: DateTime.tryParse((m['lastUpdated'] ?? '').toString()) ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        error: m['error']?.toString(),
       );
 }
 
@@ -302,7 +309,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
     final prev = state.balances[a];
     _setBalance(
       a,
-      (prev ?? _emptyBal()).copyWith(loading: true, lastUpdated: DateTime.now().toUtc()),
+      (prev ?? _emptyBal()).copyWith(loading: true, lastUpdated: DateTime.now().toUtc(), clearError: true),
     );
     try {
       final bal = await svc.getBalance(a); // BigInt or hex string (our service normalizes)
@@ -314,24 +321,20 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
           nonce: nonce,
           lastUpdated: DateTime.now().toUtc(),
           loading: false,
+          error: null,
         ),
       );
     } catch (e) {
-      // retain previous but clear loading
-      if (prev != null) {
-        _setBalance(a, prev.copyWith(loading: false));
-      } else {
-        _setBalance(
-          a,
-          AccountBalance(
-            amount: BigInt.zero,
-            nonce: 0,
-            lastUpdated: DateTime.now().toUtc(),
-            loading: false,
-          ),
-        );
-      }
-      state = state.copyWith(error: 'balance refresh failed for $a: $e');
+      // Store error in balance instead of defaulting to zero
+      final errorMsg = 'RPC error: $e';
+      _setBalance(
+        a,
+        (prev ?? _emptyBal()).copyWith(
+          loading: false,
+          error: errorMsg,
+        ),
+      );
+      state = state.copyWith(error: 'Balance refresh failed for $a: $e');
     }
   }
 

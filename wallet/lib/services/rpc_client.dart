@@ -30,6 +30,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 
 import 'env.dart';
+import 'rpc_debug.dart';
 
 /// JSON-RPC error wrapper.
 class RpcException implements Exception {
@@ -155,6 +156,20 @@ class RpcClient {
     int attempt = 0;
     final maxA = maxRetries.clamp(0, 10);
     final rnd = Random.secure();
+    final startTime = DateTime.now();
+
+    // Extract params for debug tracking
+    dynamic params;
+    try {
+      final decoded = json.decode(body);
+      if (decoded is Map) {
+        params = decoded['params'];
+      } else if (decoded is List && decoded.isNotEmpty) {
+        params = (decoded[0] as Map)['params'];
+      }
+    } catch (_) {
+      params = null;
+    }
 
     while (true) {
       attempt += 1;
@@ -178,10 +193,19 @@ class RpcClient {
           final parsed = json.decode(resp.body);
           if (isBatch) {
             if (parsed is! List) {
+              final err = 'Expected batch response (array)';
+              final latency = DateTime.now().difference(startTime);
+              RpcDebugTracker.instance.track(
+                method: method,
+                params: params,
+                rpcUrl: endpoint.toString(),
+                error: err,
+                latency: latency,
+              );
               throw RpcException(
                 method: method,
                 endpoint: endpoint,
-                message: 'Expected batch response (array)',
+                message: err,
                 httpStatus: resp.statusCode,
               );
             }
@@ -191,6 +215,15 @@ class RpcClient {
               final id = item['id'];
               if (item['error'] != null) {
                 final err = item['error'];
+                final latency = DateTime.now().difference(startTime);
+                RpcDebugTracker.instance.track(
+                  method: 'batch-item',
+                  params: params,
+                  rpcUrl: endpoint.toString(),
+                  error: err['message']?.toString() ?? 'RPC error',
+                  errorCode: (err['code'] is int) ? err['code'] as int : null,
+                  latency: latency,
+                );
                 throw RpcException(
                   method: 'batch-item',
                   endpoint: endpoint,
@@ -203,18 +236,45 @@ class RpcClient {
             }
             // Since we used incremental ids when building, just collect by id ascending.
             final ids = byId.keys.toList()..sort();
-            return ids.map((i) => byId[i]).toList();
+            final result = ids.map((i) => byId[i]).toList();
+            final latency = DateTime.now().difference(startTime);
+            RpcDebugTracker.instance.track(
+              method: method,
+              params: params,
+              rpcUrl: endpoint.toString(),
+              result: result,
+              latency: latency,
+            );
+            return result;
           } else {
             if (parsed is! Map) {
+              final err = 'Expected object response';
+              final latency = DateTime.now().difference(startTime);
+              RpcDebugTracker.instance.track(
+                method: method,
+                params: params,
+                rpcUrl: endpoint.toString(),
+                error: err,
+                latency: latency,
+              );
               throw RpcException(
                 method: method,
                 endpoint: endpoint,
-                message: 'Expected object response',
+                message: err,
                 httpStatus: resp.statusCode,
               );
             }
             if (parsed['error'] != null) {
               final err = parsed['error'];
+              final latency = DateTime.now().difference(startTime);
+              RpcDebugTracker.instance.track(
+                method: method,
+                params: params,
+                rpcUrl: endpoint.toString(),
+                error: err['message']?.toString() ?? 'RPC error',
+                errorCode: (err['code'] is int) ? err['code'] as int : null,
+                latency: latency,
+              );
               throw RpcException(
                 method: method,
                 endpoint: endpoint,
@@ -224,7 +284,16 @@ class RpcClient {
                 httpStatus: resp.statusCode,
               );
             }
-            return parsed['result'];
+            final result = parsed['result'];
+            final latency = DateTime.now().difference(startTime);
+            RpcDebugTracker.instance.track(
+              method: method,
+              params: params,
+              rpcUrl: endpoint.toString(),
+              result: result,
+              latency: latency,
+            );
+            return result;
           }
         }
 
@@ -233,10 +302,19 @@ class RpcClient {
           _maybeSleep(attempt, maxA, rnd);
           continue;
         }
+        final err = 'HTTP ${resp.statusCode}: ${resp.reasonPhrase ?? ''}';
+        final latency = DateTime.now().difference(startTime);
+        RpcDebugTracker.instance.track(
+          method: method,
+          params: params,
+          rpcUrl: endpoint.toString(),
+          error: err,
+          latency: latency,
+        );
         throw RpcException(
           method: method,
           endpoint: endpoint,
-          message: 'HTTP ${resp.statusCode}: ${resp.reasonPhrase ?? ''}',
+          message: err,
           httpStatus: resp.statusCode,
         );
       } on TimeoutException catch (e) {
@@ -244,10 +322,19 @@ class RpcClient {
           _maybeSleep(attempt, maxA, rnd);
           continue;
         }
+        final err = 'Timeout: ${e.message ?? ''}';
+        final latency = DateTime.now().difference(startTime);
+        RpcDebugTracker.instance.track(
+          method: method,
+          params: params,
+          rpcUrl: endpoint.toString(),
+          error: err,
+          latency: latency,
+        );
         throw RpcException(
           method: method,
           endpoint: endpoint,
-          message: 'Timeout: ${e.message ?? ''}',
+          message: err,
         );
       } on FormatException catch (e) {
         // Malformed JSON: retry once (maybe a transient proxy/body cut).
@@ -255,10 +342,19 @@ class RpcClient {
           _maybeSleep(attempt, maxA, rnd);
           continue;
         }
+        final err = 'Decode error: ${e.message}';
+        final latency = DateTime.now().difference(startTime);
+        RpcDebugTracker.instance.track(
+          method: method,
+          params: params,
+          rpcUrl: endpoint.toString(),
+          error: err,
+          latency: latency,
+        );
         throw RpcException(
           method: method,
           endpoint: endpoint,
-          message: 'Decode error: ${e.message}',
+          message: err,
         );
       } on RpcException {
         rethrow; // already wrapped
@@ -268,10 +364,19 @@ class RpcClient {
           _maybeSleep(attempt, maxA, rnd);
           continue;
         }
+        final err = 'Network error: $e';
+        final latency = DateTime.now().difference(startTime);
+        RpcDebugTracker.instance.track(
+          method: method,
+          params: params,
+          rpcUrl: endpoint.toString(),
+          error: err,
+          latency: latency,
+        );
         throw RpcException(
           method: method,
           endpoint: endpoint,
-          message: 'Network error: $e',
+          message: err,
         );
       }
     }
