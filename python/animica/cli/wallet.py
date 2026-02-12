@@ -16,6 +16,14 @@ from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.coin import format_amount
+from animica.wallet.serialization import (
+    WalletParseError,
+    canonical_json_dumps,
+    export_canonical_store,
+    load_store_canonical,
+    merge_imported_wallets,
+    parse_wallets_text,
+)
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
@@ -133,21 +141,18 @@ def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
 
 
 def _load_store(wallet_file: Path) -> Dict[str, Any]:
-    if not wallet_file.exists():
-        ensure_file_dir(wallet_file, sensitive=True)
-        store = {"version": 1, "wallets": []}
-        wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        secure_file(wallet_file)
-        return store
-    data = json.loads(wallet_file.read_text(encoding="utf-8"))
-    if "wallets" not in data:
-        raise RuntimeError(f"Malformed wallet store at {wallet_file}")
-    return data
+    try:
+        parsed = load_store_canonical(wallet_file)
+    except WalletParseError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if parsed.failures:
+        raise RuntimeError("Failed to parse wallet file:\n" + "\n".join(parsed.failures))
+    return parsed.store
 
 
 def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
     ensure_file_dir(wallet_file, sensitive=True)
-    wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
+    wallet_file.write_text(canonical_json_dumps(export_canonical_store(store)), encoding="utf-8")
     secure_file(wallet_file)
 
 
@@ -164,7 +169,7 @@ def _entry_from_dict(entry: Dict[str, Any]) -> WalletEntry:
         alg_id=alg_id,
         alg_name=alg_name,
         public_key_hex=entry["public_key_hex"],
-        secret_key_hex=entry["secret_key_hex"],
+        secret_key_hex=entry.get("secret_key_hex") or entry.get("private_key_enc") or "",
         created_at=entry["created_at"],
     )
 
@@ -636,7 +641,7 @@ def list_wallets() -> None:  # noqa: A001
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     wallets: List[Dict[str, Any]] = store.get("wallets", [])
-    default_addr = store.get("default_address")
+    default_addr = store.get("default_address") or store.get("default")
 
     typer.echo("Idx Default Label             Address                              Alg")
     typer.echo("--- ------- ----------------  -----------------------------------  ----------------")
@@ -779,58 +784,72 @@ def export(
     address: Optional[str] = typer.Option(None, "--address", help="(Deprecated) use positional argument"),
     out: Path = typer.Option(..., "--out", help="Destination JSON file"),
 ) -> None:
+    # Export canonical wallets.json (v2) for full store round-tripping.
     lookup_id = identifier or address
-    if not lookup_id:
-        typer.echo("Error: Missing wallet identifier", err=True)
-        raise typer.Exit(code=1)
 
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
-    entry = _find_wallet(store, identifier=lookup_id)
 
+    if lookup_id:
+        _ = _find_wallet(store, identifier=lookup_id)
+
+    payload = export_canonical_store(store)
     ensure_file_dir(out, sensitive=True)
-    out.write_text(json.dumps(entry.to_dict(), indent=2), encoding="utf-8")
+    out.write_text(canonical_json_dumps(payload), encoding="utf-8")
     secure_file(out)
     typer.echo(f"Exported to {out}")
 
 
 @app.command(name="import")
 def import_(  # noqa: A001
-    file: Path = typer.Option(..., "--file", help="JSON file to import"),
-    label: Optional[str] = typer.Option(None, "--label", help="Override label"),
-    force: bool = typer.Option(False, "--force", help="Overwrite existing address"),
+    in_: Path = typer.Option(..., "--in", "--file", help="JSON file to import"),
+    merge: bool = typer.Option(True, "--merge/--no-merge", help="Merge imported wallets with existing wallets"),
+    replace: bool = typer.Option(False, "--replace", help="Replace existing wallets with imported set"),
+    allow_partial: bool = typer.Option(False, "--allow-partial", help="Import valid wallets even if some entries fail"),
+    label: Optional[str] = typer.Option(None, "--label", help="Legacy single-wallet import label override"),
+    force: bool = typer.Option(False, "--force", help="Legacy alias for --replace when importing single wallet"),
+    password: Optional[str] = typer.Option(None, "--password", help="Reserved for encrypted imports"),
 ) -> None:
+    if password:
+        typer.echo("Note: --password was provided; encrypted payload import is not required for current file.")
+
+    if replace and merge:
+        merge = False
+
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
-    store = _load_store(path)
+    existing = _load_store(path)
 
-    entry_data = json.loads(file.read_text(encoding="utf-8"))
-    if label:
-        entry_data["label"] = label
-    if "address" not in entry_data:
-        raise typer.BadParameter("Imported file missing address")
-
-    validate_address(entry_data["address"], expect_hrp="anim")
-    entry = _entry_from_dict(entry_data)
-
-    existing = None
-    for idx, candidate in enumerate(store.get("wallets", [])):
-        if candidate.get("address") == entry.address:
-            existing = idx
-            break
-
-    if existing is not None and not force:
-        typer.echo("Wallet already exists; use --force to replace", err=True)
+    try:
+        raw_text = in_.read_text(encoding="utf-8")
+        imported = parse_wallets_text(raw_text, source=str(in_))
+    except WalletParseError as exc:
+        typer.echo(f"Import failed: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    if existing is not None:
-        store["wallets"][existing] = entry.to_dict()
-    else:
-        store.setdefault("wallets", []).append(entry.to_dict())
+    if label and len(imported.store.get("wallets", [])) == 1:
+        imported.store["wallets"][0]["label"] = label
 
-    _save_store(path, store)
-    typer.echo(f"Imported wallet {entry.label or entry.address}")
+    mode = "replace" if (replace or force) else "merge"
+    if imported.failures and not allow_partial:
+        typer.echo("Import rejected due to invalid wallets:", err=True)
+        for item in imported.failures:
+            typer.echo(f"  - {item}", err=True)
+        raise typer.Exit(code=1)
+
+    if not merge and mode != "replace":
+        mode = "replace"
+
+    next_store = merge_imported_wallets(existing, imported.store, mode=mode)
+    _save_store(path, next_store)
+
+    for warning in imported.warnings:
+        typer.echo(f"Warning: {warning}", err=True)
+    if imported.failures:
+        typer.echo(f"Warning: skipped {len(imported.failures)} invalid wallet(s)", err=True)
+
+    typer.echo(f"Imported {len(imported.store.get('wallets', []))} wallet(s) from {in_}")
 
 
 @app.command(name="set-default")
@@ -849,6 +868,7 @@ def set_default(
     entry = _find_wallet(store, identifier=lookup_id)
 
     store["default_address"] = entry.address
+    store["default"] = entry.label
     _save_store(path, store)
     typer.echo(f"Default wallet set to {entry.address}")
 
