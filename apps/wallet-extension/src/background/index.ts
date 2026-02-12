@@ -2,13 +2,14 @@
 
 import { loadVault, saveVault, loadState, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
-import { NetworkManager } from '../core/networks/manager';
 import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
 import { buildAndSignTransfer, encodeTxForRpc } from '../core/tx/builder';
 import { createAccount } from '../core/wallets/account';
 import { parseWalletsJson, exportWalletsJson, mergeAccounts, deduplicateAccounts } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
+import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl } from '../services/rpcConfig';
+import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
@@ -18,6 +19,22 @@ let unlockedPassword: string | null = null;
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Animica Wallet installed');
+});
+
+initializeRuntimeRpc().catch((error) => {
+  console.error('Failed to initialize RPC configuration:', error);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (!changes.rpc_url_override) return;
+
+  const nextValue = changes.rpc_url_override.newValue;
+  if (typeof nextValue === 'string' && nextValue.length > 0) {
+    recreateRpcClient(nextValue);
+  } else {
+    recreateRpcClient(getEffectiveRpcUrl());
+  }
 });
 
 // Message handler
@@ -70,6 +87,18 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     
     case 'wallet_sendTransaction':
       return handleSendTransaction(params);
+
+    case 'wallet_getRpcConfig':
+      return handleGetRpcConfig();
+
+    case 'wallet_setRpcUrl':
+      return handleSetRpcUrl(params.url);
+
+    case 'wallet_resetRpcUrl':
+      return handleResetRpcUrl();
+
+    case 'wallet_testRpcConnection':
+      return handleTestRpcConnection(params.url);
     
     case 'wallet_getPendingTxs':
       return handleGetPendingTxs();
@@ -229,7 +258,26 @@ async function handleGetCurrentNetwork(): Promise<any> {
   }
   
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  return network;
+  const effectiveRpcUrl = await getRpcUrl();
+
+  let rpcChainId: number | null = null;
+  let rpcWarning: string | null = null;
+  try {
+    const client = await getRpcClient();
+    rpcChainId = await client.getChainId();
+    if (rpcChainId !== network.chainId) {
+      rpcWarning = 'RPC chain_id mismatch; switch network';
+    }
+  } catch {
+    // Ignore RPC failures while loading network metadata.
+  }
+
+  return {
+    ...network,
+    effectiveRpcUrl,
+    rpcChainId,
+    rpcWarning,
+  };
 }
 
 async function handleSwitchNetwork(networkId: string): Promise<{ success: boolean }> {
@@ -254,8 +302,7 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
     throw new Error('Wallet is locked');
   }
   
-  const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const client = new (await import('../core/rpc/client')).RpcClient(network.rpcUrls);
+  const client = await getRpcClient();
   
   const balanceHex = await client.getBalance(address);
   const confirmed = BigInt(balanceHex);
@@ -279,8 +326,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
   }
   
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const { RpcClient } = await import('../core/rpc/client');
-  const client = new RpcClient(network.rpcUrls);
+  const client = await getRpcClient();
   
   // Get current block height for validAfter/validUntil
   const head = await client.getHead();
@@ -329,6 +375,75 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
   await saveVaultData(vaultData);
   
   return { txid };
+}
+
+async function handleGetRpcConfig(): Promise<{ rpcUrl: string; warning?: string }> {
+  const rpcUrl = await getRpcUrl();
+  const validation = validateRpcUrl(rpcUrl);
+
+  return {
+    rpcUrl,
+    warning: validation.warning,
+  };
+}
+
+async function handleSetRpcUrl(url: string): Promise<{ success: boolean; rpcUrl: string; warning?: string }> {
+  const validation = validateRpcUrl(url);
+  await setRpcUrl(validation.normalizedUrl);
+  recreateRpcClient(validation.normalizedUrl);
+
+  return {
+    success: true,
+    rpcUrl: validation.normalizedUrl,
+    warning: validation.warning,
+  };
+}
+
+async function handleResetRpcUrl(): Promise<{ success: boolean; rpcUrl: string }> {
+  await resetRpcUrl();
+  const rpcUrl = getEffectiveRpcUrl();
+  recreateRpcClient(rpcUrl);
+
+  return {
+    success: true,
+    rpcUrl,
+  };
+}
+
+async function handleTestRpcConnection(url: string): Promise<{
+  ok: boolean;
+  rpcUrl: string;
+  latencyMs: number;
+  chainId?: number;
+  headHeight?: number;
+  error?: string;
+}> {
+  const validation = validateRpcUrl(url);
+  const { RpcClient } = await import('../core/rpc/client');
+  const client = new RpcClient([validation.normalizedUrl], { timeoutMs: 5000 });
+
+  const start = performance.now();
+  try {
+    const [head, chainId] = await Promise.all([
+      client.getHead(),
+      client.getChainId(),
+    ]);
+
+    return {
+      ok: true,
+      rpcUrl: validation.normalizedUrl,
+      latencyMs: Math.round(performance.now() - start),
+      chainId,
+      headHeight: head?.height,
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      rpcUrl: validation.normalizedUrl,
+      latencyMs: Math.round(performance.now() - start),
+      error: error?.message || 'Unknown RPC test error',
+    };
+  }
 }
 
 async function handleGetPendingTxs(): Promise<PendingTx[]> {
@@ -426,4 +541,9 @@ async function saveVaultData(vaultData: VaultData): Promise<void> {
   });
 
   setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
+}
+
+async function initializeRuntimeRpc(): Promise<void> {
+  const rpcUrl = await getRpcUrl();
+  recreateRpcClient(rpcUrl);
 }

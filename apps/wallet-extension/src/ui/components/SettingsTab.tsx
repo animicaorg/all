@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface SettingsTabProps {
   network: any;
@@ -9,7 +9,38 @@ interface SettingsTabProps {
 function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTabProps) {
   const [selectedNetwork, setSelectedNetwork] = useState(network?.id || 'mainnet');
   const [isBusy, setIsBusy] = useState(false);
+  const [rpcInput, setRpcInput] = useState('');
+  const [effectiveRpcUrl, setEffectiveRpcUrl] = useState('');
+  const [rpcMessage, setRpcMessage] = useState<string | null>(null);
+  const [rpcError, setRpcError] = useState<string | null>(null);
+  const [isTestingRpc, setIsTestingRpc] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [rpcWarning, setRpcWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setSelectedNetwork(network?.id || 'mainnet');
+  }, [network?.id]);
+
+  useEffect(() => {
+    loadRpcConfig();
+  }, []);
+
+  async function loadRpcConfig() {
+    try {
+      const result = await chrome.runtime.sendMessage({ method: 'wallet_getRpcConfig' });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
+      setRpcInput(result.rpcUrl || '');
+      setEffectiveRpcUrl(result.rpcUrl || '');
+      setRpcWarning(result.warning || null);
+      setRpcError(null);
+    } catch (error: any) {
+      setRpcError(error?.message || 'Failed to load RPC configuration');
+    }
+  }
 
   async function handleNetworkChange(networkId: string) {
     try {
@@ -22,6 +53,88 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
       onNetworkChange();
     } catch (error) {
       console.error('Failed to switch network:', error);
+    }
+  }
+
+  async function handleSaveRpc() {
+    setRpcMessage(null);
+    setRpcError(null);
+    setTestResult(null);
+
+    try {
+      setIsBusy(true);
+      const result = await chrome.runtime.sendMessage({
+        method: 'wallet_setRpcUrl',
+        params: { url: rpcInput },
+      });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
+      setRpcInput(result.rpcUrl);
+      setEffectiveRpcUrl(result.rpcUrl);
+      setRpcWarning(result.warning || null);
+      setRpcMessage('RPC endpoint saved. Runtime client updated.');
+      onNetworkChange();
+    } catch (error: any) {
+      setRpcError(error?.message || 'Failed to save RPC endpoint');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleResetRpc() {
+    setRpcMessage(null);
+    setRpcError(null);
+    setTestResult(null);
+
+    try {
+      setIsBusy(true);
+      const result = await chrome.runtime.sendMessage({ method: 'wallet_resetRpcUrl' });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
+      setRpcInput(result.rpcUrl);
+      setEffectiveRpcUrl(result.rpcUrl);
+      setRpcWarning(null);
+      setRpcMessage('RPC endpoint reset to default mainnet RPC.');
+      onNetworkChange();
+    } catch (error: any) {
+      setRpcError(error?.message || 'Failed to reset RPC endpoint');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleTestConnection() {
+    setRpcError(null);
+    setTestResult(null);
+
+    try {
+      setIsTestingRpc(true);
+      const result = await chrome.runtime.sendMessage({
+        method: 'wallet_testRpcConnection',
+        params: { url: rpcInput },
+      });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
+      if (!result.ok) {
+        setRpcError(`Connection test failed (${result.latencyMs}ms): ${result.error}`);
+        return;
+      }
+
+      setTestResult(
+        `Connected in ${result.latencyMs}ms • chain_id=${result.chainId ?? 'n/a'} • head=${result.headHeight ?? 'n/a'}`,
+      );
+    } catch (error: any) {
+      setRpcError(error?.message || 'Failed to test RPC connection');
+    } finally {
+      setIsTestingRpc(false);
     }
   }
 
@@ -131,6 +244,43 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0, fontSize: '16px' }}>RPC Endpoint</h3>
+
+        <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+          Effective RPC URL: <code>{effectiveRpcUrl || 'Loading...'}</code>
+        </div>
+
+        <label className="label" htmlFor="rpc-url">RPC URL</label>
+        <input
+          id="rpc-url"
+          className="input"
+          type="text"
+          value={rpcInput}
+          onChange={(event) => setRpcInput(event.target.value)}
+          placeholder="http://144.126.133.21:8545/rpc"
+          disabled={isBusy || isTestingRpc}
+        />
+
+        <div className="settings-rpc-actions">
+          <button className="button" onClick={handleSaveRpc} disabled={isBusy || isTestingRpc}>
+            {isBusy ? 'Saving…' : 'Save'}
+          </button>
+          <button className="button button-secondary" onClick={handleResetRpc} disabled={isBusy || isTestingRpc}>
+            Reset to default
+          </button>
+          <button className="button button-secondary" onClick={handleTestConnection} disabled={isBusy || isTestingRpc}>
+            {isTestingRpc ? 'Testing…' : 'Test Connection'}
+          </button>
+        </div>
+
+        {rpcWarning && <div className="warning">{rpcWarning}</div>}
+        {network?.rpcWarning && <div className="warning">{network.rpcWarning}</div>}
+        {rpcMessage && <div className="success">{rpcMessage}</div>}
+        {testResult && <div className="success">{testResult}</div>}
+        {rpcError && <div className="error">{rpcError}</div>}
       </div>
 
       <div className="card">
