@@ -1,28 +1,31 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "./App";
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import RecoverableErrorBoundary from '../shared/components/RecoverableErrorBoundary';
 
 // Global styles
-import "../shared/theme.css";
-import "./styles.css";
+import '../shared/theme.css';
+import './styles.css';
 
 // Optional: let the background know the popup opened (useful for analytics/metrics)
 try {
-  chrome.runtime?.sendMessage?.({ type: "popup_opened" });
+  chrome.runtime?.sendMessage?.({ type: 'popup_opened' });
 } catch {
   /* ignore in non-extension contexts */
 }
 
 function mount() {
-  const el = document.getElementById("root");
+  const el = document.getElementById('root');
   if (!el) {
-    console.error("[popup] #root not found");
+    console.error('[popup] #root not found');
     return;
   }
   const root = createRoot(el);
   root.render(
     <React.StrictMode>
-      <App />
+      <RecoverableErrorBoundary context="popup">
+        <App />
+      </RecoverableErrorBoundary>
     </React.StrictMode>
   );
 }
