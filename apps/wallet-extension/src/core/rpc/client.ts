@@ -158,6 +158,10 @@ export class RpcClient {
     return toRpcInteger(result, 'chainId');
   }
 
+  async getChainIdentity(): Promise<any> {
+    return this.call('chain.getChainIdentity', []);
+  }
+
   async getHead(): Promise<any> {
     return this.call('chain.getHead', []);
   }
