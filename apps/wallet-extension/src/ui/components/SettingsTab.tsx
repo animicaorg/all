@@ -252,7 +252,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
                 )}
               </div>
               <div style={{ fontSize: '11px', color: '#666' }}>
-                {netId === 'mainnet' && 'Chain ID: 1 • Primary: 144.126.133.21'}
+                {netId === 'mainnet' && 'Chain ID: 1 • Primary: mainnet.animica.org'}
                 {netId === 'testnet' && 'Chain ID: 2 • Local testnet'}
                 {netId === 'devnet' && 'Chain ID: 1337 • Local development'}
               </div>
@@ -275,7 +275,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
           type="text"
           value={rpcInput}
           onChange={(event) => setRpcInput(event.target.value)}
-          placeholder="http://144.126.133.21:8545/rpc"
+          placeholder="https://mainnet.animica.org/rpc"
           disabled={isBusy || isTestingRpc}
         />
 
