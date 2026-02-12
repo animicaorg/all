@@ -178,7 +178,7 @@ function encodeValue(value: unknown): number[] {
   if (value instanceof ArrayBuffer) {
     return encodeBytes(new Uint8Array(value));
   }
-  if (Buffer && value instanceof Buffer) {
+  if (typeof Buffer !== 'undefined' && value instanceof Buffer) {
     return encodeBytes(new Uint8Array(value));
   }
   
