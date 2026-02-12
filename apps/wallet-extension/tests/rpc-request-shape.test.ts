@@ -58,16 +58,16 @@ describe('tx.sendRawTransaction request shape', () => {
     // def tx_send_raw_transaction(rawTx: str) -> t.Any
     //
     // The dispatcher (rpc/jsonrpc.py) accepts params in two forms:
-    //   1. Array:  params: ["0xabcd..."]        → binds to positional arg
-    //   2. Object: params: { rawTx: "0x..." }  → binds to keyword arg
+    //   1. Array:  params: ["0xabcd1234..."]        → binds to positional arg
+    //   2. Object: params: { rawTx: "0xabcd1234..." }  → binds to keyword arg
     //
     // We use object form for explicitness and type safety.
 
-    const arrayForm = buildJsonRpcRequest('tx.sendRawTransaction', ['0xabcd'], 1);
-    const objectForm = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd' }, 2);
+    const arrayForm = buildJsonRpcRequest('tx.sendRawTransaction', ['0xabcd1234'], 1);
+    const objectForm = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 2);
 
-    expect(arrayForm.params).toEqual(['0xabcd']);
-    expect(objectForm.params).toEqual({ rawTx: '0xabcd' });
+    expect(arrayForm.params).toEqual(['0xabcd1234']);
+    expect(objectForm.params).toEqual({ rawTx: '0xabcd1234' });
 
     console.log('[dev] Both forms are valid per node dispatcher:');
     console.log('  Array form: ', JSON.stringify(arrayForm));
@@ -76,20 +76,20 @@ describe('tx.sendRawTransaction request shape', () => {
 
   it('prevents common mistakes that cause -32602 errors', () => {
     // MISTAKE 1: Double-wrapping params
-    const bad1 = buildJsonRpcRequest('tx.sendRawTransaction', { params: ['0x...'] }, 1);
+    const bad1 = buildJsonRpcRequest('tx.sendRawTransaction', { params: ['0xabcd1234'] }, 1);
     // Node sees: params.params which doesn't bind to rawTx arg
-    expect(bad1.params).toEqual({ params: ['0x...'] });
+    expect(bad1.params).toEqual({ params: ['0xabcd1234'] });
     console.log('[dev] WRONG (double-wrapped):', JSON.stringify(bad1));
 
     // MISTAKE 2: Missing rawTx key
-    const bad2 = buildJsonRpcRequest('tx.sendRawTransaction', { tx: '0x...' }, 2);
+    const bad2 = buildJsonRpcRequest('tx.sendRawTransaction', { tx: '0xabcd1234' }, 2);
     // Node sees: tx= not rawTx=
-    expect(bad2.params).toEqual({ tx: '0x...' });
+    expect(bad2.params).toEqual({ tx: '0xabcd1234' });
     console.log('[dev] WRONG (wrong key):', JSON.stringify(bad2));
 
     // CORRECT
-    const good = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0x...' }, 3);
-    expect(good.params).toEqual({ rawTx: '0x...' });
+    const good = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 3);
+    expect(good.params).toEqual({ rawTx: '0xabcd1234' });
     console.log('[dev] CORRECT:', JSON.stringify(good));
   });
 });

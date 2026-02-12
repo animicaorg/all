@@ -195,7 +195,7 @@ export class RpcClient {
               fullRequest: request,
               responseError,
               hint: isInvalidParams 
-                ? 'Code -32602 means params shape/type mismatch. Check the params object matches node signature.'
+                ? 'Code -32602 means params shape/type mismatch. See apps/wallet-extension/docs/RPC_TRANSACTION_SUBMISSION.md for common causes.'
                 : undefined,
             });
           }
