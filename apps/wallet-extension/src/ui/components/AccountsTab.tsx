@@ -74,8 +74,9 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
       return 'Balance: …';
     }
 
-    if (errorByAddress[address]) {
-      return 'Balance: unavailable';
+    const error = errorByAddress[address];
+    if (error) {
+      return `Balance: Error - ${error}`;
     }
 
     const balance = balancesByAddress[address];

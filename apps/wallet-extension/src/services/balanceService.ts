@@ -2,7 +2,7 @@ import { validateAddress } from '../core/crypto/address';
 import { RpcClient } from '../core/rpc/client';
 
 const DEFAULT_DECIMALS = 9n;
-const DEBUG_BALANCE = false;
+const DEBUG_BALANCE = true; // Always enabled for troubleshooting
 
 export interface BalanceDebugState {
   lastBalanceResponse?: unknown;
@@ -10,6 +10,12 @@ export interface BalanceDebugState {
   lastBalanceError?: string | null;
   lastPingError?: string | null;
   lastBalanceFetchedAt?: number | null;
+  lastBalanceRequest?: {
+    address: string;
+    rpcUrl: string;
+    chainId: number;
+    timestamp: number;
+  };
 }
 
 const balanceDebugState: BalanceDebugState = {
@@ -18,6 +24,7 @@ const balanceDebugState: BalanceDebugState = {
   lastBalanceError: null,
   lastPingError: null,
   lastBalanceFetchedAt: null,
+  lastBalanceRequest: undefined,
 };
 
 function debugLog(message: string, data?: unknown): void {
@@ -100,25 +107,57 @@ export async function getBalanceBaseUnits(
 
   let raw: unknown;
   try {
+    // Store request info for debugging
+    balanceDebugState.lastBalanceRequest = {
+      address,
+      rpcUrl,
+      chainId,
+      timestamp: Date.now(),
+    };
+
+    debugLog('Calling state.getBalance', {
+      address,
+      rpcUrl,
+      chainId,
+    });
+
     raw = await client.call('state.getBalance', [address, 'latest']);
+    
+    debugLog('state.getBalance raw response', {
+      address,
+      raw,
+      rawType: typeof raw,
+    });
+
     const parsed = parseBalanceResult(raw);
 
     balanceDebugState.lastBalanceResponse = raw;
     balanceDebugState.lastBalanceError = null;
     balanceDebugState.lastBalanceFetchedAt = Date.now();
 
-    debugLog('state.getBalance response', {
+    debugLog('state.getBalance parsed result', {
       address,
       rpcUrl,
       chainId,
       raw,
+      parsed: parsed.toString(),
     });
 
     return parsed;
   } catch (error: any) {
+    const errorMsg = error?.message || 'Unknown balance error';
     balanceDebugState.lastBalanceResponse = raw;
-    balanceDebugState.lastBalanceError = error?.message || 'Unknown balance error';
+    balanceDebugState.lastBalanceError = errorMsg;
     balanceDebugState.lastBalanceFetchedAt = Date.now();
+    
+    console.error('[balance-service] getBalance failed:', {
+      address,
+      rpcUrl,
+      chainId,
+      error: errorMsg,
+      raw,
+    });
+    
     throw error;
   }
 }

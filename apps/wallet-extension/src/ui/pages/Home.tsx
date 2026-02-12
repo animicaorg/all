@@ -13,7 +13,7 @@ interface HomeProps {
   onLock: () => void;
 }
 
-const DEBUG_WALLET_UI = false;
+const DEBUG_WALLET_UI = true; // Always enabled for troubleshooting
 
 function Home({ onLock }: HomeProps) {
   const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'activity' | 'settings'>('accounts');
@@ -230,18 +230,58 @@ function Home({ onLock }: HomeProps) {
             {showDebug && (
               <details style={{ marginTop: 8, fontSize: '11px' }} open>
                 <summary>Debug details</summary>
-                <div>Active wallet: {debugState?.activeWallet?.label || 'n/a'} ({debugState?.activeWallet?.address || 'n/a'})</div>
-                <div>Configured RPC: {debugState?.rpcUrl || network?.effectiveRpcUrl || 'n/a'}</div>
-                <div>Configured chain_id: {debugState?.chainId ?? network?.chainId ?? 'n/a'}</div>
-                <div>Last balance fetch: {debugState?.lastBalanceFetchedAt ? new Date(debugState.lastBalanceFetchedAt).toLocaleString() : 'never'}</div>
-                <div>Last RPC error: {debugState?.lastBalanceError || debugState?.lastPingError || 'none'}</div>
-                <details>
-                  <summary>Raw balance response</summary>
-                  <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2)}</pre>
+                <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
+                  <div><strong>Active Wallet:</strong></div>
+                  <div style={{ marginLeft: 8 }}>Label: {debugState?.activeWallet?.label || 'n/a'}</div>
+                  <div style={{ marginLeft: 8, wordBreak: 'break-all' }}>Address: {debugState?.activeWallet?.address || 'n/a'}</div>
+                </div>
+                <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4 }}>
+                  <div><strong>RPC Configuration:</strong></div>
+                  <div style={{ marginLeft: 8 }}>URL: {debugState?.rpcUrl || network?.effectiveRpcUrl || 'n/a'}</div>
+                  <div style={{ marginLeft: 8 }}>Chain ID: {debugState?.chainId ?? network?.chainId ?? 'n/a'}</div>
+                  <div style={{ marginLeft: 8 }}>Last fetch: {debugState?.lastBalanceFetchedAt ? new Date(debugState.lastBalanceFetchedAt).toLocaleString() : 'never'}</div>
+                </div>
+                {debugState?.lastBalanceRequest && (
+                  <div style={{ marginTop: 8, padding: 8, background: '#fff3cd', borderRadius: 4 }}>
+                    <div><strong>Last Balance Request:</strong></div>
+                    <div style={{ marginLeft: 8, wordBreak: 'break-all' }}>Address: {debugState.lastBalanceRequest.address}</div>
+                    <div style={{ marginLeft: 8 }}>RPC URL: {debugState.lastBalanceRequest.rpcUrl}</div>
+                    <div style={{ marginLeft: 8 }}>Chain ID: {debugState.lastBalanceRequest.chainId}</div>
+                    <div style={{ marginLeft: 8 }}>Timestamp: {new Date(debugState.lastBalanceRequest.timestamp).toLocaleString()}</div>
+                  </div>
+                )}
+                {(debugState?.lastBalanceError || debugState?.lastPingError) && (
+                  <div style={{ marginTop: 8, padding: 8, background: '#f8d7da', borderRadius: 4, color: '#721c24' }}>
+                    <div><strong>Errors:</strong></div>
+                    {debugState?.lastBalanceError && <div style={{ marginLeft: 8 }}>Balance: {debugState.lastBalanceError}</div>}
+                    {debugState?.lastPingError && <div style={{ marginLeft: 8 }}>Ping: {debugState.lastPingError}</div>}
+                  </div>
+                )}
+                <details style={{ marginTop: 8 }}>
+                  <summary><strong>Raw Balance Response</strong></summary>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
+                    {JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2)}
+                  </pre>
+                  <button 
+                    className="button" 
+                    style={{ marginTop: 4, fontSize: 10, padding: '4px 8px' }}
+                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2))}
+                  >
+                    Copy Response
+                  </button>
                 </details>
-                <details>
-                  <summary>Raw ping response</summary>
-                  <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(debugState?.lastPingResponse ?? null, null, 2)}</pre>
+                <details style={{ marginTop: 8 }}>
+                  <summary><strong>Raw Ping Response</strong></summary>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
+                    {JSON.stringify(debugState?.lastPingResponse ?? null, null, 2)}
+                  </pre>
+                  <button 
+                    className="button" 
+                    style={{ marginTop: 4, fontSize: 10, padding: '4px 8px' }}
+                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugState?.lastPingResponse ?? null, null, 2))}
+                  >
+                    Copy Response
+                  </button>
                 </details>
               </details>
             )}
