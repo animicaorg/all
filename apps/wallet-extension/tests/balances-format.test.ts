@@ -10,6 +10,10 @@ describe('formatANM', () => {
     expect(formatANM('12000000000')).toBe('12.000000000');
   });
 
+  it('adds grouping separators for large ANM values', () => {
+    expect(formatANM('1234567890123456789')).toBe('1,234,567,890.123456789');
+  });
+
   it('formats fractional ANM values', () => {
     expect(formatANM('12345678901')).toBe('12.345678901');
   });

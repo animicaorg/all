@@ -4,6 +4,7 @@ import type { EncryptedVault, VaultData, StorageState } from '../../types/vault'
 
 const STORAGE_KEY_VAULT = 'encrypted_vault';
 const STORAGE_KEY_STATE = 'storage_state';
+const STORAGE_KEY_ACTIVE_WALLET_ID = 'active_wallet_id';
 
 export async function saveVault(vault: EncryptedVault): Promise<void> {
   await chrome.storage.local.set({
@@ -31,6 +32,18 @@ export async function loadState(): Promise<StorageState> {
 
 export async function clearAll(): Promise<void> {
   await chrome.storage.local.clear();
+}
+
+export async function saveActiveWalletId(walletId: string): Promise<void> {
+  await chrome.storage.local.set({
+    [STORAGE_KEY_ACTIVE_WALLET_ID]: walletId,
+  });
+}
+
+export async function loadActiveWalletId(): Promise<string | null> {
+  const result = await chrome.storage.local.get(STORAGE_KEY_ACTIVE_WALLET_ID);
+  const walletId = result[STORAGE_KEY_ACTIVE_WALLET_ID];
+  return typeof walletId === 'string' && walletId.length > 0 ? walletId : null;
 }
 
 // Session storage for temporary unlocked data
