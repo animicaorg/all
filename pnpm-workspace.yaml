@@ -4,7 +4,7 @@ packages:
   - website
   - explorer-web
   - studio-web
-  - wallet-extension
+  - apps/wallet-extension
   - wallet
   - apps/miner-dashboard
   - apps/dapp-ide

@@ -4,12 +4,13 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite build --watch --mode development",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "pnpm exec vite build --watch --mode development",
+    "build": "pnpm exec vite build",
+    "preview": "pnpm exec vite preview",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prebuild": "node -e \"const fs=require('fs'); if(!fs.existsSync('node_modules')){console.error('Dependencies are missing. Run `pnpm install` at repository root.'); process.exit(1)}\""
   },
   "dependencies": {
     "react": "^18.2.0",
