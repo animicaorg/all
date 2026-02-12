@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import type { Account } from '../../types/wallet';
+import { formatANM } from '../../services/balances';
+import { useBalancesStore } from '../../store/balances';
 
 interface SendTabProps {
   currentAccount: Account;
@@ -14,6 +16,10 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const liveBalance = useBalancesStore(store => store.balancesByAddress[currentAccount.address]);
+  const isBalanceLoading = useBalancesStore(store => store.loadingByAddress[currentAccount.address]);
+  const hasBalanceError = useBalancesStore(store => store.errorByAddress[currentAccount.address]);
 
   async function handleSend() {
     setError('');
@@ -61,7 +67,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       setSuccess(`Transaction sent! TXID: ${result.txid.slice(0, 16)}...`);
       setTo('');
       setAmount('');
-      
+
       // Refresh balance after a short delay
       setTimeout(() => {
         onSent();
@@ -73,17 +79,31 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
     }
   }
 
-  function formatBalance(balance: string): string {
-    const bn = BigInt(balance);
-    const anm = Number(bn) / 1e9;
-    return anm.toFixed(4);
+  function getCurrentBalanceText(): string {
+    if (isBalanceLoading) {
+      return 'Balance: …';
+    }
+
+    if (hasBalanceError) {
+      return 'Balance: unavailable';
+    }
+
+    if (typeof liveBalance === 'bigint') {
+      return `Balance: ${formatANM(liveBalance)} ANM`;
+    }
+
+    if (balance) {
+      return `Balance: ${formatANM(balance.available)} ANM`;
+    }
+
+    return 'Balance: …';
   }
 
   return (
     <div>
       <div className="card">
         <h3 style={{ marginTop: 0, fontSize: '16px' }}>Send ANM</h3>
-        
+
         <div style={{ marginBottom: '16px', padding: '12px', background: '#f5f5f5', borderRadius: '8px' }}>
           <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>From</div>
           <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>
@@ -92,11 +112,9 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
           <div className="address">
             {currentAccount.address}
           </div>
-          {balance && (
-            <div style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
-              Available: {formatBalance(balance.available)} ANM
-            </div>
-          )}
+          <div style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
+            {getCurrentBalanceText()}
+          </div>
         </div>
 
         <label className="label">To Address</label>

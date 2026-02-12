@@ -5,6 +5,8 @@ import AccountsTab from '../components/AccountsTab';
 import SendTab from '../components/SendTab';
 import ActivityTab from '../components/ActivityTab';
 import SettingsTab from '../components/SettingsTab';
+import { formatANM } from '../../services/balances';
+import { useBalancesStore } from '../../store/balances';
 
 interface HomeProps {
   onLock: () => void;
@@ -18,17 +20,33 @@ function Home({ onLock }: HomeProps) {
   const [network, setNetwork] = useState<any>(null);
   const [pendingTxs, setPendingTxs] = useState<PendingTx[]>([]);
 
+  const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
+  const refreshBalance = useBalancesStore(store => store.refreshBalance);
+  const refreshBalances = useBalancesStore(store => store.refreshBalances);
+
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 10000); // Poll every 10s
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (accounts.length > 0) {
+      refreshBalances(accounts.map(account => account.address), false);
+    }
+  }, [accounts, refreshBalances]);
+
+  useEffect(() => {
+    if (currentAccount) {
+      refreshBalance(currentAccount.address, true);
+    }
+  }, [currentAccount, refreshBalance]);
+
   async function loadData() {
     try {
       const accountsData = await chrome.runtime.sendMessage({ method: 'wallet_getAccounts' });
       setAccounts(accountsData);
-      
+
       if (accountsData.length > 0 && !currentAccount) {
         setCurrentAccount(accountsData[0]);
       }
@@ -56,10 +74,19 @@ function Home({ onLock }: HomeProps) {
     onLock();
   }
 
-  function formatBalance(balance: string): string {
-    const bn = BigInt(balance);
-    const anm = Number(bn) / 1e9;
-    return anm.toFixed(4);
+  function formatAvailableBalance(balanceRaw: string): string {
+    const liveBalance = currentAccount ? balancesByAddress[currentAccount.address] : undefined;
+    if (typeof liveBalance === 'bigint') {
+      return formatANM(liveBalance);
+    }
+
+    const bn = BigInt(balanceRaw);
+    return formatANM(bn);
+  }
+
+  function handleSelectAccount(account: Account) {
+    setCurrentAccount(account);
+    refreshBalance(account.address, true);
   }
 
   return (
@@ -122,10 +149,10 @@ function Home({ onLock }: HomeProps) {
           <div className="card">
             <div className="balance-label">Available Balance</div>
             <div className="balance">
-              {formatBalance(balance.available)} ANM
+              {formatAvailableBalance(balance.available)} ANM
             </div>
             <div style={{ fontSize: '12px', color: '#999' }}>
-              Confirmed: {formatBalance(balance.confirmed)} ANM
+              Confirmed: {formatANM(balance.confirmed)} ANM
             </div>
           </div>
         )}
@@ -134,11 +161,11 @@ function Home({ onLock }: HomeProps) {
           <AccountsTab
             accounts={accounts}
             currentAccount={currentAccount}
-            onSelectAccount={setCurrentAccount}
+            onSelectAccount={handleSelectAccount}
             onRefresh={loadData}
           />
         )}
-        
+
         {activeTab === 'send' && currentAccount && network && (
           <SendTab
             currentAccount={currentAccount}
@@ -147,11 +174,11 @@ function Home({ onLock }: HomeProps) {
             onSent={loadData}
           />
         )}
-        
+
         {activeTab === 'activity' && (
           <ActivityTab pendingTxs={pendingTxs} />
         )}
-        
+
         {activeTab === 'settings' && (
           <SettingsTab network={network} onNetworkChange={loadData} />
         )}
