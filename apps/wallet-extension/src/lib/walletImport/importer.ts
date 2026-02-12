@@ -29,6 +29,10 @@ function dedupeKey(address: string, algId: number): string {
 }
 
 function versionCompatibilityMessage(reason: string): string {
+  if (/excess padding/i.test(reason)) {
+    return `Invalid bech32m address encoding (${reason}). Re-export the wallet file from the source wallet and retry import.`;
+  }
+
   if (reason.includes('Unsupported address version: 2') || reason.includes('Unsupported address version 2')) {
     return 'Your wallet file contains address version 2; this extension now supports v1/v2. If you still see this, update and retry.';
   }
