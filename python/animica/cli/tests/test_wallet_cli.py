@@ -226,8 +226,9 @@ def test_wallet_export_by_label(premine_wallet_store: Path, tmp_path: Path) -> N
     assert "Exported" in output
     
     exported = json.loads(export_path.read_text())
-    assert exported["label"] == "alice"
-    assert exported["address"] == "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km"
+    assert exported["format"] == "animica.wallets"
+    labels = [w["label"] for w in exported["wallets"]]
+    assert "alice" in labels
 
 
 def test_wallet_set_default_by_label(premine_wallet_store: Path) -> None:

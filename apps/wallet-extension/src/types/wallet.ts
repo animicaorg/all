@@ -4,14 +4,22 @@ export interface WalletEntry {
   label: string;
   address: string;
   alg_id: number;
-  alg_name: string;
+  alg_name?: string;
   public_key_hex: string;
-  secret_key_hex: string;
   created_at: string;
+  pub_fingerprint?: string;
+  secret_key_hex?: string;
+  private_key_enc?: string;
+  keystore?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
 }
 
 export interface WalletsJson {
-  version: number;
+  format: 'animica.wallets';
+  version: 2;
+  created_at: string;
+  updated_at: string;
+  default?: string | null;
   wallets: WalletEntry[];
 }
 
