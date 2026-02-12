@@ -355,61 +355,92 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
 }
 
 async function handleSendTransaction(params: any): Promise<{ txid: string }> {
-  const vaultData = getUnlockedVault();
-  if (!vaultData) {
-    throw new Error('Wallet is locked');
+  try {
+    const vaultData = getUnlockedVault();
+    if (!vaultData) {
+      throw new Error('Wallet is locked');
+    }
+    
+    // Validate params
+    if (!params.from || typeof params.from !== 'string') {
+      throw new Error('Invalid from address');
+    }
+    if (!params.to || typeof params.to !== 'string') {
+      throw new Error('Invalid to address');
+    }
+    if (typeof params.amount !== 'number' || params.amount <= 0) {
+      throw new Error('Invalid amount');
+    }
+    
+    const network = vaultData.networkConfigs[vaultData.currentNetwork];
+    const client = await getRpcClient();
+    
+    // Get current block height for validAfter/validUntil
+    const head = await client.getHead();
+    const currentHeight = head.height || 0;
+    
+    // Find sender account
+    const account = vaultData.accounts.find(a => a.address === params.from);
+    if (!account) {
+      throw new Error('Account not found');
+    }
+    
+    // Validate account has required signing material
+    if (!account.secretKey || account.secretKey.length === 0) {
+      throw new Error('Cannot sign: account is watch-only or missing secret key');
+    }
+    
+    if (!account.publicKey || account.publicKey.length === 0) {
+      throw new Error('Cannot sign: account missing public key');
+    }
+    
+    // Build and sign transaction
+    const { signedTx, txid, unsignedHash } = await buildAndSignTransfer(
+      {
+        chainId: network.chainId,
+        from: params.from,
+        to: params.to,
+        amount: params.amount,
+        gasPrice: params.gasPrice || vaultData.settings.defaultGasPrice,
+        gasLimit: params.gasLimit || vaultData.settings.defaultGasLimit,
+        validAfter: currentHeight,
+        validUntil: currentHeight + 120,
+        data: params.data,
+      },
+      account.secretKey,
+      account.publicKey,
+      account.algId
+    );
+    
+    // Validate transaction was properly built
+    if (!txid || typeof txid !== 'string') {
+      throw new Error('Failed to build transaction: missing txid');
+    }
+    
+    // Encode and send
+    const rawTx = encodeTxForRpc(signedTx);
+    await client.sendRawTransaction(rawTx);
+    
+    // Store in tx cache
+    const txStore = TxStore.fromJSON(vaultData.txCache);
+    const pendingTx: PendingTx = {
+      txid,
+      unsignedHash,
+      signedTx,
+      status: 'submitted' as TxStatus,
+      submittedAt: Date.now(),
+    };
+    txStore.upsert(pendingTx);
+    vaultData.txCache = txStore.toJSON();
+    
+    await saveVaultData(vaultData);
+    
+    return { txid };
+  } catch (error) {
+    // Log for debugging
+    console.error('[wallet-bg] handleSendTransaction failed:', error);
+    throw error;
   }
-  
-  const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const client = await getRpcClient();
-  
-  // Get current block height for validAfter/validUntil
-  const head = await client.getHead();
-  const currentHeight = head.height || 0;
-  
-  // Find sender account
-  const account = vaultData.accounts.find(a => a.address === params.from);
-  if (!account || !account.secretKey) {
-    throw new Error('Account not found or watch-only');
-  }
-  
-  // Build and sign transaction
-  const { signedTx, txid, unsignedHash } = await buildAndSignTransfer(
-    {
-      chainId: network.chainId,
-      from: params.from,
-      to: params.to,
-      amount: params.amount,
-      gasPrice: params.gasPrice || vaultData.settings.defaultGasPrice,
-      gasLimit: params.gasLimit || vaultData.settings.defaultGasLimit,
-      validAfter: currentHeight,
-      validUntil: currentHeight + 120,
-      data: params.data,
-    },
-    account.secretKey,
-    account.publicKey,
-    account.algId
-  );
-  
-  // Encode and send
-  const rawTx = encodeTxForRpc(signedTx);
-  await client.sendRawTransaction(rawTx);
-  
-  // Store in tx cache
-  const txStore = TxStore.fromJSON(vaultData.txCache);
-  const pendingTx: PendingTx = {
-    txid,
-    unsignedHash,
-    signedTx,
-    status: 'submitted' as TxStatus,
-    submittedAt: Date.now(),
-  };
-  txStore.upsert(pendingTx);
-  vaultData.txCache = txStore.toJSON();
-  
-  await saveVaultData(vaultData);
-  
-  return { txid };
 }
 
 async function handleGetRpcConfig(): Promise<{ rpcUrl: string; warning?: string }> {
