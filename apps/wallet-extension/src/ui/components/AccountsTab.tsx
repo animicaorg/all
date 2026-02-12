@@ -46,10 +46,14 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
     setError('');
 
     try {
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         method: 'wallet_createAccount',
         params: { label: newAccountLabel },
       });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       setNewAccountLabel('');
       setShowCreate(false);

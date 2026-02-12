@@ -76,16 +76,28 @@ function Home({ onLock }: HomeProps) {
   async function loadData() {
     try {
       const accountsData = await chrome.runtime.sendMessage({ method: 'wallet_getAccounts' });
+      if (accountsData?.error) {
+        throw new Error(accountsData.error);
+      }
       setAccounts(accountsData);
 
       const networkData = await chrome.runtime.sendMessage({ method: 'wallet_getCurrentNetwork' });
+      if (networkData?.error) {
+        throw new Error(networkData.error);
+      }
       setNetwork(networkData);
 
       const txsData = await chrome.runtime.sendMessage({ method: 'wallet_getPendingTxs' });
+      if (txsData?.error) {
+        throw new Error(txsData.error);
+      }
       setPendingTxs(txsData);
 
       if (showDebug) {
         const debugData = await chrome.runtime.sendMessage({ method: 'wallet_getDebugState' });
+        if (debugData?.error) {
+          throw new Error(debugData.error);
+        }
         setDebugState(debugData);
       }
     } catch (error) {
@@ -118,7 +130,10 @@ function Home({ onLock }: HomeProps) {
   }
 
   async function handleLock() {
-    await chrome.runtime.sendMessage({ method: 'wallet_lock' });
+    const result = await chrome.runtime.sendMessage({ method: 'wallet_lock' });
+    if (result?.error) {
+      throw new Error(result.error);
+    }
     onLock();
   }
 
