@@ -130,11 +130,17 @@ function Home({ onLock }: HomeProps) {
   }
 
   async function handleLock() {
-    const result = await chrome.runtime.sendMessage({ method: 'wallet_lock' });
-    if (result?.error) {
-      throw new Error(result.error);
+    try {
+      const result = await chrome.runtime.sendMessage({ method: 'wallet_lock' });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      onLock();
+    } catch (error) {
+      console.error('Error locking wallet:', error);
+      // Still call onLock to ensure UI state is consistent
+      onLock();
     }
-    onLock();
   }
 
   function formatAvailableBalance(balanceRaw: string): string {
