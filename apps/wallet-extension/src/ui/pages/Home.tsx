@@ -7,28 +7,51 @@ import ActivityTab from '../components/ActivityTab';
 import SettingsTab from '../components/SettingsTab';
 import { formatANM } from '../../services/balances';
 import { useBalancesStore } from '../../store/balances';
+import { activeWalletStoreActions, useActiveWalletStore } from '../../store/activeWallet';
 
 interface HomeProps {
   onLock: () => void;
 }
 
+const DEBUG_WALLET_UI = false;
+
 function Home({ onLock }: HomeProps) {
   const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'activity' | 'settings'>('accounts');
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [balance, setBalance] = useState<{ confirmed: string; available: string } | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
   const [network, setNetwork] = useState<any>(null);
   const [pendingTxs, setPendingTxs] = useState<PendingTx[]>([]);
 
   const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
   const refreshBalance = useBalancesStore(store => store.refreshBalance);
   const refreshBalances = useBalancesStore(store => store.refreshBalances);
+  const currentAccount = useActiveWalletStore(store => store.activeWallet);
+  const activeWalletError = useActiveWalletStore(store => store.error);
 
   useEffect(() => {
+    activeWalletStoreActions.hydrateActiveWallet();
+    const unsubscribe = activeWalletStoreActions.listenForActiveWalletChanges();
     loadData();
     const interval = setInterval(loadData, 10000); // Poll every 10s
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!currentAccount) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadBalance(currentAccount.address);
+    }, 12000);
+
+    return () => clearInterval(interval);
+  }, [currentAccount]);
 
   useEffect(() => {
     if (accounts.length > 0) {
@@ -39,6 +62,7 @@ function Home({ onLock }: HomeProps) {
   useEffect(() => {
     if (currentAccount) {
       refreshBalance(currentAccount.address, true);
+      loadBalance(currentAccount.address);
     }
   }, [currentAccount, refreshBalance]);
 
@@ -47,18 +71,6 @@ function Home({ onLock }: HomeProps) {
       const accountsData = await chrome.runtime.sendMessage({ method: 'wallet_getAccounts' });
       setAccounts(accountsData);
 
-      if (accountsData.length > 0 && !currentAccount) {
-        setCurrentAccount(accountsData[0]);
-      }
-
-      if (currentAccount) {
-        const balanceData = await chrome.runtime.sendMessage({
-          method: 'wallet_getBalance',
-          params: { address: currentAccount.address },
-        });
-        setBalance(balanceData);
-      }
-
       const networkData = await chrome.runtime.sendMessage({ method: 'wallet_getCurrentNetwork' });
       setNetwork(networkData);
 
@@ -66,6 +78,30 @@ function Home({ onLock }: HomeProps) {
       setPendingTxs(txsData);
     } catch (error) {
       console.error('Error loading data:', error);
+      setBalanceError(error instanceof Error ? error.message : 'Failed to load balance');
+      setLoadingBalance(false);
+    }
+  }
+
+  async function loadBalance(address: string): Promise<void> {
+    try {
+      setLoadingBalance(true);
+      setBalanceError(null);
+      if (DEBUG_WALLET_UI) {
+        console.debug('[wallet-ui] loadBalance', { address, active: currentAccount?.address, rpcUrl: network?.effectiveRpcUrl, chainId: network?.chainId });
+      }
+      const balanceData = await chrome.runtime.sendMessage({
+        method: 'wallet_getBalance',
+        params: { address },
+      });
+      if (balanceData?.error) {
+        throw new Error(balanceData.error);
+      }
+      setBalance(balanceData);
+    } catch (error) {
+      setBalanceError(error instanceof Error ? error.message : 'Failed to load balance');
+    } finally {
+      setLoadingBalance(false);
     }
   }
 
@@ -85,8 +121,15 @@ function Home({ onLock }: HomeProps) {
   }
 
   function handleSelectAccount(account: Account) {
-    setCurrentAccount(account);
+    activeWalletStoreActions.switchActiveWallet(account.address);
     refreshBalance(account.address, true);
+    loadBalance(account.address);
+  }
+
+  async function refreshCurrentBalance(): Promise<void> {
+    if (currentAccount) {
+      await loadBalance(currentAccount.address);
+    }
   }
 
   return (
@@ -145,15 +188,36 @@ function Home({ onLock }: HomeProps) {
       </div>
 
       <div className="content">
-        {balance && currentAccount && (
+        {currentAccount && (
           <div className="card">
             <div className="balance-label">Available Balance</div>
-            <div className="balance">
-              {formatAvailableBalance(balance.available)} ANM
+            {loadingBalance && <div style={{ fontSize: '14px', color: '#888' }}>Loading balance...</div>}
+            {!loadingBalance && balanceError && (
+              <details style={{ color: '#b00020', fontSize: '12px' }}>
+                <summary>Unable to load balance</summary>
+                {balanceError}
+              </details>
+            )}
+            {!loadingBalance && !balanceError && balance && (
+              <>
+                <div className="balance">
+                  {formatAvailableBalance(balance.available)} ANM
+                </div>
+                <div style={{ fontSize: '12px', color: '#999' }}>
+                  Confirmed: {formatANM(balance.confirmed)} ANM
+                </div>
+              </>
+            )}
+            <div style={{ fontSize: '11px', color: '#777', marginTop: 6 }}>
+              RPC: {network?.effectiveRpcUrl ? new URL(network.effectiveRpcUrl).host : 'unknown'}
             </div>
-            <div style={{ fontSize: '12px', color: '#999' }}>
-              Confirmed: {formatANM(balance.confirmed)} ANM
-            </div>
+            <button className="button" style={{ marginTop: 8 }} onClick={refreshCurrentBalance}>Refresh</button>
+          </div>
+        )}
+
+        {activeWalletError && (
+          <div className="card" style={{ color: '#b00020', fontSize: '12px' }}>
+            Active wallet error: {activeWalletError}
           </div>
         )}
 

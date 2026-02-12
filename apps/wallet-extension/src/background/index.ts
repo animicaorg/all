@@ -1,6 +1,6 @@
 // Background service worker
 
-import { loadVault, saveVault, loadState, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked } from '../core/storage';
+import { loadVault, saveVault, loadState, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
 import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
@@ -10,11 +10,18 @@ import { importWalletsJson, exportWalletsJson } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
 import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl } from '../services/rpcConfig';
 import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
+import { getBalance } from '../services/balanceService';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
 
 let unlockedPassword: string | null = null;
+const DEBUG_WALLET = false;
+
+function debugLog(message: string, details?: unknown): void {
+  if (!DEBUG_WALLET) return;
+  console.debug(`[wallet-bg] ${message}`, details);
+}
 
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -71,7 +78,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return { hasVault: !!(await loadVault()) };
     
     case 'wallet_getAccounts':
+    case 'WALLET_LIST':
       return handleGetAccounts();
+
+    case 'WALLET_GET_ACTIVE':
+      return handleGetActiveWallet();
+
+    case 'WALLET_SET_ACTIVE':
+      return handleSetActiveWallet(params.walletId);
     
     case 'wallet_createAccount':
       return handleCreateAccount(params.label);
@@ -83,6 +97,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return handleSwitchNetwork(params.networkId);
     
     case 'wallet_getBalance':
+    case 'BALANCE_GET':
       return handleGetBalance(params.address);
     
     case 'wallet_sendTransaction':
@@ -132,6 +147,7 @@ async function handleUnlock(password: string): Promise<{ success: boolean }> {
     const vaultData: VaultData = JSON.parse(decrypted);
     
     setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
+    await ensureActiveWallet(vaultData);
     unlockedPassword = password;
     
     await saveState({
@@ -185,6 +201,7 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
   
   setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
   unlockedPassword = password;
+  await saveActiveWalletId(firstAccount.address);
   
   await saveState({
     isLocked: false,
@@ -204,9 +221,7 @@ async function handleImportWalletsJson(json: string): Promise<any> {
   const { accounts, summary } = await importWalletsJson(json, vaultData.accounts, { network: currentNetwork });
 
   vaultData.accounts = accounts;
-  if (!vaultData.currentAccount && accounts.length > 0) {
-    vaultData.currentAccount = accounts[0].address;
-  }
+  await ensureActiveWallet(vaultData);
 
   await saveVaultData(vaultData);
 
@@ -229,6 +244,8 @@ async function handleGetAccounts(): Promise<Account[]> {
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
+
+  await ensureActiveWallet(vaultData);
   
   return vaultData.accounts;
 }
@@ -241,6 +258,12 @@ async function handleCreateAccount(label: string): Promise<Account> {
   
   const account = createAccount(label);
   vaultData.accounts.push(account);
+
+  const activeWalletId = await loadActiveWalletId();
+  if (!activeWalletId) {
+    vaultData.currentAccount = account.address;
+    await saveActiveWalletId(account.address);
+  }
   
   await saveVaultData(vaultData);
   
@@ -297,15 +320,24 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
-  
-  const client = await getRpcClient();
-  
-  const balanceHex = await client.getBalance(address);
-  const confirmed = BigInt(balanceHex);
+
+  const activeWallet = await resolveActiveWallet(vaultData);
+  const targetAddress = address || activeWallet.address;
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  const rpcUrl = await getRpcUrl();
+
+  debugLog('fetch balance', {
+    activeWalletId: activeWallet.address,
+    address: targetAddress,
+    rpcUrl,
+    chainId: network.chainId,
+  });
+
+  const confirmed = await getBalance(targetAddress, { rpcUrl, chainId: network.chainId });
   
   // Calculate pending outgoing
   const txStore = TxStore.fromJSON(vaultData.txCache);
-  const pendingOutgoing = txStore.getPendingOutgoing(address);
+  const pendingOutgoing = txStore.getPendingOutgoing(targetAddress);
   
   const available = confirmed - pendingOutgoing;
   
@@ -471,7 +503,8 @@ async function handleRequestAccounts(origin: string): Promise<string[]> {
   
   // TODO: Show approval popup
   // For now, auto-approve with current account
-  const currentAccount = vaultData.currentAccount || vaultData.accounts[0]?.address;
+  const activeWallet = await resolveActiveWallet(vaultData);
+  const currentAccount = activeWallet.address;
   if (!currentAccount) {
     throw new Error('No accounts available');
   }
@@ -537,6 +570,71 @@ async function saveVaultData(vaultData: VaultData): Promise<void> {
   });
 
   setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
+}
+
+async function ensureActiveWallet(vaultData: VaultData): Promise<string | null> {
+  const storedActiveWalletId = await loadActiveWalletId();
+  const accountMap = new Map(vaultData.accounts.map(account => [account.address, account]));
+
+  const resolved = [storedActiveWalletId, vaultData.currentAccount, vaultData.accounts[0]?.address]
+    .find((walletId): walletId is string => typeof walletId === 'string' && accountMap.has(walletId));
+
+  if (!resolved) {
+    return null;
+  }
+
+  vaultData.currentAccount = resolved;
+  await saveActiveWalletId(resolved);
+  return resolved;
+}
+
+async function resolveActiveWallet(vaultData: VaultData): Promise<Account> {
+  const activeWalletId = await ensureActiveWallet(vaultData);
+  if (!activeWalletId) {
+    throw new Error('No wallets available');
+  }
+
+  const activeWallet = vaultData.accounts.find(account => account.address === activeWalletId);
+  if (!activeWallet) {
+    throw new Error('Active wallet not found');
+  }
+
+  debugLog('active wallet resolved', { activeWalletId, label: activeWallet.label });
+  return activeWallet;
+}
+
+async function handleGetActiveWallet(): Promise<Account | null> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  return resolveActiveWallet(vaultData);
+}
+
+async function handleSetActiveWallet(walletId: string): Promise<{ success: boolean }> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  const account = vaultData.accounts.find(item => item.address === walletId);
+  if (!account) {
+    throw new Error('Wallet not found');
+  }
+
+  vaultData.currentAccount = walletId;
+  await saveActiveWalletId(walletId);
+  await saveVaultData(vaultData);
+
+  debugLog('active wallet updated', { walletId, label: account.label });
+  try {
+    await chrome.runtime.sendMessage({ method: 'WALLET_ACTIVE_CHANGED', params: { walletId } });
+  } catch {
+    // Ignore when no extension page is currently listening.
+  }
+
+  return { success: true };
 }
 
 async function initializeRuntimeRpc(): Promise<void> {
