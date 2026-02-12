@@ -133,12 +133,10 @@ export async function getBalanceBaseUnits(
     // Some RPC servers/versions may return {"balance": "0x..."} instead of just "0x..."
     // This matches the defensive handling in explorer2's rpcChainClient.ts
     let balanceValue = raw;
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    if (typeof raw === 'object' && raw !== null && 'balance' in raw) {
       const obj = raw as Record<string, unknown>;
-      if ('balance' in obj && obj.balance !== undefined) {
-        balanceValue = obj.balance;
-        debugLog('Unwrapped balance from object response', { original: raw, unwrapped: balanceValue });
-      }
+      balanceValue = obj.balance;
+      debugLog('Unwrapped balance from object response', { original: raw, unwrapped: balanceValue });
     }
 
     const parsed = parseBalanceResult(balanceValue);
