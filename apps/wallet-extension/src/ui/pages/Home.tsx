@@ -180,7 +180,7 @@ function Home({ onLock }: HomeProps) {
         )}
 
         {activeTab === 'settings' && (
-          <SettingsTab network={network} onNetworkChange={loadData} />
+          <SettingsTab network={network} onNetworkChange={loadData} onAccountsChanged={loadData} />
         )}
       </div>
     </div>
