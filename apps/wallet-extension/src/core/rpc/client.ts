@@ -186,12 +186,17 @@ export class RpcClient {
             data: json.error.data,
           };
 
-          if (shouldDebugRpcPayloads()) {
-            console.error('[wallet-rpc] request failed with RPC error', {
+          // ALWAYS log -32602 (Invalid params) errors with full request details
+          const isInvalidParams = json.error.code === -32602;
+          if (isInvalidParams || shouldDebugRpcPayloads()) {
+            console.error('[wallet-rpc] RPC ERROR', {
               url,
               method,
-              request,
+              fullRequest: request,
               responseError,
+              hint: isInvalidParams 
+                ? 'Code -32602 means params shape/type mismatch. Check the params object matches node signature.'
+                : undefined,
             });
           }
 
@@ -241,8 +246,14 @@ export class RpcClient {
   }
 
   async sendRawTransaction(rawTx: string): Promise<string> {
-    // Node signature: rpc/methods/tx.py defines tx.sendRawTransaction(rawTx: str),
-    // and dispatcher keyword-binding accepts params object form { rawTx: '0x...' }.
+    // NODE RPC SIGNATURE (rpc/methods/tx.py):
+    //   def tx_send_raw_transaction(rawTx: str) -> t.Any
+    //
+    // The RPC dispatcher (rpc/jsonrpc.py _bind_call_args) accepts params in two forms:
+    //   1. Array form:  params: ["0xabcd..."]  → binds to positional arg rawTx
+    //   2. Object form: params: { rawTx: "0xabcd..." }  → binds to keyword arg rawTx
+    //
+    // We use object form for clarity and validation.
     const params = { rawTx };
     validateSendRawTransactionParams(params);
     return this.call('tx.sendRawTransaction', params);

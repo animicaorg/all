@@ -445,6 +445,46 @@ Auto-approval is currently enabled for development. Production should show:
 3. Click "Service worker" link
 4. Chrome DevTools opens with console logs
 
+### Enabling Debug Logging
+
+#### RPC Request/Response Logging
+
+To see full JSON-RPC requests and responses (especially for -32602 Invalid params errors):
+
+**Option 1: Environment Variable (Build Time)**
+```bash
+VITE_DEBUG_RPC_PAYLOADS=1 pnpm build
+```
+
+**Option 2: Runtime Global (Service Worker Console)**
+```javascript
+// In chrome://extensions → Service worker DevTools console:
+globalThis.__ANIMICA_DEBUG_RPC_PAYLOADS__ = true
+```
+
+#### Transaction Debug Logging
+
+To see detailed transaction building and signing steps:
+
+**Option 1: Environment Variable (Build Time)**
+```bash
+VITE_DEBUG_TX=1 pnpm build
+```
+
+**Option 2: Runtime Global (Service Worker Console)**
+```javascript
+// In chrome://extensions → Service worker DevTools console:
+globalThis.__ANIMICA_DEBUG_TX__ = true
+```
+
+With debug logging enabled, you'll see:
+- Full JSON-RPC request objects before sending
+- Response errors with error codes and data
+- Transaction building steps (chain context, nonce, signing)
+- Hints for common errors like -32602 (Invalid params)
+
+**Note**: -32602 errors are ALWAYS logged with full request details, even without debug flags enabled.
+
 ### Debugging Provider Injection
 
 1. Open any webpage
