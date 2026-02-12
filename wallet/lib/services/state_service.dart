@@ -82,25 +82,70 @@ class StateService {
   }
 
   BigInt _parseBigInt(dynamic v) {
-    if (v == null) return BigInt.zero;
+    if (v == null) {
+      throw FormatException('Balance response is null');
+    }
     if (v is BigInt) return v;
     if (v is int) return BigInt.from(v);
     if (v is String) {
       final s = v.trim();
+      if (s.isEmpty) {
+        throw FormatException('Balance response is empty string');
+      }
       if (s.startsWith('0x') || s.startsWith('0X')) {
         final hex = s.substring(2).isEmpty ? '0' : s.substring(2);
-        return BigInt.parse(hex, radix: 16);
+        try {
+          return BigInt.parse(hex, radix: 16);
+        } catch (e) {
+          throw FormatException('Balance response is invalid hex: "$s" - $e');
         }
-      // Try decimal first; fallback if it looks like JSON stringified number
-      return BigInt.tryParse(s) ??
-          BigInt.parse(json.decode(s).toString(), radix: 10);
+      }
+      // Try decimal first
+      try {
+        return BigInt.parse(s);
+      } catch (_) {
+        // Maybe it's JSON-encoded number
+        try {
+          return BigInt.parse(json.decode(s).toString(), radix: 10);
+        } catch (e) {
+          throw FormatException('Balance response is invalid decimal: "$s" - $e');
+        }
+      }
+    }
+    // Object response: check for common field names
+    if (v is Map) {
+      // Try common field names
+      for (final field in ['balance', 'value', 'amount', 'result']) {
+        if (v.containsKey(field)) {
+          try {
+            return _parseBigInt(v[field]);
+          } catch (_) {
+            // Continue to next field
+          }
+        }
+      }
+      throw FormatException(
+        'Balance response is object but no recognized field (balance/value/amount/result). '
+        'Response: ${json.encode(v).substring(0, 200)}'
+      );
     }
     // Last resort: toString and try both hex/dec
     final t = v.toString();
     if (t.startsWith('0x') || t.startsWith('0X')) {
-      return BigInt.parse(t.substring(2), radix: 16);
+      try {
+        return BigInt.parse(t.substring(2), radix: 16);
+      } catch (e) {
+        throw FormatException('Balance response toString() is invalid hex: "$t" - $e');
+      }
     }
-    return BigInt.parse(t);
+    try {
+      return BigInt.parse(t);
+    } catch (e) {
+      throw FormatException(
+        'Balance response cannot be parsed. Type: ${v.runtimeType}, '
+        'Value: "${t.substring(0, 100)}" - $e'
+      );
+    }
   }
 
   int _parseInt(dynamic v) {

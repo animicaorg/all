@@ -8,6 +8,7 @@ import '../../state/providers.dart';
 import '../../utils/format.dart';
 import '../../widgets/cards/balance_card.dart';
 import '../../widgets/debug/network_debug_info.dart';
+import '../../widgets/debug/balance_check_dialog.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -331,7 +332,7 @@ class _ActiveSummary extends StatelessWidget {
   }
 }
 
-class _AccountsSection extends StatelessWidget {
+class _AccountsSection extends ConsumerWidget {
   const _AccountsSection({
     required this.accounts,
     required this.active,
@@ -347,7 +348,7 @@ class _AccountsSection extends StatelessWidget {
   final ValueChanged<String> onRemove;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -417,11 +418,30 @@ class _AccountsSection extends StatelessWidget {
                         case 'remove':
                           onRemove(a.address);
                           break;
+                        case 'check_balance':
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => BalanceCheckDialog(
+                              address: a.address,
+                              stateService: ref.read(stateServiceProvider),
+                            ),
+                          );
+                          break;
                       }
                     },
                     itemBuilder: (ctx) => [
                       const PopupMenuItem(value: 'active', child: Text('Set active')),
                       const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                      const PopupMenuItem(
+                        value: 'check_balance',
+                        child: Row(
+                          children: [
+                            Icon(Icons.bug_report, size: 16),
+                            SizedBox(width: 8),
+                            Text('Check Balance'),
+                          ],
+                        ),
+                      ),
                       const PopupMenuItem(
                         value: 'remove',
                         child: Text('Remove'),
