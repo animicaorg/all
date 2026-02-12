@@ -16,6 +16,10 @@ import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
 
+// Import new canonical tx module
+import { buildAndSignTransaction, fetchChainContext, algIdToSchemeId } from '../tx';
+import { sign } from '../core/crypto/pq';
+
 let unlockedPassword: string | null = null;
 const DEBUG_WALLET = true; // Always enabled for troubleshooting
 
@@ -406,10 +410,6 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     const network = vaultData.networkConfigs[vaultData.currentNetwork];
     const client = await getRpcClient();
     
-    // Get current block height for validAfter/validUntil
-    const head = await client.getHead();
-    const currentHeight = head.height || 0;
-    
     // Find sender account
     const account = vaultData.accounts.find(a => a.address === params.from);
     if (!account) {
@@ -425,61 +425,89 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       throw new Error('Cannot sign: account missing public key');
     }
     
-    // Build and sign transaction
-    const { signedTx, txid, unsignedHash } = await buildAndSignTransfer(
+    // CRITICAL: Fetch chain context (includes genesis_hash, network, etc.)
+    // This is REQUIRED for canonical signing
+    txDebugLog('fetching-chain-context', { rpcUrl: client.getActiveUrl() });
+    const context = await fetchChainContext(client.call.bind(client));
+    
+    txDebugLog('chain-context', {
+      chain_id: context.chain_id,
+      network: context.network,
+      genesis_hash: '0x' + Array.from(context.genesis_hash).map(b => b.toString(16).padStart(2, '0')).join(''),
+      fork_id: context.fork_id,
+      domain: context.domain,
+      prehash: context.prehash,
+    });
+    
+    // Get nonce from RPC
+    const nonce = await client.getNonce(params.from, 'latest');
+    
+    // Convert algId to schemeId
+    const schemeId = algIdToSchemeId(account.algId);
+    if (schemeId === null) {
+      throw new Error(`Unsupported algorithm ID: ${account.algId}`);
+    }
+    
+    txDebugLog('building-tx', {
+      from: params.from,
+      to: params.to,
+      value: params.amount,
+      nonce,
+      algId: account.algId,
+      schemeId,
+    });
+    
+    // Build and sign transaction using canonical tx module
+    const result = await buildAndSignTransaction(
       {
-        chainId: network.chainId,
         from: params.from,
         to: params.to,
-        amount: params.amount,
-        gasPrice: params.gasPrice || vaultData.settings.defaultGasPrice,
-        gasLimit: params.gasLimit || vaultData.settings.defaultGasLimit,
-        validAfter: currentHeight,
-        validUntil: currentHeight + 120,
+        value: params.amount,
+        fee: params.gasPrice || vaultData.settings.defaultGasPrice,
+        gas_limit: params.gasLimit || vaultData.settings.defaultGasLimit,
+        nonce,
         data: params.data,
+        memo: params.memo || '',
       },
+      context,
       account.secretKey,
       account.publicKey,
-      account.algId
+      schemeId,
+      sign
     );
     
-    // Validate transaction was properly built
-    if (!txid || typeof txid !== 'string') {
-      throw new Error('Failed to build transaction: missing txid');
-    }
+    txDebugLog('tx-built', {
+      txid: result.txid,
+      scheme_id: result.envelope.auth.scheme_id,
+      pubkey_len: result.envelope.auth.pubkey_bytes.length,
+      sig_len: result.envelope.auth.signature_bytes.length,
+      rawTxLength: result.rawTx.length,
+    });
     
-    // Encode and send
-    const rawTx = encodeTxForRpc(signedTx);
-    const sig0 = signedTx.sigs?.[0];
-    let debugSignHash: string | null = null;
-    try {
-      const diag = await client.call('tx.debugSignHash', [signedTx.tx]);
-      if (diag && typeof diag.sign_hash_hex === 'string') debugSignHash = diag.sign_hash_hex;
-    } catch {
-      // optional debug endpoint (ANIMICA_DEBUG_RPC=1)
-    }
-    txDebugLog('pre-send', {
+    // Send transaction
+    txDebugLog('sending-tx', {
       rpcUrl: client.getActiveUrl(),
       rpcMethod: 'tx.sendRawTransaction',
-      from: params.from,
-      algId: account.algId,
-      txBody: signedTx.tx,
-      scheme_id: sig0?.alg,
-      pubkey_len: sig0?.pubkey?.length,
-      sig_len: sig0?.sig?.length,
-      pubkey_hex: sig0?.pubkey ? '0x' + Array.from(sig0.pubkey).map((b) => b.toString(16).padStart(2, '0')).join('') : null,
-      signature_hex: sig0?.sig ? '0x' + Array.from(sig0.sig).map((b) => b.toString(16).padStart(2, '0')).join('') : null,
-      sign_hash: debugSignHash,
-      rawTx: summarizeRawTx(rawTx),
+      rawTxPrefix: result.rawTx.slice(0, 66),
     });
-    await client.sendRawTransaction(rawTx);
     
-    // Store in tx cache
+    await client.sendRawTransaction(result.rawTx);
+    
+    txDebugLog('tx-sent', { txid: result.txid });
+    
+    // Store in tx cache (convert to old format for now)
     const txStore = TxStore.fromJSON(vaultData.txCache);
     const pendingTx: PendingTx = {
-      txid,
-      unsignedHash,
-      signedTx,
+      txid: result.txid,
+      unsignedHash: result.txid, // Use txid as placeholder
+      signedTx: {
+        tx: result.envelope.body as any,
+        sigs: [{
+          alg: result.envelope.auth.scheme_id,
+          pubkey: result.envelope.auth.pubkey_bytes,
+          sig: result.envelope.auth.signature_bytes,
+        }],
+      },
       status: 'submitted' as TxStatus,
       submittedAt: Date.now(),
     };
@@ -488,10 +516,14 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     
     await saveVaultData(vaultData);
     
-    return { txid };
+    return { txid: result.txid };
   } catch (error) {
     // Log for debugging
     console.error('[wallet-bg] handleSendTransaction failed:', error);
+    txDebugLog('tx-error', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw error;
   }
 }
