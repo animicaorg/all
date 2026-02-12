@@ -1,5 +1,7 @@
 // RPC client for Animica nodes
 
+import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
+
 const RPC_TIMEOUT_MS = 10000;
 
 function toRpcInteger(value: unknown, fieldName: string): number {
@@ -30,11 +32,24 @@ function toRpcInteger(value: unknown, fieldName: string): number {
 }
 
 function getFetch(): typeof fetch {
-  const fetchImpl = (globalThis as any)?.fetch;
-  if (typeof fetchImpl !== 'function') {
+  if (typeof fetchFn !== 'function') {
     throw new Error('Fetch API is unavailable in this runtime');
   }
-  return fetchImpl.bind(globalThis) as typeof fetch;
+  return fetchFn;
+}
+
+function getSetTimeout(): typeof setTimeout {
+  if (typeof setTimeoutFn !== 'function') {
+    throw new Error('setTimeout is unavailable in this runtime');
+  }
+  return setTimeoutFn;
+}
+
+function getClearTimeout(): typeof clearTimeout {
+  if (typeof clearTimeoutFn !== 'function') {
+    throw new Error('clearTimeout is unavailable in this runtime');
+  }
+  return clearTimeoutFn;
 }
 
 interface RpcClientOptions {
@@ -55,6 +70,8 @@ export class RpcClient {
   async call(method: string, params: any[] = []): Promise<any> {
     let lastError: Error | null = null;
     const fetchImpl = getFetch();
+    const setTimeoutImpl = getSetTimeout();
+    const clearTimeoutImpl = getClearTimeout();
 
     for (let i = 0; i < this.urls.length; i++) {
       const url = this.urls[this.currentIndex];
@@ -65,7 +82,7 @@ export class RpcClient {
       }
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      const timeout = setTimeoutImpl(() => controller.abort(), this.timeoutMs);
 
       try {
         const response = await fetchImpl(url, {
@@ -102,7 +119,7 @@ export class RpcClient {
         this.failedUrls.add(url);
         this.currentIndex = (this.currentIndex + 1) % this.urls.length;
       } finally {
-        clearTimeout(timeout);
+        clearTimeoutImpl(timeout);
       }
     }
 

@@ -14,7 +14,7 @@ vi.mock('../src/core/crypto/address', () => ({
   validateAddress: vi.fn(() => true),
 }));
 
-import { formatBalance, getBalance } from '../src/services/balanceService';
+import { formatBalance, getBalance, parseBaseUnits } from '../src/services/balanceService';
 
 describe('balance service', () => {
   it('uses rpc url and returns on-chain balance', async () => {
@@ -32,6 +32,24 @@ describe('balance service', () => {
       'latest',
     ]);
     expect(balance).toBe(1234000000000n);
+  });
+
+  it('parses sample payload {result:"81000000000000000"}', () => {
+    expect(parseBaseUnits('81000000000000000')).toBe(81000000000000000n);
+  });
+
+  it('parses sample payload {result:{balance:"123"}}', () => {
+    expect(parseBaseUnits({ balance: '123' })).toBe(123n);
+  });
+
+  it('surfaces rpc errors instead of returning 0', async () => {
+    getChainIdMock.mockResolvedValue(1);
+    callMock.mockRejectedValue(new Error('RPC -32010: failure'));
+
+    await expect(getBalance('anim1testaddress', {
+      rpcUrl: 'https://rpc.animica.io',
+      chainId: 1,
+    })).rejects.toThrow('RPC -32010: failure');
   });
 
   it('formats small balances without rounding to zero', () => {
