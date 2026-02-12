@@ -56,8 +56,9 @@ pnpm build
 - In-memory unlocked data with auto-lock timer
 
 ### RPC (`src/core/rpc/`)
-- Multi-URL client with automatic failover
-- Health checks on failures
+- Runtime-configurable endpoint (default: `http://144.126.133.21:8545/rpc`)
+- URL validation + timeout handling on RPC calls
+- Settings UI supports Save / Reset / Test Connection
 
 ### Transactions (`src/core/tx/`)
 - **builder.ts**: Build and sign v2 transactions
