@@ -6,6 +6,14 @@ interface SettingsTabProps {
   onAccountsChanged: () => void;
 }
 
+interface ImportSummary {
+  imported_count: number;
+  skipped_duplicates: number;
+  upgraded_watch_only: number;
+  invalid_records: Array<{ index: number; label?: string; reason: string }>;
+  total_accounts: number;
+}
+
 function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTabProps) {
   const [selectedNetwork, setSelectedNetwork] = useState(network?.id || 'mainnet');
   const [isBusy, setIsBusy] = useState(false);
@@ -16,6 +24,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
   const [isTestingRpc, setIsTestingRpc] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [rpcWarning, setRpcWarning] = useState<string | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -148,6 +157,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
 
     try {
       setIsBusy(true);
+      setImportSummary(null);
       const json = await file.text();
 
       const result = await chrome.runtime.sendMessage({
@@ -159,11 +169,16 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
         throw new Error(result.error);
       }
 
-      alert(`Imported ${result.imported} wallet(s). Total accounts: ${result.total}.`);
+      setImportSummary(result as ImportSummary);
       onAccountsChanged();
     } catch (error: any) {
-      console.error('Failed to import wallets.json:', error);
-      alert(`Import failed: ${error?.message || 'Unknown error'}`);
+      setImportSummary({
+        imported_count: 0,
+        skipped_duplicates: 0,
+        upgraded_watch_only: 0,
+        total_accounts: 0,
+        invalid_records: [{ index: 0, reason: error?.message || 'Unknown error' }],
+      });
     } finally {
       setIsBusy(false);
       event.target.value = '';
@@ -324,6 +339,28 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
           {isBusy ? 'Working…' : 'Export wallets.json'}
         </button>
 
+        {importSummary && (
+          <div className="success" style={{ color: '#22543d' }}>
+            <div><strong>Import summary</strong></div>
+            <div>Imported: {importSummary.imported_count}</div>
+            <div>Skipped duplicates: {importSummary.skipped_duplicates}</div>
+            <div>Upgraded watch-only: {importSummary.upgraded_watch_only}</div>
+            <div>Total accounts: {importSummary.total_accounts}</div>
+            {importSummary.invalid_records.length > 0 && (
+              <div style={{ marginTop: '8px' }}>
+                <div><strong>Invalid records</strong></div>
+                <ul style={{ margin: '4px 0 0', paddingLeft: '16px' }}>
+                  {importSummary.invalid_records.map((record, idx) => (
+                    <li key={`${record.index}-${idx}`}>
+                      [{record.index}] {record.label ? `${record.label}: ` : ''}{record.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ marginTop: '12px', padding: '12px', background: '#fff4e6', borderRadius: '8px', fontSize: '12px', color: '#9a6700' }}>
           <strong>⚠️ Warning:</strong> Exported files contain private keys. Store them securely!
         </div>
@@ -338,7 +375,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
           onClick={() => {
             if (confirm('Are you sure? This will delete all accounts and data!')) {
               chrome.storage.local.clear();
-              window.location.reload();
+              location.reload();
             }
           }}
         >

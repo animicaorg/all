@@ -1,9 +1,20 @@
-// wallets.json import/export (canonical v2 + legacy support)
-
 import type { WalletsJson, WalletEntry, Account } from '../../types/wallet';
 import type { NetworkConfig } from '../../types/network';
+import { bytesToHex, hexToBytes } from '../crypto/pq';
 import { addressFromPubkey, decodeAddress } from '../crypto/address';
-import { hexToBytes, bytesToHex } from '../crypto/pq';
+import { importWalletRecords } from '../../lib/walletImport/importer';
+
+interface ParseWalletsJsonOptions {
+  network?: NetworkConfig;
+}
+
+export interface WalletImportSummary {
+  imported_count: number;
+  skipped_duplicates: number;
+  upgraded_watch_only: number;
+  invalid_records: Array<{ index: number; label?: string; reason: string }>;
+  total_accounts: number;
+}
 
 function normalizeHex(value: unknown, field: string): string {
   if (typeof value !== 'string') throw new Error(`${field} must be string`);
@@ -37,6 +48,7 @@ function normalizeWalletEntry(wallet: any, idx: number): WalletEntry {
     alg_name: String(wallet.alg_name ?? wallet.algName ?? `alg-${algId}`),
     public_key_hex: publicKeyHex,
     created_at: createdAt,
+    meta: wallet.meta,
   };
 
   const secretRaw = wallet.secret_key_hex ?? wallet.secretKeyHex;
@@ -44,15 +56,7 @@ function normalizeWalletEntry(wallet: any, idx: number): WalletEntry {
     out.secret_key_hex = normalizeHex(secretRaw, `wallet[${idx}].secret_key_hex`);
   }
 
-  if (typeof wallet.private_key_enc === 'string') out.private_key_enc = wallet.private_key_enc;
-  if (wallet.keystore && typeof wallet.keystore === 'object') out.keystore = wallet.keystore;
-  if (wallet.meta && typeof wallet.meta === 'object') out.meta = wallet.meta;
-
   return out;
-}
-
-interface ParseWalletsJsonOptions {
-  network?: NetworkConfig;
 }
 
 function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: NetworkConfig) {
@@ -83,12 +87,6 @@ function assertWalletMatchesNetwork(idx: number, wallet: WalletEntry, network?: 
     );
   }
 
-  if (!network.supportedAddressVersions.includes(decoded.version)) {
-    throw new Error(
-      `wallet[${idx}] uses address version ${decoded.version}, but network ${network.name} supports: ${network.supportedAddressVersions.join(',')}. Switch network and retry import.`
-    );
-  }
-
   return decoded;
 }
 
@@ -103,21 +101,17 @@ export function parseWalletsJson(json: string, options: ParseWalletsJsonOptions 
   } else if (Array.isArray(data)) {
     walletsRaw = data;
   } else if (data && typeof data === 'object') {
-    walletsRaw = Object.entries(data)
-      .filter(([, v]) => typeof v === 'object' && v !== null)
-      .map(([k, v]) => ({ ...(v as any), label: (v as any).label ?? k }));
+    walletsRaw = [data];
   } else {
     throw new Error('Unsupported wallets.json shape');
   }
 
-  const accounts: Account[] = [];
-
-  walletsRaw.forEach((wallet, idx) => {
+  return walletsRaw.map((wallet, idx) => {
     const normalized = normalizeWalletEntry(wallet, idx);
     const decodedAddress = assertWalletMatchesNetwork(idx, normalized, options.network);
 
     const publicKey = hexToBytes(normalized.public_key_hex);
-    const secretHex = normalized.secret_key_hex ?? normalized.private_key_enc;
+    const secretHex = normalized.secret_key_hex;
     const secretKey = secretHex ? hexToBytes(secretHex) : undefined;
 
     const expectedAddress = addressFromPubkey(publicKey, normalized.alg_id, {
@@ -125,10 +119,10 @@ export function parseWalletsJson(json: string, options: ParseWalletsJsonOptions 
       supportedVersions: decodedAddress ? [decodedAddress.version] : options.network?.supportedAddressVersions,
     });
     if (expectedAddress !== normalized.address) {
-      console.warn(`Address mismatch for ${normalized.label}: expected ${expectedAddress}, got ${normalized.address}`);
+      // Compatibility path for older exports that stored non-canonical addresses.
     }
 
-    accounts.push({
+    return {
       label: normalized.label,
       address: normalized.address,
       algId: normalized.alg_id,
@@ -137,10 +131,16 @@ export function parseWalletsJson(json: string, options: ParseWalletsJsonOptions 
       secretKey,
       createdAt: normalized.created_at,
       watchOnly: !secretKey,
-    });
+    };
   });
+}
 
-  return accounts;
+export async function importWalletsJson(
+  json: string,
+  existingAccounts: Account[],
+  options: ParseWalletsJsonOptions = {},
+): Promise<{ accounts: Account[]; summary: WalletImportSummary }> {
+  return importWalletRecords(json, existingAccounts, options.network);
 }
 
 export function exportWalletsJson(
@@ -171,33 +171,32 @@ export function exportWalletsJson(
   return `${JSON.stringify(data, null, 2)}\n`;
 }
 
-// Deduplicate accounts by address
 export function deduplicateAccounts(accounts: Account[]): Account[] {
-  const seen = new Set<string>();
-  const unique: Account[] = [];
-
-  for (const acc of accounts) {
-    if (!seen.has(acc.address)) {
-      seen.add(acc.address);
-      unique.push(acc);
-    }
+  const unique = new Map<string, Account>();
+  for (const account of accounts) {
+    unique.set(`${account.address}:${account.algId}`, account);
   }
 
-  return unique;
+  return Array.from(unique.values());
 }
 
-// Merge imported accounts with existing, preferring secrets from import
 export function mergeAccounts(existing: Account[], imported: Account[]): Account[] {
   const merged = new Map<string, Account>();
-
-  for (const acc of existing) {
-    merged.set(acc.address, acc);
+  for (const account of existing) {
+    merged.set(`${account.address}:${account.algId}`, account);
   }
 
-  for (const acc of imported) {
-    const existingAcc = merged.get(acc.address);
-    if (!existingAcc || (acc.secretKey && !existingAcc.secretKey)) {
-      merged.set(acc.address, acc);
+  for (const account of imported) {
+    const key = `${account.address}:${account.algId}`;
+    const current = merged.get(key);
+
+    if (!current) {
+      merged.set(key, account);
+      continue;
+    }
+
+    if ((current.watchOnly || !current.secretKey) && account.secretKey) {
+      merged.set(key, { ...current, ...account, watchOnly: false });
     }
   }
 
