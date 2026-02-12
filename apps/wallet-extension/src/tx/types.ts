@@ -1,0 +1,134 @@
+/**
+ * Canonical transaction types matching the node's coretx module
+ */
+
+export interface TxBody {
+  version: number;
+  chain_id: number;
+  nonce: number;
+  from_addr: Uint8Array;
+  to_addr: Uint8Array;
+  value: number;
+  fee: number;
+  gas_limit: number;
+  data: Uint8Array;
+  memo: string;
+  timestamp: number;
+  kind: number; // 0 = transfer, 1 = contract call, etc.
+}
+
+export interface TxAuth {
+  scheme_id: number;      // 1 = Dilithium3, 2 = SPHINCS+
+  pubkey_bytes: Uint8Array;
+  signature_bytes: Uint8Array;
+  prehash_id: number;     // 2 = SHA3-512
+}
+
+export interface TxEnvelope {
+  body: TxBody;
+  auth: TxAuth;
+  txid: Uint8Array;       // 32 bytes
+}
+
+export interface ChainContext {
+  chain_id: number;
+  genesis_hash: Uint8Array;  // 32 bytes
+  network: string;
+  fork_id: number | null;
+  domain: string;            // "animica.tx.v1"
+  prehash: string;           // "sha3-512"
+}
+
+export interface SigningPreimage {
+  domain: string;
+  chain_id: number;
+  genesis_hash: Uint8Array;
+  network: string;
+  message_type: string;
+  version: number;
+  body: TxBody;
+}
+
+export interface TxBuildParams {
+  from: string;        // bech32 address
+  to: string;          // bech32 address
+  value: number;
+  fee: number;
+  gas_limit: number;
+  nonce: number;
+  data?: Uint8Array;
+  memo?: string;
+  timestamp?: number;
+}
+
+export interface SignedTxResult {
+  envelope: TxEnvelope;
+  txid: string;       // hex
+  rawTx: string;      // 0x-prefixed hex
+}
+
+export interface TxDebugInfo {
+  body: TxBody;
+  body_cbor_hex: string;
+  preimage_hex: string;
+  sign_hash_hex: string;
+  pubkey_hex: string;
+  pubkey_fingerprint: string;
+  scheme_id: number;
+  scheme_name: string;
+  signature_hex: string;
+  signature_fingerprint: string;
+  chain_id: number;
+  genesis_hash_hex: string;
+  network: string;
+  domain: string;
+  prehash: string;
+  txid_hex: string;
+  raw_tx_hex: string;
+}
+
+// Scheme constants
+export const SCHEME_DILITHIUM3 = 1;
+export const SCHEME_SPHINCS_SHAKE_128S = 2;
+
+// Algorithm ID constants (used in some contexts)
+export const ALG_ID_DILITHIUM3 = 0x1001; // 4097
+export const ALG_ID_SPHINCS = 0x1002;     // 4098
+
+// Prehash constants
+export const PREHASH_NONE = 0;
+export const PREHASH_SHA3_256 = 1;
+export const PREHASH_SHA3_512 = 2;
+
+// Domain constant
+export const DOMAIN_TX_SIGN = "animica.tx.v1";
+
+// Key and signature lengths
+export const KEY_LENGTHS = {
+  [SCHEME_DILITHIUM3]: {
+    pubkey: 1952,
+    signature: 3293,
+    name: "dilithium3",
+  },
+  [SCHEME_SPHINCS_SHAKE_128S]: {
+    pubkey: 32,
+    signature: 7856,
+    name: "sphincs_shake_128s",
+  },
+} as const;
+
+export function getSchemeInfo(scheme_id: number) {
+  return KEY_LENGTHS[scheme_id as keyof typeof KEY_LENGTHS] || null;
+}
+
+export function algIdToSchemeId(alg_id: number): number | null {
+  if (alg_id === ALG_ID_DILITHIUM3) return SCHEME_DILITHIUM3;
+  if (alg_id === ALG_ID_SPHINCS) return SCHEME_SPHINCS_SHAKE_128S;
+  return null;
+}
+
+export function schemeIdToAlgId(scheme_id: number): number | null {
+  if (scheme_id === SCHEME_DILITHIUM3) return ALG_ID_DILITHIUM3;
+  if (scheme_id === SCHEME_SPHINCS_SHAKE_128S) return ALG_ID_SPHINCS;
+  return null;
+}
