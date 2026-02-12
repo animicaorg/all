@@ -40,7 +40,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (typeof nextValue === 'string' && nextValue.length > 0) {
     recreateRpcClient(nextValue);
   } else {
-    recreateRpcClient(getEffectiveRpcUrl());
+    const vaultData = getUnlockedVault();
+    const currentNetwork = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+    const fallbackRpc = currentNetwork?.rpcUrls?.[0];
+    recreateRpcClient(getEffectiveRpcUrl(fallbackRpc));
   }
 });
 
@@ -277,7 +280,7 @@ async function handleGetCurrentNetwork(): Promise<any> {
   }
   
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const effectiveRpcUrl = await getRpcUrl();
+  const effectiveRpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
 
   let rpcChainId: number | null = null;
   let rpcWarning: string | null = null;
@@ -324,7 +327,7 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   const activeWallet = await resolveActiveWallet(vaultData);
   const targetAddress = address || activeWallet.address;
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const rpcUrl = await getRpcUrl();
+  const rpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
 
   debugLog('fetch balance', {
     activeWalletId: activeWallet.address,
@@ -406,7 +409,9 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
 }
 
 async function handleGetRpcConfig(): Promise<{ rpcUrl: string; warning?: string }> {
-  const rpcUrl = await getRpcUrl();
+  const vaultData = getUnlockedVault();
+  const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+  const rpcUrl = await getRpcUrl(network?.rpcUrls?.[0]);
   const validation = validateRpcUrl(rpcUrl);
 
   return {
@@ -429,7 +434,9 @@ async function handleSetRpcUrl(url: string): Promise<{ success: boolean; rpcUrl:
 
 async function handleResetRpcUrl(): Promise<{ success: boolean; rpcUrl: string }> {
   await resetRpcUrl();
-  const rpcUrl = getEffectiveRpcUrl();
+  const vaultData = getUnlockedVault();
+  const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+  const rpcUrl = getEffectiveRpcUrl(network?.rpcUrls?.[0]);
   recreateRpcClient(rpcUrl);
 
   return {
@@ -638,6 +645,8 @@ async function handleSetActiveWallet(walletId: string): Promise<{ success: boole
 }
 
 async function initializeRuntimeRpc(): Promise<void> {
-  const rpcUrl = await getRpcUrl();
+  const vaultData = getUnlockedVault();
+  const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+  const rpcUrl = await getRpcUrl(network?.rpcUrls?.[0]);
   recreateRpcClient(rpcUrl);
 }
