@@ -16,6 +16,13 @@ import { bech32m } from 'bech32';
  */
 
 const DEFAULT_HRP = 'anim';
+/**
+ * Payload length: 2 bytes alg_id + 32 bytes SHA3-256 digest
+ * 
+ * IMPORTANT: This is the canonical payload format WITHOUT any version byte.
+ * The previous implementation incorrectly added a version byte, causing
+ * address mismatches with the node/CLI.
+ */
 const PAYLOAD_LENGTH = 34; // 2 bytes alg_id + 32 bytes digest
 
 export interface DecodeAnimAddressOptions {

@@ -17,6 +17,10 @@ describe('Address Canonical Format (matches node/CLI)', () => {
   /**
    * Test Vector 1: Dilithium3 with repeating 0x01 bytes
    * Generated from Python: pq.py.address.address_from_pubkey()
+   * 
+   * Note: Using 1952 bytes to match actual Dilithium3 public key size.
+   * The address is derived from SHA3-256(pubkey), so any size works,
+   * but we use the real size to match production usage.
    */
   it('generates correct address for test vector 1', () => {
     const pubkey = new Uint8Array(1952).fill(0x01);
@@ -30,6 +34,8 @@ describe('Address Canonical Format (matches node/CLI)', () => {
   /**
    * Test Vector 2: Dilithium3 with repeating 0xff bytes
    * Generated from Python: pq.py.address.address_from_pubkey()
+   * 
+   * Note: Using 1952 bytes to match actual Dilithium3 public key size.
    */
   it('generates correct address for test vector 2', () => {
     const pubkey = new Uint8Array(1952).fill(0xff);
@@ -61,6 +67,10 @@ describe('Address Canonical Format (matches node/CLI)', () => {
   /**
    * Test: Payload format matches canonical spec
    * Format: [alg_id (2 bytes BE)] + [sha3_256(pubkey) (32 bytes)]
+   * 
+   * Note: Smaller 32-byte pubkey used here for test simplicity.
+   * In production, Dilithium3 uses 1952-byte keys, but SHA3-256
+   * always produces 32-byte digest regardless of input size.
    */
   it('uses correct payload format', () => {
     const pubkey = new Uint8Array(32).fill(0xaa);
