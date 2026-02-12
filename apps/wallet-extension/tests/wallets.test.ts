@@ -7,15 +7,10 @@ import { NETWORKS } from '../src/types/network';
 
 const SAMPLE_PUBKEY_HEX = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
 const SAMPLE_SECRET_HEX = '0xfedcba0987654321';
-const SAMPLE_ADDRESS_V1 = addressFromPubkey(
+const SAMPLE_ADDRESS = addressFromPubkey(
   Uint8Array.from(Buffer.from(SAMPLE_PUBKEY_HEX.slice(2), 'hex')),
   4097,
-  { expectedHrp: 'anim', supportedVersions: [1, 2] },
-);
-const SAMPLE_ADDRESS_V2 = addressFromPubkey(
-  Uint8Array.from(Buffer.from(SAMPLE_PUBKEY_HEX.slice(2), 'hex')),
-  4097,
-  { expectedHrp: 'anim', supportedVersions: [2, 1] },
+  { expectedHrp: 'anim' },
 );
 
 describe('wallets.json Import/Export', () => {
@@ -27,7 +22,7 @@ describe('wallets.json Import/Export', () => {
     "wallets": [
       {
         "label": "test-account",
-        "address": "${SAMPLE_ADDRESS_V1}",
+        "address": "${SAMPLE_ADDRESS}",
         "alg_id": 4097,
         "alg_name": "dilithium3",
         "public_key_hex": "${SAMPLE_PUBKEY_HEX}",
@@ -41,7 +36,7 @@ describe('wallets.json Import/Export', () => {
     expect(() => parseWalletsJson(sampleWalletsJson)).not.toThrow();
     const legacy = JSON.stringify({ wallets: [{
       label: 'legacy',
-      address: SAMPLE_ADDRESS_V1,
+      address: SAMPLE_ADDRESS,
       algId: 4097,
       publicKeyHex: SAMPLE_PUBKEY_HEX,
       createdAt: '2025-01-01T00:00:00Z',
@@ -57,7 +52,7 @@ describe('wallets.json Import/Export', () => {
       updated_at: '2025-01-01T00:00:00Z',
       wallets: [{
         label: 'v2-wallet',
-        address: SAMPLE_ADDRESS_V2,
+        address: SAMPLE_ADDRESS,
         alg_id: 4097,
         public_key_hex: SAMPLE_PUBKEY_HEX,
         created_at: '2025-01-01T00:00:00Z',
@@ -68,31 +63,11 @@ describe('wallets.json Import/Export', () => {
     expect(accounts).toHaveLength(1);
   });
 
-  it('shows switch-network guidance for unsupported version on selected network', () => {
-    const json = JSON.stringify({
-      format: 'animica.wallets',
-      version: 2,
-      created_at: '2025-01-01T00:00:00Z',
-      updated_at: '2025-01-01T00:00:00Z',
-      wallets: [{
-        label: 'v2-wallet',
-        address: SAMPLE_ADDRESS_V2,
-        alg_id: 4097,
-        public_key_hex: SAMPLE_PUBKEY_HEX,
-        created_at: '2025-01-01T00:00:00Z',
-      }],
-    });
-
-    const sameHrpV1OnlyNetwork = { ...NETWORKS.mainnet, supportedAddressVersions: [1] };
-    expect(() => parseWalletsJson(json, { network: sameHrpV1OnlyNetwork }))
-      .toThrow('Switch network and retry import.');
-  });
-
   it('validates chain_id metadata against selected network', () => {
     const json = JSON.stringify({
       wallets: [{
         label: 'wrong-chain',
-        address: SAMPLE_ADDRESS_V1,
+        address: SAMPLE_ADDRESS,
         alg_id: 4097,
         public_key_hex: SAMPLE_PUBKEY_HEX,
         created_at: '2025-01-01T00:00:00Z',
@@ -113,7 +88,7 @@ describe('wallets.json Import/Export', () => {
     const json = JSON.stringify({
       wallets: [{
         label: 'bad-address',
-        address: SAMPLE_ADDRESS_V1,
+        address: SAMPLE_ADDRESS,
         alg_id: 4097,
         public_key_hex: SAMPLE_PUBKEY_HEX,
         created_at: '2025-01-01T00:00:00Z',
@@ -130,7 +105,7 @@ describe('wallets.json Import/Export', () => {
   it('exports canonical version 2 wallets.json', () => {
     const accounts: Account[] = [{
       label: 'test',
-      address: SAMPLE_ADDRESS_V1,
+      address: SAMPLE_ADDRESS,
       algId: 4097,
       algName: 'dilithium3',
       publicKey: new Uint8Array([1, 2, 3, 4]),
