@@ -26,7 +26,7 @@ The RPC dispatcher (`rpc/jsonrpc.py`) uses Python's `inspect.signature` to bind 
   "params": ["0xabcdef..."]
 }
 ```
-- The array `["0x..."]` binds to the positional parameter `rawTx`
+- The array `["0xabcdef1234567890"]` binds to the positional parameter `rawTx`
 - Valid per Python's `sig.bind_partial(*args_obj)`
 
 #### Object Form (Keyword)
@@ -40,7 +40,7 @@ The RPC dispatcher (`rpc/jsonrpc.py`) uses Python's `inspect.signature` to bind 
   }
 }
 ```
-- The object `{ rawTx: "0x..." }` binds to the keyword parameter `rawTx`
+- The object `{ rawTx: "0xabcdef1234567890" }` binds to the keyword parameter `rawTx`
 - Valid per Python's `sig.bind_partial(**args_obj)`
 
 **Both forms are valid and equivalent.** The wallet extension primarily uses the object form for explicitness and type safety.
@@ -94,7 +94,7 @@ This error means the JSON-RPC `params` shape doesn't match what the method expec
 {
   "method": "tx.sendRawTransaction",
   "params": {
-    "params": ["0x..."]
+    "params": ["0xabcdef1234567890"]
   }
 }
 ```
@@ -106,8 +106,8 @@ The node sees `params.params` which doesn't bind to `rawTx`.
 {
   "method": "tx.sendRawTransaction",
   "params": {
-    "tx": "0x...",
-    "transaction": "0x..."
+    "tx": "0xabcdef1234567890",
+    "transaction": "0xabcdef1234567890"
   }
 }
 ```
@@ -131,7 +131,7 @@ While this passes JSON-RPC validation, the node's CBOR decoder expects `0x` pref
 {
   "method": "tx.sendRawTransaction",
   "params": {
-    "rawTx": ["0x..."]
+    "rawTx": ["0xabcdef1234567890"]
   }
 }
 ```
