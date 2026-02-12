@@ -4,10 +4,62 @@ import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
 
 const RPC_TIMEOUT_MS = 10000;
 
+type JsonRpcParams = unknown[] | Record<string, unknown>;
+
+interface JsonRpcRequest {
+  jsonrpc: '2.0';
+  id: number;
+  method: string;
+  params: JsonRpcParams;
+}
+
+function shouldDebugRpcPayloads(): boolean {
+  try {
+    const envFlag = (import.meta as any)?.env?.VITE_DEBUG_RPC_PAYLOADS;
+    if (envFlag === '1' || envFlag === 'true') return true;
+  } catch {}
+
+  try {
+    const g = globalThis as any;
+    return g.__ANIMICA_DEBUG_RPC_PAYLOADS__ === true || g.__ANIMICA_DEBUG_RPC_PAYLOADS__ === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: number = Date.now()): JsonRpcRequest {
+  return {
+    jsonrpc: '2.0',
+    id,
+    method,
+    params,
+  };
+}
+
+function validateSendRawTransactionParams(params: JsonRpcParams): asserts params is { rawTx: string } {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw new Error(
+      `Invalid tx.sendRawTransaction params: expected object { rawTx: string }, got ${Array.isArray(params) ? 'array' : typeof params}`,
+    );
+  }
+
+  const rawTx = (params as Record<string, unknown>).rawTx;
+  if (typeof rawTx !== 'string' || !/^0x[0-9a-f]+$/i.test(rawTx)) {
+    throw new Error(
+      'Invalid tx.sendRawTransaction params.rawTx: expected 0x-prefixed hex string in object form { rawTx: "0x..." }',
+    );
+  }
+}
+
 class RpcResponseError extends Error {
-  constructor(message: string) {
+  code?: number;
+  data?: unknown;
+
+  constructor(message: string, errorObject?: { code?: number; data?: unknown }) {
     super(message);
     this.name = 'RpcResponseError';
+    this.code = errorObject?.code;
+    this.data = errorObject?.data;
   }
 }
 
@@ -90,7 +142,7 @@ export class RpcClient {
     this.timeoutMs = options.timeoutMs ?? RPC_TIMEOUT_MS;
   }
 
-  async call(method: string, params: any[] = []): Promise<any> {
+  async call(method: string, params: JsonRpcParams = []): Promise<any> {
     let lastError: Error | null = null;
     const fetchImpl = getFetch();
     const setTimeoutImpl = getSetTimeout();
@@ -107,6 +159,8 @@ export class RpcClient {
       const controller = new AbortController();
       const timeout = setTimeoutImpl(() => controller.abort(), this.timeoutMs);
 
+      const request = buildJsonRpcRequest(method, params);
+
       try {
         const response = await fetchImpl(url, {
           method: 'POST',
@@ -114,12 +168,7 @@ export class RpcClient {
             'Content-Type': 'application/json',
           },
           signal: controller.signal,
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: Date.now(),
-            method,
-            params,
-          }),
+          body: JSON.stringify(request),
         });
 
         if (!response.ok) {
@@ -131,7 +180,22 @@ export class RpcClient {
         if (json.error) {
           const codePart = typeof json.error.code === 'number' ? ` (code ${json.error.code})` : '';
           const message = typeof json.error.message === 'string' ? json.error.message : 'RPC error';
-          throw new RpcResponseError(`${message}${codePart}`);
+          const responseError = {
+            code: typeof json.error.code === 'number' ? json.error.code : undefined,
+            message,
+            data: json.error.data,
+          };
+
+          if (shouldDebugRpcPayloads()) {
+            console.error('[wallet-rpc] request failed with RPC error', {
+              url,
+              method,
+              request,
+              responseError,
+            });
+          }
+
+          throw new RpcResponseError(`${message}${codePart}`, responseError);
         }
 
         // Success - clear failed status
@@ -140,6 +204,15 @@ export class RpcClient {
       } catch (error: unknown) {
         if (error instanceof RpcResponseError) {
           throw error;
+        }
+
+        if (shouldDebugRpcPayloads()) {
+          console.error('[wallet-rpc] request failed before RPC result', {
+            url,
+            method,
+            request,
+            error: error instanceof Error ? { name: error.name, message: error.message } : error,
+          });
         }
 
         const normalizedError = normalizeError(error);
@@ -168,7 +241,11 @@ export class RpcClient {
   }
 
   async sendRawTransaction(rawTx: string): Promise<string> {
-    return this.call('tx.sendRawTransaction', [rawTx]);
+    // Node signature: rpc/methods/tx.py defines tx.sendRawTransaction(rawTx: str),
+    // and dispatcher keyword-binding accepts params object form { rawTx: '0x...' }.
+    const params = { rawTx };
+    validateSendRawTransactionParams(params);
+    return this.call('tx.sendRawTransaction', params);
   }
 
   async getTransaction(txid: string): Promise<any> {
