@@ -2,6 +2,14 @@
 
 const RPC_TIMEOUT_MS = 10000;
 
+function getFetch(): typeof fetch {
+  const fetchImpl = (globalThis as any)?.fetch;
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('Fetch API is unavailable in this runtime');
+  }
+  return fetchImpl.bind(globalThis) as typeof fetch;
+}
+
 interface RpcClientOptions {
   timeoutMs?: number;
 }
@@ -19,6 +27,7 @@ export class RpcClient {
 
   async call(method: string, params: any[] = []): Promise<any> {
     let lastError: Error | null = null;
+    const fetchImpl = getFetch();
 
     for (let i = 0; i < this.urls.length; i++) {
       const url = this.urls[this.currentIndex];
@@ -32,7 +41,7 @@ export class RpcClient {
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(url, {
+        const response = await fetchImpl(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
