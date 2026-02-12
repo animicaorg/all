@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { addressFromPubkey } from '../../core/crypto/address';
 import { bytesToHex } from '../../core/crypto/pq';
 import { importWalletRecords } from './importer';
+import * as animicaAddressModule from '../address/animicaAddress';
 
 function testWallet(label: string, seed: number, version: 1 | 2, withSecret = true) {
   const publicKey = Uint8Array.from(Array.from({ length: 32 }, (_, idx) => (seed + idx) % 256));
@@ -64,6 +65,24 @@ describe('wallet importer', () => {
     expect(result.accounts[0].secretKey).toBeDefined();
   });
 
+
+  it('maps bech32m excess padding errors to actionable guidance', async () => {
+    const decodeSpy = vi.spyOn(animicaAddressModule, 'decodeAnimAddress').mockImplementation(() => {
+      throw new Error('Excess padding');
+    });
+
+    const payload = {
+      version: 1,
+      wallets: [testWallet('bad-padding', 60, 1, true)],
+    };
+
+    const result = await importWalletRecords(JSON.stringify(payload), []);
+    expect(result.summary.imported_count).toBe(0);
+    expect(result.summary.invalid_records).toHaveLength(1);
+    expect(result.summary.invalid_records[0].reason).toContain('Invalid bech32m address encoding (Excess padding)');
+
+    decodeSpy.mockRestore();
+  });
   it('supports single-wallet object and array payloads', async () => {
     const single = testWallet('single', 40, 1, false);
     const fromSingle = await importWalletRecords(JSON.stringify(single), []);
