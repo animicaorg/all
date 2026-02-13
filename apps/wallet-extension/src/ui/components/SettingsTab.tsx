@@ -6,6 +6,8 @@ interface SettingsTabProps {
   onAccountsChanged: () => void;
 }
 
+const FORCE_RAWTX_COMPAT_KEY = 'force_rawtx_compat';
+
 interface ImportSummary {
   imported_count: number;
   skipped_duplicates: number;
@@ -24,6 +26,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
   const [isTestingRpc, setIsTestingRpc] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [rpcWarning, setRpcWarning] = useState<string | null>(null);
+  const [forceRawTxCompat, setForceRawTxCompat] = useState(false);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -46,6 +49,10 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
       setEffectiveRpcUrl(result.rpcUrl || '');
       setRpcWarning(result.warning || null);
       setRpcError(null);
+
+      const stored = await chrome.storage.local.get([FORCE_RAWTX_COMPAT_KEY]);
+      const value = stored?.[FORCE_RAWTX_COMPAT_KEY];
+      setForceRawTxCompat(value === true || value === '1' || value === 'true');
     } catch (error: any) {
       setRpcError(error?.message || 'Failed to load RPC configuration');
     }
@@ -149,6 +156,15 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
     } finally {
       setIsTestingRpc(false);
     }
+  }
+
+
+  async function handleForceCompatToggle(enabled: boolean) {
+    setForceRawTxCompat(enabled);
+    await chrome.storage.local.set({ [FORCE_RAWTX_COMPAT_KEY]: enabled ? '1' : '0' });
+    setRpcMessage(enabled
+      ? 'Forced raw-tx compatibility mode enabled.'
+      : 'Forced raw-tx compatibility mode disabled.');
   }
 
   function triggerImportPicker() {
@@ -294,6 +310,19 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
             {isTestingRpc ? 'Testing…' : 'Test Connection'}
           </button>
         </div>
+
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '12px', color: '#444' }}>
+          <input
+            type="checkbox"
+            checked={forceRawTxCompat}
+            onChange={(event) => {
+              void handleForceCompatToggle(event.target.checked);
+            }}
+            disabled={isBusy || isTestingRpc}
+          />
+          Force raw transaction compatibility probing
+        </label>
 
         {rpcWarning && <div className="warning">{rpcWarning}</div>}
         {network?.rpcWarning && <div className="warning">{network.rpcWarning}</div>}
