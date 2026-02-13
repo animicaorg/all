@@ -9,6 +9,7 @@
 import type { Tx, Receipt, Block, Head } from '@animica/sdk/types/core';
 import { JsonRpcHttpClient } from '@animica/sdk/rpc/http';
 import { JsonRpcWsClient } from '@animica/sdk/rpc/ws';
+import { submitRawTxCompat } from '../rpc/rawtx_submit';
 
 export type RpcConfig = {
   /** HTTP JSON-RPC endpoint (e.g., http://localhost:8545/rpc) */
@@ -159,8 +160,16 @@ export class RpcClient implements Rpc {
   /* ----------------------------------- tx ---------------------------------- */
 
   async sendRawTransaction(raw: string | Uint8Array): Promise<string> {
-    const hex = typeof raw === 'string' ? to0xHex(raw) : '0x' + bufToHex(raw);
-    return this.request<string>('tx.sendRawTransaction', [hex]);
+    const out = await submitRawTxCompat({
+      rpcUrl: this.cfg.url,
+      chainId: this.cfg.chainId,
+      headers: this.cfg.headers,
+      rawTx: raw,
+    });
+    if (!out.ok || !out.txid) {
+      throw new Error(out.error?.message ?? 'Failed to submit raw transaction');
+    }
+    return out.txid;
   }
 
   async getTransactionByHash(hash: string): Promise<Tx | null> {
@@ -190,23 +199,6 @@ export class RpcClient implements Rpc {
 }
 
 /* --------------------------------- helpers --------------------------------- */
-
-function to0xHex(x: string): string {
-  const s = x.trim();
-  if (s.startsWith('0x') || s.startsWith('0X')) return '0x' + s.slice(2);
-  // allow raw hex without 0x
-  if (/^[0-9a-fA-F]+$/.test(s)) return '0x' + s;
-  throw new Error('Expected hex string for raw transaction');
-}
-
-function bufToHex(buf: Uint8Array): string {
-  let out = '';
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i]!.toString(16).padStart(2, '0');
-    out += b;
-  }
-  return out;
-}
 
 /* ------------------------------- singleton-ish ------------------------------ */
 

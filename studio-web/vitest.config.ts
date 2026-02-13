@@ -16,7 +16,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['test/setup.ts'],
 
-    include: ['test/unit/**/*.test.{ts,tsx}'],
+    include: ['test/unit/**/*.test.{ts,tsx}', '__tests__/**/*.test.{ts,tsx}'],
     exclude: ['node_modules', 'dist', '.{idea,git,cache,output,temp}'],
 
     // Helpful defaults locally; richer reports on CI.

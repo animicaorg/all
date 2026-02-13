@@ -41,7 +41,7 @@ describe('RpcClient numeric normalization', () => {
 
 describe('RpcClient sendRawTransaction error handling', () => {
   
-  it('sends tx.sendRawTransaction params as object { rawTx }', async () => {
+  it('sends tx.sendRawTransaction in compatibility mode order (array string first)', async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => ({
       ok: true,
       json: async () => ({ result: '0xhash' }),
@@ -53,7 +53,7 @@ describe('RpcClient sendRawTransaction error handling', () => {
     const [, init] = fetchMock.mock.calls[0];
     const payload = JSON.parse(String(init.body));
     expect(payload.method).toBe('tx.sendRawTransaction');
-    expect(payload.params).toEqual({ rawTx: '0xabcd' });
+    expect(payload.params).toEqual(['0xabcd']);
   });
 
   it('throws local validation error for invalid rawTx shape before network call', async () => {
@@ -65,7 +65,7 @@ describe('RpcClient sendRawTransaction error handling', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('retries once with positional params on -32602 from canonical shape', async () => {
+  it('retries with the next compatibility shape on -32602', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ error: { code: -32602, message: 'Invalid params' } }) })
@@ -76,9 +76,9 @@ describe('RpcClient sendRawTransaction error handling', () => {
 
     const firstPayload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     const secondPayload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
-    expect(firstPayload.params).toEqual({ rawTx: '0xabcd' });
-    expect(secondPayload.params).toEqual(['0xabcd']);
-    expect(secondPayload.id).toBe(firstPayload.id + 1);
+    expect(firstPayload.params).toEqual(['0xabcd']);
+    expect(secondPayload.params).toEqual([{ rawTx: '0xabcd' }]);
+    expect(secondPayload.id).toBe(firstPayload.id);
   });
 
   it('surfaces RPC response errors without masking them as endpoint failures', async () => {
@@ -100,8 +100,6 @@ describe('RpcClient sendRawTransaction error handling', () => {
       throw { reason: 'socket hang up' };
     }) as any);
 
-    await expect(client.sendRawTransaction('0xabcd')).rejects.toThrow(
-      'All RPC endpoints failed. Last error: Unknown error: [object Object]',
-    );
+    await expect(client.sendRawTransaction('0xabcd')).rejects.toThrow('Failed to submit raw transaction in all compatibility modes');
   });
 });
