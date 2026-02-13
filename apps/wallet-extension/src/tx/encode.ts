@@ -216,9 +216,9 @@ export function encodeTxBody(body: {
   nonce: number;
   from_addr: Uint8Array;
   to_addr: Uint8Array;
-  value: number;
-  fee: number;
-  gas_limit: number;
+  value: bigint | number;
+  fee: bigint | number;
+  gas_limit: bigint | number;
   data: Uint8Array;
   memo: string;
   timestamp: number;
@@ -273,9 +273,9 @@ export function encodeTxEnvelope(envelope: {
     nonce: number;
     from_addr: Uint8Array;
     to_addr: Uint8Array;
-    value: number;
-    fee: number;
-    gas_limit: number;
+    value: bigint | number;
+    fee: bigint | number;
+    gas_limit: bigint | number;
     data: Uint8Array;
     memo: string;
     timestamp: number;

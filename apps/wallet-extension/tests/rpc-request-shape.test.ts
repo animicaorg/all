@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { buildJsonRpcRequest, RpcClient } from '../src/core/rpc/client';
 
 describe('tx.sendRawTransaction request shape', () => {
-  it('builds JSON-RPC payload using object params with rawTx', () => {
+  it('builds JSON-RPC payload using positional params with rawTx', () => {
     const payload = buildJsonRpcRequest(
       'tx.sendRawTransaction',
-      { rawTx: '0xdeadbeef' },
+      ['0xdeadbeef'],
       123,
     );
 
@@ -14,22 +14,20 @@ describe('tx.sendRawTransaction request shape', () => {
       jsonrpc: '2.0',
       id: 123,
       method: 'tx.sendRawTransaction',
-      params: {
-        rawTx: '0xdeadbeef',
-      },
+      params: ['0xdeadbeef'],
     });
   });
 
   it('prints a sample request payload for dev debugging', () => {
     const sample = buildJsonRpcRequest(
       'tx.sendRawTransaction',
-      { rawTx: '0x01020304' },
+      ['0x01020304'],
       1,
     );
 
     // Intentionally logged for manual verification in dev/test runs.
     console.log('[dev] sample tx.sendRawTransaction request:', JSON.stringify(sample));
-    expect(sample.params).toEqual({ rawTx: '0x01020304' });
+    expect(sample.params).toEqual(['0x01020304']);
   });
 
   it('validates that rawTx is a hex string', async () => {
@@ -61,35 +59,22 @@ describe('tx.sendRawTransaction request shape', () => {
     //   1. Array:  params: ["0xabcd1234..."]        → binds to positional arg
     //   2. Object: params: { rawTx: "0xabcd1234..." }  → binds to keyword arg
     //
-    // We use object form for explicitness and type safety.
+    // Extension must use array form to match CLI request format exactly.
 
     const arrayForm = buildJsonRpcRequest('tx.sendRawTransaction', ['0xabcd1234'], 1);
-    const objectForm = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 2);
-
     expect(arrayForm.params).toEqual(['0xabcd1234']);
-    expect(objectForm.params).toEqual({ rawTx: '0xabcd1234' });
 
-    console.log('[dev] Both forms are valid per node dispatcher:');
+    console.log('[dev] CLI-compatible request form:');
     console.log('  Array form: ', JSON.stringify(arrayForm));
-    console.log('  Object form:', JSON.stringify(objectForm));
   });
 
   it('prevents common mistakes that cause -32602 errors', () => {
-    // MISTAKE 1: Double-wrapping params
-    const bad1 = buildJsonRpcRequest('tx.sendRawTransaction', { params: ['0xabcd1234'] }, 1);
-    // Node sees: params.params which doesn't bind to rawTx arg
-    expect(bad1.params).toEqual({ params: ['0xabcd1234'] });
-    console.log('[dev] WRONG (double-wrapped):', JSON.stringify(bad1));
+    const bad = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 1);
+    expect(Array.isArray(bad.params)).toBe(false);
+    console.log('[dev] WRONG (extension must use positional params):', JSON.stringify(bad));
 
-    // MISTAKE 2: Missing rawTx key
-    const bad2 = buildJsonRpcRequest('tx.sendRawTransaction', { tx: '0xabcd1234' }, 2);
-    // Node sees: tx= not rawTx=
-    expect(bad2.params).toEqual({ tx: '0xabcd1234' });
-    console.log('[dev] WRONG (wrong key):', JSON.stringify(bad2));
-
-    // CORRECT
-    const good = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 3);
-    expect(good.params).toEqual({ rawTx: '0xabcd1234' });
+    const good = buildJsonRpcRequest('tx.sendRawTransaction', ['0xabcd1234'], 2);
+    expect(good.params).toEqual(['0xabcd1234']);
     console.log('[dev] CORRECT:', JSON.stringify(good));
   });
 });

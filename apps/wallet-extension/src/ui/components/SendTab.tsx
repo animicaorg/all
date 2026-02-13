@@ -10,6 +10,18 @@ interface SendTabProps {
   onSent: () => void;
 }
 
+
+function parseAnmToBaseUnits(input: string): bigint {
+  const normalized = input.trim();
+  if (!/^\d+(\.\d{1,9})?$/.test(normalized)) {
+    throw new Error('Please enter a valid amount (up to 9 decimals)');
+  }
+
+  const [whole, frac = ''] = normalized.split('.');
+  const fracPadded = (frac + '000000000').slice(0, 9);
+  return BigInt(whole) * 1_000_000_000n + BigInt(fracPadded);
+}
+
 function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
@@ -35,18 +47,22 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       return;
     }
 
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
+    let amountBase: bigint;
+    try {
+      amountBase = parseAnmToBaseUnits(amount);
+    } catch (parseError: any) {
+      setError(parseError?.message || 'Please enter a valid amount');
+      return;
+    }
+
+    if (amountBase <= 0n) {
       setError('Please enter a valid amount');
       return;
     }
 
-    // Convert ANM to base units (1 ANM = 1e9 base)
-    const amountBase = Math.floor(amountNum * 1e9);
-
     if (balance) {
       const available = BigInt(balance.available);
-      if (BigInt(amountBase) > available) {
+      if (amountBase > available) {
         setError('Insufficient balance');
         return;
       }
@@ -60,7 +76,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         params: {
           from: currentAccount.address,
           to: to.trim(),
-          amount: amountBase,
+          amount: amountBase.toString(),
         },
       });
 

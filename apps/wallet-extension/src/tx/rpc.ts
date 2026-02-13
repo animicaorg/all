@@ -3,7 +3,6 @@
  */
 
 import type { ChainContext } from './types';
-import { DOMAIN_TX_SIGN } from './types';
 import { hexToBytes } from './signing';
 
 /**
@@ -45,7 +44,7 @@ export async function fetchChainContext(
       genesis_hash: genesisHash,
       network: String(network),
       fork_id: forkId !== null ? Number(forkId) : null,
-      domain: DOMAIN_TX_SIGN,
+      domain: 'tx',
       prehash: 'sha3-512',
     };
   } catch (error: any) {
@@ -61,8 +60,8 @@ export async function fetchChainContext(
  * @returns Transaction hash
  * 
  * NOTE: This function uses array form params: [rawTx] which is valid per the node
- * dispatcher (see rpc/jsonrpc.py _bind_call_args). The RpcClient.sendRawTransaction()
- * uses object form params: { rawTx } for consistency with validation. Both work.
+ * dispatcher (see rpc/jsonrpc.py _bind_call_args). The wallet extension intentionally
+ * uses CLI-compatible positional params: [rawTx].
  */
 export async function submitTransaction(
   rawTx: string,
