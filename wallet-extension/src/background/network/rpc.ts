@@ -103,7 +103,7 @@ export class RpcClient {
     const req: JsonRpcRequest = {
       jsonrpc: "2.0",
       method,
-      params,
+      params: normalizeParams(method, params),
       id: nextId++,
     };
     const res = await this._postWithRetries<JsonRpcResponse<T>>(req, method);
@@ -216,6 +216,22 @@ export class RpcClient {
       clearTimeout(t);
     }
   }
+}
+
+function normalizeParams(method: string, params?: Json | Json[]): Json[] {
+  if (Array.isArray(params)) return params;
+  if (params == null) return [];
+
+  if (
+    method === "tx.sendRawTransaction" &&
+    typeof params === "object" &&
+    "rawTx" in params &&
+    typeof (params as { rawTx?: unknown }).rawTx === "string"
+  ) {
+    return [(params as { rawTx: string }).rawTx];
+  }
+
+  return [params];
 }
 
 /** Create a client from a Network record. */
