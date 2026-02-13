@@ -18,11 +18,11 @@ describe('tx.sendRawTransaction request shape', () => {
     });
   });
 
-  it('validates that rawTx is 0x-prefixed even-length hex', async () => {
+  it('validates that rawTx is even-length hex (with or without 0x)', async () => {
     const client = new RpcClient(['http://localhost:8545/rpc']);
 
-    await expect(client.sendRawTransaction('not-hex')).rejects.toThrow(/0x-prefixed hex/);
-    await expect(client.sendRawTransaction('deadbeef')).rejects.toThrow(/0x-prefixed hex/);
+    await expect(client.sendRawTransaction('not-hex')).rejects.toThrow(/hex string/);
+    await expect(client.sendRawTransaction('deadbee')).rejects.toThrow(/even/);
     await expect(client.sendRawTransaction('0xabc')).rejects.toThrow(/even/);
   });
 

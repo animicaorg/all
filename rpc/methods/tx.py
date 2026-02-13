@@ -205,6 +205,97 @@ def _b(x: str | bytes | bytearray) -> bytes:
     return bytes.fromhex(s)
 
 
+def normalize_send_raw_tx_params(
+    params: t.Any,
+    *,
+    rawTx: t.Any = None,
+    raw_tx: t.Any = None,
+    tx: t.Any = None,
+    raw: t.Any = None,
+    cbor: t.Any = None,
+    txBytes: t.Any = None,
+) -> tuple[bytes, dict[str, t.Any]]:
+    """Normalize tx.sendRawTransaction params into raw transaction bytes.
+
+    Accepted shapes:
+    - ["0x..."] or ["..."]
+    - {"rawTx": "0x..."} (plus raw_tx/tx/raw/cbor/txBytes)
+    - [{"rawTx": "0x..."}] (same key support)
+    - direct method kwargs (rawTx/raw_tx/tx/raw/cbor/txBytes)
+    """
+
+    key_priority = ("rawTx", "raw_tx", "tx", "raw", "cbor", "txBytes")
+
+    source = params
+    if source is None:
+        kwargs_obj = {
+            "rawTx": rawTx,
+            "raw_tx": raw_tx,
+            "tx": tx,
+            "raw": raw,
+            "cbor": cbor,
+            "txBytes": txBytes,
+        }
+        present = {k: v for k, v in kwargs_obj.items() if v is not None}
+        if len(present) == 1:
+            source = next(iter(present.values()))
+        elif len(present) > 1:
+            source = present
+
+    shape = "unknown"
+    key_used: str | None = None
+    tx_value: t.Any = None
+
+    if isinstance(source, (list, tuple)):
+        shape = "list"
+        if not source:
+            raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+        first = source[0]
+        if isinstance(first, dict):
+            shape = "list.dict"
+            for key in key_priority:
+                if key in first:
+                    key_used = key
+                    tx_value = first.get(key)
+                    break
+        else:
+            tx_value = first
+    elif isinstance(source, dict):
+        shape = "dict"
+        for key in key_priority:
+            if key in source:
+                key_used = key
+                tx_value = source.get(key)
+                break
+    else:
+        tx_value = source
+        shape = type(source).__name__
+
+    if not isinstance(tx_value, str):
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+
+    has_0x = tx_value.startswith("0x") or tx_value.startswith("0X")
+    hex_value = tx_value[2:] if has_0x else tx_value
+    if not hex_value:
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+    if len(hex_value) % 2 != 0:
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+    if not all(ch in "0123456789abcdefABCDEF" for ch in hex_value):
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+
+    try:
+        raw_bytes = bytes.fromhex(hex_value)
+    except Exception as exc:
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string") from exc
+
+    return raw_bytes, {
+        "shape": shape,
+        "key": key_used,
+        "has_0x": has_0x,
+        "size_bytes": len(raw_bytes),
+    }
+
+
 def _jsonify(obj: t.Any) -> t.Any:
     if isinstance(obj, (bytes, bytearray)):
         return _hex(obj)
@@ -1724,16 +1815,30 @@ def _tx_view(
 @method(
     "tx.sendRawTransaction",
     desc=(
-        "Submit a signed CBOR-encoded transaction. Param: rawTx (hex string '0x…'). Returns tx hash.\n\n"
+        "Submit a signed CBOR-encoded transaction. Param may be positional [rawTx] or named {rawTx/raw_tx/tx}. Returns tx hash.\n\n"
         "Envelope formats supported:\n"
         '  { "body": {...}, "sig": { "algId": <int>, "pubkey": <bytes>, "sig": <bytes> } }\n'
         '  { "body": {...}, "sigs": [{ "algId": ..., "pubkey": ..., "sig": ... }] }\n'
     ),
     aliases=("tx_sendRawTransaction",),
 )
-def tx_send_raw_transaction(rawTx: str) -> t.Any:
+def tx_send_raw_transaction(
+    rawTx: t.Any = None,
+    raw_tx: t.Any = None,
+    tx: t.Any = None,
+    raw: t.Any = None,
+    cbor: t.Any = None,
+    txBytes: t.Any = None,
+) -> t.Any:
     try:
-        return _tx_send_raw_transaction(rawTx)
+        return _tx_send_raw_transaction(
+            rawTx,
+            raw_tx=raw_tx,
+            tx=tx,
+            raw_value=raw,
+            cbor=cbor,
+            txBytes=txBytes,
+        )
     except rpc_errors.RpcError:
         raise
     except Exception as e:  # pragma: no cover
@@ -1752,7 +1857,16 @@ def tx_send_raw_transaction(rawTx: str) -> t.Any:
 def mempool_simulate_admission(rawTx: str) -> t.Any:
     return _tx_send_raw_transaction(rawTx, simulate=True)
 
-def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
+def _tx_send_raw_transaction(
+    rawTx: t.Any,
+    *,
+    simulate: bool = False,
+    raw_tx: t.Any = None,
+    tx: t.Any = None,
+    raw_value: t.Any = None,
+    cbor: t.Any = None,
+    txBytes: t.Any = None,
+) -> t.Any:
     start_s = time.time()
     trace_id = uuid.uuid4().hex
     tx_hash_hex = ""
@@ -1830,21 +1944,32 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
         except Exception:
             return _hex(_sha3_256(raw_bytes)) or ""
 
-    if not isinstance(rawTx, str):
-        raise rpc_errors.InvalidParams("rawTx must be a hex string")
-    if rawTx.startswith("0b:"):
-        raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
+    try:
+        raw, param_meta = normalize_send_raw_tx_params(
+            None,
+            rawTx=rawTx,
+            raw_tx=raw_tx,
+            tx=tx,
+            raw=raw_value,
+            cbor=cbor,
+            txBytes=txBytes,
+        )
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string") from exc
+
+    log.info(
+        "tx.sendRawTransaction.params",
+        extra={
+            "shape": param_meta.get("shape"),
+            "key": param_meta.get("key"),
+            "has_0x": param_meta.get("has_0x"),
+            "size_bytes": param_meta.get("size_bytes"),
+        },
+    )
 
     try:
-        try:
-            raw = _b(rawTx)
-        except Exception as e:
-            TX_VALIDATION_FAILURES.labels(reason="hex_decode_failed").inc()
-            raise rpc_errors.InvalidTx(
-                "rawTx decode failed",
-                **_error_data("decode", e, "tx.sendRawTransaction._b", "Ensure rawTx is 0x-prefixed hex"),
-            ) from e
-
         try:
             tx_like, obj = _decode_tx_defensive(raw)
             if os.getenv("ANIMICA_DEBUG_TX", "0") == "1":
@@ -1870,10 +1995,7 @@ def _tx_send_raw_transaction(rawTx: str, *, simulate: bool = False) -> t.Any:
             raise
         except Exception as e:
             TX_VALIDATION_FAILURES.labels(reason="decode_failed").inc()
-            raise rpc_errors.InvalidTx(
-                "Transaction decode failed",
-                **_error_data("decode", e, "_decode_tx_defensive", "Ensure rawTx is CBOR {body, sig}"),
-            ) from e
+            raise rpc_errors.InvalidTx("rawTx decode failed", hint="Ensure rawTx is CBOR {body, sig}") from e
 
         # chainId and PQ verify
         if isinstance(obj, dict):
