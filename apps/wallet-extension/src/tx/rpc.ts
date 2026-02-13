@@ -59,8 +59,7 @@ export async function fetchChainContext(
  * @param rpcCall - RPC call function
  * @returns Transaction hash
  * 
- * NOTE: Canonical schema uses named params object: { rawTx }.
- * RpcClient.sendRawTransaction adds compatibility retries for older/alternate schemas.
+ * NOTE: We always submit positional params ([rawTx]) for maximum node compatibility.
  */
 export async function submitTransaction(
   rawTx: string,
@@ -69,9 +68,12 @@ export async function submitTransaction(
   if (!rawTx.startsWith('0x')) {
     throw new Error('rawTx must start with 0x');
   }
-  
+  if (!/^0x[0-9a-f]+$/i.test(rawTx)) {
+    throw new Error('rawTx must be 0x-prefixed hex');
+  }
+
   try {
-    const result = await rpcCall('tx.sendRawTransaction', { rawTx } as any);
+    const result = await rpcCall('tx.sendRawTransaction', [rawTx] as any);
     return result;
   } catch (error: any) {
     // Enhanced error handling for signature verification failures
