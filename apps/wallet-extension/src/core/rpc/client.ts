@@ -1,6 +1,7 @@
 // RPC client for Animica nodes
 
 import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
+import { submitRawTransactionCompat } from './rawtx_submit';
 
 const RPC_TIMEOUT_MS = 10000;
 
@@ -47,21 +48,6 @@ export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: n
     method,
     params,
   };
-}
-
-function validateRawTx(rawTx: string): string {
-  if (typeof rawTx !== 'string') {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
-  }
-  const hasPrefix = rawTx.startsWith('0x') || rawTx.startsWith('0X');
-  const hex = hasPrefix ? rawTx.slice(2) : rawTx;
-  if (!/^[0-9a-f]+$/i.test(hex)) {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
-  }
-  if (hex.length % 2 !== 0) {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: hex length must be even');
-  }
-  return '0x' + hex.toLowerCase();
 }
 
 class RpcResponseError extends Error {
@@ -287,27 +273,26 @@ export class RpcClient {
   }
 
   async sendRawTransaction(rawTx: string): Promise<string> {
-    const normalizedRawTx = validateRawTx(rawTx);
     this.lastCallAttempts = [];
 
-    const attempts: Array<{ schema: string; params: JsonRpcParams }> = [
-      { schema: 'named.rawTx', params: { rawTx: normalizedRawTx } },
-      { schema: 'positional', params: [normalizedRawTx] },
-    ];
+    const out = await submitRawTransactionCompat({
+      rpcUrl: this.getActiveUrl(),
+      chainId: undefined,
+      rawTx,
+      timeoutMs: this.timeoutMs,
+      jsonRpcId: this.nextRequestId(),
+      forceCompat: undefined,
+    });
 
-    let lastErr: unknown;
-    for (const attempt of attempts) {
-      try {
-        return await this.call('tx.sendRawTransaction', attempt.params, attempt.schema);
-      } catch (error) {
-        lastErr = error;
-        if (!(error instanceof RpcResponseError) || error.code !== -32602) {
-          throw error;
-        }
+    if (!out.ok || !out.txid) {
+      const err = out.error;
+      if (typeof err?.code === 'number' || err?.data !== undefined) {
+        throw new RpcResponseError(err.message, { code: err.code, data: err.data });
       }
+      throw new Error(err?.message ?? 'Failed to submit raw transaction');
     }
 
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    return out.txid;
   }
 
   async getTransaction(txid: string): Promise<any> {

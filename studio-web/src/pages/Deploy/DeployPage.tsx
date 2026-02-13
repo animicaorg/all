@@ -71,6 +71,14 @@ export default function DeployPage() {
   const [txHash, setTxHash] = React.useState<string | null>(null);
   const [receipt, setReceipt] = React.useState<any | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const [forceRawTxCompat, setForceRawTxCompat] = React.useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('force_rawtx_compat');
+      return v === '1' || v === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // file inputs
   const manifestFileRef = React.useRef<HTMLInputElement>(null);
@@ -428,6 +436,23 @@ export default function DeployPage() {
                 <code className="text-xs break-all">{txHash || "—"}</code>
               </KV>
             </div>
+
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={forceRawTxCompat}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setForceRawTxCompat(checked);
+                  try {
+                    localStorage.setItem('force_rawtx_compat', checked ? "1" : "0");
+                  } catch {
+                    // ignore persistence failures
+                  }
+                }}
+              />
+              Force raw-tx compatibility mode
+            </label>
 
             <div className="flex items-center gap-2">
               <button
