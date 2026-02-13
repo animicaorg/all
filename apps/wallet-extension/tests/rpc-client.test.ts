@@ -48,12 +48,12 @@ describe('RpcClient sendRawTransaction error handling', () => {
     })) as any;
 
     const client = await createClient(fetchMock);
-    await expect(client.sendRawTransaction('0xabc')).resolves.toBe('0xhash');
+    await expect(client.sendRawTransaction('0xabcd')).resolves.toBe('0xhash');
 
     const [, init] = fetchMock.mock.calls[0];
     const payload = JSON.parse(String(init.body));
     expect(payload.method).toBe('tx.sendRawTransaction');
-    expect(payload.params).toEqual({ rawTx: '0xabc' });
+    expect(payload.params).toEqual({ rawTx: '0xabcd' });
   });
 
   it('throws local validation error for invalid rawTx shape before network call', async () => {
@@ -75,7 +75,7 @@ describe('RpcClient sendRawTransaction error handling', () => {
       }),
     })) as any);
 
-    await expect(client.sendRawTransaction('0xabc')).rejects.toThrow('Invalid signature (code -32011)');
+    await expect(client.sendRawTransaction('0xabcd')).rejects.toThrow('Invalid signature (code -32011)');
   });
 
   it('includes useful details for thrown non-Error values', async () => {
@@ -83,7 +83,7 @@ describe('RpcClient sendRawTransaction error handling', () => {
       throw { reason: 'socket hang up' };
     }) as any);
 
-    await expect(client.sendRawTransaction('0xabc')).rejects.toThrow(
+    await expect(client.sendRawTransaction('0xabcd')).rejects.toThrow(
       'All RPC endpoints failed. Last error: Unknown error: [object Object]',
     );
   });

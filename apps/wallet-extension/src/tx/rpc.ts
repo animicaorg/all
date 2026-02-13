@@ -11,7 +11,7 @@ import { hexToBytes } from './signing';
  * This is REQUIRED before signing any transaction.
  */
 export async function fetchChainContext(
-  rpcCall: (method: string, params: any[]) => Promise<any>
+  rpcCall: (method: string, params: any) => Promise<any>
 ): Promise<ChainContext> {
   try {
     const identity = await rpcCall('chain.getChainIdentity', []);
@@ -59,21 +59,19 @@ export async function fetchChainContext(
  * @param rpcCall - RPC call function
  * @returns Transaction hash
  * 
- * NOTE: This function uses array form params: [rawTx] which is valid per the node
- * dispatcher (see rpc/jsonrpc.py _bind_call_args). The wallet extension intentionally
- * uses CLI-compatible positional params: [rawTx].
+ * NOTE: Canonical schema uses named params object: { rawTx }.
+ * RpcClient.sendRawTransaction adds compatibility retries for older/alternate schemas.
  */
 export async function submitTransaction(
   rawTx: string,
-  rpcCall: (method: string, params: any[]) => Promise<any>
+  rpcCall: (method: string, params: any) => Promise<any>
 ): Promise<string> {
   if (!rawTx.startsWith('0x')) {
     throw new Error('rawTx must start with 0x');
   }
   
   try {
-    // Array form: [rawTx] binds to positional parameter in node's tx_send_raw_transaction(rawTx: str)
-    const result = await rpcCall('tx.sendRawTransaction', [rawTx]);
+    const result = await rpcCall('tx.sendRawTransaction', { rawTx } as any);
     return result;
   } catch (error: any) {
     // Enhanced error handling for signature verification failures

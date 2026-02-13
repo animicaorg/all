@@ -129,7 +129,7 @@ await rpc.call('state.getBalance', [address, 'latest'])
 → "0x..." (hex string)
 
 // Send TX
-await rpc.call('tx.sendRawTransaction', ['0x<cbor>'])
+await rpc.call('tx.sendRawTransaction', { rawTx: '0x<cbor>' })
 → "0abc..." (txid hex)
 
 // Check Status
@@ -341,7 +341,7 @@ apps/wallet-extension/
 ## Transaction send RPC/codec requirements (wallet-extension)
 
 - RPC method: `tx.sendRawTransaction`
-- Parameter format: single `rawTx` string in params array, `"0x" + even-length-hex`.
+- Parameter format: params object with `rawTx` key: `{ "rawTx": "0x" + even-length-hex }` (fallback retries try positional/legacy shapes only when node returns `-32602`).
 - Payload bytes: canonical CBOR of signed tx envelope map:
   - top-level: `{ "tx": <UnsignedTx>, "sigs": [ {"alg": <int>, "pubkey": <bytes>, "sig": <bytes>} ] }`
   - unsigned tx body keys: `v`, `chainId`, `from`, `gas`, `payload`, `accessList`, and v2 fields `validAfter`, `validUntil`, `salt`.
