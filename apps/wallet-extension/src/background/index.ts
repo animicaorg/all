@@ -556,12 +556,12 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     
     // Send transaction
     const rpcMethod = 'tx.sendRawTransaction';
-    const rpcParams: { rawTx: string } = { rawTx: result.rawTx };
+    const rpcParams: string[] = [result.rawTx];
 
     txDebugLog('sending-tx', {
       rpcUrl: client.getActiveUrl(),
       rpcMethod,
-      paramsShape: 'object.rawTx',
+      paramsShape: 'array[rawTx]',
       rawTxPrefix: result.rawTx.slice(0, 66),
       rawTxSummary: summarizeRawTx(result.rawTx),
     });

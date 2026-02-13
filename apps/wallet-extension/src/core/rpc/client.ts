@@ -41,12 +41,26 @@ function shouldDebugRpcPayloads(): boolean {
 
 let requestIdSeed = 1;
 
+
+function isTxBroadcastMethod(method: string): boolean {
+  return method === 'tx.sendRawTransaction' || method === 'tx_sendRawTransaction' || method === 'tx.submitRawTransaction' || method === 'tx2.sendRawTransaction';
+}
+
+function normalizeTxBroadcastParams(method: string, params: JsonRpcParams): JsonRpcParams {
+  if (!isTxBroadcastMethod(method)) return params;
+  if (Array.isArray(params)) return params;
+  const maybeRaw = (params as Record<string, unknown>)?.rawTx;
+  if (typeof maybeRaw === 'string') {
+    return [maybeRaw];
+  }
+  return params;
+}
 export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: number = requestIdSeed++): JsonRpcRequest {
   return {
     jsonrpc: '2.0',
     id,
     method,
-    params,
+    params: normalizeTxBroadcastParams(method, params),
   };
 }
 

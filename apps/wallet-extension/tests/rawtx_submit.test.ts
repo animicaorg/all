@@ -38,64 +38,19 @@ afterEach(() => {
 });
 
 describe('submitRawTransactionCompat', () => {
-  it('probes next mode when first mode returns -32602', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(resp(200, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid params' } }))
-      .mockResolvedValueOnce(resp(200, { jsonrpc: '2.0', id: 1, result: { txid: '0xabc' } }));
-
-    const { submitRawTransactionCompat } = await importSubmitter(fetchMock);
-    const out = await submitRawTransactionCompat({
-      rpcUrl: 'https://mainnet.animica.org/rpc',
-      chainId: 1,
-      rawTx: '0xdeadbeef',
-      timeoutMs: 5000,
-      forceCompat: true,
-    });
-
-    expect(out.ok).toBe(true);
-    expect(out.modeUsed).toBe('array:obj:rawTx:hex');
-
-    const first = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    const second = JSON.parse(String(fetchMock.mock.calls[1][1].body));
-    expect(first.params).toEqual(['0xdeadbeef']);
-    expect(second.params).toEqual([{ rawTx: '0xdeadbeef' }]);
-  });
-
-  it('invalidates cached mode on -32602 and caches new mode', async () => {
-    const seeded = {
-      rawtx_compat_mode_cache_v1: {
-        '1::https://mainnet.animica.org/rpc': { mode: 'obj:rawTx:hex', ts: Date.now() },
-      },
-    };
-
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(resp(200, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid params' } }))
-      .mockResolvedValueOnce(resp(200, { jsonrpc: '2.0', id: 1, result: '0xhash' }));
-
-    const { submitRawTransactionCompat, store } = await importSubmitter(fetchMock, seeded);
-    const out = await submitRawTransactionCompat({
-      rpcUrl: 'https://mainnet.animica.org/rpc',
-      chainId: 1,
-      rawTx: '0xdeadbeef',
-      timeoutMs: 5000,
-      forceCompat: true,
-    });
-
-    expect(out.ok).toBe(true);
-    const cache = (store.rawtx_compat_mode_cache_v1 as any);
-    expect(cache['1::https://mainnet.animica.org/rpc'].mode).toBe('array:string:hex');
-  });
-
-  it('falls back to base64 after all hex variants fail with invalid params', async () => {
+  it('retries on -32602 and succeeds on underscore alias', async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
-      const params = JSON.stringify(body.params);
-      if (params.includes('0x')) {
+      if (body.method === 'rpc.discover') {
+        return resp(200, { jsonrpc: '2.0', id: 1, result: { methods: [] } });
+      }
+      if (body.method === 'tx.sendRawTransaction') {
         return resp(200, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid params' } });
       }
-      return resp(200, { jsonrpc: '2.0', id: 1, result: { hash: '0xb64ok' } });
+      if (body.method === 'tx_sendRawTransaction') {
+        return resp(200, { jsonrpc: '2.0', id: 1, result: '0xabc' });
+      }
+      return resp(200, { jsonrpc: '2.0', id: 1, error: { code: -32601, message: 'Method not found' } });
     });
 
     const { submitRawTransactionCompat } = await importSubmitter(fetchMock);
@@ -104,23 +59,28 @@ describe('submitRawTransactionCompat', () => {
       chainId: 1,
       rawTx: '0xdeadbeef',
       timeoutMs: 5000,
-      forceCompat: true,
     });
 
     expect(out.ok).toBe(true);
-    expect(out.modeUsed).toBe('array:obj:rawTxB64:b64');
+    expect(out.txid).toBe('0xabc');
+
+    const sendDot = JSON.parse(String(fetchMock.mock.calls[1][1].body));
+    const sendUnderscore = JSON.parse(String(fetchMock.mock.calls[2][1].body));
+    expect(sendDot.params).toEqual(['0xdeadbeef']);
+    expect(sendUnderscore.params).toEqual(['0xdeadbeef']);
   });
 
-  it('treats transport ambiguity as success when post-check finds tx', async () => {
+  it('does not retry terminal animica tx errors', async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
-      if (body.method === 'tx.sendRawTransaction') {
-        throw new Error('gateway timeout');
+      if (body.method === 'rpc.discover') {
+        return resp(200, { jsonrpc: '2.0', id: 1, result: { methods: [] } });
       }
-      if (body.method === 'tx.getTransactionByHash') {
-        return resp(200, { jsonrpc: '2.0', id: 1, result: { hash: '0xfound' } });
-      }
-      return resp(200, { jsonrpc: '2.0', id: 1, result: null });
+      return resp(200, {
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: -32011, message: 'ChainIdMismatch', data: { expectedChainId: 1, detectedChainId: 9 } },
+      });
     });
 
     const { submitRawTransactionCompat } = await importSubmitter(fetchMock);
@@ -129,12 +89,26 @@ describe('submitRawTransactionCompat', () => {
       chainId: 1,
       rawTx: '0xdeadbeef',
       timeoutMs: 5000,
-      forceCompat: true,
-      maxRetriesPerMode: 1,
     });
 
-    expect(out.ok).toBe(true);
-    expect(out.txid).toMatch(/^0x/);
+    expect(out.ok).toBe(false);
+    expect(out.error?.code).toBe(-32011);
+    expect(out.error?.message).toContain('Expected 1, detected 9');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects malformed rawTx before network call', async () => {
+    const fetchMock = vi.fn();
+    const { submitRawTransactionCompat } = await importSubmitter(fetchMock);
+
+    await expect(submitRawTransactionCompat({
+      rpcUrl: 'https://mainnet.animica.org/rpc',
+      chainId: 1,
+      rawTx: 'deadbeef',
+      timeoutMs: 5000,
+    })).rejects.toThrow(/must start with 0x/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
