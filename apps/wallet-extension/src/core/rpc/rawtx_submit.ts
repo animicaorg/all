@@ -1,31 +1,33 @@
-import { bytesToHexRaw, hexToBytes } from '../crypto/convert';
-import { sha3Hash } from '../crypto/pq';
 import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
 
-const MODE_CACHE_KEY = 'rawtx_compat_mode_cache_v1';
+const METHOD_CACHE_KEY = 'rawtx_method_cap_cache_v2';
 export const FORCE_RAWTX_COMPAT_KEY = 'force_rawtx_compat';
-const MAX_RETRIES_PER_MODE = 3;
 
-type JsonRpcParams = unknown[] | Record<string, unknown>;
+const RETRYABLE_VARIANTS = [
+  { method: 'tx.sendRawTransaction', paramsShape: 'array' as const },
+  { method: 'tx_sendRawTransaction', paramsShape: 'array' as const },
+  { method: 'tx.sendRawTransaction', paramsShape: 'objectArray' as const },
+  { method: 'tx_sendRawTransaction', paramsShape: 'objectArray' as const },
+  { method: 'tx.submitRawTransaction', paramsShape: 'array' as const },
+  { method: 'tx2.sendRawTransaction', paramsShape: 'array' as const },
+] as const;
 
+type Variant = (typeof RETRYABLE_VARIANTS)[number];
+
+type JsonRpcParams = unknown[];
 type JsonRpcError = { code?: number; message?: string; data?: unknown };
 type JsonRpcResponse = { result?: unknown; error?: JsonRpcError };
 
-export type RawTxMode =
-  | 'array:string:hex'
-  | 'array:obj:rawTx:hex'
-  | 'array:obj:raw_tx:hex'
-  | 'array:obj:tx:hex'
-  | 'obj:rawTx:hex'
-  | 'obj:raw_tx:hex'
-  | 'obj:tx:hex'
-  | 'array:obj:rawTxB64:b64'
-  | 'array:string:b64';
+type CapabilityCache = {
+  methods: string[];
+  positionalMethods: string[];
+  ts: number;
+};
 
 export type SubmitRawTransactionResult = {
   ok: boolean;
   txid?: string;
-  modeUsed?: RawTxMode;
+  modeUsed?: string;
   rpcResult?: unknown;
   error?: { code?: number; message: string; data?: unknown };
 };
@@ -37,20 +39,7 @@ export type SubmitRawTransactionInput = {
   timeoutMs: number;
   jsonRpcId?: number;
   forceCompat?: boolean;
-  maxRetriesPerMode?: number;
 };
-
-const HEX_MODES: RawTxMode[] = [
-  'array:string:hex',
-  'array:obj:rawTx:hex',
-  'array:obj:raw_tx:hex',
-  'array:obj:tx:hex',
-  'obj:rawTx:hex',
-  'obj:raw_tx:hex',
-  'obj:tx:hex',
-];
-
-const B64_MODES: RawTxMode[] = ['array:obj:rawTxB64:b64', 'array:string:b64'];
 
 export async function submitRawTransactionCompat(input: SubmitRawTransactionInput): Promise<SubmitRawTransactionResult> {
   const fetchImpl = getFetch();
@@ -58,244 +47,273 @@ export async function submitRawTransactionCompat(input: SubmitRawTransactionInpu
   const clearTimeoutImpl = getClearTimeout();
 
   const normalizedRawTx = normalizeRawTx(input.rawTx);
-  const rawBytes = hexToBytes(normalizedRawTx, 'rawTx');
-  const txid = '0x' + bytesToHexRaw(sha3Hash(rawBytes));
-  const rawTxB64 = bytesToBase64(rawBytes);
   const rpcId = input.jsonRpcId ?? 1;
-  const maxRetries = Math.max(1, input.maxRetriesPerMode ?? MAX_RETRIES_PER_MODE);
 
-  const cacheKey = `${input.chainId ?? 'unknown'}::${input.rpcUrl}`;
-  const forced = input.forceCompat ?? (await readForceCompatFlag());
-  const cachedMode = await readModeCache(cacheKey);
-
-  const modeOrder = buildModeOrder(cachedMode, forced);
-  let invalidHexCount = 0;
-  let lastError: SubmitRawTransactionResult['error'];
-  let sawAmbiguousFailure = false;
+  const capability = await discoverCapabilities(fetchImpl, setTimeoutImpl, clearTimeoutImpl, input.rpcUrl, input.timeoutMs, rpcId);
+  const ordered = orderVariants(capability);
 
   debugLog('submit.start', {
     rpcUrl: input.rpcUrl,
-    chainId: input.chainId,
-    cachedMode,
-    forced,
-    txid,
-    tx: summarizeRawTx(normalizedRawTx),
+    requestId: rpcId,
+    rawTx: summarizeRawTx(normalizedRawTx),
+    discoveredMethods: capability?.methods,
   });
 
-  for (const mode of modeOrder) {
-    if (B64_MODES.includes(mode) && invalidHexCount < HEX_MODES.length) continue;
+  let lastError: SubmitRawTransactionResult['error'];
 
-    const params = paramsForMode(mode, normalizedRawTx, rawTxB64);
+  for (const variant of ordered) {
+    const body = {
+      jsonrpc: '2.0' as const,
+      id: rpcId,
+      method: variant.method,
+      params: paramsForVariant(variant, normalizedRawTx),
+    };
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const body = {
-        jsonrpc: '2.0' as const,
-        id: rpcId,
-        method: 'tx.sendRawTransaction',
-        params,
-      };
+    const sent = await sendJsonRpc(fetchImpl, setTimeoutImpl, clearTimeoutImpl, {
+      rpcUrl: input.rpcUrl,
+      timeoutMs: input.timeoutMs,
+      body,
+    });
 
-      const sent = await sendJsonRpc(fetchImpl, setTimeoutImpl, clearTimeoutImpl, {
+    if (sent.transportError) {
+      lastError = { message: sent.transportError };
+      debugLog('submit.transport_error', {
         rpcUrl: input.rpcUrl,
-        timeoutMs: input.timeoutMs,
-        body,
+        requestId: rpcId,
+        method: variant.method,
+        paramsShape: variant.paramsShape,
+        error: sent.transportError,
       });
-
-      debugLog('submit.attempt', {
-        mode,
-        attempt,
-        httpStatus: sent.httpStatus,
-        txid,
-        tx: summarizeRawTx(normalizedRawTx),
-        transportError: sent.transportError,
-        rpcError: sent.response?.error,
-      });
-
-      if (sent.transportError) {
-        sawAmbiguousFailure = true;
-        if (attempt < maxRetries) {
-          await wait(backoffMs(attempt));
-          continue;
-        }
-        break;
-      }
-
-      const rpc = sent.response;
-      if (!rpc) {
-        lastError = { message: `RPC returned empty response (HTTP ${sent.httpStatus})` };
-        break;
-      }
-
-      if (rpc.error) {
-        lastError = {
-          code: rpc.error.code,
-          message: formatRpcErrorMessage(rpc.error),
-          data: rpc.error.data,
-        };
-
-        if (isMethodNotFound(rpc.error)) {
-          return {
-            ok: false,
-            txid,
-            error: {
-              code: rpc.error.code,
-              message: 'RPC does not support tx submission',
-              data: rpc.error.data,
-            },
-          };
-        }
-
-        if (isAlreadyKnown(rpc.error)) {
-          await writeModeCache(cacheKey, mode);
-          return { ok: true, txid, modeUsed: mode, rpcResult: rpc.result ?? rpc.error };
-        }
-
-        if (isInvalidParams(rpc.error)) {
-          if (HEX_MODES.includes(mode)) invalidHexCount += 1;
-          if (cachedMode === mode) await clearModeCache(cacheKey);
-          break;
-        }
-
-        if (isRetriableRpcError(rpc.error) && attempt < maxRetries) {
-          sawAmbiguousFailure = true;
-          await wait(backoffMs(attempt));
-          continue;
-        }
-
-        break;
-      }
-
-      const resultTxid = extractTxid(rpc.result) ?? txid;
-      await writeModeCache(cacheKey, mode);
-      return { ok: true, txid: resultTxid, modeUsed: mode, rpcResult: rpc.result };
+      continue;
     }
-  }
 
-  if (sawAmbiguousFailure) {
-    const postCheck = await postCheckSubmittedTx(
-      fetchImpl,
-      setTimeoutImpl,
-      clearTimeoutImpl,
-      input.rpcUrl,
-      input.timeoutMs,
-      txid,
-      rpcId,
-    );
-    if (postCheck.ok) return postCheck;
+    const rpc = sent.response;
+    if (!rpc) {
+      lastError = { message: `RPC returned empty response (HTTP ${sent.httpStatus})` };
+      continue;
+    }
+
+    if (rpc.error) {
+      const err = {
+        code: rpc.error.code,
+        message: formatRpcErrorMessage(rpc.error),
+        data: rpc.error.data,
+      };
+      lastError = err;
+
+      debugLog('submit.rpc_error', {
+        rpcUrl: input.rpcUrl,
+        requestId: rpcId,
+        method: variant.method,
+        paramsShape: variant.paramsShape,
+        code: rpc.error.code,
+        message: rpc.error.message,
+      });
+
+      if (isAnimicaTxTerminalError(rpc.error)) {
+        return { ok: false, error: decorateAnimicaError(err) };
+      }
+
+      if (shouldRetryNextVariant(rpc.error)) {
+        continue;
+      }
+
+      return { ok: false, error: err };
+    }
+
+    const resultTxid = extractTxid(rpc.result);
+    if (!resultTxid) {
+      return { ok: false, error: { message: 'RPC tx broadcast returned invalid tx hash' } };
+    }
+
+    return {
+      ok: true,
+      txid: resultTxid,
+      modeUsed: `${variant.method}:${variant.paramsShape}`,
+      rpcResult: rpc.result,
+    };
   }
 
   return {
     ok: false,
-    txid,
-    error: lastError ?? { message: 'Failed to submit raw transaction in all compatibility modes' },
+    error: lastError ?? { message: 'Failed to submit raw transaction in all compatibility variants' },
   };
 }
 
-function paramsForMode(mode: RawTxMode, hexRawTx: string, rawTxB64: string): JsonRpcParams {
-  switch (mode) {
-    case 'array:string:hex': return [hexRawTx];
-    case 'array:obj:rawTx:hex': return [{ rawTx: hexRawTx }];
-    case 'array:obj:raw_tx:hex': return [{ raw_tx: hexRawTx }];
-    case 'array:obj:tx:hex': return [{ tx: hexRawTx }];
-    case 'obj:rawTx:hex': return { rawTx: hexRawTx };
-    case 'obj:raw_tx:hex': return { raw_tx: hexRawTx };
-    case 'obj:tx:hex': return { tx: hexRawTx };
-    case 'array:obj:rawTxB64:b64': return [{ rawTxB64: rawTxB64 }];
-    case 'array:string:b64': return [rawTxB64];
-  }
+function paramsForVariant(variant: Variant, rawTx: string): JsonRpcParams {
+  if (variant.paramsShape === 'objectArray') return [{ rawTx }];
+  return [rawTx];
 }
 
-function buildModeOrder(cachedMode: RawTxMode | undefined, forced: boolean): RawTxMode[] {
-  const base = forced ? [...HEX_MODES, ...B64_MODES] : [...HEX_MODES, ...B64_MODES];
-  if (!cachedMode) return base;
-  return [cachedMode, ...base.filter((x) => x !== cachedMode)];
+function orderVariants(capability: CapabilityCache | undefined): Variant[] {
+  if (!capability) return [...RETRYABLE_VARIANTS];
+
+  const methodSet = new Set(capability.methods);
+  const positionalSet = new Set(capability.positionalMethods);
+
+  const scored = RETRYABLE_VARIANTS.map((variant, idx) => {
+    let score = 0;
+    if (methodSet.has(variant.method)) score += 100;
+    if (variant.paramsShape === 'array' && positionalSet.has(variant.method)) score += 50;
+    score -= idx;
+    return { variant, score };
+  }).sort((a, b) => b.score - a.score);
+
+  return scored.map((x) => x.variant);
 }
 
 function normalizeRawTx(rawTx: string): string {
   if (typeof rawTx !== 'string') {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
+    throw new Error('Invalid raw transaction: expected hex string');
   }
-  const cleaned = rawTx.startsWith('0x') || rawTx.startsWith('0X') ? rawTx.slice(2) : rawTx;
-  if (!/^[0-9a-f]+$/i.test(cleaned)) {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
-  }
-  if (cleaned.length % 2 !== 0) {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: hex length must be even');
-  }
-  return `0x${cleaned.toLowerCase()}`;
-}
 
+  const trimmed = rawTx.trim();
+  if (!trimmed.startsWith('0x') && !trimmed.startsWith('0X')) {
+    throw new Error('Invalid raw transaction: must start with 0x');
+  }
+
+  let hex = trimmed.slice(2);
+  if (!/^[0-9a-f]*$/i.test(hex)) {
+    throw new Error('Invalid raw transaction: must be hex');
+  }
+
+  if (hex.length === 0 || /^0+$/i.test(hex)) {
+    throw new Error('Invalid raw transaction: payload too short');
+  }
+
+  if (hex.length % 2 !== 0) {
+    hex = `0${hex}`;
+  }
+
+  if (hex.length <= 2) {
+    throw new Error('Invalid raw transaction: payload too short');
+  }
+
+  return `0x${hex.toLowerCase()}`;
+}
 
 function formatRpcErrorMessage(error: JsonRpcError): string {
   const base = error.message ?? 'RPC error';
   return typeof error.code === 'number' ? `${base} (code ${error.code})` : base;
 }
 
-function isInvalidParams(error: JsonRpcError): boolean {
-  return error.code === -32602 || /invalid params?/i.test(error.message ?? '');
+function shouldRetryNextVariant(error: JsonRpcError): boolean {
+  return error.code === -32602 || error.code === -32601;
 }
 
-function isMethodNotFound(error: JsonRpcError): boolean {
-  return error.code === -32601 || /method not found|unsupported method|does not exist/i.test(error.message ?? '');
+function isAnimicaTxTerminalError(error: JsonRpcError): boolean {
+  return error.code === -32010 || error.code === -32011 || error.code === -32012;
 }
 
-function isAlreadyKnown(error: JsonRpcError): boolean {
-  return /already known|already in mempool|known transaction|duplicate/i.test(error.message ?? '');
-}
+function decorateAnimicaError(error: { code?: number; message: string; data?: unknown }): { code?: number; message: string; data?: unknown } {
+  if (error.code === -32011) {
+    const data = error.data as Record<string, unknown> | undefined;
+    const expected = data?.expectedChainId ?? data?.expected_chain_id;
+    const actual = data?.detectedChainId ?? data?.detected_chain_id;
+    return {
+      ...error,
+      message: `ChainId mismatch. Expected ${String(expected ?? 'unknown')}, detected ${String(actual ?? 'unknown')}. Switch network and retry.`,
+    };
+  }
 
-function isRetriableRpcError(error: JsonRpcError): boolean {
-  const msg = (error.message ?? '').toLowerCase();
-  return msg.includes('timeout') || msg.includes('temporar') || msg.includes('bad gateway') || msg.includes('gateway timeout');
+  if (error.code === -32012) {
+    const data = error.data as Record<string, unknown> | undefined;
+    const feeSummary = data?.fee ? ` Current fee fields: ${JSON.stringify(data.fee)}` : '';
+    return {
+      ...error,
+      message: `Fee too low. Increase fee and retry.${feeSummary}`,
+    };
+  }
+
+  if (error.code === -32010) {
+    return {
+      ...error,
+      message: 'Transaction decode failed. Verify signed transaction bytes and retry.',
+    };
+  }
+
+  return error;
 }
 
 function extractTxid(result: unknown): string | undefined {
-  if (typeof result === 'string') return result;
+  if (typeof result === 'string' && result.startsWith('0x')) return result;
   if (!result || typeof result !== 'object') return undefined;
   const obj = result as Record<string, unknown>;
   for (const key of ['txid', 'hash', 'txHash', 'transactionHash']) {
     const value = obj[key];
-    if (typeof value === 'string' && value.length > 0) return value;
+    if (typeof value === 'string' && value.startsWith('0x')) return value;
   }
   return undefined;
 }
 
-function summarizeRawTx(rawTx: string): Record<string, unknown> {
-  const clean = rawTx.startsWith('0x') ? rawTx.slice(2) : rawTx;
-  return {
-    len: clean.length,
-    prefix: `${rawTx.slice(0, 14)}…`,
-    suffix: `…${rawTx.slice(-10)}`,
-  };
+function summarizeRawTx(rawTx: string): string {
+  return `${rawTx.slice(0, 10)}... (len=${rawTx.length})`;
 }
 
-async function postCheckSubmittedTx(
+async function discoverCapabilities(
   fetchImpl: typeof fetch,
   setTimeoutImpl: typeof setTimeout,
   clearTimeoutImpl: typeof clearTimeout,
   rpcUrl: string,
   timeoutMs: number,
-  txid: string,
   rpcId: number,
-): Promise<SubmitRawTransactionResult> {
-  const methods = ['tx.getTransactionByHash', 'tx.getTransaction', 'tx.getReceipt', 'tx.getTransactionReceipt'];
-  for (const method of methods) {
-    const sent = await sendJsonRpc(fetchImpl, setTimeoutImpl, clearTimeoutImpl, {
+): Promise<CapabilityCache | undefined> {
+  const key = `unknown::${rpcUrl}`;
+  const cache = await readCapabilityCache(key);
+  if (cache) return cache;
+
+  const discover = await sendJsonRpc(fetchImpl, setTimeoutImpl, clearTimeoutImpl, {
+    rpcUrl,
+    timeoutMs,
+    body: { jsonrpc: '2.0', id: rpcId, method: 'rpc.discover', params: [] },
+  });
+
+  let capability: CapabilityCache | undefined;
+
+  if (discover.response?.result) {
+    capability = parseDiscoverResult(discover.response.result);
+  }
+
+  if (!capability) {
+    const listMethods = await sendJsonRpc(fetchImpl, setTimeoutImpl, clearTimeoutImpl, {
       rpcUrl,
       timeoutMs,
-      body: {
-        jsonrpc: '2.0',
-        id: rpcId,
-        method,
-        params: [txid],
-      },
+      body: { jsonrpc: '2.0', id: rpcId, method: 'rpc.listMethods', params: [] },
     });
-    if (sent.transportError || sent.response?.error) continue;
-    if (sent.response?.result) {
-      debugLog('submit.post_check.hit', { method, txid });
-      return { ok: true, txid, modeUsed: 'array:string:hex', rpcResult: sent.response.result };
+    if (listMethods.response?.result) {
+      capability = parseListMethodsResult(listMethods.response.result);
     }
   }
-  return { ok: false, error: { message: 'post-check could not confirm tx acceptance' } };
+
+  if (capability) {
+    await writeCapabilityCache(key, capability);
+  }
+
+  return capability;
+}
+
+function parseDiscoverResult(result: unknown): CapabilityCache | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const methodsField = (result as any).methods;
+  if (!Array.isArray(methodsField)) return undefined;
+
+  const methods: string[] = [];
+  const positionalMethods: string[] = [];
+
+  for (const entry of methodsField) {
+    const name = typeof entry?.name === 'string' ? entry.name : undefined;
+    if (!name) continue;
+    methods.push(name);
+    if (Array.isArray(entry?.params)) positionalMethods.push(name);
+  }
+
+  return { methods, positionalMethods, ts: Date.now() };
+}
+
+function parseListMethodsResult(result: unknown): CapabilityCache | undefined {
+  if (!Array.isArray(result)) return undefined;
+  const methods = result.filter((x): x is string => typeof x === 'string');
+  return { methods, positionalMethods: [], ts: Date.now() };
 }
 
 async function sendJsonRpc(
@@ -325,10 +343,6 @@ async function sendJsonRpc(
       parsed = undefined;
     }
 
-    if (!response.ok && [408, 429, 502, 503, 504].includes(response.status)) {
-      return { httpStatus: response.status, transportError: `HTTP ${response.status}` };
-    }
-
     return { response: parsed, httpStatus: response.status };
   } catch (error) {
     return { transportError: error instanceof Error ? error.message : String(error) };
@@ -337,31 +351,18 @@ async function sendJsonRpc(
   }
 }
 
-async function readForceCompatFlag(): Promise<boolean> {
-  const stored = await getStorageValue(FORCE_RAWTX_COMPAT_KEY);
-  return stored === true || stored === '1' || stored === 'true';
-}
-
-async function readModeCache(cacheKey: string): Promise<RawTxMode | undefined> {
-  const value = await getStorageValue(MODE_CACHE_KEY);
+async function readCapabilityCache(cacheKey: string): Promise<CapabilityCache | undefined> {
+  const value = await getStorageValue(METHOD_CACHE_KEY);
   if (!value || typeof value !== 'object') return undefined;
-  const map = value as Record<string, { mode?: RawTxMode }>;
-  return map[cacheKey]?.mode;
+  const map = value as Record<string, CapabilityCache | undefined>;
+  return map[cacheKey];
 }
 
-async function writeModeCache(cacheKey: string, mode: RawTxMode): Promise<void> {
-  const value = await getStorageValue(MODE_CACHE_KEY);
-  const map = value && typeof value === 'object' ? (value as Record<string, { mode: RawTxMode; ts: number }>) : {};
-  map[cacheKey] = { mode, ts: Date.now() };
-  await setStorageValue(MODE_CACHE_KEY, map);
-}
-
-async function clearModeCache(cacheKey: string): Promise<void> {
-  const value = await getStorageValue(MODE_CACHE_KEY);
-  if (!value || typeof value !== 'object') return;
-  const map = value as Record<string, unknown>;
-  delete map[cacheKey];
-  await setStorageValue(MODE_CACHE_KEY, map);
+async function writeCapabilityCache(cacheKey: string, cap: CapabilityCache): Promise<void> {
+  const value = await getStorageValue(METHOD_CACHE_KEY);
+  const map = value && typeof value === 'object' ? (value as Record<string, CapabilityCache>) : {};
+  map[cacheKey] = cap;
+  await setStorageValue(METHOD_CACHE_KEY, map);
 }
 
 const memoryStorage = new Map<string, unknown>();
@@ -405,29 +406,10 @@ function getClearTimeout(): typeof clearTimeout {
   return clearTimeoutFn;
 }
 
-function backoffMs(attempt: number): number {
-  const isTest = typeof (globalThis as any).__vitest_worker__ !== 'undefined' || (import.meta as any)?.env?.MODE === 'test';
-  if (isTest) return 1;
-  const base = Math.min(4000, 250 * 2 ** Math.max(0, attempt - 1));
-  const jitter = Math.floor(Math.random() * 150);
-  return base + jitter;
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
 function debugLog(event: string, data: Record<string, unknown>): void {
+  const enabled = (globalThis as any).__ANIMICA_DEBUG_TX_BROADCAST__ === true
+    || (globalThis as any).__ANIMICA_DEBUG_TX_BROADCAST__ === '1'
+    || (import.meta as any)?.env?.VITE_DEBUG_TX_BROADCAST === '1';
+  if (!enabled) return;
   console.debug(`[wallet-rpc][rawtx] ${event}`, data);
 }

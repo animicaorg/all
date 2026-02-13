@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildJsonRpcRequest, RpcClient } from '../src/core/rpc/client';
 
 describe('tx.sendRawTransaction request shape', () => {
-  it('builds JSON-RPC payload using named params with rawTx', () => {
+  it('normalizes named rawTx params into positional array for tx broadcast', () => {
     const payload = buildJsonRpcRequest(
       'tx.sendRawTransaction',
       { rawTx: '0xdeadbeef' },
@@ -14,23 +14,20 @@ describe('tx.sendRawTransaction request shape', () => {
       jsonrpc: '2.0',
       id: 123,
       method: 'tx.sendRawTransaction',
-      params: { rawTx: '0xdeadbeef' },
+      params: ['0xdeadbeef'],
     });
   });
 
-  it('validates that rawTx is even-length hex (with or without 0x)', async () => {
+  it('validates malformed rawTx before network calls', async () => {
     const client = new RpcClient(['http://localhost:8545/rpc']);
 
-    await expect(client.sendRawTransaction('not-hex')).rejects.toThrow(/hex string/);
-    await expect(client.sendRawTransaction('deadbee')).rejects.toThrow(/even/);
-    await expect(client.sendRawTransaction('0xabc')).rejects.toThrow(/even/);
+    await expect(client.sendRawTransaction('not-hex')).rejects.toThrow(/must start with 0x/);
+    await expect(client.sendRawTransaction('0xzz')).rejects.toThrow(/must be hex/);
+    await expect(client.sendRawTransaction('0x00')).rejects.toThrow(/too short/);
   });
 
-  it('shows canonical and fallback schema examples', () => {
-    const canonical = buildJsonRpcRequest('tx.sendRawTransaction', { rawTx: '0xabcd1234' }, 1);
-    const fallback = buildJsonRpcRequest('tx.sendRawTransaction', ['0xabcd1234'], 2);
-
-    expect(canonical.params).toEqual({ rawTx: '0xabcd1234' });
-    expect(fallback.params).toEqual(['0xabcd1234']);
+  it('keeps read-only calls untouched', () => {
+    const payload = buildJsonRpcRequest('chain.getHead', { foo: 'bar' } as any, 2);
+    expect(payload.params).toEqual({ foo: 'bar' });
   });
 });
