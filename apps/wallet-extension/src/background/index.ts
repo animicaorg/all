@@ -56,11 +56,11 @@ interface TxRpcDebugState {
     method: string;
     params: unknown;
     requestBody: string;
-    id: number;
     timestamp: number;
   };
   lastSendResponse?: unknown;
   lastSendError?: string | null;
+  sendAttempts?: unknown[];
 }
 
 const txRpcDebugState: TxRpcDebugState = {
@@ -80,10 +80,8 @@ function sanitizeRpcParams(value: unknown): unknown {
 }
 
 function captureSendRpcDebug(rpcUrl: string, method: string, params: unknown): void {
-  const id = Date.now();
   const payload = {
     jsonrpc: '2.0',
-    id,
     method,
     params: sanitizeRpcParams(params),
   };
@@ -92,17 +90,17 @@ function captureSendRpcDebug(rpcUrl: string, method: string, params: unknown): v
     method,
     params: payload.params,
     requestBody: JSON.stringify(payload),
-    id,
     timestamp: Date.now(),
   };
   txRpcDebugState.lastSendError = null;
   console.debug('[wallet-bg][send-rpc] request', txRpcDebugState.lastSendRequest);
 }
 
-function captureSendRpcResponse(response: unknown, error: string | null = null): void {
+function captureSendRpcResponse(response: unknown, error: string | null = null, attempts?: unknown[]): void {
   txRpcDebugState.lastSendResponse = response;
   txRpcDebugState.lastSendError = error;
-  console.debug('[wallet-bg][send-rpc] response', { response, error });
+  if (attempts) txRpcDebugState.sendAttempts = attempts;
+  console.debug('[wallet-bg][send-rpc] response', { response, error, attempts });
 }
 
 function parseBaseUnitAmount(value: unknown): bigint {
@@ -558,12 +556,12 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     
     // Send transaction
     const rpcMethod = 'tx.sendRawTransaction';
-    const rpcParams: [string] = [result.rawTx];
+    const rpcParams: { rawTx: string } = { rawTx: result.rawTx };
 
     txDebugLog('sending-tx', {
       rpcUrl: client.getActiveUrl(),
       rpcMethod,
-      paramsShape: 'array',
+      paramsShape: 'object.rawTx',
       rawTxPrefix: result.rawTx.slice(0, 66),
       rawTxSummary: summarizeRawTx(result.rawTx),
     });
@@ -573,9 +571,9 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     let sendResult: unknown;
     try {
       sendResult = await client.sendRawTransaction(result.rawTx);
-      captureSendRpcResponse(sendResult, null);
+      captureSendRpcResponse(sendResult, null, client.getLastCallAttempts?.() ?? []);
     } catch (rpcError) {
-      captureSendRpcResponse(null, rpcError instanceof Error ? rpcError.message : String(rpcError));
+      captureSendRpcResponse(null, rpcError instanceof Error ? rpcError.message : String(rpcError), client.getLastCallAttempts?.() ?? []);
       throw rpcError;
     }
 
