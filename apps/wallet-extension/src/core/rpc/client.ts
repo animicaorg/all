@@ -36,17 +36,17 @@ export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: n
   };
 }
 
-function validateSendRawTransactionParams(params: JsonRpcParams): asserts params is { rawTx: string } {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+function validateSendRawTransactionParams(params: JsonRpcParams): asserts params is [string] {
+  if (!Array.isArray(params)) {
     throw new Error(
-      `Invalid tx.sendRawTransaction params: expected object { rawTx: string }, got ${Array.isArray(params) ? 'array' : typeof params}`,
+      `Invalid tx.sendRawTransaction params: expected array [rawTx], got ${Array.isArray(params) ? 'array' : typeof params}`,
     );
   }
 
-  const rawTx = (params as Record<string, unknown>).rawTx;
+  const rawTx = params[0];
   if (typeof rawTx !== 'string' || !/^0x[0-9a-f]+$/i.test(rawTx)) {
     throw new Error(
-      'Invalid tx.sendRawTransaction params.rawTx: expected 0x-prefixed hex string in object form { rawTx: "0x..." }',
+      'Invalid tx.sendRawTransaction params[0]: expected 0x-prefixed hex string in array form ["0x..."]',
     );
   }
 }
@@ -253,8 +253,8 @@ export class RpcClient {
     //   1. Array form:  params: ["0xabcd..."]  → binds to positional arg rawTx
     //   2. Object form: params: { rawTx: "0xabcd..." }  → binds to keyword arg rawTx
     //
-    // We use object form for clarity and validation.
-    const params = { rawTx };
+    // Match CLI request shape exactly: params is positional array [rawTx].
+    const params: [string] = [rawTx];
     validateSendRawTransactionParams(params);
     return this.call('tx.sendRawTransaction', params);
   }

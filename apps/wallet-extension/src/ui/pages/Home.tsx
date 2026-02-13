@@ -278,6 +278,29 @@ function Home({ onLock }: HomeProps) {
                     {debugState?.lastPingError && <div style={{ marginLeft: 8 }}>Ping: {debugState.lastPingError}</div>}
                   </div>
                 )}
+
+                {debugState?.txRpcDebug?.lastSendRequest && (
+                  <div style={{ marginTop: 8, padding: 8, background: '#e8f4fd', borderRadius: 4 }}>
+                    <div><strong>Last Send RPC Request:</strong></div>
+                    <div style={{ marginLeft: 8 }}>Method: {debugState.txRpcDebug.lastSendRequest.method}</div>
+                    <div style={{ marginLeft: 8, wordBreak: 'break-all' }}>RPC URL: {debugState.txRpcDebug.lastSendRequest.rpcUrl}</div>
+                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto' }}>
+                      {JSON.stringify(debugState.txRpcDebug.lastSendRequest.params, null, 2)}
+                    </pre>
+                    <details>
+                      <summary><strong>Raw JSON-RPC request body</strong></summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto' }}>
+                        {debugState.txRpcDebug.lastSendRequest.requestBody}
+                      </pre>
+                    </details>
+                    <details style={{ marginTop: 6 }}>
+                      <summary><strong>Raw send response / error</strong></summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto' }}>
+                        {JSON.stringify({ response: debugState?.txRpcDebug?.lastSendResponse ?? null, error: debugState?.txRpcDebug?.lastSendError ?? null }, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                )}
                 <details style={{ marginTop: 8 }}>
                   <summary><strong>Raw Balance Response</strong></summary>
                   <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>

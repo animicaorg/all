@@ -210,7 +210,7 @@ reorged_out       → Chain reorg
 
 ✅ **Vault encrypted** with AES-GCM + PBKDF2 (100k iterations)  
 ✅ **Auto-lock timer** configurable (default 5 min)  
-✅ **Domain separation** for signing: "animica/tx.v1"  
+✅ **Domain separation** for signing: "tx" (CLI-compatible)  
 ✅ **Canonical CBOR** encoding for determinism  
 ✅ **Idempotent tx tracking** prevents double-spend  
 ✅ **Permission isolation** per origin  
