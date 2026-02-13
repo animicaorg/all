@@ -13,6 +13,17 @@ interface JsonRpcRequest {
   params: JsonRpcParams;
 }
 
+interface RpcAttemptDebug {
+  method: string;
+  url: string;
+  requestBody: string;
+  httpStatus?: number;
+  rawResponseBody?: string;
+  parsedResponse?: unknown;
+  error?: string;
+  schema?: string;
+}
+
 function shouldDebugRpcPayloads(): boolean {
   try {
     const envFlag = (import.meta as any)?.env?.VITE_DEBUG_RPC_PAYLOADS;
@@ -27,7 +38,9 @@ function shouldDebugRpcPayloads(): boolean {
   }
 }
 
-export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: number = Date.now()): JsonRpcRequest {
+let requestIdSeed = 1;
+
+export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: number = requestIdSeed++): JsonRpcRequest {
   return {
     jsonrpc: '2.0',
     id,
@@ -36,19 +49,15 @@ export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: n
   };
 }
 
-function validateSendRawTransactionParams(params: JsonRpcParams): asserts params is [string] {
-  if (!Array.isArray(params)) {
-    throw new Error(
-      `Invalid tx.sendRawTransaction params: expected array [rawTx], got ${Array.isArray(params) ? 'array' : typeof params}`,
-    );
+function validateRawTx(rawTx: string): string {
+  if (typeof rawTx !== 'string' || !rawTx.startsWith('0x') || !/^0x[0-9a-f]+$/i.test(rawTx)) {
+    throw new Error('Invalid tx.sendRawTransaction rawTx: expected 0x-prefixed hex string');
   }
-
-  const rawTx = params[0];
-  if (typeof rawTx !== 'string' || !/^0x[0-9a-f]+$/i.test(rawTx)) {
-    throw new Error(
-      'Invalid tx.sendRawTransaction params[0]: expected 0x-prefixed hex string in array form ["0x..."]',
-    );
+  const hex = rawTx.slice(2);
+  if (hex.length % 2 !== 0) {
+    throw new Error('Invalid tx.sendRawTransaction rawTx: hex length must be even');
   }
+  return '0x' + hex.toLowerCase();
 }
 
 class RpcResponseError extends Error {
@@ -136,13 +145,26 @@ export class RpcClient {
   private currentIndex: number = 0;
   private failedUrls: Set<string> = new Set();
   private timeoutMs: number;
+  private requestId: number = 1;
+  private lastCallAttempts: RpcAttemptDebug[] = [];
 
   constructor(urls: string[], options: RpcClientOptions = {}) {
     this.urls = urls;
     this.timeoutMs = options.timeoutMs ?? RPC_TIMEOUT_MS;
   }
 
-  async call(method: string, params: JsonRpcParams = []): Promise<any> {
+  private nextRequestId(): number {
+    const id = this.requestId;
+    this.requestId += 1;
+    if (this.requestId > 1_000_000_000) this.requestId = 1;
+    return id;
+  }
+
+  getLastCallAttempts(): RpcAttemptDebug[] {
+    return [...this.lastCallAttempts];
+  }
+
+  async call(method: string, params: JsonRpcParams = [], schema?: string): Promise<any> {
     let lastError: Error | null = null;
     const fetchImpl = getFetch();
     const setTimeoutImpl = getSetTimeout();
@@ -159,7 +181,10 @@ export class RpcClient {
       const controller = new AbortController();
       const timeout = setTimeoutImpl(() => controller.abort(), this.timeoutMs);
 
-      const request = buildJsonRpcRequest(method, params);
+      const request = buildJsonRpcRequest(method, params, this.nextRequestId());
+      const requestBody = JSON.stringify(request);
+      const attempt: RpcAttemptDebug = { method, url, requestBody, schema };
+      this.lastCallAttempts.push(attempt);
 
       try {
         const response = await fetchImpl(url, {
@@ -168,14 +193,25 @@ export class RpcClient {
             'Content-Type': 'application/json',
           },
           signal: controller.signal,
-          body: JSON.stringify(request),
+          body: requestBody,
         });
+
+        attempt.httpStatus = response.status;
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const json = await response.json();
+        let json: any = {};
+        if (typeof (response as any).text === 'function') {
+          const responseText = await (response as any).text();
+          attempt.rawResponseBody = responseText;
+          json = responseText ? JSON.parse(responseText) : {};
+        } else {
+          json = await (response as any).json();
+          attempt.rawResponseBody = JSON.stringify(json);
+        }
+        attempt.parsedResponse = json;
 
         if (json.error) {
           const codePart = typeof json.error.code === 'number' ? ` (code ${json.error.code})` : '';
@@ -207,6 +243,7 @@ export class RpcClient {
         this.failedUrls.delete(url);
         return json.result;
       } catch (error: unknown) {
+        attempt.error = error instanceof Error ? error.message : String(error);
         if (error instanceof RpcResponseError) {
           throw error;
         }
@@ -246,17 +283,34 @@ export class RpcClient {
   }
 
   async sendRawTransaction(rawTx: string): Promise<string> {
-    // NODE RPC SIGNATURE (rpc/methods/tx.py):
-    //   def tx_send_raw_transaction(rawTx: str) -> t.Any
-    //
-    // The RPC dispatcher (rpc/jsonrpc.py _bind_call_args) accepts params in two forms:
-    //   1. Array form:  params: ["0xabcd..."]  → binds to positional arg rawTx
-    //   2. Object form: params: { rawTx: "0xabcd..." }  → binds to keyword arg rawTx
-    //
-    // Match CLI request shape exactly: params is positional array [rawTx].
-    const params: [string] = [rawTx];
-    validateSendRawTransactionParams(params);
-    return this.call('tx.sendRawTransaction', params);
+    const normalizedRawTx = validateRawTx(rawTx);
+    this.lastCallAttempts = [];
+
+    const attempts: Array<{ schema: string; params: JsonRpcParams }> = [
+      { schema: 'named.rawTx', params: { rawTx: normalizedRawTx } },
+      { schema: 'positional', params: [normalizedRawTx] },
+      { schema: 'array.named.rawTx', params: [{ rawTx: normalizedRawTx }] },
+      { schema: 'named.raw_tx', params: { raw_tx: normalizedRawTx } },
+      { schema: 'array.named.raw_tx', params: [{ raw_tx: normalizedRawTx }] },
+      { schema: 'named.tx', params: { tx: normalizedRawTx } },
+      { schema: 'array.named.tx', params: [{ tx: normalizedRawTx }] },
+      { schema: 'positional.withOptions', params: [normalizedRawTx, {}] },
+      { schema: 'array.named.rawTx.withOptions', params: [{ rawTx: normalizedRawTx }, {}] },
+    ];
+
+    let lastErr: unknown;
+    for (const attempt of attempts) {
+      try {
+        return await this.call('tx.sendRawTransaction', attempt.params, attempt.schema);
+      } catch (error) {
+        lastErr = error;
+        if (!(error instanceof RpcResponseError) || error.code !== -32602) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   async getTransaction(txid: string): Promise<any> {
