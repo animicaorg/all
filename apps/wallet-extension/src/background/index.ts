@@ -120,6 +120,24 @@ function summarizeRawTx(rawTx: string): Record<string, unknown> {
     last16BytesHex: normalized.slice(Math.max(0, normalized.length - 32)),
   };
 }
+
+function extractSubmittedTxHash(sendResult: unknown): string {
+  if (typeof sendResult === 'string' && sendResult.length > 0) {
+    return sendResult;
+  }
+
+  if (sendResult && typeof sendResult === 'object') {
+    const candidate = sendResult as Record<string, unknown>;
+    for (const key of ['tx_hash', 'hash', 'txHash', 'transactionHash']) {
+      const value = candidate[key];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+  }
+
+  throw new Error(`Unexpected tx.sendRawTransaction result: ${JSON.stringify(sendResult)}`);
+}
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Animica Wallet installed');
@@ -577,7 +595,14 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       throw rpcError;
     }
 
-    txDebugLog('tx-sent', { txid: result.txid, sendResult });
+    const submittedTxHash = extractSubmittedTxHash(sendResult);
+
+    txDebugLog('tx-sent', {
+      localTxid: result.txid,
+      submittedTxHash,
+      sendResult,
+      hashMismatch: submittedTxHash !== result.txid,
+    });
     
     // Store in tx cache (convert to old format for now)
     const txStore = TxStore.fromJSON(vaultData.txCache);
@@ -595,12 +620,18 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       status: 'submitted' as TxStatus,
       submittedAt: Date.now(),
     };
+
+    // Match CLI semantics: use tx hash returned by tx.sendRawTransaction.
+    // Some nodes return an authoritative hash string or object payload.
+    pendingTx.txid = submittedTxHash;
+    pendingTx.unsignedHash = submittedTxHash;
+
     txStore.upsert(pendingTx);
     vaultData.txCache = txStore.toJSON();
     
     await saveVaultData(vaultData);
     
-    return { txid: result.txid };
+    return { txid: submittedTxHash };
   } catch (error) {
     // Log for debugging
     console.error('[wallet-bg] handleSendTransaction failed:', error);
