@@ -1,91 +1,93 @@
 #!/usr/bin/env python3
-"""Probe tx.sendRawTransaction params schema against an RPC endpoint."""
+"""Probe tx.sendRawTransaction param shapes against an RPC endpoint."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from pathlib import Path
+import urllib.request
 from typing import Any
 
-import requests
+
+def _strip_0x(v: str) -> str:
+    return v[2:] if v.startswith(("0x", "0X")) else v
 
 
-def load_raw_tx(raw: str | None, raw_file: str | None) -> str:
-    if raw and raw_file:
-        raise SystemExit("Provide only one of --raw or --raw-file")
-    if raw_file:
-        return Path(raw_file).read_text(encoding="utf-8").strip()
-    if raw:
-        return raw.strip()
-    data = sys.stdin.read().strip()
-    if not data:
-        raise SystemExit("No raw tx provided. Use --raw, --raw-file, or stdin.")
-    return data
+def _to_0x(v: str) -> str:
+    h = _strip_0x(v)
+    return "0x" + h
 
 
-def sanitize(v: Any) -> Any:
-    if isinstance(v, str) and v.startswith("0x") and len(v) > 18:
-        return f"{v[:10]}...{v[-8:]} (len={len(v)})"
-    if isinstance(v, dict):
-        return {k: sanitize(val) for k, val in v.items()}
-    if isinstance(v, list):
-        return [sanitize(x) for x in v]
-    return v
+def _post_json(url: str, payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+    return json.loads(body) if body else {}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="https://mainnet.animica.org/rpc")
-    ap.add_argument("--raw")
-    ap.add_argument("--raw-file")
-    ap.add_argument("--timeout", type=float, default=15.0)
+    ap.add_argument("--url", required=True, help="RPC URL")
+    ap.add_argument("--raw-tx", required=True, help="Raw tx hex (with or without 0x)")
     args = ap.parse_args()
 
-    raw_tx = load_raw_tx(args.raw, args.raw_file)
+    raw_0x = _to_0x(args.raw_tx)
+    raw_no = _strip_0x(args.raw_tx)
 
-    candidates: list[tuple[str, Any]] = [
-        ("A.positional", [raw_tx]),
-        ("B.named.rawTx", {"rawTx": raw_tx}),
-        ("B.named.raw_tx", {"raw_tx": raw_tx}),
-        ("B.named.tx", {"tx": raw_tx}),
-        ("B.named.raw", {"raw": raw_tx}),
-        ("C.array.named.rawTx", [{"rawTx": raw_tx}]),
-        ("C.array.named.raw_tx", [{"raw_tx": raw_tx}]),
-        ("C.array.named.tx", [{"tx": raw_tx}]),
-        ("D.positional.withOptions", [raw_tx, {}]),
-        ("D.array.named.rawTx.withOptions", [{"rawTx": raw_tx}, {}]),
+    attempts: list[tuple[str, Any]] = [
+        ("params:[0x]", [raw_0x]),
+        ("params:[no0x]", [raw_no]),
+        ("params:{rawTx:0x}", {"rawTx": raw_0x}),
+        ("params:{rawTx:no0x}", {"rawTx": raw_no}),
+        ("params:{raw_tx:0x}", {"raw_tx": raw_0x}),
+        ("params:{raw_tx:no0x}", {"raw_tx": raw_no}),
+        ("params:[{rawTx:0x}]", [{"rawTx": raw_0x}]),
+        ("params:[{raw_tx:0x}]", [{"raw_tx": raw_0x}]),
+        ("params:[{tx:0x}]", [{"tx": raw_0x}]),
+        ("params:{tx:0x}", {"tx": raw_0x}),
+        ("params:[0x,{}]", [raw_0x, {}]),
+        ("params:[{rawTx:0x},{}]", [{"rawTx": raw_0x}, {}]),
     ]
 
-    accepted = []
-    for idx, (label, params) in enumerate(candidates, start=1):
-        payload = {"jsonrpc": "2.0", "id": idx, "method": "tx.sendRawTransaction", "params": params}
-        print(f"\n[{label}] request={json.dumps(sanitize(payload), ensure_ascii=False)}")
-        try:
-            resp = requests.post(args.url, json=payload, timeout=args.timeout)
-            text = resp.text
-            print(f"status={resp.status_code}")
-            print(f"response={text}")
-            try:
-                out = resp.json()
-            except Exception:
-                continue
-            if isinstance(out, dict) and out.get("error") is None:
-                accepted.append(label)
-            elif isinstance(out, dict) and "error" not in out and out.get("result") is not None:
-                accepted.append(label)
-        except Exception as exc:
-            print(f"request_error={exc}")
+    winners: list[str] = []
 
-    print("\n=== summary ===")
-    if accepted:
-        print("accepted schemas:")
-        for label in accepted:
-            print(f"- {label}")
-    else:
-        print("no schema accepted (or all failed before validation)")
-    return 0
+    for idx, (label, params) in enumerate(attempts, start=1):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": idx,
+            "method": "tx.sendRawTransaction",
+            "params": params,
+        }
+        try:
+            res = _post_json(args.url, payload)
+        except Exception as exc:
+            print(f"[{idx:02d}] {label}: transport_error={exc}")
+            continue
+
+        if "error" in res:
+            err = res.get("error", {})
+            code = err.get("code")
+            msg = err.get("message")
+            data = err.get("data")
+            print(f"[{idx:02d}] {label}: error code={code} message={msg!r} data={data!r}")
+            if code != -32602:
+                winners.append(label)
+                break
+        else:
+            print(f"[{idx:02d}] {label}: result={res.get('result')!r}")
+            winners.append(label)
+            break
+
+    if winners:
+        print("\nwinning schema(s):")
+        for w in winners:
+            print(f" - {w}")
+        return 0
+
+    print("\nNo non--32602 response observed")
+    return 1
 
 
 if __name__ == "__main__":

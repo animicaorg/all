@@ -50,10 +50,14 @@ export function buildJsonRpcRequest(method: string, params: JsonRpcParams, id: n
 }
 
 function validateRawTx(rawTx: string): string {
-  if (typeof rawTx !== 'string' || !rawTx.startsWith('0x') || !/^0x[0-9a-f]+$/i.test(rawTx)) {
-    throw new Error('Invalid tx.sendRawTransaction rawTx: expected 0x-prefixed hex string');
+  if (typeof rawTx !== 'string') {
+    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
   }
-  const hex = rawTx.slice(2);
+  const hasPrefix = rawTx.startsWith('0x') || rawTx.startsWith('0X');
+  const hex = hasPrefix ? rawTx.slice(2) : rawTx;
+  if (!/^[0-9a-f]+$/i.test(hex)) {
+    throw new Error('Invalid tx.sendRawTransaction rawTx: expected hex string');
+  }
   if (hex.length % 2 !== 0) {
     throw new Error('Invalid tx.sendRawTransaction rawTx: hex length must be even');
   }
@@ -289,13 +293,6 @@ export class RpcClient {
     const attempts: Array<{ schema: string; params: JsonRpcParams }> = [
       { schema: 'named.rawTx', params: { rawTx: normalizedRawTx } },
       { schema: 'positional', params: [normalizedRawTx] },
-      { schema: 'array.named.rawTx', params: [{ rawTx: normalizedRawTx }] },
-      { schema: 'named.raw_tx', params: { raw_tx: normalizedRawTx } },
-      { schema: 'array.named.raw_tx', params: [{ raw_tx: normalizedRawTx }] },
-      { schema: 'named.tx', params: { tx: normalizedRawTx } },
-      { schema: 'array.named.tx', params: [{ tx: normalizedRawTx }] },
-      { schema: 'positional.withOptions', params: [normalizedRawTx, {}] },
-      { schema: 'array.named.rawTx.withOptions', params: [{ rawTx: normalizedRawTx }, {}] },
     ];
 
     let lastErr: unknown;

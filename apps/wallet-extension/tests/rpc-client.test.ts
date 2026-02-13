@@ -60,8 +60,25 @@ describe('RpcClient sendRawTransaction error handling', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ result: 'x' }) })) as any;
     const client = await createClient(fetchMock);
 
-    await expect(client.sendRawTransaction('abc')).rejects.toThrow('expected 0x-prefixed hex string');
+    await expect(client.sendRawTransaction('abc')).rejects.toThrow('hex length must be even');
+    await expect(client.sendRawTransaction('0xzz')).rejects.toThrow('expected hex string');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retries once with positional params on -32602 from canonical shape', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ error: { code: -32602, message: 'Invalid params' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: '0xhash' }) });
+
+    const client = await createClient(fetchMock as any);
+    await expect(client.sendRawTransaction('abcd')).resolves.toBe('0xhash');
+
+    const firstPayload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    const secondPayload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
+    expect(firstPayload.params).toEqual({ rawTx: '0xabcd' });
+    expect(secondPayload.params).toEqual(['0xabcd']);
+    expect(secondPayload.id).toBe(firstPayload.id + 1);
   });
 
   it('surfaces RPC response errors without masking them as endpoint failures', async () => {
