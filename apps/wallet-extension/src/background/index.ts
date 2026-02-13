@@ -49,6 +49,69 @@ function txDebugLog(message: string, payload: Record<string, unknown>): void {
   console.debug(`[wallet-bg][tx-debug] ${message}`, payload);
 }
 
+
+interface TxRpcDebugState {
+  lastSendRequest?: {
+    rpcUrl: string;
+    method: string;
+    params: unknown;
+    requestBody: string;
+    id: number;
+    timestamp: number;
+  };
+  lastSendResponse?: unknown;
+  lastSendError?: string | null;
+}
+
+const txRpcDebugState: TxRpcDebugState = {
+  lastSendRequest: undefined,
+  lastSendResponse: null,
+  lastSendError: null,
+};
+
+function sanitizeRpcParams(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (value instanceof Uint8Array) return `[bytes:${value.length}]`;
+  if (Array.isArray(value)) return value.map(item => sanitizeRpcParams(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, sanitizeRpcParams(v)]));
+  }
+  return value;
+}
+
+function captureSendRpcDebug(rpcUrl: string, method: string, params: unknown): void {
+  const id = Date.now();
+  const payload = {
+    jsonrpc: '2.0',
+    id,
+    method,
+    params: sanitizeRpcParams(params),
+  };
+  txRpcDebugState.lastSendRequest = {
+    rpcUrl,
+    method,
+    params: payload.params,
+    requestBody: JSON.stringify(payload),
+    id,
+    timestamp: Date.now(),
+  };
+  txRpcDebugState.lastSendError = null;
+  console.debug('[wallet-bg][send-rpc] request', txRpcDebugState.lastSendRequest);
+}
+
+function captureSendRpcResponse(response: unknown, error: string | null = null): void {
+  txRpcDebugState.lastSendResponse = response;
+  txRpcDebugState.lastSendError = error;
+  console.debug('[wallet-bg][send-rpc] response', { response, error });
+}
+
+function parseBaseUnitAmount(value: unknown): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return BigInt(value.trim());
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return BigInt(value);
+  throw new Error('Invalid amount: must be a positive base-unit integer string');
+}
+
 function summarizeRawTx(rawTx: string): Record<string, unknown> {
   const normalized = rawTx.startsWith('0x') ? rawTx.slice(2) : rawTx;
   return {
@@ -364,13 +427,14 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   }
 
   const activeWallet = await resolveActiveWallet(vaultData);
-  const targetAddress = address || activeWallet.address;
+  const targetAddress = activeWallet.address;
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
   const rpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
 
   debugLog('fetch balance', {
     activeWalletId: activeWallet.address,
     address: targetAddress,
+    requestedAddress: address || null,
     rpcUrl,
     chainId: network.chainId,
   });
@@ -403,15 +467,19 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     if (!params.to || typeof params.to !== 'string') {
       throw new Error('Invalid to address');
     }
-    if (typeof params.amount !== 'number' || params.amount <= 0) {
-      throw new Error('Invalid amount');
-    }
-    
+
+    const amountBaseUnits = parseBaseUnitAmount(params.amount);
+
     const network = vaultData.networkConfigs[vaultData.currentNetwork];
     const client = await getRpcClient();
-    
+
+    const activeWallet = await resolveActiveWallet(vaultData);
+    if (activeWallet.address !== params.from) {
+      throw new Error(`From address must match active wallet (${activeWallet.address})`);
+    }
+
     // Find sender account
-    const account = vaultData.accounts.find(a => a.address === params.from);
+    const account = vaultData.accounts.find(a => a.address === activeWallet.address);
     if (!account) {
       throw new Error('Account not found');
     }
@@ -438,9 +506,13 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       domain: context.domain,
       prehash: context.prehash,
     });
+
+    if (context.chain_id !== network.chainId) {
+      throw new Error(`Chain ID mismatch between network (${network.chainId}) and RPC identity (${context.chain_id})`);
+    }
     
     // Get nonce from RPC
-    const nonce = await client.getNonce(params.from, 'latest');
+    const nonce = await client.getNonce(activeWallet.address, 'latest');
     
     // Convert algId to schemeId for signing
     const schemeId = algIdToSchemeId(account.algId);
@@ -451,7 +523,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     txDebugLog('building-tx', {
       from: params.from,
       to: params.to,
-      value: params.amount,
+      value: amountBaseUnits,
       nonce,
       algId: account.algId,
       schemeId,
@@ -460,11 +532,11 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     // Build and sign transaction using canonical tx module
     const result = await buildAndSignTransaction(
       {
-        from: params.from,
+        from: activeWallet.address,
         to: params.to,
-        value: params.amount,
-        fee: params.gasPrice || vaultData.settings.defaultGasPrice,
-        gas_limit: params.gasLimit || vaultData.settings.defaultGasLimit,
+        value: amountBaseUnits,
+        fee: BigInt(params.gasPrice || vaultData.settings.defaultGasPrice),
+        gas_limit: BigInt(params.gasLimit || vaultData.settings.defaultGasLimit),
         nonce,
         data: params.data,
         memo: params.memo || '',
@@ -485,15 +557,29 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     });
     
     // Send transaction
+    const rpcMethod = 'tx.sendRawTransaction';
+    const rpcParams: [string] = [result.rawTx];
+
     txDebugLog('sending-tx', {
       rpcUrl: client.getActiveUrl(),
-      rpcMethod: 'tx.sendRawTransaction',
+      rpcMethod,
+      paramsShape: 'array',
       rawTxPrefix: result.rawTx.slice(0, 66),
+      rawTxSummary: summarizeRawTx(result.rawTx),
     });
-    
-    await client.sendRawTransaction(result.rawTx);
-    
-    txDebugLog('tx-sent', { txid: result.txid });
+
+    captureSendRpcDebug(client.getActiveUrl(), rpcMethod, rpcParams);
+
+    let sendResult: unknown;
+    try {
+      sendResult = await client.sendRawTransaction(result.rawTx);
+      captureSendRpcResponse(sendResult, null);
+    } catch (rpcError) {
+      captureSendRpcResponse(null, rpcError instanceof Error ? rpcError.message : String(rpcError));
+      throw rpcError;
+    }
+
+    txDebugLog('tx-sent', { txid: result.txid, sendResult });
     
     // Store in tx cache (convert to old format for now)
     const txStore = TxStore.fromJSON(vaultData.txCache);
@@ -605,6 +691,7 @@ async function handleGetDebugState(): Promise<any> {
     rpcUrl: await getRpcUrl(network.rpcUrls?.[0]),
     chainId: network.chainId,
     ...debugState,
+    txRpcDebug: { ...txRpcDebugState },
   };
 }
 
