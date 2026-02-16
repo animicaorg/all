@@ -315,12 +315,20 @@ def debug_mempool_status() -> dict:
     queue_depth = stats.get("count", 0)
     
     persist_path = getattr(mempool_service, "_persist_path", None)
-    
+    persistence = {}
+    if hasattr(mempool_service, "persistence_status") and callable(getattr(mempool_service, "persistence_status")):
+        try:
+            persistence = mempool_service.persistence_status()
+        except Exception:
+            persistence = {}
+
     return {
         "enabled": True,
         "queue_depth": queue_depth,
         "service_id": hex(id(mempool_service)),
         "path": str(persist_path) if persist_path else None,
+        "persistence": persistence,
+        "fallback_enabled": bool(persistence.get("fallback_active")) if isinstance(persistence, dict) else False,
     }
 
 

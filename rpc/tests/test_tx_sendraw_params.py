@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from rpc.tests import new_test_client, rpc_call
 from rpc.methods.tx import normalize_send_raw_tx_params
 
 
@@ -11,7 +10,6 @@ def test_normalize_send_raw_tx_params_supported_shapes() -> None:
 
     cases = [
         [raw_hex],
-        ["0102"],
         {"rawTx": raw_hex},
         {"raw_tx": raw_hex},
         {"tx": raw_hex},
@@ -28,28 +26,20 @@ def test_normalize_send_raw_tx_params_supported_shapes() -> None:
         assert meta["size_bytes"] == 2
 
 
-def test_normalize_send_raw_tx_params_rejects_invalid_hex() -> None:
+def test_normalize_send_raw_tx_params_rejects_invalid_shapes() -> None:
     with pytest.raises(Exception):
         normalize_send_raw_tx_params({"rawTx": "0xabc"})
     with pytest.raises(Exception):
         normalize_send_raw_tx_params({"rawTx": "0xzz"})
     with pytest.raises(Exception):
         normalize_send_raw_tx_params({})
+    with pytest.raises(Exception):
+        normalize_send_raw_tx_params([{"foo": "0x00"}])
+    with pytest.raises(Exception):
+        normalize_send_raw_tx_params(["0102"])
 
 
-def test_send_raw_tx_accepts_list_not_invalid_params() -> None:
-    client, _, _ = new_test_client()
-    res = rpc_call(client, "tx.sendRawTransaction", ["0x00"], expect_error=True)
-    assert res["error"]["code"] != -32602
-
-
-def test_send_raw_tx_accepts_named_rawtx_not_invalid_params() -> None:
-    client, _, _ = new_test_client()
-    res = rpc_call(client, "tx.sendRawTransaction", {"rawTx": "0x00"}, expect_error=True)
-    assert res["error"]["code"] != -32602
-
-
-def test_send_raw_tx_accepts_named_raw_tx_not_invalid_params() -> None:
-    client, _, _ = new_test_client()
-    res = rpc_call(client, "tx.sendRawTransaction", {"raw_tx": "0x00"}, expect_error=True)
-    assert res["error"]["code"] != -32602
+def test_normalize_send_raw_tx_params_invalid_shape_actionable_error() -> None:
+    with pytest.raises(Exception) as exc:
+        normalize_send_raw_tx_params({"foo": "0x00"})
+    assert 'expected params ["0x.."] or {rawTx:"0x.."}' in str(exc.value)

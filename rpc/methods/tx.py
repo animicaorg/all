@@ -125,10 +125,11 @@ except Exception:  # pragma: no cover
 
 # Mempool errors (optional)
 try:  # pragma: no cover
-    from mempool.errors import MempoolError, ReplacementUnsupported  # type: ignore
+    from mempool.errors import MempoolError, ReplacementUnsupported, PersistenceFailed  # type: ignore
 except Exception:  # pragma: no cover
     MempoolError = None  # type: ignore
     ReplacementUnsupported = None  # type: ignore
+    PersistenceFailed = None  # type: ignore
 
 # PQ verify
 try:
@@ -215,15 +216,9 @@ def normalize_send_raw_tx_params(
     cbor: t.Any = None,
     txBytes: t.Any = None,
 ) -> tuple[bytes, dict[str, t.Any]]:
-    """Normalize tx.sendRawTransaction params into raw transaction bytes.
+    """Normalize tx.sendRawTransaction params into raw transaction bytes."""
 
-    Accepted shapes:
-    - ["0x..."] or ["..."]
-    - {"rawTx": "0x..."} (plus raw_tx/tx/raw/cbor/txBytes)
-    - [{"rawTx": "0x..."}] (same key support)
-    - direct method kwargs (rawTx/raw_tx/tx/raw/cbor/txBytes)
-    """
-
+    invalid_msg = 'expected params ["0x.."] or {rawTx:"0x.."}'
     key_priority = ("rawTx", "raw_tx", "tx", "raw", "cbor", "txBytes")
 
     source = params
@@ -249,7 +244,7 @@ def normalize_send_raw_tx_params(
     if isinstance(source, (list, tuple)):
         shape = "list"
         if not source:
-            raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+            raise rpc_errors.InvalidParams(invalid_msg)
         first = source[0]
         if isinstance(first, dict):
             shape = "list.dict"
@@ -272,27 +267,30 @@ def normalize_send_raw_tx_params(
         shape = type(source).__name__
 
     if not isinstance(tx_value, str):
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+        raise rpc_errors.InvalidParams(invalid_msg)
 
     has_0x = tx_value.startswith("0x") or tx_value.startswith("0X")
-    hex_value = tx_value[2:] if has_0x else tx_value
+    if not has_0x:
+        raise rpc_errors.InvalidParams(invalid_msg)
+    hex_value = tx_value[2:]
     if not hex_value:
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+        raise rpc_errors.InvalidParams(invalid_msg)
     if len(hex_value) % 2 != 0:
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+        raise rpc_errors.InvalidParams(invalid_msg)
     if not all(ch in "0123456789abcdefABCDEF" for ch in hex_value):
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string")
+        raise rpc_errors.InvalidParams(invalid_msg)
 
     try:
         raw_bytes = bytes.fromhex(hex_value)
     except Exception as exc:
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string") from exc
+        raise rpc_errors.InvalidParams(invalid_msg) from exc
 
     return raw_bytes, {
         "shape": shape,
         "key": key_used,
         "has_0x": has_0x,
         "size_bytes": len(raw_bytes),
+        "rawTx_hex": tx_value,
     }
 
 
@@ -1072,7 +1070,7 @@ def _decode_tx_defensive(raw: bytes) -> tuple[t.Any, dict]:
         "Attempted decoders and their failures:",
         failure_summary,
         "",
-        "Ensure the transaction is properly encoded as CBOR with structure: {body: {...}, sigs: [...]}"
+        "Ensure the transaction is properly encoded as CBOR map with structure: {body: {...}, sigs: [...]}"
     ]
     
     raise rpc_errors.InvalidTx(
@@ -1507,7 +1505,28 @@ def _mempool_submit(
                 kwargs["local"] = local
             if origin_peer is not None:
                 kwargs["origin_peer"] = origin_peer
-        svc.submit(**kwargs)
+        try:
+            svc.submit(**kwargs)
+        except Exception as exc:
+            if PersistenceFailed is not None and isinstance(exc, PersistenceFailed):
+                path_attempted = None
+                if hasattr(svc, "persistence_status"):
+                    try:
+                        pstat = svc.persistence_status()
+                        err = pstat.get("error") if isinstance(pstat, dict) else None
+                        path_attempted = err.get("pathAttempted") if isinstance(err, dict) else None
+                    except Exception:
+                        path_attempted = None
+                raise rpc_errors.ServerError(
+                    "Mempool service unavailable",
+                    data={
+                        "kind": "mempool_unavailable",
+                        "pathAttempted": path_attempted,
+                        "errno": getattr(exc, "context", {}).get("errno") if hasattr(exc, "context") else None,
+                        "suggestion": "Configure ANIMICA_DATA_DIR to a writable mount or disable ANIMICA_MEMPOOL_REQUIRE_PERSIST",
+                    },
+                ) from exc
+            raise
         return
     if hasattr(svc, "submit_atomic"):
         accepted, reject, _hash_hex = svc.submit_atomic(
@@ -1957,7 +1976,7 @@ def _tx_send_raw_transaction(
     except rpc_errors.RpcError:
         raise
     except Exception as exc:
-        raise rpc_errors.InvalidParams("Expected params to include rawTx/raw_tx as hex string") from exc
+        raise rpc_errors.InvalidParams("expected params [\"0x..\"] or {rawTx:\"0x..\"}") from exc
 
     log.info(
         "tx.sendRawTransaction.params",
@@ -2119,11 +2138,14 @@ def _tx_send_raw_transaction(
         # ===== CRITICAL FIX =====
         # We will NOT "accept but not mine". If mempool is missing, error.
         if svc is None:
-            raise rpc_errors.InternalError(
-                "Mempool service unavailable; tx cannot be admitted",
+            raise rpc_errors.ServerError(
+                "Mempool service unavailable",
                 data={
+                    "kind": "mempool_unavailable",
+                    "pathAttempted": None,
+                    "errno": None,
+                    "suggestion": "Check ANIMICA_DATA_DIR and writable mount for mempool persistence",
                     "tx_hash": tx_hash_hex,
-                    "hint": "Node context is missing mempool service; fix ctx wiring or mempool init",
                 },
             )
 
@@ -2150,6 +2172,17 @@ def _tx_send_raw_transaction(
             raise
     except rpc_errors.RpcError as exc:
         reason = getattr(exc, "message", str(exc))
+        if int(getattr(exc, "code", 0)) == -32603 and "mempool" in str(reason).lower():
+            raise rpc_errors.ServerError(
+                "Mempool service unavailable",
+                data={
+                    "kind": "mempool_unavailable",
+                    "pathAttempted": None,
+                    "errno": None,
+                    "suggestion": "Check ANIMICA_DATA_DIR and writable mount for mempool persistence",
+                    "cause": str(exc),
+                },
+            ) from exc
         log.info(
             "TX_VALIDATE_REJECT",
             extra={
