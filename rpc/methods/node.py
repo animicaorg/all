@@ -92,6 +92,19 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
             "best_block_hash": None,
         }
 
+    mempool_status: dict[str, t.Any] = {"enabled": False, "fallback_enabled": False}
+    try:
+        mempool = getattr(ctx, "mempool", None) if "ctx" in locals() else None
+        if mempool is not None and hasattr(mempool, "persistence_status"):
+            persistence = mempool.persistence_status()
+            mempool_status = {
+                "enabled": True,
+                "fallback_enabled": bool(persistence.get("fallback_active")),
+                "persistence": persistence,
+            }
+    except Exception:
+        mempool_status = {"enabled": False, "fallback_enabled": False}
+
     return {
         "rpc_reachable": True,
         "init_error": init_error,
@@ -107,6 +120,7 @@ async def node_get_status(hashrate_window: int | None = None) -> dict[str, t.Any
             "peer_counts": _safe_peer_counts(p2p_status),
         },
         "sync": sync_status,
+        "mempool": mempool_status,
     }
 
 

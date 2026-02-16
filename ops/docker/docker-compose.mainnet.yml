@@ -40,6 +40,9 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
     working_dir: /app
+    read_only: true
+    tmpfs:
+      - /tmp
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
       - path: ../../.env
@@ -54,6 +57,7 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/mainnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      ANIMICA_MEMPOOL_REQUIRE_PERSIST: "${ANIMICA_MEMPOOL_REQUIRE_PERSIST:-0}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"
@@ -104,6 +108,9 @@ services:
       dockerfile: ops/docker/miner.Dockerfile
     container_name: animica-mainnet-miner
     working_dir: /app
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
       - ../..:/app:ro
     environment:
@@ -169,6 +176,9 @@ services:
     image: node:20-alpine
     container_name: animica-mainnet-explorer
     working_dir: /app
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       VITE_RPC_URL: "http://localhost:${HOST_RPC_PORT:-8545}"
       VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"

@@ -33,6 +33,7 @@ params = ctx.params             # dict (subset of spec/params.yaml)
 """
 
 import asyncio
+import errno
 import contextlib
 import json
 import logging
@@ -286,29 +287,50 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
     )
 
 
-def _infer_data_root(cfg: _ConfigView) -> Path:
-    """Derive the canonical data root for the active chain.
+def resolve_data_dir() -> Path:
+    """Resolve canonical writable data directory for runtime state.
 
     Preference order:
-    1) ANIMICA_DATA_DIR (per chain)
-    2) sqlite DB parent directory
-    3) ~/.animica/chain-<id>
+    1) ANIMICA_DATA_DIR
+    2) /data (container-friendly mount)
+    3) /var/lib/animica
     """
 
-    env_dir = os.environ.get("ANIMICA_DATA_DIR")
-    base = Path(env_dir).expanduser() if env_dir else None
+    env_dir = (os.environ.get("ANIMICA_DATA_DIR") or "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+    if Path("/data").exists():
+        return Path("/data")
+    return Path("/var/lib/animica")
 
-    if base is None:
-        db_uri = getattr(cfg, "db_uri", "") or ""
-        if isinstance(db_uri, str) and db_uri.startswith("sqlite:///"):
-            db_path = Path(db_uri.split("sqlite:///")[1]).expanduser()
-            if db_path != Path(":memory:"):
-                base = db_path.parent
 
-    if base is None:
-        base = Path("~/.animica").expanduser()
+def _ensure_runtime_dirs(data_root: Path) -> None:
+    for name in ("mempool", "snapshots", "logs", "p2p", "ptl"):
+        (data_root / name).mkdir(parents=True, exist_ok=True)
 
-    return base / f"chain-{cfg.chain_id}"
+
+def preflight_writable_check(data_root: Path) -> tuple[bool, dict[str, t.Any] | None]:
+    """Check whether data_root is writable by creating a small sentinel file."""
+
+    test_path = data_root / ".animica-write-test"
+    try:
+        data_root.mkdir(parents=True, exist_ok=True)
+        with test_path.open("wt", encoding="utf-8") as fh:
+            fh.write("ok")
+        test_path.unlink(missing_ok=True)
+        return True, None
+    except OSError as exc:
+        if exc.errno in (errno.EROFS, errno.EACCES, errno.ENOENT):
+            return False, {
+                "path": str(data_root),
+                "errno": exc.errno,
+                "error": str(exc),
+            }
+        return False, {
+            "path": str(data_root),
+            "errno": getattr(exc, "errno", None),
+            "error": str(exc),
+        }
 
 
 def _load_rpc_config() -> _ConfigView:
@@ -925,7 +947,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     log = logging.getLogger("animica.rpc.deps")
 
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
-    data_root = _infer_data_root(cfg_view)
+    data_root = resolve_data_dir()
     init_error: str | None = None
     init_error_code: str | None = None
 
@@ -945,6 +967,21 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     log.info(
         f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})"
     )
+    log.info("Resolved ANIMICA_DATA_DIR", extra={"data_dir": str(data_root)})
+
+    writable_ok, writable_error = preflight_writable_check(data_root)
+    require_persist = _bool_env("ANIMICA_MEMPOOL_REQUIRE_PERSIST", False)
+    if writable_ok:
+        _ensure_runtime_dirs(data_root)
+    elif require_persist:
+        raise RuntimeError(
+            f"Configured data dir is not writable and persistence is required: {writable_error}"
+        )
+    else:
+        log.warning(
+            "Data directory preflight failed; mempool will run with in-memory fallback if needed",
+            extra={"preflight": writable_error},
+        )
     log.info(f"Using database: {cfg_view.db_uri}")
     if cfg_view.genesis_path:
         log.info(f"Genesis file: {cfg_view.genesis_path}")
