@@ -12,7 +12,7 @@ import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl }
 import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
 import { getBalance, getBalanceDebugState, setLastPingDebug } from '../services/balanceService';
 import { rpcPing } from '../services/rpcPing';
-import { sendRawTxPipeline } from '../services/sendRawTx';
+import { sendRawTxPipeline, warmPolicyCapabilities } from '../services/sendRawTx';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
@@ -156,9 +156,20 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('Animica Wallet installed');
 });
 
-initializeRuntimeRpc().catch((error) => {
-  console.error('Failed to initialize RPC configuration:', error);
-});
+initializeRuntimeRpc()
+  .then(async () => {
+    try {
+      const vaultData = getUnlockedVault();
+      const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+      const rpcUrl = await getRpcUrl(network?.rpcUrls?.[0]);
+      await warmPolicyCapabilities(rpcUrl, network?.chainId);
+    } catch (error) {
+      console.warn('Initial policy capability warmup failed:', error);
+    }
+  })
+  .catch((error) => {
+    console.error('Failed to initialize RPC configuration:', error);
+  });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
@@ -167,18 +178,34 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   const nextValue = changes.rpc_url_override.newValue;
   if (typeof nextValue === 'string' && nextValue.length > 0) {
     recreateRpcClient(nextValue);
+    const vaultData = getUnlockedVault();
+    const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+    warmPolicyCapabilities(nextValue, network?.chainId).catch((error) => console.warn('Policy capability refresh failed:', error));
   } else {
     const vaultData = getUnlockedVault();
     const currentNetwork = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
     const fallbackRpc = currentNetwork?.rpcUrls?.[0];
-    recreateRpcClient(getEffectiveRpcUrl(fallbackRpc));
+    const effective = getEffectiveRpcUrl(fallbackRpc);
+    recreateRpcClient(effective);
+    warmPolicyCapabilities(effective, currentNetwork?.chainId).catch((error) => console.warn('Policy capability refresh failed:', error));
   }
 });
+
+
+function normalizeErrorForUi(error: unknown): { message: string; [key: string]: unknown } {
+  if (error && typeof error === 'object') {
+    const obj = error as Record<string, unknown>;
+    const message = typeof obj.message === 'string' ? obj.message : 'Request failed';
+    return { ...obj, message };
+  }
+  if (error instanceof Error) return { message: error.message };
+  return { message: String(error) };
+}
 
 // Message handler
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch(error => {
-    sendResponse({ error: error.message });
+    sendResponse({ error: normalizeErrorForUi(error) });
   });
   return true; // Keep channel open for async response
 });
@@ -607,21 +634,16 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       chainIdExpected: network.chainId,
       fromAddress: activeWallet.address,
       timeoutMs: 20_000,
+      accountSchemeId: schemeId,
+      accountPubkeyType: account.publicKey.length === 32 ? 'ed25519-like/32-byte' : `pq-${account.publicKey.length}-byte`,
     });
 
     if ('error' in sendResult) {
       const sendError = sendResult.error;
       captureSendRpcResponse(null, JSON.stringify(sendError), sendError.attempts);
 
-      if (
-        sendError.code === -32010 &&
-        typeof sendError.message === 'string' &&
-        sendError.message.toLowerCase().includes('signature scheme disabled by policy')
-      ) {
-        throw new Error(
-          `Network policy rejected ${algLabel(account.algId)} for ${activeWallet.address}. ` +
-          'Switch to an account using an allowed signature algorithm for this network and retry.'
-        );
+      if (sendError.signaturePolicyError) {
+        throw sendError.signaturePolicyError;
       }
 
       throw sendError;
@@ -699,6 +721,9 @@ async function handleSetRpcUrl(url: string): Promise<{ success: boolean; rpcUrl:
   const validation = validateRpcUrl(url);
   await setRpcUrl(validation.normalizedUrl);
   recreateRpcClient(validation.normalizedUrl);
+  const vaultData = getUnlockedVault();
+  const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
+  warmPolicyCapabilities(validation.normalizedUrl, network?.chainId).catch((error) => console.warn('Policy capability refresh failed:', error));
 
   return {
     success: true,
@@ -713,6 +738,7 @@ async function handleResetRpcUrl(): Promise<{ success: boolean; rpcUrl: string }
   const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
   const rpcUrl = getEffectiveRpcUrl(network?.rpcUrls?.[0]);
   recreateRpcClient(rpcUrl);
+  warmPolicyCapabilities(rpcUrl, network?.chainId).catch((error) => console.warn('Policy capability refresh failed:', error));
 
   return {
     success: true,

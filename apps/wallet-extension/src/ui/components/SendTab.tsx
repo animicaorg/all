@@ -3,6 +3,31 @@ import type { Account } from '../../types/wallet';
 import { formatANM } from '../../services/balances';
 import { useBalancesStore } from '../../store/balances';
 
+
+type SignaturePolicyUiError = {
+  message?: string;
+  action?: string;
+  schemeUsed?: { id: number; name: string };
+  allowedSchemes?: Array<{ id: number; name: string }>;
+};
+
+function formatSendError(input: unknown): string {
+  if (!input) return 'Failed to send transaction';
+  if (typeof input === 'string') return input;
+  if (typeof input !== 'object') return String(input);
+
+  const err = input as SignaturePolicyUiError;
+  if (err.action === 'SWITCH_ACCOUNT_OR_ENABLE_POLICY') {
+    const scheme = err.schemeUsed ? `${err.schemeUsed.name} (${err.schemeUsed.id})` : 'current signature scheme';
+    const allowed = Array.isArray(err.allowedSchemes) && err.allowedSchemes.length > 0
+      ? err.allowedSchemes.map((s) => `${s.name} (${s.id})`).join(', ')
+      : 'unknown (policy RPC unavailable)';
+    return `This network currently disables ${scheme}. Create/switch to an account using one of: ${allowed}, or ask the network operator to enable it.`;
+  }
+
+  return err.message || 'Failed to send transaction';
+}
+
 interface SendTabProps {
   currentAccount: Account;
   network: any;
@@ -81,7 +106,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       });
 
       if (result?.error) {
-        throw new Error(result.error);
+        throw result.error;
       }
 
       // Validate result has required fields
@@ -98,7 +123,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         onSent();
       }, 1000);
     } catch (err: any) {
-      setError(err.message || 'Failed to send transaction');
+      setError(formatSendError(err));
     } finally {
       setLoading(false);
     }

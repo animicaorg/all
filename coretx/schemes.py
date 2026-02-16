@@ -13,6 +13,8 @@ SignFn = Callable[[bytes, bytes], bytes]
 
 log = logging.getLogger(__name__)
 
+_ALLOWED_OVERRIDE_WARNED = False
+
 
 @dataclass(frozen=True)
 class SchemeSpec:
@@ -101,6 +103,28 @@ def load_policy_disabled_scheme_ids() -> set[int]:
     return out
 
 
+
+
+def load_allowed_signature_schemes_override() -> tuple[int, ...]:
+    raw = (os.environ.get("ANIMICA_ALLOWED_SIG_SCHEMES") or "").strip()
+    if not raw:
+        return tuple()
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part, 0))
+        except ValueError:
+            continue
+    allowed = tuple(sorted(out))
+    global _ALLOWED_OVERRIDE_WARNED
+    if allowed and not _ALLOWED_OVERRIDE_WARNED:
+        log.warning("ANIMICA_ALLOWED_SIG_SCHEMES override active: %s", list(allowed))
+        _ALLOWED_OVERRIDE_WARNED = True
+    return allowed
+
 def _parse_int_list(value: object) -> tuple[int, ...]:
     if not isinstance(value, list):
         return tuple()
@@ -177,6 +201,7 @@ def load_policy_override() -> PolicyOverride:
 def policy_roots() -> dict[str, str]:
     return {
         "pqAlgPolicy": "ANIMICA_DISABLED_SIGNATURE_SCHEMES",
+        "allowedSigSchemesOverride": "ANIMICA_ALLOWED_SIG_SCHEMES",
         "policyOverride": "ANIMICA_POLICY_OVERRIDE_FILE",
     }
 
@@ -192,7 +217,14 @@ def evaluate_scheme_policy(
     base_enabled_by_policy = spec.scheme_id not in disabled_by_policy
     reason: str | None = None
 
-    if spec.scheme_id in override.deny_sig_schemes:
+    allowed_override = load_allowed_signature_schemes_override()
+
+    if allowed_override:
+        enabled_by_policy = spec.scheme_id in allowed_override
+        policy_root = "ANIMICA_ALLOWED_SIG_SCHEMES"
+        if not enabled_by_policy:
+            reason = "not_in_allowed_override"
+    elif spec.scheme_id in override.deny_sig_schemes:
         enabled_by_policy = False
         reason = "denied_by_override"
         policy_root = "ANIMICA_POLICY_OVERRIDE_FILE"
