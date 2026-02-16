@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "tsx scripts/modal-bootstrap.ts && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -14,7 +14,10 @@
     "worker": "tsx scripts/worker.ts",
     "dev:script": "bash scripts/dev.sh",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "modal:bootstrap": "tsx scripts/modal-bootstrap.ts",
+    "modal:deploy": "tsx scripts/modal-bootstrap.ts --force",
+    "modal:logs": "tsx scripts/modal-bootstrap.ts --logs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

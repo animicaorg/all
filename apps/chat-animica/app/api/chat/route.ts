@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireActiveSubscription, requireUser } from "@/src/server/auth/require";
 import { consumeDailyMessage } from "@/src/server/usage/rateLimit";
-import { callModalChat, ModalClientError } from "@/src/modal/modalClient";
+import { generateContractCompletion } from "@/src/services/llmClient";
 import { chatSchema } from "@/src/shared/schemas";
 import { prisma } from "@/src/server/db/prisma";
 import { compileQueue } from "@/src/server/jobs/queue";
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     : await prisma.thread.create({ data: { projectId: project!.id, title: "New thread" } });
 
   try {
-    const output = await callModalChat({ prompt, mode, context: { projectId: project!.id, threadId: thread!.id } });
+    const output = await generateContractCompletion({ prompt, mode, context: { projectId: project!.id, threadId: thread!.id } });
     const validation = validateAndRewrite(output.content);
     if (!validation.ok) {
       log.warn({ errors: validation.errors, requestId: output.requestId }, "guardrail rejected model output");
@@ -100,17 +100,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     log.error({ error }, "chat pipeline failed");
-    if (error instanceof ModalClientError) {
-      return NextResponse.json({
-        error: error.message,
-        debug: {
-          status: error.status,
-          requestId: crypto.randomUUID(),
-          details: error.debug
-        }
-      }, { status: error.status || 500 });
-    }
-
     return NextResponse.json({ error: "Unexpected chat failure", debug: { requestId: crypto.randomUUID() } }, { status: 500 });
   }
 }
