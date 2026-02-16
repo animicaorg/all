@@ -10,7 +10,15 @@ import logging
 from typing import Optional, Protocol
 
 from .errors import VerifyResult
-from .schemes import RuntimeScheme, build_runtime_scheme_table, load_policy_disabled_scheme_ids
+from .schemes import (
+    PolicyEvaluation,
+    RuntimeScheme,
+    build_runtime_scheme_table,
+    evaluate_scheme_policy,
+    load_policy_disabled_scheme_ids,
+    load_policy_override,
+    policy_roots,
+)
 
 __all__ = [
     "SCHEME_DILITHIUM3",
@@ -27,6 +35,7 @@ __all__ = [
     "infer_scheme_ids_by_lengths",
     "verify_signature",
     "pubkey_fingerprint",
+    "get_signature_policy_status",
 ]
 
 log = logging.getLogger(__name__)
@@ -57,6 +66,10 @@ class SchemeInfo:
         enabled_by_default: bool = True,
         enabled: bool = False,
         reason_if_disabled: Optional[str] = None,
+        enabled_by_code: bool = True,
+        enabled_by_policy: bool = True,
+        enabled_effective: bool = False,
+        policy_root: str = "ANIMICA_DISABLED_SIGNATURE_SCHEMES",
     ):
         self.scheme_id = scheme_id
         self.name = name
@@ -67,6 +80,10 @@ class SchemeInfo:
         self.enabled_by_default = enabled_by_default
         self.enabled = enabled
         self.reason_if_disabled = reason_if_disabled
+        self.enabled_by_code = enabled_by_code
+        self.enabled_by_policy = enabled_by_policy
+        self.enabled_effective = enabled_effective
+        self.policy_root = policy_root
 
 
 _SCHEMES: dict[int, SchemeInfo] = {}
@@ -94,10 +111,35 @@ def list_scheme_descriptors() -> list[dict[str, object]]:
                 "pubkeyLengths": list(scheme.pubkey_lengths),
                 "signatureLengths": list(scheme.signature_lengths),
                 "enabled": bool(scheme.enabled and scheme.verify_func is not None),
+                "enabledByCode": scheme.enabled_by_code,
+                "enabledByPolicy": scheme.enabled_by_policy,
+                "enabledEffective": bool(scheme.enabled and scheme.verify_func is not None),
                 "reasonIfDisabled": scheme.reason_if_disabled,
+                "policyRoot": scheme.policy_root,
             }
         )
     return out
+
+
+def get_signature_policy_status() -> dict[str, object]:
+    schemes = list_scheme_descriptors()
+    return {
+        "policyRoots": policy_roots(),
+        "schemes": schemes,
+        "override": _load_override_status(),
+    }
+
+
+def _load_override_status() -> dict[str, object]:
+    override = load_policy_override()
+    return {
+        "enabled": override.enabled,
+        "mode": override.mode,
+        "allowSigSchemes": list(override.allow_sig_schemes),
+        "denySigSchemes": list(override.deny_sig_schemes),
+        "comment": override.comment,
+        "file": override.file_path,
+    }
 
 
 def infer_scheme_ids_by_lengths(pubkey_len: int, sig_len: int, *, enabled_only: bool = True) -> list[int]:
@@ -128,27 +170,37 @@ def verify_signature(
             scheme_id=scheme_id,
             pubkeyLen=len(public_key),
             sigLen=len(signature),
-            supported=[{"id": s["schemeId"], "name": s["name"]} for s in list_scheme_descriptors() if s.get("enabled")],
+            supported=[{"id": s["schemeId"], "name": s["name"]} for s in list_scheme_descriptors() if s.get("enabledEffective")],
         )
 
     if not scheme.enabled:
         return VerifyResult.failure(
             "scheme_disabled_by_policy",
+            kind="scheme_disabled_by_policy",
             schemeId=scheme_id,
             name=scheme.name,
-            policyRoot="ANIMICA_DISABLED_SIGNATURE_SCHEMES",
-            hint="Enable scheme in node policy or switch wallet scheme",
+            policyRoot=scheme.policy_root,
+            hint="Call tx.getSupportedSignatureSchemes and switch to an enabled scheme",
             disabledReason=scheme.reason_if_disabled,
+            supported=[
+                {"id": s["schemeId"], "name": s["name"], "enabledEffective": bool(s.get("enabledEffective"))}
+                for s in list_scheme_descriptors()
+            ],
         )
 
     if scheme.verify_func is None:
         return VerifyResult.failure(
             "scheme_disabled_by_policy",
+            kind="scheme_disabled_by_policy",
             schemeId=scheme_id,
             name=scheme.name,
             policyRoot="crypto.backends",
             hint="Install the required PQ backend for this scheme",
             reason="backend_missing",
+            supported=[
+                {"id": s["schemeId"], "name": s["name"], "enabledEffective": bool(s.get("enabledEffective"))}
+                for s in list_scheme_descriptors()
+            ],
         )
 
     if len(public_key) not in scheme.pubkey_lengths:
@@ -196,13 +248,14 @@ def verify_signature(
 def _bootstrap_schemes() -> None:
     table: dict[int, RuntimeScheme] = build_runtime_scheme_table()
     disabled_by_policy = load_policy_disabled_scheme_ids()
+    override = load_policy_override()
 
+    policy_eval: dict[int, PolicyEvaluation] = {}
     for runtime in table.values():
-        if runtime.spec.scheme_id in disabled_by_policy:
-            runtime.enabled = False
-            runtime.reason_if_disabled = "disabled_by_policy"
-        else:
-            runtime.enabled = runtime.spec.enabled_by_default
+        decision = evaluate_scheme_policy(runtime.spec, disabled_by_policy=disabled_by_policy, override=override)
+        policy_eval[runtime.spec.scheme_id] = decision
+        runtime.enabled = decision.enabled_effective
+        runtime.reason_if_disabled = decision.reason_if_disabled
 
     try:
         from pq.py import dilithium3_sign, dilithium3_verify
@@ -242,11 +295,13 @@ def _bootstrap_schemes() -> None:
 
     _SCHEMES.clear()
     for scheme_id, runtime in sorted(table.items()):
+        decision = policy_eval[scheme_id]
         enabled = runtime.enabled and runtime.verify_fn is not None
         reason = runtime.reason_if_disabled
         if runtime.enabled and runtime.verify_fn is None:
             enabled = False
             reason = "backend_missing"
+
         info = SchemeInfo(
             scheme_id=runtime.spec.scheme_id,
             name=runtime.spec.name,
@@ -257,13 +312,18 @@ def _bootstrap_schemes() -> None:
             enabled_by_default=runtime.spec.enabled_by_default,
             enabled=enabled,
             reason_if_disabled=reason,
+            enabled_by_code=decision.enabled_by_code,
+            enabled_by_policy=decision.enabled_by_policy,
+            enabled_effective=enabled,
+            policy_root=decision.policy_root,
         )
         register_scheme(info)
         log.info(
-            "Signature scheme: id=%s name=%s enabled=%s reason=%s verify_fn=%s",
+            "Signature scheme: id=%s name=%s enabled=%s enabled_by_policy=%s reason=%s verify_fn=%s",
             info.scheme_id,
             info.name,
             info.enabled,
+            info.enabled_by_policy,
             info.reason_if_disabled,
             bool(info.verify_func),
         )
