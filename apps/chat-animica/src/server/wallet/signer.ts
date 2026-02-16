@@ -6,15 +6,15 @@ type ResolveInput = {
   signerType?: "extension" | "wallet" | "dev";
   signedRawTx?: string;
   rawTx?: string;
-  txDraft?: Record<string, unknown>;
+  txCbor: string;
   userId: string;
 };
 
-export async function resolveRawTransaction(input: ResolveInput): Promise<{ rawTx?: string; error?: string }> {
+export async function resolveRawTransaction(input: ResolveInput): Promise<{ rawTx?: string; error?: string; mode: string }> {
   if (input.signerType === "extension") {
     const extRawTx = input.signedRawTx ?? input.rawTx;
-    if (!extRawTx) return { error: "Extension signer selected but no signedRawTx provided." };
-    return { rawTx: extRawTx };
+    if (!extRawTx) return { mode: "extension", error: "Extension signer selected but no signed transaction payload provided." };
+    return { mode: "extension", rawTx: extRawTx };
   }
 
   if (input.signerType === "wallet") {
@@ -22,22 +22,17 @@ export async function resolveRawTransaction(input: ResolveInput): Promise<{ rawT
       where: { userId: input.userId, status: "active" },
       orderBy: { lastUsedAt: "desc" }
     });
-    if (!session) return { error: "Animica Wallet session not found. Please connect mobile wallet first." };
-    if (env.WALLET_MOCK === "1" && input.txDraft) {
-      return { rawTx: signWithDevSigner({ walletMock: true, txDraft: input.txDraft, sessionId: session.id }) };
+    if (!session) return { mode: "wallet", error: "No wallet session found. Connect wallet first." };
+    if (env.ENABLE_WALLET_PROD_SIGNING !== "1") {
+      return { mode: "wallet", error: "Wallet signing is disabled by feature flag ENABLE_WALLET_PROD_SIGNING=0." };
     }
-    return { error: "WalletSessionSigner not implemented yet for production signing." };
+    return { mode: "wallet", error: "Wallet signer provider must be integrated with wallet session token." };
   }
 
-  if (input.signerType === "dev" || (!input.signerType && canUseDevSigner() && input.txDraft)) {
-    if (!input.txDraft) return { error: "Dev signer requires txDraft." };
-    if (!canUseDevSigner()) return { error: "DEV_SIGNER_KEY not enabled." };
-    return { rawTx: signWithDevSigner(input.txDraft) };
+  if (input.signerType === "dev" || (!input.signerType && canUseDevSigner())) {
+    if (!canUseDevSigner()) return { mode: "dev", error: "DEV_SIGNER_KEY is not configured." };
+    return { mode: "dev", rawTx: signWithDevSigner(input.txCbor) };
   }
 
-  if (input.signedRawTx ?? input.rawTx) {
-    return { rawTx: input.signedRawTx ?? input.rawTx };
-  }
-
-  return { error: "No signer available. Connect extension/mobile wallet or enable Dev signer." };
+  return { mode: "none", error: "No signer available. Use extension or enable dev signer." };
 }

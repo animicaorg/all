@@ -13,9 +13,14 @@ export const chatSchema = z.object({
 export const deploySchema = z.object({
   contractId: z.string(),
   rawTx: z.string().startsWith("0x").optional(),
-  txDraft: z.record(z.any()).optional(),
   signedRawTx: z.string().startsWith("0x").optional(),
-  signerType: z.enum(["extension", "wallet", "dev"]).optional()
+  signerType: z.enum(["extension", "wallet", "dev"]).optional(),
+  chainId: z.number().int().positive().default(1),
+  nonce: z.number().int().nonnegative().default(0),
+  gasLimit: z.number().int().positive().default(1200000),
+  fee: z.number().int().positive().default(1),
+  from: z.string().min(3),
+  args: z.string().optional()
 });
 
 export const walletConnectStartSchema = z.object({
