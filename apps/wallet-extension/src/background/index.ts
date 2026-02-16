@@ -12,6 +12,7 @@ import { getEffectiveRpcUrl, getRpcUrl, resetRpcUrl, setRpcUrl, validateRpcUrl }
 import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
 import { getBalance, getBalanceDebugState, setLastPingDebug } from '../services/balanceService';
 import { rpcPing } from '../services/rpcPing';
+import { sendRawTxPipeline } from '../services/sendRawTx';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
@@ -572,30 +573,37 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       rawTxLength: result.rawTx.length,
     });
     
-    // Send transaction
-    const rpcMethod = 'tx.sendRawTransaction';
-    const rpcParams: string[] = [result.rawTx];
-
+    const rpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
     txDebugLog('sending-tx', {
-      rpcUrl: client.getActiveUrl(),
-      rpcMethod,
-      paramsShape: 'array[rawTx]',
+      rpcUrl,
+      paramsShape: 'matrix',
       rawTxPrefix: result.rawTx.slice(0, 66),
       rawTxSummary: summarizeRawTx(result.rawTx),
     });
 
-    captureSendRpcDebug(client.getActiveUrl(), rpcMethod, rpcParams);
+    const sendResult = await sendRawTxPipeline({
+      rpcUrl,
+      rawTx: result.rawTx,
+      chainIdExpected: network.chainId,
+      fromAddress: activeWallet.address,
+      timeoutMs: 20_000,
+    });
 
-    let sendResult: unknown;
-    try {
-      sendResult = await client.sendRawTransaction(result.rawTx);
-      captureSendRpcResponse(sendResult, null, client.getLastCallAttempts?.() ?? []);
-    } catch (rpcError) {
-      captureSendRpcResponse(null, rpcError instanceof Error ? rpcError.message : String(rpcError), client.getLastCallAttempts?.() ?? []);
-      throw rpcError;
+    if ('error' in sendResult) {
+      const sendError = sendResult.error;
+      captureSendRpcResponse(null, JSON.stringify(sendError), sendError.attempts);
+      throw sendError;
     }
 
-    const submittedTxHash = extractSubmittedTxHash(sendResult);
+    captureSendRpcDebug(rpcUrl, 'tx.sendRawTransaction(matrix)', [{ rawTx: 'redacted' }]);
+    captureSendRpcResponse({
+      txHash: sendResult.txHash,
+      confirmed: sendResult.confirmed,
+      status: sendResult.status,
+      correlationId: sendResult.correlationId,
+    }, null, sendResult.attempts);
+
+    const submittedTxHash = sendResult.txHash;
 
     txDebugLog('tx-sent', {
       localTxid: result.txid,
