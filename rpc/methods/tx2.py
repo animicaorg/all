@@ -30,6 +30,7 @@ from rpc import errors as rpc_errors
 from rpc.methods import method
 from rpc.mempool2_service import get_mempool2_service
 from mempool2 import TxSource
+import rpc.deps as deps
 
 __all__ = [
     "send_raw_transaction_v2",
@@ -38,6 +39,7 @@ __all__ = [
     "get_mempool_stats_v2",
     "get_supported_signature_schemes",
     "get_policy_status",
+    "get_pq_alg_policy",
 ]
 
 log = logging.getLogger(__name__)
@@ -300,6 +302,29 @@ def get_supported_signature_schemes() -> dict[str, Any]:
         ],
     }
 
+
+
+
+@method("policy.getPqAlgPolicy", aliases=("policy_getPqAlgPolicy",), desc="Return evaluated PQ signature policy allowlist")
+def get_pq_alg_policy() -> dict[str, Any]:
+    chain_id = int(deps.get_chain_id())
+    schemes = list_scheme_descriptors()
+    allowed = [
+        {
+            "id": int(s.get("schemeId")),
+            "name": str(s.get("name") or f"scheme_{s.get('schemeId')}"),
+            "enabled": bool(s.get("enabledEffective")),
+        }
+        for s in schemes
+    ]
+    default_scheme_id = next((entry["id"] for entry in allowed if entry["enabled"]), None)
+    policy_roots = get_signature_policy_status().get("policyRoots", {})
+    return {
+        "chainId": chain_id,
+        "allowedSchemes": allowed,
+        "defaultSchemeId": default_scheme_id,
+        "policyRoot": policy_roots.get("pqAlgPolicy"),
+    }
 
 @method("admin.getPolicyStatus", desc="Show active signature policy status and operator override")
 def get_policy_status(ctx: Any = None) -> dict[str, Any]:
