@@ -15,13 +15,16 @@ const schema = z.object({
   PAYPAL_PLAN_ID: z.string().optional(),
   PAYPAL_BASE_URL: z.string().default("https://api-m.sandbox.paypal.com"),
   MODAL_CHAT_URL: z.string().url().optional(),
-  ANIMICA_RPC_URL: z.string().default("https://mainnet.animica.org/rpc"),
+  ANIMICA_RPC_URL: z.string().url().default("https://mainnet.animica.org/rpc"),
   EXPLORER_TX_URL: z.string().default("https://explorer.animica.org/tx/{hash}"),
   DEV_SIGNER_KEY: z.string().optional(),
   WALLET_CONNECT_SIGNING_KEY: z.string().min(16).default("dev-wallet-signing-key-change-me"),
   WALLET_CONNECT_CALLBACK_URL: z.string().url().optional(),
   NEXT_PUBLIC_APP_ORIGIN: z.string().url().optional(),
-  WALLET_MOCK: z.enum(["0", "1"]).default("0")
+  NEXT_PUBLIC_DEFAULT_CHAIN_ID: z.coerce.number().int().positive().default(1),
+  ENABLE_WALLET_PROD_SIGNING: z.enum(["0", "1"]).default("0"),
+  PROJECT_MEMORY_FILE: z.string().default(".data/project-memory.json"),
+  KNOWLEDGE_PACK_FILE: z.string().default(".data/knowledge-pack.json")
 });
 
 export const env = schema.parse(process.env);
