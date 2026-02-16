@@ -143,7 +143,11 @@ def verify_tx(
                 "Signature scheme disabled by policy" if verify_result.reason == "scheme_disabled_by_policy" else
                 f"Signature verification failed: {verify_result.reason}"
             ),
-            hint="Check that the transaction was signed with the correct key and algorithm",
+            hint=(
+                "Call tx.getSupportedSignatureSchemes and switch to an enabled scheme"
+                if verify_result.reason == "scheme_disabled_by_policy"
+                else "Check that the transaction was signed with the correct key and algorithm"
+            ),
             context={
                 "kind": verify_result.reason,
                 "txid": envelope.txid.hex(),

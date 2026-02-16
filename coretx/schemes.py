@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 
 VerifyFn = Callable[[bytes, bytes, bytes], bool]
 SignFn = Callable[[bytes, bytes], bytes]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,27 @@ class RuntimeScheme:
     verify_fn: Optional[VerifyFn] = None
     enabled: bool = False
     reason_if_disabled: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PolicyOverride:
+    enabled: bool
+    mode: str
+    allow_sig_schemes: tuple[int, ...]
+    deny_sig_schemes: tuple[int, ...]
+    comment: str
+    file_path: str | None
+
+
+@dataclass(frozen=True)
+class PolicyEvaluation:
+    scheme_id: int
+    name: str
+    enabled_by_code: bool
+    enabled_by_policy: bool
+    enabled_effective: bool
+    reason_if_disabled: str | None
+    policy_root: str
 
 
 CANONICAL_SCHEME_SPECS: tuple[SchemeSpec, ...] = (
@@ -73,6 +99,126 @@ def load_policy_disabled_scheme_ids() -> set[int]:
         except ValueError:
             continue
     return out
+
+
+def _parse_int_list(value: object) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        return tuple()
+    out: list[int] = []
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        try:
+            out.append(int(item))
+        except Exception:
+            continue
+    return tuple(sorted(set(out)))
+
+
+def load_policy_override() -> PolicyOverride:
+    enabled = (os.environ.get("ANIMICA_ENABLE_POLICY_OVERRIDE") or "").strip() == "1"
+    file_path = (os.environ.get("ANIMICA_POLICY_OVERRIDE_FILE") or "").strip() or None
+    if not enabled or not file_path:
+        return PolicyOverride(
+            enabled=False,
+            mode="enforce",
+            allow_sig_schemes=tuple(),
+            deny_sig_schemes=tuple(),
+            comment="",
+            file_path=file_path,
+        )
+
+    p = Path(file_path)
+    if not p.exists():
+        log.warning("Policy override enabled but file is missing: %s", file_path)
+        return PolicyOverride(
+            enabled=False,
+            mode="enforce",
+            allow_sig_schemes=tuple(),
+            deny_sig_schemes=tuple(),
+            comment="override_file_missing",
+            file_path=file_path,
+        )
+
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("Policy override enabled but file could not be parsed (%s): %s", file_path, exc)
+        return PolicyOverride(
+            enabled=False,
+            mode="enforce",
+            allow_sig_schemes=tuple(),
+            deny_sig_schemes=tuple(),
+            comment="override_file_parse_error",
+            file_path=file_path,
+        )
+
+    mode = str(payload.get("mode") or "enforce").strip().lower()
+    if mode not in {"enforce", "override_allow"}:
+        mode = "enforce"
+    allow = _parse_int_list(payload.get("allowSigSchemes", []))
+    deny = _parse_int_list(payload.get("denySigSchemes", []))
+    comment = str(payload.get("comment") or "")
+
+    log.warning("POLICY OVERRIDE ACTIVE: mode=%s file=%s allow=%s deny=%s", mode, file_path, list(allow), list(deny))
+    if comment:
+        log.warning("POLICY OVERRIDE COMMENT: %s", comment)
+
+    return PolicyOverride(
+        enabled=True,
+        mode=mode,
+        allow_sig_schemes=allow,
+        deny_sig_schemes=deny,
+        comment=comment,
+        file_path=file_path,
+    )
+
+
+def policy_roots() -> dict[str, str]:
+    return {
+        "pqAlgPolicy": "ANIMICA_DISABLED_SIGNATURE_SCHEMES",
+        "policyOverride": "ANIMICA_POLICY_OVERRIDE_FILE",
+    }
+
+
+def evaluate_scheme_policy(
+    spec: SchemeSpec,
+    *,
+    disabled_by_policy: set[int],
+    override: PolicyOverride,
+) -> PolicyEvaluation:
+    enabled_by_code = bool(spec.enabled_by_default)
+
+    base_enabled_by_policy = spec.scheme_id not in disabled_by_policy
+    reason: str | None = None
+
+    if spec.scheme_id in override.deny_sig_schemes:
+        enabled_by_policy = False
+        reason = "denied_by_override"
+        policy_root = "ANIMICA_POLICY_OVERRIDE_FILE"
+    elif override.enabled and override.mode == "override_allow" and spec.scheme_id in override.allow_sig_schemes:
+        enabled_by_policy = True
+        policy_root = "ANIMICA_POLICY_OVERRIDE_FILE"
+    else:
+        enabled_by_policy = base_enabled_by_policy
+        policy_root = "ANIMICA_DISABLED_SIGNATURE_SCHEMES"
+
+    enabled_effective = enabled_by_code and enabled_by_policy
+
+    if reason is None and not enabled_by_policy:
+        reason = "disabled_by_policy"
+    if reason is None and not enabled_by_code:
+        reason = "disabled_by_code"
+
+    return PolicyEvaluation(
+        scheme_id=spec.scheme_id,
+        name=spec.name,
+        enabled_by_code=enabled_by_code,
+        enabled_by_policy=enabled_by_policy,
+        enabled_effective=enabled_effective,
+        reason_if_disabled=reason,
+        policy_root=policy_root,
+    )
 
 
 def build_runtime_scheme_table() -> dict[int, RuntimeScheme]:
