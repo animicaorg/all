@@ -16,6 +16,7 @@ import { sendRawTxPipeline } from '../services/sendRawTx';
 import type { VaultData, VaultSettings } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
+import { decodeAddress } from '../core/crypto/address';
 
 // Import new canonical tx module
 import { buildAndSignTransaction, fetchChainContext, algIdToSchemeId } from '../tx';
@@ -109,6 +110,17 @@ function parseBaseUnitAmount(value: unknown): bigint {
   if (typeof value === 'string' && /^\d+$/.test(value.trim())) return BigInt(value.trim());
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) return BigInt(value);
   throw new Error('Invalid amount: must be a positive base-unit integer string');
+}
+
+function algLabel(algId: number): string {
+  switch (algId) {
+    case 0x1001:
+      return 'Dilithium3 (0x1001)';
+    case 0x1002:
+      return 'SPHINCS+ SHAKE-128s (0x1002)';
+    default:
+      return `alg-${algId} (0x${algId.toString(16)})`;
+  }
 }
 
 function summarizeRawTx(rawTx: string): Record<string, unknown> {
@@ -500,6 +512,14 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     if (!account) {
       throw new Error('Account not found');
     }
+
+    const fromAddressInfo = decodeAddress(params.from);
+    if (account.algId !== fromAddressInfo.algId) {
+      throw new Error(
+        `Account/address algorithm mismatch: account uses ${algLabel(account.algId)}, ` +
+        `but from address encodes ${algLabel(fromAddressInfo.algId)}.`
+      );
+    }
     
     // Validate account has required signing material
     if (!account.secretKey || account.secretKey.length === 0) {
@@ -592,6 +612,18 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     if ('error' in sendResult) {
       const sendError = sendResult.error;
       captureSendRpcResponse(null, JSON.stringify(sendError), sendError.attempts);
+
+      if (
+        sendError.code === -32010 &&
+        typeof sendError.message === 'string' &&
+        sendError.message.toLowerCase().includes('signature scheme disabled by policy')
+      ) {
+        throw new Error(
+          `Network policy rejected ${algLabel(account.algId)} for ${activeWallet.address}. ` +
+          'Switch to an account using an allowed signature algorithm for this network and retry.'
+        );
+      }
+
       throw sendError;
     }
 
