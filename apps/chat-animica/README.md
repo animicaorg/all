@@ -2,27 +2,35 @@
 
 Production-ready Next.js app for Animica contract generation + deploy.
 
+## Quick bootstrap
+```bash
+pnpm -w install
+pnpm --filter chat-animica dev
+export MODAL_TOKEN_ID=...
+export MODAL_TOKEN_SECRET=...
+pnpm --filter chat-animica modal:deploy
+```
+
 ## Dev Quickstart
 1. `docker compose -f docker/docker-compose.yml up -d`
-2. `pnpm install`
+2. `pnpm -w install`
 3. `cp .env.example .env`
-4. `pnpm prisma:migrate`
-5. `pnpm dev`
-6. `pnpm worker`
+4. `pnpm --filter chat-animica prisma:migrate`
+5. `pnpm --filter chat-animica dev`
+6. `pnpm --filter chat-animica worker`
 
 ## Modal Setup (1 minute)
 1. Copy env template: `cp .env.example .env`
-2. Set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in `.env`
-3. Run `pnpm dev`
+2. Set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in `.env` or shell env
+3. Run `pnpm --filter chat-animica modal:deploy`
 
-What happens on first run:
-- `scripts/modal-bootstrap.ts` auto-creates `.venv-modal`
+What happens on deploy:
+- `scripts/modal-bootstrap.sh` auto-creates `.venv-modal`
 - installs pinned Modal runtime deps
 - deploys `modal/modal_app.py`
-- writes discovered endpoint to `.modal-endpoint`
-- app starts using Modal endpoint automatically
+- uses default Modal environment unless a requested env exists
 
-If Modal credentials are missing or deploy fails, chat falls back to a local stub provider with clear logs.
+If Modal credentials are missing or deploy fails, the script exits with actionable diagnostics.
 
 ## Feature flags
 - `ENABLE_WALLET_PROD_SIGNING=1`: allows wallet session signer path.
@@ -39,11 +47,9 @@ If Modal credentials are missing or deploy fails, chat falls back to a local stu
 5. Display hash, receipt, explorer link.
 
 ## Troubleshooting
-- **Modal auth errors (401/403)**: verify `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in `.env`. Re-run `pnpm modal:deploy`.
-- **Deploy failure / endpoint missing**: run `pnpm modal:deploy` and inspect output; ensure Python 3 + network access are available. Endpoint should land in `.modal-endpoint`.
-- **Endpoint override needed**: set `MODAL_ENDPOINT_URL=https://...` in `.env` to bypass auto-discovery.
-- **Timeouts from LLM calls**: check `pnpm modal:logs`; app auto-falls back locally if Modal is unreachable.
-- **Local fallback unexpectedly active**: delete stale `.modal-endpoint`, verify endpoint URL is HTTPS, then redeploy.
+- **Modal auth errors (401/403)**: verify `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` are exported. Re-run `pnpm --filter chat-animica modal:deploy`.
+- **Deploy failure / endpoint missing**: run `pnpm --filter chat-animica modal:deploy` and inspect output; ensure Python 3 + network access are available.
+- **Timeouts from LLM calls**: check `pnpm --filter chat-animica modal:logs`.
 - **Compiler failures**: install `animica-compiler` binary in PATH for worker compile jobs.
 
 ## Included capabilities
