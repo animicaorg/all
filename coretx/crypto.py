@@ -1,23 +1,16 @@
 """
 coretx.crypto - PQ Cryptography Registry
 =========================================
-
-Registry of post-quantum signature schemes with typed verification results.
-Supports dilithium3, sphincs+, and other PQ algorithms.
-
-All verification functions:
-- Return typed VerifyResult (never raise exceptions)
-- Log only fingerprints (never full keys/signatures)
-- Provide diagnostic context on failure
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Callable, Optional, Protocol, Tuple
+from typing import Optional, Protocol
 
 from .errors import VerifyResult
+from .schemes import RuntimeScheme, build_runtime_scheme_table, load_policy_disabled_scheme_ids
 
 __all__ = [
     "SCHEME_DILITHIUM3",
@@ -30,13 +23,14 @@ __all__ = [
     "register_scheme",
     "get_scheme",
     "list_schemes",
+    "list_scheme_descriptors",
+    "infer_scheme_ids_by_lengths",
     "verify_signature",
     "pubkey_fingerprint",
 ]
 
 log = logging.getLogger(__name__)
 
-# Scheme identifiers (stable integers)
 SCHEME_DILITHIUM3 = 1
 SCHEME_SPHINCS_SHAKE_128S = 2
 SCHEME_SPHINCS_SHAKE_128F = 3
@@ -44,63 +38,79 @@ SCHEME_SPHINCS_SHAKE_256S = 4
 
 
 class SignFunc(Protocol):
-    """Signature function protocol"""
-    def __call__(self, message: bytes, secret_key: bytes) -> bytes:
-        """Sign a message with a secret key, return signature bytes"""
-        ...
+    def __call__(self, message: bytes, secret_key: bytes) -> bytes: ...
 
 
 class VerifyFunc(Protocol):
-    """Verification function protocol"""
-    def __call__(self, message: bytes, signature: bytes, public_key: bytes) -> bool:
-        """Verify a signature, return True if valid"""
-        ...
+    def __call__(self, message: bytes, signature: bytes, public_key: bytes) -> bool: ...
 
 
 class SchemeInfo:
-    """Information about a signature scheme"""
     def __init__(
         self,
         scheme_id: int,
         name: str,
         sign_func: Optional[SignFunc],
-        verify_func: VerifyFunc,
-        pubkey_len: Tuple[int, int],  # (min, max) in bytes
-        sig_len: Tuple[int, int],  # (min, max) in bytes
+        verify_func: Optional[VerifyFunc],
+        pubkey_lengths: tuple[int, ...],
+        signature_lengths: tuple[int, ...],
+        enabled_by_default: bool = True,
+        enabled: bool = False,
+        reason_if_disabled: Optional[str] = None,
     ):
         self.scheme_id = scheme_id
         self.name = name
         self.sign_func = sign_func
         self.verify_func = verify_func
-        self.pubkey_len = pubkey_len
-        self.sig_len = sig_len
+        self.pubkey_lengths = pubkey_lengths
+        self.signature_lengths = signature_lengths
+        self.enabled_by_default = enabled_by_default
+        self.enabled = enabled
+        self.reason_if_disabled = reason_if_disabled
 
 
-# Global registry
 _SCHEMES: dict[int, SchemeInfo] = {}
 
 
 def register_scheme(info: SchemeInfo) -> None:
-    """Register a signature scheme"""
     _SCHEMES[info.scheme_id] = info
-    log.info(f"Registered signature scheme: {info.name} (id={info.scheme_id})")
 
 
 def get_scheme(scheme_id: int) -> Optional[SchemeInfo]:
-    """Get scheme info by ID"""
     return _SCHEMES.get(scheme_id)
 
 
 def list_schemes() -> list[SchemeInfo]:
-    """List all registered schemes"""
     return list(_SCHEMES.values())
 
 
+def list_scheme_descriptors() -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for scheme in sorted(_SCHEMES.values(), key=lambda s: s.scheme_id):
+        out.append(
+            {
+                "schemeId": scheme.scheme_id,
+                "name": scheme.name,
+                "pubkeyLengths": list(scheme.pubkey_lengths),
+                "signatureLengths": list(scheme.signature_lengths),
+                "enabled": bool(scheme.enabled and scheme.verify_func is not None),
+                "reasonIfDisabled": scheme.reason_if_disabled,
+            }
+        )
+    return out
+
+
+def infer_scheme_ids_by_lengths(pubkey_len: int, sig_len: int, *, enabled_only: bool = True) -> list[int]:
+    matches: list[int] = []
+    for scheme in _SCHEMES.values():
+        if enabled_only and (not scheme.enabled or scheme.verify_func is None):
+            continue
+        if pubkey_len in scheme.pubkey_lengths and sig_len in scheme.signature_lengths:
+            matches.append(scheme.scheme_id)
+    return sorted(matches)
+
+
 def pubkey_fingerprint(pubkey: bytes) -> str:
-    """
-    Compute a short fingerprint of a public key for logging.
-    Never log full pubkeys (they're large and sensitive).
-    """
     h = hashlib.sha3_256(pubkey).digest()
     return h[:8].hex()
 
@@ -111,133 +121,152 @@ def verify_signature(
     signature: bytes,
     public_key: bytes,
 ) -> VerifyResult:
-    """
-    Verify a signature using the registered scheme.
-    
-    Returns:
-        VerifyResult with success/failure and diagnostic context
-    
-    Never raises exceptions - all failures are captured in VerifyResult.
-    """
-    # Get scheme
     scheme = get_scheme(scheme_id)
     if scheme is None:
         return VerifyResult.failure(
             "scheme_unsupported",
             scheme_id=scheme_id,
-            available_schemes=list(_SCHEMES.keys()),
+            pubkeyLen=len(public_key),
+            sigLen=len(signature),
+            supported=[{"id": s["schemeId"], "name": s["name"]} for s in list_scheme_descriptors() if s.get("enabled")],
         )
-    
-    # Check public key length
-    pubkey_min, pubkey_max = scheme.pubkey_len
-    if not (pubkey_min <= len(public_key) <= pubkey_max):
+
+    if not scheme.enabled:
+        return VerifyResult.failure(
+            "scheme_disabled_by_policy",
+            schemeId=scheme_id,
+            name=scheme.name,
+            policyRoot="ANIMICA_DISABLED_SIGNATURE_SCHEMES",
+            hint="Enable scheme in node policy or switch wallet scheme",
+            disabledReason=scheme.reason_if_disabled,
+        )
+
+    if scheme.verify_func is None:
+        return VerifyResult.failure(
+            "scheme_disabled_by_policy",
+            schemeId=scheme_id,
+            name=scheme.name,
+            policyRoot="crypto.backends",
+            hint="Install the required PQ backend for this scheme",
+            reason="backend_missing",
+        )
+
+    if len(public_key) not in scheme.pubkey_lengths:
         return VerifyResult.failure(
             "invalid_pubkey_length",
             scheme_id=scheme_id,
-            expected_range=(pubkey_min, pubkey_max),
+            expected_lengths=list(scheme.pubkey_lengths),
             got=len(public_key),
             pubkey_fp=pubkey_fingerprint(public_key),
         )
-    
-    # Check signature length
-    sig_min, sig_max = scheme.sig_len
-    if not (sig_min <= len(signature) <= sig_max):
+
+    if len(signature) not in scheme.signature_lengths:
         return VerifyResult.failure(
             "invalid_signature_length",
             scheme_id=scheme_id,
-            expected_range=(sig_min, sig_max),
+            expected_lengths=list(scheme.signature_lengths),
             got=len(signature),
             pubkey_fp=pubkey_fingerprint(public_key),
         )
-    
-    # Verify signature
+
     try:
         valid = scheme.verify_func(message, signature, public_key)
         if valid:
             return VerifyResult.success()
-        else:
-            return VerifyResult.failure(
-                "signature_invalid",
-                scheme_id=scheme_id,
-                scheme_name=scheme.name,
-                pubkey_fp=pubkey_fingerprint(public_key),
-            )
-    except Exception as e:
-        log.warning(
-            f"Signature verification raised exception: {type(e).__name__}: {e}",
-            extra={"scheme_id": scheme_id, "pubkey_fp": pubkey_fingerprint(public_key)},
-        )
         return VerifyResult.failure(
-            "verify_exception",
-            scheme_id=scheme_id,
-            scheme_name=scheme.name,
+            "signature_invalid",
+            schemeId=scheme_id,
+            name=scheme.name,
+            detail="verify() returned false",
+            pubkey_fp=pubkey_fingerprint(public_key),
+        )
+    except Exception as e:
+        log.warning("Signature verification raised exception: %s: %s", type(e).__name__, e)
+        return VerifyResult.failure(
+            "signature_invalid",
+            schemeId=scheme_id,
+            name=scheme.name,
+            detail=f"verify() raised {type(e).__name__}",
             error_class=type(e).__name__,
             error_message=str(e),
             pubkey_fp=pubkey_fingerprint(public_key),
         )
 
 
-# ============================================================================
-# Bootstrap: Register available PQ schemes
-# ============================================================================
+def _bootstrap_schemes() -> None:
+    table: dict[int, RuntimeScheme] = build_runtime_scheme_table()
+    disabled_by_policy = load_policy_disabled_scheme_ids()
 
-def _bootstrap_schemes():
-    """Register all available PQ signature schemes"""
-    
-    # Try to load dilithium3
+    for runtime in table.values():
+        if runtime.spec.scheme_id in disabled_by_policy:
+            runtime.enabled = False
+            runtime.reason_if_disabled = "disabled_by_policy"
+        else:
+            runtime.enabled = runtime.spec.enabled_by_default
+
     try:
         from pq.py import dilithium3_sign, dilithium3_verify
-        register_scheme(SchemeInfo(
-            scheme_id=SCHEME_DILITHIUM3,
-            name="dilithium3",
-            sign_func=dilithium3_sign,
-            verify_func=dilithium3_verify,
-            pubkey_len=(1952, 1952),  # Dilithium3 public key is 1952 bytes
-            sig_len=(3293, 3293),  # Dilithium3 signature is 3293 bytes
-        ))
+
+        runtime = table[SCHEME_DILITHIUM3]
+        runtime.sign_fn = dilithium3_sign
+        runtime.verify_fn = dilithium3_verify
     except ImportError:
-        log.warning("dilithium3 not available")
-    
-    # Try to load sphincs+ variants
+        table[SCHEME_DILITHIUM3].reason_if_disabled = "backend_missing"
+
     try:
         from pq.py import sphincs_shake_128s_sign, sphincs_shake_128s_verify
-        register_scheme(SchemeInfo(
-            scheme_id=SCHEME_SPHINCS_SHAKE_128S,
-            name="sphincs_shake_128s",
-            sign_func=sphincs_shake_128s_sign,
-            verify_func=sphincs_shake_128s_verify,
-            pubkey_len=(32, 32),
-            sig_len=(7856, 7856),
-        ))
+
+        runtime = table[SCHEME_SPHINCS_SHAKE_128S]
+        runtime.sign_fn = sphincs_shake_128s_sign
+        runtime.verify_fn = sphincs_shake_128s_verify
     except ImportError:
-        log.debug("sphincs_shake_128s not available")
-    
+        table[SCHEME_SPHINCS_SHAKE_128S].reason_if_disabled = "backend_missing"
+
     try:
         from pq.py import sphincs_shake_128f_sign, sphincs_shake_128f_verify
-        register_scheme(SchemeInfo(
-            scheme_id=SCHEME_SPHINCS_SHAKE_128F,
-            name="sphincs_shake_128f",
-            sign_func=sphincs_shake_128f_sign,
-            verify_func=sphincs_shake_128f_verify,
-            pubkey_len=(32, 32),
-            sig_len=(17088, 17088),
-        ))
+
+        runtime = table[SCHEME_SPHINCS_SHAKE_128F]
+        runtime.sign_fn = sphincs_shake_128f_sign
+        runtime.verify_fn = sphincs_shake_128f_verify
     except ImportError:
-        log.debug("sphincs_shake_128f not available")
-    
+        table[SCHEME_SPHINCS_SHAKE_128F].reason_if_disabled = "backend_missing"
+
     try:
         from pq.py import sphincs_shake_256s_sign, sphincs_shake_256s_verify
-        register_scheme(SchemeInfo(
-            scheme_id=SCHEME_SPHINCS_SHAKE_256S,
-            name="sphincs_shake_256s",
-            sign_func=sphincs_shake_256s_sign,
-            verify_func=sphincs_shake_256s_verify,
-            pubkey_len=(64, 64),
-            sig_len=(29792, 29792),
-        ))
+
+        runtime = table[SCHEME_SPHINCS_SHAKE_256S]
+        runtime.sign_fn = sphincs_shake_256s_sign
+        runtime.verify_fn = sphincs_shake_256s_verify
     except ImportError:
-        log.debug("sphincs_shake_256s not available")
+        table[SCHEME_SPHINCS_SHAKE_256S].reason_if_disabled = "backend_missing"
+
+    _SCHEMES.clear()
+    for scheme_id, runtime in sorted(table.items()):
+        enabled = runtime.enabled and runtime.verify_fn is not None
+        reason = runtime.reason_if_disabled
+        if runtime.enabled and runtime.verify_fn is None:
+            enabled = False
+            reason = "backend_missing"
+        info = SchemeInfo(
+            scheme_id=runtime.spec.scheme_id,
+            name=runtime.spec.name,
+            sign_func=runtime.sign_fn,
+            verify_func=runtime.verify_fn,
+            pubkey_lengths=runtime.spec.pubkey_lengths,
+            signature_lengths=runtime.spec.signature_lengths,
+            enabled_by_default=runtime.spec.enabled_by_default,
+            enabled=enabled,
+            reason_if_disabled=reason,
+        )
+        register_scheme(info)
+        log.info(
+            "Signature scheme: id=%s name=%s enabled=%s reason=%s verify_fn=%s",
+            info.scheme_id,
+            info.name,
+            info.enabled,
+            info.reason_if_disabled,
+            bool(info.verify_func),
+        )
 
 
-# Bootstrap on import
 _bootstrap_schemes()
