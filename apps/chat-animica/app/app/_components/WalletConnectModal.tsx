@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { requestAccounts } from "@/src/shared/wallet";
+import { copyText } from "@/src/shared/clipboard";
 
 type StartResponse = {
   requestId: string;
@@ -47,7 +48,6 @@ export function WalletConnectModal({ open, onClose, onConnected }: { open: boole
       const pollData = await poll.json();
       if (pollData.status === "approved") {
         window.clearInterval(timer);
-        navigator.vibrate?.(30);
         onConnected();
         onClose();
       }
@@ -60,28 +60,13 @@ export function WalletConnectModal({ open, onClose, onConnected }: { open: boole
     setLoading(false);
   }
 
-  async function mockApprove() {
-    if (!pending) return;
-    const res = await fetch("/api/wallet/mock-approve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId: pending.requestId }) });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error ?? "Mock approve failed");
-      return;
-    }
-    navigator.vibrate?.(20);
-    onConnected();
-    onClose();
-  }
-
   async function connectExtension() {
     try {
       await requestAccounts();
-      navigator.vibrate?.(20);
       onConnected();
       onClose();
     } catch (e) {
       setError((e as Error).message);
-      navigator.vibrate?.([10, 30, 10]);
     }
   }
 
@@ -94,17 +79,14 @@ export function WalletConnectModal({ open, onClose, onConnected }: { open: boole
         </div>
         <button onClick={connectExtension} className="w-full rounded-lg border border-slate-600 p-3 text-left">Browser Extension</button>
         <button onClick={connectMobileWallet} disabled={loading} className="w-full rounded-lg border border-indigo-400 bg-indigo-500/20 p-3 text-left">Connect Animica Wallet (Mobile)</button>
-        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
-          Dev Signer (server key) is for testing only and should never be used for production funds.
-        </div>
 
         {pending ? (
           <div className="space-y-2 rounded-lg border border-slate-700 p-3 text-sm">
             <p className="font-medium">Waiting for wallet approval…</p>
             <p className="text-xs text-slate-400">Open this link on mobile if auto-open fails:</p>
             <a className="block break-all text-xs text-blue-300 underline" href={pending.universalLink}>{pending.universalLink}</a>
+            <button className="rounded bg-slate-800 px-2 py-1 text-xs" onClick={() => copyText(pending.universalLink)}>Copy link</button>
             {qrSrc ? <img src={qrSrc} alt="Wallet connect QR code" className="mx-auto h-40 w-40 rounded bg-white p-1" /> : null}
-            <button onClick={mockApprove} className="w-full rounded bg-slate-800 px-3 py-2 text-xs">Mock Approve (WALLET_MOCK=1)</button>
           </div>
         ) : null}
 
