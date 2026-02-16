@@ -1,16 +1,16 @@
 import { WalletPanel } from "./WalletPanel";
+import { ChatWorkspace } from "./ChatWorkspace";
+import { getSessionUser } from "@/src/server/auth/session";
+import { prisma } from "@/src/server/db/prisma";
 
-export default function IdeHomePage() {
+export default async function IdeHomePage() {
+  const user = await getSessionUser();
+  const sub = user ? await prisma.subscription.findFirst({ where: { userId: user.id, status: "ACTIVE" } }) : null;
+
   return (
     <div className="space-y-4">
       <WalletPanel />
-      <h1 className="text-2xl font-semibold">Chat IDE</h1>
-      <div className="card">
-        <form action="/api/chat" method="post" className="space-y-3">
-          <textarea className="w-full rounded bg-slate-800 p-3" name="prompt" placeholder="Describe the Animica contract to generate" rows={6} />
-          <button className="rounded bg-indigo-500 px-3 py-2">Generate Contract</button>
-        </form>
-      </div>
+      <ChatWorkspace demoMode={!sub} />
     </div>
   );
 }

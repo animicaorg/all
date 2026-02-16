@@ -7,5 +7,18 @@ body {
 }
 
 .card {
-  @apply rounded-lg border border-slate-800 bg-slate-900/70 p-4;
+  @apply rounded-xl border border-slate-800 bg-slate-900/70 p-4;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400;
+}
+
+button,
+a {
+  min-height: 44px;
 }

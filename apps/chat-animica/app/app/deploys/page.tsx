@@ -6,9 +6,16 @@ export default async function DeploysPage() {
   return (
     <div className="space-y-3">
       <h1 className="text-xl font-semibold">Deploys</h1>
-      {deploys.map((d) => (
-        <Link key={d.id} className="card block" href={`/app/deploys/${d.id}`}>{d.id} — {d.status}</Link>
-      ))}
+      <div className="grid gap-2">
+        {deploys.map((d) => (
+          <Link key={d.id} className="card block" href={`/app/deploys/${d.id}`}>
+            <div className="flex items-center justify-between text-sm">
+              <span className="truncate">{d.id}</span>
+              <span className="rounded bg-slate-800 px-2 py-1 text-xs">{d.status}</span>
+            </div>
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
