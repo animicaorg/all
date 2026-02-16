@@ -5,8 +5,9 @@ export function canUseDevSigner() {
   return Boolean(env.DEV_SIGNER_KEY);
 }
 
-export function signWithDevSigner(txDraft: unknown) {
+export function signWithDevSigner(rawPayloadHex: string) {
   if (!env.DEV_SIGNER_KEY) throw new Error("DEV_SIGNER_KEY not enabled");
-  const digest = crypto.createHmac("sha256", env.DEV_SIGNER_KEY).update(JSON.stringify(txDraft)).digest("hex");
-  return `0x${digest}`;
+  const payload = rawPayloadHex.startsWith("0x") ? rawPayloadHex.slice(2) : rawPayloadHex;
+  const digest = crypto.createHmac("sha256", env.DEV_SIGNER_KEY).update(payload).digest("hex");
+  return `0x${payload}${digest}`;
 }
