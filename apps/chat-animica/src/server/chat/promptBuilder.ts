@@ -1,3 +1,5 @@
+import { STRICT_ANIMICA_GUARDRAILS } from "@/src/lib/animicaGuardrails";
+
 export type ChatMode = "strict" | "possibility";
 
 export function buildPrompt(input: { prompt: string; mode: ChatMode; projectMemory?: string }) {
@@ -7,6 +9,7 @@ export function buildPrompt(input: { prompt: string; mode: ChatMode; projectMemo
 
   return [
     "You are Animica contract generator.",
+    STRICT_ANIMICA_GUARDRAILS,
     `Mode: ${input.mode}`,
     modeInstruction,
     input.projectMemory ? `Project memory:\n${input.projectMemory}` : "",
