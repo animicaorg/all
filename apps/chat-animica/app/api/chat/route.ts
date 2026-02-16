@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     const output = await callModalChat({ prompt, mode, context: { projectId: project!.id, threadId: thread!.id } });
     const validation = validateAndRewrite(output.content);
     if (!validation.ok) {
+      log.warn({ errors: validation.errors, requestId: output.requestId }, "guardrail rejected model output");
       return NextResponse.json({
         error: "Generated contract failed validation",
         diagnostics: {
@@ -61,6 +62,14 @@ export async function POST(req: NextRequest) {
           errors: validation.errors
         }
       }, { status: 422 });
+    }
+
+    if (validation.status === "rewritten") {
+      log.info({
+        requestId: output.requestId,
+        rewriteCount: validation.rewriteCount,
+        fixes: validation.fixes
+      }, "validator auto-fixed model output");
     }
 
     const contract = await prisma.contract.create({
@@ -84,7 +93,8 @@ export async function POST(req: NextRequest) {
         topK: 4,
         validatorStatus: validation.status,
         rewriteCount: validation.rewriteCount,
-        requestId: output.requestId
+        requestId: output.requestId,
+        fixes: validation.fixes
       },
       demoMode: !hasSubscription
     });
