@@ -5,9 +5,12 @@ export type WalletSigScheme = 'dilithium3' | 'sphincs_shake_128s';
 export interface NodeSignatureScheme {
   schemeId: number;
   name: string;
-  pubkeyLengths: number[];
-  signatureLengths: number[];
-  enabled: boolean;
+  pubkeyLengths?: number[];
+  signatureLengths?: number[];
+  enabled?: boolean;
+  enabledByCode?: boolean;
+  enabledByPolicy?: boolean;
+  enabledEffective?: boolean;
   reasonIfDisabled?: string | null;
 }
 
@@ -16,6 +19,12 @@ const NAME_ALIASES: Record<string, WalletSigScheme> = {
   sphincs_shake_128s: 'sphincs_shake_128s',
   'sphincs-shake-128s': 'sphincs_shake_128s',
 };
+
+function isEnabledEffective(s: NodeSignatureScheme): boolean {
+  if (typeof s.enabledEffective === 'boolean') return s.enabledEffective;
+  if (typeof s.enabled === 'boolean') return s.enabled;
+  return Boolean((s.enabledByCode ?? true) && (s.enabledByPolicy ?? true));
+}
 
 export async function fetchSupportedSignatureSchemes(client: RpcClient): Promise<NodeSignatureScheme[]> {
   const result = await client.call<{ schemes?: NodeSignatureScheme[] }>('tx.getSupportedSignatureSchemes');
@@ -27,7 +36,7 @@ export function chooseBestWalletScheme(
   schemes: NodeSignatureScheme[],
   preferred?: WalletSigScheme,
 ): WalletSigScheme {
-  const enabled = schemes.filter((s) => s.enabled);
+  const enabled = schemes.filter((s) => isEnabledEffective(s));
 
   const byName = new Map<WalletSigScheme, NodeSignatureScheme>();
   for (const s of enabled) {
@@ -49,7 +58,22 @@ export function resolveSchemeIdForWalletAlgo(
   algo: WalletSigScheme,
   schemes: NodeSignatureScheme[],
 ): number {
-  const wanted = schemes.find((s) => s.enabled && NAME_ALIASES[s.name.toLowerCase()] === algo);
+  const wanted = schemes.find((s) => isEnabledEffective(s) && NAME_ALIASES[s.name.toLowerCase()] === algo);
   if (!wanted) throw new Error(`Scheme ${algo} not supported by node`);
   return wanted.schemeId;
+}
+
+export function resolveWalletSchemeSelection(
+  schemes: NodeSignatureScheme[],
+  selected?: WalletSigScheme,
+): { selected: WalletSigScheme; switchedFrom?: WalletSigScheme; message?: string } {
+  const best = chooseBestWalletScheme(schemes, selected);
+  if (!selected || selected === best) {
+    return { selected: best };
+  }
+  return {
+    selected: best,
+    switchedFrom: selected,
+    message: `This network currently disallows ${selected}. Switched to ${best}.`,
+  };
 }
