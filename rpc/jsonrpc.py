@@ -639,7 +639,15 @@ async def jsonrpc_endpoint(request: Request) -> Response:
 async def rpc_discover() -> Dict[str, Any]:
     """Return the OpenRPC document for this server (same as GET /openrpc.json)."""
 
-    return _load_openrpc_document()
+    doc = _load_openrpc_document()
+    try:
+        from coretx.crypto import list_scheme_descriptors
+        ext = dict(doc.get("extensions") or {})
+        ext["signatureSchemes"] = list_scheme_descriptors()
+        doc["extensions"] = ext
+    except Exception:
+        pass
+    return doc
 
 
 @registry.method("rpc.listMethods")
