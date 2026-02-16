@@ -6,9 +6,11 @@ export default async function ProjectsPage() {
   return (
     <div className="space-y-3">
       <h1 className="text-xl font-semibold">Projects</h1>
-      {projects.map((p) => (
-        <Link key={p.id} className="card block" href={`/app/projects/${p.id}`}>{p.name}</Link>
-      ))}
+      <div className="grid gap-2">
+        {projects.map((p) => (
+          <Link key={p.id} className="card block" href={`/app/projects/${p.id}`}>{p.name}</Link>
+        ))}
+      </div>
     </div>
   );
 }
