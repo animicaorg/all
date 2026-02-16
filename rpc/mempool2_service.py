@@ -176,7 +176,8 @@ def get_mempool2_service() -> Mempool2Service:
     
     if _mempool2_service is None:
         # Read config from environment
-        db_path = os.environ.get("ANIMICA_MEMPOOL2_DB_PATH", "./data/mempool2.db")
+        from rpc.deps import resolve_data_dir
+        db_path = os.environ.get("ANIMICA_MEMPOOL2_DB_PATH", str(resolve_data_dir() / "mempool" / "mempool2.db"))
         chain_id = int(os.environ.get("ANIMICA_CHAIN_ID", "1"))
         max_tx_bytes = int(os.environ.get("ANIMICA_MAX_TX_BYTES", "131072"))
         min_fee_rate = int(os.environ.get("ANIMICA_MIN_FEE_RATE", "1"))

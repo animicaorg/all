@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import errno
 import threading
 import time
 import uuid
@@ -530,11 +531,18 @@ class MempoolService:
         self.state_db = state_db
         self.tx_index = tx_index
         self._persist_enabled = bool(persist_enabled)
+        self._persist_backend = "memory"
+        self._persistence_error: dict[str, Any] | None = None
+        self._fallback_reason: str | None = None
+        self._fallback_active = False
+        self._persist_required = (os.environ.get("ANIMICA_MEMPOOL_REQUIRE_PERSIST", "0").strip().lower() in {"1", "true", "yes", "on"})
         self._persist_ttl_s = int(persist_ttl_s) if int(persist_ttl_s) > 0 else 0
         self._persist_lock = threading.RLock()
         self._persist_path: Path | None = None
         if data_dir:
             self._persist_path = Path(data_dir).expanduser() / "mempool" / "pending.jsonl"
+            if self._persist_enabled:
+                self._persist_backend = "persistent"
         self._restoring = False
         self._rejection_ttl_s = int(
             os.getenv("ANIMICA_MEMPOOL_REJECTION_TTL_S", "300") or 300
@@ -554,6 +562,28 @@ class MempoolService:
         self._instant_block_loop: Optional["asyncio.AbstractEventLoop"] = None
         if self._persist_enabled:
             self._load_persisted()
+
+    def _disable_persistence_fallback(self, *, reason: str, exc: Exception, path_attempted: str | None = None) -> None:
+        errno_value = getattr(exc, "errno", None)
+        payload = {
+            "kind": "mempool_unavailable",
+            "pathAttempted": path_attempted or (str(self._persist_path) if self._persist_path else None),
+            "errno": errno_value,
+            "error": str(exc),
+            "suggestion": "Set ANIMICA_DATA_DIR to a writable path (/data or /var/lib/animica) or unset ANIMICA_MEMPOOL_REQUIRE_PERSIST to allow fallback.",
+        }
+        self._persistence_error = payload
+        self._fallback_reason = reason
+        if self._persist_required:
+            raise PersistenceFailed(tx_hash="unknown", error=str(exc)) from exc
+        self._persist_enabled = False
+        self._persist_backend = "memory"
+        self._fallback_active = True
+        log.error(
+            "Mempool persistence disabled; using in-memory fallback",
+            extra={"fallback": payload, "reason": reason},
+            exc_info=exc,
+        )
     
     def set_p2p_broadcast_callback(
         self, callback: Any, *, loop: Optional["asyncio.AbstractEventLoop"] = None
@@ -773,13 +803,26 @@ class MempoolService:
                 }
             )
         if self._persist_path.parent:
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                if exc.errno in (errno.EROFS, errno.EACCES, errno.ENOENT):
+                    self._disable_persistence_fallback(reason="mkdir_failed", exc=exc)
+                    return
+                raise
         tmp_path = self._persist_path.with_suffix(".tmp")
         with self._persist_lock:
-            with tmp_path.open("wt", encoding="utf-8") as fh:
-                for entry in entries:
-                    fh.write(json.dumps(entry) + "\n")
-            tmp_path.replace(self._persist_path)
+            try:
+                with tmp_path.open("wt", encoding="utf-8") as fh:
+                    for entry in entries:
+                        fh.write(json.dumps(entry) + "\n")
+                tmp_path.replace(self._persist_path)
+                self._persist_backend = "persistent"
+            except OSError as exc:
+                if exc.errno in (errno.EROFS, errno.EACCES, errno.ENOENT):
+                    self._disable_persistence_fallback(reason="write_failed", exc=exc)
+                    return
+                raise
 
     def _load_persisted(self) -> None:
         if self._persist_path is None or not self._persist_path.exists():
@@ -861,6 +904,17 @@ class MempoolService:
             return self.pool.get(_normalize_hash_bytes(tx_hash_hex)) is not None
         except Exception:
             return False
+
+    def persistence_status(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self._persist_enabled),
+            "backend": self._persist_backend,
+            "fallback_active": bool(self._fallback_active),
+            "fallback_reason": self._fallback_reason,
+            "path": str(self._persist_path) if self._persist_path else None,
+            "error": self._persistence_error,
+            "require_persist": bool(self._persist_required),
+        }
 
     def submit(
         self,
