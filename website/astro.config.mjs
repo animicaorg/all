@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
@@ -14,6 +16,14 @@ const IMAGE_DOMAINS = [
   'assets.animica.org',
   'images.animica.org',
 ];
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url));
+
+const aliases = {
+  '@': resolve(projectRoot, 'src'),
+  '@content': resolve(projectRoot, 'src/content'),
+  '@components': resolve(projectRoot, 'src/components'),
+};
 
 export default defineConfig({
   site: SITE_URL,
@@ -52,11 +62,7 @@ export default defineConfig({
   vite: {
     // Useful aliases for cleaner imports (optional)
     resolve: {
-      alias: {
-        '@': new URL('./src', import.meta.url).pathname,
-        '@content': new URL('./src/content', import.meta.url).pathname,
-        '@components': new URL('./src/components', import.meta.url).pathname,
-      },
+      alias: aliases,
     },
     build: {
       // Smaller JS by default; adjust if you need legacy support
