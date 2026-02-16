@@ -23,6 +23,7 @@ from typing import Any, Optional
 from coretx import TxEnvelope, TxId
 from coretx.canonical import compute_txid, decode_tx_envelope
 from coretx.errors import RejectReason
+from coretx.crypto import list_scheme_descriptors
 
 from rpc import errors as rpc_errors
 from rpc.methods import method
@@ -34,6 +35,7 @@ __all__ = [
     "get_transaction_v2",
     "get_transaction_status_v2",
     "get_mempool_stats_v2",
+    "get_supported_signature_schemes",
 ]
 
 log = logging.getLogger(__name__)
@@ -208,9 +210,10 @@ async def send_raw_transaction_v2(raw_tx: str) -> dict[str, Any]:
             
             # Map rejection reason to RPC error code
             code_map = {
-                RejectReason.invalid_signature: rpc_errors.AnimicaCode.BAD_SIGNATURE,
-                RejectReason.invalid_pubkey: rpc_errors.AnimicaCode.BAD_SIGNATURE,
-                RejectReason.scheme_unsupported: rpc_errors.AnimicaCode.BAD_SIGNATURE,
+                RejectReason.invalid_signature: rpc_errors.AnimicaCode.INVALID_TX,
+                RejectReason.invalid_pubkey: rpc_errors.AnimicaCode.INVALID_TX,
+                RejectReason.scheme_unsupported: rpc_errors.AnimicaCode.INVALID_TX,
+                RejectReason.policy_reject: rpc_errors.AnimicaCode.INVALID_TX,
                 RejectReason.chain_id_mismatch: rpc_errors.AnimicaCode.CHAIN_ID_MISMATCH,
                 RejectReason.insufficient_funds: rpc_errors.AnimicaCode.INSUFFICIENT_FUNDS,
                 RejectReason.nonce_too_low: rpc_errors.AnimicaCode.NONCE_TOO_LOW,
@@ -377,3 +380,9 @@ async def get_mempool_stats_v2() -> dict[str, Any]:
     except Exception as e:
         log.exception(f"Unexpected error in tx2.getMempoolStats: {e}")
         raise rpc_errors.InternalError(f"Internal error: {e}")
+
+
+@method("tx.getSupportedSignatureSchemes", aliases=("tx_getSupportedSignatureSchemes",), desc="List signature schemes supported by this node")
+def get_supported_signature_schemes() -> dict[str, Any]:
+    schemes = list_scheme_descriptors()
+    return {"schemes": schemes}

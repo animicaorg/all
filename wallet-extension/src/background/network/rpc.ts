@@ -9,6 +9,7 @@
  */
 
 import type { Network } from "./networks";
+import type { NodeSignatureScheme } from "./signatureSchemes";
 
 let nextId = 1;
 
@@ -280,3 +281,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 export default RpcClient;
+
+export async function getSupportedSignatureSchemes(net: Network, opts?: Partial<RpcClientOptions>): Promise<NodeSignatureScheme[]> {
+  const client = makeRpcClientForNetwork(net, opts);
+  const result = await client.call<{ schemes?: NodeSignatureScheme[] }>("tx.getSupportedSignatureSchemes");
+  return Array.isArray(result?.schemes) ? result.schemes : [];
+}
