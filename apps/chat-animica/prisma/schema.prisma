@@ -15,6 +15,32 @@ model User {
   subscriptions Subscription[]
   deployJobs    DeployJob[]
   usage         UsageDaily[]
+  walletSessions WalletSession[]
+  walletRequests WalletConnectRequest[]
+}
+
+model WalletSession {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  type       String
+  accounts   String[]
+  status     String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+}
+
+model WalletConnectRequest {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  nonce     String   @unique
+  payload   Json
+  signature String
+  status    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
 }
 
 model Subscription {

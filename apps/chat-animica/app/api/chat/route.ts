@@ -6,22 +6,34 @@ import { chatSchema } from "@/src/shared/schemas";
 import { prisma } from "@/src/server/db/prisma";
 import { compileQueue } from "@/src/server/jobs/queue";
 import { getRequestLogger } from "@/src/server/logging/requestLogger";
+import { redis } from "@/src/server/db/redis";
+
+const DEMO_LIMIT = 5;
 
 export async function POST(req: NextRequest) {
   const log = getRequestLogger(req);
   const userResult = await requireUser();
   if ("error" in userResult) return userResult.error;
   const subResult = await requireActiveSubscription(userResult.user.id);
-  if ("error" in subResult) return subResult.error;
+  const hasSubscription = !("error" in subResult);
 
   const body = Object.fromEntries((await req.formData()).entries());
   const parsed = chatSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const usage = await consumeDailyMessage(userResult.user.id);
-  if (!usage.allowed) {
-    log.warn({ userId: userResult.user.id, usage }, "Daily chat limit exceeded");
-    return NextResponse.json({ error: "Daily limit exceeded", usage }, { status: 429 });
+  if (hasSubscription) {
+    const usage = await consumeDailyMessage(userResult.user.id);
+    if (!usage.allowed) {
+      log.warn({ userId: userResult.user.id, usage }, "Daily chat limit exceeded");
+      return NextResponse.json({ error: "Daily limit exceeded", usage }, { status: 429 });
+    }
+  } else {
+    const key = `demo:chat:${userResult.user.id}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, 60 * 60 * 24 * 7);
+    if (count > DEMO_LIMIT) {
+      return NextResponse.json({ error: "Demo chat limit exceeded", usage: { total: count, limit: DEMO_LIMIT } }, { status: 402 });
+    }
   }
 
   const project = parsed.data.projectId
@@ -46,5 +58,5 @@ export async function POST(req: NextRequest) {
 
   await compileQueue.add("compile", { contractId: contract.id, source: output.content });
 
-  return NextResponse.json({ ok: true, contractId: contract.id, usage, output });
+  return NextResponse.json({ ok: true, contractId: contract.id, output, demoMode: !hasSubscription });
 }
