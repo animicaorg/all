@@ -14,6 +14,15 @@ SignFn = Callable[[bytes, bytes], bytes]
 log = logging.getLogger(__name__)
 
 _ALLOWED_OVERRIDE_WARNED = False
+_PQ_ALLOWLIST_WARNED = False
+
+_SCHEME_NAME_TO_ID = {
+    "dilithium3": 1,
+    "pq-1952-byte": 1,
+    "sphincs_shake_128s": 2,
+    "sphincs128s": 2,
+    "sphincs+128s": 2,
+}
 
 
 @dataclass(frozen=True)
@@ -125,6 +134,42 @@ def load_allowed_signature_schemes_override() -> tuple[int, ...]:
         _ALLOWED_OVERRIDE_WARNED = True
     return allowed
 
+
+def load_pq_allowlist_fallback() -> tuple[int, ...]:
+    """
+    Parse ANIMICA_PQ_ALLOWLIST into scheme IDs.
+
+    This fallback must be explicitly enabled via ANIMICA_ENABLE_PQ_ALLOWLIST_FALLBACK=1
+    and is only applied when policy load fails.
+    """
+    enabled = (os.environ.get("ANIMICA_ENABLE_PQ_ALLOWLIST_FALLBACK") or "").strip() == "1"
+    if not enabled:
+        return tuple()
+
+    raw = (os.environ.get("ANIMICA_PQ_ALLOWLIST") or "").strip().lower()
+    if not raw:
+        return tuple()
+
+    out: set[int] = set()
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if token in _SCHEME_NAME_TO_ID:
+            out.add(_SCHEME_NAME_TO_ID[token])
+            continue
+        try:
+            out.add(int(token, 0))
+        except ValueError:
+            continue
+
+    allowed = tuple(sorted(out))
+    global _PQ_ALLOWLIST_WARNED
+    if allowed and not _PQ_ALLOWLIST_WARNED:
+        log.warning("ANIMICA_PQ_ALLOWLIST fallback active: %s", list(allowed))
+        _PQ_ALLOWLIST_WARNED = True
+    return allowed
+
 def _parse_int_list(value: object) -> tuple[int, ...]:
     if not isinstance(value, list):
         return tuple()
@@ -203,6 +248,7 @@ def policy_roots() -> dict[str, str]:
         "pqAlgPolicy": "ANIMICA_DISABLED_SIGNATURE_SCHEMES",
         "allowedSigSchemesOverride": "ANIMICA_ALLOWED_SIG_SCHEMES",
         "policyOverride": "ANIMICA_POLICY_OVERRIDE_FILE",
+        "pqAllowlistFallback": "ANIMICA_PQ_ALLOWLIST",
     }
 
 
@@ -218,12 +264,19 @@ def evaluate_scheme_policy(
     reason: str | None = None
 
     allowed_override = load_allowed_signature_schemes_override()
+    allowlist_fallback = load_pq_allowlist_fallback()
+    policy_load_failed = override.comment in {"override_file_missing", "override_file_parse_error"}
 
     if allowed_override:
         enabled_by_policy = spec.scheme_id in allowed_override
         policy_root = "ANIMICA_ALLOWED_SIG_SCHEMES"
         if not enabled_by_policy:
             reason = "not_in_allowed_override"
+    elif policy_load_failed and allowlist_fallback:
+        enabled_by_policy = spec.scheme_id in allowlist_fallback
+        policy_root = "ANIMICA_PQ_ALLOWLIST"
+        if not enabled_by_policy:
+            reason = "not_in_pq_allowlist_fallback"
     elif spec.scheme_id in override.deny_sig_schemes:
         enabled_by_policy = False
         reason = "denied_by_override"
