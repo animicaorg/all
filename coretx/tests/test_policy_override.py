@@ -62,3 +62,33 @@ def test_scheme_policy_reject_contains_supported_matrix(monkeypatch):
     assert result.reason == "scheme_disabled_by_policy"
     assert result.diagnostics["kind"] == "scheme_disabled_by_policy"
     assert isinstance(result.diagnostics.get("supported"), list)
+
+
+def test_pq_allowlist_fallback_only_applies_on_policy_load_failure(monkeypatch):
+    monkeypatch.setenv("ANIMICA_ENABLE_PQ_ALLOWLIST_FALLBACK", "1")
+    monkeypatch.setenv("ANIMICA_PQ_ALLOWLIST", "dilithium3,sphincs128s")
+    monkeypatch.delenv("ANIMICA_ALLOWED_SIG_SCHEMES", raising=False)
+    monkeypatch.delenv("ANIMICA_DISABLED_SIGNATURE_SCHEMES", raising=False)
+    monkeypatch.delenv("ANIMICA_ENABLE_POLICY_OVERRIDE", raising=False)
+    monkeypatch.delenv("ANIMICA_POLICY_OVERRIDE_FILE", raising=False)
+
+    crypto._bootstrap_schemes()
+    status = crypto.get_signature_policy_status()
+    policy_enabled = {s["schemeId"] for s in status["schemes"] if s["enabledByPolicy"]}
+    assert 1 in policy_enabled
+    assert 2 in policy_enabled
+
+
+def test_pq_allowlist_fallback_activates_for_missing_policy_file(monkeypatch):
+    monkeypatch.setenv("ANIMICA_ENABLE_PQ_ALLOWLIST_FALLBACK", "1")
+    monkeypatch.setenv("ANIMICA_PQ_ALLOWLIST", "dilithium3,sphincs128s")
+    monkeypatch.setenv("ANIMICA_ENABLE_POLICY_OVERRIDE", "1")
+    monkeypatch.setenv("ANIMICA_POLICY_OVERRIDE_FILE", "/tmp/does-not-exist-policy.json")
+    monkeypatch.delenv("ANIMICA_ALLOWED_SIG_SCHEMES", raising=False)
+    monkeypatch.delenv("ANIMICA_DISABLED_SIGNATURE_SCHEMES", raising=False)
+
+    crypto._bootstrap_schemes()
+    status = crypto.get_signature_policy_status()
+    policy_enabled = {s["schemeId"] for s in status["schemes"] if s["enabledByPolicy"]}
+    assert 1 in policy_enabled
+    assert 2 in policy_enabled

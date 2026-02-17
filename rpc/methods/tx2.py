@@ -19,6 +19,8 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import hashlib
+import json
 from typing import Any, Optional
 
 from coretx import TxEnvelope, TxId
@@ -40,6 +42,7 @@ __all__ = [
     "get_supported_signature_schemes",
     "get_policy_status",
     "get_pq_alg_policy",
+    "get_effective_policy",
 ]
 
 log = logging.getLogger(__name__)
@@ -325,6 +328,26 @@ def get_pq_alg_policy() -> dict[str, Any]:
         "defaultSchemeId": default_scheme_id,
         "policyRoot": policy_roots.get("pqAlgPolicy"),
     }
+
+
+@method("policy.getEffective", aliases=("policy_getEffective", "policy.get"), desc="Return effective signature policy, roots, and enabled scheme matrix")
+def get_effective_policy() -> dict[str, Any]:
+    chain_id = int(deps.get_chain_id())
+    status = get_signature_policy_status()
+    schemes = list_scheme_descriptors()
+    enabled_names = [str(s.get("name")) for s in schemes if bool(s.get("enabledEffective"))]
+    payload = {
+        "chainId": chain_id,
+        "enabledSignatureSchemes": enabled_names,
+        "schemes": schemes,
+        "policyRoots": status.get("policyRoots", {}),
+        "policySource": "env/runtime",
+        "override": status.get("override", {}),
+    }
+    payload["policyHash"] = "0x" + hashlib.sha3_256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return payload
 
 @method("admin.getPolicyStatus", desc="Show active signature policy status and operator override")
 def get_policy_status(ctx: Any = None) -> dict[str, Any]:
