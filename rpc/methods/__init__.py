@@ -42,6 +42,7 @@ class RpcMethod:
 # Global registry: method name → RpcMethod
 _METHODS: Dict[str, RpcMethod] = {}
 _LOADED: bool = False
+_ALIAS_COLLISION_LOGGED: set[str] = set()
 
 
 def get_methods() -> Mapping[str, RpcMethod]:
@@ -71,7 +72,18 @@ def register(name: str, func: HandlerFunc, *, desc: str | None = None, aliases: 
     _METHODS[name] = m
     for alias in m.aliases:
         if alias in _METHODS:
-            log.warning("Overwriting existing RPC method alias: %s", alias)
+            existing = _METHODS[alias]
+            if existing.name == m.name:
+                continue
+            if alias not in _ALIAS_COLLISION_LOGGED:
+                log.debug(
+                    "Duplicate RPC method alias ignored: alias=%s existing=%s new=%s",
+                    alias,
+                    existing.name,
+                    m.name,
+                )
+                _ALIAS_COLLISION_LOGGED.add(alias)
+            continue
         _METHODS[alias] = m
     log.debug("Registered RPC method %s (aliases=%s)", name, m.aliases)
 

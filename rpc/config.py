@@ -197,7 +197,7 @@ def _env_access_mode(name: str, default: AccessMode) -> AccessMode:
 
 
 def _default_chain_dir(chain_id: int) -> Path:
-    base = os.getenv("ANIMICA_DATA_DIR") or "~/.animica"
+    base = os.getenv("ANIMICA_DATA_DIR") or ("/data" if Path("/data").exists() else "~/.animica")
     return Path(base).expanduser() / f"chain-{chain_id}"
 
 
@@ -205,7 +205,8 @@ def _legacy_db_candidates(chain_id: int, *, base_dir: Path | None = None) -> lis
     network_name = {1: "mainnet", 2: "testnet", 1337: "devnet"}.get(
         chain_id, f"chain-{chain_id}"
     )
-    base = (base_dir or Path(os.getenv("ANIMICA_DATA_DIR") or "~/.animica")).expanduser()
+    default_base = "/data" if Path("/data").exists() else "~/.animica"
+    base = (base_dir or Path(os.getenv("ANIMICA_DATA_DIR") or default_base)).expanduser()
     alt_base = Path.home() / "animica"
     candidates = [
         base / network_name / "chain.db",

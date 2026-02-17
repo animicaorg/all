@@ -24,6 +24,12 @@ _SCHEME_NAME_TO_ID = {
     "sphincs+128s": 2,
 }
 
+_CHAIN_REQUIRED_SCHEMES: dict[int, tuple[int, ...]] = {1: (1, 2)}
+
+
+def required_schemes_for_chain(chain_id: int) -> tuple[int, ...]:
+    return _CHAIN_REQUIRED_SCHEMES.get(chain_id, tuple())
+
 
 @dataclass(frozen=True)
 class SchemeSpec:
@@ -100,16 +106,27 @@ def load_policy_disabled_scheme_ids() -> set[int]:
     raw = (os.environ.get("ANIMICA_DISABLED_SIGNATURE_SCHEMES") or "").strip()
     if not raw:
         return set()
+    return set(parse_scheme_ids_strict(raw, env_name="ANIMICA_DISABLED_SIGNATURE_SCHEMES"))
+
+
+def parse_scheme_ids_strict(raw: str, *, env_name: str) -> tuple[int, ...]:
     out: set[int] = set()
+    invalid: list[str] = []
     for part in raw.split(","):
-        part = part.strip()
-        if not part:
+        token = part.strip()
+        if not token:
+            continue
+        token_l = token.lower()
+        if token_l in _SCHEME_NAME_TO_ID:
+            out.add(_SCHEME_NAME_TO_ID[token_l])
             continue
         try:
-            out.add(int(part, 0))
+            out.add(int(token, 0))
         except ValueError:
-            continue
-    return out
+            invalid.append(token)
+    if invalid:
+        raise ValueError(f"{env_name} contains invalid scheme identifiers: {invalid}")
+    return tuple(sorted(out))
 
 
 
@@ -118,16 +135,7 @@ def load_allowed_signature_schemes_override() -> tuple[int, ...]:
     raw = (os.environ.get("ANIMICA_ALLOWED_SIG_SCHEMES") or "").strip()
     if not raw:
         return tuple()
-    out: set[int] = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            out.add(int(part, 0))
-        except ValueError:
-            continue
-    allowed = tuple(sorted(out))
+    allowed = parse_scheme_ids_strict(raw, env_name="ANIMICA_ALLOWED_SIG_SCHEMES")
     global _ALLOWED_OVERRIDE_WARNED
     if allowed and not _ALLOWED_OVERRIDE_WARNED:
         log.warning("ANIMICA_ALLOWED_SIG_SCHEMES override active: %s", list(allowed))
@@ -150,20 +158,7 @@ def load_pq_allowlist_fallback() -> tuple[int, ...]:
     if not raw:
         return tuple()
 
-    out: set[int] = set()
-    for part in raw.split(","):
-        token = part.strip()
-        if not token:
-            continue
-        if token in _SCHEME_NAME_TO_ID:
-            out.add(_SCHEME_NAME_TO_ID[token])
-            continue
-        try:
-            out.add(int(token, 0))
-        except ValueError:
-            continue
-
-    allowed = tuple(sorted(out))
+    allowed = parse_scheme_ids_strict(raw, env_name="ANIMICA_PQ_ALLOWLIST")
     global _PQ_ALLOWLIST_WARNED
     if allowed and not _PQ_ALLOWLIST_WARNED:
         log.warning("ANIMICA_PQ_ALLOWLIST fallback active: %s", list(allowed))
@@ -266,8 +261,20 @@ def evaluate_scheme_policy(
     allowed_override = load_allowed_signature_schemes_override()
     allowlist_fallback = load_pq_allowlist_fallback()
     policy_load_failed = override.comment in {"override_file_missing", "override_file_parse_error"}
+    chain_id_env = os.environ.get("ANIMICA_CHAIN_ID")
+    required_for_chain: set[int] = set()
+    if chain_id_env:
+        try:
+            required_for_chain = set(required_schemes_for_chain(int(chain_id_env, 0)))
+        except Exception:
+            required_for_chain = set()
 
     if allowed_override:
+        if spec.scheme_id in required_for_chain and spec.scheme_id not in allowed_override:
+            raise ValueError(
+                "ANIMICA_ALLOWED_SIG_SCHEMES contradicts chain-required schemes: "
+                f"missing required scheme id {spec.scheme_id}"
+            )
         enabled_by_policy = spec.scheme_id in allowed_override
         policy_root = "ANIMICA_ALLOWED_SIG_SCHEMES"
         if not enabled_by_policy:
@@ -278,6 +285,11 @@ def evaluate_scheme_policy(
         if not enabled_by_policy:
             reason = "not_in_pq_allowlist_fallback"
     elif spec.scheme_id in override.deny_sig_schemes:
+        if spec.scheme_id in required_for_chain:
+            raise ValueError(
+                "ANIMICA_POLICY_OVERRIDE_FILE denySigSchemes contradicts chain-required schemes: "
+                f"contains required scheme id {spec.scheme_id}"
+            )
         enabled_by_policy = False
         reason = "denied_by_override"
         policy_root = "ANIMICA_POLICY_OVERRIDE_FILE"
@@ -285,6 +297,11 @@ def evaluate_scheme_policy(
         enabled_by_policy = True
         policy_root = "ANIMICA_POLICY_OVERRIDE_FILE"
     else:
+        if spec.scheme_id in required_for_chain and spec.scheme_id in disabled_by_policy:
+            raise ValueError(
+                "ANIMICA_DISABLED_SIGNATURE_SCHEMES contradicts chain-required schemes: "
+                f"contains required scheme id {spec.scheme_id}"
+            )
         enabled_by_policy = base_enabled_by_policy
         policy_root = "ANIMICA_DISABLED_SIGNATURE_SCHEMES"
 
