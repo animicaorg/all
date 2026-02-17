@@ -16,7 +16,7 @@ const SCHEME_NAMES: Record<number, string> = {
 
 export type SendAttempt = {
   method: string;
-  shape: 'objectArray' | 'array';
+  shape: 'object' | 'objectArray' | 'array';
   ok: boolean;
   code?: number | 'RPC_ERROR_UNKNOWN';
   message?: string;
@@ -197,10 +197,10 @@ function parseChainId(value: unknown): number | undefined {
 }
 
 async function tryMethodShapes(rpcUrl: string, method: string, rawTx: string, timeoutMs: number): Promise<RpcCallOutcome[]> {
-  const shapes: Array<'array' | 'objectArray'> = ['array', 'objectArray'];
+  const shapes: Array<'array' | 'object' | 'objectArray'> = ['array', 'object', 'objectArray'];
   const outcomes: RpcCallOutcome[] = [];
   for (const shape of shapes) {
-    const params = shape === 'array' ? [rawTx] : [{ rawTx }];
+    const params = shape === 'array' ? [rawTx] : shape === 'object' ? { rawTx } : [{ rawTx }];
     const out = await rpcCall(rpcUrl, method, params, { timeoutMs, retryNetworkOnce: true });
     outcomes.push(out);
     if (out.ok) return outcomes;
@@ -350,12 +350,16 @@ export async function warmPolicyCapabilities(rpcUrl: string, chainId?: number, t
   await getCapabilities(rpcUrl, chainId, timeoutMs, true);
 }
 
-function buildBaseAttempts(methodsDiscovered: string[]): Array<{ method: string; shape: 'array' | 'objectArray' }> {
-  const fixed: Array<{ method: string; shape: 'array' | 'objectArray' }> = [
+function buildBaseAttempts(methodsDiscovered: string[]): Array<{ method: string; shape: 'array' | 'object' | 'objectArray' }> {
+  const fixed: Array<{ method: string; shape: 'array' | 'object' | 'objectArray' }> = [
     { method: 'tx_sendRawTransaction', shape: 'array' },
     { method: 'tx.sendRawTransaction', shape: 'array' },
     { method: 'tx2.sendRawTransaction', shape: 'array' },
     { method: 'tx.submitRawTransaction', shape: 'array' },
+    { method: 'tx_sendRawTransaction', shape: 'object' },
+    { method: 'tx.sendRawTransaction', shape: 'object' },
+    { method: 'tx2.sendRawTransaction', shape: 'object' },
+    { method: 'tx.submitRawTransaction', shape: 'object' },
     { method: 'tx_sendRawTransaction', shape: 'objectArray' },
     { method: 'tx.sendRawTransaction', shape: 'objectArray' },
     { method: 'tx2.sendRawTransaction', shape: 'objectArray' },
@@ -366,6 +370,7 @@ function buildBaseAttempts(methodsDiscovered: string[]): Array<{ method: string;
   const all = [...fixed];
   for (const m of discoverLike) {
     all.push({ method: m, shape: 'array' });
+    all.push({ method: m, shape: 'object' });
     all.push({ method: m, shape: 'objectArray' });
   }
 
@@ -378,8 +383,8 @@ function buildBaseAttempts(methodsDiscovered: string[]): Array<{ method: string;
   });
 }
 
-async function callWithShape(rpcUrl: string, method: string, rawTx: string, shape: 'array' | 'objectArray', timeoutMs: number): Promise<RpcCallOutcome> {
-  const params = shape === 'objectArray' ? [{ rawTx }] : [rawTx];
+async function callWithShape(rpcUrl: string, method: string, rawTx: string, shape: 'array' | 'object' | 'objectArray', timeoutMs: number): Promise<RpcCallOutcome> {
+  const params = shape === 'array' ? [rawTx] : shape === 'object' ? { rawTx } : [{ rawTx }];
   return rpcCall(rpcUrl, method, params, { timeoutMs, retryNetworkOnce: true });
 }
 
