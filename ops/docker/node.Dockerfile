@@ -24,6 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Upgrade pip tooling and pre-build wheels into /wheels.
 RUN python -m pip install --upgrade pip setuptools wheel
 
+WORKDIR /app
+COPY python /app/python
+COPY pq /app/pq
+
 # Build wheels we want to vendor into the runtime. We include an extended set of
 # deps commonly used by the node (FastAPI/uvicorn, pydantic, websockets, etc.).
 # If python-rocksdb fails to build on some architectures, we let it fail open;
@@ -47,8 +51,8 @@ RUN set -eux; \
       rich \
       typer \
       pyyaml \
-      prometheus-client \
-      oqs-python; \
+      prometheus-client; \
+    python -m pip wheel --wheel-dir=/wheels /app/python /app/pq; \
     python -m pip wheel --wheel-dir=/wheels python-rocksdb \
       || echo "python-rocksdb build failed (optional)"; \
     ls -l /wheels
@@ -88,7 +92,8 @@ RUN set -eux; \
       typer \
       pyyaml \
       prometheus-client \
-      oqs-python; \
+      animica \
+      animica-pq; \
     python -m pip install --no-index --find-links=/wheels python-rocksdb \
       || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
@@ -108,16 +113,12 @@ WORKDIR /app
 # If you build only subpackages, adjust to COPY the relevant dirs.
 COPY --chown=${USER}:${USER} . /app
 
-# Install repo packages (animica + animica-pq) so pure-Python PQ backends are
-# available inside the container.
-RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
-
 ENV ANIMICA_USER=${USER} \
     ANIMICA_UID=${UID} \
     ANIMICA_GID=${GID} \
     HOME=/data
 
-RUN python -c "from pq.py.algs import dilithium3,sphincs_shake_128s;sk,pk=dilithium3.keypair();m=b'build-selftest';sg=dilithium3.sign(sk,m);assert dilithium3.verify(pk,m,sg);sk2,pk2=sphincs_shake_128s.keypair();sg2=sphincs_shake_128s.sign(sk2,m);assert sphincs_shake_128s.verify(pk2,m,sg2);print('pq-selftest-ok')"
+RUN python /app/ops/docker/scripts/pq_backend_selftest.py
 
 # Switch to non-root user
 USER ${USER}
@@ -130,7 +131,7 @@ EXPOSE 8545 8546 8080 8081
 
 # Healthcheck (best-effort). The RPC server should expose /healthz when mounted.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
-  CMD curl -fsS http://127.0.0.1:8545/healthz || exit 1
+  CMD curl -fsS http://127.0.0.1:8545/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}' >/dev/null || exit 1
 
 # OCI labels (optional)
 ARG VERSION=0.0.0+local
