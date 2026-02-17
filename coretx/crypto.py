@@ -40,6 +40,7 @@ __all__ = [
     "get_signature_policy_status",
     "log_effective_policy_status",
     "assert_required_pq_for_chain",
+    "enforce_non_empty_enabled_policy",
 ]
 
 log = logging.getLogger(__name__)
@@ -187,6 +188,27 @@ def assert_required_pq_for_chain(
         )
 
 
+
+
+def enforce_non_empty_enabled_policy(*, chain_id: int) -> None:
+    status = get_signature_policy_status()
+    enabled = [s for s in status.get("schemes", []) if bool(s.get("enabledEffective"))]
+    if enabled:
+        return
+
+    required = sorted(required_schemes_for_chain(chain_id))
+    env_ctx = {
+        "ANIMICA_CHAIN_ID": __import__("os").environ.get("ANIMICA_CHAIN_ID"),
+        "ANIMICA_ALLOWED_SIG_SCHEMES": __import__("os").environ.get("ANIMICA_ALLOWED_SIG_SCHEMES"),
+        "ANIMICA_DISABLED_SIGNATURE_SCHEMES": __import__("os").environ.get("ANIMICA_DISABLED_SIGNATURE_SCHEMES"),
+        "ANIMICA_ENABLE_POLICY_OVERRIDE": __import__("os").environ.get("ANIMICA_ENABLE_POLICY_OVERRIDE"),
+        "ANIMICA_POLICY_OVERRIDE_FILE": __import__("os").environ.get("ANIMICA_POLICY_OVERRIDE_FILE"),
+    }
+    raise RuntimeError(
+        "Signature policy resolved to enabled_schemes=[]; refusing startup. "
+        f"chainId={chain_id} required={required} env={env_ctx} schemes={status.get('schemes', [])}"
+    )
+
 def _load_override_status() -> dict[str, object]:
     override = load_policy_override()
     return {
@@ -240,14 +262,16 @@ def verify_signature(
         )
 
     if not scheme.enabled:
+        reason = (scheme.reason_if_disabled or "disabled_by_policy")
+        kind = "backend_missing" if reason.startswith("backend_") else "disabled_by_policy"
         return VerifyResult.failure(
-            "scheme_disabled_by_policy",
-            kind="scheme_disabled_by_policy",
+            kind,
+            kind=kind,
             schemeId=scheme_id,
             name=scheme.name,
             policyRoot=scheme.policy_root,
             hint="Call tx.getSupportedSignatureSchemes and switch to an enabled scheme",
-            disabledReason=scheme.reason_if_disabled,
+            disabledReason=reason,
             supported=[
                 {"id": s["schemeId"], "name": s["name"], "enabledEffective": bool(s.get("enabledEffective"))}
                 for s in list_scheme_descriptors()
@@ -256,8 +280,8 @@ def verify_signature(
 
     if scheme.verify_func is None:
         return VerifyResult.failure(
-            "scheme_disabled_by_policy",
-            kind="scheme_disabled_by_policy",
+            "backend_missing",
+            kind="backend_missing",
             schemeId=scheme_id,
             name=scheme.name,
             policyRoot="crypto.backends",
@@ -349,8 +373,20 @@ def _bootstrap_schemes() -> None:
         runtime.sign_fn = _sign_sphincs_128s
         runtime.verify_fn = _verify_sphincs_128s
 
+        backend_modules = {
+            SCHEME_DILITHIUM3: dilithium3_backend,
+            SCHEME_SPHINCS_SHAKE_128S: sphincs_128s_backend,
+        }
         for scheme_id, alg in ((SCHEME_DILITHIUM3, "dilithium3"), (SCHEME_SPHINCS_SHAKE_128S, "sphincs_shake_128s")):
-            status: dict[str, object] = {"schemeId": scheme_id, "name": alg, "available": False}
+            mod = backend_modules[scheme_id]
+            status: dict[str, object] = {
+                "schemeId": scheme_id,
+                "name": alg,
+                "available": False,
+                "module": getattr(mod, "__name__", None),
+                "modulePath": getattr(mod, "__file__", None),
+                "moduleVersion": getattr(mod, "__version__", None),
+            }
             try:
                 if alg == "dilithium3":
                     sk, pk = dilithium3_backend.keypair()
