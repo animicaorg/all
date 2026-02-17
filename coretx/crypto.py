@@ -36,6 +36,8 @@ __all__ = [
     "verify_signature",
     "pubkey_fingerprint",
     "get_signature_policy_status",
+    "log_effective_policy_status",
+    "assert_required_pq_for_chain",
 ]
 
 log = logging.getLogger(__name__)
@@ -128,6 +130,55 @@ def get_signature_policy_status() -> dict[str, object]:
         "schemes": schemes,
         "override": _load_override_status(),
     }
+
+
+def log_effective_policy_status(logger: logging.Logger | None = None) -> dict[str, object]:
+    """Log effective signature policy details and return the status payload."""
+    status = get_signature_policy_status()
+    lg = logger or log
+    enabled = [
+        f"{s.get('name')}[{s.get('schemeId')}]"
+        for s in status.get("schemes", [])
+        if bool(s.get("enabledEffective"))
+    ]
+    lg.info(
+        "Effective signature policy: enabled_schemes=%s policy_roots=%s",
+        enabled,
+        status.get("policyRoots", {}),
+    )
+    return status
+
+
+def assert_required_pq_for_chain(
+    *,
+    chain_id: int,
+    is_validator: bool = False,
+    is_mainnet_rpc: bool = False,
+) -> None:
+    """Fail fast when chain critical PQ schemes are not effectively enabled."""
+    if chain_id != 1 and not is_validator and not is_mainnet_rpc:
+        return
+
+    status = get_signature_policy_status()
+    scheme_map = {int(s.get("schemeId", -1)): s for s in status.get("schemes", [])}
+    required = {
+        SCHEME_DILITHIUM3: "dilithium3",
+        SCHEME_SPHINCS_SHAKE_128S: "sphincs_shake_128s",
+    }
+    missing: list[str] = []
+    for sid, name in required.items():
+        row = scheme_map.get(sid)
+        if not row or not bool(row.get("enabledEffective")):
+            reason = (row or {}).get("reasonIfDisabled") or "unavailable"
+            missing.append(f"{name}[{sid}] reason={reason}")
+
+    if missing:
+        role = "validator" if is_validator else "mainnet-rpc" if is_mainnet_rpc else "chain"
+        raise RuntimeError(
+            "Required PQ signature schemes are not enabled for "
+            f"{role} on chainId={chain_id}: {', '.join(missing)}. "
+            "Refusing startup to avoid partial/unsafe operation."
+        )
 
 
 def _load_override_status() -> dict[str, object]:
