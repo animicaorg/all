@@ -46,7 +46,11 @@ import typing as t
 from dataclasses import dataclass
 from pathlib import Path
 
-from coretx.crypto import assert_required_pq_for_chain, log_effective_policy_status
+from coretx.crypto import (
+    assert_required_pq_for_chain,
+    enforce_non_empty_enabled_policy,
+    log_effective_policy_status,
+)
 
 # ---- local imports (lazy patterns for resiliency) ---------------------------
 
@@ -1419,7 +1423,13 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
 
         is_validator = (os.environ.get("ANIMICA_NODE_ROLE") or "").strip().lower() == "validator"
         is_mainnet_rpc = bool(getattr(_CTX.cfg, "chain_id", None) == 1)
-        log_effective_policy_status(logging.getLogger("animica.rpc.deps"))
+        status = log_effective_policy_status(logging.getLogger("animica.rpc.deps"))
+        logging.getLogger("animica.rpc.deps").info(
+            "Signature policy schemes=%s backends=%s",
+            status.get("schemes", []),
+            status.get("backends", []),
+        )
+        enforce_non_empty_enabled_policy(chain_id=int(_CTX.cfg.chain_id))
         assert_required_pq_for_chain(
             chain_id=int(_CTX.cfg.chain_id),
             is_validator=is_validator,
