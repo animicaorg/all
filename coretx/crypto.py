@@ -16,7 +16,9 @@ from .schemes import (
     build_runtime_scheme_table,
     evaluate_scheme_policy,
     load_policy_disabled_scheme_ids,
+    load_allowed_signature_schemes_override,
     load_policy_override,
+    required_schemes_for_chain,
     policy_roots,
 )
 
@@ -41,6 +43,8 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+_BACKEND_STATUS: dict[int, dict[str, object]] = {}
 
 SCHEME_DILITHIUM3 = 1
 SCHEME_SPHINCS_SHAKE_128S = 2
@@ -146,6 +150,8 @@ def log_effective_policy_status(logger: logging.Logger | None = None) -> dict[st
         enabled,
         status.get("policyRoots", {}),
     )
+    backends = status.get("backends", [])
+    lg.info("PQ backend availability: %s", backends)
     return status
 
 
@@ -191,6 +197,15 @@ def _load_override_status() -> dict[str, object]:
         "comment": override.comment,
         "file": override.file_path,
     }
+
+
+def _backend_diag_rows() -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scheme_id in sorted(_BACKEND_STATUS):
+        row = dict(_BACKEND_STATUS[scheme_id])
+        row.setdefault("schemeId", scheme_id)
+        rows.append(row)
+    return rows
 
 
 def infer_scheme_ids_by_lengths(pubkey_len: int, sig_len: int, *, enabled_only: bool = True) -> list[int]:
@@ -308,41 +323,68 @@ def _bootstrap_schemes() -> None:
         runtime.enabled = decision.enabled_effective
         runtime.reason_if_disabled = decision.reason_if_disabled
 
+    _BACKEND_STATUS.clear()
+
     try:
-        from pq.py import dilithium3_sign, dilithium3_verify
+        from pq.py.algs import dilithium3 as dilithium3_backend
+        from pq.py.algs import sphincs_shake_128s as sphincs_128s_backend
+
+        def _sign_dilithium3(message: bytes, secret_key: bytes) -> bytes:
+            return dilithium3_backend.sign(secret_key, message)
+
+        def _verify_dilithium3(message: bytes, signature: bytes, public_key: bytes) -> bool:
+            return bool(dilithium3_backend.verify(public_key, message, signature))
+
+        def _sign_sphincs_128s(message: bytes, secret_key: bytes) -> bytes:
+            return sphincs_128s_backend.sign(secret_key, message)
+
+        def _verify_sphincs_128s(message: bytes, signature: bytes, public_key: bytes) -> bool:
+            return bool(sphincs_128s_backend.verify(public_key, message, signature))
 
         runtime = table[SCHEME_DILITHIUM3]
-        runtime.sign_fn = dilithium3_sign
-        runtime.verify_fn = dilithium3_verify
-    except ImportError:
-        table[SCHEME_DILITHIUM3].reason_if_disabled = "backend_missing"
-
-    try:
-        from pq.py import sphincs_shake_128s_sign, sphincs_shake_128s_verify
+        runtime.sign_fn = _sign_dilithium3
+        runtime.verify_fn = _verify_dilithium3
 
         runtime = table[SCHEME_SPHINCS_SHAKE_128S]
-        runtime.sign_fn = sphincs_shake_128s_sign
-        runtime.verify_fn = sphincs_shake_128s_verify
-    except ImportError:
-        table[SCHEME_SPHINCS_SHAKE_128S].reason_if_disabled = "backend_missing"
+        runtime.sign_fn = _sign_sphincs_128s
+        runtime.verify_fn = _verify_sphincs_128s
 
-    try:
-        from pq.py import sphincs_shake_128f_sign, sphincs_shake_128f_verify
+        for scheme_id, alg in ((SCHEME_DILITHIUM3, "dilithium3"), (SCHEME_SPHINCS_SHAKE_128S, "sphincs_shake_128s")):
+            status: dict[str, object] = {"schemeId": scheme_id, "name": alg, "available": False}
+            try:
+                if alg == "dilithium3":
+                    sk, pk = dilithium3_backend.keypair()
+                    sig = dilithium3_backend.sign(sk, b"animica-pq-selftest")
+                    ok = bool(dilithium3_backend.verify(pk, b"animica-pq-selftest", sig))
+                else:
+                    sk, pk = sphincs_128s_backend.keypair()
+                    sig = sphincs_128s_backend.sign(sk, b"animica-pq-selftest")
+                    ok = bool(sphincs_128s_backend.verify(pk, b"animica-pq-selftest", sig))
+                status["available"] = ok
+                status["selfTest"] = "ok" if ok else "failed"
+                if not ok:
+                    table[scheme_id].verify_fn = None
+                    table[scheme_id].reason_if_disabled = "backend_selftest_failed"
+            except Exception as exc:
+                table[scheme_id].verify_fn = None
+                table[scheme_id].reason_if_disabled = "backend_missing"
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                status["selfTest"] = "error"
+            _BACKEND_STATUS[scheme_id] = status
+    except Exception as exc:
+        for scheme_id, name in ((SCHEME_DILITHIUM3, "dilithium3"), (SCHEME_SPHINCS_SHAKE_128S, "sphincs_shake_128s")):
+            table[scheme_id].reason_if_disabled = "backend_missing"
+            _BACKEND_STATUS[scheme_id] = {
+                "schemeId": scheme_id,
+                "name": name,
+                "available": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "selfTest": "error",
+            }
 
-        runtime = table[SCHEME_SPHINCS_SHAKE_128F]
-        runtime.sign_fn = sphincs_shake_128f_sign
-        runtime.verify_fn = sphincs_shake_128f_verify
-    except ImportError:
-        table[SCHEME_SPHINCS_SHAKE_128F].reason_if_disabled = "backend_missing"
-
-    try:
-        from pq.py import sphincs_shake_256s_sign, sphincs_shake_256s_verify
-
-        runtime = table[SCHEME_SPHINCS_SHAKE_256S]
-        runtime.sign_fn = sphincs_shake_256s_sign
-        runtime.verify_fn = sphincs_shake_256s_verify
-    except ImportError:
-        table[SCHEME_SPHINCS_SHAKE_256S].reason_if_disabled = "backend_missing"
+    # optional variants intentionally disabled unless explicit backend wiring is added
+    for sid in (SCHEME_SPHINCS_SHAKE_128F, SCHEME_SPHINCS_SHAKE_256S):
+        table[sid].reason_if_disabled = table[sid].reason_if_disabled or "backend_missing"
 
     _SCHEMES.clear()
     for scheme_id, runtime in sorted(table.items()):
@@ -378,6 +420,27 @@ def _bootstrap_schemes() -> None:
             info.reason_if_disabled,
             bool(info.verify_func),
         )
+
+    chain_id = int((__import__("os").environ.get("ANIMICA_CHAIN_ID") or "0") or "0")
+    required = set(required_schemes_for_chain(chain_id))
+    allowed_override = set(load_allowed_signature_schemes_override())
+    if required and not allowed_override:
+        log.info(
+            "Signature policy source: safe_defaults_for_chain chainId=%s required=%s",
+            chain_id,
+            sorted(required),
+        )
+    elif allowed_override:
+        log.info("Signature policy source: ANIMICA_ALLOWED_SIG_SCHEMES allowed=%s", sorted(allowed_override))
+
+
+_orig_get_signature_policy_status = get_signature_policy_status
+
+
+def get_signature_policy_status() -> dict[str, object]:
+    status = _orig_get_signature_policy_status()
+    status["backends"] = _backend_diag_rows()
+    return status
 
 
 _bootstrap_schemes()
