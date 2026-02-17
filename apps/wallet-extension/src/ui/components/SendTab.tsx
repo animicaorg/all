@@ -54,9 +54,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const liveBalance = useBalancesStore(store => store.balancesByAddress[currentAccount.address]);
-  const isBalanceLoading = useBalancesStore(store => store.loadingByAddress[currentAccount.address]);
-  const hasBalanceError = useBalancesStore(store => store.errorByAddress[currentAccount.address]);
+  const liveBalance = useBalancesStore(store => store.getBalanceState(currentAccount.address));
 
   async function handleSend() {
     setError('');
@@ -130,16 +128,16 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   }
 
   function getCurrentBalanceText(): string {
-    if (isBalanceLoading) {
+    if (!liveBalance || liveBalance.status === 'loading') {
       return 'Balance: …';
     }
 
-    if (hasBalanceError) {
-      return 'Balance: unavailable';
+    if (liveBalance.status === 'error') {
+      return liveBalance.formatted ? `Balance: ${liveBalance.formatted} ANM (stale)` : 'Balance: —';
     }
 
-    if (typeof liveBalance === 'bigint') {
-      return `Balance: ${formatANM(liveBalance)} ANM`;
+    if (liveBalance.formatted) {
+      return `Balance: ${liveBalance.formatted} ANM`;
     }
 
     if (balance) {

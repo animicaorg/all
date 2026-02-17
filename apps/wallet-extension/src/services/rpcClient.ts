@@ -1,4 +1,5 @@
 import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../runtime/env';
+import { stringifySafe } from '../core/rpc/safeJson';
 
 export type RpcErrorObject = { code?: number; message?: string; data?: unknown };
 export type RpcEnvelope = { jsonrpc?: string; id?: number | string | null; result?: unknown; error?: RpcErrorObject };
@@ -70,7 +71,7 @@ export async function rpcCall(
       const response = await fetchImpl(rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: stringifySafe(payload),
         signal: controller.signal,
       });
 
