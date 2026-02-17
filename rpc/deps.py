@@ -46,6 +46,8 @@ import typing as t
 from dataclasses import dataclass
 from pathlib import Path
 
+from coretx.crypto import assert_required_pq_for_chain, log_effective_policy_status
+
 # ---- local imports (lazy patterns for resiliency) ---------------------------
 
 
@@ -1414,6 +1416,15 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 finally:
                     _CTX = None
             _CTX = build_context(cfg)
+
+        is_validator = (os.environ.get("ANIMICA_NODE_ROLE") or "").strip().lower() == "validator"
+        is_mainnet_rpc = bool(getattr(_CTX.cfg, "chain_id", None) == 1)
+        log_effective_policy_status(logging.getLogger("animica.rpc.deps"))
+        assert_required_pq_for_chain(
+            chain_id=int(_CTX.cfg.chain_id),
+            is_validator=is_validator,
+            is_mainnet_rpc=is_mainnet_rpc,
+        )
 
         # Start P2P service if it was initialized
         if _CTX.p2p_service is not None:
