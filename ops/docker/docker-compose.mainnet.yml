@@ -57,6 +57,8 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/mainnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
+      ANIMICA_HOME: "/data/chain-${ANIMICA_CHAIN_ID:-1}"
       ANIMICA_MEMPOOL_REQUIRE_PERSIST: "${ANIMICA_MEMPOOL_REQUIRE_PERSIST:-0}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
@@ -86,7 +88,7 @@ services:
       P2P_SEEDS: "${P2P_SEEDS:-}"
     command: ["/bin/bash", "-c", "python -m rpc"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8545/rpc -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}' >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
