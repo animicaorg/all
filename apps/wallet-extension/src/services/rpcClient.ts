@@ -6,7 +6,7 @@ export type RpcEnvelope = { jsonrpc?: string; id?: number | string | null; resul
 export type RpcCallOutcome = {
   ok: boolean;
   method: string;
-  params: unknown[];
+  params: unknown;
   httpStatus?: number;
   durationMs: number;
   response?: RpcEnvelope;
@@ -53,7 +53,7 @@ function isNetworkError(error: unknown): boolean {
 export async function rpcCall(
   rpcUrl: string,
   method: string,
-  params: unknown[],
+  params: unknown,
   options: { timeoutMs?: number; retryNetworkOnce?: boolean } = {},
 ): Promise<RpcCallOutcome> {
   const fetchImpl = getFetch();

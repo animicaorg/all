@@ -3,7 +3,7 @@ import { discoverMethods, rpcCall } from './rpcClient';
 export type DiagnosticRecord = {
   ok: boolean;
   method: string;
-  paramsShape: 'objectArray' | 'array' | 'none';
+  paramsShape: 'object' | 'objectArray' | 'array' | 'none';
   response?: unknown;
   error?: { code: number | 'RPC_ERROR_UNKNOWN'; message: string; data?: unknown };
 };
@@ -26,9 +26,10 @@ function errCode(code?: number): number | 'RPC_ERROR_UNKNOWN' {
 
 async function callShapes(rpcUrl: string, method: string, rawTx: string, timeoutMs: number): Promise<DiagnosticRecord[]> {
   const out: DiagnosticRecord[] = [];
-  const variants: Array<{ params: unknown[]; paramsShape: DiagnosticRecord['paramsShape'] }> = [
-    { params: [{ rawTx }], paramsShape: 'objectArray' },
+  const variants: Array<{ params: unknown; paramsShape: DiagnosticRecord['paramsShape'] }> = [
     { params: [rawTx], paramsShape: 'array' },
+    { params: { rawTx }, paramsShape: 'object' },
+    { params: [{ rawTx }], paramsShape: 'objectArray' },
   ];
 
   for (const variant of variants) {

@@ -6,6 +6,8 @@ export const FORCE_RAWTX_COMPAT_KEY = 'force_rawtx_compat';
 const RETRYABLE_VARIANTS = [
   { method: 'tx.sendRawTransaction', paramsShape: 'array' as const },
   { method: 'tx_sendRawTransaction', paramsShape: 'array' as const },
+  { method: 'tx.sendRawTransaction', paramsShape: 'object' as const },
+  { method: 'tx_sendRawTransaction', paramsShape: 'object' as const },
   { method: 'tx.sendRawTransaction', paramsShape: 'objectArray' as const },
   { method: 'tx_sendRawTransaction', paramsShape: 'objectArray' as const },
   { method: 'tx.submitRawTransaction', paramsShape: 'array' as const },
@@ -14,7 +16,7 @@ const RETRYABLE_VARIANTS = [
 
 type Variant = (typeof RETRYABLE_VARIANTS)[number];
 
-type JsonRpcParams = unknown[];
+type JsonRpcParams = unknown;
 type JsonRpcError = { code?: number; message?: string; data?: unknown };
 type JsonRpcResponse = { result?: unknown; error?: JsonRpcError };
 
@@ -141,6 +143,7 @@ export async function submitRawTransactionCompat(input: SubmitRawTransactionInpu
 }
 
 function paramsForVariant(variant: Variant, rawTx: string): JsonRpcParams {
+  if (variant.paramsShape === 'object') return { rawTx };
   if (variant.paramsShape === 'objectArray') return [{ rawTx }];
   return [rawTx];
 }

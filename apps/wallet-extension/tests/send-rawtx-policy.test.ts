@@ -56,7 +56,7 @@ describe('sendRawTxPipeline policy handling', () => {
   });
 
   it('does not block when allowed schemes include current scheme', async () => {
-    rpcCall.mockImplementation(async (_url: string, method: string, params: unknown[]) => {
+    rpcCall.mockImplementation(async (_url: string, method: string, params: unknown) => {
       if (method === 'chain.getChainId') return ok(1);
       if (method === 'policy.getPqAlgPolicy') {
         return ok({ chainId: 1, allowedSchemes: [{ id: 1, name: 'Dilithium3', enabled: true }], defaultSchemeId: 1 });
@@ -79,15 +79,15 @@ describe('sendRawTxPipeline policy handling', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('uses array params first and falls back to object params', async () => {
-    rpcCall.mockImplementation(async (_url: string, method: string, params: unknown[]) => {
+  it('uses array params first and falls back to keyword object params', async () => {
+    rpcCall.mockImplementation(async (_url: string, method: string, params: unknown) => {
       if (method === 'chain.getChainId') return ok(1);
       if (method === 'policy.getPqAlgPolicy') return ok({ chainId: 1, allowedSchemes: [], defaultSchemeId: 1 });
       if (method.startsWith('tx.debugVerifyRawTransaction')) return err(-32601, 'Method not found');
       if (method === 'tx_sendRawTransaction' && Array.isArray(params) && typeof params[0] === 'string') {
         return err(-32602, 'invalid params array');
       }
-      if (method === 'tx_sendRawTransaction' && Array.isArray(params) && typeof params[0] === 'object') {
+      if (method === 'tx_sendRawTransaction' && !Array.isArray(params) && params && typeof params === 'object' && 'rawTx' in params) {
         return ok('0xdef');
       }
       if (method.startsWith('tx.getTransaction')) return ok({ status: 'pending' });
@@ -104,7 +104,7 @@ describe('sendRawTxPipeline policy handling', () => {
     expect(result.ok).toBe(true);
     const calls = rpcCall.mock.calls.filter((c) => c[1] === 'tx_sendRawTransaction');
     expect(calls[0][2]).toEqual([expect.any(String)]);
-    expect(calls[1][2]).toEqual([{ rawTx: expect.any(String) }]);
+    expect(calls[1][2]).toEqual({ rawTx: expect.any(String) });
   });
 });
 
