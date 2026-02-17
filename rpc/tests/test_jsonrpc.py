@@ -27,6 +27,19 @@ def test_method_not_found_error():
     assert "error" in data
     # JSON-RPC -32601: Method not found
     assert data["error"]["code"] == -32601
+    assert "did_you_mean" in data["error"].get("data", {})
+
+
+def test_tx_send_alias_resolves_to_send_raw_transaction() -> None:
+    client, _, _ = new_test_client()
+    payload = {"jsonrpc": "2.0", "method": "tx.send", "params": ["0xdeadbeef"], "id": 43}
+    r = client.post("/rpc", json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["id"] == 43
+    assert "error" in data
+    # Should now fail tx decoding, not param-shape mismatch.
+    assert data["error"]["code"] != -32602
 
 
 def test_get_rpc_is_rejected_with_hint():
