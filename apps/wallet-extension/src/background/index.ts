@@ -24,6 +24,8 @@ import { sign } from '../core/crypto/pq';
 
 let unlockedPassword: string | null = null;
 const DEBUG_WALLET = true; // Always enabled for troubleshooting
+let balanceRequestSeq = 1;
+const balanceAbortByKey = new Map<string, AbortController>();
 
 function debugLog(message: string, details?: unknown): void {
   if (!DEBUG_WALLET) return;
@@ -485,36 +487,82 @@ async function handleSwitchNetwork(networkId: string): Promise<{ success: boolea
 }
 
 async function handleGetBalance(address: string): Promise<{ confirmed: string; available: string }> {
+  // Short changelog: honor requested address, add per-wallet request cancellation,
+  // and emit structured start/end/error logs with correlation IDs.
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
 
   const activeWallet = await resolveActiveWallet(vaultData);
-  const targetAddress = activeWallet.address;
+  const targetAddress = (address || activeWallet.address || '').trim();
+  const normalizedAddress = targetAddress.toLowerCase();
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
   const rpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
+  const requestId = `bal-${Date.now()}-${balanceRequestSeq++}`;
+  const balanceKey = `${network.chainId}:${rpcUrl}:${normalizedAddress}`;
+  const startedAt = Date.now();
 
-  debugLog('fetch balance', {
+  const existingController = balanceAbortByKey.get(balanceKey);
+  if (existingController) {
+    existingController.abort('Superseded by newer request');
+  }
+  const controller = new AbortController();
+  balanceAbortByKey.set(balanceKey, controller);
+
+  console.debug('[wallet-bg] balance.fetch.start', {
+    requestId,
+    key: balanceKey,
     activeWalletId: activeWallet.address,
-    address: targetAddress,
+    address: normalizedAddress,
     requestedAddress: address || null,
     rpcUrl,
     chainId: network.chainId,
   });
 
-  const confirmed = await getBalance(targetAddress, { rpcUrl, chainId: network.chainId });
+  try {
+    const confirmed = await getBalance(normalizedAddress, {
+      rpcUrl,
+      chainId: network.chainId,
+      signal: controller.signal,
+      requestId,
+    });
   
-  // Calculate pending outgoing
-  const txStore = TxStore.fromJSON(vaultData.txCache);
-  const pendingOutgoing = txStore.getPendingOutgoing(targetAddress);
+    // Calculate pending outgoing
+    const txStore = TxStore.fromJSON(vaultData.txCache);
+    const pendingOutgoing = txStore.getPendingOutgoing(normalizedAddress);
   
-  const available = confirmed - pendingOutgoing;
+    const available = confirmed - pendingOutgoing;
 
-  return {
-    confirmed: confirmed.toString(),
-    available: available.toString(),
-  };
+    console.debug('[wallet-bg] balance.fetch.end', {
+      requestId,
+      key: balanceKey,
+      chainId: network.chainId,
+      rpcUrl,
+      address: normalizedAddress,
+      durationMs: Date.now() - startedAt,
+    });
+
+    return {
+      confirmed: confirmed.toString(),
+      available: available.toString(),
+    };
+  } catch (error) {
+    console.error('[wallet-bg] balance.fetch.error', {
+      requestId,
+      key: balanceKey,
+      chainId: network.chainId,
+      rpcUrl,
+      address: normalizedAddress,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    if (balanceAbortByKey.get(balanceKey) === controller) {
+      balanceAbortByKey.delete(balanceKey);
+    }
+  }
 }
 
 async function handleSendTransaction(params: any): Promise<{ txid: string }> {

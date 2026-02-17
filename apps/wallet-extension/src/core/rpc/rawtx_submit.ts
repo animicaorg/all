@@ -1,4 +1,5 @@
 import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
+import { stringifySafe } from './safeJson';
 
 const METHOD_CACHE_KEY = 'rawtx_method_cap_cache_v2';
 export const FORCE_RAWTX_COMPAT_KEY = 'force_rawtx_compat';
@@ -331,13 +332,13 @@ async function sendJsonRpc(
     const response = await fetchImpl(input.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input.body),
+      body: stringifySafe(input.body),
       signal: controller.signal,
     });
 
     const text = typeof (response as any).text === 'function'
       ? await (response as any).text()
-      : JSON.stringify(await (response as any).json());
+      : stringifySafe(await (response as any).json());
 
     let parsed: JsonRpcResponse | undefined;
     try {
