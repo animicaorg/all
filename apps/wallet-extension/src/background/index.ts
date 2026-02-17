@@ -81,6 +81,14 @@ function sanitizeRpcParams(value: unknown): unknown {
   return value;
 }
 
+function safeJsonStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, currentValue) => {
+    if (typeof currentValue === 'bigint') return currentValue.toString();
+    if (currentValue instanceof Uint8Array) return `[bytes:${currentValue.length}]`;
+    return currentValue;
+  });
+}
+
 function captureSendRpcDebug(rpcUrl: string, method: string, params: unknown): void {
   const payload = {
     jsonrpc: '2.0',
@@ -149,7 +157,7 @@ function extractSubmittedTxHash(sendResult: unknown): string {
     }
   }
 
-  throw new Error(`Unexpected tx.sendRawTransaction result: ${JSON.stringify(sendResult)}`);
+  throw new Error(`Unexpected tx.sendRawTransaction result: ${safeJsonStringify(sendResult)}`);
 }
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -640,7 +648,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
 
     if ('error' in sendResult) {
       const sendError = sendResult.error;
-      captureSendRpcResponse(null, JSON.stringify(sendError), sendError.attempts);
+      captureSendRpcResponse(null, safeJsonStringify(sendError), sendError.attempts);
 
       if (sendError.signaturePolicyError) {
         throw sendError.signaturePolicyError;
