@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses as _dc
 import hashlib
 import inspect
@@ -216,82 +217,154 @@ def normalize_send_raw_tx_params(
     cbor: t.Any = None,
     txBytes: t.Any = None,
 ) -> tuple[bytes, dict[str, t.Any]]:
-    """Normalize tx.sendRawTransaction params into raw transaction bytes."""
+    """Normalize tx.sendRawTransaction params into canonical raw transaction bytes."""
 
-    invalid_msg = 'expected params ["0x.."] or {rawTx:"0x.."}'
-    key_priority = ("rawTx", "raw_tx", "tx", "raw", "cbor", "txBytes")
+    expected_schema = {
+        "accepted": [
+            {"params": ["0xdeadbeef"]},
+            {"params": ["base64...", {"broadcast": True}]},
+            {"params": {"tx": "0xdeadbeef"}},
+            {"params": "0xdeadbeef"},
+        ],
+        "keys": ["raw", "rawTx", "rawtx", "tx", "signedTx", "signed_tx", "cbor", "txBytes"],
+    }
+    attempts: list[dict[str, t.Any]] = []
+    key_priority = ("rawTx", "raw_tx", "rawtx", "tx", "raw", "signedTx", "signed_tx", "cbor", "txBytes")
+
+    def _preview(value: t.Any) -> t.Any:
+        if isinstance(value, str):
+            return value[:64] + ("..." if len(value) > 64 else "")
+        if isinstance(value, (bytes, bytearray)):
+            return f"<bytes:{len(value)}>"
+        if isinstance(value, list):
+            return [_preview(v) for v in value[:3]]
+        if isinstance(value, dict):
+            return {k: _preview(v) for k, v in list(value.items())[:6]}
+        return value
+
+    def _invalid(field: str, detail: str, source: t.Any) -> rpc_errors.InvalidParams:
+        return rpc_errors.InvalidParams(
+            f"Field {field} must be hex string or base64; {detail}",
+            data={
+                "expected": expected_schema,
+                "field": field,
+                "received_type": type(source).__name__,
+                "received_preview": _preview(source),
+                "normalize_attempts": attempts,
+                "hints": [
+                    "Use params as object|array|string.",
+                    "Provide tx bytes as 0x-prefixed hex or base64 string.",
+                ],
+                "suggested_payload": {"jsonrpc": "2.0", "id": 1, "method": "tx.sendRawTransaction", "params": {"tx": "0xdeadbeef"}},
+            },
+        )
 
     source = params
     if source is None:
-        kwargs_obj = {
-            "rawTx": rawTx,
-            "raw_tx": raw_tx,
-            "tx": tx,
-            "raw": raw,
-            "cbor": cbor,
-            "txBytes": txBytes,
-        }
+        kwargs_obj = {"rawTx": rawTx, "raw_tx": raw_tx, "tx": tx, "raw": raw, "cbor": cbor, "txBytes": txBytes}
         present = {k: v for k, v in kwargs_obj.items() if v is not None}
         if len(present) == 1:
             source = next(iter(present.values()))
+            attempts.append({"step": "kwargs.single_value", "ok": True, "key": next(iter(present.keys()))})
         elif len(present) > 1:
             source = present
+            attempts.append({"step": "kwargs.to_object", "ok": True, "keys": list(present.keys())})
 
-    shape = "unknown"
+    shape = type(source).__name__
     key_used: str | None = None
+    meta: dict[str, t.Any] = {"shape": shape, "key": None, "size_bytes": 0}
+
+    if source is None:
+        attempts.append({"step": "missing_params", "ok": False, "reason": "params missing or null"})
+        raise _invalid("params", "got null/missing", source)
+
+    if isinstance(source, str):
+        s = source.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                source = _json_module.loads(s)
+                attempts.append({"step": "string.json_parse", "ok": True})
+            except Exception as exc:
+                attempts.append({"step": "string.json_parse", "ok": False, "reason": str(exc)})
+
+    if isinstance(source, dict) and isinstance(source.get("params"), list):
+        attempts.append({"step": "unwrap_nested_params", "ok": True})
+        source = source["params"]
+
     tx_value: t.Any = None
+    options: dict[str, t.Any] = {}
 
     if isinstance(source, (list, tuple)):
-        shape = "list"
         if not source:
-            raise rpc_errors.InvalidParams(invalid_msg)
+            attempts.append({"step": "extract_list", "ok": False, "reason": "empty list"})
+            raise _invalid("params[0]", "list cannot be empty", source)
         first = source[0]
         if isinstance(first, dict):
-            shape = "list.dict"
             for key in key_priority:
                 if key in first:
                     key_used = key
                     tx_value = first.get(key)
                     break
+            options = source[1] if len(source) > 1 and isinstance(source[1], dict) else {}
         else:
             tx_value = first
+            options = source[1] if len(source) > 1 and isinstance(source[1], dict) else {}
+        attempts.append({"step": "extract_list", "ok": tx_value is not None, "key": key_used})
     elif isinstance(source, dict):
-        shape = "dict"
         for key in key_priority:
             if key in source:
                 key_used = key
                 tx_value = source.get(key)
                 break
+        if tx_value is None and isinstance(source.get("params"), (dict, list, str)):
+            source = source["params"]
+            attempts.append({"step": "unwrap_object.params", "ok": True})
+            return normalize_send_raw_tx_params(source)
+        options = source.get("meta") if isinstance(source.get("meta"), dict) else {}
+        attempts.append({"step": "extract_dict", "ok": tx_value is not None, "key": key_used})
     else:
         tx_value = source
-        shape = type(source).__name__
+        attempts.append({"step": "direct_value", "ok": True})
+
+    if isinstance(tx_value, list) and all(isinstance(x, int) and 0 <= x <= 255 for x in tx_value):
+        raw_bytes = bytes(tx_value)
+        attempts.append({"step": "bytes_like_list", "ok": True, "size": len(raw_bytes)})
+        meta.update({"key": key_used, "size_bytes": len(raw_bytes), "meta": options})
+        return raw_bytes, meta
+
+    if isinstance(tx_value, (bytes, bytearray)):
+        raw_bytes = bytes(tx_value)
+        attempts.append({"step": "bytes_direct", "ok": True, "size": len(raw_bytes)})
+        meta.update({"key": key_used, "size_bytes": len(raw_bytes), "meta": options})
+        return raw_bytes, meta
 
     if not isinstance(tx_value, str):
-        raise rpc_errors.InvalidParams(invalid_msg)
+        attempts.append({"step": "string_required", "ok": False, "reason": f"got {type(tx_value).__name__}"})
+        raise _invalid(key_used or "tx", f"got {type(tx_value).__name__}", tx_value)
 
-    has_0x = tx_value.startswith("0x") or tx_value.startswith("0X")
-    if not has_0x:
-        raise rpc_errors.InvalidParams(invalid_msg)
-    hex_value = tx_value[2:]
-    if not hex_value:
-        raise rpc_errors.InvalidParams(invalid_msg)
-    if len(hex_value) % 2 != 0:
-        raise rpc_errors.InvalidParams(invalid_msg)
-    if not all(ch in "0123456789abcdefABCDEF" for ch in hex_value):
-        raise rpc_errors.InvalidParams(invalid_msg)
+    s = tx_value.strip()
+    if s.startswith("0x") or s.startswith("0X"):
+        hex_value = s[2:]
+        try:
+            raw_bytes = bytes.fromhex(hex_value)
+            attempts.append({"step": "decode_hex", "ok": True, "size": len(raw_bytes)})
+            meta.update({"key": key_used, "has_0x": True, "size_bytes": len(raw_bytes), "rawTx_hex": s[:66], "meta": options})
+            return raw_bytes, meta
+        except Exception as exc:
+            attempts.append({"step": "decode_hex", "ok": False, "reason": str(exc)})
+    else:
+        attempts.append({"step": "decode_hex", "ok": False, "reason": "missing 0x prefix"})
 
     try:
-        raw_bytes = bytes.fromhex(hex_value)
+        raw_bytes = base64.b64decode(s, validate=True)
+        if raw_bytes:
+            attempts.append({"step": "decode_base64", "ok": True, "size": len(raw_bytes)})
+            meta.update({"key": key_used, "encoding": "base64", "size_bytes": len(raw_bytes), "meta": options})
+            return raw_bytes, meta
     except Exception as exc:
-        raise rpc_errors.InvalidParams(invalid_msg) from exc
+        attempts.append({"step": "decode_base64", "ok": False, "reason": str(exc)})
 
-    return raw_bytes, {
-        "shape": shape,
-        "key": key_used,
-        "has_0x": has_0x,
-        "size_bytes": len(raw_bytes),
-        "rawTx_hex": tx_value,
-    }
+    raise _invalid(key_used or "tx", "unable to decode as hex or base64", tx_value)
 
 
 def _jsonify(obj: t.Any) -> t.Any:
@@ -1875,6 +1948,23 @@ def tx_send_raw_transaction(
 )
 def mempool_simulate_admission(rawTx: str) -> t.Any:
     return _tx_send_raw_transaction(rawTx, simulate=True)
+
+
+@method("tx.sendHelp", desc="Return accepted parameter shapes and examples for tx send methods.")
+def tx_send_help() -> dict[str, t.Any]:
+    return {
+        "method": "tx.sendRawTransaction",
+        "aliases": ["tx.send", "tx.broadcast", "tx.submit", "sendRawTransaction", "eth_sendRawTransaction"],
+        "accepted": {
+            "object": [{"tx": "0xdeadbeef"}, {"rawTx": "base64..."}],
+            "array": [["0xdeadbeef"], ["0xdeadbeef", {"broadcast": True}]],
+            "string": ["0xdeadbeef", "base64..."],
+        },
+        "notes": [
+            "Chain ID must be 1.",
+            "PQ signatures are required and validated after param normalization.",
+        ],
+    }
 
 def _tx_send_raw_transaction(
     rawTx: t.Any,
