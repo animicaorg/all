@@ -17,10 +17,14 @@ import `router` into rpc/server.py and mount at `/rpc`.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import difflib
 import inspect
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
@@ -306,9 +310,8 @@ def _error_obj(exc: Exception) -> Json:
 
     # Normalize canonical JSON-RPC messages
     if code == -32602:
-        if message != "Invalid params":
-            data = data or {"detail": message}
-        message = "Invalid params"
+        if message == "Invalid params":
+            message = "Invalid params"
     elif code == -32601:
         message = "Method not found"
     elif code == -32603:
@@ -465,10 +468,26 @@ def _validate_request_obj(obj: Json) -> Tuple[str, Optional[Params], Any]:
         raise InvalidRequest("method must be a non-empty string")
 
     params: Optional[Params] = obj.get("params")
-    if params is not None and not isinstance(params, (list, dict)):
-        # Allow raw single-value params (non-standard but supported by CLI callers).
-        # Normalization happens in the binder.
-        params = params
+    if params is None:
+        params = []
+    elif isinstance(params, str):
+        raw = params.strip()
+        if raw:
+            try:
+                params = json.loads(raw)
+            except Exception:
+                try:
+                    decoded = base64.b64decode(raw, validate=True)
+                    params = json.loads(decoded.decode("utf-8"))
+                except Exception:
+                    try:
+                        hex_raw = raw[2:] if raw.lower().startswith("0x") else raw
+                        decoded = binascii.unhexlify(hex_raw)
+                        params = decoded
+                    except Exception:
+                        params = raw
+        else:
+            params = []
 
     # id is optional (notification when absent)
     id_present = "id" in obj
@@ -501,9 +520,17 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     """
     try:
         method_name, params, req_id = _validate_request_obj(obj)
+        alias_map = {
+            "tx.send": "tx.sendRawTransaction",
+            "tx.broadcast": "tx.sendRawTransaction",
+            "tx.submit": "tx.sendRawTransaction",
+            "sendRawTransaction": "tx.sendRawTransaction",
+            "eth_sendRawTransaction": "tx.sendRawTransaction",
+        }
+        resolved_method = alias_map.get(method_name, method_name)
         policy = get_active_policy()
-        policy.authorize(method_name, ctx)
-        fn = registry.get(method_name)
+        policy.authorize(resolved_method, ctx)
+        fn = registry.get(resolved_method)
         args, kwargs = _bind_call_args(fn, params, ctx)
         result = await _maybe_await(fn(*args, **kwargs))
         # Notification?
@@ -516,6 +543,19 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
         method = obj.get("method")
         params = obj.get("params")
         rpc_err = to_error(exc)
+        if getattr(rpc_err, "code", None) == -32602:
+            existing = dict(getattr(rpc_err, "data", {}) or {})
+            existing.setdefault("request", {"id": req_id if req_id is not _NO_ID else None, "method": method})
+            existing.setdefault("server_version", getattr(rpc_version, "__version__", "dev"))
+            rpc_err = RpcError(code=-32602, message=getattr(rpc_err, "message", "Invalid params"), data=existing)
+        if getattr(rpc_err, "code", None) == -32601 and isinstance(method, str):
+            suggestions = difflib.get_close_matches(method, registry.names, n=5, cutoff=0.5)
+            rpc_err = MethodNotFound(method)
+            rpc_err = RpcError(
+                code=-32601,
+                message="Method not found",
+                data={"method": method, "did_you_mean": suggestions},
+            )
         if getattr(rpc_err, "code", None) == -32603:
             log.exception(
                 "RPC internal error",
@@ -529,7 +569,7 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
             return None
         if req_id is _NO_ID:
             return None
-        return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
+        return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(rpc_err)}
 
 
 async def dispatch(
@@ -593,11 +633,33 @@ async def jsonrpc_endpoint(request: Request) -> Response:
     HTTP endpoint for JSON-RPC POST.
     """
     try:
+        started = time.perf_counter()
+        correlation_id = request.headers.get("x-correlation-id") or uuid.uuid4().hex
         body = await request.body()
         try:
             payload = json.loads(body.decode("utf-8"))
         except Exception:
             raise InvalidRequest("malformed JSON")
+        payload_preview: Any
+        if isinstance(payload, dict):
+            payload_preview = {
+                "id": payload.get("id"),
+                "method": payload.get("method"),
+                "params_type": type(payload.get("params")).__name__,
+            }
+        elif isinstance(payload, list):
+            payload_preview = {"batch_size": len(payload)}
+        else:
+            payload_preview = type(payload).__name__
+        log.info(
+            "rpc.request",
+            extra={
+                "correlation_id": correlation_id,
+                "remote": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "preview": payload_preview,
+            },
+        )
         # Build context
         client = request.client
         ctx = Context(
@@ -609,12 +671,15 @@ async def jsonrpc_endpoint(request: Request) -> Response:
         result = await dispatch(payload, ctx)
         if result is None:
             return Response(status_code=204)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        log.info("rpc.response", extra={"correlation_id": correlation_id, "elapsed_ms": elapsed_ms})
         return Response(
             content=json.dumps(result, separators=(",", ":")),
             media_type="application/json",
         )
     except JsonRpcError as e:
         # Top-level structural errors
+        log.exception("rpc.request_error")
         err = {"jsonrpc": "2.0", "id": None, "error": _error_obj(e)}
         return Response(
             content=json.dumps(err, separators=(",", ":")),
