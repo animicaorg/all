@@ -1,4 +1,5 @@
 import { clearTimeoutFn, fetchFn, performanceObj, setTimeoutFn } from '../runtime/env';
+import { stringifySafe } from '../core/rpc/safeJson';
 import { validateRpcUrl } from './rpcConfig';
 
 interface RpcRequestBody {
@@ -68,7 +69,7 @@ async function rpcPost(rpcUrl: string, body: RpcRequestBody, timeoutMs: number):
     const response = await fetchFn(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: stringifySafe(body),
       signal: controller.signal,
     });
 

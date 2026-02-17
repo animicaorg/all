@@ -26,7 +26,7 @@ function Home({ onLock }: HomeProps) {
   const [showDebug, setShowDebug] = useState(false);
   const [debugState, setDebugState] = useState<any>(null);
 
-  const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
+  const getBalanceState = useBalancesStore(store => store.getBalanceState);
   const refreshBalance = useBalancesStore(store => store.refreshBalance);
   const refreshBalances = useBalancesStore(store => store.refreshBalances);
   const currentAccount = useActiveWalletStore(store => store.activeWallet);
@@ -144,9 +144,9 @@ function Home({ onLock }: HomeProps) {
   }
 
   function formatAvailableBalance(balanceRaw: string): string {
-    const liveBalance = currentAccount ? balancesByAddress[currentAccount.address] : undefined;
-    if (typeof liveBalance === 'bigint') {
-      return formatANM(liveBalance);
+    const liveBalance = currentAccount ? getBalanceState(currentAccount.address) : undefined;
+    if (liveBalance?.status === 'ok' && liveBalance.formatted) {
+      return liveBalance.formatted;
     }
 
     const bn = BigInt(balanceRaw);
@@ -227,7 +227,7 @@ function Home({ onLock }: HomeProps) {
             {loadingBalance && <div style={{ fontSize: '14px', color: '#888' }}>Loading balance...</div>}
             {!loadingBalance && balanceError && (
               <details style={{ color: '#b00020', fontSize: '12px' }}>
-                <summary>Unable to load balance</summary>
+                <summary>—</summary>
                 {balanceError}
               </details>
             )}
@@ -278,6 +278,18 @@ function Home({ onLock }: HomeProps) {
                     {debugState?.lastPingError && <div style={{ marginLeft: 8 }}>Ping: {debugState.lastPingError}</div>}
                   </div>
                 )}
+                <div style={{ marginTop: 8, padding: 8, background: '#eef7ff', borderRadius: 4 }}>
+                  <div><strong>Wallet balance state:</strong></div>
+                  {accounts.map((account) => {
+                    const state = getBalanceState(account.address);
+                    return (
+                      <div key={account.address} style={{ marginLeft: 8 }}>
+                        {account.label}: {state?.status ?? 'loading'} · updated {state?.updatedAt ? new Date(state.updatedAt).toLocaleTimeString() : 'never'}
+                        {state?.error?.message ? ` · error: ${state.error.message}` : ''}
+                      </div>
+                    );
+                  })}
+                </div>
 
                 {debugState?.txRpcDebug?.lastSendRequest && (
                   <div style={{ marginTop: 8, padding: 8, background: '#e8f4fd', borderRadius: 4 }}>

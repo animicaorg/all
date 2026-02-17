@@ -2,6 +2,7 @@
 
 import { clearTimeoutFn, fetchFn, setTimeoutFn } from '../../runtime/env';
 import { submitRawTransactionCompat } from './rawtx_submit';
+import { stringifySafe } from './safeJson';
 
 const RPC_TIMEOUT_MS = 10000;
 
@@ -144,6 +145,10 @@ interface RpcClientOptions {
   timeoutMs?: number;
 }
 
+interface RpcCallOptions {
+  signal?: AbortSignal;
+}
+
 export class RpcClient {
   private urls: string[];
   private currentIndex: number = 0;
@@ -168,7 +173,7 @@ export class RpcClient {
     return [...this.lastCallAttempts];
   }
 
-  async call(method: string, params: JsonRpcParams = [], schema?: string): Promise<any> {
+  async call(method: string, params: JsonRpcParams = [], schema?: string, options: RpcCallOptions = {}): Promise<any> {
     let lastError: Error | null = null;
     const fetchImpl = getFetch();
     const setTimeoutImpl = getSetTimeout();
@@ -183,10 +188,17 @@ export class RpcClient {
       }
 
       const controller = new AbortController();
+      const externalAbortHandler = () => controller.abort(options.signal?.reason);
+      if (options.signal) {
+        if (options.signal.aborted) {
+          throw new Error('Request aborted before start');
+        }
+        options.signal.addEventListener('abort', externalAbortHandler, { once: true });
+      }
       const timeout = setTimeoutImpl(() => controller.abort(), this.timeoutMs);
 
       const request = buildJsonRpcRequest(method, params, this.nextRequestId());
-      const requestBody = JSON.stringify(request);
+      const requestBody = stringifySafe(request);
       const attempt: RpcAttemptDebug = { method, url, requestBody, schema };
       this.lastCallAttempts.push(attempt);
 
@@ -213,7 +225,7 @@ export class RpcClient {
           json = responseText ? JSON.parse(responseText) : {};
         } else {
           json = await (response as any).json();
-          attempt.rawResponseBody = JSON.stringify(json);
+          attempt.rawResponseBody = stringifySafe(json);
         }
         attempt.parsedResponse = json;
 
@@ -268,6 +280,9 @@ export class RpcClient {
         this.failedUrls.add(url);
         this.currentIndex = (this.currentIndex + 1) % this.urls.length;
       } finally {
+        if (options.signal) {
+          options.signal.removeEventListener('abort', externalAbortHandler);
+        }
         clearTimeoutImpl(timeout);
       }
     }

@@ -11,6 +11,7 @@ export interface BalanceDebugState {
   lastPingError?: string | null;
   lastBalanceFetchedAt?: number | null;
   lastBalanceRequest?: {
+    requestId?: string;
     address: string;
     rpcUrl: string;
     chainId: number;
@@ -93,16 +94,18 @@ export function formatBalance(baseUnits: bigint, decimals = Number(DEFAULT_DECIM
 export async function getBalanceBaseUnits(
   address: string,
   rpcUrl: string,
-  chainId: number
+  chainId: number,
+  options: { signal?: AbortSignal; requestId?: string } = {}
 ): Promise<bigint> {
   if (!/^anim1[0-9a-z]+$/.test(address) || !validateAddress(address)) {
     throw new Error('Invalid wallet address');
   }
 
   const client = new RpcClient([rpcUrl]);
-  const rpcChainId = await client.getChainId();
-  if (rpcChainId !== chainId) {
-    throw new Error(`Network mismatch: expected chain_id ${chainId}, got ${rpcChainId}`);
+  const rpcChainId = await client.call('chain.getChainId', [], undefined, { signal: options.signal });
+  const normalizedChainId = typeof rpcChainId === 'number' ? rpcChainId : Number(rpcChainId);
+  if (normalizedChainId !== chainId) {
+    throw new Error(`Network mismatch: expected chain_id ${chainId}, got ${normalizedChainId}`);
   }
 
   let raw: unknown;
@@ -112,6 +115,7 @@ export async function getBalanceBaseUnits(
       address,
       rpcUrl,
       chainId,
+      requestId: options.requestId,
       timestamp: Date.now(),
     };
 
@@ -121,7 +125,25 @@ export async function getBalanceBaseUnits(
       chainId,
     });
 
-    raw = await client.call('state.getBalance', [address, 'latest']);
+    let retries = 0;
+    const maxRetries = 2;
+    while (true) {
+      try {
+        raw = await client.call('state.getBalance', [address, 'latest'], undefined, { signal: options.signal });
+        break;
+      } catch (error) {
+        retries += 1;
+        if (retries > maxRetries) throw error;
+        const delayMs = 150 * (2 ** (retries - 1));
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, delayMs);
+          options.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(new Error('Balance request aborted'));
+          }, { once: true });
+        });
+      }
+    }
     
     debugLog('state.getBalance raw response', {
       address,
@@ -174,7 +196,10 @@ export async function getBalanceBaseUnits(
 
 export async function getBalance(
   address: string,
-  options: { rpcUrl: string; chainId: number }
+  options: { rpcUrl: string; chainId: number; signal?: AbortSignal; requestId?: string }
 ): Promise<bigint> {
-  return getBalanceBaseUnits(address, options.rpcUrl, options.chainId);
+  return getBalanceBaseUnits(address, options.rpcUrl, options.chainId, {
+    signal: options.signal,
+    requestId: options.requestId,
+  });
 }

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import type { Account } from '../../types/wallet';
-import { formatANM } from '../../services/balances';
 import { useBalancesStore } from '../../store/balances';
 
 interface AccountsTabProps {
@@ -16,9 +15,7 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const balancesByAddress = useBalancesStore(store => store.balancesByAddress);
-  const loadingByAddress = useBalancesStore(store => store.loadingByAddress);
-  const errorByAddress = useBalancesStore(store => store.errorByAddress);
+  const getBalanceState = useBalancesStore(store => store.getBalanceState);
   const refreshBalances = useBalancesStore(store => store.refreshBalances);
 
   useEffect(() => {
@@ -74,21 +71,17 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
   }
 
   function getBalanceText(address: string): string {
-    if (loadingByAddress[address]) {
+    const balanceState = getBalanceState(address);
+    if (!balanceState || balanceState.status === 'loading') {
       return 'Balance: …';
     }
-
-    const error = errorByAddress[address];
-    if (error) {
-      return `Balance: Error - ${error}`;
+    if (balanceState.status === 'ok') {
+      return `Balance: ${balanceState.formatted} ANM`;
     }
-
-    const balance = balancesByAddress[address];
-    if (typeof balance === 'bigint') {
-      return `Balance: ${formatANM(balance)} ANM`;
+    if (balanceState.formatted) {
+      return `Balance: ${balanceState.formatted} ANM (stale)`;
     }
-
-    return 'Balance: …';
+    return 'Balance: —';
   }
 
   return (
@@ -156,7 +149,7 @@ function AccountsTab({ accounts, currentAccount, onSelectAccount, onRefresh }: A
             <div className="address">
               {account.address.slice(0, 20)}...{account.address.slice(-10)}
             </div>
-            <div style={{ marginTop: '4px', fontSize: '12px', color: '#666' }}>
+            <div style={{ marginTop: '4px', fontSize: '12px', color: '#666' }} title={getBalanceState(account.address)?.error?.message || ''}>
               {getBalanceText(account.address)}
             </div>
           </div>
