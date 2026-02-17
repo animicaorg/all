@@ -47,7 +47,8 @@ RUN set -eux; \
       rich \
       typer \
       pyyaml \
-      prometheus-client; \
+      prometheus-client \
+      oqs-python; \
     python -m pip wheel --wheel-dir=/wheels python-rocksdb \
       || echo "python-rocksdb build failed (optional)"; \
     ls -l /wheels
@@ -86,7 +87,8 @@ RUN set -eux; \
       rich \
       typer \
       pyyaml \
-      prometheus-client; \
+      prometheus-client \
+      oqs-python; \
     python -m pip install --no-index --find-links=/wheels python-rocksdb \
       || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
@@ -112,7 +114,10 @@ RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
 
 ENV ANIMICA_USER=${USER} \
     ANIMICA_UID=${UID} \
-    ANIMICA_GID=${GID}
+    ANIMICA_GID=${GID} \
+    HOME=/data
+
+RUN python -c "from pq.py.algs import dilithium3,sphincs_shake_128s;sk,pk=dilithium3.keypair();m=b'build-selftest';sg=dilithium3.sign(sk,m);assert dilithium3.verify(pk,m,sg);sk2,pk2=sphincs_shake_128s.keypair();sg2=sphincs_shake_128s.sign(sk2,m);assert sphincs_shake_128s.verify(pk2,m,sg2);print('pq-selftest-ok')"
 
 # Switch to non-root user
 USER ${USER}
