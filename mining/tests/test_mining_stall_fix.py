@@ -1,9 +1,8 @@
 """
-Test that mining doesn't stall indefinitely when searching for nonces.
+Test nonce-scan stopping behavior for HashScanner.
 
-This test verifies the fix for the issue where HashScanner.scan() would
-search indefinitely when max_nonce was None (or not provided), causing
-mining to stall while looking for higher and higher nonces.
+The default scanner behavior is now unbounded when max_nonce is omitted or None,
+so miners can keep scanning until externally stopped.
 """
 import os
 import time
@@ -11,8 +10,8 @@ import threading
 from mining.hash_search import HashScanner
 
 
-def test_scan_with_default_max_nonce_terminates():
-    """Test that scan() terminates with default max_nonce instead of running forever."""
+def test_scan_with_default_max_nonce_can_be_stopped():
+    """Test that default unbounded scan mode stops promptly via stop_event."""
     scanner = HashScanner()
     
     # Fake header prefix
@@ -29,7 +28,7 @@ def test_scan_with_default_max_nonce_terminates():
     
     def count_shares():
         nonlocal shares_found
-        # Call scan() WITHOUT explicit max_nonce parameter (should use default of 2^32)
+        # Call scan() WITHOUT explicit max_nonce parameter (default is unbounded (None))
         # But we'll stop it early with stop_event to verify it respects the event
         for share in scanner.scan(prefix, t_micro, start_nonce=0, stop_event=stop_event):
             shares_found += 1
@@ -106,8 +105,8 @@ def test_scan_can_be_stopped_with_event():
     print(f"✓ Scan stopped successfully via stop_event after finding {len(shares_found)} shares")
 
 
-def test_scan_with_none_max_nonce_uses_default():
-    """Test that explicitly passing max_nonce=None uses the safe default."""
+def test_scan_with_none_max_nonce_is_unbounded_but_stoppable():
+    """Test that max_nonce=None behaves as unbounded scan and respects stop_event."""
     scanner = HashScanner()
     prefix = b"animica:header:signbytes:v1:" + os.urandom(48)
     t_micro = 50_000_000  # Very high threshold
@@ -169,8 +168,8 @@ def test_scan_limit_prevents_overflow():
     print(f"  Found {len(shares)} shares")
 
 
-def test_default_max_nonce_is_reasonable():
-    """Test that the default max_nonce value is set and reasonable."""
+def test_default_max_nonce_is_unbounded_none():
+    """Test that the default max_nonce value is None (unbounded)."""
     import inspect
     from mining.hash_search import HashScanner
     
@@ -182,12 +181,12 @@ def test_default_max_nonce_is_reasonable():
     assert max_nonce_param.default != inspect.Parameter.empty, \
         "max_nonce should have a default value"
     
-    # Verify the default is 2^32 (a reasonable limit)
-    expected_default = 1 << 32  # 4,294,967,296
-    assert max_nonce_param.default == expected_default, \
+    # Verify the default is None (unbounded scan)
+    expected_default = None
+    assert max_nonce_param.default is expected_default, \
         f"max_nonce default should be {expected_default}, got {max_nonce_param.default}"
-    
-    print(f"✓ Default max_nonce is set to {max_nonce_param.default:,} (2^32)")
+
+    print("✓ Default max_nonce is None (unbounded)")
 
 
 def test_limit_handles_64bit_wrapping():
@@ -218,11 +217,11 @@ if __name__ == "__main__":
     print("=" * 60)
     
     try:
-        test_default_max_nonce_is_reasonable()
-        test_scan_with_default_max_nonce_terminates()
+        test_default_max_nonce_is_unbounded_none()
+        test_scan_with_default_max_nonce_can_be_stopped()
         test_scan_respects_explicit_max_nonce()
         test_scan_can_be_stopped_with_event()
-        test_scan_with_none_max_nonce_uses_default()
+        test_scan_with_none_max_nonce_is_unbounded_but_stoppable()
         test_scan_limit_prevents_overflow()
         test_limit_handles_64bit_wrapping()
         
