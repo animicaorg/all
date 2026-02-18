@@ -12,11 +12,15 @@ Implements:
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
 from typing import Iterable, List, Optional
 
 import typer
 
-from animica.config import load_network_config
+from animica.config import get_network_defaults, load_network_config
 from animica.cli.rpc import call_rpc
 
 app = typer.Typer(help="Chain queries (head, blocks, transactions, accounts)")
@@ -56,6 +60,86 @@ def _try_rpc(methods: Iterable[str], params: Optional[list], rpc_url: Optional[s
 
 def _pretty(obj: dict) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
+
+
+def _reset_paths_for_chain(chain_id: int) -> list[Path]:
+    defaults = get_network_defaults(load_network_config().name)
+    base = Path(str(defaults.get("data_dir", f"~/.animica/chain-{chain_id}"))).expanduser()
+    return [
+        base,
+        base / "blocks",
+        base / "state",
+        base / "mempool",
+        base / "snapshots",
+        base / "cache",
+        base / "nonce_cache",
+        Path("./data") / f"chain-{chain_id}",
+    ]
+
+
+@app.command("reset")
+def reset(
+    force: bool = typer.Option(False, "--force", help="Actually perform reset (default is dry-run)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", envvar="ANIMICA_RPC_URL", help="RPC endpoint for verification"),
+) -> None:
+    """Safely reset chain state to genesis (height 0).
+
+    Default mode is dry-run: prints targets only. Use --force to execute.
+    """
+    cfg = load_network_config()
+    targets = []
+    seen = set()
+    for p in _reset_paths_for_chain(cfg.chain_id):
+        rp = p.expanduser().resolve()
+        if rp in seen:
+            continue
+        seen.add(rp)
+        targets.append(rp)
+
+    typer.echo("Chain reset plan (dry-run by default):")
+    for t in targets:
+        exists = t.exists()
+        typer.echo(f" - {'[exists]' if exists else '[missing]'} {t}")
+
+    if not force:
+        typer.secho("Dry-run only. Re-run with --force to stop services, backup, wipe, and verify.", fg=typer.colors.YELLOW)
+        return
+
+    stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    backup_root = Path.home() / ".animica" / "backups" / f"chain-reset-{cfg.chain_id}-{stamp}"
+    backup_root.mkdir(parents=True, exist_ok=True)
+
+    # Best-effort service shutdown
+    subprocess.run(["animica", "node", "down"], check=False)
+
+    for t in targets:
+        if not t.exists():
+            continue
+        dest = backup_root / t.name
+        try:
+            if t.is_dir():
+                shutil.copytree(t, dest, dirs_exist_ok=True)
+                shutil.rmtree(t, ignore_errors=True)
+            else:
+                shutil.copy2(t, dest)
+                t.unlink(missing_ok=True)
+            typer.echo(f"reset_removed: {t}")
+        except Exception as exc:
+            typer.secho(f"Warning: failed to process {t}: {exc}", fg=typer.colors.YELLOW, err=True)
+
+    subprocess.run(["animica", "node", "up"], check=False)
+
+    try:
+        head_data = _try_rpc(("chain_getHead", "chain.getHead"), None, rpc_url)
+    except Exception as exc:
+        typer.secho(f"Warning: verification RPC failed: {exc}", fg=typer.colors.YELLOW, err=True)
+        return
+
+    height = int(head_data.get("height") or head_data.get("number") or 0)
+    if height != 0:
+        typer.secho(f"Reset verification failed: head height is {height}, expected 0", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho("Chain reset complete and verified at height 0.", fg=typer.colors.GREEN)
 
 
 @app.command()

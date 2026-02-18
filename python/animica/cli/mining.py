@@ -874,6 +874,7 @@ def mine_blocks(
         "--include-mempool/--no-include-mempool",
         help="Include pending mempool transactions when mining (default: include).",
     ),
+    template_ttl_s: int = typer.Option(15, "--template-ttl-s", help="Template lease TTL in seconds."),
 ) -> None:
     """
     Mine blocks with proof-of-work to a specified payout address.
@@ -1301,6 +1302,7 @@ def mine_blocks(
                         payload = {
                             "address": resolved_address,
                             "include_mempool": include_mempool,
+                            "ttlSeconds": int(template_ttl_s),
                         }
                         try:
                             return client.request("miner.getBlockTemplate", payload)
@@ -1347,6 +1349,7 @@ def mine_blocks(
                             {
                                 "address": resolved_address,
                                 "include_mempool": include_mempool,
+                                "ttlSeconds": int(template_ttl_s),
                             },
                             fallback_handler=get_template_via_local,
                         )
@@ -1612,6 +1615,20 @@ def mine_blocks(
                             fg=typer.colors.RED,
                         )
                         
+                        if is_stale:
+                            try:
+                                head_now = client.request("chain.getHead", [])
+                            except Exception:
+                                head_now = {}
+                            typer.secho(
+                                "  STALE_DIFF: "
+                                f"template.parent={template.get('parent', {}).get('hash')} "
+                                f"head.hash={head_now.get('hash')} "
+                                f"head_at_issue={template.get('headHashAtIssue')} "
+                                f"issued_at={template.get('issuedAt')} expires_at={template.get('expiresAt')}",
+                                fg=typer.colors.YELLOW,
+                            )
+
                         if is_stale and stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
