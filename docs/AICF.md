@@ -1,279 +1,393 @@
-# AICF (AI Compute Fund)
+# AICF (AI Compute Fund) - User Guide
 
 ## Overview
 
-AICF is Animica's on-chain AI compute marketplace that coordinates GPU workloads and distributes rewards to GPU contributors. It integrates with ENA (Animica's inference service) to fund GPU compute via a percentage of each inference call.
+The AICF (AI Compute Fund) is a protocol-level mechanism for funding AI and quantum compute providers on the Animica network. It operates on a block-based credit system where miners earn credits for each block they mine, and these credits can be claimed proportionally from a pool funded by block rewards and transaction fees.
 
-## Architecture
-
-```
-User → ENA Inference → AICF Contribution (25% of fee)
-                          ↓
-                    Epoch Accounting
-                          ↓
-                    Reward Distribution
-                          ↓
-            GPU Workers (70%) | Treasury (20%) | Dev (5%) | Burn (5%)
-```
-
-## How Funds Flow
-
-1. **Inflow**: Users pay for ENA inference. A portion (default 25%) goes to AICF.
-2. **Accounting**: Contributions are recorded per epoch (e.g., every 1000 blocks).
-3. **Credits**: GPU workers earn credits for completing jobs.
-4. **Distribution**: At epoch finalization:
-   - 70% → GPU workers (proportional to credits)
-   - 20% → Treasury
-   - 5% → Dev fund
-   - 5% → Burn
-5. **Payout**: Workers claim their share via on-chain transactions.
-
-## For Users
-
-### Making an AICF Contribution
-
-When you use ENA inference, AICF contributions are **automatic**:
-
-```bash
-# This command includes automatic AICF payment
-animica ena infer "hello world"
-```
-
-The CLI will:
-1. Compute the total fee (service + AICF)
-2. Submit two transactions: one to ENA service, one to AICF
-3. Wait for confirmation
-4. Run inference
-5. Display receipt with AICF contribution details
-
-### Checking AICF Status
-
-```bash
-# View AICF information
-animica ena aicf info
-
-# Check contribution transaction
-animica ena aicf verify <tx_hash>
-```
-
-### Receipts
-
-Example receipt:
-
-```
-✓ Inference complete!
-
-Receipt:
-  ID: req_abc123
-  Mode: per_call_tx
-
-AICF Contribution:
-  Amount: 0.0025 ANM
-  Required: 0.0025 ANM
-  Status: ✓ Verified on-chain
-  Transaction: 0xabc...def
-```
-
-## For GPU Contributors
-
-### Registration
-
-Register as a GPU worker to start earning:
-
-```bash
-# Register with your payout address
-animica ena aicf worker-register anim1your_address_here --name "MyGPU"
-```
-
-This returns a `worker_id` that you'll use for all subsequent operations.
-
-### Running Jobs
-
-Start the worker loop to pull and process jobs:
-
-```bash
-# Single job
-animica ena aicf worker-run <worker_id>
-
-# Continuous loop (recommended)
-animica ena aicf worker-run <worker_id> --loop
-```
-
-The worker will:
-1. Poll for available jobs
-2. Execute the job (training, inference, etc.)
-3. Submit results
-4. Earn credits
-
-### Claiming Rewards
-
-After an epoch is finalized, claim your share:
-
-```bash
-# Claim rewards for epoch N
-animica ena aicf worker-claim <worker_id> <epoch_number>
-```
-
-Example output:
-
-```
-✓ Rewards claimed!
-  Amount: 1.234 ANM
-  Transaction: 0x123...abc
-  Status: CONFIRMED
-```
-
-### Checking Worker Status
-
-```bash
-# View your worker info
-animica ena aicf worker-status <worker_id>
-
-# List all workers
-animica ena aicf list-workers
-```
-
-## For Operators
-
-### Creating Jobs
-
-Create training or inference jobs for workers:
-
-```bash
-animica aicf coordinator create-job \
-  --type distill \
-  --difficulty 3 \
-  --dataset ipfs://Qm...
-```
-
-### Finalizing Epochs
-
-Epochs can be auto-finalized or manually triggered:
-
-```bash
-# Manual epoch finalization
-animica aicf epoch finalize
-```
-
-This calculates reward shares and enables workers to claim payouts.
-
-### Monitoring
-
-```bash
-# View epoch info
-animica ena aicf epoch-info <epoch_number>
-
-# Check protocol status
-animica ena aicf protocol-status
-```
-
-## Economics
-
-### Reward Split
-
-Default distribution per epoch:
-
-- **70%** → GPU workers (proportional to credits earned)
-- **20%** → Treasury (community fund)
-- **5%** → Dev fund (protocol development)
-- **5%** → Burn (deflationary)
+## Key Concepts
 
 ### Epochs
 
-- **Length**: 1000 blocks (configurable)
-- **Challenge Window**: 100 blocks after epoch end
-- **Finalization**: After challenge window closes
+- **Epoch**: A fixed-length window of blocks (default: 100 blocks)
+- **Epoch Number**: Computed as `floor(block_height / epoch_length)`
+- **Finalization**: Epochs are finalized 2 blocks after completion, making their budget distributable
 
 ### Credits
 
-Workers earn credits for:
-- Completing training jobs
-- Running inference
-- Providing storage proofs
-- Quantum compute proofs
+- **Credits**: Non-transferable points awarded to miners when they mine a block
+- **Credits per Block**: Fixed amount (default: 1,000,000 credits)
+- **Total Credits**: Sum of all credits awarded in an epoch
+- **User Credits**: Credits earned by a specific miner in an epoch
 
-Credit weight varies by job difficulty and verification.
+### Funding Sources
+
+The AICF pool is funded by:
+
+1. **Block Reward Slice** (5% default)
+   - Taken from miner's block reward
+   - Configured via `block_reward_slice_bps` (500 = 5%)
+
+2. **Transaction Fee Slice** (20% default)
+   - Taken from transaction priority fees
+   - Configured via `fee_slice_bps` (2000 = 20%)
+
+3. **ENA Call Fees** (80% to AICF, default)
+   - Fees charged for External Network Access (ENA) calls
+   - Base fee: `ena_call_fee_base_nano` (0.00001 ANM default)
+   - AICF portion: `ena_call_fee_aicf_bps` (8000 = 80%)
+
+4. **Governance Top-ups**
+   - Manual injections from treasury
+   - Requires governance approval
+
+### Claiming
+
+- **Claimable Epochs**: Only epochs that are finalized (current_epoch - 2 or earlier)
+- **Pro-rata Distribution**: Share = (your_credits / total_credits) * budget
+- **Idempotent**: Claiming twice does not double-pay
+- **Max Epochs**: Claims are limited to 100 epochs per transaction (configurable)
+
+## Configuration Parameters
+
+All parameters are defined in `spec/params.yaml` under `networks.[network].aicf`:
+
+```yaml
+aicf:
+  epoch_length_blocks: 100          # Blocks per epoch
+  block_reward_slice_bps: 500       # 5% of block reward to AICF
+  fee_slice_bps: 2000               # 20% of tx fees to AICF
+  ena_call_fee_base_nano: 10000     # 0.00001 ANM per ENA call
+  ena_call_fee_aicf_bps: 8000       # 80% of ENA fee to AICF
+  epoch_payout_bps: 5000            # 50% of epoch inflows distributable
+  credits_per_block: 1000000        # Credits awarded per block
+  max_claim_epochs: 100             # Max epochs per claim
+  prune_after_epochs: 10000         # Epochs to keep before pruning
+```
+
+## RPC Methods
+
+### `aicf.getParams`
+
+Get AICF configuration parameters.
+
+**Request:**
+```bash
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.getParams",
+    "params": []
+  }'
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "epoch_length_blocks": 100,
+    "block_reward_slice_bps": 500,
+    "fee_slice_bps": 2000,
+    "ena_call_fee_base_nano": 10000,
+    "ena_call_fee_aicf_bps": 8000,
+    "epoch_payout_bps": 5000,
+    "credits_per_block": 1000000,
+    "max_claim_epochs": 100,
+    "prune_after_epochs": 10000
+  }
+}
+```
+
+### `aicf.getStatus`
+
+Get current AICF pool status.
+
+**Request:**
+```bash
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.getStatus",
+    "params": []
+  }'
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pool_balance": "0x2540be400",
+    "current_epoch": 42,
+    "current_height": 4200,
+    "last_finalized_epoch": 40
+  }
+}
+```
+
+### `aicf.getClaimable`
+
+Get claimable rewards for an address.
+
+**Request:**
+```bash
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.getClaimable",
+    "params": ["anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", true]
+  }'
+```
+
+**Parameters:**
+- `address` (required): Bech32m or hex-encoded address
+- `includeDetails` (optional): Include per-epoch breakdown
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "claimable": "0x3b9aca00",
+    "epochs": [38, 39, 40],
+    "details": [
+      {
+        "epoch": 38,
+        "credits": "0xf4240",
+        "total_credits": "0x1e8480",
+        "share": "0x1312d00"
+      },
+      {
+        "epoch": 39,
+        "credits": "0xf4240",
+        "total_credits": "0x1e8480",
+        "share": "0x1312d00"
+      },
+      {
+        "epoch": 40,
+        "credits": "0xf4240",
+        "total_credits": "0x1e8480",
+        "share": "0x1312d00"
+      }
+    ]
+  }
+}
+```
+
+### `aicf.claim`
+
+Get claim information (read-only). To execute a claim, send a transaction via `tx.sendRawTransaction`.
+
+**Request:**
+```bash
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.claim",
+    "params": ["anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"]
+  }'
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "claimable": "0x3b9aca00",
+    "epochs": [38, 39, 40],
+    "message": "This is a read-only response. To claim, you must send a transaction through tx.sendRawTransaction with the claim operation."
+  }
+}
+```
+
+### `aicf.topUp`
+
+Governance-only method to add funds to AICF pool.
+
+**Request:**
+```bash
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.topUp",
+    "params": ["0x2540be400"]
+  }'
+```
+
+**Parameters:**
+- `amount` (required): Hex quantity or decimal string
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": false,
+    "message": "Top-up functionality not yet implemented. Requires governance transaction."
+  }
+}
+```
+
+## How It Works
+
+### 1. Mining a Block
+
+When a miner successfully mines a block:
+
+1. The block is validated and applied to the chain
+2. Credits are awarded to the miner:
+   - Amount: `credits_per_block` (default: 1,000,000)
+   - Tracked in: `aicf.epoch.{epoch}.credits_user.{miner_address}`
+   - Total updated: `aicf.epoch.{epoch}.credits_total`
+
+3. Funding flows into AICF pool:
+   - Block reward slice: 5% of base reward → AICF pool
+   - Transaction fees: 20% of priority fees → AICF pool
+   - Tracked in: `aicf.epoch.{epoch}.inflow`
+
+### 2. Epoch Finalization
+
+At epoch boundaries (every 100 blocks):
+
+1. Previous epoch (E-1) is finalized
+2. Budget computed: `budget = min(inflow * 50%, pool_balance)`
+3. Budget marked as distributable
+4. Remaining 50% stays as reserve in pool
+
+### 3. Claiming Rewards
+
+Miners can claim rewards from finalized epochs:
+
+1. Call `aicf.getClaimable(address)` to check claimable amount
+2. For each finalized epoch:
+   - Compute share: `(user_credits / total_credits) * budget`
+   - Sum across all unclaimed epochs
+3. Send claim transaction (to be implemented)
+4. AICF pool transfers claimable amount to miner
+5. Last claimed epoch is updated
+
+### 4. Replay Protection
+
+- Claims are idempotent: calling twice returns 0 the second time
+- State key `aicf.last_claimed_epoch.{address}` tracks progress
+- Only epochs > last_claimed are processed
+
+## State Schema
+
+All state is stored in the chain state DB with deterministic keys:
+
+```
+aicf.epoch_length                           → u64  (epoch length config)
+aicf.epoch.{E}.credits_total                → u128 (total credits in epoch E)
+aicf.epoch.{E}.credits_user.{address}       → u128 (credits for user in epoch E)
+aicf.epoch.{E}.budget                       → u128 (distributable budget for epoch E)
+aicf.epoch.{E}.inflow                       → u128 (total inflow to pool in epoch E)
+aicf.last_claimed_epoch.{address}           → u64  (last epoch claimed by address)
+aicf.pool_balance                           → u128 (current pool balance, cached)
+```
+
+## Security Considerations
+
+1. **Overflow Protection**: All arithmetic uses safe checked operations
+2. **Determinism**: All logic is purely deterministic; no I/O dependencies
+3. **Idempotency**: Claims are replay-safe and idempotent
+4. **Reorg Safety**: State keys are epoch/address-scoped for reorg resilience
+5. **Budget Caps**: Budgets are capped by available pool balance
+6. **Max Epochs**: Claims are limited to prevent DoS
+
+## Future Work
+
+1. **Claim Transactions**: Implement actual claim transaction execution
+2. **Governance Top-up**: Implement permissioned governance top-up transactions
+3. **ENA Call Fees**: Integrate ENA call fee routing
+4. **State Pruning**: Implement configurable state pruning after N epochs
+5. **Multi-sig Claims**: Support for claiming to different addresses
+6. **Delegation**: Allow miners to delegate claims to other addresses
+
+## Examples
+
+### Check Your Claimable Rewards
+
+```bash
+# Replace with your address
+ADDRESS="anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"id\": 1,
+    \"method\": \"aicf.getClaimable\",
+    \"params\": [\"$ADDRESS\", true]
+  }" | jq
+```
+
+### Monitor AICF Pool
+
+```bash
+# Get current status
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.getStatus",
+    "params": []
+  }' | jq
+
+# Get parameters
+curl -X POST https://mainnet.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "aicf.getParams",
+    "params": []
+  }' | jq
+```
 
 ## Troubleshooting
 
-### Doctor Command
+### "Insufficient AICF pool balance" Error
 
-Run diagnostics if you encounter issues:
+This should never happen if budget computation is correct. It indicates:
+- Pool was drained below budget commitments
+- State corruption or bug in budget calculation
 
-```bash
-# Check AICF configuration and connectivity
-animica ena aicf doctor
-```
+**Resolution**: Report as a critical bug with block height and epoch number.
 
-The doctor will check:
-- RPC connectivity
-- Wallet configuration
-- Data directory permissions
-- ENA endpoint accessibility
+### "Invalid address format" Error
 
-### Common Issues
+Ensure your address is:
+- Valid bech32m with "anim" prefix, OR
+- Valid 0x-prefixed 64-character hex (32 bytes)
 
-**Issue**: "AICF contribution failed"
+### Zero Claimable Rewards
 
-**Fix**:
-1. Check wallet balance: `animica wallet balance`
-2. Verify AICF address: `animica ena aicf info`
-3. Check transaction logs: `animica tx status <hash>`
+Possible reasons:
+- You haven't mined any blocks in finalized epochs
+- All your epochs have been claimed
+- Current epoch is not yet finalized (wait 2+ epochs)
+- Budget for your epochs is zero (no inflows)
 
-**Issue**: "No jobs available"
+## Support
 
-**Fix**:
-1. Ensure worker is registered: `animica ena aicf worker-status <id>`
-2. Check coordinator is running
-3. Try again later (jobs are created on demand)
-
-**Issue**: "Claim failed - epoch not finalized"
-
-**Fix**:
-Wait for epoch to finalize. Check status:
-```bash
-animica ena aicf epoch-info <epoch>
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# ENA endpoint (default: https://ena.animica.org)
-export ENA_ENDPOINT=https://ena.animica.org
-
-# Animica RPC (default: https://mainnet.animica.org/rpc)
-export ANIMICA_RPC_URL=https://mainnet.animica.org/rpc
-
-# AICF database path (for coordinators)
-export AICF_DB_PATH=~/.animica/aicf_protocol.db
-```
-
-### Protocol Parameters
-
-Configured in `aicf/protocol/config.py`:
-
-```python
-EPOCH_LENGTH_BLOCKS = 1000
-CHALLENGE_WINDOW_BLOCKS = 100
-MIN_STAKE = 10_000_000_000  # 10 ANM
-MAX_WORKERS = 10000
-```
-
-## Security
-
-- All payments are on-chain and verifiable
-- Jobs are verified before credits are minted
-- Challenge window allows disputing invalid work
-- Slashing for malicious behavior
-
-## API Reference
-
-See [AICF Protocol RPC Methods](../aicf/specs/RPC.md) for detailed API documentation.
-
-## Further Reading
-
-- [ENA Documentation](./ENA.md)
-- [AICF Protocol Specification](../aicf/README.md)
-- [Economics Model](../aicf/economics/README.md)
+For issues or questions:
+- GitHub: https://github.com/animicaorg/all/issues
+- Discord: https://discord.gg/animica
+- Docs: https://docs.animica.org
