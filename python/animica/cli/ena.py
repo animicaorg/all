@@ -28,6 +28,14 @@ except ImportError:
 console = Console()
 app = typer.Typer(help="ENA LLM inference commands")
 
+# Import upgrade CLI
+try:
+    from . import ena_upgrade
+    app.add_typer(ena_upgrade.app, name="upgrade", help="Model upgrade management")
+except ImportError as e:
+    # Upgrade CLI is optional if dependencies missing
+    pass
+
 # Default configuration
 DEFAULT_ENA_ENDPOINT = os.getenv("ENA_ENDPOINT", "https://ena.animica.org")
 DEFAULT_RPC_URL = os.getenv("ANIMICA_RPC_URL", "https://mainnet.animica.org/rpc")
