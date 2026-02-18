@@ -43,6 +43,9 @@ model_cache/
 *.sqlite
 *.sqlite3
 
+# Demo and temporary data
+tmp/
+
 # Chain data directories
 chain-*/
 .animica/chain-*/
