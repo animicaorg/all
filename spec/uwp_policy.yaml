@@ -1,0 +1,100 @@
+# Useful Work Proof (UWP) Policy Configuration
+# Controls enabled schemes, caps, bonuses, and verification limits
+
+uwp:
+  # Global UWP system toggle
+  enabled: true
+  
+  # Global limits per share
+  max_proofs_per_share: 5
+  max_total_bytes_per_share: 262144  # 256 KB
+  max_verify_ms_per_share: 2000  # 2 seconds total verification budget
+  
+  # Require valid proofs for share acceptance (normally false)
+  require_proofs: false
+  
+  # Default bonus credits (if scheme doesn't specify)
+  default_bonus_credits: 1000
+  
+  # Total bonus budget per epoch (paid from AICF escrow)
+  epoch_bonus_budget: 1000000
+  
+  schemes:
+    # Tier 0: Deterministic evaluation with Merkle spot-checks
+    "ena.eval.micro":
+      enabled: true
+      min_version: "0.1.0"
+      bonus_credits: 2000
+      bonus_credits_bp: 0  # Alternative: basis points of base reward
+      per_share_cap: 2  # Max 2 proofs of this type per share
+      per_miner_hourly_cap: 100
+      per_epoch_cap: 50000
+      max_verify_ms: 300  # 300ms max per proof
+    
+    # Tier 1: Signed compute receipts
+    "compute.receipt.v1":
+      enabled: true
+      min_version: "0.1.0"
+      bonus_credits: 5000
+      bonus_credits_bp: 0
+      per_share_cap: 1  # Max 1 receipt per share
+      per_miner_hourly_cap: 50
+      per_epoch_cap: 20000
+      max_verify_ms: 200  # 200ms max per proof
+    
+    # Tier 2: ZK proofs (future, stubbed)
+    "zkml.infer.v1":
+      enabled: false
+      min_version: "1.0.0"
+      bonus_credits: 10000
+      bonus_credits_bp: 0
+      per_share_cap: 1
+      per_miner_hourly_cap: 20
+      per_epoch_cap: 10000
+      max_verify_ms: 500
+
+# Network-specific overrides
+networks:
+  "animica:1":  # Mainnet
+    inherit: "default"
+    overrides:
+      uwp:
+        max_proofs_per_share: 3
+        epoch_bonus_budget: 2000000
+        schemes:
+          "ena.eval.micro":
+            bonus_credits: 1500
+          "compute.receipt.v1":
+            bonus_credits: 4000
+  
+  "animica:2":  # Testnet
+    inherit: "default"
+    overrides:
+      uwp:
+        max_proofs_per_share: 5
+        epoch_bonus_budget: 500000
+        schemes:
+          "ena.eval.micro":
+            bonus_credits: 3000
+          "compute.receipt.v1":
+            bonus_credits: 6000
+  
+  "animica:1337":  # Devnet
+    inherit: "default"
+    overrides:
+      uwp:
+        enabled: true
+        max_proofs_per_share: 10
+        require_proofs: false
+        epoch_bonus_budget: 10000000
+        schemes:
+          "ena.eval.micro":
+            enabled: true
+            bonus_credits: 5000
+            per_miner_hourly_cap: 1000
+          "compute.receipt.v1":
+            enabled: true
+            bonus_credits: 10000
+            per_miner_hourly_cap: 500
+          "zkml.infer.v1":
+            enabled: false  # Still disabled on devnet until implemented

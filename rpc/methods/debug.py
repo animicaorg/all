@@ -622,4 +622,138 @@ __all__ = [
     "debug_tx_status",
     "debug_mempool_tx_trace",
     "tx_explain_reject",
+    "debug_verify_useful_work_proof",
 ]
+
+
+@method(
+    "debug.verifyUsefulWorkProof",
+    desc="Verify a useful work proof without submitting a share",
+    aliases=("debug.verify_useful_work_proof", "debug.verifyUWP"),
+)
+def debug_verify_useful_work_proof(params: Any) -> Dict[str, Any]:
+    """
+    Verify a useful work proof for testing/debugging purposes.
+    
+    Args:
+        params: {
+            "proofHex": "hex-encoded proof",
+            "context": {
+                "jobId": "...",
+                "nonce": "0x...",
+                "mixSeed": "0x...",
+                "height": 12345,
+                "minerAddress": "anim1...",
+                "timestamp": 1234567890
+            }
+        }
+    
+    Returns:
+        {
+            "status": "ACCEPTED" | "REJECTED" | ...,
+            "statusCode": 0..5,
+            "accepted": bool,
+            "reason": "...",
+            "bonusCredits": number,
+            "metadata": {...}
+        }
+    """
+    try:
+        from core.usefulwork import (
+            decode_proof_from_hex,
+            verify_proof,
+            ShareContext,
+            UWPDecodeError,
+        )
+    except ImportError as e:
+        return {
+            "error": "UWP module not available",
+            "details": str(e),
+        }
+    
+    # Parse params
+    if isinstance(params, dict):
+        proof_hex = params.get("proofHex") or params.get("proof_hex") or params.get("proof")
+        context_data = params.get("context", {})
+    elif isinstance(params, (list, tuple)) and len(params) > 0:
+        proof_hex = params[0]
+        context_data = params[1] if len(params) > 1 else {}
+    elif isinstance(params, str):
+        proof_hex = params
+        context_data = {}
+    else:
+        return {
+            "error": "Invalid parameters",
+            "details": "Expected {proofHex, context} or proof hex string",
+        }
+    
+    if not proof_hex:
+        return {
+            "error": "Missing proof",
+            "details": "proofHex parameter is required",
+        }
+    
+    # Decode proof
+    try:
+        proof = decode_proof_from_hex(proof_hex)
+    except UWPDecodeError as e:
+        return {
+            "error": "Decode error",
+            "details": str(e),
+            "status": "REJECTED",
+            "statusCode": 1,
+            "accepted": False,
+        }
+    except Exception as e:
+        log.error(f"Unexpected decode error: {e}", exc_info=True)
+        return {
+            "error": "Decode error",
+            "details": str(e),
+            "status": "VERIFIER_ERROR",
+            "statusCode": 5,
+            "accepted": False,
+        }
+    
+    # Build context
+    job_id = str(context_data.get("jobId") or context_data.get("job_id") or "test-job")
+    
+    nonce_val = context_data.get("nonce") or context_data.get("n") or "0x0000000000000000"
+    if isinstance(nonce_val, str):
+        if nonce_val.startswith("0x"):
+            nonce_bytes = bytes.fromhex(nonce_val[2:])
+        else:
+            nonce_bytes = bytes.fromhex(nonce_val)
+    else:
+        nonce_bytes = nonce_val
+    
+    mix_seed_val = context_data.get("mixSeed") or context_data.get("mix_seed") or b"\x00" * 32
+    if isinstance(mix_seed_val, str):
+        if mix_seed_val.startswith("0x"):
+            mix_seed_bytes = bytes.fromhex(mix_seed_val[2:])
+        else:
+            mix_seed_bytes = bytes.fromhex(mix_seed_val)
+    else:
+        mix_seed_bytes = mix_seed_val
+    
+    context = ShareContext(
+        job_id=job_id,
+        nonce=nonce_bytes,
+        mix_seed=mix_seed_bytes,
+        height=int(context_data.get("height") or 0),
+        miner_address=str(context_data.get("minerAddress") or context_data.get("miner_address") or ""),
+        timestamp=int(context_data.get("timestamp") or time.time()),
+    )
+    
+    # Verify proof
+    try:
+        result = verify_proof(proof=proof, context=context)
+        return result.to_dict()
+    except Exception as e:
+        log.error(f"Verification error: {e}", exc_info=True)
+        return {
+            "error": "Verification error",
+            "details": str(e),
+            "status": "VERIFIER_ERROR",
+            "statusCode": 5,
+            "accepted": False,
+        }
