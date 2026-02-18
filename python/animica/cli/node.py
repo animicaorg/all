@@ -3313,6 +3313,205 @@ def p2p_config() -> None:
         typer.echo(_pretty(cfg))
 
 
+@app.command("doctor")
+def node_doctor(
+    data_dir: Optional[str] = typer.Option(
+        None,
+        "--data-dir",
+        help="Node data directory",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Diagnose node configuration and data directory issues."""
+    import os
+    import tempfile
+    from pathlib import Path
+    
+    issues = []
+    fixes = []
+    warnings = []
+    
+    # Determine data directory
+    if data_dir:
+        node_data_dir = Path(data_dir)
+    else:
+        node_data_dir = Path.home() / ".animica" / "data"
+    
+    typer.echo(typer.style("Node Doctor - Running Diagnostics...", fg=typer.colors.BRIGHT_CYAN, bold=True))
+    typer.echo()
+    
+    # Check 1: Data directory exists
+    typer.echo(typer.style("→ Checking data directory...", fg=typer.colors.YELLOW))
+    if node_data_dir.exists():
+        typer.echo(typer.style(f"  ✓ Data directory exists: {node_data_dir}", fg=typer.colors.GREEN))
+    else:
+        warnings.append(f"Data directory does not exist: {node_data_dir}")
+        typer.echo(typer.style(f"  ⚠ Data directory does not exist: {node_data_dir}", fg=typer.colors.YELLOW))
+        typer.echo(typer.style("    (Will be created on first node startup)", fg=typer.colors.BRIGHT_BLACK))
+    
+    # Check 2: Write permissions
+    typer.echo()
+    typer.echo(typer.style("→ Checking write permissions...", fg=typer.colors.YELLOW))
+    
+    # Create data dir if it doesn't exist for testing
+    test_dir = node_data_dir
+    if not test_dir.exists():
+        try:
+            test_dir.mkdir(parents=True, exist_ok=True)
+            created_for_test = True
+        except Exception as e:
+            issues.append(f"Cannot create data directory: {e}")
+            fixes.append(f"Fix permissions on parent directory or use different location")
+            typer.echo(typer.style(f"  ✗ Cannot create data directory: {e}", fg=typer.colors.RED))
+            created_for_test = False
+            test_dir = None
+    else:
+        created_for_test = False
+    
+    if test_dir and test_dir.exists():
+        # Test write by creating a temp file
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', dir=test_dir, delete=False) as tf:
+                tf.write("test")
+                temp_path = tf.name
+            
+            # Try to fsync (important for durability)
+            with open(temp_path, 'r+b') as f:
+                f.flush()
+                os.fsync(f.fileno())
+            
+            # Clean up
+            os.unlink(temp_path)
+            
+            typer.echo(typer.style(f"  ✓ Data directory is writable with fsync", fg=typer.colors.GREEN))
+        except Exception as e:
+            issues.append(f"Data directory not writable: {e}")
+            fixes.append(f"Fix permissions: chmod 755 {test_dir}")
+            typer.echo(typer.style(f"  ✗ Data directory not writable: {e}", fg=typer.colors.RED))
+        
+        # Clean up test directory if we created it
+        if created_for_test:
+            try:
+                test_dir.rmdir()
+            except:
+                pass
+    
+    # Check 3: Free space
+    typer.echo()
+    typer.echo(typer.style("→ Checking disk space...", fg=typer.colors.YELLOW))
+    try:
+        if node_data_dir.exists() or node_data_dir.parent.exists():
+            check_path = node_data_dir if node_data_dir.exists() else node_data_dir.parent
+            stat = os.statvfs(check_path)
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+            
+            if free_gb < 1:
+                issues.append(f"Low disk space: {free_gb:.2f} GB available")
+                fixes.append("Free up disk space or use different data directory")
+                typer.echo(typer.style(f"  ✗ Low disk space: {free_gb:.2f} GB available", fg=typer.colors.RED))
+            elif free_gb < 10:
+                warnings.append(f"Disk space getting low: {free_gb:.2f} GB available")
+                typer.echo(typer.style(f"  ⚠ Disk space getting low: {free_gb:.2f} GB available", fg=typer.colors.YELLOW))
+            else:
+                typer.echo(typer.style(f"  ✓ Sufficient disk space: {free_gb:.2f} GB available", fg=typer.colors.GREEN))
+    except Exception as e:
+        warnings.append(f"Could not check disk space: {e}")
+        typer.echo(typer.style(f"  ⚠ Could not check disk space: {e}", fg=typer.colors.YELLOW))
+    
+    # Check 4: Check for common database files
+    typer.echo()
+    typer.echo(typer.style("→ Checking database files...", fg=typer.colors.YELLOW))
+    if node_data_dir.exists():
+        db_files = list(node_data_dir.glob("*.db")) + list(node_data_dir.glob("*.sqlite"))
+        if db_files:
+            typer.echo(typer.style(f"  ✓ Found {len(db_files)} database file(s)", fg=typer.colors.GREEN))
+            for db_file in db_files[:3]:  # Show first 3
+                size_mb = db_file.stat().st_size / (1024 * 1024)
+                typer.echo(typer.style(f"    - {db_file.name} ({size_mb:.2f} MB)", fg=typer.colors.BRIGHT_BLACK))
+        else:
+            typer.echo(typer.style("  ⚠ No database files found (fresh node)", fg=typer.colors.YELLOW))
+    
+    # Check 5: SELinux/AppArmor hints (Linux only)
+    typer.echo()
+    typer.echo(typer.style("→ Checking security contexts (Linux)...", fg=typer.colors.YELLOW))
+    import platform
+    if platform.system() == "Linux":
+        # Check if SELinux is enabled
+        try:
+            if os.path.exists("/sys/fs/selinux"):
+                with open("/sys/fs/selinux/enforce", "r") as f:
+                    if f.read().strip() == "1":
+                        warnings.append("SELinux is in enforcing mode - may require policy adjustments")
+                        typer.echo(typer.style("  ⚠ SELinux is enforcing - may need policy adjustments", fg=typer.colors.YELLOW))
+                    else:
+                        typer.echo(typer.style("  ✓ SELinux is permissive", fg=typer.colors.GREEN))
+            else:
+                typer.echo(typer.style("  ✓ SELinux not detected", fg=typer.colors.GREEN))
+        except:
+            typer.echo(typer.style("  ⚠ Could not check SELinux status", fg=typer.colors.YELLOW))
+        
+        # Check if AppArmor is active
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["aa-status"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and "profiles are loaded" in result.stdout:
+                warnings.append("AppArmor is active - may require profile adjustments")
+                typer.echo(typer.style("  ⚠ AppArmor is active - may need profile adjustments", fg=typer.colors.YELLOW))
+            else:
+                typer.echo(typer.style("  ✓ AppArmor not restricting", fg=typer.colors.GREEN))
+        except:
+            typer.echo(typer.style("  ✓ AppArmor not detected", fg=typer.colors.GREEN))
+    else:
+        typer.echo(typer.style(f"  ⚠ Skipping (not Linux, detected: {platform.system()})", fg=typer.colors.YELLOW))
+    
+    # Summary
+    typer.echo()
+    typer.echo("=" * 60)
+    if not issues and not warnings:
+        typer.echo(typer.style("✓ All checks passed!", fg=typer.colors.GREEN, bold=True))
+        typer.echo()
+        typer.echo(typer.style("Your node environment is ready.", fg=typer.colors.BRIGHT_BLACK))
+    else:
+        if issues:
+            typer.echo(typer.style(f"✗ Found {len(issues)} issue(s):", fg=typer.colors.RED, bold=True))
+            typer.echo()
+            for i, issue in enumerate(issues, 1):
+                typer.echo(f"  {i}. {issue}")
+            
+            typer.echo()
+            typer.echo(typer.style("Suggested Fixes:", bold=True))
+            typer.echo()
+            for i, fix in enumerate(fixes, 1):
+                typer.echo(f"  {i}. {fix}")
+        
+        if warnings:
+            typer.echo()
+            typer.echo(typer.style(f"⚠ {len(warnings)} warning(s):", fg=typer.colors.YELLOW, bold=True))
+            typer.echo()
+            for i, warning in enumerate(warnings, 1):
+                typer.echo(typer.style(f"  {i}. {warning}", fg=typer.colors.YELLOW))
+    
+    if json_output:
+        import json
+        typer.echo()
+        typer.echo(json.dumps({
+            "status": "ok" if not issues else "error",
+            "issues": issues,
+            "warnings": warnings,
+            "fixes": fixes,
+            "data_dir": str(node_data_dir),
+        }, indent=2))
+
+
 app.add_typer(p2p_app, name="p2p")
 
 
