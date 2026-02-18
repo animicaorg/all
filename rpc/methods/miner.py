@@ -5537,6 +5537,51 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             except Exception as e:
                 log.warning("Failed to calculate expected reward: %s", e)
 
+            # AICF Credit Minting: Mint credits from block reward + fees
+            # This happens AFTER block is committed and rewards are applied to state
+            try:
+                from aicf.protocol.state import ProtocolState
+                from aicf.credits.minting import mint_block_credits, get_aicf_slice_bps
+                
+                # Get AICF state DB path (default to data directory)
+                data_dir = os.getenv("ANIMICA_DATA_DIR", os.path.expanduser("~/.animica/data"))
+                aicf_db_path = os.path.join(data_dir, "aicf_protocol.db")
+                
+                # Initialize protocol state
+                protocol_state = ProtocolState(aicf_db_path)
+                
+                # Get miner address for credit allocation
+                miner_addr_bytes = payout_address if payout_address else _get_miner_address()
+                miner_addr_hex = "0x" + miner_addr_bytes.hex()
+                
+                # Get AICF slice configuration
+                aicf_slice_bps = get_aicf_slice_bps(params)
+                
+                # Mint credits (base_reward = credited_amount, fees_collected = 0 for now)
+                # TODO: Extract actual fees from block transactions
+                mint_result = mint_block_credits(
+                    protocol_state,
+                    block_height=int(result.height or 0),
+                    block_hash=block_hash_hex or "0x" + result.block_hash.hex() if result.block_hash else "0x00",
+                    miner_address=miner_addr_hex,
+                    base_reward=credited_amount,
+                    fees_collected=0,  # TODO: Sum tx fees from block
+                    aicf_slice_bps=aicf_slice_bps,
+                )
+                
+                log.info(
+                    f"AICF credits minted for block {result.height}: "
+                    f"aicf_credits={mint_result['aicf_credits']}, "
+                    f"ledger_id={mint_result['ledger_id']}"
+                )
+            except Exception as e:
+                # Don't fail block submission if credit minting has issues
+                # Credit minting is tracked separately and can be reconciled later
+                log.warning(
+                    f"Failed to mint AICF credits for block {result.height}: {e}",
+                    exc_info=True
+                )
+
         return {
             "accepted": True,
             "duplicate": result.code == block_import_mod.ImportErrorCode.DUPLICATE,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import typing as t
+from typing import Any, Dict
 
 from rpc import deps
 from rpc import errors as rpc_errors
@@ -661,3 +663,103 @@ def state_get_total_supply() -> dict:
         "totalSupply": _to_hex_quantity(total_supply),
         "addressCount": address_count
     }
+
+
+@method(
+    "state.getAicfSummary",
+    desc="Get global AICF credit totals and summary statistics"
+)
+def state_get_aicf_summary() -> Dict[str, Any]:
+    """
+    Get global AICF credit accounting summary.
+    
+    Returns:
+        Dict with:
+        - balance_total: Total AICF credits available
+        - minted_total: Total credits minted from mining
+        - spent_total: Total credits spent on jobs
+        - last_update_height: Last block height that updated credits
+        - last_update_hash: Last block hash that updated credits
+    """
+    import os
+    from aicf.protocol.state import ProtocolState
+    
+    try:
+        # Get AICF state DB path
+        data_dir = os.getenv("ANIMICA_DATA_DIR", os.path.expanduser("~/.animica/data"))
+        aicf_db_path = os.path.join(data_dir, "aicf_protocol.db")
+        
+        # Initialize protocol state
+        protocol_state = ProtocolState(aicf_db_path)
+        
+        # Get totals
+        totals = protocol_state.get_aicf_totals()
+        
+        return {
+            "balance_total": totals.balance_total,
+            "minted_total": totals.minted_total,
+            "spent_total": totals.spent_total,
+            "last_update_height": totals.last_update_height,
+            "last_update_hash": totals.last_update_hash,
+            "updated_at": totals.updated_at,
+        }
+    except Exception as e:
+        log.error(f"Failed to get AICF summary: {e}", exc_info=True)
+        raise rpc_errors.InternalError(f"Failed to get AICF summary: {str(e)}")
+
+
+@method(
+    "state.getAicfMinerCredits",
+    desc="Get AICF credit balance for a specific miner address"
+)
+def state_get_aicf_miner_credits(address: str) -> Dict[str, Any]:
+    """
+    Get AICF credit balance and statistics for a miner.
+    
+    Args:
+        address: Miner address (hex, bech32, or system format)
+    
+    Returns:
+        Dict with:
+        - miner_address: Normalized miner address
+        - balance: Current AICF credit balance
+        - lifetime_earned: Total credits ever earned
+        - lifetime_spent: Total credits ever spent
+        - last_mint_height: Last block height that minted credits
+        - last_mint_hash: Last block hash that minted credits
+    """
+    import os
+    from aicf.protocol.state import ProtocolState
+    
+    # Normalize address (remove 0x prefix if present)
+    addr_norm = _validate_address(address)
+    addr_bytes = _to_account_key_bytes(addr_norm)
+    if addr_bytes is None:
+        raise rpc_errors.InvalidParams(f"Invalid address: {address}")
+    
+    miner_addr_hex = addr_bytes.hex()
+    
+    try:
+        # Get AICF state DB path
+        data_dir = os.getenv("ANIMICA_DATA_DIR", os.path.expanduser("~/.animica/data"))
+        aicf_db_path = os.path.join(data_dir, "aicf_protocol.db")
+        
+        # Initialize protocol state
+        protocol_state = ProtocolState(aicf_db_path)
+        
+        # Get miner credits
+        credits = protocol_state.get_miner_credits(miner_addr_hex)
+        
+        return {
+            "miner_address": "0x" + miner_addr_hex,
+            "balance": credits.balance,
+            "lifetime_earned": credits.lifetime_earned,
+            "lifetime_spent": credits.lifetime_spent,
+            "last_mint_height": credits.last_mint_height,
+            "last_mint_hash": credits.last_mint_hash,
+            "created_at": credits.created_at,
+            "updated_at": credits.updated_at,
+        }
+    except Exception as e:
+        log.error(f"Failed to get miner credits for {address}: {e}", exc_info=True)
+        raise rpc_errors.InternalError(f"Failed to get miner credits: {str(e)}")
