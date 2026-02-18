@@ -35,6 +35,7 @@ ZERO_ADDRESS: bytes = b"\x00" * ADDRESS_SIZE
 
 class SystemId(str, Enum):
     TREASURY = "treasury"
+    AICF_POOL = "aicf_pool"
     BURN_SINK = "burn_sink"
     ZERO = "zero"
 
@@ -113,12 +114,13 @@ class SystemAccounts:
 
     chain_id: int
     treasury: bytes
+    aicf_pool: bytes  # AICF module account for block rewards/fees
     burn_sink: bytes = BURN_SINK
     zero: bytes = ZERO_ADDRESS
 
     def is_system(self, addr: bytes) -> bool:
         a = ensure_address(addr)
-        return a in (self.treasury, self.burn_sink, self.zero)
+        return a in (self.treasury, self.aicf_pool, self.burn_sink, self.zero)
 
 
 def default_treasury_address(chain_id: int) -> bytes:
@@ -126,6 +128,13 @@ def default_treasury_address(chain_id: int) -> bytes:
     Deterministic, chain-scoped default treasury address (overrideable by config).
     """
     return _derive_chain_scoped("treasury", chain_id)
+
+
+def default_aicf_pool_address(chain_id: int) -> bytes:
+    """
+    Deterministic, chain-scoped default AICF pool address (overrideable by config).
+    """
+    return _derive_chain_scoped("aicf_pool", chain_id)
 
 
 def load_system_accounts(
@@ -139,6 +148,7 @@ def load_system_accounts(
     Expected (optional) keys in `params`:
       - "chain_id": int
       - "treasury_address": hex string ("0x…") or raw 32-byte bytes
+      - "aicf_pool_address": hex string ("0x…") or raw 32-byte bytes
 
     If not provided, sensible defaults are derived deterministically from chain_id.
     """
@@ -151,7 +161,13 @@ def load_system_accounts(
     else:
         treasury = parse_hex_address(tr_raw, name="treasury_address")
 
-    return SystemAccounts(chain_id=cid, treasury=treasury)
+    aicf_raw = p.get("aicf_pool_address")
+    if aicf_raw is None:
+        aicf_pool = default_aicf_pool_address(cid)
+    else:
+        aicf_pool = parse_hex_address(aicf_raw, name="aicf_pool_address")
+
+    return SystemAccounts(chain_id=cid, treasury=treasury, aicf_pool=aicf_pool)
 
 
 # --------------------------------------------------------------------------------------
@@ -181,6 +197,7 @@ __all__ = [
     "to_hex",
     "SystemAccounts",
     "default_treasury_address",
+    "default_aicf_pool_address",
     "load_system_accounts",
     "coinbase_from_block_env",
 ]
