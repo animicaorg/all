@@ -21,9 +21,21 @@ class Config:
         "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq000000"
     )
     
+    # AICF (AI Compute Fund)
+    AICF_ADDRESS = os.getenv(
+        "ENA_AICF_ADDRESS",
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq111111"
+    )
+    AICF_BP = int(os.getenv("ENA_AICF_BP", "2500"))  # Basis points (2500 = 25%)
+    REQUIRE_AICF = os.getenv("ENA_REQUIRE_AICF", "true").lower() in ("true", "1", "yes")
+    
+    # Payment mode
+    PAYMENT_MODE = os.getenv("ENA_PAYMENT_MODE", "per_call_tx")
+    
     # Pricing (base units: 1 ANM = 1e9)
     FEE_PER_CALL = int(os.getenv("ENA_FEE_PER_CALL", "10000000"))  # 0.01 ANM
     FEE_PER_TOKEN = int(os.getenv("ENA_FEE_PER_TOKEN", "1000"))    # 0.000001 ANM
+    MIN_FEE_PER_CALL = int(os.getenv("ENA_MIN_FEE_PER_CALL", "10000000"))  # Minimum total
     
     # Database
     DB_PATH = os.getenv("ENA_DB_PATH", "./ena_data/ena.db")
