@@ -5133,6 +5133,134 @@ def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str,
     return None
 
 
+def _process_attached_proofs(
+    attached_proofs: list[str],
+    job_id: str,
+    nonce: bytes,
+    mix_seed: bytes,
+    height: int,
+    miner_address: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Process attached useful work proofs with strict budgeting and error handling.
+    
+    Returns:
+        (proof_results, total_bonus_credits)
+    """
+    try:
+        from core.usefulwork import (
+            decode_proof_from_hex,
+            verify_proof,
+            ShareContext,
+            get_policy,
+            UWPDecodeError,
+        )
+    except ImportError as e:
+        log.warning(f"UWP module not available: {e}")
+        return [], 0
+    
+    policy = get_policy()
+    
+    # Early checks
+    if not policy.enabled:
+        return [], 0
+    
+    if len(attached_proofs) > policy.max_proofs_per_share:
+        log.warning(f"Too many proofs: {len(attached_proofs)} > {policy.max_proofs_per_share}")
+        return [{
+            "index": 0,
+            "status": "REJECTED",
+            "reason": f"Too many proofs (max {policy.max_proofs_per_share})"
+        }], 0
+    
+    # Check total bytes
+    total_bytes = sum(len(p.replace("0x", "")) // 2 for p in attached_proofs if isinstance(p, str))
+    if total_bytes > policy.max_total_bytes_per_share:
+        log.warning(f"Proofs too large: {total_bytes} > {policy.max_total_bytes_per_share}")
+        return [{
+            "index": 0,
+            "status": "REJECTED",
+            "reason": f"Total proof bytes exceed {policy.max_total_bytes_per_share}"
+        }], 0
+    
+    # Build share context
+    context = ShareContext(
+        job_id=job_id,
+        nonce=nonce,
+        mix_seed=mix_seed,
+        height=height,
+        miner_address=miner_address,
+        timestamp=int(time.time()),
+    )
+    
+    # Process each proof with time budgeting
+    proof_results = []
+    total_bonus_credits = 0
+    time_budget_remaining_ms = policy.max_verify_ms_per_share
+    start_time = time.time()
+    
+    for idx, proof_hex in enumerate(attached_proofs):
+        # Check time budget
+        elapsed_ms = (time.time() - start_time) * 1000
+        if elapsed_ms >= time_budget_remaining_ms:
+            proof_results.append({
+                "index": idx,
+                "status": "SKIPPED_BUDGET",
+                "reason": "Verification time budget exhausted",
+            })
+            continue
+        
+        # Decode proof
+        try:
+            proof = decode_proof_from_hex(proof_hex)
+        except UWPDecodeError as e:
+            proof_results.append({
+                "index": idx,
+                "status": "REJECTED",
+                "reason": f"Decode error: {str(e)[:100]}",
+            })
+            continue
+        except Exception as e:
+            log.error(f"Unexpected decode error: {e}", exc_info=True)
+            proof_results.append({
+                "index": idx,
+                "status": "VERIFIER_ERROR",
+                "reason": f"Decode error: {str(e)[:100]}",
+            })
+            continue
+        
+        # Verify proof
+        try:
+            result = verify_proof(
+                proof=proof,
+                context=context,
+                time_budget_ms=int(time_budget_remaining_ms - elapsed_ms),
+            )
+            
+            proof_results.append({
+                "index": idx,
+                "status": result.status.name,
+                "statusCode": int(result.status),
+                "accepted": result.accepted,
+                "reason": result.reason,
+                "bonusCredits": result.bonus_credits,
+                "metadata": result.metadata,
+            })
+            
+            if result.accepted:
+                total_bonus_credits += result.bonus_credits
+                
+        except Exception as e:
+            log.error(f"Verifier exception for proof {idx}: {e}", exc_info=True)
+            proof_results.append({
+                "index": idx,
+                "status": "VERIFIER_ERROR",
+                "reason": f"Internal error: {str(e)[:100]}",
+            })
+    
+    return proof_results, total_bonus_credits
+
+
 @method(
     "miner.submitShare",
     desc="Accept a submitted share from the mining pool",
@@ -5226,7 +5354,23 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         return {"accepted": False, "reason": "low difficulty share"}
 
     is_block = digest_int <= int(cached.get("block_target") or 0)
-    return {
+    
+    # Process attached useful work proofs (Phase 2)
+    proof_results = []
+    total_bonus_credits = 0
+    
+    attached_proofs = share.get("attachedProofs") or share.get("attached_proofs") or []
+    if attached_proofs and isinstance(attached_proofs, list):
+        proof_results, total_bonus_credits = _process_attached_proofs(
+            attached_proofs=attached_proofs,
+            job_id=str(job_id),
+            nonce=nonce_int.to_bytes(8, "little"),
+            mix_seed=mix_seed_bytes,
+            height=int(cached.get("height") or 0),
+            miner_address=share.get("minerAddress") or share.get("miner_address") or "",
+        )
+    
+    result = {
         "accepted": True,
         "reason": None,
         "jobId": job_id,
@@ -5234,6 +5378,13 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         "hash": "0x" + digest.hex(),
         "height": int(cached.get("height") or 0),
     }
+    
+    # Add proof results if any proofs were submitted
+    if proof_results:
+        result["proofs"] = proof_results
+        result["totalBonusCredits"] = total_bonus_credits
+    
+    return result
 
 
 @method(
