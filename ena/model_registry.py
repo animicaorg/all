@@ -58,6 +58,10 @@ class ModelRegistry:
             
             except Exception as e:
                 logger.error(f"Failed to load model from {meta_file}: {e}")
+        
+        # If no models were loaded, create dummy model
+        if not self.models:
+            self._create_dummy_model()
     
     def _create_dummy_model(self):
         """Create a dummy model for testing."""
