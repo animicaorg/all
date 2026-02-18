@@ -144,6 +144,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.p2p",
         "rpc.methods.snapshot",
         "rpc.methods.debug",  # Debug methods for transaction tracing and diagnostics
+        "rpc.methods.aicf",  # AICF (AI Compute Fund) methods
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
