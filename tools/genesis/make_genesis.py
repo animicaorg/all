@@ -131,7 +131,7 @@ def main() -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         genesis["stateRoot"] = _hex(state_root)
         genesis["genesisHeader"] = header_dict
-        output_path.write_text(to_canonical_json(genesis), encoding="utf-8")
+        output_path.write_bytes(to_canonical_json(genesis))
 
 
 if __name__ == "__main__":
