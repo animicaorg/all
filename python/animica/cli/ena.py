@@ -1287,5 +1287,159 @@ def ena_doctor(
         }, indent=2))
 
 
+@app.command("ask")
+def ask_alias(
+    prompt: str = typer.Argument(..., help="Your question or prompt"),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Model name or alias",
+    ),
+    max_tokens: int = typer.Option(
+        100,
+        "--max-tokens",
+        help="Maximum tokens to generate",
+    ),
+    from_wallet: Optional[str] = typer.Option(
+        None,
+        "--from",
+        help="Wallet identifier",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Animica RPC URL",
+    ),
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help="Use local CPU inference (not implemented yet)",
+    ),
+    remote: Optional[str] = typer.Option(
+        None,
+        "--remote",
+        help="Remote inference endpoint (alias for --endpoint)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """
+    Ask ENA a question (alias for 'infer' command).
+    
+    This is the recommended user-friendly command for running inference.
+    It automatically handles AICF payments and wallet selection.
+    
+    Examples:
+        animica ena ask "What is Animica?"
+        animica ena ask "Explain blockchain" --max-tokens 200
+        animica ena ask "Hello" --local  (future: local CPU inference)
+        animica ena ask "Test" --remote https://custom.ena.org
+    """
+    # Handle local flag
+    if local:
+        console.print("[yellow]⚠ Local inference not yet implemented[/yellow]")
+        console.print("Using remote endpoint for now...")
+    
+    # Remote flag is alias for endpoint
+    if remote and not endpoint:
+        endpoint = remote
+    
+    # Call the main infer command
+    run_inference(
+        prompt=prompt,
+        model=model,
+        max_tokens=max_tokens,
+        fee_mode="per_call_tx",
+        from_wallet=from_wallet,
+        endpoint=endpoint,
+        rpc_url=rpc_url,
+        json_output=json_output,
+    )
+
+
+@app.command("install")
+def install_models(
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Specific model to install (default: install all recommended)",
+    ),
+    data_dir: Optional[str] = typer.Option(
+        None,
+        "--data-dir",
+        help="Directory for model assets",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force reinstall even if already present",
+    ),
+):
+    """
+    Install ENA model assets for local inference.
+    
+    Downloads and sets up model weights, tokenizers, and other assets
+    needed for local CPU/GPU inference.
+    
+    Note: This is a placeholder for future local inference support.
+    Currently, ENA runs remotely via the inference endpoint.
+    """
+    console.print("[bold]ENA Model Installation[/bold]\n")
+    
+    # Default data directory
+    if not data_dir:
+        data_dir = str(Path.home() / ".animica" / "ena_models")
+    
+    data_path = Path(data_dir)
+    
+    console.print(f"Installation directory: {data_path}")
+    console.print(f"Model filter: {model or 'all recommended'}")
+    console.print()
+    
+    # Check if directory exists
+    if data_path.exists():
+        if force:
+            console.print("[yellow]⚠ Directory exists, but --force specified[/yellow]")
+        else:
+            console.print("[yellow]⚠ Directory already exists[/yellow]")
+            if not typer.confirm("Reinstall anyway?"):
+                console.print("Installation cancelled")
+                raise typer.Exit(0)
+    else:
+        console.print(f"Creating directory: {data_path}")
+        data_path.mkdir(parents=True, exist_ok=True)
+    
+    # Future implementation: download model assets
+    console.print("\n[yellow]⚠ Local model installation not yet implemented[/yellow]")
+    console.print()
+    console.print("For now, ENA uses remote inference endpoints:")
+    console.print("  • Mainnet: https://ena.animica.org")
+    console.print("  • Custom: Use --endpoint flag")
+    console.print()
+    console.print("Local inference will be available in a future release.")
+    console.print()
+    console.print("To use ENA now, run:")
+    console.print('  animica ena ask "Your question here"')
+    console.print()
+    
+    # Create a marker file to indicate install was attempted
+    marker_file = data_path / ".ena_install_pending"
+    marker_file.write_text(json.dumps({
+        "version": "future",
+        "installed_at": time.time(),
+        "status": "pending_implementation",
+    }))
+    
+    console.print(f"[dim]Created marker file: {marker_file}[/dim]")
+
+
 if __name__ == "__main__":
     app()
