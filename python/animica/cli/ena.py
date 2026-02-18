@@ -252,7 +252,7 @@ def get_pricing(
         help="Output as JSON",
     ),
 ):
-    """Get pricing information."""
+    """Get pricing information including AICF contribution."""
     _ensure_httpx()
     
     ena_endpoint = endpoint or _get_ena_endpoint()
@@ -271,12 +271,31 @@ def get_pricing(
             fee_per_token = data.get("fee_per_token", 0)
             currency = data.get("currency", "ANM")
             
+            # AICF info
+            aicf_address = data.get("aicf_address", "N/A")
+            aicf_bp = data.get("aicf_bp", 0)
+            
             console.print(f"[bold]ENA Pricing:[/bold]")
             console.print(f"  Base fee per call: {_format_amount(fee_per_call)} {currency}")
             console.print(f"  Fee per output token: {_format_amount(fee_per_token)} {currency}")
-            console.print(f"\n[dim]Example: A call generating 100 tokens costs:")
-            total = fee_per_call + (100 * fee_per_token)
-            console.print(f"  {_format_amount(total)} {currency}[/dim]")
+            
+            console.print(f"\n[bold]AICF (AI Compute Fund):[/bold]")
+            console.print(f"  Address: {aicf_address}")
+            console.print(f"  Contribution: {aicf_bp} basis points ({aicf_bp / 100}%)")
+            
+            # Example breakdown
+            example_total = data.get("example_call_cost", fee_per_call)
+            example_aicf = data.get("example_aicf_cost", 0)
+            example_service = data.get("example_service_cost", 0)
+            
+            console.print(f"\n[bold]Example Payment (100 token response):[/bold]")
+            total_example = fee_per_call + (100 * fee_per_token)
+            aicf_example = (total_example * aicf_bp + 9999) // 10000
+            service_example = total_example - aicf_example
+            
+            console.print(f"  Total cost: {_format_amount(total_example)} {currency}")
+            console.print(f"  → Service fee: {_format_amount(service_example)} {currency}")
+            console.print(f"  → AICF contribution: {_format_amount(aicf_example)} {currency}")
     
     except httpx.HTTPError as e:
         console.print(f"[red]Error: Failed to fetch pricing: {e}[/red]")
@@ -322,7 +341,7 @@ def run_inference(
         help="Output as JSON",
     ),
 ):
-    """Run inference with payment."""
+    """Run inference with payment including AICF contribution."""
     _ensure_httpx()
     
     ena_endpoint = endpoint or _get_ena_endpoint()
@@ -331,7 +350,7 @@ def run_inference(
     # Load wallet address
     payer_address = _load_wallet_address(from_wallet)
     
-    # Get pricing
+    # Get pricing and AICF information
     pricing_url = f"{ena_endpoint}/v1/pricing"
     try:
         with httpx.Client(timeout=30) as client:
@@ -343,35 +362,66 @@ def run_inference(
         raise typer.Exit(1)
     
     fee_per_call = pricing.get("fee_per_call", 10000000)
+    aicf_address = pricing.get("aicf_address")
+    aicf_bp = pricing.get("aicf_bp", 2500)
     
-    # Get ENA service address from config or hardcoded default
+    # Calculate service and AICF fees
+    total_fee = fee_per_call
+    # AICF fee (rounded up)
+    aicf_fee = (total_fee * aicf_bp + 9999) // 10000
+    service_fee = total_fee - aicf_fee
+    
+    # Get ENA service address
     ena_service_address = os.getenv(
         "ENA_SERVICE_ADDRESS",
         "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq000000"
     )
     
-    tx_hash = None
+    tx_hash_service = None
+    tx_hash_aicf = None
     
     if fee_mode == "per_call_tx":
-        # Send payment transaction
+        # Send two separate payment transactions (service + AICF)
         if not json_output:
-            console.print(f"[yellow]Sending payment transaction...[/yellow]")
+            console.print(f"[bold]Payment Details:[/bold]")
+            console.print(f"  Total required: {_format_amount(total_fee)} ANM")
+            console.print(f"  Service fee: {_format_amount(service_fee)} ANM")
+            console.print(f"  AICF contribution: {_format_amount(aicf_fee)} ANM ({aicf_bp / 100}%)")
+            console.print()
+            console.print(f"[yellow]Sending service payment...[/yellow]")
             console.print(f"  From: {payer_address}")
             console.print(f"  To: {ena_service_address}")
-            console.print(f"  Amount: {_format_amount(fee_per_call)} ANM")
+            console.print(f"  Amount: {_format_amount(service_fee)} ANM")
         
-        tx_hash = _send_payment_tx(
+        # Send service payment
+        tx_hash_service = _send_payment_tx(
             from_address=payer_address,
             to_address=ena_service_address,
-            amount=fee_per_call,
+            amount=service_fee,
             rpc_url=animica_rpc,
         )
         
         if not json_output:
-            console.print(f"[green]✓ Payment transaction: {tx_hash}[/green]")
-            console.print(f"[yellow]Waiting for transaction confirmation...[/yellow]")
+            console.print(f"[green]✓ Service payment: {tx_hash_service}[/green]")
+            console.print()
+            console.print(f"[yellow]Sending AICF contribution...[/yellow]")
+            console.print(f"  From: {payer_address}")
+            console.print(f"  To: {aicf_address}")
+            console.print(f"  Amount: {_format_amount(aicf_fee)} ANM")
         
-        # Wait a bit for tx to propagate
+        # Send AICF payment
+        tx_hash_aicf = _send_payment_tx(
+            from_address=payer_address,
+            to_address=aicf_address,
+            amount=aicf_fee,
+            rpc_url=animica_rpc,
+        )
+        
+        if not json_output:
+            console.print(f"[green]✓ AICF contribution: {tx_hash_aicf}[/green]")
+            console.print(f"[yellow]Waiting for transaction confirmations...[/yellow]")
+        
+        # Wait a bit for txs to propagate
         time.sleep(2)
     
     # Prepare inference request
@@ -388,7 +438,9 @@ def run_inference(
         request_data["model"] = model
     
     if fee_mode == "per_call_tx":
-        request_data["payment"]["tx_hash"] = tx_hash
+        # Use two-transaction format
+        request_data["payment"]["tx_hash_service"] = tx_hash_service
+        request_data["payment"]["tx_hash_aicf"] = tx_hash_aicf
     
     # Call inference API
     infer_url = f"{ena_endpoint}/v1/infer"
@@ -422,8 +474,24 @@ def run_inference(
             console.print(f"\n[bold]Receipt:[/bold]")
             console.print(f"  ID: {receipt.get('id', '')}")
             console.print(f"  Mode: {receipt.get('mode', '')}")
-            console.print(f"  Amount paid: {_format_amount(receipt.get('amount', 0))} ANM")
-            if receipt.get("tx_hash"):
+            
+            # Show AICF contribution details
+            if receipt.get('aicf_paid'):
+                console.print(f"\n[bold green]AICF Contribution:[/bold green]")
+                console.print(f"  Amount: {_format_amount(receipt.get('aicf_paid', 0))} ANM")
+                console.print(f"  Required: {_format_amount(receipt.get('aicf_required', 0))} ANM")
+                if receipt.get('aicf_explicit'):
+                    console.print(f"  Status: ✓ Verified on-chain")
+                else:
+                    console.print(f"  Status: ⚠ Not explicitly verified (single tx)")
+                if receipt.get('tx_hash_aicf'):
+                    console.print(f"  Transaction: {receipt.get('tx_hash_aicf', '')}")
+            
+            console.print(f"\n[bold]Total Paid:[/bold]")
+            console.print(f"  Amount: {_format_amount(receipt.get('amount', 0))} ANM")
+            if receipt.get('tx_hash_service'):
+                console.print(f"  Service tx: {receipt.get('tx_hash_service', '')}")
+            elif receipt.get('tx_hash'):
                 console.print(f"  Transaction: {receipt.get('tx_hash', '')}")
     
     except httpx.HTTPStatusError as e:
@@ -553,6 +621,182 @@ def check_status(
             data = json.loads(result.stdout)
             console.print(f"[bold]Transaction Status:[/bold]")
             console.print(json.dumps(data, indent=2))
+    
+    except subprocess.TimeoutExpired:
+        console.print("[red]Error: Request timed out[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# AICF commands group
+aicf_app = typer.Typer(help="AICF (AI Compute Fund) commands")
+app.add_typer(aicf_app, name="aicf")
+
+
+@aicf_app.command("info")
+def aicf_info(
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Show AICF (AI Compute Fund) information."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    pricing_url = f"{ena_endpoint}/v1/pricing"
+    
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.get(pricing_url)
+            response.raise_for_status()
+            pricing = response.json()
+        
+        if json_output:
+            # Output AICF-relevant fields
+            aicf_data = {
+                "address": pricing.get("aicf_address"),
+                "basis_points": pricing.get("aicf_bp"),
+                "percentage": pricing.get("aicf_bp", 0) / 100,
+                "description": pricing.get("aicf_description"),
+                "example": {
+                    "total_cost": pricing.get("example_call_cost"),
+                    "aicf_contribution": pricing.get("example_aicf_cost"),
+                    "service_fee": pricing.get("example_service_cost"),
+                },
+            }
+            console.print(json.dumps(aicf_data, indent=2))
+        else:
+            aicf_address = pricing.get("aicf_address", "N/A")
+            aicf_bp = pricing.get("aicf_bp", 0)
+            aicf_desc = pricing.get("aicf_description", "")
+            
+            console.print("[bold]AICF (AI Compute Fund) Information:[/bold]")
+            console.print(f"  Address: {aicf_address}")
+            console.print(f"  Contribution: {aicf_bp} basis points ({aicf_bp / 100}%)")
+            if aicf_desc:
+                console.print(f"  Description: {aicf_desc}")
+            
+            # Show example breakdown
+            example_total = pricing.get("example_call_cost", 0)
+            example_aicf = pricing.get("example_aicf_cost", 0)
+            example_service = pricing.get("example_service_cost", 0)
+            
+            if example_total > 0:
+                console.print(f"\n[bold]Example Payment Breakdown:[/bold]")
+                console.print(f"  Total fee: {_format_amount(example_total)} ANM")
+                console.print(f"  → Service: {_format_amount(example_service)} ANM")
+                console.print(f"  → AICF: {_format_amount(example_aicf)} ANM")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to fetch AICF info: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@aicf_app.command("verify")
+def aicf_verify(
+    tx: str = typer.Argument(..., help="AICF transaction hash to verify"),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Animica RPC URL",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Verify an AICF contribution transaction."""
+    import subprocess
+    
+    animica_rpc = rpc_url or _get_rpc_url()
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    # Get AICF address from ENA endpoint
+    try:
+        _ensure_httpx()
+        with httpx.Client(timeout=30) as client:
+            response = client.get(f"{ena_endpoint}/v1/pricing")
+            response.raise_for_status()
+            pricing = response.json()
+            aicf_address = pricing.get("aicf_address")
+    except httpx.HTTPError:
+        aicf_address = None
+    
+    # Get transaction details
+    cmd = [
+        "animica",
+        "tx",
+        "status",
+        tx,
+        "--json",
+    ]
+    
+    if rpc_url:
+        cmd.extend(["--rpc-url", rpc_url])
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        
+        if result.returncode != 0:
+            console.print(f"[red]Error: Failed to get transaction details[/red]")
+            console.print(result.stderr)
+            raise typer.Exit(1)
+        
+        tx_data = json.loads(result.stdout)
+        
+        # Check if it's an AICF contribution
+        tx_to = tx_data.get("to", "")
+        tx_value = tx_data.get("value", 0)
+        
+        if isinstance(tx_value, str):
+            if tx_value.startswith("0x"):
+                tx_value = int(tx_value, 16)
+            else:
+                tx_value = int(tx_value)
+        
+        is_aicf = (aicf_address and tx_to == aicf_address)
+        
+        if json_output:
+            verification = {
+                "transaction": tx,
+                "to": tx_to,
+                "value": tx_value,
+                "is_aicf_contribution": is_aicf,
+                "aicf_address": aicf_address,
+            }
+            console.print(json.dumps(verification, indent=2))
+        else:
+            console.print(f"[bold]AICF Contribution Verification:[/bold]")
+            console.print(f"  Transaction: {tx}")
+            console.print(f"  Recipient: {tx_to}")
+            console.print(f"  Amount: {_format_amount(tx_value)} ANM")
+            
+            if is_aicf:
+                console.print(f"  Status: [green]✓ Valid AICF contribution[/green]")
+            else:
+                console.print(f"  Status: [red]✗ Not an AICF contribution[/red]")
+                if aicf_address:
+                    console.print(f"  Expected recipient: {aicf_address}")
     
     except subprocess.TimeoutExpired:
         console.print("[red]Error: Request timed out[/red]")
