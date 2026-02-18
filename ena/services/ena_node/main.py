@@ -1,7 +1,8 @@
 """
 ENA Node - FastAPI server with payment gates.
 
-Provides LLM inference with on-chain payment verification.
+Provides LLM inference with on-chain payment verification including
+mandatory AICF (AI Compute Fund) contributions.
 """
 
 import logging
@@ -21,6 +22,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from ena.animica.animica_rpc import AnimicaRPCClient, CircuitOpenError
 from ena.animica.address import validate_address, validate_tx_hash, normalize_address, normalize_tx_hash
 from ena.animica.verify import verify_payment_transaction, TransactionVerificationError
+from ena.animica.aicf_verify import (
+    verify_payment_and_aicf,
+    calculate_aicf_split,
+    AICFVerificationError,
+)
 from ena.model_registry import ModelRegistry
 from ena.inference import create_inference_engine
 from ena.services.ena_node.config import Config
@@ -64,12 +70,21 @@ async def startup():
     logger.info("Starting ENA node...")
     logger.info(f"RPC URL: {Config.RPC_URL}")
     logger.info(f"Service address: {Config.SERVICE_ADDRESS}")
+    logger.info(f"AICF address: {Config.AICF_ADDRESS}")
+    logger.info(f"AICF basis points: {Config.AICF_BP} ({Config.AICF_BP / 100}%)")
+    logger.info(f"AICF required: {Config.REQUIRE_AICF}")
     logger.info(f"Dev mode: {Config.DEV_MODE}")
     
     if Config.DEV_MODE:
         logger.warning("=" * 60)
         logger.warning("DEV MODE ENABLED - PAYMENT VERIFICATION DISABLED!")
         logger.warning("NEVER USE IN PRODUCTION!")
+        logger.warning("=" * 60)
+    
+    if not Config.REQUIRE_AICF and not Config.DEV_MODE:
+        logger.warning("=" * 60)
+        logger.warning("AICF NOT REQUIRED - This should only be used for testing!")
+        logger.warning("In production, set ENA_REQUIRE_AICF=true")
         logger.warning("=" * 60)
     
     # Initialize RPC client
@@ -116,7 +131,15 @@ class PaymentInfo(BaseModel):
     """Payment information for a request."""
     mode: str = Field(..., description="Payment mode: per_call_tx or credit")
     payer: str = Field(..., description="Payer address")
-    tx_hash: Optional[str] = Field(None, description="Transaction hash (per_call_tx mode)")
+    
+    # Single transaction mode (if blockchain supports multi-output)
+    tx_hash: Optional[str] = Field(None, description="Transaction hash (per_call_tx mode, single tx)")
+    
+    # Two transaction mode (separate service and AICF payments)
+    tx_hash_service: Optional[str] = Field(None, description="Service payment tx hash")
+    tx_hash_aicf: Optional[str] = Field(None, description="AICF payment tx hash")
+    
+    # Credit mode fields
     call_nonce: Optional[int] = Field(None, description="Call nonce (credit mode)")
     sig: Optional[str] = Field(None, description="Signature (credit mode)")
     
@@ -134,11 +157,25 @@ class PaymentInfo(BaseModel):
     
     @validator("tx_hash")
     def validate_tx_hash(cls, v, values):
-        if values.get("mode") == "per_call_tx":
-            if not v:
-                raise ValueError("tx_hash required for per_call_tx mode")
+        if values.get("mode") == "per_call_tx" and v:
             if not validate_tx_hash(v):
                 raise ValueError(f"Invalid tx_hash: {v}")
+            return normalize_tx_hash(v)
+        return v
+    
+    @validator("tx_hash_service")
+    def validate_tx_hash_service(cls, v, values):
+        if values.get("mode") == "per_call_tx" and v:
+            if not validate_tx_hash(v):
+                raise ValueError(f"Invalid tx_hash_service: {v}")
+            return normalize_tx_hash(v)
+        return v
+    
+    @validator("tx_hash_aicf")
+    def validate_tx_hash_aicf(cls, v, values):
+        if values.get("mode") == "per_call_tx" and v:
+            if not validate_tx_hash(v):
+                raise ValueError(f"Invalid tx_hash_aicf: {v}")
             return normalize_tx_hash(v)
         return v
 
@@ -164,8 +201,14 @@ class ReceiptInfo(BaseModel):
     id: str
     paid: bool
     mode: str
-    tx_hash: Optional[str]
+    tx_hash: Optional[str] = None
+    tx_hash_service: Optional[str] = None
+    tx_hash_aicf: Optional[str] = None
     amount: int
+    service_paid: Optional[int] = None
+    aicf_paid: Optional[int] = None
+    aicf_required: Optional[int] = None
+    aicf_explicit: Optional[bool] = None
 
 
 class InferResponse(BaseModel):
@@ -198,6 +241,16 @@ class PricingInfo(BaseModel):
     fee_per_token: int
     currency: str = "ANM"
     base_units: int = 1_000_000_000
+    
+    # AICF information
+    aicf_address: str
+    aicf_bp: int
+    aicf_description: str = "AI Compute Fund - supports AI infrastructure"
+    
+    # Example breakdown
+    example_call_cost: int
+    example_aicf_cost: int
+    example_service_cost: int
 
 
 # Helper functions
@@ -255,10 +308,19 @@ async def health():
 
 @app.get("/v1/pricing")
 async def get_pricing() -> PricingInfo:
-    """Get pricing information."""
+    """Get pricing information including AICF contribution details."""
+    # Calculate example costs
+    example_total = Config.FEE_PER_CALL
+    service_fee, aicf_fee = calculate_aicf_split(example_total, Config.AICF_BP)
+    
     return PricingInfo(
         fee_per_call=Config.FEE_PER_CALL,
         fee_per_token=Config.FEE_PER_TOKEN,
+        aicf_address=Config.AICF_ADDRESS,
+        aicf_bp=Config.AICF_BP,
+        example_call_cost=example_total,
+        example_aicf_cost=aicf_fee,
+        example_service_cost=service_fee,
     )
 
 
@@ -330,28 +392,59 @@ async def infer(request_data: InferRequest, request: Request) -> InferResponse:
         
         # Verify payment
         amount_paid = 0
+        service_paid = 0
+        aicf_paid = 0
+        aicf_required = 0
+        aicf_explicit = False
         tx_hash = None
+        tx_hash_service = None
+        tx_hash_aicf = None
         
         if not Config.DEV_MODE:
             if request_data.payment.mode == "per_call_tx":
-                # Per-call transaction mode
-                tx_hash = request_data.payment.tx_hash
+                # Per-call transaction mode with AICF contribution
+                total_required = Config.MIN_FEE_PER_CALL
                 
-                # Check if already used
-                if database.is_transaction_used(tx_hash):
+                # Calculate AICF split
+                service_required, aicf_required = calculate_aicf_split(
+                    total_required,
+                    Config.AICF_BP,
+                )
+                
+                # Get transaction hashes
+                tx_hash = request_data.payment.tx_hash
+                tx_hash_service = request_data.payment.tx_hash_service
+                tx_hash_aicf = request_data.payment.tx_hash_aicf
+                
+                # Check if transactions already used (replay protection)
+                if tx_hash and database.is_transaction_used(tx_hash):
                     raise HTTPException(
                         status_code=400,
                         detail="Transaction already used (replay protection)"
                     )
+                if tx_hash_service and database.is_transaction_used(tx_hash_service):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Service transaction already used (replay protection)"
+                    )
+                if tx_hash_aicf and database.is_transaction_used(tx_hash_aicf):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="AICF transaction already used (replay protection)"
+                    )
                 
-                # Verify transaction
+                # Verify payment with AICF contribution
                 try:
-                    verify_payment_transaction(
+                    receipt = verify_payment_and_aicf(
                         rpc_client=rpc_client,
+                        payer=request_data.payment.payer,
+                        service_address=Config.SERVICE_ADDRESS,
+                        aicf_address=Config.AICF_ADDRESS,
+                        total_required=total_required,
+                        aicf_bp=Config.AICF_BP,
                         tx_hash=tx_hash,
-                        expected_to=Config.SERVICE_ADDRESS,
-                        expected_from=request_data.payment.payer,
-                        minimum_value=Config.FEE_PER_CALL,
+                        tx_hash_service=tx_hash_service,
+                        tx_hash_aicf=tx_hash_aicf,
                         require_confirmed=False,  # Allow mempool
                     )
                 except CircuitOpenError:
@@ -359,21 +452,57 @@ async def infer(request_data: InferRequest, request: Request) -> InferResponse:
                         status_code=503,
                         detail="RPC service unavailable - cannot verify payment"
                     )
+                except AICFVerificationError as e:
+                    # AICF contribution missing/insufficient
+                    logger.error(
+                        f"AICF verification failed: {e}",
+                        extra={
+                            "request_id": request_id,
+                            "payer": request_data.payment.payer,
+                            "error": str(e),
+                        }
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"AICF contribution missing/insufficient: {str(e)}"
+                    )
                 except TransactionVerificationError as e:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Payment verification failed: {str(e)}"
                     )
                 
-                amount_paid = Config.FEE_PER_CALL
+                # Extract amounts from receipt
+                amount_paid = int(receipt.get("totalPaid", 0))
+                service_paid = int(receipt.get("servicePaid", 0))
+                aicf_paid = int(receipt.get("aicfPaid", 0))
+                aicf_explicit = receipt.get("aicfExplicit", False)
+                tx_hash = receipt.get("txHash")
+                tx_hash_service = receipt.get("txHashService")
+                tx_hash_aicf = receipt.get("txHashAicf")
                 
-                # Mark transaction as used
-                database.mark_transaction_used(
-                    tx_hash=tx_hash,
-                    payer=request_data.payment.payer,
-                    amount=amount_paid,
-                    request_id=request_id,
-                )
+                # Mark transactions as used (all of them to prevent replay)
+                if tx_hash:
+                    database.mark_transaction_used(
+                        tx_hash=tx_hash,
+                        payer=request_data.payment.payer,
+                        amount=amount_paid,
+                        request_id=request_id,
+                    )
+                if tx_hash_service:
+                    database.mark_transaction_used(
+                        tx_hash=tx_hash_service,
+                        payer=request_data.payment.payer,
+                        amount=service_paid,
+                        request_id=request_id,
+                    )
+                if tx_hash_aicf:
+                    database.mark_transaction_used(
+                        tx_hash=tx_hash_aicf,
+                        payer=request_data.payment.payer,
+                        amount=aicf_paid,
+                        request_id=request_id,
+                    )
             
             elif request_data.payment.mode == "credit":
                 # Credit mode
@@ -445,7 +574,13 @@ async def infer(request_data: InferRequest, request: Request) -> InferResponse:
                 paid=True,
                 mode=request_data.payment.mode,
                 tx_hash=tx_hash,
+                tx_hash_service=tx_hash_service,
+                tx_hash_aicf=tx_hash_aicf,
                 amount=amount_paid,
+                service_paid=service_paid if service_paid > 0 else None,
+                aicf_paid=aicf_paid if aicf_paid > 0 else None,
+                aicf_required=aicf_required if aicf_required > 0 else None,
+                aicf_explicit=aicf_explicit if aicf_paid > 0 else None,
             ),
         )
     
