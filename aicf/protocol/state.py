@@ -154,6 +154,60 @@ class ModelRelease:
     notes: Optional[str] = None
 
 
+@dataclass
+class AICFCreditTotals:
+    """Global AICF credit accounting."""
+    balance_total: str = "0"
+    minted_total: str = "0"
+    spent_total: str = "0"
+    last_update_height: Optional[int] = None
+    last_update_hash: Optional[str] = None
+    updated_at: Optional[int] = None
+
+
+@dataclass
+class MinerCredits:
+    """Per-miner AICF credit balance."""
+    miner_address: str
+    balance: str = "0"
+    lifetime_earned: str = "0"
+    lifetime_spent: str = "0"
+    last_mint_height: Optional[int] = None
+    last_mint_hash: Optional[str] = None
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
+@dataclass
+class PoolCredits:
+    """Per-pool AICF credit balance."""
+    pool_address: str
+    balance: str = "0"
+    lifetime_earned: str = "0"
+    lifetime_spent: str = "0"
+    last_mint_height: Optional[int] = None
+    last_mint_hash: Optional[str] = None
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+
+@dataclass
+class CreditLedgerEntry:
+    """AICF credit ledger event."""
+    ledger_id: str
+    event_type: str  # 'credit_minted' | 'credit_spent'
+    block_height: int
+    block_hash: str
+    amount: str
+    source: Optional[str] = None  # 'reward' | 'fees' | 'share'
+    miner_address: Optional[str] = None
+    pool_address: Optional[str] = None
+    job_id: Optional[str] = None
+    recipients_json: Optional[str] = None
+    timestamp: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 class ProtocolState:
     """
     Protocol state manager with SQLite persistence.
@@ -869,3 +923,317 @@ class ProtocolState:
         with self._get_conn() as conn:
             rows = conn.execute("SELECT key, value FROM protocol_params").fetchall()
             return {row["key"]: row["value"] for row in rows}
+
+    # --- AICF Credit Tracking ---
+
+    def get_aicf_totals(self) -> AICFCreditTotals:
+        """Get global AICF credit totals."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM aicf_credit_totals WHERE id = 1"
+            ).fetchone()
+            
+            if not row:
+                # Initialize if missing
+                now = _now_s()
+                conn.execute(
+                    """
+                    INSERT INTO aicf_credit_totals(id, balance_total, minted_total, spent_total, updated_at)
+                    VALUES (1, '0', '0', '0', ?)
+                    """,
+                    (now,)
+                )
+                conn.commit()
+                return AICFCreditTotals(updated_at=now)
+            
+            return AICFCreditTotals(
+                balance_total=row["balance_total"],
+                minted_total=row["minted_total"],
+                spent_total=row["spent_total"],
+                last_update_height=row["last_update_height"],
+                last_update_hash=row["last_update_hash"],
+                updated_at=row["updated_at"],
+            )
+
+    def update_aicf_totals(
+        self,
+        *,
+        balance_delta: int = 0,
+        minted_delta: int = 0,
+        spent_delta: int = 0,
+        block_height: Optional[int] = None,
+        block_hash: Optional[str] = None,
+    ) -> None:
+        """
+        Update global AICF credit totals.
+        
+        Args:
+            balance_delta: Amount to add to balance_total (can be negative for spending)
+            minted_delta: Amount to add to minted_total
+            spent_delta: Amount to add to spent_total
+            block_height: Current block height
+            block_hash: Current block hash
+        """
+        with self.tx():
+            with self._get_conn() as conn:
+                now = _now_s()
+                
+                # Get current values
+                row = conn.execute(
+                    "SELECT balance_total, minted_total, spent_total FROM aicf_credit_totals WHERE id = 1"
+                ).fetchone()
+                
+                if not row:
+                    # Initialize
+                    new_balance = str(max(0, balance_delta))
+                    new_minted = str(max(0, minted_delta))
+                    new_spent = str(max(0, spent_delta))
+                else:
+                    new_balance = str(int(row["balance_total"]) + balance_delta)
+                    new_minted = str(int(row["minted_total"]) + minted_delta)
+                    new_spent = str(int(row["spent_total"]) + spent_delta)
+                
+                # Ensure non-negative
+                assert int(new_balance) >= 0, "Balance cannot be negative"
+                assert int(new_minted) >= 0, "Minted total cannot be negative"
+                assert int(new_spent) >= 0, "Spent total cannot be negative"
+                
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO aicf_credit_totals(
+                        id, balance_total, minted_total, spent_total,
+                        last_update_height, last_update_hash, updated_at
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (new_balance, new_minted, new_spent, block_height, block_hash, now),
+                )
+
+    def get_miner_credits(self, miner_address: str) -> MinerCredits:
+        """Get AICF credit balance for a miner."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM aicf_miner_credits WHERE miner_address = ?",
+                (miner_address,)
+            ).fetchone()
+            
+            if not row:
+                return MinerCredits(miner_address=miner_address)
+            
+            return MinerCredits(
+                miner_address=row["miner_address"],
+                balance=row["balance"],
+                lifetime_earned=row["lifetime_earned"],
+                lifetime_spent=row["lifetime_spent"],
+                last_mint_height=row["last_mint_height"],
+                last_mint_hash=row["last_mint_hash"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+
+    def add_miner_credits(
+        self,
+        miner_address: str,
+        amount: int,
+        block_height: int,
+        block_hash: str,
+    ) -> None:
+        """
+        Add AICF credits to a miner's balance.
+        
+        Args:
+            miner_address: Miner address (hex string)
+            amount: Credits to add (must be positive)
+            block_height: Block height where credits were minted
+            block_hash: Block hash where credits were minted
+        """
+        assert amount > 0, "Amount must be positive"
+        
+        with self.tx():
+            with self._get_conn() as conn:
+                now = _now_s()
+                
+                # Check if miner exists
+                row = conn.execute(
+                    "SELECT balance, lifetime_earned FROM aicf_miner_credits WHERE miner_address = ?",
+                    (miner_address,)
+                ).fetchone()
+                
+                if row:
+                    # Update existing
+                    new_balance = str(int(row["balance"]) + amount)
+                    new_earned = str(int(row["lifetime_earned"]) + amount)
+                    conn.execute(
+                        """
+                        UPDATE aicf_miner_credits
+                        SET balance = ?, lifetime_earned = ?,
+                            last_mint_height = ?, last_mint_hash = ?, updated_at = ?
+                        WHERE miner_address = ?
+                        """,
+                        (new_balance, new_earned, block_height, block_hash, now, miner_address),
+                    )
+                else:
+                    # Insert new
+                    conn.execute(
+                        """
+                        INSERT INTO aicf_miner_credits(
+                            miner_address, balance, lifetime_earned, lifetime_spent,
+                            last_mint_height, last_mint_hash, created_at, updated_at
+                        ) VALUES (?, ?, ?, '0', ?, ?, ?, ?)
+                        """,
+                        (miner_address, str(amount), str(amount), block_height, block_hash, now, now),
+                    )
+
+    def spend_miner_credits(
+        self,
+        miner_address: str,
+        amount: int,
+    ) -> None:
+        """
+        Spend AICF credits from a miner's balance.
+        
+        Args:
+            miner_address: Miner address
+            amount: Credits to spend (must be positive)
+        
+        Raises:
+            ValueError: If insufficient balance
+        """
+        assert amount > 0, "Amount must be positive"
+        
+        with self.tx():
+            with self._get_conn() as conn:
+                row = conn.execute(
+                    "SELECT balance, lifetime_spent FROM aicf_miner_credits WHERE miner_address = ?",
+                    (miner_address,)
+                ).fetchone()
+                
+                if not row:
+                    raise ValueError(f"Miner not found: {miner_address}")
+                
+                current_balance = int(row["balance"])
+                if current_balance < amount:
+                    raise ValueError(f"Insufficient balance: {current_balance} < {amount}")
+                
+                new_balance = str(current_balance - amount)
+                new_spent = str(int(row["lifetime_spent"]) + amount)
+                
+                conn.execute(
+                    """
+                    UPDATE aicf_miner_credits
+                    SET balance = ?, lifetime_spent = ?
+                    WHERE miner_address = ?
+                    """,
+                    (new_balance, new_spent, miner_address),
+                )
+
+    def log_credit_event(
+        self,
+        ledger_id: str,
+        event_type: str,
+        block_height: int,
+        block_hash: str,
+        amount: str,
+        *,
+        source: Optional[str] = None,
+        miner_address: Optional[str] = None,
+        pool_address: Optional[str] = None,
+        job_id: Optional[str] = None,
+        recipients: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Log a credit event to the immutable ledger.
+        
+        Args:
+            ledger_id: Deterministic event ID (sha256 of event data)
+            event_type: 'credit_minted' or 'credit_spent'
+            block_height: Block height
+            block_hash: Block hash
+            amount: Credit amount (u256 decimal string)
+            source: For minted events: 'reward', 'fees', 'share'
+            miner_address: For minted events
+            pool_address: For pool credits
+            job_id: For spent events
+            recipients: For spent events (list of addresses)
+            metadata: Additional event data
+        """
+        with self.tx():
+            with self._get_conn() as conn:
+                now = _now_s()
+                
+                recipients_json = json.dumps(recipients) if recipients else None
+                metadata_json = json.dumps(metadata) if metadata else None
+                
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO aicf_credit_ledger(
+                        ledger_id, event_type, block_height, block_hash, amount,
+                        source, miner_address, pool_address, job_id, recipients_json,
+                        timestamp, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ledger_id, event_type, block_height, block_hash, amount,
+                        source, miner_address, pool_address, job_id, recipients_json,
+                        now, metadata_json,
+                    ),
+                )
+
+    def get_credit_ledger(
+        self,
+        *,
+        event_type: Optional[str] = None,
+        miner_address: Optional[str] = None,
+        job_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CreditLedgerEntry]:
+        """
+        Query credit ledger events.
+        
+        Args:
+            event_type: Filter by event type
+            miner_address: Filter by miner address
+            job_id: Filter by job ID
+            limit: Max results
+            offset: Pagination offset
+        
+        Returns:
+            List of ledger entries
+        """
+        with self._get_conn() as conn:
+            query = "SELECT * FROM aicf_credit_ledger WHERE 1=1"
+            params: List[Any] = []
+            
+            if event_type:
+                query += " AND event_type = ?"
+                params.append(event_type)
+            if miner_address:
+                query += " AND miner_address = ?"
+                params.append(miner_address)
+            if job_id:
+                query += " AND job_id = ?"
+                params.append(job_id)
+            
+            query += " ORDER BY block_height DESC, timestamp DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            rows = conn.execute(query, params).fetchall()
+            
+            return [
+                CreditLedgerEntry(
+                    ledger_id=row["ledger_id"],
+                    event_type=row["event_type"],
+                    block_height=row["block_height"],
+                    block_hash=row["block_hash"],
+                    amount=row["amount"],
+                    source=row["source"],
+                    miner_address=row["miner_address"],
+                    pool_address=row["pool_address"],
+                    job_id=row["job_id"],
+                    recipients_json=row["recipients_json"],
+                    timestamp=row["timestamp"],
+                    metadata=json.loads(row["metadata_json"]) if row["metadata_json"] else None,
+                )
+                for row in rows
+            ]
