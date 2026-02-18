@@ -34,6 +34,16 @@ networks:
       aicf_treasury: "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1foundationxxxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    aicf:
+      epoch_length_blocks: 100                    # Blocks per epoch for credit distribution
+      block_reward_slice_bps: 500                  # 5% of block reward to AICF pool
+      fee_slice_bps: 2000                          # 20% of tx fees to AICF pool
+      ena_call_fee_base_nano: 10000                # 0.00001 ANM base fee per ENA call
+      ena_call_fee_aicf_bps: 8000                  # 80% of ENA call fee to AICF (20% to miner)
+      epoch_payout_bps: 5000                       # 50% of epoch inflows become distributable
+      credits_per_block: 1000000                   # Fixed credits awarded per mined block
+      max_claim_epochs: 100                        # Max epochs claimable in a single tx
+      prune_after_epochs: 10000                    # Epochs to keep before pruning (future work)
     monetary:
       premine:
         total_anm: 81000000.0   # ANM (human units)
@@ -155,6 +165,16 @@ networks:
       aicf_treasury: "anim1taicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1tfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1tcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    aicf:
+      epoch_length_blocks: 100
+      block_reward_slice_bps: 500
+      fee_slice_bps: 2000
+      ena_call_fee_base_nano: 10000
+      ena_call_fee_aicf_bps: 8000
+      epoch_payout_bps: 5000
+      credits_per_block: 1000000
+      max_claim_epochs: 100
+      prune_after_epochs: 10000
     monetary:
       premine:
         total_anm: 1250000.0
@@ -229,6 +249,16 @@ networks:
       aicf_treasury: "anim1daicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       foundation_lockup: "anim1dfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
       coinbase_default: "anim1dcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    aicf:
+      epoch_length_blocks: 100
+      block_reward_slice_bps: 1000                 # 10% for devnet (higher for testing)
+      fee_slice_bps: 3000                          # 30% of tx fees to AICF pool
+      ena_call_fee_base_nano: 5000                 # Lower fee for devnet
+      ena_call_fee_aicf_bps: 8000
+      epoch_payout_bps: 5000
+      credits_per_block: 1000000
+      max_claim_epochs: 100
+      prune_after_epochs: 10000
     monetary:
       premine:
         total_anm: 1250000.0
