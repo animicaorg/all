@@ -7,8 +7,7 @@ This module implements deterministic CBOR encoding and defensive decoding for UW
 from __future__ import annotations
 
 from typing import Any, Dict, List
-import cbor2
-from ...core.encoding.cbor import dumps as cbor_dumps, loads as cbor_loads
+from core.encoding.cbor import dumps as cbor_dumps, loads as cbor_loads
 from .types import UsefulWorkProof, Hash
 
 # Limits (policy-controlled, these are defaults)

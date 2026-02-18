@@ -30,10 +30,9 @@ import sys
 
 # Try to import dilithium for signature verification
 try:
-    # Attempt to use pq module if available
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'pq'))
-    from pq.dilithium import verify_signature as dilithium_verify
-    PQ_AVAILABLE = True
+    # Attempt to use pq module if available (currently stubbed)
+    PQ_AVAILABLE = False
+    dilithium_verify = None
 except ImportError:
     PQ_AVAILABLE = False
     dilithium_verify = None
@@ -149,7 +148,7 @@ def verify_ena_eval_micro(proof: UsefulWorkProof, context: ShareContext) -> Veri
     
     # Decode receipt_bytes as CBOR
     try:
-        from ...core.encoding.cbor import loads as cbor_loads
+        from core.encoding.cbor import loads as cbor_loads
         receipt_data = cbor_loads(proof.receipt_bytes)
     except Exception as e:
         return VerifyResult(
@@ -232,7 +231,7 @@ def verify_compute_receipt(proof: UsefulWorkProof, context: ShareContext) -> Ver
     
     # Decode receipt_bytes as CBOR
     try:
-        from ...core.encoding.cbor import loads as cbor_loads
+        from core.encoding.cbor import loads as cbor_loads
         receipt_data = cbor_loads(proof.receipt_bytes)
     except Exception as e:
         return VerifyResult(
@@ -259,6 +258,19 @@ def verify_compute_receipt(proof: UsefulWorkProof, context: ShareContext) -> Ver
     # TODO: Check contributor registry (when implemented)
     # For now, we skip this check
     
+    # Validate counters within reasonable bounds
+    if steps <= 0 or steps > 1_000_000_000:
+        return VerifyResult(
+            status=VerifyStatus.REJECTED,
+            reason=f"Invalid steps count: {steps}",
+        )
+    
+    if tokens <= 0 or tokens > 1_000_000_000_000:
+        return VerifyResult(
+            status=VerifyStatus.REJECTED,
+            reason=f"Invalid tokens count: {tokens}",
+        )
+    
     # Build message to verify
     message = (
         proof.plan_commitment +
@@ -279,19 +291,6 @@ def verify_compute_receipt(proof: UsefulWorkProof, context: ShareContext) -> Ver
         return VerifyResult(
             status=VerifyStatus.REJECTED,
             reason="Invalid signature",
-        )
-    
-    # Validate counters within reasonable bounds
-    if steps <= 0 or steps > 1_000_000_000:
-        return VerifyResult(
-            status=VerifyStatus.REJECTED,
-            reason=f"Invalid steps count: {steps}",
-        )
-    
-    if tokens <= 0 or tokens > 1_000_000_000_000:
-        return VerifyResult(
-            status=VerifyStatus.REJECTED,
-            reason=f"Invalid tokens count: {tokens}",
         )
     
     # All checks passed
