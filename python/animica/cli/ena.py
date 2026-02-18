@@ -806,5 +806,486 @@ def aicf_verify(
         raise typer.Exit(1)
 
 
+@aicf_app.command("doctor")
+def aicf_doctor(
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Animica RPC URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Diagnose AICF configuration and connectivity issues."""
+    import subprocess
+    
+    animica_rpc = rpc_url or _get_rpc_url()
+    issues = []
+    fixes = []
+    
+    console.print("[bold]AICF Doctor - Running Diagnostics...[/bold]\n")
+    
+    # Check 1: RPC connectivity
+    console.print("[yellow]→ Checking RPC connectivity...[/yellow]")
+    try:
+        result = subprocess.run(
+            ["animica", "rpc", "call", "chain.getChainId", "--rpc-url", animica_rpc],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            console.print("[green]  ✓ RPC is reachable[/green]")
+        else:
+            issues.append("RPC not reachable")
+            fixes.append(f"Check if node is running and accessible at {animica_rpc}")
+            console.print(f"[red]  ✗ RPC not reachable at {animica_rpc}[/red]")
+    except subprocess.TimeoutExpired:
+        issues.append("RPC timeout")
+        fixes.append(f"RPC timeout - check network connection or use local RPC")
+        console.print("[red]  ✗ RPC request timed out[/red]")
+    except Exception as e:
+        issues.append(f"RPC error: {e}")
+        fixes.append("Ensure animica CLI is installed correctly")
+        console.print(f"[red]  ✗ Error: {e}[/red]")
+    
+    # Check 2: Wallet exists
+    console.print("\n[yellow]→ Checking wallet configuration...[/yellow]")
+    wallet_path = Path.home() / ".animica" / "wallets.json"
+    if wallet_path.exists():
+        try:
+            data = json.loads(wallet_path.read_text())
+            wallets = data.get("wallets", [])
+            if wallets:
+                console.print(f"[green]  ✓ Found {len(wallets)} wallet(s)[/green]")
+            else:
+                issues.append("No wallets configured")
+                fixes.append("Create a wallet: animica wallet new")
+                console.print("[red]  ✗ No wallets found[/red]")
+        except Exception as e:
+            issues.append(f"Wallet file corrupted: {e}")
+            fixes.append("Check wallet file format or create new wallet")
+            console.print(f"[red]  ✗ Error reading wallets: {e}[/red]")
+    else:
+        issues.append("Wallet file not found")
+        fixes.append("Create a wallet: animica wallet new")
+        console.print(f"[red]  ✗ Wallet file not found: {wallet_path}[/red]")
+    
+    # Check 3: Data directory writable
+    console.print("\n[yellow]→ Checking data directory permissions...[/yellow]")
+    data_dir = Path.home() / ".animica"
+    if data_dir.exists():
+        if os.access(data_dir, os.W_OK):
+            console.print(f"[green]  ✓ Data directory is writable: {data_dir}[/green]")
+        else:
+            issues.append("Data directory not writable")
+            fixes.append(f"Fix permissions: chmod 755 {data_dir}")
+            console.print(f"[red]  ✗ Data directory not writable: {data_dir}[/red]")
+    else:
+        console.print(f"[yellow]  ⚠ Data directory does not exist: {data_dir}[/yellow]")
+        console.print(f"[dim]    (Will be created on first use)[/dim]")
+    
+    # Check 4: AICF endpoint connectivity
+    console.print("\n[yellow]→ Checking AICF/ENA endpoint...[/yellow]")
+    ena_endpoint = _get_ena_endpoint()
+    try:
+        if httpx is not None:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(f"{ena_endpoint}/v1/pricing")
+                response.raise_for_status()
+                console.print(f"[green]  ✓ ENA endpoint is reachable: {ena_endpoint}[/green]")
+        else:
+            console.print("[yellow]  ⚠ httpx not installed, skipping endpoint check[/yellow]")
+    except Exception as e:
+        issues.append(f"ENA endpoint not reachable: {e}")
+        fixes.append(f"Check network or use --endpoint to specify a different URL")
+        console.print(f"[red]  ✗ ENA endpoint not reachable: {e}[/red]")
+    
+    # Summary
+    console.print("\n" + "=" * 60)
+    if not issues:
+        console.print("[bold green]✓ All checks passed![/bold green]")
+        console.print("\n[dim]You're ready to use AICF commands.[/dim]")
+    else:
+        console.print(f"[bold red]✗ Found {len(issues)} issue(s):[/bold red]\n")
+        for i, issue in enumerate(issues, 1):
+            console.print(f"  {i}. {issue}")
+        
+        console.print("\n[bold]Suggested Fixes:[/bold]\n")
+        for i, fix in enumerate(fixes, 1):
+            console.print(f"  {i}. {fix}")
+    
+    if json_output:
+        console.print("\n" + json.dumps({
+            "status": "ok" if not issues else "error",
+            "issues": issues,
+            "fixes": fixes,
+        }, indent=2))
+
+
+@aicf_app.command("worker-register")
+def aicf_worker_register(
+    address: str = typer.Argument(..., help="Worker payout address (anim1...)"),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Display name for worker",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Register as a GPU worker for AICF."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    # Validate address format
+    if not address.startswith("anim1"):
+        console.print(f"[red]Error: Invalid address format (must start with 'anim1')[/red]")
+        raise typer.Exit(1)
+    
+    # Prepare registration data
+    registration_data = {
+        "address": address,
+        "displayName": name or f"Worker {address[:12]}...",
+    }
+    
+    try:
+        if not json_output:
+            console.print("[yellow]Registering worker...[/yellow]")
+            console.print(f"  Address: {address}")
+            console.print(f"  Name: {registration_data['displayName']}")
+        
+        with httpx.Client(timeout=30) as client:
+            response = client.post(
+                f"{ena_endpoint}/v1/aicf/workers/register",
+                json=registration_data,
+            )
+            response.raise_for_status()
+            result = response.json()
+        
+        if json_output:
+            console.print(json.dumps(result, indent=2))
+        else:
+            console.print("\n[bold green]✓ Worker registered successfully![/bold green]")
+            console.print(f"  Worker ID: {result.get('workerId', 'N/A')}")
+            console.print(f"  Status: {result.get('status', 'PENDING')}")
+            console.print(f"\n[dim]You can now start accepting jobs with:[/dim]")
+            console.print(f"[dim]  animica ena aicf worker-run --worker-id {result.get('workerId', 'YOUR_ID')}[/dim]")
+    
+    except httpx.HTTPStatusError as e:
+        try:
+            error_detail = e.response.json()
+            detail = error_detail.get("detail", str(e))
+        except:
+            detail = str(e)
+        console.print(f"[red]Error: {detail}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@aicf_app.command("worker-run")
+def aicf_worker_run(
+    worker_id: str = typer.Argument(..., help="Worker ID from registration"),
+    loop: bool = typer.Option(
+        False,
+        "--loop",
+        help="Run continuously, polling for jobs",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+):
+    """Run AICF worker to process jobs."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    console.print(f"[bold]Starting AICF Worker[/bold]")
+    console.print(f"  Worker ID: {worker_id}")
+    console.print(f"  Endpoint: {ena_endpoint}")
+    console.print(f"  Mode: {'Continuous' if loop else 'Single job'}\n")
+    
+    iteration = 0
+    while True:
+        iteration += 1
+        console.print(f"[yellow]→ Iteration {iteration}: Checking for jobs...[/yellow]")
+        
+        try:
+            with httpx.Client(timeout=30) as client:
+                # Poll for available job
+                response = client.get(
+                    f"{ena_endpoint}/v1/aicf/jobs/available",
+                    params={"worker_id": worker_id},
+                )
+                response.raise_for_status()
+                job_data = response.json()
+            
+            if job_data.get("job_id"):
+                job_id = job_data["job_id"]
+                console.print(f"[green]  ✓ Got job: {job_id}[/green]")
+                console.print(f"    Type: {job_data.get('type', 'unknown')}")
+                console.print(f"    Difficulty: {job_data.get('difficulty', 'N/A')}")
+                
+                # Process job (dummy implementation)
+                console.print(f"[yellow]  → Processing job...[/yellow]")
+                time.sleep(1)  # Simulate work
+                
+                # Submit result
+                result_data = {
+                    "worker_id": worker_id,
+                    "job_id": job_id,
+                    "result": {"status": "completed", "output": "dummy_output"},
+                }
+                
+                with httpx.Client(timeout=30) as client:
+                    response = client.post(
+                        f"{ena_endpoint}/v1/aicf/jobs/submit",
+                        json=result_data,
+                    )
+                    response.raise_for_status()
+                    submit_result = response.json()
+                
+                console.print(f"[green]  ✓ Job submitted![/green]")
+                console.print(f"    Credits earned: {submit_result.get('credits', 0)}")
+            else:
+                console.print("[dim]  No jobs available[/dim]")
+        
+        except httpx.HTTPError as e:
+            console.print(f"[red]  ✗ Error: {e}[/red]")
+        except Exception as e:
+            console.print(f"[red]  ✗ Unexpected error: {e}[/red]")
+        
+        if not loop:
+            break
+        
+        # Wait before next poll
+        console.print("[dim]  Waiting 10s before next check...[/dim]\n")
+        time.sleep(10)
+
+
+@aicf_app.command("worker-claim")
+def aicf_worker_claim(
+    worker_id: str = typer.Argument(..., help="Worker ID"),
+    epoch: int = typer.Argument(..., help="Epoch number to claim"),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Claim AICF rewards for a completed epoch."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    try:
+        if not json_output:
+            console.print(f"[yellow]Claiming rewards...[/yellow]")
+            console.print(f"  Worker ID: {worker_id}")
+            console.print(f"  Epoch: {epoch}")
+        
+        with httpx.Client(timeout=30) as client:
+            response = client.post(
+                f"{ena_endpoint}/v1/aicf/rewards/claim",
+                json={"worker_id": worker_id, "epoch": epoch},
+            )
+            response.raise_for_status()
+            result = response.json()
+        
+        if json_output:
+            console.print(json.dumps(result, indent=2))
+        else:
+            if result.get("claimed"):
+                console.print("\n[bold green]✓ Rewards claimed![/bold green]")
+                console.print(f"  Amount: {_format_amount(result.get('amount', 0))} ANM")
+                console.print(f"  Transaction: {result.get('tx_hash', 'N/A')}")
+                console.print(f"  Status: {result.get('status', 'PENDING')}")
+            else:
+                console.print("\n[yellow]No rewards to claim[/yellow]")
+                console.print(f"  Reason: {result.get('reason', 'Unknown')}")
+    
+    except httpx.HTTPStatusError as e:
+        try:
+            error_detail = e.response.json()
+            detail = error_detail.get("detail", str(e))
+        except:
+            detail = str(e)
+        console.print(f"[red]Error: {detail}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("doctor")
+def ena_doctor(
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Animica RPC URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Diagnose ENA configuration and connectivity issues."""
+    import subprocess
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    animica_rpc = rpc_url or _get_rpc_url()
+    issues = []
+    fixes = []
+    
+    console.print("[bold]ENA Doctor - Running Diagnostics...[/bold]\n")
+    
+    # Check 1: ENA endpoint connectivity
+    console.print("[yellow]→ Checking ENA endpoint...[/yellow]")
+    try:
+        if httpx is not None:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(f"{ena_endpoint}/v1/models")
+                response.raise_for_status()
+                models_data = response.json()
+                console.print(f"[green]  ✓ ENA endpoint is reachable: {ena_endpoint}[/green]")
+                console.print(f"[dim]    Available models: {len(models_data.get('models', []))}[/dim]")
+        else:
+            issues.append("httpx not installed")
+            fixes.append("Install httpx: pip install httpx")
+            console.print("[red]  ✗ httpx not installed[/red]")
+    except Exception as e:
+        issues.append(f"ENA endpoint not reachable: {e}")
+        fixes.append(f"Check network or use --endpoint to specify different URL")
+        console.print(f"[red]  ✗ ENA endpoint not reachable: {e}[/red]")
+    
+    # Check 2: RPC connectivity
+    console.print("\n[yellow]→ Checking RPC connectivity...[/yellow]")
+    try:
+        result = subprocess.run(
+            ["animica", "rpc", "call", "chain.getChainId", "--rpc-url", animica_rpc],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            console.print(f"[green]  ✓ RPC is reachable: {animica_rpc}[/green]")
+        else:
+            issues.append("RPC not reachable")
+            fixes.append(f"Start node: animica node up")
+            console.print(f"[red]  ✗ RPC not reachable: {animica_rpc}[/red]")
+    except subprocess.TimeoutExpired:
+        issues.append("RPC timeout")
+        fixes.append("Check network connection or use local RPC")
+        console.print("[red]  ✗ RPC request timed out[/red]")
+    except Exception as e:
+        issues.append(f"RPC error: {e}")
+        fixes.append("Ensure animica CLI is installed correctly")
+        console.print(f"[red]  ✗ Error: {e}[/red]")
+    
+    # Check 3: Wallet exists
+    console.print("\n[yellow]→ Checking wallet configuration...[/yellow]")
+    wallet_path = Path.home() / ".animica" / "wallets.json"
+    if wallet_path.exists():
+        try:
+            data = json.loads(wallet_path.read_text())
+            wallets = data.get("wallets", [])
+            if wallets:
+                console.print(f"[green]  ✓ Found {len(wallets)} wallet(s)[/green]")
+                # Check balance of first wallet
+                first_addr = wallets[0]["address"]
+                try:
+                    result = subprocess.run(
+                        ["animica", "wallet", "balance", "--address", first_addr, "--rpc-url", animica_rpc],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
+                        console.print(f"[dim]    First wallet ({first_addr[:12]}...): Balance query successful[/dim]")
+                    else:
+                        console.print(f"[yellow]    ⚠ Could not query balance for first wallet[/yellow]")
+                except:
+                    pass
+            else:
+                issues.append("No wallets configured")
+                fixes.append("Create a wallet: animica wallet new")
+                console.print("[red]  ✗ No wallets found[/red]")
+        except Exception as e:
+            issues.append(f"Wallet file corrupted: {e}")
+            fixes.append("Check wallet file or create new wallet")
+            console.print(f"[red]  ✗ Error reading wallets: {e}[/red]")
+    else:
+        issues.append("Wallet file not found")
+        fixes.append("Create a wallet: animica wallet new")
+        console.print(f"[red]  ✗ Wallet file not found: {wallet_path}[/red]")
+    
+    # Check 4: AICF pricing
+    console.print("\n[yellow]→ Checking AICF pricing configuration...[/yellow]")
+    try:
+        if httpx is not None:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(f"{ena_endpoint}/v1/pricing")
+                response.raise_for_status()
+                pricing = response.json()
+                aicf_address = pricing.get("aicf_address")
+                aicf_bp = pricing.get("aicf_bp", 0)
+                console.print(f"[green]  ✓ AICF configuration loaded[/green]")
+                console.print(f"[dim]    AICF address: {aicf_address}[/dim]")
+                console.print(f"[dim]    Contribution: {aicf_bp / 100}%[/dim]")
+        else:
+            console.print("[yellow]  ⚠ Skipping (httpx not installed)[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]  ⚠ Could not load AICF config: {e}[/yellow]")
+    
+    # Summary
+    console.print("\n" + "=" * 60)
+    if not issues:
+        console.print("[bold green]✓ All checks passed![/bold green]")
+        console.print("\n[dim]You're ready to use ENA inference:[/dim]")
+        console.print("[dim]  animica ena infer \"hello world\"[/dim]")
+    else:
+        console.print(f"[bold red]✗ Found {len(issues)} issue(s):[/bold red]\n")
+        for i, issue in enumerate(issues, 1):
+            console.print(f"  {i}. {issue}")
+        
+        console.print("\n[bold]Suggested Fixes:[/bold]\n")
+        for i, fix in enumerate(fixes, 1):
+            console.print(f"  {i}. {fix}")
+    
+    if json_output:
+        console.print("\n" + json.dumps({
+            "status": "ok" if not issues else "error",
+            "issues": issues,
+            "fixes": fixes,
+        }, indent=2))
+
+
 if __name__ == "__main__":
     app()
