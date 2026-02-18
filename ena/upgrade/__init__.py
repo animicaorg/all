@@ -9,9 +9,14 @@ Manages the full upgrade workflow:
 """
 
 from .training_plan import TrainingPlan, JobSpec, JobType
-from .state_machine import UpgradeStateMachine, UpgradeState, UpgradeStatus
+from .state_machine import (
+    UpgradeStateMachine,
+    UpgradeState,
+    UpgradeStatus,
+    JobStatus,
+)
 from .coordinator import UpgradeCoordinator
-from .verifier import ResultVerifier, SafetyGates
+from .verifier import ResultVerifier, SafetyGates, VerificationResult
 
 __all__ = [
     "TrainingPlan",
@@ -20,7 +25,9 @@ __all__ = [
     "UpgradeStateMachine",
     "UpgradeState",
     "UpgradeStatus",
+    "JobStatus",
     "UpgradeCoordinator",
     "ResultVerifier",
     "SafetyGates",
+    "VerificationResult",
 ]
