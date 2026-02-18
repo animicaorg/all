@@ -261,6 +261,10 @@ Chain Queries
   # Query events
   animica chain events --from 0 --to 100 --type "Transfer"
 
+  # Safe chain reset (dry-run by default)
+  animica chain reset
+  animica chain reset --force
+
 Transactions
 ------------
   # Build a transaction

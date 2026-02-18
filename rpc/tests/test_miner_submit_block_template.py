@@ -9,6 +9,7 @@ from core.types.header import Header, serialize_header
 from core.utils.hash import sha3_256
 from pq.py.address import decode_address
 from rpc.tests import new_test_client, rpc_call
+from rpc.methods import miner as miner_methods
 
 
 def _parse_balance(result: dict) -> int:
@@ -159,3 +160,65 @@ def test_submit_block_rejects_stale_template(monkeypatch: pytest.MonkeyPatch) ->
     assert error["code"] == -32063
     assert error["message"] == "stale template"
     assert error["data"]["reason"] == "stale_template"
+
+
+def test_template_includes_lease_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _cfg, _tmp = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    template = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "include_mempool": False, "ttlSeconds": 12},
+    )["result"]
+
+    assert template.get("templateId")
+    assert template.get("issuedAt") is not None
+    assert template.get("expiresAt") is not None
+    assert template.get("headHashAtIssue") is not None
+    assert int(template["expiresAt"]) >= int(template["issuedAt"])
+
+
+def test_submit_block_rejects_expired_template(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    monkeypatch.setenv("ANIMICA_DEFAULT_THETA_MICRO", "1000")
+    monkeypatch.setenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0")
+    monkeypatch.setenv("ANIMICA_MINER_MAX_NONCE", "50000")
+
+    client, _cfg, _tmp = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    template = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": payout_address, "include_mempool": False, "ttlSeconds": 5},
+    )["result"]
+
+    header = _header_from_template(template["header"])
+    target_int = int(template["target"], 16)
+    nonce, _digest = _find_nonce(header, target_int)
+    header = replace(header, nonce=nonce)
+
+    # Force cache entry expiry deterministically (no real sleep needed).
+    tid = str(template.get("templateId"))
+    assert tid in miner_methods._TEMPLATE_CACHE
+    miner_methods._TEMPLATE_CACHE[tid]["expires_at"] = 0
+
+    header_payload = {
+        k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in header.to_obj().items()
+    }
+    txs_raw = [tx.get("raw") for tx in template.get("txs", []) if isinstance(tx, dict)]
+    block_payload = {
+        "header": header_payload,
+        "txs": txs_raw,
+        "proofs": [],
+        "parentHash": template["parent"]["hash"],
+        "templateId": template.get("templateId"),
+    }
+
+    error = rpc_call(client, "miner.submitBlock", block_payload, expect_error=True)["error"]
+    assert error["code"] == -32063
+    assert error["data"]["reason"] == "stale_template"
+    assert error["data"].get("detail") == "template_expired"

@@ -7,6 +7,7 @@ import hashlib
 import logging
 import math
 import os
+import threading
 import time
 import uuid
 from dataclasses import asdict, replace
@@ -112,6 +113,17 @@ _TX_HASH_MAP: dict[int, tuple[str, bytes]] = {}
 # Block template cache for submit binding (template_id -> metadata)
 _TEMPLATE_CACHE: dict[str, dict[str, Any]] = {}
 _TEMPLATE_TTL_S = float(os.getenv("ANIMICA_TEMPLATE_TTL_S", "30"))
+_HEAD_RW_LOCK = threading.RLock()
+_TEMPLATE_CACHE_LOCK = threading.RLock()
+_METRICS: dict[str, int] = {
+    "templates_issued": 0,
+    "templates_submitted": 0,
+    "stale_rejects": 0,
+    "imports_ok": 0,
+    "imports_failed": 0,
+    "head_advances": 0,
+}
+_LAST_PROGRESS_TS = time.time()
 _MEMPOOL_DEBUG = os.getenv("ANIMICA_MEMPOOL_DEBUG", "").lower() in {
     "1",
     "true",
@@ -136,6 +148,46 @@ _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 # This value matches theta_min_micro used in _adjust_theta_for_mining() for consistency
 # 100K µ-nats = 0.1 nats = very easy mining (allows quick block production)
 _FORCED_BLOCK_MIN_THETA_MICRO = 100_000
+_WATCHDOG_INTERVAL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_INTERVAL_S", "30"))
+_WATCHDOG_STALL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_STALL_S", "120"))
+_WATCHDOG_MAX_ATTEMPTS = int(os.getenv("ANIMICA_MINER_WATCHDOG_MAX_ATTEMPTS", "2"))
+_WATCHDOG_RESTART_NODE = os.getenv("ANIMICA_MINER_WATCHDOG_RESTART_NODE", "").lower() in {"1", "true", "yes", "on"}
+_WATCHDOG_TASK: asyncio.Task | None = None
+_WATCHDOG_ATTEMPTS = 0
+
+
+def _metric_inc(name: str, delta: int = 1) -> None:
+    _METRICS[name] = int(_METRICS.get(name, 0)) + int(delta)
+
+
+def _mark_head_progress() -> None:
+    global _LAST_PROGRESS_TS
+    _LAST_PROGRESS_TS = time.time()
+
+
+async def _watchdog_loop() -> None:
+    global _WATCHDOG_ATTEMPTS
+    while _AUTO_MINE:
+        await asyncio.sleep(max(1.0, _WATCHDOG_INTERVAL_S))
+        stalled_for = time.time() - float(_LAST_PROGRESS_TS)
+        if stalled_for < _WATCHDOG_STALL_S:
+            _WATCHDOG_ATTEMPTS = 0
+            continue
+        _WATCHDOG_ATTEMPTS += 1
+        log.warning(
+            "stall_detected",
+            extra={
+                "stalled_for_s": int(stalled_for),
+                "attempt": _WATCHDOG_ATTEMPTS,
+                "metrics": dict(_METRICS),
+            },
+        )
+        _prune_template_cache()
+        if _WATCHDOG_ATTEMPTS <= _WATCHDOG_MAX_ATTEMPTS:
+            continue
+        if _WATCHDOG_RESTART_NODE:
+            log.error("watchdog_restart_requested", extra={"attempt": _WATCHDOG_ATTEMPTS})
+        _WATCHDOG_ATTEMPTS = 0
 
 
 def _record_mining_audit(
@@ -898,6 +950,8 @@ def _ctx():
 
 
 def _target_block_time_s(default: float = 300.0) -> float:
+    log.info("template_submit", extra={"template_id": template_id, "parent_hash": parent_hash_hex, "head_hash_at_submit": head_snapshot.get("hash"), "head_height_at_submit": head_snapshot.get("height"), "head_hash_at_issue": (cached or {}).get("head_hash_at_issue") if isinstance(cached, dict) else None, "issued_at": (cached or {}).get("issued_at") if isinstance(cached, dict) else None, "expires_at": (cached or {}).get("expires_at") if isinstance(cached, dict) else None, "submitted_at": time.time()})
+
     try:
         ctx = _ctx()
         params = getattr(ctx, "params", {}) or {}
@@ -1361,36 +1415,40 @@ def _parent_within_canonical_window(
 
 
 def _current_head_snapshot() -> dict[str, Any]:
-    ctx = _ctx()
-    snap = ctx.get_head()
-    if _LOCAL_HEAD and isinstance(_LOCAL_HEAD, dict):
-        local_h = int(_LOCAL_HEAD.get("height", 0))
-        snap_h = int(snap.get("height", 0)) if isinstance(snap, dict) else 0
-        if local_h > snap_h:
+    with _HEAD_RW_LOCK:
+        ctx = _ctx()
+        snap = ctx.get_head()
+        if _LOCAL_HEAD and isinstance(_LOCAL_HEAD, dict):
+            local_h = int(_LOCAL_HEAD.get("height", 0))
+            snap_h = int(snap.get("height", 0)) if isinstance(snap, dict) else 0
+            if local_h > snap_h:
+                snap = _LOCAL_HEAD
+        if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
             snap = _LOCAL_HEAD
-    if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
-        snap = _LOCAL_HEAD
 
-    header = snap.get("header") if isinstance(snap, dict) else None
-    height = int(snap.get("height") or 0)
-    hash_hex = snap.get("hash") if isinstance(snap, dict) else None
-    if hash_hex is None and header is not None:
-        header_hash = getattr(header, "hash", None)
-        if callable(header_hash):
-            hash_hex = "0x" + header_hash().hex()
-        elif isinstance(header_hash, (bytes, bytearray)):
-            hash_hex = "0x" + bytes(header_hash).hex()
+        header = snap.get("header") if isinstance(snap, dict) else None
+        height = int(snap.get("height") or 0)
+        hash_hex = snap.get("hash") if isinstance(snap, dict) else None
+        if hash_hex is None and header is not None:
+            header_hash = getattr(header, "hash", None)
+            if callable(header_hash):
+                hash_hex = "0x" + header_hash().hex()
+            elif isinstance(header_hash, (bytes, bytearray)):
+                hash_hex = "0x" + bytes(header_hash).hex()
 
-    if hash_hex != _HEAD_STATE.get("hash") or height != _HEAD_STATE.get("height"):
-        _HEAD_STATE["hash"] = hash_hex
-        _HEAD_STATE["height"] = height
-        _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
-    return {
-        "height": height,
-        "hash": hash_hex,
-        "header": header,
-        "generation": int(_HEAD_STATE.get("generation", 0)),
-    }
+        if hash_hex != _HEAD_STATE.get("hash") or height != _HEAD_STATE.get("height"):
+            if height > int(_HEAD_STATE.get("height") or 0):
+                _metric_inc("head_advances")
+                _mark_head_progress()
+            _HEAD_STATE["hash"] = hash_hex
+            _HEAD_STATE["height"] = height
+            _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
+        return {
+            "height": height,
+            "hash": hash_hex,
+            "header": header,
+            "generation": int(_HEAD_STATE.get("generation", 0)),
+        }
 
 
 def _template_head_state(
@@ -2464,13 +2522,14 @@ def _build_child_header(
 
 def _prune_template_cache(now: float | None = None) -> None:
     now = now if now is not None else time.time()
-    expired = [
-        key
-        for key, meta in _TEMPLATE_CACHE.items()
-        if float(meta.get("created_at", 0.0)) + _TEMPLATE_TTL_S < now
-    ]
-    for key in expired:
-        _TEMPLATE_CACHE.pop(key, None)
+    with _TEMPLATE_CACHE_LOCK:
+        expired = [
+            key
+            for key, meta in _TEMPLATE_CACHE.items()
+            if float(meta.get("expires_at", meta.get("created_at", 0.0) + _TEMPLATE_TTL_S)) < now
+        ]
+        for key in expired:
+            _TEMPLATE_CACHE.pop(key, None)
 
 
 def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
@@ -3810,13 +3869,15 @@ async def _auto_mine_loop(interval: float = 1.0) -> None:
 
 
 def _start_auto_task() -> bool:
-    global _AUTO_TASK
+    global _AUTO_TASK, _WATCHDOG_TASK
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
     if _AUTO_TASK is None or _AUTO_TASK.done():
         _AUTO_TASK = loop.create_task(_auto_mine_loop())
+    if _WATCHDOG_TASK is None or _WATCHDOG_TASK.done():
+        _WATCHDOG_TASK = loop.create_task(_watchdog_loop())
     return True
 
 
@@ -4440,6 +4501,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allow_unsynced_mining = False
     force_empty_template = False
     raw_params: dict[str, Any] | list[Any] | None = None
+    template_ttl_s = _TEMPLATE_TTL_S
 
     if args:
         raw_params = list(args)
@@ -4476,6 +4538,11 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         force_empty_template = bool(
             payload.get("force_empty_template", payload.get("forceEmptyTemplate", False))
         )
+        ttl_raw = payload.get("ttl_seconds", payload.get("ttlSeconds", template_ttl_s))
+        try:
+            template_ttl_s = max(5.0, min(float(ttl_raw), 300.0))
+        except Exception:
+            template_ttl_s = _TEMPLATE_TTL_S
         unknown = set(payload.keys()) - {
             "address",
             "payout_address",
@@ -4487,6 +4554,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allowUnsyncedMining",
             "force_empty_template",
             "forceEmptyTemplate",
+            "ttl_seconds",
+            "ttlSeconds",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -4517,6 +4586,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allow_unsynced_mining": allow_unsynced_mining,
             "force_empty_template": force_empty_template,
             "payout_address": payout_address,
+            "template_ttl_s": template_ttl_s,
         },
     )
 
@@ -4953,17 +5023,32 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         )
 
         _prune_template_cache()
+        issued_at = time.time()
+        expires_at = issued_at + float(template_ttl_s)
         template_id = uuid.uuid4().hex
-        _TEMPLATE_CACHE[template_id] = {
-            "created_at": time.time(),
-            "parent_hash": _to_hex(parent_hash_bytes),
-            "parent_height": parent_height,
-            "target": hex(int(target)),
-            "theta_micro": int(header_template.thetaMicro),
-            "timestamp_min": int(timestamp_min),
-            "timestamp_max": int(timestamp_max) if timestamp_max is not None else None,
-            "payout_address": payout_address,
-        }
+        head_at_issue = _current_head_snapshot()
+        frozen_tx_hashes = [str(item.get("hash")) for item in tx_payloads if isinstance(item, dict) and item.get("hash")]
+        with _TEMPLATE_CACHE_LOCK:
+            _TEMPLATE_CACHE[template_id] = {
+                "created_at": issued_at,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+                "parent_hash": _to_hex(parent_hash_bytes),
+                "parent_height": parent_height,
+                "head_hash_at_issue": head_at_issue.get("hash"),
+                "head_height_at_issue": head_at_issue.get("height"),
+                "target": hex(int(target)),
+                "theta_micro": int(header_template.thetaMicro),
+                "timestamp_min": int(timestamp_min),
+                "timestamp_max": int(timestamp_max) if timestamp_max is not None else None,
+                "payout_address": payout_address,
+                "tx_root": header_view.get("txsRoot"),
+                "tx_hashes": frozen_tx_hashes,
+                "mempool_version": int(selection_summary.get("mempoolVersion") or selection_summary.get("version") or 0),
+                "chain_identity": f"{ctx.cfg.chain_id}:{getattr(ctx.cfg, 'genesis_path', None)}",
+            }
+        _metric_inc("templates_issued")
+        log.info("template_issued", extra={"template_id": template_id, "parent_hash": _to_hex(parent_hash_bytes), "parent_height": parent_height, "head_hash_at_issue": head_at_issue.get("hash"), "issued_at": int(issued_at), "expires_at": int(expires_at)})
 
         return {
             "enabled": True,
@@ -4974,6 +5059,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "thetaMicro": int(header_template.thetaMicro),
             "timestampMin": int(timestamp_min),
             "timestampMax": int(timestamp_max) if timestamp_max is not None else None,
+            "issuedAt": int(issued_at),
+            "expiresAt": int(expires_at),
+            "headHashAtIssue": head_at_issue.get("hash"),
             "coinbase": coinbase,
             "txs": tx_payloads,
             "excluded": excluded,
@@ -5013,6 +5101,8 @@ def miner_stop() -> bool:
     _AUTO_MINE = False
     if _AUTO_TASK is not None:
         _AUTO_TASK.cancel()
+    if _WATCHDOG_TASK is not None:
+        _WATCHDOG_TASK.cancel()
     return False
 
 
@@ -5218,9 +5308,13 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams("parent_hash must be hex string or bytes")
 
     _prune_template_cache()
+    cached = None
     if template_id:
-        cached = _TEMPLATE_CACHE.get(str(template_id))
+        with _TEMPLATE_CACHE_LOCK:
+            cached = _TEMPLATE_CACHE.get(str(template_id))
+        _metric_inc("templates_submitted")
         if not cached:
+            _metric_inc("stale_rejects")
             raise rpc_errors.RpcError(
                 rpc_errors.AnimicaCode.STALE_TEMPLATE,
                 "stale template",
@@ -5230,8 +5324,24 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                     "detail": "template_not_found",
                 },
             )
+        now = time.time()
+        if float(cached.get("expires_at") or 0) and now > float(cached.get("expires_at") or 0):
+            _metric_inc("stale_rejects")
+            raise rpc_errors.RpcError(
+                rpc_errors.AnimicaCode.STALE_TEMPLATE,
+                "stale template",
+                {
+                    "reason": "stale_template",
+                    "templateId": template_id,
+                    "detail": "template_expired",
+                    "issued_at": cached.get("issued_at"),
+                    "expires_at": cached.get("expires_at"),
+                    "submitted_at": now,
+                },
+            )
         cached_parent = cached.get("parent_hash")
         if cached_parent and parent_hash_hex and cached_parent != parent_hash_hex:
+            _metric_inc("stale_rejects")
             raise rpc_errors.RpcError(
                 rpc_errors.AnimicaCode.STALE_TEMPLATE,
                 "stale template",
@@ -5245,17 +5355,37 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
 
     head_snapshot = _current_head_snapshot()
     head_hash = head_snapshot.get("hash")
-    if parent_hash_hex and head_hash and parent_hash_hex != head_hash:
-        raise rpc_errors.RpcError(
-            rpc_errors.AnimicaCode.STALE_TEMPLATE,
-            "stale template",
-            {
-                "reason": "stale_template",
-                "expected_head": head_hash,
-                "got_parent": parent_hash_hex,
-                "head_height": head_snapshot.get("height"),
-            },
-        )
+    submitted_height = None
+    if isinstance(block.get("header"), dict):
+        submitted_height = block["header"].get("height") or block["header"].get("number")
+    is_stale = bool(parent_hash_hex and head_hash and parent_hash_hex != head_hash)
+    if is_stale:
+        parent_matches_head = bool(parent_hash_hex and head_hash and parent_hash_hex == head_hash)
+        height_ok = True
+        try:
+            if submitted_height is not None:
+                height_ok = int(submitted_height) == int(head_snapshot.get("height") or 0) + 1
+        except Exception:
+            height_ok = True
+        if not (parent_matches_head and height_ok):
+            _metric_inc("stale_rejects")
+            raise rpc_errors.RpcError(
+                rpc_errors.AnimicaCode.STALE_TEMPLATE,
+                "stale template",
+                {
+                    "reason": "stale_template",
+                    "templateId": template_id,
+                    "expected_head": head_hash,
+                    "got_parent": parent_hash_hex,
+                    "head_height": head_snapshot.get("height"),
+                    "submitted_height": submitted_height,
+                    "head_hash_at_issue": (cached or {}).get("head_hash_at_issue") if isinstance(cached, dict) else None,
+                    "head_hash_at_submit": head_hash,
+                    "issued_at": (cached or {}).get("issued_at") if isinstance(cached, dict) else None,
+                    "expires_at": (cached or {}).get("expires_at") if isinstance(cached, dict) else None,
+                    "submitted_at": time.time(),
+                },
+            )
 
     try:
         ctx = _ctx()
@@ -5274,6 +5404,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             block_import_mod.ImportErrorCode.DUPLICATE,
         )
         if not accepted:
+            _metric_inc("imports_failed")
             reason = result.reason or result.code
             reason_lower = str(reason).lower()
             reject_reason = "invalid_state_transition"
@@ -5310,6 +5441,8 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             cached = _TEMPLATE_CACHE.get(str(template_id)) or {}
             payout_address = cached.get("payout_address")
         if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
+            _metric_inc("imports_ok")
+            _mark_head_progress()
             try:
                 block_obj, _ = block_import_mod.decode_block(block)
             except Exception as e:
