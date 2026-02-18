@@ -78,3 +78,8 @@ native/target/
 # chat-animica modal bootstrap artifacts
 apps/chat-animica/.venv-modal/
 apps/chat-animica/.modal-endpoint
+
+# ENA service data
+ena_data/
+ena/**/*.db
+ena/**/*.log
