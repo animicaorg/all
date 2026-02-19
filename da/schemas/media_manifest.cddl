@@ -1,0 +1,109 @@
+; Animica DA — Media Manifest Schema
+; ----------------------------------
+; Schema for storing media objects (images, videos, etc.) in the DA layer.
+; Each media object consists of:
+; - A manifest (this schema) stored as a blob
+; - One or more data blobs referenced by commitments
+;
+; Use case: ENA images, user avatars, training artifacts, etc.
+
+;---------------------------------- Types -------------------------------------
+
+uint16 = uint .size 2
+uint32 = uint .size 4
+
+; 32-byte digest (SHA3-256 or SHA256)
+digest32 = bstr .size 32
+
+; 32-byte NMT root commitment
+commitment = bstr .size 32
+
+; Media type identifier
+media_kind = "image" / "video" / "audio" / "document" / "archive" / "other"
+
+; Namespace identifier (uint32)
+namespace = uint
+
+; Optional address (20 bytes for EVM-style, can be extended)
+address = bstr .size 20
+
+; License identifier
+license = tstr
+
+; Tags for categorization and search
+tags = [ * tstr ]
+
+; Chunking parameters for large media stored across multiple blobs
+chunking_params = {
+  0: chunk_size: uint,        ; size per chunk in bytes (e.g., 1048576 = 1MB)
+  1: num_chunks: uint,        ; total number of chunks
+  2: chunk_commitments: [ + commitment ]  ; ordered list of chunk commitments
+}
+
+; Integrity fields for verification
+integrity = {
+  0: sha256: digest32,        ; SHA-256 of original bytes
+  1: sha3_256: digest32,      ; SHA3-256 of original bytes
+  ? 2: nmt_root: commitment,  ; optional NMT root if applicable
+  ? 3: proof_type: tstr       ; optional proof type (e.g., "merkle", "nmt")
+}
+
+;-------------------------------- Manifest ------------------------------------
+
+; Media manifest: metadata + references to actual data blobs
+media_manifest = {
+  ; Required fields
+  0: media_id: commitment,          ; unique identifier (hash of manifest or content)
+  1: kind: media_kind,              ; type of media
+  2: content_type: tstr,            ; MIME type (e.g., "image/png", "image/jpeg")
+  3: byte_size: uint,               ; total size of original media in bytes
+  4: integrity: integrity,          ; hash verification fields
+  5: created_at: uint,              ; unix timestamp (seconds)
+  6: uploader_address: address,     ; address of uploader
+  
+  ; Content references
+  7: content: [ raw_commitment: commitment ] / chunking_params,
+  
+  ; Optional metadata
+  ? 8: license: license,            ; default "user-provided"
+  ? 9: tags: tags,                  ; categorization tags
+  ? 10: thumbnail_commitment: commitment,  ; optional thumbnail reference
+  ? 11: original_commitment: commitment,   ; if this is derived from another media
+  ? 12: width: uint,                ; for images/video
+  ? 13: height: uint,               ; for images/video
+  ? 14: duration: uint,             ; for audio/video (seconds)
+  ? 15: name: tstr,                 ; display name
+  ? 16: description: tstr,          ; optional description
+  ? 17: metadata: { * tstr => any } ; extensible key-value metadata
+}
+
+;-------------------------------- API Notes -----------------------------------
+
+; Storage workflow:
+; 1. Upload raw media bytes via DA put_blob → get raw_commitment
+; 2. Construct media_manifest with references to raw_commitment(s)
+; 3. Upload manifest itself as a DA blob → get manifest_commitment
+; 4. Share manifest_commitment with users; they can:
+;    - Fetch manifest
+;    - Verify integrity hashes
+;    - Fetch raw content blob(s) and reassemble
+
+; For large media:
+; - Split into chunks (e.g., 1MB each)
+; - Upload each chunk → get chunk_commitment_i
+; - Store chunking_params with all chunk_commitments in manifest
+; - Clients fetch chunks in order and verify hashes
+
+;-------------------------------- Constraints ---------------------------------
+
+; Semantic constraints:
+; 1) content_type MUST match media_kind (e.g., image/* for kind="image")
+; 2) byte_size MUST equal the sum of all chunk sizes (if chunked) or single blob size
+; 3) integrity.sha256 and integrity.sha3_256 MUST match original bytes
+; 4) For chunked content: num_chunks == len(chunk_commitments)
+; 5) created_at MUST be a valid unix timestamp (> 0)
+; 6) tags SHOULD be lowercase, alphanumeric + hyphen/underscore
+
+;-------------------------------- Root ----------------------------------------
+
+$root = media_manifest

@@ -52,6 +52,8 @@ _SCHEMA_FILES = {
     "nmt": "nmt.cddl",
     "availability_proof": "availability_proof.cddl",
     "retrieval_api": "retrieval_api.schema.json",
+    "media_manifest": "media_manifest.cddl",
+    "provider_registry": "provider_registry.cddl",
 }
 
 
@@ -121,6 +123,16 @@ def load_retrieval_api_schema() -> Dict[str, Any]:
     return json.loads(_read_text(_SCHEMA_FILES["retrieval_api"]))
 
 
+def load_media_manifest_cddl() -> str:
+    """Return the text of `media_manifest.cddl`."""
+    return _read_text(_SCHEMA_FILES["media_manifest"])
+
+
+def load_provider_registry_cddl() -> str:
+    """Return the text of `provider_registry.cddl`."""
+    return _read_text(_SCHEMA_FILES["provider_registry"])
+
+
 def schema_checksum(logical: str) -> str:
     """
     Return a SHA3-256 checksum (hex with 0x prefix) of a schema resource.
@@ -178,6 +190,8 @@ __all__ = [
     "load_nmt_cddl",
     "load_availability_proof_cddl",
     "load_retrieval_api_schema",
+    "load_media_manifest_cddl",
+    "load_provider_registry_cddl",
     "schema_checksum",
     "as_path",
     "validate_retrieval_api",

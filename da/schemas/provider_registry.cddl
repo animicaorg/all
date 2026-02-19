@@ -1,0 +1,175 @@
+; Animica DA — Storage Provider Registry Schema
+; --------------------------------------------
+; Schema for managing storage providers who contribute disk space
+; to the network and earn AICF credits for storing and serving blobs.
+
+;---------------------------------- Types -------------------------------------
+
+uint32 = uint .size 4
+uint64 = uint .size 8
+
+; 32-byte digest (SHA3-256 for provider_id)
+digest32 = bstr .size 32
+
+; Provider identifier (hash of provider public key)
+provider_id = digest32
+
+; Public key (post-quantum, typically Dilithium3)
+pubkey = bstr
+
+; Network endpoint for blob retrieval
+endpoint = tstr  ; HTTP(S) URL, e.g., "https://provider.example.com:9090"
+
+; Capacity in bytes
+capacity_bytes = uint64
+
+; Pricing model (optional, credits per GB-month or ANM)
+pricing = {
+  ? 0: credits_per_gb_month: uint,  ; AICF credits per GB-month
+  ? 1: anm_per_gb_month: uint       ; ANM tokens per GB-month
+}
+
+; Region/location tags for diversity
+region_tags = [ * tstr ]  ; e.g., ["us-west", "ssd", "low-latency"]
+
+; Uptime score (0-10000, where 10000 = 100.00%)
+uptime_score = uint .le 10000
+
+; Timestamp (unix seconds)
+timestamp = uint
+
+;-------------------------------- Provider Entry ------------------------------
+
+; Provider registration entry
+provider_entry = {
+  ; Identity
+  0: provider_id: provider_id,      ; unique provider identifier
+  1: pubkey: pubkey,                ; provider's public key
+  2: address: bstr .size 20,        ; payment address (20-byte EVM-style)
+  
+  ; Service info
+  3: endpoint: endpoint / nil,      ; optional HTTP(S) endpoint for serving blobs
+  4: capacity_bytes_advertised: capacity_bytes,  ; total capacity advertised
+  5: capacity_bytes_committed: capacity_bytes,   ; currently assigned/used
+  
+  ; Economics
+  ? 6: pricing: pricing,            ; optional pricing information
+  
+  ; Metadata
+  ? 7: region_tags: region_tags,    ; optional region/feature tags
+  8: uptime_score: uptime_score,    ; reliability score (0-10000)
+  9: last_heartbeat: timestamp,     ; last heartbeat timestamp
+  10: registered_at: timestamp,     ; registration timestamp
+  
+  ; Status
+  11: active: bool,                 ; provider is active and accepting assignments
+  ? 12: jailed_until: timestamp,    ; if jailed, timestamp when jail expires
+  ? 13: notes: tstr                 ; optional notes/metadata
+}
+
+;-------------------------------- Assignment ----------------------------------
+
+; Blob assignment to a provider
+blob_assignment = {
+  0: blob_commitment: digest32,     ; commitment of assigned blob
+  1: provider_id: provider_id,      ; provider who should store it
+  2: assigned_at: timestamp,        ; when assignment was made
+  3: replicas: uint,                ; replication factor for this blob
+  4: blob_size: uint                ; size in bytes
+}
+
+;-------------------------------- Audit Challenge -----------------------------
+
+; Challenge sent to provider to prove storage
+audit_challenge = {
+  0: challenge_id: digest32,        ; unique challenge identifier
+  1: provider_id: provider_id,      ; target provider
+  2: blob_commitment: digest32,     ; blob to verify
+  3: nonce: bstr .size 32,          ; random nonce for freshness
+  4: challenge_type: "byte-range" / "merkle-proof" / "nmt-proof",
+  5: params: byte_range_params / merkle_params / nmt_params,
+  6: created_at: timestamp,         ; when challenge was created
+  7: deadline: timestamp            ; response deadline
+}
+
+; Byte-range challenge parameters
+byte_range_params = {
+  0: ranges: [ + [ start: uint, length: uint ] ]  ; list of byte ranges
+}
+
+; Merkle proof challenge parameters
+merkle_params = {
+  0: indices: [ + uint ]            ; indices to prove
+}
+
+; NMT proof challenge parameters
+nmt_params = {
+  0: namespace: uint,               ; namespace to prove
+  1: indices: [ + uint ]            ; share indices
+}
+
+;-------------------------------- Audit Response ------------------------------
+
+; Response from provider to audit challenge
+audit_response = {
+  0: challenge_id: digest32,        ; matching challenge_id
+  1: provider_id: provider_id,      ; responder
+  2: response_type: "byte-data" / "merkle-proof" / "nmt-proof",
+  3: payload: byte_data_payload / merkle_proof_payload / nmt_proof_payload,
+  4: signature: bstr,               ; provider signature over (challenge_id || payload)
+  5: submitted_at: timestamp        ; response timestamp
+}
+
+; Byte data payload (actual bytes from requested ranges)
+byte_data_payload = {
+  0: data: [ + bstr ]               ; ordered list of byte range data
+}
+
+; Merkle proof payload
+merkle_proof_payload = {
+  0: leaves: [ + bstr ],            ; leaf values
+  1: proof: [ + bstr ]              ; Merkle proof siblings
+}
+
+; NMT proof payload
+nmt_proof_payload = {
+  0: shares: [ + bstr ],            ; share data
+  1: proof: [ + bstr ]              ; NMT inclusion proof
+}
+
+;-------------------------------- Audit Result --------------------------------
+
+; Audit verification result
+audit_result = {
+  0: challenge_id: digest32,        ; matching challenge_id
+  1: provider_id: provider_id,      ; audited provider
+  2: passed: bool,                  ; verification passed
+  3: verified_at: timestamp,        ; when verification was done
+  ? 4: failure_reason: tstr,        ; if failed, why
+  5: score_delta: int               ; change to uptime_score (+/-)
+}
+
+;-------------------------------- Provider Registry ---------------------------
+
+; Complete provider registry (can be stored in DA or chain state)
+provider_registry = {
+  0: version: uint,                 ; schema version
+  1: updated_at: timestamp,         ; last update timestamp
+  2: providers: { * provider_id => provider_entry },  ; all registered providers
+  3: total_capacity: capacity_bytes,  ; sum of all advertised capacity
+  4: total_committed: capacity_bytes  ; sum of all committed capacity
+}
+
+;-------------------------------- Constraints ---------------------------------
+
+; Semantic constraints:
+; 1) capacity_bytes_committed MUST be <= capacity_bytes_advertised
+; 2) uptime_score MUST be 0-10000 (represents 0.00% to 100.00%)
+; 3) If jailed_until is set, active MUST be false
+; 4) last_heartbeat MUST be <= current time
+; 5) For audit_response: signature MUST verify against provider's pubkey
+; 6) For audit_challenge: deadline MUST be > created_at
+
+;-------------------------------- Root ----------------------------------------
+
+$root = provider_entry / blob_assignment / audit_challenge / audit_response / audit_result / provider_registry
