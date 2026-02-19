@@ -597,4 +597,241 @@ def _send_alert(webhook_url: Optional[str], message: str) -> None:
         console.print(f"  [dim red]→ Alert failed: {e}[/dim red]")
 
 
+@aicf_app.command("storage-credits")
+def storage_credits_cmd(
+    address: str = typer.Argument(..., help="Provider address (hex or bech32)"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override database path",
+    ),
+):
+    """Show storage credits earned by a provider."""
+    try:
+        from aicf.credits.storage import StorageCreditsDB
+        from pathlib import Path
+        
+        # Convert address to provider_id (for now, use as-is if hex)
+        # In production, would resolve via registry
+        if address.startswith("0x"):
+            provider_id = bytes.fromhex(address[2:])
+        else:
+            # Assume hex without 0x prefix
+            provider_id = bytes.fromhex(address)
+        
+        if len(provider_id) != 32:
+            console.print("[red]Error: Provider ID must be 32 bytes (64 hex characters)[/red]")
+            raise typer.Exit(1)
+        
+        db_path_obj = Path(db_path) if db_path else None
+        db = StorageCreditsDB(db_path_override=db_path_obj)
+        
+        records = db.list_provider_credits(provider_id)
+        
+        if json_output:
+            output = {
+                "provider_id": provider_id.hex(),
+                "records": [
+                    {
+                        "period": r.period,
+                        "gb_stored": r.gb_stored,
+                        "audits_passed": r.audits_passed,
+                        "audits_failed": r.audits_failed,
+                        "bandwidth_gb": r.bandwidth_gb,
+                        "reliability_score": r.reliability_score,
+                        "credits_earned": r.credits_earned,
+                        "settled": r.settled,
+                    }
+                    for r in records
+                ],
+            }
+            console.print(aicf_utils.safe_json_encode(output))
+        else:
+            console.print(f"[bold]Storage Credits: {address}[/bold]\n")
+            
+            if not records:
+                console.print("[dim]No storage credits recorded yet.[/dim]")
+                return
+            
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("Period")
+            table.add_column("Storage", justify="right")
+            table.add_column("Audits", justify="right")
+            table.add_column("Bandwidth", justify="right")
+            table.add_column("Credits", justify="right")
+            table.add_column("Status")
+            
+            total_earned = 0
+            for r in records:
+                status = "✓ Settled" if r.settled else "Claimable"
+                table.add_row(
+                    r.period,
+                    f"{r.gb_stored:.1f} GB",
+                    f"{r.audits_passed}/{r.audits_passed + r.audits_failed}",
+                    f"{r.bandwidth_gb:.1f} GB",
+                    str(r.credits_earned),
+                    status,
+                )
+                total_earned += r.credits_earned
+            
+            console.print(table)
+            console.print(f"\n[bold]Total Earned:[/bold] {total_earned} credits")
+            
+            claimable = db.get_total_claimable(provider_id)
+            if claimable > 0:
+                console.print(f"[bold green]Claimable:[/bold green] {claimable} credits")
+                console.print(f"\n[dim]Claim with: animica aicf claim --type storage[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@aicf_app.command("storage-claims")
+def storage_claims_cmd(
+    address: str = typer.Argument(..., help="Provider address (hex or bech32)"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override database path",
+    ),
+):
+    """Show claimable storage credits for a provider."""
+    try:
+        from aicf.credits.settlement import get_claimable_summary
+        from pathlib import Path
+        
+        # Convert address to provider_id
+        if address.startswith("0x"):
+            provider_id = bytes.fromhex(address[2:])
+        else:
+            provider_id = bytes.fromhex(address)
+        
+        if len(provider_id) != 32:
+            console.print("[red]Error: Provider ID must be 32 bytes (64 hex characters)[/red]")
+            raise typer.Exit(1)
+        
+        summary = get_claimable_summary(provider_id, db_path_override=db_path)
+        
+        if json_output:
+            console.print(aicf_utils.safe_json_encode(summary))
+        else:
+            console.print(f"[bold]Claimable Storage Credits: {address}[/bold]\n")
+            
+            if summary["total_claimable"] == 0:
+                console.print("[dim]No claimable credits available.[/dim]")
+                return
+            
+            console.print(f"[bold]Total Claimable:[/bold] {summary['total_claimable']} credits")
+            console.print(f"[bold]Period Count:[/bold] {summary['period_count']}\n")
+            
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("Period")
+            table.add_column("Storage", justify="right")
+            table.add_column("Audits", justify="right")
+            table.add_column("Bandwidth", justify="right")
+            table.add_column("Credits", justify="right")
+            
+            for p in summary["periods"]:
+                table.add_row(
+                    p["period"],
+                    f"{p['gb_stored']:.1f} GB",
+                    str(p["audits_passed"]),
+                    f"{p['bandwidth_gb']:.1f} GB",
+                    str(p["credits"]),
+                )
+            
+            console.print(table)
+            console.print(f"\n[dim]Claim with: animica aicf claim --type storage --amount {summary['total_claimable']}[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@aicf_app.command("claim")
+def claim_cmd(
+    credit_type: str = typer.Option(
+        ...,
+        "--type",
+        help="Type of credits to claim (storage)",
+    ),
+    amount: Optional[int] = typer.Option(
+        None,
+        "--amount",
+        help="Amount to claim (default: all available)",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Provider address (hex or bech32)",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="Override database path",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Claim credits (storage credits)."""
+    try:
+        if credit_type != "storage":
+            console.print(f"[red]Error: Unknown credit type '{credit_type}'. Use 'storage'.[/red]")
+            raise typer.Exit(1)
+        
+        if not address:
+            console.print("[red]Error: --address is required[/red]")
+            raise typer.Exit(1)
+        
+        from aicf.credits.settlement import claim_storage_credits
+        from pathlib import Path
+        
+        # Convert address to provider_id
+        if address.startswith("0x"):
+            provider_id = bytes.fromhex(address[2:])
+        else:
+            provider_id = bytes.fromhex(address)
+        
+        if len(provider_id) != 32:
+            console.print("[red]Error: Provider ID must be 32 bytes (64 hex characters)[/red]")
+            raise typer.Exit(1)
+        
+        total, periods = claim_storage_credits(
+            provider_id, amount=amount, db_path_override=db_path
+        )
+        
+        if json_output:
+            output = {
+                "provider_id": provider_id.hex(),
+                "total_claimed": total,
+                "periods_settled": periods,
+            }
+            console.print(aicf_utils.safe_json_encode(output))
+        else:
+            if total == 0:
+                console.print("[dim]No credits available to claim.[/dim]")
+            else:
+                console.print(f"[bold green]✓ Claimed {total} storage credits[/bold green]")
+                console.print(f"\n[bold]Settled Periods:[/bold] {', '.join(periods)}")
+                console.print(f"\n[dim]Credits are now available for withdrawal via AICF treasury.[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 __all__ = ["aicf_app"]

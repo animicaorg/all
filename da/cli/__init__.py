@@ -11,6 +11,8 @@ This namespace will host small, focused CLIs such as:
 - get_blob.py    : Retrieve a blob by commitment (to stdout or file).
 - sim_sample.py  : Simulate DAS sampling and report p_fail.
 - inspect_root.py: Decode/inspect an NMT root and namespace ranges.
+- provider.py    : Storage provider management commands.
+- serve.py       : Start provider service daemon.
 
 Each CLI is designed to be importable as a module (for programmatic use)
 and runnable as a script (e.g., `python -m da.cli.put_blob`).
