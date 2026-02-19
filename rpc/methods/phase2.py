@@ -56,14 +56,31 @@ async def register_provider(
     Raises:
         RpcError: If registration fails (insufficient bond, not allowlisted, etc.)
     """
-    # TODO: Implement provider registration logic
-    # 1. Validate capabilities
+    # Phase 2: Provider registration (PHASE2_IMPLEMENTATION_SUMMARY.md)
+    # 
+    # Implementation path:
+    # 1. Validate capabilities (model_family, max_context, etc.)
     # 2. Check bond requirement (if permissionless mode)
     # 3. Check allowlist (if allowlist mode)
     # 4. Create provider record in registry
-    # 5. Return provider_id and status
+    # 5. Emit registration event
+    # 6. Return provider_id and status
+    # 
+    # Example:
+    # from aicf.registry import ProviderRegistry
+    # registry = ProviderRegistry(ctx.state_db)
+    # provider_id = registry.register(
+    #     address=address,
+    #     capabilities=capabilities,
+    #     bond=bond,
+    #     allowlist=ctx.params.get("aicf_provider_allowlist")
+    # )
+    # return {"provider_id": provider_id, "status": "registered", ...}
     
-    raise RpcError(code=-32601, message="aicf.registerProvider not yet implemented")
+    raise RpcError(
+        code=-32601,
+        message="aicf.registerProvider not yet implemented (Phase 2 - provider onboarding)"
+    )
 
 
 @method(
@@ -97,8 +114,25 @@ async def get_provider(provider_id: str) -> Dict[str, Any]:
             "last_heartbeat": int
         }
     """
-    # TODO: Implement get provider logic
-    raise RpcError(code=-32601, message="aicf.getProvider not yet implemented")
+    # Phase 2: Provider information retrieval (PHASE2_IMPLEMENTATION_SUMMARY.md)
+    # 
+    # Implementation path:
+    # 1. Load provider record from registry
+    # 2. Calculate reputation metrics from job history
+    # 3. Return provider details
+    # 
+    # Example:
+    # from aicf.registry import ProviderRegistry
+    # registry = ProviderRegistry(ctx.state_db)
+    # provider = registry.get(provider_id)
+    # if not provider:
+    #     raise RpcError(code=-32602, message=f"Provider {provider_id} not found")
+    # return provider.to_dict()
+    
+    raise RpcError(
+        code=-32601,
+        message="aicf.getProvider not yet implemented (Phase 2 - provider registry)"
+    )
 
 
 @method(

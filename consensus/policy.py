@@ -365,18 +365,19 @@ def load_poies_policy(yaml_path: str) -> PoiesPolicy:
     ):
         raise PolicyError("escort.enabled is true but useful_types is empty")
 
-    # Construct and hash
+    # Construct dummy policy to compute canonical JSON hash (policy_root references itself)
     dummy = PoiesPolicy(
         version=version,
         gamma_cap=GammaMicro(gamma_cap),
         caps=caps,
         escort=escort,
         weights=weights,
-        policy_root=b"",  # temp
+        policy_root=b"",  # empty for initial hash computation
     )
     cj = dummy.to_canonical_json()
     root = _compute_policy_root(cj)
 
+    # Return policy with computed root
     return PoiesPolicy(
         version=version,
         gamma_cap=GammaMicro(gamma_cap),
