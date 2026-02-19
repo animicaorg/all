@@ -576,6 +576,274 @@ def sync_blobs(
         raise typer.Exit(1)
 
 
+# Plan management commands
+plan_app = typer.Typer(
+    name="plan",
+    help="Provider plan management",
+    no_args_is_help=True,
+)
+provider_app.add_typer(plan_app, name="plan")
+
+
+@plan_app.command("apply")
+def plan_apply(
+    plan_name: str = typer.Argument(..., help="Plan name (starter-100gb, serious-1tb, datacenter-10tb)"),
+    path: Path = typer.Option(
+        ...,
+        "--path",
+        help="Storage path for provider",
+    ),
+    keystore: Optional[Path] = typer.Option(
+        None,
+        "--keystore",
+        help="Keystore path (default: ~/.animica/provider_key.json)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+) -> None:
+    """Apply a plan to this provider."""
+    try:
+        from aicf.credits.plans import apply_plan, format_capacity
+        
+        # Load keypair to get provider ID
+        pubkey, _ = _load_or_generate_keypair(keystore)
+        provider_id = create_provider_id(pubkey)
+        
+        # Apply plan
+        plan_info = apply_plan(provider_id, plan_name)
+        
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "provider_id": provider_id.hex(),
+                        "plan_name": plan_info.name,
+                        "capacity": plan_info.capacity_bytes,
+                        "heartbeat_interval": plan_info.heartbeat_interval_seconds,
+                        "audit_target": plan_info.audit_target_per_day,
+                        "port": plan_info.port,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[green]✓[/green] Applied plan: {plan_info.name}")
+            console.print(f"\n[bold]Plan Configuration:[/bold]")
+            console.print(f"  Capacity: {format_capacity(plan_info.capacity_bytes)}")
+            console.print(f"  Heartbeat Interval: {plan_info.heartbeat_interval_seconds}s")
+            console.print(f"  Audit Target: {plan_info.audit_target_per_day} audits/day")
+            console.print(f"  Port: {plan_info.port}")
+            console.print(f"\n[dim]Storage path: {path}[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@plan_app.command("info")
+def plan_info_cmd(
+    plan_name: str = typer.Argument(..., help="Plan name"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+) -> None:
+    """Show information about a specific plan."""
+    try:
+        from aicf.credits.plans import get_plan_info, format_capacity
+        
+        plan_info = get_plan_info(plan_name)
+        
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "name": plan_info.name,
+                        "capacity": plan_info.capacity_bytes,
+                        "heartbeat_interval": plan_info.heartbeat_interval_seconds,
+                        "audit_target": plan_info.audit_target_per_day,
+                        "port": plan_info.port,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[bold]Plan: {plan_info.name}[/bold]\n")
+            console.print(f"  Capacity: {format_capacity(plan_info.capacity_bytes)}")
+            console.print(f"  Heartbeat Interval: {plan_info.heartbeat_interval_seconds}s")
+            console.print(f"  Audit Target: {plan_info.audit_target_per_day} audits/day")
+            console.print(f"  Port: {plan_info.port}")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@plan_app.command("list")
+def plan_list(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+) -> None:
+    """List all available plans."""
+    try:
+        from aicf.credits.plans import list_plans, format_capacity
+        
+        plans = list_plans()
+        
+        if json_output:
+            print(
+                json.dumps(
+                    [
+                        {
+                            "name": p.name,
+                            "capacity": p.capacity_bytes,
+                            "heartbeat_interval": p.heartbeat_interval_seconds,
+                            "audit_target": p.audit_target_per_day,
+                            "port": p.port,
+                        }
+                        for p in plans
+                    ],
+                    indent=2,
+                )
+            )
+        else:
+            table = Table(title="Available Plans")
+            table.add_column("Name", style="cyan")
+            table.add_column("Capacity", justify="right")
+            table.add_column("Heartbeat", justify="right")
+            table.add_column("Audits/Day", justify="right")
+            table.add_column("Port", justify="right")
+            
+            for p in plans:
+                table.add_row(
+                    p.name,
+                    format_capacity(p.capacity_bytes),
+                    f"{p.heartbeat_interval_seconds}s",
+                    str(p.audit_target_per_day),
+                    str(p.port),
+                )
+            
+            console.print(table)
+            console.print(f"\n[dim]Apply a plan with: animica da provider plan apply <plan_name> --path <storage_path>[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# Alerts commands
+alerts_app = typer.Typer(
+    name="alerts",
+    help="Provider alert monitoring",
+    no_args_is_help=True,
+)
+provider_app.add_typer(alerts_app, name="alerts")
+
+
+@provider_app.command("alerts")
+def alerts_cmd(
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        help="Watch mode (refresh every 10s)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+    keystore: Optional[Path] = typer.Option(
+        None,
+        "--keystore",
+        help="Keystore path (default: ~/.animica/provider_key.json)",
+    ),
+) -> None:
+    """Show active alerts for this provider."""
+    try:
+        from aicf.credits.alerts import get_active_alerts
+        
+        # Load keypair to get provider ID
+        pubkey, _ = _load_or_generate_keypair(keystore)
+        provider_id = create_provider_id(pubkey)
+        
+        if watch:
+            console.print("[bold]Provider Alerts (Watch Mode)[/bold]")
+            console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+            
+            try:
+                while True:
+                    alerts = get_active_alerts(provider_id)
+                    
+                    console.print(f"[dim]{time.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
+                    
+                    if not alerts:
+                        console.print("[green]✓ No active alerts[/green]\n")
+                    else:
+                        for alert in alerts:
+                            severity_color = "red" if alert.severity == "critical" else "yellow"
+                            console.print(f"[{severity_color}]• {alert.alert_type.value}:[/{severity_color}] {alert.message}")
+                        console.print()
+                    
+                    time.sleep(10)
+            
+            except KeyboardInterrupt:
+                console.print("\n[dim]Stopped monitoring.[/dim]")
+                raise typer.Exit(0)
+        
+        else:
+            alerts = get_active_alerts(provider_id)
+            
+            if json_output:
+                print(
+                    json.dumps(
+                        [
+                            {
+                                "type": a.alert_type.value,
+                                "severity": a.severity,
+                                "message": a.message,
+                                "created_at": a.created_at,
+                            }
+                            for a in alerts
+                        ],
+                        indent=2,
+                    )
+                )
+            else:
+                if not alerts:
+                    console.print("[green]✓ No active alerts[/green]")
+                else:
+                    console.print(f"[bold]Active Alerts ({len(alerts)}):[/bold]\n")
+                    
+                    table = Table()
+                    table.add_column("Type", style="cyan")
+                    table.add_column("Severity")
+                    table.add_column("Message")
+                    table.add_column("Created")
+                    
+                    for alert in alerts:
+                        severity_style = "red" if alert.severity == "critical" else "yellow"
+                        created = time.strftime('%Y-%m-%d %H:%M', time.localtime(alert.created_at))
+                        table.add_row(
+                            alert.alert_type.value,
+                            f"[{severity_style}]{alert.severity}[/{severity_style}]",
+                            alert.message,
+                            created,
+                        )
+                    
+                    console.print(table)
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 def main() -> None:
     """CLI entry point."""
     provider_app()
