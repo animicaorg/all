@@ -1809,37 +1809,139 @@ class BlockImporter:
                     "recipient_delta": recipient_delta,
                 })
 
-            apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
+            block_result = apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
             apply_events = end_apply_block()
             assert_block_apply_deltas(tx_expectations=tx_expectations, events=apply_events)
 
-            reward_amount = _compute_block_reward_amount(
-                chain_id=int(self.params.chain_id),
-                height=int(getattr(block.header, "height", 0) or 0),
-                params=self.full_params_dict or {},
-                header=block.header,
-            )
+            # Compute block rewards with AICF slicing
+            height = int(getattr(block.header, "height", 0) or 0)
+            chain_id = int(self.params.chain_id)
+            
+            # Get all reward outputs (miner, AICF, treasury)
+            from consensus.rewards import compute_block_reward
+            try:
+                reward_outputs = compute_block_reward(
+                    chain_id=chain_id,
+                    height=height,
+                    params=self.full_params_dict or {},
+                    instant_block=_is_instant_block(block.header),
+                    canonical_height=max(1, height) if not _is_instant_block(block.header) else None,
+                )
+            except Exception as e:
+                log.warning(f"Failed to compute block reward: {e}")
+                reward_outputs = []
+            
+            # Parse reward outputs
+            miner_reward = 0
+            aicf_reward = 0
+            treasury_reward = 0
+            
+            if reward_outputs:
+                # Get system addresses to identify reward types
+                system_addresses = (self.full_params_dict or {}).get("system_addresses", {})
+                aicf_addr = system_addresses.get("aicf_treasury", "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                
+                for addr, amount in reward_outputs:
+                    if addr == aicf_addr:
+                        aicf_reward += amount
+                    elif addr == treasury_addr:
+                        treasury_reward += amount
+                    else:
+                        # Miner reward (default)
+                        miner_reward += amount
+            
+            # Compute fee split for AICF
+            fee_aicf_amount = 0
+            try:
+                from execution.runtime.aicf_integration import compute_fee_aicf_amount
+                fee_aicf_amount = compute_fee_aicf_amount(getattr(block_result, 'tx_results', []))
+            except Exception as e:
+                log.debug(f"Failed to compute AICF fee amount: {e}")
+            
+            # Total fees (for miner - already includes AICF portion split)
             fee_amount = _compute_block_fees_total(block)
-            credit_amount = int(reward_amount) + int(fee_amount)
-            if credit_amount > 0:
+            miner_fee_amount = fee_amount - fee_aicf_amount
+            
+            # Credit miner with their portion (reward + fees after AICF slice)
+            miner_total = int(miner_reward) + int(miner_fee_amount)
+            if miner_total > 0:
                 new_balance = state_credit(
                     self.state_db,
                     bytes(block_env.coinbase),
-                    credit_amount,
-                    reason="BLOCK_APPLY_COINBASE_TOTAL",
+                    miner_total,
+                    reason="BLOCK_APPLY_MINER_REWARD_FEES",
                     tx_hash=None,
-                    height=int(getattr(block.header, "height", 0) or 0),
+                    height=height,
                     callsite="core.chain.block_import._apply_block_state",
                 )
                 global _BLOCK_COINBASE_CREDIT_TOTAL
-                _BLOCK_COINBASE_CREDIT_TOTAL += credit_amount
+                _BLOCK_COINBASE_CREDIT_TOTAL += miner_total
                 log.info(
-                    "STATE_CREDIT coinbase=%s amount=%d height=%d new_balance=%d",
+                    "STATE_CREDIT miner=%s reward=%d fees=%d total=%d height=%d new_balance=%d",
                     block_env.coinbase.hex(),
-                    credit_amount,
-                    int(getattr(block.header, "height", 0) or 0),
+                    miner_reward,
+                    miner_fee_amount,
+                    miner_total,
+                    height,
                     new_balance,
                 )
+            
+            # Credit AICF pool with their portion (reward slice + fee slice)
+            aicf_total = int(aicf_reward) + int(fee_aicf_amount)
+            if aicf_total > 0:
+                system_addresses = (self.full_params_dict or {}).get("system_addresses", {})
+                aicf_pool_addr_str = system_addresses.get("aicf_treasury", "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                
+                # Convert bech32 address to bytes
+                try:
+                    from pq.address import bech32_decode
+                    _, aicf_pool_addr_bytes = bech32_decode(aicf_pool_addr_str)
+                except Exception:
+                    # Fallback: use a deterministic placeholder address
+                    aicf_pool_addr_bytes = b"\x00" * 32
+                
+                aicf_balance = state_credit(
+                    self.state_db,
+                    aicf_pool_addr_bytes,
+                    aicf_total,
+                    reason="BLOCK_APPLY_AICF_POOL_INFLOW",
+                    tx_hash=None,
+                    height=height,
+                    callsite="core.chain.block_import._apply_block_state",
+                )
+                log.info(
+                    "STATE_CREDIT aicf_pool=%s reward=%d fees=%d total=%d height=%d new_balance=%d",
+                    aicf_pool_addr_bytes.hex(),
+                    aicf_reward,
+                    fee_aicf_amount,
+                    aicf_total,
+                    height,
+                    aicf_balance,
+                )
+            
+            # Process AICF accounting (credits, epochs, etc.)
+            try:
+                from execution.runtime.aicf_integration import process_block_for_aicf
+                process_block_for_aicf(
+                    state=self.state_db,
+                    block_env=block_env,
+                    miner_address=bytes(block_env.coinbase),
+                    block_reward_aicf_amount=int(aicf_reward),
+                    fee_aicf_amount=int(fee_aicf_amount),
+                    params=self.full_params_dict,
+                )
+                log.debug(
+                    f"AICF: Processed block {height}, "
+                    f"miner credits awarded, "
+                    f"inflows tracked (reward={aicf_reward}, fees={fee_aicf_amount})"
+                )
+            except Exception as e:
+                log.error(f"AICF: Failed to process block {height}: {e}", exc_info=True)
+            
+            # Log total coinbase credit metric
+            total_credited = miner_total + aicf_total
+            if total_credited > 0:
                 log.info(
                     "metric block_coinbase_credit_total=%d",
                     _BLOCK_COINBASE_CREDIT_TOTAL,
