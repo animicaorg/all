@@ -33,6 +33,7 @@ __all__: List[str] = [
     "economics",
     "sla",
     "treasury",
+    "credits",
     "integration",
     "rpc",
     "cli",
