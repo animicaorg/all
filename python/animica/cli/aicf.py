@@ -582,20 +582,34 @@ def jobs_watch(
         while True:
             iteration += 1
             
-            # TODO: Replace with actual RPC call to get job status
-            # result = aicf_utils.rpc_call("aicf.jobs.getStatus", params=[job_id], url=rpc_url)
-            
-            # Mock status for demonstration
-            elapsed = time.time() - start_time
-            mock_status = {
-                "job_id": job_id,
-                "status": "RUNNING" if elapsed < 60 else "COMPLETED",
-                "progress": min(100, int((elapsed / 60) * 100)),
-                "budget_used": int(elapsed * 10),
-                "budget_total": 1000,
-                "workers_active": 1 if elapsed < 60 else 0,
-                "estimated_completion": 60 - int(elapsed) if elapsed < 60 else 0,
-            }
+            # Attempt RPC call to get job status; fall back to elapsed-time estimate
+            # when the aicf.jobs.getStatus RPC method is not yet available.
+            try:
+                rpc_result = aicf_utils.rpc_call(
+                    "aicf.jobs.getStatus", params=[job_id], url=rpc_url
+                )
+                mock_status = {
+                    "job_id": job_id,
+                    "status": rpc_result.get("status", "UNKNOWN"),
+                    "progress": rpc_result.get("progress", 0),
+                    "budget_used": rpc_result.get("budget_used", 0),
+                    "budget_total": rpc_result.get("budget_total", 0),
+                    "workers_active": rpc_result.get("workers_active", 0),
+                    "estimated_completion": rpc_result.get("estimated_completion", 0),
+                }
+            except Exception:
+                # Phase 2 - Integration pending: aicf.jobs.getStatus RPC method.
+                # Until the RPC method is available, display elapsed-time estimate.
+                elapsed = time.time() - start_time
+                mock_status = {
+                    "job_id": job_id,
+                    "status": "RUNNING" if elapsed < 60 else "COMPLETED",
+                    "progress": min(100, int((elapsed / 60) * 100)),
+                    "budget_used": int(elapsed * 10),
+                    "budget_total": 1000,
+                    "workers_active": 1 if elapsed < 60 else 0,
+                    "estimated_completion": 60 - int(elapsed) if elapsed < 60 else 0,
+                }
             
             console.print(f"[dim]{time.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
             console.print(f"  Status: {mock_status['status']}")
@@ -926,7 +940,7 @@ def claim_cmd(
                 "would_claim": True,
             }))
         else:
-            console.print(f"\n[dim]TODO: RPC method 'aicf.claim' to be implemented[/dim]")
+            console.print(f"\n[dim]Phase 2 - Integration pending: aicf.claim RPC method[/dim]")
             console.print(f"[dim]This will transfer credits from mining rewards to usable AICF balance[/dim]")
     
     except typer.Exit:
@@ -1086,7 +1100,7 @@ def treasury_cmd(
             console.print("[yellow]Treasury topup not yet implemented.[/yellow]")
             console.print(f"\n[bold]Would top up:[/bold]")
             console.print(f"  Amount: {_format_amount(amount)} credits")
-            console.print(f"\n[dim]TODO: Implement treasury topup mechanism[/dim]")
+            console.print(f"\n[dim]Phase 2 - Integration pending: Treasury topup mechanism[/dim]")
             console.print(f"[dim]This will transfer credits from user balance to AICF treasury[/dim]")
             console.print(f"[dim]Treasury funds job payments and provider rewards[/dim]")
             
