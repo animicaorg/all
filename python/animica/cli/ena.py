@@ -651,6 +651,11 @@ aicf_app = typer.Typer(help="AICF (AI Compute Fund) commands")
 app.add_typer(aicf_app, name="aicf")
 
 
+# Image commands group
+image_app = typer.Typer(help="ENA media image commands")
+app.add_typer(image_app, name="image")
+
+
 @aicf_app.command("info")
 def aicf_info(
     endpoint: Optional[str] = typer.Option(
@@ -1455,6 +1460,859 @@ def install_models(
     }))
     
     console.print(f"[dim]Created marker file: {marker_file}[/dim]")
+
+
+# ============================================================================
+# Image CLI Commands
+# ============================================================================
+
+# Constants for image handling
+ENA_MEDIA_NAMESPACE = 7
+CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+CHUNK_THRESHOLD = 1024 * 1024  # Files > 1MB get chunked
+
+# Image MIME type mappings
+IMAGE_FORMATS = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+}
+
+# Magic byte signatures for validation
+IMAGE_SIGNATURES = {
+    b"\x89\x50\x4E\x47\x0D\x0A\x1A\x0A": "png",
+    b"\xFF\xD8\xFF": "jpg",
+    b"RIFF": "webp",  # WEBP has RIFF header followed by WEBP
+}
+
+
+def _detect_image_format(file_path: Path) -> Optional[str]:
+    """
+    Detect image format by magic bytes.
+    
+    Returns:
+        Format string (png, jpg, webp) or None if unknown
+    """
+    with open(file_path, "rb") as f:
+        header = f.read(16)
+    
+    # Check PNG
+    if header.startswith(b"\x89\x50\x4E\x47\x0D\x0A\x1A\x0A"):
+        return "png"
+    
+    # Check JPEG
+    if header.startswith(b"\xFF\xD8\xFF"):
+        return "jpg"
+    
+    # Check WEBP
+    if header.startswith(b"RIFF") and b"WEBP" in header:
+        return "webp"
+    
+    return None
+
+
+def _validate_image_file(file_path: Path) -> tuple[str, str]:
+    """
+    Validate image file and return format and MIME type.
+    
+    Returns:
+        Tuple of (format, mime_type)
+    
+    Raises:
+        ValueError if validation fails
+    """
+    if not file_path.exists():
+        raise ValueError(f"File not found: {file_path}")
+    
+    if not file_path.is_file():
+        raise ValueError(f"Not a file: {file_path}")
+    
+    # Check extension
+    ext = file_path.suffix.lower().lstrip(".")
+    if ext not in IMAGE_FORMATS:
+        raise ValueError(f"Unsupported file extension: {ext}")
+    
+    # Validate magic bytes
+    detected_format = _detect_image_format(file_path)
+    if detected_format is None:
+        raise ValueError(f"File does not appear to be a valid image")
+    
+    # Normalize jpg/jpeg
+    if detected_format == "jpg":
+        detected_format = "jpeg" if ext == "jpeg" else "jpg"
+    
+    mime_type = IMAGE_FORMATS.get(ext)
+    if mime_type is None:
+        raise ValueError(f"No MIME type mapping for extension: {ext}")
+    
+    return detected_format, mime_type
+
+
+def _get_media_cache_path() -> Path:
+    """Get path to media cache file."""
+    cache_dir = Path.home() / ".animica"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / "media_cache.json"
+
+
+def _load_media_cache() -> dict:
+    """Load media cache from disk."""
+    cache_path = _get_media_cache_path()
+    if not cache_path.exists():
+        return {"images": []}
+    
+    try:
+        with open(cache_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to load cache: {e}[/yellow]")
+        return {"images": []}
+
+
+def _save_media_cache(cache: dict):
+    """Save media cache to disk."""
+    cache_path = _get_media_cache_path()
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to save cache: {e}[/yellow]")
+
+
+def _add_to_cache(manifest_data: dict):
+    """Add manifest to local cache."""
+    cache = _load_media_cache()
+    
+    # Add to images list (avoid duplicates by media_id)
+    media_id_hex = manifest_data["media_id"]
+    cache["images"] = [
+        img for img in cache.get("images", [])
+        if img.get("media_id") != media_id_hex
+    ]
+    cache["images"].append(manifest_data)
+    
+    _save_media_cache(cache)
+
+
+def _get_image_dimensions(file_path: Path, fmt: str) -> tuple[Optional[int], Optional[int]]:
+    """
+    Extract image dimensions.
+    
+    Returns:
+        Tuple of (width, height) or (None, None) if unable to extract
+    """
+    try:
+        # Try using PIL if available
+        from PIL import Image
+        with Image.open(file_path) as img:
+            return img.width, img.height
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
+    return None, None
+
+
+@image_app.command("put")
+def image_put(
+    file: str = typer.Argument(..., help="Path to image file"),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Display name for the image",
+    ),
+    tag: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        help="Tag for categorization (can specify multiple times)",
+    ),
+    da_url: Optional[str] = typer.Option(
+        None,
+        "--da-url",
+        help="DA service URL",
+    ),
+    from_wallet: Optional[str] = typer.Option(
+        None,
+        "--from",
+        help="Wallet identifier (address, label, or index)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """
+    Upload an image to DA with automatic chunking.
+    
+    Supports PNG, JPG, JPEG, and WEBP formats.
+    Files larger than 1MB are automatically chunked.
+    """
+    file_path = Path(file).expanduser().resolve()
+    
+    try:
+        # Validate image
+        fmt, mime_type = _validate_image_file(file_path)
+        file_size = file_path.stat().st_size
+        
+        if not json_output:
+            console.print(f"[bold]Uploading Image to DA[/bold]")
+            console.print(f"  File: {file_path.name}")
+            console.print(f"  Format: {fmt.upper()}")
+            console.print(f"  Size: {file_size:,} bytes")
+            console.print(f"  MIME: {mime_type}")
+        
+        # Read file and compute hashes
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        
+        import hashlib
+        sha256_hash = hashlib.sha256(file_data).digest()
+        sha3_256_hash = hashlib.sha3_256(file_data).digest()
+        
+        if not json_output:
+            console.print(f"\n[yellow]→ Computing hashes...[/yellow]")
+            console.print(f"  SHA-256: {sha256_hash.hex()}")
+            console.print(f"  SHA3-256: {sha3_256_hash.hex()}")
+        
+        # Get uploader address
+        if from_wallet:
+            uploader_address = _load_wallet_address(from_wallet)
+        else:
+            uploader_address = _load_wallet_address(None)
+        
+        # Convert address to bytes (assuming hex format)
+        if uploader_address.startswith("0x"):
+            uploader_address_bytes = bytes.fromhex(uploader_address[2:])
+        else:
+            uploader_address_bytes = bytes.fromhex(uploader_address)
+        
+        if len(uploader_address_bytes) != 20:
+            console.print(f"[red]Error: Invalid address length: {len(uploader_address_bytes)} bytes[/red]")
+            raise typer.Exit(1)
+        
+        # Determine if chunking is needed
+        needs_chunking = file_size > CHUNK_THRESHOLD
+        
+        if needs_chunking:
+            # Upload with chunking
+            if not json_output:
+                console.print(f"\n[yellow]→ File exceeds {CHUNK_THRESHOLD:,} bytes, using chunking...[/yellow]")
+            
+            num_chunks = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+            chunk_commitments = []
+            
+            for i in range(num_chunks):
+                start = i * CHUNK_SIZE
+                end = min((i + 1) * CHUNK_SIZE, file_size)
+                chunk_data = file_data[start:end]
+                
+                if not json_output:
+                    console.print(f"  Uploading chunk {i+1}/{num_chunks} ({len(chunk_data):,} bytes)...")
+                
+                # Upload chunk using da.cli.put_blob
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
+                    tmp.write(chunk_data)
+                    tmp_path = tmp.name
+                
+                try:
+                    from da.cli import put_blob
+                    result = put_blob.main([
+                        "--ns", str(ENA_MEDIA_NAMESPACE),
+                        "--mime", "application/octet-stream",
+                        "--name", f"{file_path.name}.chunk{i}",
+                        "--json",
+                        tmp_path,
+                    ])
+                    
+                    if result != 0:
+                        raise RuntimeError(f"Failed to upload chunk {i+1}")
+                    
+                    # Parse commitment from output (captured via subprocess)
+                    import subprocess
+                    result = subprocess.run(
+                        [
+                            sys.executable, "-m", "da.cli.put_blob",
+                            "--ns", str(ENA_MEDIA_NAMESPACE),
+                            "--mime", "application/octet-stream",
+                            "--name", f"{file_path.name}.chunk{i}",
+                            "--json",
+                            tmp_path,
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    
+                    if result.returncode != 0:
+                        raise RuntimeError(f"Failed to upload chunk {i+1}: {result.stderr}")
+                    
+                    chunk_response = json.loads(result.stdout)
+                    commitment_hex = chunk_response["commitment"]
+                    if commitment_hex.startswith("0x"):
+                        commitment_hex = commitment_hex[2:]
+                    chunk_commitments.append(bytes.fromhex(commitment_hex))
+                
+                finally:
+                    os.unlink(tmp_path)
+            
+            # Create chunking params
+            from da.media.manifest import ChunkingParams
+            content = ChunkingParams(
+                chunk_size=CHUNK_SIZE,
+                num_chunks=num_chunks,
+                chunk_commitments=chunk_commitments,
+            )
+            
+            if not json_output:
+                console.print(f"[green]  ✓ All {num_chunks} chunks uploaded[/green]")
+        
+        else:
+            # Upload as single blob
+            if not json_output:
+                console.print(f"\n[yellow]→ Uploading to DA...[/yellow]")
+            
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
+                tmp.write(file_data)
+                tmp_path = tmp.name
+            
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [
+                        sys.executable, "-m", "da.cli.put_blob",
+                        "--ns", str(ENA_MEDIA_NAMESPACE),
+                        "--mime", mime_type,
+                        "--name", name or file_path.name,
+                        "--json",
+                        tmp_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                
+                if result.returncode != 0:
+                    raise RuntimeError(f"Failed to upload: {result.stderr}")
+                
+                blob_response = json.loads(result.stdout)
+                commitment_hex = blob_response["commitment"]
+                if commitment_hex.startswith("0x"):
+                    commitment_hex = commitment_hex[2:]
+                content = bytes.fromhex(commitment_hex)
+                
+                if not json_output:
+                    console.print(f"[green]  ✓ Uploaded to DA[/green]")
+                    console.print(f"  Commitment: {commitment_hex}")
+            
+            finally:
+                os.unlink(tmp_path)
+        
+        # Get image dimensions
+        width, height = _get_image_dimensions(file_path, fmt)
+        
+        # Create manifest
+        from da.media.manifest import MediaKind, create_manifest
+        
+        manifest = create_manifest(
+            content_commitment=content,
+            kind=MediaKind.IMAGE,
+            content_type=mime_type,
+            byte_size=file_size,
+            sha256=sha256_hash,
+            sha3_256=sha3_256_hash,
+            uploader_address=uploader_address_bytes,
+            name=name or file_path.name,
+            tags=list(tag) if tag else [],
+            width=width,
+            height=height,
+        )
+        
+        if not json_output:
+            console.print(f"\n[yellow]→ Creating manifest...[/yellow]")
+            console.print(f"  Media ID: {manifest.media_id.hex()}")
+            if width and height:
+                console.print(f"  Dimensions: {width}x{height}")
+        
+        # Upload manifest
+        manifest_cbor = manifest.to_cbor()
+        
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
+            tmp.write(manifest_cbor)
+            tmp_path = tmp.name
+        
+        try:
+            import subprocess
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "da.cli.put_blob",
+                    "--ns", str(ENA_MEDIA_NAMESPACE),
+                    "--mime", "application/cbor",
+                    "--name", f"{manifest.media_id.hex()}.manifest",
+                    "--json",
+                    tmp_path,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to upload manifest: {result.stderr}")
+            
+            manifest_response = json.loads(result.stdout)
+            manifest_commitment_hex = manifest_response["commitment"]
+            
+            if not json_output:
+                console.print(f"[green]  ✓ Manifest uploaded[/green]")
+                console.print(f"  Manifest commitment: {manifest_commitment_hex}")
+        
+        finally:
+            os.unlink(tmp_path)
+        
+        # Add to local cache
+        cache_entry = {
+            "media_id": manifest.media_id.hex(),
+            "name": manifest.name,
+            "kind": manifest.kind.value,
+            "content_type": manifest.content_type,
+            "byte_size": manifest.byte_size,
+            "tags": manifest.tags,
+            "created_at": manifest.created_at,
+            "width": manifest.width,
+            "height": manifest.height,
+            "manifest_commitment": manifest_commitment_hex,
+        }
+        _add_to_cache(cache_entry)
+        
+        # Output results
+        if json_output:
+            output = {
+                "media_id": manifest.media_id.hex(),
+                "name": manifest.name,
+                "size": file_size,
+                "format": fmt,
+                "mime_type": mime_type,
+                "sha256": sha256_hash.hex(),
+                "sha3_256": sha3_256_hash.hex(),
+                "manifest_commitment": manifest_commitment_hex,
+                "chunked": needs_chunking,
+                "num_chunks": num_chunks if needs_chunking else 1,
+                "width": width,
+                "height": height,
+                "tags": manifest.tags,
+            }
+            console.print(json.dumps(output, indent=2))
+        else:
+            console.print(f"\n[bold green]✓ Image uploaded successfully![/bold green]")
+            console.print(f"\n[bold]Media ID:[/bold] {manifest.media_id.hex()}")
+            console.print(f"\n[dim]Retrieve with:[/dim]")
+            console.print(f"[dim]  animica ena image get {manifest.media_id.hex()}[/dim]")
+    
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        if not json_output:
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(1)
+
+
+@image_app.command("get")
+def image_get(
+    media_id: str = typer.Argument(..., help="Media ID (hex)"),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Output file path (default: use name from manifest)",
+    ),
+    da_url: Optional[str] = typer.Option(
+        None,
+        "--da-url",
+        help="DA service URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output metadata as JSON (image saved to file)",
+    ),
+):
+    """
+    Retrieve an image by media_id.
+    
+    Downloads the manifest and content from DA, reassembling chunks if needed.
+    """
+    try:
+        # Normalize media_id
+        if media_id.startswith("0x"):
+            media_id = media_id[2:]
+        
+        if len(media_id) != 64:
+            raise ValueError("Media ID must be 32 bytes (64 hex chars)")
+        
+        media_id_bytes = bytes.fromhex(media_id)
+        
+        if not json_output:
+            console.print(f"[bold]Retrieving Image[/bold]")
+            console.print(f"  Media ID: {media_id}")
+        
+        # First, try to get manifest from cache
+        cache = _load_media_cache()
+        cached_manifest = None
+        for img in cache.get("images", []):
+            if img.get("media_id") == media_id:
+                cached_manifest = img
+                break
+        
+        if cached_manifest and not json_output:
+            console.print(f"  Name: {cached_manifest.get('name', 'unknown')}")
+            manifest_commitment = cached_manifest.get("manifest_commitment")
+            if manifest_commitment:
+                console.print(f"  Manifest commitment: {manifest_commitment}")
+        
+        # Download manifest
+        if not json_output:
+            console.print(f"\n[yellow]→ Downloading manifest...[/yellow]")
+        
+        # We need the manifest commitment - if not in cache, we can't retrieve
+        if not cached_manifest or not cached_manifest.get("manifest_commitment"):
+            console.print(f"[red]Error: Manifest commitment not found in cache[/red]")
+            console.print(f"[dim]Note: Only images uploaded with this CLI can be retrieved automatically[/dim]")
+            raise typer.Exit(1)
+        
+        manifest_commitment = cached_manifest["manifest_commitment"]
+        
+        import subprocess
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "da.cli.get_blob",
+                "--commit", manifest_commitment,
+                "--out", "-",
+            ],
+            capture_output=True,
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to download manifest: {result.stderr.decode()}")
+        
+        manifest_cbor = result.stdout
+        
+        # Parse manifest
+        from da.media.manifest import MediaManifest
+        manifest = MediaManifest.from_cbor(manifest_cbor)
+        
+        if not json_output:
+            console.print(f"[green]  ✓ Manifest retrieved[/green]")
+            console.print(f"  Name: {manifest.name}")
+            console.print(f"  Size: {manifest.byte_size:,} bytes")
+            console.print(f"  Type: {manifest.content_type}")
+            if manifest.width and manifest.height:
+                console.print(f"  Dimensions: {manifest.width}x{manifest.height}")
+        
+        # Download content
+        if not json_output:
+            console.print(f"\n[yellow]→ Downloading content...[/yellow]")
+        
+        from da.media.manifest import ChunkingParams
+        
+        if isinstance(manifest.content, ChunkingParams):
+            # Download and reassemble chunks
+            num_chunks = manifest.content.num_chunks
+            if not json_output:
+                console.print(f"  Chunked: {num_chunks} chunks")
+            
+            content_data = b""
+            for i, commitment in enumerate(manifest.content.chunk_commitments):
+                if not json_output:
+                    console.print(f"  Downloading chunk {i+1}/{num_chunks}...")
+                
+                result = subprocess.run(
+                    [
+                        sys.executable, "-m", "da.cli.get_blob",
+                        "--commit", "0x" + commitment.hex(),
+                        "--out", "-",
+                    ],
+                    capture_output=True,
+                )
+                
+                if result.returncode != 0:
+                    raise RuntimeError(f"Failed to download chunk {i+1}: {result.stderr.decode()}")
+                
+                content_data += result.stdout
+            
+            if not json_output:
+                console.print(f"[green]  ✓ All chunks downloaded and reassembled[/green]")
+        
+        else:
+            # Download single blob
+            commitment_hex = manifest.content.hex()
+            
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "da.cli.get_blob",
+                    "--commit", "0x" + commitment_hex,
+                    "--out", "-",
+                ],
+                capture_output=True,
+            )
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to download content: {result.stderr.decode()}")
+            
+            content_data = result.stdout
+            
+            if not json_output:
+                console.print(f"[green]  ✓ Content downloaded[/green]")
+        
+        # Verify integrity
+        from da.media.manifest import verify_manifest
+        if not verify_manifest(manifest, content_data):
+            console.print(f"[red]Warning: Content failed integrity check![/red]")
+        elif not json_output:
+            console.print(f"[green]  ✓ Integrity verified[/green]")
+        
+        # Save to file
+        if output:
+            output_path = Path(output).expanduser().resolve()
+        else:
+            output_path = Path(manifest.name or f"{media_id}.bin")
+        
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(content_data)
+        
+        if json_output:
+            output_data = {
+                "media_id": media_id,
+                "name": manifest.name,
+                "size": manifest.byte_size,
+                "content_type": manifest.content_type,
+                "width": manifest.width,
+                "height": manifest.height,
+                "tags": manifest.tags,
+                "output_file": str(output_path),
+                "verified": verify_manifest(manifest, content_data),
+            }
+            console.print(json.dumps(output_data, indent=2))
+        else:
+            console.print(f"\n[bold green]✓ Image saved to: {output_path}[/bold green]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        if not json_output:
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(1)
+
+
+@image_app.command("verify")
+def image_verify(
+    media_id: str = typer.Argument(..., help="Media ID (hex)"),
+    file: str = typer.Argument(..., help="Path to local file to verify"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """
+    Verify an image matches the manifest.
+    
+    Computes hashes of the local file and compares with the manifest.
+    """
+    try:
+        # Normalize media_id
+        if media_id.startswith("0x"):
+            media_id = media_id[2:]
+        
+        if len(media_id) != 64:
+            raise ValueError("Media ID must be 32 bytes (64 hex chars)")
+        
+        file_path = Path(file).expanduser().resolve()
+        if not file_path.exists():
+            raise ValueError(f"File not found: {file_path}")
+        
+        if not json_output:
+            console.print(f"[bold]Verifying Image[/bold]")
+            console.print(f"  Media ID: {media_id}")
+            console.print(f"  File: {file_path}")
+        
+        # Get manifest from cache
+        cache = _load_media_cache()
+        cached_manifest = None
+        for img in cache.get("images", []):
+            if img.get("media_id") == media_id:
+                cached_manifest = img
+                break
+        
+        if not cached_manifest or not cached_manifest.get("manifest_commitment"):
+            console.print(f"[red]Error: Manifest not found in cache[/red]")
+            raise typer.Exit(1)
+        
+        manifest_commitment = cached_manifest["manifest_commitment"]
+        
+        # Download manifest
+        if not json_output:
+            console.print(f"\n[yellow]→ Downloading manifest...[/yellow]")
+        
+        import subprocess
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "da.cli.get_blob",
+                "--commit", manifest_commitment,
+                "--out", "-",
+            ],
+            capture_output=True,
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to download manifest: {result.stderr.decode()}")
+        
+        manifest_cbor = result.stdout
+        
+        # Parse manifest
+        from da.media.manifest import MediaManifest, verify_manifest
+        manifest = MediaManifest.from_cbor(manifest_cbor)
+        
+        # Read local file
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        
+        # Verify
+        if not json_output:
+            console.print(f"\n[yellow]→ Verifying integrity...[/yellow]")
+        
+        is_valid = verify_manifest(manifest, file_data)
+        
+        # Check individual fields
+        import hashlib
+        sha256_match = hashlib.sha256(file_data).digest() == manifest.integrity.sha256
+        sha3_256_match = hashlib.sha3_256(file_data).digest() == manifest.integrity.sha3_256
+        size_match = len(file_data) == manifest.byte_size
+        
+        if json_output:
+            output = {
+                "media_id": media_id,
+                "file": str(file_path),
+                "valid": is_valid,
+                "checks": {
+                    "size": size_match,
+                    "sha256": sha256_match,
+                    "sha3_256": sha3_256_match,
+                },
+                "manifest": {
+                    "name": manifest.name,
+                    "size": manifest.byte_size,
+                    "content_type": manifest.content_type,
+                },
+            }
+            console.print(json.dumps(output, indent=2))
+        else:
+            if is_valid:
+                console.print(f"\n[bold green]✓ Verification passed![/bold green]")
+                console.print(f"  Size: {size_match} ({'✓' if size_match else '✗'})")
+                console.print(f"  SHA-256: {sha256_match} ({'✓' if sha256_match else '✗'})")
+                console.print(f"  SHA3-256: {sha3_256_match} ({'✓' if sha3_256_match else '✗'})")
+            else:
+                console.print(f"\n[bold red]✗ Verification failed![/bold red]")
+                console.print(f"  Size: {size_match} ({'✓' if size_match else '✗'})")
+                console.print(f"  SHA-256: {sha256_match} ({'✓' if sha256_match else '✗'})")
+                console.print(f"  SHA3-256: {sha3_256_match} ({'✓' if sha3_256_match else '✗'})")
+                raise typer.Exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@image_app.command("list")
+def image_list(
+    tag: Optional[str] = typer.Option(
+        None,
+        "--tag",
+        help="Filter by tag",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """
+    List uploaded images.
+    
+    Shows images from the local cache with optional tag filtering.
+    """
+    try:
+        cache = _load_media_cache()
+        images = cache.get("images", [])
+        
+        # Filter by tag if specified
+        if tag:
+            images = [img for img in images if tag in img.get("tags", [])]
+        
+        if json_output:
+            console.print(json.dumps({"images": images}, indent=2))
+        else:
+            if not images:
+                if tag:
+                    console.print(f"[yellow]No images found with tag: {tag}[/yellow]")
+                else:
+                    console.print("[yellow]No images in cache[/yellow]")
+                    console.print("[dim]Upload an image with: animica ena image put <file>[/dim]")
+                return
+            
+            console.print(f"[bold]Uploaded Images[/bold] ({len(images)} total)\n")
+            
+            # Create table
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Media ID", style="yellow", no_wrap=True)
+            table.add_column("Name", style="white")
+            table.add_column("Size", style="green", justify="right")
+            table.add_column("Type", style="cyan")
+            table.add_column("Dimensions", style="magenta")
+            table.add_column("Tags", style="blue")
+            table.add_column("Created", style="dim")
+            
+            for img in images:
+                media_id = img.get("media_id", "")[:16] + "..."
+                name = img.get("name", "")
+                size = img.get("byte_size", 0)
+                size_str = f"{size:,}" if size < 1024 else f"{size / 1024:.1f}K" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f}M"
+                content_type = img.get("content_type", "").replace("image/", "")
+                
+                width = img.get("width")
+                height = img.get("height")
+                dims = f"{width}x{height}" if width and height else "-"
+                
+                tags_str = ", ".join(img.get("tags", [])) or "-"
+                
+                import datetime
+                created = img.get("created_at", 0)
+                created_str = datetime.datetime.fromtimestamp(created).strftime("%Y-%m-%d %H:%M") if created else "-"
+                
+                table.add_row(
+                    media_id,
+                    name,
+                    size_str,
+                    content_type,
+                    dims,
+                    tags_str,
+                    created_str,
+                )
+            
+            console.print(table)
+            
+            console.print(f"\n[dim]Retrieve an image with:[/dim]")
+            console.print(f"[dim]  animica ena image get <media_id>[/dim]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
