@@ -31,6 +31,7 @@ class TxKind(IntEnum):
     ENA_CALL = 5  # ENA inference call transaction (future)
     ENA_SUBMIT_RECEIPT = 6  # Phase 2: Submit compute receipt (anchor hash)
     AICF_CLAIM_PROVIDER_REWARDS = 7  # Phase 2: Provider claim accrued rewards
+    AICF_GOVERNANCE_TOPUP = 8  # Governance top-up for AICF pool
 
 
 @dataclass(frozen=True)
