@@ -18,114 +18,6 @@ from animica_studio.util.paths import logs_dir
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Stylesheet — minimal, no external theme libs
-# ---------------------------------------------------------------------------
-
-_STYLESHEET = """
-QMainWindow, QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-family: "Segoe UI", "SF Pro Text", "Ubuntu", sans-serif;
-    font-size: 13px;
-}
-
-QFrame#headerBar {
-    background-color: #181825;
-    border-bottom: 1px solid #313244;
-}
-
-QLabel#headerTitle {
-    color: #cba6f7;
-    font-size: 15px;
-    font-weight: bold;
-}
-
-QLabel#headerMeta {
-    color: #a6adc8;
-    font-size: 12px;
-}
-
-QLabel#headerSep {
-    color: #45475a;
-}
-
-QComboBox#profileCombo {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 12px;
-}
-
-QComboBox#profileCombo::drop-down {
-    border: none;
-}
-
-QFrame#sidebar {
-    background-color: #181825;
-    border-right: 1px solid #313244;
-}
-
-QPushButton#navButton {
-    background-color: transparent;
-    color: #cdd6f4;
-    text-align: left;
-    padding: 10px 16px;
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-}
-
-QPushButton#navButton:hover {
-    background-color: #313244;
-}
-
-QPushButton#navButton:checked {
-    background-color: #45475a;
-    color: #cba6f7;
-    font-weight: bold;
-}
-
-QPushButton#primaryButton {
-    background-color: #89b4fa;
-    color: #1e1e2e;
-    font-weight: bold;
-    border-radius: 4px;
-    padding: 6px 14px;
-}
-
-QPushButton#primaryButton:hover {
-    background-color: #b4befe;
-}
-
-QLabel#placeholderLabel {
-    color: #6c7086;
-    font-size: 18px;
-}
-
-QLabel#wizardPageTitle {
-    color: #cba6f7;
-    font-size: 16px;
-    font-weight: bold;
-}
-
-QLabel#wizardPageSubtitle {
-    color: #a6adc8;
-    font-size: 13px;
-}
-
-QLabel#wizardSummary {
-    background: #313244;
-    border-radius: 6px;
-    padding: 12px;
-    color: #cdd6f4;
-    font-size: 13px;
-}
-"""
-
-
-# ---------------------------------------------------------------------------
 # Global exception hook
 # ---------------------------------------------------------------------------
 
@@ -169,7 +61,6 @@ def _create_app() -> QApplication:
     app.setOrganizationName(__org_name__)
     app.setApplicationVersion(__version__)
     app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
-    app.setStyleSheet(_STYLESHEET)
     return app  # type: ignore[return-value]
 
 

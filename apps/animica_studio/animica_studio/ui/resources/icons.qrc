@@ -1,0 +1,17 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file>icons/dashboard.svg</file>
+    <file>icons/wallet.svg</file>
+    <file>icons/node.svg</file>
+    <file>icons/mining.svg</file>
+    <file>icons/aicf.svg</file>
+    <file>icons/da.svg</file>
+    <file>icons/quantum.svg</file>
+    <file>icons/console.svg</file>
+    <file>icons/ide.svg</file>
+    <file>icons/settings.svg</file>
+    <file>icons/search.svg</file>
+    <file>icons/palette.svg</file>
+    <file>icons/logo.svg</file>
+  </qresource>
+</RCC>
