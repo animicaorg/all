@@ -84,6 +84,36 @@ def is_hex_id(s: str) -> bool:
     return True
 
 
+# Phase 2 imports (lazy to avoid circular deps)
+# Import from submodules to make available via aicf.aitypes
+try:
+    from aicf.aitypes.receipt import (
+        ComputeReceipt,
+        ReceiptSignature,
+        ReceiptVersion,
+        hash_receipt,
+    )
+    from aicf.aitypes.provider_gpu import (
+        GPUCapabilities,
+        ProviderExtended,
+        ProviderReputation,
+    )
+    from aicf.aitypes.payout_accounting import (
+        ClaimRecord,
+        MaturityConfig,
+        PayoutEpoch,
+        ProviderAccrual,
+    )
+    from aicf.aitypes.training_receipt import (
+        TrainingProof,
+        TrainingReceipt,
+        hash_training_receipt,
+    )
+except ImportError:
+    # Gracefully degrade if Phase 2 modules not yet available
+    pass
+
+
 __all__ = [
     # ids
     "JobId",
@@ -104,4 +134,22 @@ __all__ = [
     "BlockHeight",
     # helpers
     "is_hex_id",
+    # Phase 2: Receipts (exported from submodules)
+    "ComputeReceipt",
+    "ReceiptSignature",
+    "ReceiptVersion",
+    "hash_receipt",
+    # Phase 2: GPU Providers
+    "GPUCapabilities",
+    "ProviderExtended",
+    "ProviderReputation",
+    # Phase 2: Payout Accounting
+    "ClaimRecord",
+    "MaturityConfig",
+    "PayoutEpoch",
+    "ProviderAccrual",
+    # Phase 2: Training
+    "TrainingProof",
+    "TrainingReceipt",
+    "hash_training_receipt",
 ]
