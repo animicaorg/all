@@ -31,8 +31,8 @@ packages/*/build/
 .mypy_cache/
 .ruff_cache/
 
-# Model cache
-models/
+# Model cache (top-level only; does not affect animica_studio/models/ Python package)
+/models/
 model_cache/
 *.bin
 *.safetensors
