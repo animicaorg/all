@@ -34,7 +34,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Dict
 
-__all__ = ("storage", "events", "hash", "abi", "treasury", "syscalls")
+__all__ = ("storage", "events", "hash", "abi", "treasury", "syscalls", "ena")
 
 # -- storage -----------------------------------------------------------------
 try:
@@ -166,3 +166,16 @@ except Exception:
             zk_verify=lambda *a, **k: False,
             random=lambda n: b"",
         )
+
+# -- ena ---------------------------------------------------------------------
+try:
+    from . import ena as ena  # type: ignore
+except Exception:
+    ena = SimpleNamespace(  # type: ignore[assignment]
+        request=lambda *a, **k: "",
+        get_status=lambda req_id: "",
+        get_result_hash=lambda req_id: "",
+        read_result=lambda req_id: None,
+        get_da_ptr=lambda req_id: "",
+        verify_receipt=lambda *a, **k: (False, "not available"),
+    )
