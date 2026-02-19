@@ -50,7 +50,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import aicf, chain, da, debug, ena, faucet, gui, key, mempool, mining, network, node, p2p, peer, rpc, script, snapshot, studio, sync, tx, wallet
+from . import aicf, chain, da, debug, ena, faucet, gui, key, mempool, mining, network, node, p2p, peer, phase2, rpc, script, snapshot, studio, sync, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -159,6 +159,7 @@ app.add_typer(node.app, name="node")
 app.add_typer(wallet.app, name="wallet")
 app.add_typer(mining.app, name="miner")
 app.add_typer(aicf.aicf_app, name="aicf")
+app.add_typer(phase2.phase2_app, name="phase2")
 app.add_typer(key.app, name="key")
 app.add_typer(tx.app, name="tx")
 app.add_typer(rpc.app, name="rpc")
