@@ -202,6 +202,87 @@ QUEUE_DEPTH = Gauge(
     registry=REGISTRY,
 )
 
+# NEW METRICS (Future Work Requirements)
+
+POOL_BALANCE_TOTAL = Gauge(
+    "animica_aicf_pool_balance_total",
+    "Current AICF pool balance in nano-ANM.",
+    registry=REGISTRY,
+)
+
+INFLOWS_TOTAL = Counter(
+    "animica_aicf_inflows_total",
+    "Total AICF pool inflows by source.",
+    labelnames=("source",),  # source: block_reward | fees | ena | governance
+    registry=REGISTRY,
+)
+
+PROVIDER_ACCRUED_TOTAL = Gauge(
+    "animica_aicf_provider_accrued_total",
+    "Total accrued rewards for a provider in nano-ANM.",
+    labelnames=("provider_id",),
+    registry=REGISTRY,
+)
+
+CLAIMS_TOTAL = Counter(
+    "animica_aicf_claims_total",
+    "Total claims by provider and status.",
+    labelnames=("provider_id", "status"),  # status: success | failed
+    registry=REGISTRY,
+)
+
+EPOCH_HEIGHT = Gauge(
+    "animica_aicf_epoch_height",
+    "Current block height.",
+    registry=REGISTRY,
+)
+
+EPOCH_INDEX = Gauge(
+    "animica_aicf_epoch_index",
+    "Current epoch number.",
+    registry=REGISTRY,
+)
+
+ENA_CALLS_TOTAL = Counter(
+    "animica_aicf_ena_calls_total",
+    "Total ENA inference calls by provider and status.",
+    labelnames=("provider_id", "status"),  # status: success | failed
+    registry=REGISTRY,
+)
+
+ENA_FEE_TOTAL = Counter(
+    "animica_aicf_ena_fee_total",
+    "Total ENA fees collected by split destination.",
+    labelnames=("split",),  # split: aicf | provider | treasury | burn
+    registry=REGISTRY,
+)
+
+MEMPOOL_ENA_PENDING = Gauge(
+    "animica_aicf_mempool_ena_pending",
+    "Number of pending ENA call transactions in mempool.",
+    registry=REGISTRY,
+)
+
+MEMPOOL_REJECTS_TOTAL = Counter(
+    "animica_aicf_mempool_rejects_total",
+    "Total mempool rejections by reason.",
+    labelnames=("reason",),  # reason: low_fee | unknown_provider | invalid_payload | etc.
+    registry=REGISTRY,
+)
+
+DB_WRITE_ERRORS_TOTAL = Counter(
+    "animica_aicf_db_write_errors_total",
+    "Total database write errors.",
+    labelnames=("operation",),  # operation: put | delete | batch
+    registry=REGISTRY,
+)
+
+READ_ONLY_FS_ERRORS_TOTAL = Counter(
+    "animica_aicf_read_only_fs_errors_total",
+    "Total read-only filesystem errors.",
+    registry=REGISTRY,
+)
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Recording helpers
 # ────────────────────────────────────────────────────────────────────────────────
@@ -307,6 +388,103 @@ def time_settlement():
 
 
 # ────────────────────────────────────────────────────────────────────────────────
+# NEW RECORDING HELPERS (Future Work Requirements)
+# ────────────────────────────────────────────────────────────────────────────────
+
+
+def record_pool_balance(balance_nano: int) -> None:
+    """Update AICF pool balance gauge."""
+    POOL_BALANCE_TOTAL.set(float(balance_nano) / 1e9)  # Convert to ANM for readability
+
+
+def record_inflow(source: str, amount_nano: int) -> None:
+    """
+    Record an inflow to the AICF pool.
+    
+    Args:
+        source: One of: block_reward, fees, ena, governance
+        amount_nano: Amount in nano-ANM
+    """
+    INFLOWS_TOTAL.labels(source=source).inc(float(amount_nano) / 1e9)
+
+
+def record_provider_accrued(provider_id: str, accrued_nano: int) -> None:
+    """Update provider accrued rewards gauge."""
+    PROVIDER_ACCRUED_TOTAL.labels(provider_id=provider_id).set(
+        float(accrued_nano) / 1e9
+    )
+
+
+def record_claim(provider_id: str, status: str = "success") -> None:
+    """
+    Record a claim attempt.
+    
+    Args:
+        provider_id: Provider identifier
+        status: 'success' or 'failed'
+    """
+    CLAIMS_TOTAL.labels(provider_id=provider_id, status=status).inc()
+
+
+def record_epoch(height: int, epoch: int) -> None:
+    """Update epoch height and index gauges."""
+    EPOCH_HEIGHT.set(height)
+    EPOCH_INDEX.set(epoch)
+
+
+def record_ena_call(provider_id: str, status: str = "success") -> None:
+    """
+    Record an ENA call.
+    
+    Args:
+        provider_id: Provider identifier
+        status: 'success' or 'failed'
+    """
+    ENA_CALLS_TOTAL.labels(provider_id=provider_id, status=status).inc()
+
+
+def record_ena_fee(split: str, amount_nano: int) -> None:
+    """
+    Record ENA fee distribution.
+    
+    Args:
+        split: One of: aicf, provider, treasury, burn
+        amount_nano: Amount in nano-ANM
+    """
+    ENA_FEE_TOTAL.labels(split=split).inc(float(amount_nano) / 1e9)
+
+
+def record_mempool_ena_pending(count: int) -> None:
+    """Update pending ENA call transactions gauge."""
+    MEMPOOL_ENA_PENDING.set(count)
+
+
+def record_mempool_reject(reason: str) -> None:
+    """
+    Record a mempool rejection.
+    
+    Args:
+        reason: Rejection reason (low_fee, unknown_provider, invalid_payload, etc.)
+    """
+    MEMPOOL_REJECTS_TOTAL.labels(reason=reason).inc()
+
+
+def record_db_write_error(operation: str = "put") -> None:
+    """
+    Record a database write error.
+    
+    Args:
+        operation: Operation type (put, delete, batch)
+    """
+    DB_WRITE_ERRORS_TOTAL.labels(operation=operation).inc()
+
+
+def record_read_only_fs_error() -> None:
+    """Record a read-only filesystem error."""
+    READ_ONLY_FS_ERRORS_TOTAL.inc()
+
+
+# ────────────────────────────────────────────────────────────────────────────────
 # ASGI/FastAPI mounting helpers
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -382,6 +560,20 @@ __all__ = [
     "SLASH_AMOUNT_TOKENS",
     "ACTIVE_LEASES",
     "QUEUE_DEPTH",
+    # New metrics
+    "POOL_BALANCE_TOTAL",
+    "INFLOWS_TOTAL",
+    "PROVIDER_ACCRUED_TOTAL",
+    "CLAIMS_TOTAL",
+    "EPOCH_HEIGHT",
+    "EPOCH_INDEX",
+    "ENA_CALLS_TOTAL",
+    "ENA_FEE_TOTAL",
+    "MEMPOOL_ENA_PENDING",
+    "MEMPOOL_REJECTS_TOTAL",
+    "DB_WRITE_ERRORS_TOTAL",
+    "READ_ONLY_FS_ERRORS_TOTAL",
+    # Recording helpers
     "record_enqueue",
     "record_assignment",
     "record_lease_lost",
@@ -389,10 +581,24 @@ __all__ = [
     "record_proof_verified",
     "record_payout",
     "record_slash",
+    # New recording helpers
+    "record_pool_balance",
+    "record_inflow",
+    "record_provider_accrued",
+    "record_claim",
+    "record_epoch",
+    "record_ena_call",
+    "record_ena_fee",
+    "record_mempool_ena_pending",
+    "record_mempool_reject",
+    "record_db_write_error",
+    "record_read_only_fs_error",
+    # Timers
     "time_enqueue_to_assign",
     "time_assign_to_complete",
     "time_proof_verify",
     "time_settlement",
+    # Mounting
     "make_prometheus_asgi_app",
     "mount_fastapi",
 ]
