@@ -25,11 +25,30 @@ class Timeouts:
 
 
 @dataclass
+class NodeConfig:
+    """Local node process configuration."""
+
+    start_cmd: list[str] = field(default_factory=lambda: ["animica", "node", "start"])
+    rpc_local_url: str = "http://127.0.0.1:8545/rpc"
+    log_file_name: str = "node.log"
+    pid_file_name: str = "node.pid"
+
+
+@dataclass
+class CliConfig:
+    """CLI tooling configuration."""
+
+    animica_bin: str = "animica"
+
+
+@dataclass
 class Profile:
     name: str = "Mainnet"
     rpc_url: str = "https://mainnet.animica.org/rpc"
     chain_id_expected: int = 1
     timeouts: Timeouts = field(default_factory=Timeouts)
+    node: NodeConfig = field(default_factory=NodeConfig)
+    cli: CliConfig = field(default_factory=CliConfig)
 
 
 @dataclass
@@ -58,17 +77,38 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
+def _node_config_from_dict(d: dict[str, Any]) -> NodeConfig:
+    raw_cmd = d.get("start_cmd", ["animica", "node", "start"])
+    start_cmd = list(raw_cmd) if isinstance(raw_cmd, list) else ["animica", "node", "start"]
+    return NodeConfig(
+        start_cmd=start_cmd,
+        rpc_local_url=str(d.get("rpc_local_url", "http://127.0.0.1:8545/rpc")),
+        log_file_name=str(d.get("log_file_name", "node.log")),
+        pid_file_name=str(d.get("pid_file_name", "node.pid")),
+    )
+
+
+def _cli_config_from_dict(d: dict[str, Any]) -> CliConfig:
+    return CliConfig(
+        animica_bin=str(d.get("animica_bin", "animica")),
+    )
+
+
 def _profile_from_dict(d: dict[str, Any]) -> Profile:
     timeouts_dict = d.get("timeouts", {})
     timeouts = Timeouts(
         connect_timeout_ms=int(timeouts_dict.get("connect_timeout_ms", 3000)),
         request_timeout_ms=int(timeouts_dict.get("request_timeout_ms", 15000)),
     )
+    node = _node_config_from_dict(d.get("node", {}))
+    cli = _cli_config_from_dict(d.get("cli", {}))
     return Profile(
         name=str(d.get("name", "Mainnet")),
         rpc_url=str(d.get("rpc_url", "https://mainnet.animica.org/rpc")),
         chain_id_expected=int(d.get("chain_id_expected", 1)),
         timeouts=timeouts,
+        node=node,
+        cli=cli,
     )
 
 
