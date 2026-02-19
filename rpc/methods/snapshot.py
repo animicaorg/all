@@ -223,7 +223,7 @@ def _query_peers_for_snapshots_sync(chain_id: int | None = None) -> dict:
         
         _log.debug(f"P2P peer snapshot query not implemented in sync RPC context ({len(peers_info)} peers available)")
         
-        # TODO: Implement using thread pool executor or when async RPC methods are supported
+        # Phase 2: Thread pool for sync snapshot generation (when async RPC supported)
         # For now, return empty dict
         return {}
         

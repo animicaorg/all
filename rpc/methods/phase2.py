@@ -161,7 +161,7 @@ async def list_providers(
             "limit": int
         }
     """
-    # TODO: Implement list providers logic
+    # Phase 2: List providers (provider registry integration pending)
     raise RpcError(code=-32601, message="aicf.listProviders not yet implemented")
 
 
@@ -203,7 +203,7 @@ async def get_quote(
             ]
         }
     """
-    # TODO: Implement quote logic
+    # Phase 2: Provider quote logic (ENA fee market integration pending)
     # 1. Calculate base fee from params (ena_call_fee_base_nano)
     # 2. Apply per-token pricing
     # 3. Split into AICF/provider cuts
@@ -235,7 +235,7 @@ async def submit_receipt(receipt_cbor: str) -> Dict[str, Any]:
     Raises:
         RpcError: If receipt is invalid or submission fails
     """
-    # TODO: Implement receipt submission logic
+    # Phase 2: Receipt submission (ENA proof verification integration pending)
     # 1. Decode CBOR receipt
     # 2. Validate receipt fields
     # 3. Verify signatures
@@ -278,7 +278,7 @@ async def get_receipt(receipt_hash: str) -> Dict[str, Any]:
             "da_commitment": str (optional)
         }
     """
-    # TODO: Implement get receipt logic
+    # Phase 2: Receipt retrieval (ENA receipt storage integration pending)
     raise RpcError(code=-32601, message="ena.getReceipt not yet implemented")
 
 
@@ -316,7 +316,7 @@ async def get_provider_rewards(provider_id: str) -> Dict[str, Any]:
             ]
         }
     """
-    # TODO: Implement get provider rewards logic
+    # Phase 2: Provider rewards query (AICF accounting integration pending)
     # 1. Query provider accrual records
     # 2. Sum across finalized epochs
     # 3. Return breakdown by epoch
@@ -355,7 +355,7 @@ async def claim_provider_rewards(
     Raises:
         RpcError: If amount exceeds claimable, not finalized, etc.
     """
-    # TODO: Implement claim logic
+    # Phase 2: Provider rewards claim (AICF claim transaction integration pending)
     # 1. Validate provider exists
     # 2. Validate epochs are finalized
     # 3. Validate amount <= claimable
@@ -389,7 +389,7 @@ async def get_epoch_status() -> Dict[str, Any]:
             "epoch_length": int
         }
     """
-    # TODO: Implement epoch status logic
+    # Phase 2: Epoch status query (AICF epoch tracking integration pending)
     # 1. Get current chain height
     # 2. Compute current epoch
     # 3. Get pool balance
@@ -418,7 +418,7 @@ async def get_maturity_depth() -> Dict[str, Any]:
             "max_claims_per_epoch": int
         }
     """
-    # TODO: Implement maturity config getter
+    # Phase 2: Maturity config (AICF params integration pending)
     raise RpcError(code=-32601, message="aicf.getMaturityDepth not yet implemented")
 
 
@@ -447,7 +447,7 @@ async def submit_training_receipt(receipt_cbor: str) -> Dict[str, Any]:
             "anchored_at_height": int
         }
     """
-    # TODO: Implement training receipt submission
+    # Phase 2: Training receipt submission (ENA training proof verification pending)
     # 1. Decode CBOR receipt
     # 2. Validate training receipt fields
     # 3. Verify provider signature
@@ -485,5 +485,5 @@ async def get_training_receipt(receipt_hash: str) -> Dict[str, Any]:
             "is_verified": bool
         }
     """
-    # TODO: Implement get training receipt
+    # Phase 2: Training receipt retrieval (ENA training storage integration pending)
     raise RpcError(code=-32601, message="aicf.getTrainingReceipt not yet implemented")

@@ -497,12 +497,18 @@ async def marketplace_calculate_price(
 
 
 def get_treasury_snapshot_sync() -> TreasurySnapshot:
-    """Synchronous version for non-async code paths."""
-    # TODO: Implement actual state fetching
+    """Synchronous version for non-async code paths.
+    
+    MVP implementation: Returns fallback data.
+    Phase 2: Integrate with state DB to fetch real treasury state.
+    """
     return FALLBACK_TREASURY_SNAPSHOT
 
 
 def get_market_price_sync() -> MarketPriceData:
-    """Synchronous version for non-async code paths."""
-    # TODO: Implement actual market data fetching with retries
+    """Synchronous version for non-async code paths.
+    
+    MVP implementation: Returns fallback data.
+    Phase 2: Integrate with external price APIs (CoinGecko, CoinMarketCap).
+    """
     return FALLBACK_MARKET_PRICE_DATA

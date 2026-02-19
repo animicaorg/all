@@ -1,0 +1,31 @@
+name: Production Readiness Check
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  check-no-todos:
+    runs-on: ubuntu-latest
+    name: Check for TODO/FIXME/STUB markers
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Run TODO/FIXME/STUB check
+        run: |
+          python scripts/check_no_todos.py
+      
+      - name: Report success
+        if: success()
+        run: |
+          echo "✓ Production readiness check passed"
+          echo "✓ No TODO/FIXME/STUB markers found in production code"

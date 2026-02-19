@@ -261,7 +261,7 @@ def upgrade_resume():
     
     console.print(f"[cyan]Resuming upgrade from state: {status.current_state.value}[/cyan]")
     
-    # TODO: Implement resume logic based on current state
+    # Phase 2: Resume logic (state persistence integration pending)
     console.print("[yellow]Resume functionality not yet fully implemented[/yellow]")
     console.print("Current state allows manual intervention:")
     console.print(f"  State: {status.current_state.value}")

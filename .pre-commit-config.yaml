@@ -23,3 +23,9 @@ repos:
         entry: python -m compileall core/genesis/loader.py
         language: system
         pass_filenames: false
+      - id: check-no-todos
+        name: Check for TODO/FIXME/STUB in production code
+        entry: python scripts/check_no_todos.py
+        language: system
+        pass_filenames: false
+        types: [python, javascript, typescript]
