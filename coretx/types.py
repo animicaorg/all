@@ -27,6 +27,8 @@ class TxKind(IntEnum):
     DEPLOY = 1
     CALL = 2
     COINBASE = 3
+    AICF_CLAIM = 4  # AICF credit claim transaction
+    ENA_CALL = 5  # ENA inference call transaction (future)
 
 
 @dataclass(frozen=True)
