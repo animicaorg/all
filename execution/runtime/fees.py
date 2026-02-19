@@ -36,16 +36,21 @@ class FeeConfig:
 
     treasury_tip_bps:
         Portion of *priority fee* (tips) that is credited to the treasury.
-        The remainder of the priority fee goes to the miner/coinbase.
+        The remainder (after AICF slice) of the priority fee goes to the miner/coinbase.
         Base fee is always burned when burn_base_fee is True.
+
+    aicf_tip_bps:
+        Portion of *priority fee* (tips) that is credited to AICF pool.
+        Applied after treasury_tip_bps.
 
     burn_base_fee:
         If True, base_fee_per_gas * gas_used_final is burned (payer is charged,
         no account receives it). If False, base fee is treated like a tip and
-        split via treasury_tip_bps (rare; default stays True).
+        split via treasury_tip_bps and aicf_tip_bps (rare; default stays True).
     """
 
     treasury_tip_bps: int = 0  # e.g. 1000 = 10% of priority fee to treasury
+    aicf_tip_bps: int = 0  # e.g. 2000 = 20% of priority fee to AICF
     burn_base_fee: bool = True
 
 
@@ -69,9 +74,10 @@ class FeeOutcome:
     burn_amount: int  # base burn (if enabled)
     tip_to_coinbase: int  # miner share of priority fee
     tip_to_treasury: int  # treasury share of priority fee
+    tip_to_aicf: int  # AICF share of priority fee
 
     total_fee: int  # total amount debited from payer
-    # Note: total_fee == burn_amount + tip_to_coinbase + tip_to_treasury when burn_base_fee=True
+    # Note: total_fee == burn_amount + tip_to_coinbase + tip_to_treasury + tip_to_aicf when burn_base_fee=True
 
 
 # --------------------------------------------------------------------------------------
@@ -153,7 +159,7 @@ def finalize_accounting(
             - max_fee_per_gas & max_priority_fee_per_gas (1559-style), or
             - gas_price (legacy).
         block_env: BlockEnv-like object exposing base_fee (>=0) and coinbase/treasury if needed.
-        config: FeeConfig with treasury split and burn behavior.
+        config: FeeConfig with treasury/AICF split and burn behavior.
 
     Returns:
         FeeOutcome with all amounts computed.
@@ -176,12 +182,18 @@ def finalize_accounting(
         burn_amount = 0
         prio_for_split = base_component + prio_component
 
+    # Split priority fee: treasury -> AICF -> miner (remainder)
     tip_to_treasury = (
         prio_for_split * max(min(cfg.treasury_tip_bps, BPS_DENOM), 0)
     ) // BPS_DENOM
-    tip_to_coinbase = prio_for_split - tip_to_treasury
+    
+    tip_to_aicf = (
+        prio_for_split * max(min(cfg.aicf_tip_bps, BPS_DENOM), 0)
+    ) // BPS_DENOM
+    
+    tip_to_coinbase = prio_for_split - tip_to_treasury - tip_to_aicf
 
-    total = burn_amount + tip_to_coinbase + tip_to_treasury
+    total = burn_amount + tip_to_coinbase + tip_to_treasury + tip_to_aicf
 
     return FeeOutcome(
         gas_used_raw=int(gas_used_raw),
@@ -193,6 +205,7 @@ def finalize_accounting(
         burn_amount=int(burn_amount),
         tip_to_coinbase=int(tip_to_coinbase),
         tip_to_treasury=int(tip_to_treasury),
+        tip_to_aicf=int(tip_to_aicf),
         total_fee=int(total),
     )
 
@@ -203,13 +216,14 @@ def settle_fees(
     *,
     coinbase: Optional[bytes],
     treasury: Optional[bytes],
+    aicf_pool: Optional[bytes],
     outcome: FeeOutcome,
 ) -> None:
     """
     Apply balance changes implied by the computed FeeOutcome.
 
-    Debits the payer by total_fee, then credits coinbase & treasury with their
-    respective tip shares. The burn portion is intentionally not credited.
+    Debits the payer by total_fee, then credits coinbase, treasury, and AICF pool
+    with their respective tip shares. The burn portion is intentionally not credited.
 
     This function requires execution.state.apply_balance.{debit,credit}. If those
     helpers are not available, this function raises ImportError and callers should
@@ -229,6 +243,11 @@ def settle_fees(
     # 3) Credit treasury with its cut (if any/configured)
     if treasury and outcome.tip_to_treasury:
         credit(state, treasury, outcome.tip_to_treasury)
+    
+    # 4) Credit AICF pool with its cut (if any/configured)
+    if aicf_pool and outcome.tip_to_aicf:
+        credit(state, aicf_pool, outcome.tip_to_aicf)
+    
     # Burn is implicit: no credit performed.
 
 
