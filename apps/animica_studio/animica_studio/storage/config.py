@@ -53,6 +53,14 @@ class Profile:
 
 
 @dataclass
+class WalletSettings:
+    """Per-profile wallet display settings."""
+
+    decimals: int = 18
+    explorer_base_url: str = "https://animica.org/explorer"
+
+
+@dataclass
 class Config:
     active_profile: str = "Mainnet"
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
@@ -63,6 +71,15 @@ class Config:
     first_run_completed: bool = False
     active_profile_id: str | None = None
     rpc_profiles: list[dict[str, Any]] = field(default_factory=list)
+
+    # ---------------------------------------------------------------------------
+    # Wallet fields
+    # ---------------------------------------------------------------------------
+    accounts: list[dict[str, Any]] = field(default_factory=list)
+    wallet_settings: dict[str, Any] = field(
+        default_factory=lambda: {"decimals": 18, "explorer_base_url": "https://animica.org/explorer"}
+    )
+    pending_txs: list[dict[str, Any]] = field(default_factory=list)
 
     # ---------------------------------------------------------------------------
     # Convenience helpers
@@ -123,12 +140,24 @@ def _profile_from_dict(d: dict[str, Any]) -> Profile:
 def _config_from_dict(d: dict[str, Any]) -> Config:
     profiles_raw = d.get("profiles", [])
     profiles = [_profile_from_dict(p) for p in profiles_raw] if profiles_raw else [Profile()]
+    wallet_settings_raw = d.get("wallet_settings") or {}
+    if not isinstance(wallet_settings_raw, dict):
+        wallet_settings_raw = {}
+    wallet_settings = {
+        "decimals": int(wallet_settings_raw.get("decimals", 18)),
+        "explorer_base_url": str(
+            wallet_settings_raw.get("explorer_base_url", "https://animica.org/explorer")
+        ),
+    }
     return Config(
         active_profile=str(d.get("active_profile", "Mainnet")),
         profiles=profiles,
         first_run_completed=bool(d.get("first_run_completed", False)),
         active_profile_id=d.get("active_profile_id") or None,
         rpc_profiles=list(d.get("rpc_profiles") or []),
+        accounts=list(d.get("accounts") or []),
+        wallet_settings=wallet_settings,
+        pending_txs=list(d.get("pending_txs") or []),
     )
 
 

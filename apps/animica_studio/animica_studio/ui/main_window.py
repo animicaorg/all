@@ -27,7 +27,7 @@ from animica_studio.ui.pages.console import ConsolePage
 from animica_studio.ui.pages.dashboard import DashboardPage
 from animica_studio.ui.pages.node import NodePage
 from animica_studio.ui.pages.settings import SettingsPage
-from animica_studio.ui.pages.wallet import WalletPage
+from animica_studio.ui.pages.wallet_page import WalletPage
 
 log = logging.getLogger(__name__)
 
@@ -126,9 +126,10 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
 
+        self._wallet_page = WalletPage(config=self._config)
         pages: list[_NavEntry] = [
             _NavEntry("Dashboard", "📊", DashboardPage()),
-            _NavEntry("Wallet", "💳", WalletPage(config=self._config)),
+            _NavEntry("Wallet", "💳", self._wallet_page),
             _NavEntry("Node", "🖥️", NodePage(config=self._config)),
             _NavEntry("Console", "🖱️", ConsolePage()),
             _NavEntry("Settings", "⚙️", SettingsPage(config=self._config)),
@@ -328,6 +329,8 @@ class MainWindow(QMainWindow):
         """Called by ProfileService when the active profile changes."""
         self._last_actual_chain_id = None  # reset until next health check
         self.refresh_header()
+        # Notify wallet page so it can cancel in-flight requests and refresh
+        self._wallet_page.on_profile_changed(profile)
 
     # ------------------------------------------------------------------
     # Profiles menu / wizard
