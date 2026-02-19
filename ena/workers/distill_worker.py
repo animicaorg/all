@@ -199,7 +199,7 @@ class DistillationWorker(WorkerBase):
         dataset_dir = self.output_dir / "distill_dataset"
         self.download_from_da(distill_dataset_hash, dataset_dir)
         
-        # TODO: Real distillation implementation
+        # Phase 2: Real model distillation (modal/compute platform integration pending)
         # This would use knowledge distillation libraries:
         # 
         # from transformers import (

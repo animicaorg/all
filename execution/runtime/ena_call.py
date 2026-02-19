@@ -310,7 +310,7 @@ def apply_ena_call(
             receipt=None,
         )
     
-    # TODO: Actually invoke the ENA service via capabilities adapter
+    # Phase 2: ENA service invocation (capabilities adapter integration pending)
     # For now, return a stub response
     result_text = f"[ENA stub] Processed prompt (len={len(prompt)})"
     

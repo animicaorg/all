@@ -418,12 +418,27 @@ async def topUp(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     if amount <= 0:
         raise InvalidParams("Amount must be positive")
     
-    # TODO: Implement governance permission check
-    # TODO: Implement actual top-up transaction
+    # Phase 2: Governance top-up transaction
+    # Implementation path:
+    # 1. Verify caller has governance permission (from governance registry)
+    # 2. Build AICF_GOVERNANCE_TOPUP transaction (TxKind.AICF_GOVERNANCE_TOPUP)
+    # 3. Sign with governance key
+    # 4. Submit transaction to mempool
+    # 5. Wait for confirmation
+    # 6. Return transaction hash
+    # 
+    # Example:
+    # from execution.state.governance import verify_governance_permission
+    # if not verify_governance_permission(ctx.state, from_address):
+    #     raise RpcError(code=-32000, message="Not authorized")
+    # from coretx.types import TxKind
+    # tx = build_tx(kind=TxKind.AICF_GOVERNANCE_TOPUP, value=amount, ...)
+    # tx_hash = submit_tx(tx)
+    # return {"success": True, "tx_hash": tx_hash}
     
     return {
         "success": False,
-        "message": "Top-up functionality not yet implemented. Requires governance transaction.",
+        "message": "Top-up functionality not yet implemented (Phase 2 - governance integration pending).",
     }
 
 

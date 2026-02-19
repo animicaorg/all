@@ -69,7 +69,7 @@ def register_worker(pubkey: bytes, metadata: bytes) -> bytes:
 
 
 def stake(worker_id: bytes, amount: int) -> None:
-    # TODO: integrate with token transfer & escrow
+    # Phase 2: Escrow integration (token transfer contract integration pending)
     w = storage.get(_worker_key(worker_id))
     if w is None:
         abi.revert(b"ERR_UNKNOWN_WORKER")
