@@ -1,0 +1,12 @@
+{
+  "type": "quantum_stub",
+  "job_id": "quantum_stub_vdf_001",
+  "description": "Verifiable sequential work (hash chain style)",
+  "steps": 10000,
+  "expected_runtime_sec": 60,
+  "unit_definition": "per_1000_steps",
+  "reward_rate_hint": 5,
+  "required_capabilities": ["cpu"],
+  "proof_type": "stub_quantum_v1",
+  "notes": "This is a placeholder for real quantum proofs. Produces deterministic, verifiable useful-work envelopes."
+}
