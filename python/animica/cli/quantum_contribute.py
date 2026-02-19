@@ -342,4 +342,122 @@ def watch(
         raise typer.Exit(0)
 
 
+@quantum_contribute_app.command("start")
+def start(
+    worker_type: str = typer.Option(
+        "quantum",
+        "--type",
+        help="Worker type: gpu|cpu|quantum",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Worker wallet address (defaults to default wallet)",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Start quantum contribution worker."""
+    from . import aicf_utils
+    
+    try:
+        result = aicf_utils.rpc_call(
+            "aicf.startWorker",
+            params=[{
+                "worker_type": worker_type,
+                "address": address,
+            }],
+            url=rpc_url,
+        )
+        
+        if json_output:
+            console.print(aicf_utils.safe_json_encode(result))
+        else:
+            console.print(f"[green]✓ Quantum worker started successfully![/green]")
+            console.print(f"\n[bold]Worker Details:[/bold]")
+            console.print(f"  Worker ID: {result.get('worker_id', 'N/A')}")
+            console.print(f"  Type: {worker_type}")
+            console.print(f"  Status: {result.get('status', 'ACTIVE')}")
+            
+            if result.get('listening_for'):
+                console.print(f"  Listening For: {result['listening_for']}")
+            
+            console.print(f"\n[dim]Stop worker: animica quantum contribute stop[/dim]")
+    
+    except Exception as e:
+        if json_output:
+            console.print(aicf_utils.safe_json_encode({"error": str(e)}))
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@quantum_contribute_app.command("stop")
+def stop(
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Worker address (defaults to default wallet)",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force stop even if jobs are in progress",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Stop quantum contribution worker."""
+    from . import aicf_utils
+    
+    try:
+        result = aicf_utils.rpc_call(
+            "aicf.stopWorker",
+            params=[{
+                "address": address,
+                "force": force,
+            }],
+            url=rpc_url,
+        )
+        
+        if json_output:
+            console.print(aicf_utils.safe_json_encode(result))
+        else:
+            console.print(f"[green]✓ Quantum worker stopped successfully![/green]")
+            console.print(f"\n[bold]Final Status:[/bold]")
+            console.print(f"  Worker ID: {result.get('worker_id', 'N/A')}")
+            console.print(f"  Status: {result.get('status', 'STOPPED')}")
+            
+            if result.get('jobs_completed'):
+                console.print(f"  Jobs Completed: {result['jobs_completed']}")
+            if result.get('credits_earned'):
+                console.print(f"  Total Credits Earned: {result['credits_earned']}")
+            
+            if result.get('warning'):
+                console.print(f"\n[yellow]Warning: {result['warning']}[/yellow]")
+    
+    except Exception as e:
+        if json_output:
+            console.print(aicf_utils.safe_json_encode({"error": str(e)}))
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 __all__ = ["quantum_contribute_app"]
