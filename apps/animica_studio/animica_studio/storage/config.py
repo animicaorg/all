@@ -82,6 +82,25 @@ class Config:
     pending_txs: list[dict[str, Any]] = field(default_factory=list)
 
     # ---------------------------------------------------------------------------
+    # Console fields
+    # ---------------------------------------------------------------------------
+    console_presets: list[dict[str, Any]] = field(default_factory=list)
+    console_history: list[str] = field(default_factory=list)
+
+    # ---------------------------------------------------------------------------
+    # IDE fields
+    # ---------------------------------------------------------------------------
+    ide_workspace_root: str | None = None
+    ide_recent_files: list[str] = field(default_factory=list)
+    ide_open_tabs: list[str] = field(default_factory=list)
+    ide_last_active_file: str | None = None
+
+    # ---------------------------------------------------------------------------
+    # App behaviour
+    # ---------------------------------------------------------------------------
+    stop_node_on_exit: bool = True
+
+    # ---------------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------------
 
@@ -158,6 +177,13 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         accounts=list(d.get("accounts") or []),
         wallet_settings=wallet_settings,
         pending_txs=list(d.get("pending_txs") or []),
+        console_presets=list(d.get("console_presets") or []),
+        console_history=list(d.get("console_history") or []),
+        ide_workspace_root=d.get("ide_workspace_root") or None,
+        ide_recent_files=list(d.get("ide_recent_files") or []),
+        ide_open_tabs=list(d.get("ide_open_tabs") or []),
+        ide_last_active_file=d.get("ide_last_active_file") or None,
+        stop_node_on_exit=bool(d.get("stop_node_on_exit", True)),
     )
 
 

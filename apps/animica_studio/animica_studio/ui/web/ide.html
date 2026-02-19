@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'self' data:;">
+  <title>Animica Studio IDE</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e2e; color: #cdd6f4; font-family: monospace; }
+    #app { display: flex; flex-direction: column; height: 100%; }
+    #tabs { display: flex; background: #181825; border-bottom: 1px solid #313244; overflow-x: auto; flex-shrink: 0; }
+    .tab { padding: 6px 16px; cursor: pointer; white-space: nowrap; border-right: 1px solid #313244; color: #6c7086; font-size: 12px; }
+    .tab.active { background: #1e1e2e; color: #cdd6f4; border-top: 1px solid #89b4fa; }
+    .tab .close { margin-left: 8px; opacity: 0.6; }
+    .tab .close:hover { opacity: 1; }
+    .tab.dirty::after { content: "●"; margin-left: 4px; color: #f38ba8; font-size: 10px; }
+    #editor-container { flex: 1; overflow: hidden; }
+    #editor { width: 100%; height: 100%; }
+    #no-monaco { display: flex; align-items: center; justify-content: center; height: 100%;
+                  flex-direction: column; gap: 12px; color: #6c7086; }
+    #no-monaco code { background: #313244; padding: 4px 8px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="tabs"></div>
+  <div id="editor-container">
+    <div id="editor"></div>
+    <div id="no-monaco" style="display:none">
+      <p>Monaco editor not found.</p>
+      <p>Run: <code>python scripts/setup_monaco.py</code></p>
+    </div>
+  </div>
+</div>
+<script src="qwebchannel.js"></script>
+<script src="ide.js"></script>
+</body>
+</html>

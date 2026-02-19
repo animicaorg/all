@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
 from animica_studio.storage.config import Config
-from animica_studio.ui.pages.console import ConsolePage
+from animica_studio.ui.pages.console_page import ConsolePage
 from animica_studio.ui.pages.dashboard import DashboardPage
+from animica_studio.ui.pages.ide_page import IdePage
 from animica_studio.ui.pages.node import NodePage
 from animica_studio.ui.pages.settings import SettingsPage
 from animica_studio.ui.pages.wallet_page import WalletPage
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
             _NavEntry("Wallet", "💳", self._wallet_page),
             _NavEntry("Node", "🖥️", NodePage(config=self._config)),
             _NavEntry("Console", "🖱️", ConsolePage()),
+            _NavEntry("IDE", "📝", IdePage()),
             _NavEntry("Settings", "⚙️", SettingsPage(config=self._config)),
         ]
 
@@ -452,3 +454,31 @@ class MainWindow(QMainWindow):
     def show_no_profile_banner(self) -> None:
         """Show the 'no profile configured' banner."""
         self._no_profile_banner.setVisible(True)
+
+    # ------------------------------------------------------------------
+    # Close event — clean shutdown
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        """Clean shutdown: stop node if configured, stop health timer."""
+        log.info("MainWindow: close event — shutting down")
+
+        stop_on_exit = getattr(self._config, "stop_node_on_exit", True)
+        if stop_on_exit:
+            try:
+                active = self._profile_service.get_active()
+            except Exception:  # noqa: BLE001
+                active = None
+            if active is not None:
+                from animica_studio.services.process_manager import ProcessManager  # noqa: PLC0415
+                try:
+                    pm = ProcessManager(rpc_url=active.effective_rpc_url())
+                    status = pm.status()
+                    if status.get("running"):
+                        log.info("MainWindow: stopping local node on exit")
+                        pm.stop()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("MainWindow: could not stop node on exit: %s", exc)
+
+        self._health_timer.stop()
+        event.accept()
