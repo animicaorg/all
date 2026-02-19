@@ -463,9 +463,24 @@ def sync_blobs(
         "--keystore",
         help="Keystore path (default: ~/.animica/provider_key.json)",
     ),
+    verify: bool = typer.Option(
+        True,
+        "--verify/--no-verify",
+        help="Verify blob hashes after download",
+    ),
 ) -> None:
-    """Sync assigned blobs from DA to local storage."""
+    """
+    Sync assigned blobs from DA to local storage.
+    
+    This command:
+    1. Fetches all assigned blobs for this provider
+    2. Downloads missing blobs from DA service
+    3. Stores in local content-addressed storage
+    4. Verifies hashes match assignments
+    """
     try:
+        import hashlib
+        
         # Load keypair to get provider ID
         pubkey, _ = _load_or_generate_keypair(keystore)
         provider_id = create_provider_id(pubkey)
@@ -487,14 +502,33 @@ def sync_blobs(
         synced = 0
         skipped = 0
         errors = 0
+        verified = 0
         
         for assignment in assignments:
             commit_hex = assignment.blob_commitment.hex()
             
             # Check if already exists
             if service.has_blob(assignment.blob_commitment):
-                skipped += 1
-                continue
+                # Verify existing blob if requested
+                if verify:
+                    try:
+                        existing_data = service.get_blob(assignment.blob_commitment)
+                        actual_hash = hashlib.sha3_256(existing_data).digest()
+                        if actual_hash == assignment.blob_commitment:
+                            verified += 1
+                        else:
+                            console.print(
+                                f"[yellow]⚠[/yellow] Hash mismatch for {commit_hex[:16]}... (re-downloading)"
+                            )
+                            # Re-download if hash mismatch
+                            service.delete_blob(assignment.blob_commitment)
+                    except Exception as e:
+                        console.print(
+                            f"[yellow]⚠[/yellow] Failed to verify {commit_hex[:16]}...: {e}"
+                        )
+                else:
+                    skipped += 1
+                    continue
             
             # Fetch from DA service
             try:
@@ -504,16 +538,38 @@ def sync_blobs(
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 
-                # Store locally
-                service.store_blob(assignment.blob_commitment, response.content)
+                blob_data = response.content
+                
+                # Verify hash before storing
+                if verify:
+                    actual_hash = hashlib.sha3_256(blob_data).digest()
+                    if actual_hash != assignment.blob_commitment:
+                        raise ValueError(
+                            f"Hash mismatch: expected {commit_hex}, "
+                            f"got {actual_hash.hex()}"
+                        )
+                    verified += 1
+                
+                # Store locally in content-addressed storage
+                service.store_blob(assignment.blob_commitment, blob_data)
                 synced += 1
-                console.print(f"[green]✓[/green] Synced {commit_hex[:16]}...")
+                
+                size_mb = len(blob_data) / (1024 * 1024)
+                console.print(
+                    f"[green]✓[/green] Synced {commit_hex[:16]}... "
+                    f"({size_mb:.2f} MB)"
+                )
             
             except Exception as e:
                 errors += 1
                 console.print(f"[red]✗[/red] Failed to sync {commit_hex[:16]}...: {e}")
         
-        console.print(f"\nSync complete: {synced} synced, {skipped} skipped, {errors} errors")
+        console.print(f"\nSync complete:")
+        console.print(f"  {synced} synced")
+        console.print(f"  {skipped} skipped")
+        if verify:
+            console.print(f"  {verified} verified")
+        console.print(f"  {errors} errors")
     
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
