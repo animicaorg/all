@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
-from PySide6.QtCore import QShortcut, Qt, QTimer
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMenu, QVBoxLayout, QWidget
 
 from animica_studio.models.profile_models import RpcProfile
@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self._theme_manager.theme_changed.connect(lambda _p: self._apply_theme())
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Meta+K"), self, activated=self._open_palette)
+        QShortcut(QKeySequence("Ctrl+\\"), self, activated=self._toggle_sidebar)
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._trigger_health_check)
         self._health_timer.start(_HEALTH_INTERVAL_MS)
@@ -116,6 +117,9 @@ class MainWindow(QMainWindow):
         self._dashboard_page.set_visual_effects(
             self._theme_manager.visual_effects(), self._theme_manager.reduced_motion()
         )
+
+    def _toggle_sidebar(self) -> None:
+        self._sidebar.toggle(animate=not self._theme_manager.reduced_motion())
 
     def _navigate(self, index: int) -> None:
         self._stack.setCurrentIndexAnimated(index, reduced_motion=self._theme_manager.reduced_motion())
