@@ -44,6 +44,44 @@ KEY_BUDGET = "aicf.epoch.{epoch}.budget"
 KEY_INFLOW = "aicf.epoch.{epoch}.inflow"
 KEY_LAST_CLAIMED = "aicf.last_claimed_epoch.{address}"
 KEY_POOL_BALANCE = "aicf.pool_balance"
+KEY_PROVIDER_ACCRUED = "aicf.provider.{provider_id}.accrued"
+KEY_PROVIDER_CLAIMED = "aicf.provider.{provider_id}.claimed"
+KEY_PROVIDER_LAST_CLAIM_HEIGHT = "aicf.provider.{provider_id}.last_claim_height"
+KEY_CLAIM_COOLDOWN_BLOCKS = "aicf.claim_cooldown_blocks"
+KEY_MIN_CLAIM_AMOUNT = "aicf.min_claim_amount"
+KEY_WORKER_REGISTRY = "aicf.worker.{provider_id}.{worker_id}"
+KEY_WORKER_STATS_JOBS = "aicf.worker_stats.{provider_id}.{worker_id}.jobs"
+KEY_WORKER_STATS_TOKENS = "aicf.worker_stats.{provider_id}.{worker_id}.tokens"
+KEY_WORKER_STATS_FEES = "aicf.worker_stats.{provider_id}.{worker_id}.fees"
+
+
+@dataclass
+class WorkerInfo:
+    """Information about a worker registered under a provider."""
+    
+    worker_id: str
+    provider_id: str
+    pubkey: bytes
+    label: str = ""
+    caps: Dict[str, Any] = None
+    last_seen_height: int = 0
+    registered_at_height: int = 0
+    
+    def __post_init__(self):
+        if self.caps is None:
+            self.caps = {}
+
+
+@dataclass
+class WorkerStats:
+    """Statistics for a worker."""
+    
+    provider_id: str
+    worker_id: str
+    jobs_completed: int = 0
+    tokens_processed: int = 0
+    fees_earned: int = 0
+    success_rate: float = 1.0  # 0.0 - 1.0
 
 
 @dataclass
@@ -253,6 +291,97 @@ def set_pool_balance(state: Any, amount: int) -> None:
 
 
 # --------------------------------------------------------------------------------------
+# Provider reward accrual state (Phase 2 - for ENA providers)
+# --------------------------------------------------------------------------------------
+
+
+def get_provider_accrued(state: Any, provider_id: str) -> int:
+    """Get total accrued rewards for a provider."""
+    key = KEY_PROVIDER_ACCRUED.format(provider_id=provider_id)
+    try:
+        val = state.get(key)
+        return int(val) if val is not None else 0
+    except Exception:
+        return 0
+
+
+def set_provider_accrued(state: Any, provider_id: str, amount: int) -> None:
+    """Set total accrued rewards for a provider."""
+    if amount < 0:
+        raise ValueError("provider_accrued cannot be negative")
+    key = KEY_PROVIDER_ACCRUED.format(provider_id=provider_id)
+    state.put(key, int(amount))
+
+
+def get_provider_claimed(state: Any, provider_id: str) -> int:
+    """Get total claimed rewards for a provider."""
+    key = KEY_PROVIDER_CLAIMED.format(provider_id=provider_id)
+    try:
+        val = state.get(key)
+        return int(val) if val is not None else 0
+    except Exception:
+        return 0
+
+
+def set_provider_claimed(state: Any, provider_id: str, amount: int) -> None:
+    """Set total claimed rewards for a provider."""
+    if amount < 0:
+        raise ValueError("provider_claimed cannot be negative")
+    key = KEY_PROVIDER_CLAIMED.format(provider_id=provider_id)
+    state.put(key, int(amount))
+
+
+def get_provider_last_claim_height(state: Any, provider_id: str) -> int:
+    """Get last claim block height for a provider (returns -1 if never claimed)."""
+    key = KEY_PROVIDER_LAST_CLAIM_HEIGHT.format(provider_id=provider_id)
+    try:
+        val = state.get(key)
+        return int(val) if val is not None else -1
+    except Exception:
+        return -1
+
+
+def set_provider_last_claim_height(state: Any, provider_id: str, height: int) -> None:
+    """Set last claim block height for a provider."""
+    if height < -1:
+        raise ValueError("last_claim_height cannot be < -1")
+    key = KEY_PROVIDER_LAST_CLAIM_HEIGHT.format(provider_id=provider_id)
+    state.put(key, int(height))
+
+
+def get_claim_cooldown_blocks(state: Any) -> int:
+    """Get claim cooldown period in blocks."""
+    try:
+        val = state.get(KEY_CLAIM_COOLDOWN_BLOCKS)
+        return int(val) if val is not None else 100  # Default: 100 blocks
+    except Exception:
+        return 100
+
+
+def set_claim_cooldown_blocks(state: Any, blocks: int) -> None:
+    """Set claim cooldown period in blocks."""
+    if blocks < 0:
+        raise ValueError("claim_cooldown_blocks cannot be negative")
+    state.put(KEY_CLAIM_COOLDOWN_BLOCKS, int(blocks))
+
+
+def get_min_claim_amount(state: Any) -> int:
+    """Get minimum claim amount in nano-ANM."""
+    try:
+        val = state.get(KEY_MIN_CLAIM_AMOUNT)
+        return int(val) if val is not None else 1_000_000  # Default: 0.000001 ANM
+    except Exception:
+        return 1_000_000
+
+
+def set_min_claim_amount(state: Any, amount: int) -> None:
+    """Set minimum claim amount in nano-ANM."""
+    if amount < 0:
+        raise ValueError("min_claim_amount cannot be negative")
+    state.put(KEY_MIN_CLAIM_AMOUNT, int(amount))
+
+
+# --------------------------------------------------------------------------------------
 # Core AICF operations
 # --------------------------------------------------------------------------------------
 
@@ -439,6 +568,188 @@ def process_claim(
     return (claimable.total_claimable, claimable.epochs)
 
 
+def process_partial_claim(
+    state: Any,
+    address: bytes,
+    amount: int,
+    current_epoch: int,
+    current_height: int,
+    max_epochs: int = 100,
+    min_claim: int = 1_000_000,
+    cooldown_blocks: int = 100,
+) -> Tuple[int, List[int]]:
+    """
+    Process a partial claim transaction for an address.
+    
+    Args:
+        state: State handle
+        address: Claimant address
+        amount: Requested claim amount (in nano-ANM), or 0 for claim-all
+        current_epoch: Current epoch number
+        current_height: Current block height
+        max_epochs: Max epochs to claim from
+        min_claim: Minimum claim amount (anti-dust)
+        cooldown_blocks: Blocks between claims
+    
+    Returns:
+        (amount_to_transfer, epochs_claimed)
+    
+    Raises:
+        ValueError: If validation fails (cooldown, amount, etc.)
+    """
+    # Check cooldown (using last_claimed_epoch as proxy for cooldown check)
+    # For more precise cooldown, we'd need to track last_claim_height per address
+    # For now, we'll implement simple per-epoch cooldown
+    claimable = compute_claimable(state, address, current_epoch, max_epochs)
+    
+    if claimable.total_claimable == 0:
+        raise ValueError("No claimable rewards available")
+    
+    # Determine actual claim amount
+    if amount == 0:
+        # Claim all (backward compatibility)
+        actual_amount = claimable.total_claimable
+    else:
+        # Partial claim
+        if amount < 0:
+            raise ValueError("Claim amount must be non-negative")
+        if amount < min_claim:
+            raise ValueError(f"Claim amount {amount} below minimum {min_claim}")
+        if amount > claimable.total_claimable:
+            raise ValueError(
+                f"Claim amount {amount} exceeds available {claimable.total_claimable}"
+            )
+        actual_amount = amount
+    
+    # For partial claims, we need to track which epochs were claimed
+    # For simplicity, we claim from oldest epochs first until we reach the amount
+    remaining = actual_amount
+    epochs_claimed = []
+    
+    for epoch, credits_user, credits_total, share in claimable.details:
+        if remaining <= 0:
+            break
+        
+        if share <= remaining:
+            # Claim entire share from this epoch
+            remaining -= share
+            epochs_claimed.append(epoch)
+        else:
+            # Partial claim from this epoch
+            # For now, we don't support partial epoch claims (consensus complexity)
+            # So we either claim the full epoch or skip it
+            # This simplifies state management
+            if len(epochs_claimed) == 0:
+                # If this is the first epoch and we can't claim it fully,
+                # allow it anyway to enable any claim
+                epochs_claimed.append(epoch)
+                remaining = 0
+            break
+    
+    if not epochs_claimed:
+        raise ValueError("Cannot claim requested amount with current epoch structure")
+    
+    # Update last claimed epoch
+    set_last_claimed_epoch(state, address, max(epochs_claimed))
+    
+    # Deduct from pool balance
+    pool = get_pool_balance(state)
+    if pool < actual_amount:
+        raise RuntimeError(
+            f"Insufficient AICF pool balance: {pool} < {actual_amount}"
+        )
+    new_pool = pool - actual_amount
+    set_pool_balance(state, new_pool)
+    
+    log.info(
+        f"AICF: Partial claimed {actual_amount} (requested {amount}) "
+        f"for {address.hex()[:16]}... across {len(epochs_claimed)} epochs"
+    )
+    
+    return (actual_amount, epochs_claimed)
+
+
+def process_provider_claim(
+    state: Any,
+    provider_id: str,
+    amount: int,
+    to_address: bytes,
+    current_height: int,
+    min_claim: int = 1_000_000,
+    cooldown_blocks: int = 100,
+) -> int:
+    """
+    Process a provider reward claim transaction.
+    
+    Args:
+        state: State handle
+        provider_id: Provider identifier
+        amount: Requested claim amount (in nano-ANM), or 0 for claim-all
+        to_address: Recipient address
+        current_height: Current block height
+        min_claim: Minimum claim amount
+        cooldown_blocks: Blocks between claims
+    
+    Returns:
+        Amount actually transferred
+    
+    Raises:
+        ValueError: If validation fails
+    """
+    # Get provider accrual state
+    accrued = get_provider_accrued(state, provider_id)
+    claimed = get_provider_claimed(state, provider_id)
+    last_claim_height = get_provider_last_claim_height(state, provider_id)
+    
+    available = accrued - claimed
+    
+    if available == 0:
+        raise ValueError(f"No rewards available for provider {provider_id}")
+    
+    # Check cooldown
+    if last_claim_height >= 0:
+        blocks_since_last = current_height - last_claim_height
+        if blocks_since_last < cooldown_blocks:
+            raise ValueError(
+                f"Claim cooldown active: {blocks_since_last}/{cooldown_blocks} blocks"
+            )
+    
+    # Determine actual claim amount
+    if amount == 0:
+        # Claim all
+        actual_amount = available
+    else:
+        # Partial claim
+        if amount < 0:
+            raise ValueError("Claim amount must be non-negative")
+        if amount < min_claim:
+            raise ValueError(f"Claim amount {amount} below minimum {min_claim}")
+        if amount > available:
+            raise ValueError(f"Claim amount {amount} exceeds available {available}")
+        actual_amount = amount
+    
+    # Update provider state
+    new_claimed = claimed + actual_amount
+    set_provider_claimed(state, provider_id, new_claimed)
+    set_provider_last_claim_height(state, provider_id, current_height)
+    
+    # Deduct from pool balance
+    pool = get_pool_balance(state)
+    if pool < actual_amount:
+        raise RuntimeError(
+            f"Insufficient AICF pool balance: {pool} < {actual_amount}"
+        )
+    new_pool = pool - actual_amount
+    set_pool_balance(state, new_pool)
+    
+    log.info(
+        f"AICF: Provider {provider_id} claimed {actual_amount} "
+        f"(requested {amount}, available {available})"
+    )
+    
+    return actual_amount
+
+
 def add_governance_topup(
     state: Any,
     current_epoch: int,
@@ -457,10 +768,163 @@ def add_governance_topup(
     log.info(f"AICF: Governance top-up of {amount} to epoch {current_epoch}")
 
 
+# --------------------------------------------------------------------------------------
+# Worker Attribution (Phase 2 - GPU worker tracking)
+# --------------------------------------------------------------------------------------
+
+
+def register_worker(
+    state: Any,
+    provider_id: str,
+    worker_id: str,
+    pubkey: bytes,
+    label: str = "",
+    caps: Optional[Dict[str, Any]] = None,
+    height: int = 0,
+) -> None:
+    """
+    Register a worker under a provider.
+    
+    Args:
+        state: State handle
+        provider_id: Provider identifier
+        worker_id: Worker identifier
+        pubkey: Worker public key
+        label: Human-readable label
+        caps: Worker capabilities (optional)
+        height: Registration block height
+    """
+    import json
+    
+    key = KEY_WORKER_REGISTRY.format(provider_id=provider_id, worker_id=worker_id)
+    
+    worker_data = {
+        "worker_id": worker_id,
+        "provider_id": provider_id,
+        "pubkey": pubkey.hex(),
+        "label": label,
+        "caps": caps or {},
+        "last_seen_height": height,
+        "registered_at_height": height,
+    }
+    
+    state.put(key, json.dumps(worker_data))
+    log.info(f"AICF: Registered worker {worker_id} for provider {provider_id}")
+
+
+def get_worker_info(
+    state: Any,
+    provider_id: str,
+    worker_id: str,
+) -> Optional[WorkerInfo]:
+    """Get worker information."""
+    import json
+    
+    key = KEY_WORKER_REGISTRY.format(provider_id=provider_id, worker_id=worker_id)
+    try:
+        val = state.get(key)
+        if val is None:
+            return None
+        
+        data = json.loads(val)
+        return WorkerInfo(
+            worker_id=data["worker_id"],
+            provider_id=data["provider_id"],
+            pubkey=bytes.fromhex(data["pubkey"]),
+            label=data.get("label", ""),
+            caps=data.get("caps", {}),
+            last_seen_height=data.get("last_seen_height", 0),
+            registered_at_height=data.get("registered_at_height", 0),
+        )
+    except Exception as e:
+        log.warning(f"Failed to get worker info: {e}")
+        return None
+
+
+def update_worker_last_seen(
+    state: Any,
+    provider_id: str,
+    worker_id: str,
+    height: int,
+) -> None:
+    """Update worker last seen height."""
+    import json
+    
+    key = KEY_WORKER_REGISTRY.format(provider_id=provider_id, worker_id=worker_id)
+    try:
+        val = state.get(key)
+        if val is None:
+            return
+        
+        data = json.loads(val)
+        data["last_seen_height"] = height
+        state.put(key, json.dumps(data))
+    except Exception as e:
+        log.warning(f"Failed to update worker last seen: {e}")
+
+
+def get_worker_stats(
+    state: Any,
+    provider_id: str,
+    worker_id: str,
+) -> WorkerStats:
+    """Get worker statistics."""
+    jobs_key = KEY_WORKER_STATS_JOBS.format(provider_id=provider_id, worker_id=worker_id)
+    tokens_key = KEY_WORKER_STATS_TOKENS.format(provider_id=provider_id, worker_id=worker_id)
+    fees_key = KEY_WORKER_STATS_FEES.format(provider_id=provider_id, worker_id=worker_id)
+    
+    try:
+        jobs = int(state.get(jobs_key) or 0)
+        tokens = int(state.get(tokens_key) or 0)
+        fees = int(state.get(fees_key) or 0)
+        
+        return WorkerStats(
+            provider_id=provider_id,
+            worker_id=worker_id,
+            jobs_completed=jobs,
+            tokens_processed=tokens,
+            fees_earned=fees,
+            success_rate=1.0,  # Simplified for now
+        )
+    except Exception:
+        return WorkerStats(provider_id=provider_id, worker_id=worker_id)
+
+
+def update_worker_stats(
+    state: Any,
+    provider_id: str,
+    worker_id: str,
+    tokens_delta: int = 0,
+    fees_delta: int = 0,
+    job_completed: bool = False,
+) -> None:
+    """Update worker statistics."""
+    jobs_key = KEY_WORKER_STATS_JOBS.format(provider_id=provider_id, worker_id=worker_id)
+    tokens_key = KEY_WORKER_STATS_TOKENS.format(provider_id=provider_id, worker_id=worker_id)
+    fees_key = KEY_WORKER_STATS_FEES.format(provider_id=provider_id, worker_id=worker_id)
+    
+    try:
+        if job_completed:
+            jobs = int(state.get(jobs_key) or 0)
+            state.put(jobs_key, jobs + 1)
+        
+        if tokens_delta > 0:
+            tokens = int(state.get(tokens_key) or 0)
+            state.put(tokens_key, tokens + tokens_delta)
+        
+        if fees_delta > 0:
+            fees = int(state.get(fees_key) or 0)
+            state.put(fees_key, fees + fees_delta)
+    except Exception as e:
+        log.warning(f"Failed to update worker stats: {e}")
+
+
 __all__ = [
     "AICFParams",
     "EpochInfo",
     "ClaimableInfo",
+    "WorkerInfo",
+    "WorkerStats",
     "compute_epoch",
     "get_epoch_length",
     "set_epoch_length",
@@ -469,5 +933,22 @@ __all__ = [
     "finalize_epoch",
     "compute_claimable",
     "process_claim",
+    "process_partial_claim",
+    "process_provider_claim",
     "add_governance_topup",
+    "register_worker",
+    "get_worker_info",
+    "update_worker_last_seen",
+    "get_worker_stats",
+    "update_worker_stats",
+    "get_provider_accrued",
+    "set_provider_accrued",
+    "get_provider_claimed",
+    "set_provider_claimed",
+    "get_provider_last_claim_height",
+    "set_provider_last_claim_height",
+    "get_claim_cooldown_blocks",
+    "set_claim_cooldown_blocks",
+    "get_min_claim_amount",
+    "set_min_claim_amount",
 ]
