@@ -5708,15 +5708,27 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 # Get AICF slice configuration
                 aicf_slice_bps = get_aicf_slice_bps(params)
                 
-                # Mint credits (base_reward = credited_amount, fees_collected = 0 for now)
-                # TODO: Extract actual fees from block transactions
+                # Extract fees from block transactions
+                fees_collected = 0
+                if block_obj and block_obj.receipts:
+                    # Use actual gas used from receipts for accurate fee calculation
+                    for tx, receipt in zip(block_obj.txs, block_obj.receipts):
+                        if tx.unsigned.kind != 3:  # Skip coinbase transactions (TxKind.COINBASE = 3)
+                            fees_collected += tx.unsigned.gas_price * receipt.gas_used
+                elif block_obj:
+                    # Fallback: use gas_limit if receipts unavailable (max potential fees)
+                    for tx in block_obj.txs:
+                        if tx.unsigned.kind != 3:  # Skip coinbase transactions
+                            fees_collected += tx.unsigned.gas_price * tx.unsigned.gas_limit
+                
+                # Mint credits (base_reward + fees_collected)
                 mint_result = mint_block_credits(
                     protocol_state,
                     block_height=int(result.height or 0),
                     block_hash=block_hash_hex or "0x" + result.block_hash.hex() if result.block_hash else "0x00",
                     miner_address=miner_addr_hex,
                     base_reward=credited_amount,
-                    fees_collected=0,  # TODO: Sum tx fees from block
+                    fees_collected=fees_collected,
                     aicf_slice_bps=aicf_slice_bps,
                 )
                 
