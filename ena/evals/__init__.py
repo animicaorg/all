@@ -22,6 +22,7 @@ from .grader import (
     RegexGrader,
     CodeTestGrader,
     SchemaGrader,
+    get_grader,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "RegexGrader",
     "CodeTestGrader",
     "SchemaGrader",
+    "get_grader",
 ]
