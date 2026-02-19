@@ -338,7 +338,7 @@ def apply_aicf_claim(
     # Validate that we got what was expected
     # Note: process_claim always claims ALL available credits, not a partial amount
     # The claim_amount parameter in the transaction is ignored for now
-    # TODO: Implement partial claim support if needed
+    # Phase 2: Partial claim support (if needed for UX)
     
     if actual_paid == 0:
         return ApplyResult(

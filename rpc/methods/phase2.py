@@ -56,14 +56,31 @@ async def register_provider(
     Raises:
         RpcError: If registration fails (insufficient bond, not allowlisted, etc.)
     """
-    # TODO: Implement provider registration logic
-    # 1. Validate capabilities
+    # Phase 2: Provider registration (PHASE2_IMPLEMENTATION_SUMMARY.md)
+    # 
+    # Implementation path:
+    # 1. Validate capabilities (model_family, max_context, etc.)
     # 2. Check bond requirement (if permissionless mode)
     # 3. Check allowlist (if allowlist mode)
     # 4. Create provider record in registry
-    # 5. Return provider_id and status
+    # 5. Emit registration event
+    # 6. Return provider_id and status
+    # 
+    # Example:
+    # from aicf.registry import ProviderRegistry
+    # registry = ProviderRegistry(ctx.state_db)
+    # provider_id = registry.register(
+    #     address=address,
+    #     capabilities=capabilities,
+    #     bond=bond,
+    #     allowlist=ctx.params.get("aicf_provider_allowlist")
+    # )
+    # return {"provider_id": provider_id, "status": "registered", ...}
     
-    raise RpcError(code=-32601, message="aicf.registerProvider not yet implemented")
+    raise RpcError(
+        code=-32601,
+        message="aicf.registerProvider not yet implemented (Phase 2 - provider onboarding)"
+    )
 
 
 @method(
@@ -97,8 +114,25 @@ async def get_provider(provider_id: str) -> Dict[str, Any]:
             "last_heartbeat": int
         }
     """
-    # TODO: Implement get provider logic
-    raise RpcError(code=-32601, message="aicf.getProvider not yet implemented")
+    # Phase 2: Provider information retrieval (PHASE2_IMPLEMENTATION_SUMMARY.md)
+    # 
+    # Implementation path:
+    # 1. Load provider record from registry
+    # 2. Calculate reputation metrics from job history
+    # 3. Return provider details
+    # 
+    # Example:
+    # from aicf.registry import ProviderRegistry
+    # registry = ProviderRegistry(ctx.state_db)
+    # provider = registry.get(provider_id)
+    # if not provider:
+    #     raise RpcError(code=-32602, message=f"Provider {provider_id} not found")
+    # return provider.to_dict()
+    
+    raise RpcError(
+        code=-32601,
+        message="aicf.getProvider not yet implemented (Phase 2 - provider registry)"
+    )
 
 
 @method(
@@ -127,7 +161,7 @@ async def list_providers(
             "limit": int
         }
     """
-    # TODO: Implement list providers logic
+    # Phase 2: List providers (provider registry integration pending)
     raise RpcError(code=-32601, message="aicf.listProviders not yet implemented")
 
 
@@ -169,7 +203,7 @@ async def get_quote(
             ]
         }
     """
-    # TODO: Implement quote logic
+    # Phase 2: Provider quote logic (ENA fee market integration pending)
     # 1. Calculate base fee from params (ena_call_fee_base_nano)
     # 2. Apply per-token pricing
     # 3. Split into AICF/provider cuts
@@ -201,7 +235,7 @@ async def submit_receipt(receipt_cbor: str) -> Dict[str, Any]:
     Raises:
         RpcError: If receipt is invalid or submission fails
     """
-    # TODO: Implement receipt submission logic
+    # Phase 2: Receipt submission (ENA proof verification integration pending)
     # 1. Decode CBOR receipt
     # 2. Validate receipt fields
     # 3. Verify signatures
@@ -244,7 +278,7 @@ async def get_receipt(receipt_hash: str) -> Dict[str, Any]:
             "da_commitment": str (optional)
         }
     """
-    # TODO: Implement get receipt logic
+    # Phase 2: Receipt retrieval (ENA receipt storage integration pending)
     raise RpcError(code=-32601, message="ena.getReceipt not yet implemented")
 
 
@@ -282,7 +316,7 @@ async def get_provider_rewards(provider_id: str) -> Dict[str, Any]:
             ]
         }
     """
-    # TODO: Implement get provider rewards logic
+    # Phase 2: Provider rewards query (AICF accounting integration pending)
     # 1. Query provider accrual records
     # 2. Sum across finalized epochs
     # 3. Return breakdown by epoch
@@ -321,7 +355,7 @@ async def claim_provider_rewards(
     Raises:
         RpcError: If amount exceeds claimable, not finalized, etc.
     """
-    # TODO: Implement claim logic
+    # Phase 2: Provider rewards claim (AICF claim transaction integration pending)
     # 1. Validate provider exists
     # 2. Validate epochs are finalized
     # 3. Validate amount <= claimable
@@ -355,7 +389,7 @@ async def get_epoch_status() -> Dict[str, Any]:
             "epoch_length": int
         }
     """
-    # TODO: Implement epoch status logic
+    # Phase 2: Epoch status query (AICF epoch tracking integration pending)
     # 1. Get current chain height
     # 2. Compute current epoch
     # 3. Get pool balance
@@ -384,7 +418,7 @@ async def get_maturity_depth() -> Dict[str, Any]:
             "max_claims_per_epoch": int
         }
     """
-    # TODO: Implement maturity config getter
+    # Phase 2: Maturity config (AICF params integration pending)
     raise RpcError(code=-32601, message="aicf.getMaturityDepth not yet implemented")
 
 
@@ -413,7 +447,7 @@ async def submit_training_receipt(receipt_cbor: str) -> Dict[str, Any]:
             "anchored_at_height": int
         }
     """
-    # TODO: Implement training receipt submission
+    # Phase 2: Training receipt submission (ENA training proof verification pending)
     # 1. Decode CBOR receipt
     # 2. Validate training receipt fields
     # 3. Verify provider signature
@@ -451,5 +485,5 @@ async def get_training_receipt(receipt_hash: str) -> Dict[str, Any]:
             "is_verified": bool
         }
     """
-    # TODO: Implement get training receipt
+    # Phase 2: Training receipt retrieval (ENA training storage integration pending)
     raise RpcError(code=-32601, message="aicf.getTrainingReceipt not yet implemented")

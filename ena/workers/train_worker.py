@@ -187,7 +187,7 @@ class TrainingWorker(WorkerBase):
             self.download_from_da(checkpoint_resume, checkpoint_path)
             logger.info(f"Resuming from checkpoint: {checkpoint_resume}")
         
-        # TODO: Real training implementation
+        # Phase 2: Real model training (modal/compute platform integration pending)
         # This would use HuggingFace Transformers Trainer:
         # 
         # from transformers import (
