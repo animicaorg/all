@@ -203,7 +203,7 @@ def apply_aicf_claim(
     
     # Load AICF state and validate claim
     try:
-        from ...state.aicf_state import (
+        from execution.state.aicf_state import (
             compute_claimable,
             process_claim,
             get_epoch_length,
@@ -278,7 +278,7 @@ def apply_aicf_claim(
     
     # Process the claim (debits pool, credits claimant, updates last_claimed_epoch)
     try:
-        actual_paid = process_claim(state, sender, claim_amount, current_epoch)
+        actual_paid, epochs_claimed = process_claim(state, sender, current_epoch, max_claim_epochs)
     except Exception as e:
         log.error(f"Failed to process claim: {e}", exc_info=True)
         return ApplyResult(
@@ -295,9 +295,29 @@ def apply_aicf_claim(
             receipt=None,
         )
     
+    # Validate that we got what was expected
+    # Note: process_claim always claims ALL available credits, not a partial amount
+    # The claim_amount parameter in the transaction is ignored for now
+    # TODO: Implement partial claim support if needed
+    
+    if actual_paid == 0:
+        return ApplyResult(
+            status=TxStatus.REVERT,
+            gas_used=21000,
+            logs=[
+                LogEvent(
+                    address=b"\x00" * 20,
+                    topics=[b"aicf.claim.error"],
+                    data=b"No claimable credits available",
+                )
+            ],
+            state_root=_state_root(state),
+            receipt=None,
+        )
+    
     # Credit the recipient address with the claimed amount
     try:
-        from ...state.apply_balance import credit as state_credit
+        from execution.state.apply_balance import credit as state_credit
         
         new_balance = state_credit(
             state,
