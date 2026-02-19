@@ -74,6 +74,9 @@ _NUMERIC_KIND = {
     3: "coinbase",  # Mining reward transaction (protocol-generated)
     4: "aicf_claim",  # AICF credit claim transaction
     5: "ena_call",  # ENA inference call transaction (future)
+    6: "ena_submit_receipt",  # Phase 2: Submit compute receipt
+    7: "aicf_claim_provider_rewards",  # Phase 2: Provider claim
+    8: "aicf_governance_topup",  # Governance top-up
 }
 
 _ALIAS_KIND = {
@@ -90,6 +93,9 @@ _ALIAS_KIND = {
     "claim": "aicf_claim",
     "ena_call": "ena_call",
     "ena": "ena_call",
+    "aicf_governance_topup": "aicf_governance_topup",
+    "topup": "aicf_governance_topup",
+    "governance_topup": "aicf_governance_topup",
 }
 
 
@@ -266,6 +272,15 @@ def dispatch(
             raise DispatchError("ena_call handler not available (future feature)")
         return _ena.apply_ena_call(  # type: ignore[no-any-return]
             tx, state, block_env, tx_env, params=params, capabilities=capabilities
+        )
+    
+    if kind == "aicf_governance_topup":
+        from . import aicf_governance_topup as _topup
+        
+        if not hasattr(_topup, "apply_aicf_governance_topup"):
+            raise DispatchError("aicf_governance_topup handler not available")
+        return _topup.apply_aicf_governance_topup(  # type: ignore[no-any-return]
+            tx, state, block_env, tx_env, params=params
         )
 
     raise DispatchError(f"unknown transaction kind: {kind!r}")
