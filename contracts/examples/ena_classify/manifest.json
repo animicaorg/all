@@ -1,0 +1,55 @@
+{
+  "name": "ena_classify",
+  "version": "1.0.0",
+  "description": "ENA text classification contract using asynchronous oracle pattern",
+  "entry": "contract.py",
+  "language": "python",
+  "abi": [
+    {
+      "name": "classify",
+      "inputs": [{"name": "text", "type": "bytes"}],
+      "outputs": [{"name": "request_id", "type": "bytes"}],
+      "mutability": "payable"
+    },
+    {
+      "name": "check_result",
+      "inputs": [{"name": "request_id", "type": "bytes"}],
+      "outputs": [
+        {"name": "status", "type": "string"},
+        {"name": "result_hash", "type": "string"}
+      ],
+      "mutability": "view"
+    },
+    {
+      "name": "read_inline_result",
+      "inputs": [{"name": "request_id", "type": "bytes"}],
+      "outputs": [{"name": "result", "type": "bytes"}],
+      "mutability": "view"
+    },
+    {
+      "name": "get_da_ptr",
+      "inputs": [{"name": "request_id", "type": "bytes"}],
+      "outputs": [{"name": "da_ptr", "type": "bytes"}],
+      "mutability": "view"
+    },
+    {
+      "name": "verify",
+      "inputs": [
+        {"name": "request_id", "type": "bytes"},
+        {"name": "claimed_result_hash", "type": "bytes"}
+      ],
+      "outputs": [{"name": "is_valid", "type": "bool"}],
+      "mutability": "view"
+    }
+  ],
+  "events": [
+    {
+      "name": "ClassifyRequested",
+      "fields": ["request_id", "text_len", "model_version"]
+    },
+    {
+      "name": "ClassifyCompleted",
+      "fields": ["request_id", "result_hash"]
+    }
+  ]
+}
