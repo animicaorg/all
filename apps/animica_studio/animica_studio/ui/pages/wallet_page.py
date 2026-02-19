@@ -822,6 +822,8 @@ class WalletPage(QWidget):
         # Cancel any in-flight requests
         self._cancel_token.cancel()
         self._cancel_token = CancelToken()
+        # Clear stale balance cache so old-profile balances are not shown
+        self._wallet_service.clear_balance_cache()
         # Re-read RPC config (config object is shared, already updated)
         QTimer.singleShot(_REFRESH_DEBOUNCE_MS, self._refresh_all)
 
