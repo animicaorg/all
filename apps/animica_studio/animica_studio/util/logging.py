@@ -13,6 +13,9 @@ _BACKUP_COUNT = 5
 def setup_logging(log_dir: Path, app_version: str = "unknown") -> None:
     """Configure the root logger with a rotating file handler and console handler.
 
+    Also attaches a :class:`~animica_studio.services.diagnostics.DiagnosticsHandler`
+    so that ERROR/WARNING records are captured in the in-memory diagnostics ring buffer.
+
     Parameters
     ----------
     log_dir:
@@ -45,6 +48,15 @@ def setup_logging(log_dir: Path, app_version: str = "unknown") -> None:
 
     root.addHandler(file_handler)
     root.addHandler(console_handler)
+
+    # Diagnostics handler — captures ERROR/WARNING into the ring buffer
+    try:
+        from animica_studio.services.diagnostics import DiagnosticsHandler  # noqa: PLC0415
+        diag_handler = DiagnosticsHandler(level=logging.WARNING)
+        diag_handler.setFormatter(formatter)
+        root.addHandler(diag_handler)
+    except Exception:  # noqa: BLE001
+        pass  # Non-fatal if diagnostics module is unavailable
 
     logging.getLogger(__name__).info(
         "Logging initialised — log file: %s", log_file
