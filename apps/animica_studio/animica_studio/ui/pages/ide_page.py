@@ -1,0 +1,452 @@
+"""IDE page — Monaco editor embedded via QWebEngineView with QWebChannel bridge."""
+from __future__ import annotations
+
+import logging
+import subprocess
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from animica_studio.services.ide_service import IdeService
+from animica_studio.ui.widgets.stream_console import StreamConsole
+
+log = logging.getLogger(__name__)
+
+_WEB_DIR = Path(__file__).parent.parent / "web"
+
+
+def _try_import_webengine():
+    """Attempt to import QtWebEngineWidgets; return None tuple on failure."""
+    try:
+        from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: PLC0415
+        from PySide6.QtWebEngineCore import QWebEngineSettings  # noqa: PLC0415
+        from PySide6.QtWebChannel import QWebChannel  # noqa: PLC0415
+        return QWebEngineView, QWebEngineSettings, QWebChannel
+    except ImportError:
+        return None, None, None
+
+
+class IdePage(QWidget):
+    """IDE page with Monaco editor, project tree, and script runner."""
+
+    def __init__(self, parent: "QWidget | None" = None) -> None:
+        super().__init__(parent)
+        self._svc = IdeService()
+        self._QWebEngineView, self._QWebEngineSettings, self._QWebChannel = _try_import_webengine()
+        self._webview = None
+        self._bridge = None
+        self._plain_editor = None
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
+
+        root.addWidget(self._build_toolbar())
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._build_tree_panel())
+
+        right = QSplitter(Qt.Orientation.Vertical)
+        right.addWidget(self._build_editor_area())
+        right.addWidget(self._build_output_panel())
+        right.setSizes([500, 200])
+        splitter.addWidget(right)
+        splitter.setSizes([220, 780])
+        root.addWidget(splitter, stretch=1)
+
+        root.addWidget(self._build_status_bar())
+
+    def _build_toolbar(self) -> QWidget:
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        row.addWidget(QLabel("Workspace:"))
+        self._ws_label = QLabel("(none)")
+        self._ws_label.setObjectName("headerMeta")
+        row.addWidget(self._ws_label, stretch=1)
+
+        change_btn = QPushButton("📂 Change…")
+        change_btn.clicked.connect(self._on_change_workspace)
+        row.addWidget(change_btn)
+
+        new_file_btn = QPushButton("📄 New File")
+        new_file_btn.clicked.connect(self._on_new_file)
+        row.addWidget(new_file_btn)
+
+        new_dir_btn = QPushButton("📁 New Folder")
+        new_dir_btn.clicked.connect(self._on_new_folder)
+        row.addWidget(new_dir_btn)
+
+        self._save_btn = QPushButton("💾 Save")
+        self._save_btn.clicked.connect(self._on_save)
+        row.addWidget(self._save_btn)
+
+        self._run_btn = QPushButton("▶ Run Script")
+        self._run_btn.clicked.connect(self._on_run_script)
+        row.addWidget(self._run_btn)
+
+        explore_btn = QPushButton("🗂 Open Folder")
+        explore_btn.clicked.connect(self._on_open_folder)
+        row.addWidget(explore_btn)
+
+        return bar
+
+    def _build_tree_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setMinimumWidth(180)
+        panel.setMaximumWidth(300)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(QLabel("📁 Project"))
+
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.itemDoubleClicked.connect(self._on_tree_double_click)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+        layout.addWidget(self._tree, stretch=1)
+        return panel
+
+    def _build_editor_area(self) -> QWidget:
+        if self._QWebEngineView is not None:
+            return self._build_webengine_editor()
+        return self._build_fallback_editor()
+
+    def _build_webengine_editor(self) -> QWidget:
+        """Build the Monaco editor using QWebEngineView."""
+        from animica_studio.services.ide_bridge import IdeBridge  # noqa: PLC0415
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._webview = self._QWebEngineView()  # type: ignore[misc]
+
+        # Security: restrict web features
+        settings = self._webview.settings()
+        settings.setAttribute(self._QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        settings.setAttribute(self._QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
+        settings.setAttribute(
+            self._QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, False
+        )
+
+        # Set up QWebChannel
+        self._channel = self._QWebChannel(self._webview.page())
+        self._bridge = IdeBridge(self._svc, parent=self)
+        self._channel.registerObject("bridge", self._bridge)
+        self._webview.page().setWebChannel(self._channel)
+
+        # Load local IDE HTML
+        ide_html = _WEB_DIR / "ide.html"
+        if ide_html.exists():
+            self._webview.load(QUrl.fromLocalFile(str(ide_html)))
+        else:
+            self._webview.setHtml(
+                "<html><body style='color:white;background:#1e1e2e;font-family:monospace'>"
+                "<h3>Monaco assets not found</h3>"
+                "<p>Run <code>python scripts/setup_monaco.py</code> to download Monaco.</p>"
+                "</body></html>"
+            )
+
+        layout.addWidget(self._webview)
+        return container
+
+    def _build_fallback_editor(self) -> QWidget:
+        """Fallback: plain text editor when QtWebEngine is unavailable."""
+        from PySide6.QtWidgets import QPlainTextEdit  # noqa: PLC0415
+        from PySide6.QtGui import QFont  # noqa: PLC0415
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        banner = QLabel(
+            "⚠️  QtWebEngine not available — using plain text editor. "
+            "Install PySide6-WebEngine for full Monaco IDE."
+        )
+        banner.setWordWrap(True)
+        banner.setStyleSheet("background:#45475a; color:#f9e2af; padding:4px;")
+        layout.addWidget(banner)
+
+        self._plain_editor = QPlainTextEdit()
+        font = QFont("Courier New", 11)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self._plain_editor.setFont(font)
+        layout.addWidget(self._plain_editor, stretch=1)
+        return container
+
+    def _build_output_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(QLabel("📤 Output"))
+        self._output = StreamConsole()
+        layout.addWidget(self._output, stretch=1)
+        return panel
+
+    def _build_status_bar(self) -> QWidget:
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        self._status_bar_label = QLabel("Ready")
+        self._status_bar_label.setObjectName("headerMeta")
+        row.addWidget(self._status_bar_label)
+        row.addStretch()
+        return bar
+
+    # ------------------------------------------------------------------
+    # Workspace
+    # ------------------------------------------------------------------
+
+    def _on_change_workspace(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Workspace Folder")
+        if not path:
+            return
+        try:
+            self._svc.set_workspace(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Workspace", str(exc))
+            return
+        self._ws_label.setText(path)
+        self._ws_label.setToolTip(path)
+        self._refresh_tree()
+        if self._bridge is not None:
+            self._bridge.setWorkspace(path)
+
+    def _refresh_tree(self) -> None:
+        self._tree.clear()
+        ws = self._svc.workspace
+        if ws is None:
+            return
+        try:
+            entries = self._svc.list_dir(".")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("IdePage: tree refresh failed: %s", exc)
+            return
+        root_item = QTreeWidgetItem([ws.name])
+        root_item.setData(0, Qt.ItemDataRole.UserRole, ".")
+        self._tree.addTopLevelItem(root_item)
+        self._populate_tree_item(root_item, entries)
+        root_item.setExpanded(True)
+
+    def _populate_tree_item(self, parent: QTreeWidgetItem, entries: list[dict]) -> None:
+        for entry in entries:
+            item = QTreeWidgetItem([entry["name"]])
+            item.setData(0, Qt.ItemDataRole.UserRole, entry["path"])
+            if entry["is_dir"]:
+                item.setIcon(0, self.style().standardIcon(
+                    self.style().StandardPixmap.SP_DirIcon
+                ))
+                placeholder = QTreeWidgetItem(["..."])
+                item.addChild(placeholder)
+            else:
+                item.setIcon(0, self.style().standardIcon(
+                    self.style().StandardPixmap.SP_FileIcon
+                ))
+            parent.addChild(item)
+
+    def _on_tree_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
+        rel_path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not rel_path or rel_path == ".":
+            return
+        try:
+            content = self._svc.read_file(rel_path)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("IdePage: cannot read %s: %s", rel_path, exc)
+            return
+        if self._webview is not None and self._bridge is not None:
+            req_id = "open_" + rel_path.replace("/", "_").replace("\\", "_")
+            self._bridge.readFile(req_id, rel_path)
+        elif self._plain_editor is not None:
+            self._plain_editor.setPlainText(content)
+            self._status_bar_label.setText(rel_path)
+
+    def _on_tree_context_menu(self, pos: "QPoint") -> None:
+        from PySide6.QtWidgets import QMenu  # noqa: PLC0415
+        item = self._tree.itemAt(pos)
+        if not item:
+            return
+        rel_path = item.data(0, Qt.ItemDataRole.UserRole) or "."
+        menu = QMenu(self)
+        new_file_action = menu.addAction("New File…")
+        new_dir_action = menu.addAction("New Folder…")
+        menu.addSeparator()
+        rename_action = menu.addAction("Rename…")
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if action == new_file_action:
+            self._prompt_create_file(rel_path)
+        elif action == new_dir_action:
+            self._prompt_create_dir(rel_path)
+        elif action == rename_action:
+            self._prompt_rename(rel_path)
+        elif action == delete_action:
+            self._confirm_delete(rel_path)
+
+    # ------------------------------------------------------------------
+    # File operations
+    # ------------------------------------------------------------------
+
+    def _on_new_file(self) -> None:
+        self._prompt_create_file(".")
+
+    def _on_new_folder(self) -> None:
+        self._prompt_create_dir(".")
+
+    def _prompt_create_file(self, parent_rel: str) -> None:
+        name, ok = QInputDialog.getText(self, "New File", "File name:")
+        if not ok or not name:
+            return
+        rel = name if parent_rel == "." else f"{parent_rel}/{name}"
+        try:
+            self._svc.create_file(rel)
+            self._refresh_tree()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", str(exc))
+
+    def _prompt_create_dir(self, parent_rel: str) -> None:
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if not ok or not name:
+            return
+        rel = name if parent_rel == "." else f"{parent_rel}/{name}"
+        try:
+            self._svc.create_dir(rel)
+            self._refresh_tree()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", str(exc))
+
+    def _prompt_rename(self, old_rel: str) -> None:
+        old_name = Path(old_rel).name
+        new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=old_name)
+        if not ok or not new_name or new_name == old_name:
+            return
+        new_rel = str(Path(old_rel).parent / new_name)
+        try:
+            self._svc.rename_path(old_rel, new_rel)
+            self._refresh_tree()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", str(exc))
+
+    def _confirm_delete(self, rel_path: str) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Delete",
+            f"Delete '{rel_path}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._svc.delete_path(rel_path)
+            self._refresh_tree()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", str(exc))
+
+    def _on_save(self) -> None:
+        if self._webview is not None:
+            self._webview.page().runJavaScript("if(window.saveCurrentFile) saveCurrentFile();")
+            return
+        # Fallback plain editor mode
+        if self._plain_editor is None:
+            return
+        rel_path = self._status_bar_label.text()
+        if not rel_path or rel_path == "Ready":
+            QMessageBox.information(self, "Save", "No file open.")
+            return
+        content = self._plain_editor.toPlainText()
+        try:
+            self._svc.write_file(rel_path, content)
+            self._status_bar_label.setText(f"{rel_path} [saved]")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Save Error", str(exc))
+
+    def _on_run_script(self) -> None:
+        """Run the currently open file via DeterministicRunner."""
+        if self._webview is not None:
+            self._webview.page().runJavaScript(
+                "window.currentFilePath || ''",
+                lambda path: (
+                    self._do_run_script(path) if path
+                    else QMessageBox.information(self, "Run Script", "No file open in editor.")
+                ),
+            )
+        else:
+            if self._plain_editor is None:
+                return
+            rel_path = self._status_bar_label.text().replace(" [saved]", "")
+            if not rel_path or rel_path == "Ready":
+                QMessageBox.information(self, "Run Script", "No file open.")
+                return
+            self._do_run_script(rel_path)
+
+    def _do_run_script(self, rel_path: str) -> None:
+        from animica_studio.services.deterministic_runner import DeterministicRunner  # noqa: PLC0415
+        from animica_studio.services.workers import WorkerThread  # noqa: PLC0415
+        from animica_studio.util.cancel import CancelToken  # noqa: PLC0415
+
+        ws = self._svc.workspace
+        if ws is None:
+            QMessageBox.warning(self, "Run Script", "No workspace selected.")
+            return
+
+        full_path = str(ws / rel_path)
+        self._output.clear()
+        token = CancelToken()
+        self._output.set_cancel_token(token)
+        self._output.set_running(True)
+        output = self._output
+
+        runner = DeterministicRunner()
+
+        def _task():
+            return runner.run_script(
+                full_path,
+                on_line=lambda line: output.append_line(line),
+                cancel_token=token,
+            )
+
+        worker = WorkerThread(_task)
+        worker.worker.result.connect(
+            lambda r: output.set_exit_status(r.exit_code, r.duration_ms, r.cancelled)
+        )
+        worker.worker.error.connect(lambda msg, _tb: output.append_line(f"[error] {msg}"))
+        worker.start()
+
+    def _on_open_folder(self) -> None:
+        ws = self._svc.workspace
+        if ws is None:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", str(ws)])  # noqa: S603, S607
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(ws)])  # noqa: S603, S607
+            else:
+                subprocess.Popen(["xdg-open", str(ws)])  # noqa: S603, S607
+        except OSError as exc:
+            log.warning("IdePage: cannot open folder: %s", exc)
