@@ -499,7 +499,7 @@ def _verify_merkle_proof(
     if proof is None:
         return False, "missing proof in response"
     
-    # TODO: Implement full Merkle verification
+    # Phase 2 - Integration pending: full Merkle path verification.
     return True, None
 
 
@@ -515,7 +515,7 @@ def _verify_nmt_proof(
     if proof is None:
         return False, "missing proof in response"
     
-    # TODO: Implement full NMT verification
+    # Phase 2 - Integration pending: full NMT path verification.
     return True, None
 
 
