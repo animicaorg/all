@@ -244,6 +244,124 @@ async def getClaimable(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     return result
 
 
+@method("aicf.buildClaimTx", desc="Build an unsigned claim transaction")
+async def buildClaimTx(ctx: Any, params: List[Any]) -> Dict[str, Any]:
+    """
+    aicf.buildClaimTx - Build an unsigned claim transaction.
+    
+    Params: [
+        from_address: HexString,
+        to_address: HexString,
+        amount: HexQuantity,
+        options?: {
+            nonce?: HexQuantity,
+            gas_limit?: HexQuantity,
+            gas_price?: HexQuantity,
+        }
+    ]
+    
+    Returns: Unsigned transaction object that can be signed and sent via tx.sendRawTransaction
+    """
+    if len(params) < 3:
+        raise InvalidParams("buildClaimTx requires [from_address, to_address, amount]")
+    
+    from_addr_str = params[0]
+    to_addr_str = params[1]
+    amount_str = params[2]
+    options = params[3] if len(params) > 3 else {}
+    
+    # Decode addresses
+    from_addr = _decode_address(from_addr_str)
+    to_addr = _decode_address(to_addr_str)
+    
+    # Parse amount
+    if isinstance(amount_str, str) and amount_str.startswith("0x"):
+        amount = int(amount_str, 16)
+    else:
+        amount = int(amount_str)
+    
+    # Get options
+    nonce = options.get("nonce")
+    gas_limit = options.get("gas_limit", hex(50000))  # Default gas for claim
+    gas_price = options.get("gas_price", hex(1000000000))  # Default 1 gwei
+    
+    # Get current nonce if not provided
+    if nonce is None:
+        state = getattr(ctx, "state", None)
+        if state is not None:
+            try:
+                from execution.state.balances import get_nonce
+                nonce_int = get_nonce(state, from_addr)
+                nonce = hex(nonce_int)
+            except Exception:
+                nonce = "0x0"
+        else:
+            nonce = "0x0"
+    
+    # Parse gas values
+    if isinstance(gas_limit, str) and gas_limit.startswith("0x"):
+        gas_limit_int = int(gas_limit, 16)
+    else:
+        gas_limit_int = int(gas_limit)
+    
+    if isinstance(gas_price, str) and gas_price.startswith("0x"):
+        gas_price_int = int(gas_price, 16)
+    else:
+        gas_price_int = int(gas_price)
+    
+    fee = gas_limit_int * gas_price_int
+    
+    # Get chain_id
+    params_obj = getattr(ctx, "params", None)
+    chain_id = params_obj.get("chain_id", 1) if params_obj else 1
+    
+    # Build claim payload (CBOR-encoded)
+    import cbor2
+    claim_payload = {
+        "to_address": to_addr,
+        "amount": amount,
+    }
+    claim_data = cbor2.dumps(claim_payload)
+    
+    # Build unsigned transaction
+    import time
+    unsigned_tx = {
+        "version": 1,
+        "chain_id": chain_id,
+        "nonce": int(nonce, 16) if isinstance(nonce, str) and nonce.startswith("0x") else int(nonce),
+        "from_addr": from_addr,
+        "to_addr": to_addr,  # In claim tx, to_addr is the recipient
+        "value": 0,  # No value transfer, just claim
+        "fee": fee,
+        "gas_limit": gas_limit_int,
+        "data": claim_data,
+        "memo": "",
+        "timestamp": int(time.time()),
+        "kind": 4,  # AICF_CLAIM
+    }
+    
+    # Encode to hex for return
+    result = {
+        "unsigned_tx": {
+            "version": hex(unsigned_tx["version"]),
+            "chain_id": hex(unsigned_tx["chain_id"]),
+            "nonce": hex(unsigned_tx["nonce"]),
+            "from_addr": "0x" + from_addr.hex(),
+            "to_addr": "0x" + to_addr.hex(),
+            "value": "0x0",
+            "fee": hex(fee),
+            "gas_limit": hex(gas_limit_int),
+            "data": "0x" + claim_data.hex(),
+            "memo": "",
+            "timestamp": hex(unsigned_tx["timestamp"]),
+            "kind": "0x4",  # AICF_CLAIM
+        },
+        "message": "Sign this transaction and send via tx.sendRawTransaction to claim your AICF credits"
+    }
+    
+    return result
+
+
 @method("aicf.claim", desc="Get claim information (read-only)")
 async def claim(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     """
@@ -251,6 +369,7 @@ async def claim(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     
     NOTE: This is a read-only method that returns claimable info.
     Actual claiming requires sending a transaction through tx.sendRawTransaction.
+    Use aicf.buildClaimTx to build an unsigned transaction.
     
     Params: [address: HexString, upToEpoch?: int]
     
@@ -261,11 +380,10 @@ async def claim(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     }
     """
     # For now, this just returns claimable info
-    # TODO: Implement actual claim transaction building
     claimable_info = await getClaimable(ctx, params)
     claimable_info["message"] = (
-        "This is a read-only response. To claim, you must send a transaction "
-        "through tx.sendRawTransaction with the claim operation."
+        "This is a read-only response. To claim, use aicf.buildClaimTx to build an unsigned "
+        "transaction, sign it, and send via tx.sendRawTransaction."
     )
     return claimable_info
 
