@@ -1,0 +1,32 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Logs (generated at runtime in the OS app-data dir, not committed)
+logs/
+*.log
+
+# PyInstaller / cx_Freeze bundles
+*.spec
+release/
+
+# IDE / OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# pytest cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
