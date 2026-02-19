@@ -1,8 +1,7 @@
 """Data models for the Console service."""
 from __future__ import annotations
 import uuid
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 @dataclass

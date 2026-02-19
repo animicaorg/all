@@ -14,7 +14,7 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Signal, QObject
 from PySide6.QtGui import QTextCursor, QFont
 from PySide6.QtWidgets import (
     QFileDialog,

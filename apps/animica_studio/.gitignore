@@ -15,8 +15,9 @@ build/
 logs/
 *.log
 
-# PyInstaller / cx_Freeze bundles
+# PyInstaller / cx_Freeze bundles (exclude generated .spec at repo root, keep scripts/)
 *.spec
+!scripts/pyinstaller.spec
 release/
 
 # IDE / OS files
