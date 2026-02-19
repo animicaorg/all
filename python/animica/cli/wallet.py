@@ -16,6 +16,7 @@ from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
 from animica.coin import format_amount
+from animica.cli.aicf_utils import safe_json_encode
 from animica.wallet.serialization import (
     WalletParseError,
     canonical_json_dumps,
@@ -775,7 +776,8 @@ def show(
     if queried_at is not None:
         output["queried_at"] = queried_at
     
-    typer.echo(json.dumps(output, indent=2))
+    # Use safe_json_encode to handle BigInt values properly
+    typer.echo(safe_json_encode(output))
 
 
 @app.command()

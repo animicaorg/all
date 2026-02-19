@@ -153,6 +153,29 @@ def _write_cbor(path: str, obj: Json) -> None:
             # cbor2 canonical encoding: default sort keys behavior; ensure floats preserved
             # cbor2 doesn't expose a canonical flag; with pre-sorted dicts it's deterministic.
             cbor2.dump(canonical, f)
+    except PermissionError as e:
+        raise SystemExit(
+            f"❌ Permission denied writing to {path}\n\n"
+            f"The filesystem may be read-only or you lack write permissions.\n"
+            f"Troubleshooting:\n"
+            f"  1. Check filesystem is writable: touch {path}\n"
+            f"  2. Verify directory exists and is writable\n"
+            f"  3. Use a different output path (e.g., /tmp/mempool.cbor)\n"
+            f"Technical details: {e}\n"
+        ) from e
+    except OSError as e:
+        # Catch EROFS (Read-only file system) specifically
+        if e.errno == 30:  # EROFS
+            raise SystemExit(
+                f"❌ Read-only filesystem error writing to {path}\n\n"
+                f"The filesystem is mounted read-only.\n"
+                f"Troubleshooting:\n"
+                f"  1. Remount filesystem as read-write\n"
+                f"  2. Use a different output path (e.g., /tmp/mempool.cbor)\n"
+                f"  3. Configure a writable data directory\n"
+                f"Technical details: {e}\n"
+            ) from e
+        raise SystemExit(f"Failed to write CBOR to {path}: {e}") from e
     except Exception as e:
         raise SystemExit(f"Failed to write CBOR to {path}: {e}") from e
 
@@ -231,6 +254,29 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"[+] Wrote canonical JSON snapshot to {args.json_out}", file=sys.stderr
             )
+        except PermissionError as e:
+            raise SystemExit(
+                f"❌ Permission denied writing to {args.json_out}\n\n"
+                f"The filesystem may be read-only or you lack write permissions.\n"
+                f"Troubleshooting:\n"
+                f"  1. Check filesystem is writable: touch {args.json_out}\n"
+                f"  2. Verify directory exists and is writable\n"
+                f"  3. Use a different output path (e.g., /tmp/mempool.json)\n"
+                f"Technical details: {e}\n"
+            ) from e
+        except OSError as e:
+            # Catch EROFS (Read-only file system) specifically
+            if e.errno == 30:  # EROFS
+                raise SystemExit(
+                    f"❌ Read-only filesystem error writing to {args.json_out}\n\n"
+                    f"The filesystem is mounted read-only.\n"
+                    f"Troubleshooting:\n"
+                    f"  1. Remount filesystem as read-write\n"
+                    f"  2. Use a different output path (e.g., /tmp/mempool.json)\n"
+                    f"  3. Configure a writable data directory\n"
+                    f"Technical details: {e}\n"
+                ) from e
+            raise SystemExit(f"Failed to write JSON to {args.json_out}: {e}") from e
         except Exception as e:
             raise SystemExit(f"Failed to write JSON to {args.json_out}: {e}") from e
 
