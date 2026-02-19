@@ -72,6 +72,8 @@ _NUMERIC_KIND = {
     1: "deploy",
     2: "call",
     3: "coinbase",  # Mining reward transaction (protocol-generated)
+    4: "aicf_claim",  # AICF credit claim transaction
+    5: "ena_call",  # ENA inference call transaction (future)
 }
 
 _ALIAS_KIND = {
@@ -84,12 +86,16 @@ _ALIAS_KIND = {
     "call": "call",
     "coinbase": "coinbase",
     "reward": "coinbase",
+    "aicf_claim": "aicf_claim",
+    "claim": "aicf_claim",
+    "ena_call": "ena_call",
+    "ena": "ena_call",
 }
 
 
 def resolve_tx_kind(tx: Any) -> str:
     """
-    Determine the transaction kind: 'transfer' | 'deploy' | 'call' | 'coinbase'.
+    Determine the transaction kind: 'transfer' | 'deploy' | 'call' | 'coinbase' | 'aicf_claim' | 'ena_call'.
 
     Resolution order:
       1) Explicit field: kind / tx_kind / type / txType (string or numeric).
@@ -116,7 +122,7 @@ def resolve_tx_kind(tx: Any) -> str:
                 return _NUMERIC_KIND[explicit]
         else:
             k = str(explicit).strip().lower()
-            if k in ("transfer", "deploy", "call", "coinbase"):
+            if k in ("transfer", "deploy", "call", "coinbase", "aicf_claim", "ena_call"):
                 return k
             if k in _ALIAS_KIND:
                 return _ALIAS_KIND[k]
@@ -242,6 +248,24 @@ def dispatch(
             params=params,
             da=da,
             capabilities=capabilities,
+        )
+
+    if kind == "aicf_claim":
+        from . import aicf_claim as _aicf
+
+        if not hasattr(_aicf, "apply_aicf_claim"):
+            raise DispatchError("aicf_claim handler not available")
+        return _aicf.apply_aicf_claim(  # type: ignore[no-any-return]
+            tx, state, block_env, tx_env, params=params
+        )
+
+    if kind == "ena_call":
+        from . import ena_call as _ena
+
+        if not hasattr(_ena, "apply_ena_call"):
+            raise DispatchError("ena_call handler not available (future feature)")
+        return _ena.apply_ena_call(  # type: ignore[no-any-return]
+            tx, state, block_env, tx_env, params=params, capabilities=capabilities
         )
 
     raise DispatchError(f"unknown transaction kind: {kind!r}")

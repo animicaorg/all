@@ -53,7 +53,7 @@ def process_block_for_aicf(
         return
     
     try:
-        from ...state.aicf_state import (
+        from execution.state.aicf_state import (
             add_credits,
             add_inflow,
             compute_epoch,
