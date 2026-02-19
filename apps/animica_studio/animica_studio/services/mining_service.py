@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Callable
 
 from animica_studio.models.exec_models import ExecResult, StreamEvent
