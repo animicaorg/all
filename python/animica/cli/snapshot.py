@@ -20,6 +20,7 @@ import httpx
 import typer
 from animica.config import load_network_config
 from animica.cli.rpc_utils import candidate_rpc_urls
+from animica.cli.aicf_utils import normalize_rpc_url
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 _log = logging.getLogger("animica.cli.snapshot")
@@ -141,11 +142,8 @@ async def _query_peer_snapshots(
         _log.debug(f"Skipping RPC query for {peer_address}: {error_msg}")
         return peer_address, [], error_msg
     
-    rpc_url = peer_address
-    
-    # Ensure RPC URL has /rpc suffix
-    if not rpc_url.endswith("/rpc"):
-        rpc_url = f"{rpc_url}/rpc"
+    # Normalize RPC URL to ensure proper /rpc suffix
+    rpc_url = normalize_rpc_url(peer_address)
     
     params = {}
     if chain_id is not None:
