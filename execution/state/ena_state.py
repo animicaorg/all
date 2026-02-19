@@ -793,7 +793,7 @@ def verify_receipt(
     Returns:
         (is_valid, reason) tuple.
     """
-    # TODO: Integrate with full proof/attestation system when available.
+    # Phase 2 - Integration pending: full proof/attestation system.
     # For now, perform structural validation only.
 
     if not request_id or not request_id.startswith("ena-"):
