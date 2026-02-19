@@ -29,6 +29,8 @@ class TxKind(IntEnum):
     COINBASE = 3
     AICF_CLAIM = 4  # AICF credit claim transaction
     ENA_CALL = 5  # ENA inference call transaction (future)
+    ENA_SUBMIT_RECEIPT = 6  # Phase 2: Submit compute receipt (anchor hash)
+    AICF_CLAIM_PROVIDER_REWARDS = 7  # Phase 2: Provider claim accrued rewards
 
 
 @dataclass(frozen=True)
