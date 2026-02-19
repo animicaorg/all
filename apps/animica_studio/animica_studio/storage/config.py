@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from animica_studio.util.paths import config_file
+from animica_studio.util.paths import config_file, app_data_dir
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +56,13 @@ class Profile:
 class Config:
     active_profile: str = "Mainnet"
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
+
+    # ---------------------------------------------------------------------------
+    # New fields: wizard + RpcProfile system
+    # ---------------------------------------------------------------------------
+    first_run_completed: bool = False
+    active_profile_id: str | None = None
+    rpc_profiles: list[dict[str, Any]] = field(default_factory=list)
 
     # ---------------------------------------------------------------------------
     # Convenience helpers
@@ -118,11 +126,68 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     return Config(
         active_profile=str(d.get("active_profile", "Mainnet")),
         profiles=profiles,
+        first_run_completed=bool(d.get("first_run_completed", False)),
+        active_profile_id=d.get("active_profile_id") or None,
+        rpc_profiles=list(d.get("rpc_profiles") or []),
     )
 
 
 def _config_to_dict(cfg: Config) -> dict[str, Any]:
-    return asdict(cfg)
+    d = asdict(cfg)
+    # rpc_profiles is already a list[dict] — asdict wraps it as-is
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Migration helpers
+# ---------------------------------------------------------------------------
+
+
+def _migrate_legacy_profiles(cfg: Config) -> bool:
+    """Migrate old-style ``profiles`` (list[Profile]) into ``rpc_profiles`` (list[RpcProfile]).
+
+    Returns ``True`` if migration was performed and the config should be saved.
+    """
+    from animica_studio.models.profile_models import RpcProfile, ProfileType  # noqa: PLC0415
+
+    if cfg.rpc_profiles:
+        # Already has new-style profiles; nothing to migrate
+        return False
+
+    legacy = cfg.profiles
+    if not legacy:
+        return False
+
+    migrated: list[dict] = []
+    for lp in legacy:
+        # Determine profile type from rpc_url
+        is_local = "127.0.0.1" in lp.rpc_url or "localhost" in lp.rpc_url
+
+        node_datadir: str | None = None
+        if is_local:
+            # Default node datadir to <app_data_dir>/node
+            node_datadir = str(app_data_dir() / "node")
+
+        ptype = ProfileType.LOCAL_NODE if is_local else ProfileType.REMOTE_RPC
+
+        rp = RpcProfile(
+            id=str(uuid.uuid4()),
+            name=lp.name,
+            type=ptype,
+            rpc_url=lp.rpc_url,
+            chain_id_expected=lp.chain_id_expected,
+            node_start_cmd=list(lp.node.start_cmd) if is_local else None,
+            node_datadir=node_datadir,
+            node_rpc_url=lp.node.rpc_local_url if is_local else None,
+        )
+        migrated.append(rp.to_dict())
+
+    cfg.rpc_profiles = migrated
+    if migrated:
+        cfg.active_profile_id = migrated[0]["id"]
+
+    log.info("Migrated %d legacy profile(s) to rpc_profiles", len(migrated))
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +200,7 @@ def load_config() -> Config:
 
     * Creates a default config if the file is absent.
     * Recovers to defaults (and backs up the corrupt file) on JSON parse errors.
+    * Migrates legacy ``profiles`` data to ``rpc_profiles`` on first load.
     """
     path: Path = config_file()
 
@@ -151,6 +217,9 @@ def load_config() -> Config:
             raise ValueError("Config root must be a JSON object")
         cfg = _config_from_dict(data)
         log.debug("Config loaded from %s", path)
+        # Run migration silently; save if changes were made
+        if _migrate_legacy_profiles(cfg):
+            save_config(cfg)
         return cfg
     except Exception as exc:  # noqa: BLE001
         log.warning("Failed to load config (%s) — reverting to defaults", exc)

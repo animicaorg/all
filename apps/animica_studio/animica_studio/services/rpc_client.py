@@ -284,6 +284,38 @@ class RpcClient:
             raise RpcParseError(f"Expected str tx hash from {method}, got {type(result).__name__}")
         return result
 
+    def get_chain_id(self) -> int:
+        """Return the node's chain ID.
+
+        Tries the following methods in order, using discovery to pick the best one:
+
+        1. ``chain_getChainId``
+        2. ``chain.getChainId``
+        3. ``eth_chainId`` (returns hex-encoded integer)
+
+        Raises
+        ------
+        RpcTransportError
+            On network failures.
+        RpcResponseError
+            When the server returns a JSON-RPC error.
+        RpcParseError
+            When the chain ID cannot be parsed.
+        """
+        from animica_studio.models.rpc_models import parse_hex_quantity  # noqa: PLC0415
+
+        method = self._pick_method("chain_getChainId", "chain.getChainId", "eth_chainId")
+        result = self.call(method)
+        # Integers are returned directly; hex strings come from eth_chainId
+        if isinstance(result, int):
+            return result
+        if isinstance(result, str):
+            try:
+                return parse_hex_quantity(result, "chain_id")
+            except ValueError as exc:
+                raise RpcParseError(f"Cannot parse chain_id from {result!r}: {exc}") from exc
+        raise RpcParseError(f"Unexpected chain_id result type {type(result).__name__}: {result!r}")
+
     def ping(self) -> bool:
         """Attempt a lightweight RPC call to check if the node is reachable.
 
