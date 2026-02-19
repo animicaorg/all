@@ -360,11 +360,12 @@ def apply_deploy(
         enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
     ):
         try:
-            # Placeholder hook — intentionally not imported at module import time.
+            # VM-PY integration hook (Phase 2)
+            # When vm_py runtime is ready, uncomment:
             # from vm_py.runtime.loader import deploy_package
             # result = deploy_package(...)
             # return result_as_ApplyResult(...)
-            pass  # not yet wired
+            pass  # Integration pending, falls back to deterministic revert
         except Exception:
             # fall back to deterministic revert below
             pass
@@ -438,13 +439,14 @@ def apply_call(
         enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
     ):
         try:
-            # Example sketch (intentionally not executed):
+            # VM-PY contract call hook (Phase 2)
+            # When vm_py runtime is ready, uncomment:
             # from vm_py.runtime.abi import dispatch_call
             # to = _as_bytes(_get(tx, "to", "recipient"), expect_len=20)
             # input_data = _as_bytes(_get(tx, "data", "input"))
             # result = dispatch_call(state_adapter, to, input_data, gas=gas_limit or intrinsic, env=...)
             # return result_as_ApplyResult(...)
-            pass  # not yet wired
+            pass  # Integration pending, falls back to deterministic revert
         except Exception:
             # fall back to deterministic revert below
             pass

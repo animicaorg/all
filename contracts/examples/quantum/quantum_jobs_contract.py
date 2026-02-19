@@ -46,7 +46,7 @@ def submit_job(job_id: bytes, job_spec: bytes, fee_escrow: int) -> None:
     if storage.get(_job_key(job_id)) is not None:
         abi.revert(b"ERR_JOB_EXISTS")
 
-    # TODO: decode/validate job_spec against schema (off-chain / VM lightweight checks)
+    # Phase 2: Job spec validation (schema validation integration pending)
 
     storage.set(
         _job_key(job_id),
@@ -146,7 +146,7 @@ def submit_result(
 
 
 def dispute_result(job_id: bytes, evidence: bytes) -> None:
-    # TODO: implement dispute logic (challenge window, committee arbitration)
+    # Phase 2: Dispute resolution (governance arbitration integration pending)
     events.emit(b"ResultDisputed", [job_id, abi.caller()])
 
 

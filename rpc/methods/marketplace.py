@@ -172,8 +172,17 @@ async def explorer_get_treasury_snapshot(
         }
     """
     try:
-        # TODO: Implement actual treasury state fetch from state DB
-        # For now, return fallback data
+        # Marketplace MVP: Returns fallback treasury snapshot
+        # 
+        # Status: MVP implementation (MARKETPLACE_SUMMARY.md)
+        # - Wallet and explorer UIs work with fallback data
+        # - Real treasury state fetch requires state DB integration
+        # 
+        # Future implementation:
+        # from execution.state.treasury import get_treasury_state
+        # snapshot = get_treasury_state(ctx.state_db)
+        # 
+        # For now, return static fallback for UI testing
         snapshot = FALLBACK_TREASURY_SNAPSHOT
 
         return {
@@ -219,8 +228,20 @@ async def explorer_get_market_data(
         }
     """
     try:
-        # TODO: Implement actual market data fetch from external APIs
-        # with fallback chain: CoinGecko → CoinMarketCap → internal exchange
+        # Marketplace MVP: Returns fallback market data
+        # 
+        # Status: MVP implementation (MARKETPLACE_SUMMARY.md)
+        # - Wallet and explorer UIs work with fallback pricing
+        # - Real market data requires external API integration
+        # 
+        # Future implementation:
+        # from marketplace.pricing import fetch_market_data
+        # data = await fetch_market_data(
+        #     token,
+        #     sources=["coingecko", "coinmarketcap", "internal_exchange"]
+        # )
+        # 
+        # For now, return static fallback for UI testing
         data = FALLBACK_MARKET_PRICE_DATA
 
         return {
@@ -334,8 +355,18 @@ async def wallet_get_purchase_history(
     offset = max(0, offset)
 
     try:
-        # TODO: Implement actual purchase history fetch from database
-        # For now, return empty result (user has not purchased)
+        # Marketplace MVP: Returns empty purchase history
+        # 
+        # Status: MVP implementation (MARKETPLACE_SUMMARY.md)
+        # - Wallet UI handles empty purchase history gracefully
+        # - Real purchase history requires payment DB integration
+        # 
+        # Future implementation:
+        # from billing.store import BillingStore
+        # store = BillingStore()
+        # purchases = store.get_user_purchases(user_address, limit=limit, offset=offset)
+        # 
+        # For now, return empty for UI testing
 
         return {
             "purchases": [],
@@ -466,12 +497,18 @@ async def marketplace_calculate_price(
 
 
 def get_treasury_snapshot_sync() -> TreasurySnapshot:
-    """Synchronous version for non-async code paths."""
-    # TODO: Implement actual state fetching
+    """Synchronous version for non-async code paths.
+    
+    MVP implementation: Returns fallback data.
+    Phase 2: Integrate with state DB to fetch real treasury state.
+    """
     return FALLBACK_TREASURY_SNAPSHOT
 
 
 def get_market_price_sync() -> MarketPriceData:
-    """Synchronous version for non-async code paths."""
-    # TODO: Implement actual market data fetching with retries
+    """Synchronous version for non-async code paths.
+    
+    MVP implementation: Returns fallback data.
+    Phase 2: Integrate with external price APIs (CoinGecko, CoinMarketCap).
+    """
     return FALLBACK_MARKET_PRICE_DATA

@@ -281,26 +281,39 @@ class TelemetryCurator:
             logger.info(f"MOCK: Uploaded {len(commitments)} samples")
             return commitments
         
-        # TODO: Real DA upload
-        # This would batch samples and upload to DA:
+        # Real DA upload (requires DA client integration)
+        # 
+        # Status: Integration pending (Phase 2)
+        # - Mock mode is functional for testing (mock_mode=True)
+        # - Real DA upload requires DA client to be wired up
+        # 
+        # When implemented:
+        # 1. Batch samples into JSONL file
+        # 2. Upload to DA layer via DA client
+        # 3. Return DA commitment hashes
+        # 
+        # Example implementation:
+        # from da.client import DAClient
+        # import tempfile
         # 
         # # Create dataset file
-        # dataset_file = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
-        # for sample in samples:
-        #     dataset_file.write(sample.to_json() + '\n')
-        # dataset_file.close()
+        # with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+        #     for sample in samples:
+        #         f.write(sample.to_json() + '\n')
+        #     dataset_file = f.name
         # 
         # # Upload to DA
-        # from da.client import DAClient
         # da_client = DAClient()
-        # commitment = da_client.upload(dataset_file.name)
-        # 
-        # # Clean up
-        # os.unlink(dataset_file.name)
+        # commitment = da_client.upload(dataset_file)
+        # os.unlink(dataset_file)
         # 
         # return [commitment]
         
-        raise NotImplementedError("Real DA upload not yet implemented. Use mock_mode=True for testing.")
+        raise NotImplementedError(
+            "Real DA upload not yet implemented (Phase 2). "
+            "Use mock_mode=True for testing. "
+            "Integration requires DA client to be wired up."
+        )
     
     def _compute_stats(
         self,

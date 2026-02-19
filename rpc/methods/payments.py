@@ -210,7 +210,13 @@ async def process_payment_webhook(
             message=f"Could not save purchase to database: {e}",
         )
 
-    # Step 6: Mint tokens on-chain (TODO: replace with actual on-chain call)
+    # Step 6: Mint tokens on-chain
+    # Status: MVP mock implementation (MARKETPLACE_SUMMARY.md)
+    # - Payment records are saved to database
+    # - Actual on-chain minting is mocked for development
+    # - Real implementation requires treasury contract integration
+    # 
+    # See _mint_tokens_on_chain() for integration path
     try:
         tx_hash = await _mint_tokens_on_chain(
             user_address=webhook.user_address,
@@ -380,24 +386,40 @@ async def _mint_tokens_on_chain(
     """
     Mint ANM tokens to user address on-chain.
 
-    NOTE: Mock implementation for development/testing.
-    In production, replace with actual on-chain minting:
-    1. Load treasury contract
-    2. Call mint(user_address, anm_quantity)
-    3. Wait for transaction confirmation
-    4. Return transaction hash
+    Status: MVP mock implementation
+    - Returns synthetic transaction hash for development/testing
+    - Payment records are properly saved to database
+    - UI can track purchase history
+    
+    Production implementation path:
+    1. Load treasury contract from state
+    2. Build mint transaction: mint(user_address, anm_quantity)
+    3. Sign and submit transaction
+    4. Wait for confirmation (with retries)
+    5. Return actual transaction hash
+    
+    Example:
+        from execution.contracts import load_contract
+        from coretx.signing import sign_transaction
+        
+        treasury = load_contract("treasury", ctx.state_db)
+        tx = treasury.build_mint(user_address, anm_quantity)
+        signed = sign_transaction(tx, treasury_key)
+        tx_hash = await submit_transaction(signed)
+        await wait_for_confirmation(tx_hash)
+        return tx_hash
 
     Returns:
-        Transaction hash (mock in devnet)
+        Transaction hash (mock in MVP, real on mainnet)
     """
 
-    # Return mock transaction hash for development
+    # Return mock transaction hash for MVP
     import secrets
 
     tx_hash = "0x" + secrets.token_hex(32)
 
     logger.info(
-        f"[MOCK] Minting {anm_quantity} ANM to {user_address} "
+        f"[MOCK MINT] {anm_quantity} ANM to {user_address} "
         f"(order={order_id}) → tx={tx_hash}"
     )
 

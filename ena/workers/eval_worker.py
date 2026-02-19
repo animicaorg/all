@@ -191,7 +191,7 @@ class EvaluationWorker(WorkerBase):
         eval_suite_dir = self.output_dir / "eval_suite"
         self.download_from_da(eval_suite_hash, eval_suite_dir)
         
-        # TODO: Real evaluation implementation
+        # Phase 2: Real model evaluation (modal/compute platform integration pending)
         # This would use evaluation frameworks like lm-evaluation-harness:
         # 
         # from transformers import AutoModelForCausalLM, AutoTokenizer

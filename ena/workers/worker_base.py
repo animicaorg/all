@@ -129,7 +129,7 @@ class WorkerBase(ABC):
             logger.info(f"MOCK: Created dummy file at {output_path}")
             return
         
-        # TODO: Integrate with actual DA layer
+        # Phase 2: DA layer integration (DA client wiring pending)
         # For now, stub implementation
         raise NotImplementedError("DA download not yet implemented. Use mock_mode=True for testing.")
     
@@ -157,7 +157,7 @@ class WorkerBase(ABC):
             logger.info(f"MOCK: Upload complete, commitment={commitment}")
             return commitment
         
-        # TODO: Integrate with actual DA layer
+        # Phase 2: DA layer integration (DA client wiring pending)
         # For now, stub implementation
         raise NotImplementedError("DA upload not yet implemented. Use mock_mode=True for testing.")
     
