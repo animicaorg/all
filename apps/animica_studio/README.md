@@ -80,7 +80,34 @@ mypy animica_studio
 pytest
 ```
 
-## Console Page
+## Features
+
+Animica Studio provides a complete desktop interface to all Animica CLI operations:
+
+| Page | Description |
+|------|-------------|
+| **Dashboard** | Node health, chain info, quick actions |
+| **Wallet** | Multi-account balances, send transactions, history, explorer links |
+| **Node** | Start/stop/restart local node, status, log tail |
+| **Mining** | Mine blocks (CPU), automine toggle, live mining log stream |
+| **AICF** | Status, miner credits, claim, jobs list/submit/watch |
+| **DA** | Blob put/get/proof with chunked upload and namespace support |
+| **Quantum** | Quantum job status, credits, submit, and stream watch |
+| **Console** | Raw CLI runner with presets, history, and streaming output |
+| **IDE** | Monaco editor with run-script placeholder |
+| **Settings** | Profiles, RPC config, timeouts |
+
+### Bug fixes included
+
+- **AICF 405 Method Not Allowed**: All AICF/DA/Quantum services normalise the RPC
+  URL to ensure it ends with `/rpc` (fixes bare-URL 405 errors).
+- **Wallet `[object Object]`**: All errors are formatted through `format_rpc_error`
+  and `format_exception` before display; never raw dict/object dumps.
+- **BigInt serialization**: `RpcClient` now uses `safe_json_dumps` (with custom
+  `int` encoder) instead of `json.dumps` for RPC request bodies — handles
+  arbitrarily large Python integers safely.
+- **Balance cache**: `WalletService.clear_balance_cache()` is called on profile
+  switch to prevent stale balances from a previous profile appearing.
 
 The **Console** page provides a full-featured CLI runner with:
 
@@ -144,3 +171,19 @@ pwsh -File scripts/package_windows.ps1
 
 Artifacts appear in `dist/AnimicaStudio/`. Include Monaco assets before
 packaging by running `scripts/setup_monaco.py` first.
+
+
+## Manual Verification Checklist
+
+After starting the app (`python -m animica_studio`):
+
+1. **Profile setup**: Open Setup Wizard, configure RPC URL (e.g. `http://127.0.0.1:8545/rpc`), verify green health dot appears.
+2. **Node page**: Click Start → check status shows "running=True" in log, click Stop.
+3. **Mining page**: Set count=1, click Mine Blocks → live output streams; automine checkbox → Apply.
+4. **AICF page**: Status tab → Refresh Status (expect JSON or clear error, not `[object Object]`); Credits tab → enter address → Fetch.
+5. **DA page**: Put Blob → type text → Upload → verify commitment returned; Get Blob → paste commitment → Download → see text.
+6. **Quantum page**: Status tab → Refresh; Jobs → List; Submit with `{"circuit":"test"}`.
+7. **Wallet page**: Add account, see balance (or "Unavailable" with clear error); Send with large value (verify no BigInt error).
+8. **Profile switch**: Switch profile in header → wallet balances clear and re-fetch (no stale cross-profile values).
+9. **Console page**: Run `node status` → streaming output appears; history with Up arrow.
+10. **Settings page**: Update profile, save.

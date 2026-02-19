@@ -117,8 +117,20 @@ class WalletService:
     # Balance management
     # ------------------------------------------------------------------
 
+    def clear_balance_cache(self) -> None:
+        """Clear the in-memory balance cache.
+
+        Should be called when the active profile changes to prevent stale
+        balances from a different RPC endpoint being shown.
+        """
+        self._balances.clear()
+
     def get_cached_balance(self, address: str) -> BalanceState | None:
-        """Return cached balance for *address*, or None."""
+        """Return cached balance for *address*, or None.
+
+        The cache is keyed by address only. Call :meth:`clear_balance_cache`
+        when the active profile changes to prevent stale cross-profile balances.
+        """
         return self._balances.get(address)
 
     def fetch_balance(self, address: str, rpc_url: str) -> BalanceState:
