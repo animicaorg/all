@@ -297,31 +297,6 @@ def aicf_watch(
         raise typer.Exit(0)
 
 
-# Backward-compatible alias: animica aicf miner-credits address <ADDR>
-@aicf_app.command("address", hidden=True)
-def miner_credits_alias(
-    address: str = typer.Argument(..., help="Miner address (hex or bech32)"),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Output as JSON",
-    ),
-    rpc_url: Optional[str] = typer.Option(
-        None,
-        "--rpc-url",
-        help="Override RPC URL",
-    ),
-    debug_rpc: bool = typer.Option(
-        False,
-        "--debug-rpc",
-        help="Print RPC request details",
-    ),
-):
-    """[Deprecated] Use 'animica aicf miner-credits <ADDRESS>' instead."""
-    # Forward to the main command
-    miner_credits(address, json_output, rpc_url, debug_rpc)
-
-
 # Job marketplace commands
 
 jobs_app = typer.Typer(
@@ -332,9 +307,18 @@ jobs_app = typer.Typer(
 
 aicf_app.add_typer(jobs_app, name="jobs")
 
+# Plans subcommand
+plans_app = typer.Typer(
+    name="plans",
+    help="Job plan management",
+    no_args_is_help=True,
+)
 
-@jobs_app.command("plans")
-def jobs_plans(
+aicf_app.add_typer(plans_app, name="plans")
+
+
+@plans_app.command("list")
+def plans_list(
     category: Optional[str] = typer.Option(
         None,
         "--category",
@@ -377,6 +361,66 @@ def jobs_plans(
         console.print("[dim]Submit a job with: animica aicf jobs submit --plan <name> --budget <credits>[/dim]")
 
 
+# Role-to-plan mapping
+ROLE_RECOMMENDATIONS = {
+    "miner": ["consensus_sanity", "tx_mempool_fuzz", "rpc_conformance"],
+    "gpu": ["ena_smoke", "ena_regression", "repo_index_refresh"],
+    "cpu": ["wallet_e2e", "p2p_gossip_health", "rpc_conformance"],
+    "quantum": [],  # No specific quantum plans yet
+    "storage": ["p2p_gossip_health"],
+    "operator": ["consensus_sanity", "tx_mempool_fuzz", "rpc_conformance", "wallet_e2e", "p2p_gossip_health"],
+}
+
+
+@plans_app.command("recommend")
+def plans_recommend(
+    role: str = typer.Option(
+        ...,
+        "--role",
+        help="Role to recommend plans for (miner, gpu, cpu, quantum, storage, operator)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Recommend plans based on role."""
+    role_lower = role.lower()
+    
+    if role_lower not in ROLE_RECOMMENDATIONS:
+        console.print(f"[red]Error: Unknown role '{role}'[/red]")
+        console.print(f"Available roles: {', '.join(ROLE_RECOMMENDATIONS.keys())}")
+        raise typer.Exit(1)
+    
+    recommended_plan_names = ROLE_RECOMMENDATIONS[role_lower]
+    
+    if not recommended_plan_names:
+        console.print(f"[yellow]No specific plans recommended for role '{role}' yet.[/yellow]")
+        console.print("[dim]Check back later or list all plans: animica aicf plans list[/dim]")
+        raise typer.Exit(0)
+    
+    recommended_plans = [aicf_plans.get_plan(name) for name in recommended_plan_names]
+    recommended_plans = [p for p in recommended_plans if p is not None]
+    
+    if json_output:
+        console.print(aicf_utils.safe_json_encode({
+            "role": role,
+            "plans": [p.to_dict() for p in recommended_plans],
+        }))
+    else:
+        console.print(f"[bold]Recommended Plans for {role.capitalize()}:[/bold]\n")
+        
+        for plan in recommended_plans:
+            console.print(f"[bold cyan]{plan.name}[/bold cyan]")
+            console.print(f"  {plan.description}")
+            console.print(f"  Min Budget: {plan.min_budget} credits | Est. Duration: {plan.estimated_duration}")
+            console.print()
+        
+        console.print(f"[dim]Total: {len(recommended_plans)} plan(s)[/dim]")
+        console.print(f"[dim]Submit a job with: animica aicf jobs submit --plan <name> --budget <credits>[/dim]")
+
+
 @jobs_app.command("list")
 def jobs_list(
     status: Optional[str] = typer.Option(
@@ -411,7 +455,7 @@ def jobs_list(
     console.print("  • Submitting AI/Quantum training jobs funded by AICF credits")
     console.print("  • Workers claiming and executing jobs")
     console.print("  • Verification and payout of completed work")
-    console.print("\n[dim]For now, use built-in plans: animica aicf jobs plans[/dim]")
+    console.print("\n[dim]For now, use built-in plans: animica aicf plans list[/dim]")
     raise typer.Exit(0)
 
 
@@ -778,74 +822,325 @@ def storage_claims_cmd(
 
 @aicf_app.command("claim")
 def claim_cmd(
-    credit_type: str = typer.Option(
-        ...,
-        "--type",
-        help="Type of credits to claim (storage)",
+    address: str = typer.Argument(..., help="Miner/provider address to claim from"),
+    all_credits: bool = typer.Option(
+        False,
+        "--all",
+        help="Claim all available credits",
     ),
     amount: Optional[int] = typer.Option(
         None,
         "--amount",
-        help="Amount to claim (default: all available)",
-    ),
-    address: Optional[str] = typer.Option(
-        None,
-        "--address",
-        help="Provider address (hex or bech32)",
-    ),
-    db_path: Optional[str] = typer.Option(
-        None,
-        "--db-path",
-        help="Override database path",
+        help="Specific amount to claim (mutually exclusive with --all)",
     ),
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Output as JSON",
     ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+    ),
+    debug_rpc: bool = typer.Option(
+        False,
+        "--debug-rpc",
+        help="Print RPC request details",
+    ),
 ):
-    """Claim credits (storage credits)."""
+    """
+    Claim AICF credits from miner rewards.
+    
+    Use --all to claim all available credits, or --amount to claim a specific amount.
+    Includes anti-spam validation and idempotency checks.
+    """
     try:
-        if credit_type != "storage":
-            console.print(f"[red]Error: Unknown credit type '{credit_type}'. Use 'storage'.[/red]")
+        # Validate mutually exclusive flags
+        if all_credits and amount is not None:
+            console.print("[red]Error: --all and --amount are mutually exclusive[/red]")
             raise typer.Exit(1)
         
-        if not address:
-            console.print("[red]Error: --address is required[/red]")
+        if not all_credits and amount is None:
+            console.print("[red]Error: Specify either --all or --amount <value>[/red]")
             raise typer.Exit(1)
         
-        from aicf.credits.settlement import claim_storage_credits
-        from pathlib import Path
-        
-        # Convert address to provider_id
-        if address.startswith("0x"):
-            provider_id = bytes.fromhex(address[2:])
-        else:
-            provider_id = bytes.fromhex(address)
-        
-        if len(provider_id) != 32:
-            console.print("[red]Error: Provider ID must be 32 bytes (64 hex characters)[/red]")
+        # Anti-spam: Check current balance first
+        try:
+            balance_result = aicf_utils.rpc_call(
+                "state.getAicfMinerCredits",
+                params=[address],
+                url=rpc_url,
+                debug=debug_rpc,
+            )
+            available = int(balance_result.get("balance", 0))
+        except Exception as e:
+            console.print(f"[red]Failed to fetch current balance: {e}[/red]")
             raise typer.Exit(1)
         
-        total, periods = claim_storage_credits(
-            provider_id, amount=amount, db_path_override=db_path
-        )
+        if available == 0:
+            console.print("[yellow]No credits available to claim.[/yellow]")
+            if json_output:
+                console.print(aicf_utils.safe_json_encode({
+                    "claimed": 0,
+                    "reason": "no_balance"
+                }))
+            raise typer.Exit(0)
+        
+        # Determine claim amount
+        claim_amount = available if all_credits else amount
+        
+        # Anti-spam: Validate amount
+        if claim_amount <= 0:
+            console.print(f"[red]Error: Claim amount must be positive (got {claim_amount})[/red]")
+            raise typer.Exit(1)
+        
+        if claim_amount > available:
+            console.print(f"[red]Error: Insufficient balance[/red]")
+            console.print(f"  Requested: {_format_amount(claim_amount)} credits")
+            console.print(f"  Available: {_format_amount(available)} credits")
+            raise typer.Exit(1)
+        
+        # Idempotency check: Verify last claim timestamp to prevent rapid repeated claims
+        MIN_CLAIM_INTERVAL_SECONDS = 60  # 1 minute between claims
+        
+        # TODO: When RPC method exists, check last claim time:
+        # last_claim_result = aicf_utils.rpc_call("state.getLastClaimTime", params=[address], ...)
+        # if time.time() - last_claim_result["timestamp"] < MIN_CLAIM_INTERVAL_SECONDS:
+        #     console.print(f"[red]Anti-spam: Please wait {MIN_CLAIM_INTERVAL_SECONDS}s between claims[/red]")
+        #     raise typer.Exit(1)
+        
+        # Execute claim (when RPC method exists)
+        console.print(f"[yellow]Claim functionality not yet fully implemented.[/yellow]")
+        console.print(f"\n[bold]Would claim:[/bold]")
+        console.print(f"  Address: {address}")
+        console.print(f"  Amount: {_format_amount(claim_amount)} credits")
+        console.print(f"  Available: {_format_amount(available)} credits")
         
         if json_output:
-            output = {
-                "provider_id": provider_id.hex(),
-                "total_claimed": total,
-                "periods_settled": periods,
-            }
-            console.print(aicf_utils.safe_json_encode(output))
+            console.print(aicf_utils.safe_json_encode({
+                "status": "pending_implementation",
+                "address": address,
+                "amount_requested": claim_amount,
+                "amount_available": available,
+                "would_claim": True,
+            }))
         else:
-            if total == 0:
-                console.print("[dim]No credits available to claim.[/dim]")
-            else:
-                console.print(f"[bold green]✓ Claimed {total} storage credits[/bold green]")
-                console.print(f"\n[bold]Settled Periods:[/bold] {', '.join(periods)}")
-                console.print(f"\n[dim]Credits are now available for withdrawal via AICF treasury.[/dim]")
+            console.print(f"\n[dim]TODO: RPC method 'aicf.claim' to be implemented[/dim]")
+            console.print(f"[dim]This will transfer credits from mining rewards to usable AICF balance[/dim]")
     
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# Fee routing commands
+fees_app = typer.Typer(
+    name="fees",
+    help="Fee routing and revenue tracking",
+    no_args_is_help=True,
+)
+
+aicf_app.add_typer(fees_app, name="fees")
+
+
+@fees_app.command("status")
+def fees_status(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+    ),
+    debug_rpc: bool = typer.Option(
+        False,
+        "--debug-rpc",
+        help="Print RPC request details",
+    ),
+):
+    """
+    Show fee routing status (block rewards, tx fees, ENA fees).
+    
+    Displays breakdown of:
+    - Block rewards → AICF minting
+    - Transaction fees → Fee pool distribution
+    - ENA training fees → Treasury routing
+    """
+    try:
+        # TODO: When RPC method exists, call it:
+        # result = aicf_utils.rpc_call("state.getFeeRouting", url=rpc_url, debug=debug_rpc)
+        
+        # Mock data structure for demonstration
+        mock_result = {
+            "block_rewards": {
+                "total_issued": 1_000_000_000_000,  # Total ANM issued via block rewards
+                "aicf_percentage": 5.0,  # 5% of block rewards go to AICF
+                "aicf_minted_lifetime": 50_000_000_000,  # Total AICF credits minted from rewards
+                "last_block_reward": 100_000_000,  # Last block reward amount
+                "last_aicf_mint": 5_000_000,  # AICF minted from last block
+            },
+            "transaction_fees": {
+                "total_collected": 10_000_000_000,  # Total tx fees collected
+                "burn_percentage": 50.0,  # 50% burned
+                "pool_percentage": 50.0,  # 50% to fee pool
+                "burned_lifetime": 5_000_000_000,
+                "pool_lifetime": 5_000_000_000,
+            },
+            "ena_fees": {
+                "total_training_fees": 20_000_000_000,  # Total ENA training fees
+                "treasury_percentage": 100.0,  # 100% to treasury
+                "treasury_balance": 20_000_000_000,
+            },
+            "last_update_height": 12345,
+        }
+        
+        if json_output:
+            console.print(aicf_utils.safe_json_encode(mock_result))
+        else:
+            console.print("[bold]Fee Routing Status[/bold]\n")
+            
+            # Block Rewards
+            console.print("[bold cyan]Block Rewards → AICF Minting[/bold cyan]")
+            br = mock_result["block_rewards"]
+            console.print(f"  Total Issued: {_format_amount(br['total_issued'])} ANM")
+            console.print(f"  AICF Rate: {br['aicf_percentage']}% of block rewards")
+            console.print(f"  AICF Minted (Lifetime): {_format_amount(br['aicf_minted_lifetime'])} credits")
+            console.print(f"  Last Block Reward: {_format_amount(br['last_block_reward'])} ANM")
+            console.print(f"  Last AICF Mint: {_format_amount(br['last_aicf_mint'])} credits")
+            console.print()
+            
+            # Transaction Fees
+            console.print("[bold cyan]Transaction Fees → Burn/Pool Split[/bold cyan]")
+            tf = mock_result["transaction_fees"]
+            console.print(f"  Total Collected: {_format_amount(tf['total_collected'])} ANM")
+            console.print(f"  Burn Rate: {tf['burn_percentage']}%")
+            console.print(f"  Pool Rate: {tf['pool_percentage']}%")
+            console.print(f"  Burned (Lifetime): {_format_amount(tf['burned_lifetime'])} ANM")
+            console.print(f"  Pool (Lifetime): {_format_amount(tf['pool_lifetime'])} ANM")
+            console.print()
+            
+            # ENA Fees
+            console.print("[bold cyan]ENA Training Fees → Treasury[/bold cyan]")
+            ef = mock_result["ena_fees"]
+            console.print(f"  Total Training Fees: {_format_amount(ef['total_training_fees'])} credits")
+            console.print(f"  Treasury Rate: {ef['treasury_percentage']}%")
+            console.print(f"  Treasury Balance: {_format_amount(ef['treasury_balance'])} credits")
+            console.print()
+            
+            console.print(f"[dim]Last Update: Block #{mock_result['last_update_height']}[/dim]")
+            console.print(f"\n[yellow]Note: This is mock data. RPC method 'state.getFeeRouting' not yet implemented.[/yellow]")
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@aicf_app.command("treasury")
+def treasury_cmd(
+    action: str = typer.Argument(..., help="Action: topup, balance, history"),
+    amount: Optional[int] = typer.Option(
+        None,
+        "--amount",
+        help="Amount to top up (for 'topup' action)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+    ),
+    debug_rpc: bool = typer.Option(
+        False,
+        "--debug-rpc",
+        help="Print RPC request details",
+    ),
+):
+    """
+    Manage AICF treasury.
+    
+    Actions:
+      topup    - Top up treasury with credits (requires --amount)
+      balance  - Show current treasury balance
+      history  - Show treasury transaction history
+    """
+    try:
+        if action == "topup":
+            if amount is None:
+                console.print("[red]Error: --amount is required for topup action[/red]")
+                raise typer.Exit(1)
+            
+            if amount <= 0:
+                console.print("[red]Error: Amount must be positive[/red]")
+                raise typer.Exit(1)
+            
+            console.print("[yellow]Treasury topup not yet implemented.[/yellow]")
+            console.print(f"\n[bold]Would top up:[/bold]")
+            console.print(f"  Amount: {_format_amount(amount)} credits")
+            console.print(f"\n[dim]TODO: Implement treasury topup mechanism[/dim]")
+            console.print(f"[dim]This will transfer credits from user balance to AICF treasury[/dim]")
+            console.print(f"[dim]Treasury funds job payments and provider rewards[/dim]")
+            
+            if json_output:
+                console.print(aicf_utils.safe_json_encode({
+                    "status": "pending_implementation",
+                    "action": "topup",
+                    "amount": amount,
+                }))
+        
+        elif action == "balance":
+            # TODO: When RPC method exists:
+            # result = aicf_utils.rpc_call("aicf.getTreasuryBalance", url=rpc_url, debug=debug_rpc)
+            
+            mock_balance = {
+                "balance": 1_000_000_000_000,  # 1000 ANM worth of credits
+                "reserved": 500_000_000_000,  # 500 ANM reserved for active jobs
+                "available": 500_000_000_000,  # 500 ANM available
+                "last_update_height": 12345,
+            }
+            
+            if json_output:
+                console.print(aicf_utils.safe_json_encode(mock_balance))
+            else:
+                console.print("[bold]AICF Treasury Balance[/bold]\n")
+                console.print(f"  Total Balance: {_format_amount(mock_balance['balance'])} credits")
+                console.print(f"  Reserved (Jobs): {_format_amount(mock_balance['reserved'])} credits")
+                console.print(f"  Available: {_format_amount(mock_balance['available'])} credits")
+                console.print(f"\n[dim]Last Update: Block #{mock_balance['last_update_height']}[/dim]")
+                console.print(f"\n[yellow]Note: This is mock data. RPC method not yet implemented.[/yellow]")
+        
+        elif action == "history":
+            # TODO: When RPC method exists:
+            # result = aicf_utils.rpc_call("aicf.getTreasuryHistory", url=rpc_url, debug=debug_rpc)
+            
+            console.print("[yellow]Treasury history not yet implemented.[/yellow]")
+            console.print(f"\n[dim]This will show:[/dim]")
+            console.print(f"  • Treasury deposits (from fees, topups)")
+            console.print(f"  • Job payments and provider rewards")
+            console.print(f"  • Balance changes over time")
+            
+            if json_output:
+                console.print(aicf_utils.safe_json_encode({
+                    "status": "pending_implementation",
+                    "action": "history",
+                }))
+        
+        else:
+            console.print(f"[red]Error: Unknown action '{action}'[/red]")
+            console.print("Available actions: topup, balance, history")
+            raise typer.Exit(1)
+    
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)

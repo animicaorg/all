@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 # Add ena module to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
@@ -193,7 +194,7 @@ def _send_payment_tx(
         raise typer.Exit(1)
 
 
-@app.command("models")
+@models_app.command("list")
 def list_models(
     endpoint: Optional[str] = typer.Option(
         None,
@@ -351,6 +352,16 @@ def run_inference(
         "--rpc-url",
         help="Animica RPC URL",
     ),
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help="Use local inference daemon (no payment required)",
+    ),
+    network: bool = typer.Option(
+        False,
+        "--network",
+        help="Force network inference (with payment)",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -360,10 +371,55 @@ def run_inference(
     """Run inference with payment including AICF contribution."""
     _ensure_httpx()
     
-    ena_endpoint = endpoint or _get_ena_endpoint()
+    # Determine endpoint based on flags
+    if local and network:
+        console.print("[red]Error: Cannot specify both --local and --network[/red]")
+        raise typer.Exit(1)
+    
+    if local:
+        ena_endpoint = "http://127.0.0.1:8000"
+    else:
+        ena_endpoint = endpoint or _get_ena_endpoint()
+    
     animica_rpc = rpc_url or _get_rpc_url()
     
-    # Load wallet address
+    # Skip payment for local inference
+    if local:
+        if not json_output:
+            console.print("[dim]Using local inference (no payment)[/dim]\n")
+        
+        # Make direct inference request
+        inference_url = f"{ena_endpoint}/v1/inference"
+        request_data = {
+            "prompt": prompt,
+            "model": model or "ena.latest",
+            "max_tokens": max_tokens,
+        }
+        
+        try:
+            with httpx.Client(timeout=60) as client:
+                response = client.post(inference_url, json=request_data)
+                response.raise_for_status()
+                result = response.json()
+            
+            if json_output:
+                console.print(json.dumps(result, indent=2))
+            else:
+                console.print(f"[bold]Response:[/bold]")
+                console.print(result.get("text", ""))
+                
+                if "usage" in result:
+                    usage = result["usage"]
+                    console.print(f"\n[dim]Tokens: {usage.get('prompt_tokens', 0)} prompt + {usage.get('completion_tokens', 0)} completion = {usage.get('total_tokens', 0)} total[/dim]")
+            
+            return
+        
+        except httpx.HTTPError as e:
+            console.print(f"[red]Error: Local inference failed: {e}[/red]")
+            console.print("[yellow]Is the local daemon running? Start with: animica ena serve start[/yellow]")
+            raise typer.Exit(1)
+    
+    # Load wallet address for network inference
     payer_address = _load_wallet_address(from_wallet)
     
     # Get pricing and AICF information
@@ -587,8 +643,8 @@ def deposit_credits(
         console.print(f"\n[dim]Credits will be available once the transaction is confirmed.[/dim]")
 
 
-@app.command("status")
-def check_status(
+@app.command("tx-status")
+def check_tx_status(
     tx: str = typer.Argument(..., help="Transaction hash to check"),
     rpc_url: Optional[str] = typer.Option(
         None,
@@ -644,6 +700,106 @@ def check_status(
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("status")
+def ena_status(
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Show ENA service status (network/local availability)."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    status_data = {
+        "endpoint": ena_endpoint,
+        "network_available": False,
+        "local_available": False,
+        "models": [],
+        "version": None,
+    }
+    
+    # Check network endpoint
+    try:
+        with httpx.Client(timeout=10) as client:
+            # Try /health endpoint first
+            try:
+                response = client.get(f"{ena_endpoint}/health")
+                response.raise_for_status()
+                health_data = response.json()
+                status_data["network_available"] = True
+                status_data["version"] = health_data.get("version")
+            except:
+                # Fallback to /v1/models
+                response = client.get(f"{ena_endpoint}/v1/models")
+                response.raise_for_status()
+                models_data = response.json()
+                status_data["network_available"] = True
+                status_data["models"] = [m.get("name") for m in models_data.get("models", [])]
+    except httpx.HTTPError:
+        pass
+    
+    # Check local endpoint if different
+    local_endpoint = "http://127.0.0.1:8000"
+    if local_endpoint != ena_endpoint:
+        try:
+            with httpx.Client(timeout=5) as client:
+                response = client.get(f"{local_endpoint}/health")
+                response.raise_for_status()
+                status_data["local_available"] = True
+        except httpx.HTTPError:
+            pass
+    
+    if json_output:
+        console.print(json.dumps(status_data, indent=2))
+    else:
+        console.print(f"[bold]ENA Service Status[/bold]\n")
+        console.print(f"Endpoint: {ena_endpoint}")
+        
+        if status_data["network_available"]:
+            console.print(f"Network: [green]✓ Available[/green]")
+            if status_data["version"]:
+                console.print(f"Version: {status_data['version']}")
+            if status_data["models"]:
+                console.print(f"Models: {len(status_data['models'])} available")
+        else:
+            console.print(f"Network: [red]✗ Unavailable[/red]")
+        
+        if local_endpoint != ena_endpoint:
+            if status_data["local_available"]:
+                console.print(f"Local ({local_endpoint}): [green]✓ Available[/green]")
+            else:
+                console.print(f"Local ({local_endpoint}): [yellow]○ Not running[/yellow]")
+                console.print("[dim]Start with: animica ena serve start[/dim]")
+
+
+# Train commands group
+train_app = typer.Typer(help="ENA training job commands")
+app.add_typer(train_app, name="train")
+
+
+# Checkpoints commands group
+checkpoints_app = typer.Typer(help="ENA model checkpoint commands")
+app.add_typer(checkpoints_app, name="checkpoints")
+
+
+# Models commands group (rename existing 'models' command and create group)
+models_app = typer.Typer(help="ENA model management commands")
+app.add_typer(models_app, name="models")
+
+
+# Serve commands group
+serve_app = typer.Typer(help="ENA local inference daemon commands")
+app.add_typer(serve_app, name="serve")
 
 
 # AICF commands group
@@ -2313,6 +2469,699 @@ def image_list(
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
+
+# ============================================================================
+# Train Commands
+# ============================================================================
+
+@train_app.command("submit")
+def train_submit(
+    plan: str = typer.Option(..., "--plan", help="Training plan JSON file path"),
+    budget: str = typer.Option(..., "--budget", help="Budget in ANM (e.g., '10.5')"),
+    from_wallet: Optional[str] = typer.Option(
+        None,
+        "--from",
+        help="Wallet identifier (address, label, or index)",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Animica RPC URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Submit a training job with plan and budget."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    animica_rpc = rpc_url or _get_rpc_url()
+    
+    # Load training plan
+    plan_path = Path(plan)
+    if not plan_path.exists():
+        console.print(f"[red]Error: Plan file not found: {plan}[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        with open(plan_path) as f:
+            plan_data = json.load(f)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Error: Invalid JSON in plan file: {e}[/red]")
+        raise typer.Exit(1)
+    
+    # Parse budget
+    budget_units = _parse_amount(budget)
+    
+    # Load wallet address
+    payer_address = _load_wallet_address(from_wallet)
+    
+    if not json_output:
+        console.print(f"[bold]Submitting Training Job[/bold]\n")
+        console.print(f"Plan: {plan}")
+        console.print(f"Budget: {_format_amount(budget_units)} ANM")
+        console.print(f"From: {payer_address}\n")
+    
+    # Submit training job
+    submit_url = f"{ena_endpoint}/v1/training/submit"
+    request_data = {
+        "plan": plan_data,
+        "budget": budget_units,
+        "payer": payer_address,
+    }
+    
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.post(submit_url, json=request_data)
+            response.raise_for_status()
+            result = response.json()
+        
+        if json_output:
+            console.print(json.dumps(result, indent=2))
+        else:
+            job_id = result.get("job_id")
+            console.print(f"[green]✓ Job submitted successfully[/green]")
+            console.print(f"Job ID: {job_id}")
+            console.print(f"\n[dim]Watch progress with:[/dim]")
+            console.print(f"[dim]  animica ena train watch {job_id}[/dim]")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to submit job: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@train_app.command("list")
+def train_list(
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status",
+        help="Filter by status (pending, running, completed, failed)",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        help="Maximum number of jobs to show",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """List training jobs."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    # Build query parameters
+    params = {"limit": limit}
+    if status:
+        params["status"] = status
+    
+    list_url = f"{ena_endpoint}/v1/training/list"
+    
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.get(list_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+        
+        jobs = data.get("jobs", [])
+        
+        if json_output:
+            console.print(json.dumps(data, indent=2))
+        else:
+            if not jobs:
+                console.print("[yellow]No training jobs found[/yellow]")
+                console.print("[dim]Submit a job with: animica ena train submit --plan <file> --budget <amount>[/dim]")
+                return
+            
+            console.print(f"[bold]Training Jobs[/bold] ({len(jobs)} jobs)\n")
+            
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Job ID", style="yellow", no_wrap=True)
+            table.add_column("Status", style="white")
+            table.add_column("Progress", style="green", justify="right")
+            table.add_column("Budget", style="cyan", justify="right")
+            table.add_column("Spent", style="magenta", justify="right")
+            table.add_column("Created", style="dim")
+            
+            for job in jobs:
+                job_id = job.get("job_id", "")[:16] + "..."
+                status = job.get("status", "unknown")
+                progress = job.get("progress", 0)
+                budget = _format_amount(job.get("budget", 0))
+                spent = _format_amount(job.get("spent", 0))
+                
+                import datetime
+                created = job.get("created_at", 0)
+                created_str = datetime.datetime.fromtimestamp(created).strftime("%Y-%m-%d %H:%M") if created else "-"
+                
+                # Color code status
+                status_colored = status
+                if status == "completed":
+                    status_colored = f"[green]{status}[/green]"
+                elif status == "failed":
+                    status_colored = f"[red]{status}[/red]"
+                elif status == "running":
+                    status_colored = f"[yellow]{status}[/yellow]"
+                
+                table.add_row(
+                    job_id,
+                    status_colored,
+                    f"{progress}%",
+                    f"{budget} ANM",
+                    f"{spent} ANM",
+                    created_str,
+                )
+            
+            console.print(table)
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to list jobs: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@train_app.command("watch")
+def train_watch(
+    job_id: str = typer.Argument(..., help="Job ID to watch"),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    interval: int = typer.Option(
+        5,
+        "--interval",
+        help="Update interval in seconds",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON (single update)",
+    ),
+):
+    """Watch training job status."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    status_url = f"{ena_endpoint}/v1/training/status/{job_id}"
+    
+    if json_output:
+        # Single update for JSON mode
+        try:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(status_url)
+                response.raise_for_status()
+                data = response.json()
+            
+            console.print(json.dumps(data, indent=2))
+        
+        except httpx.HTTPError as e:
+            console.print(f"[red]Error: Failed to get job status: {e}[/red]")
+            raise typer.Exit(1)
+        
+        return
+    
+    # Live watching mode
+    console.print(f"[bold]Watching Job: {job_id}[/bold]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+    
+    try:
+        while True:
+            try:
+                with httpx.Client(timeout=30) as client:
+                    response = client.get(status_url)
+                    response.raise_for_status()
+                    job = response.json()
+                
+                status = job.get("status", "unknown")
+                progress = job.get("progress", 0)
+                budget = _format_amount(job.get("budget", 0))
+                spent = _format_amount(job.get("spent", 0))
+                message = job.get("message", "")
+                
+                # Clear previous line
+                console.print("\033[F\033[K" * 3, end="")
+                
+                console.print(f"Status: {status}")
+                console.print(f"Progress: {progress}%")
+                console.print(f"Budget: {budget} ANM | Spent: {spent} ANM")
+                
+                if message:
+                    console.print(f"[dim]{message}[/dim]")
+                
+                # Stop watching if job is complete
+                if status in ["completed", "failed", "cancelled"]:
+                    console.print(f"\n[green]✓ Job {status}[/green]")
+                    break
+                
+                time.sleep(interval)
+            
+            except httpx.HTTPError as e:
+                console.print(f"[red]Error: Failed to get job status: {e}[/red]")
+                raise typer.Exit(1)
+    
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped watching[/yellow]")
+
+
+# ============================================================================
+# Checkpoints Commands
+# ============================================================================
+
+@checkpoints_app.command("list")
+def checkpoints_list(
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Filter by model name",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        help="Maximum number of checkpoints to show",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """List available checkpoints."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    # Build query parameters
+    params = {"limit": limit}
+    if model:
+        params["model"] = model
+    
+    list_url = f"{ena_endpoint}/v1/checkpoints/list"
+    
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.get(list_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+        
+        checkpoints = data.get("checkpoints", [])
+        
+        if json_output:
+            console.print(json.dumps(data, indent=2))
+        else:
+            if not checkpoints:
+                console.print("[yellow]No checkpoints found[/yellow]")
+                return
+            
+            console.print(f"[bold]Available Checkpoints[/bold] ({len(checkpoints)} checkpoints)\n")
+            
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Version", style="yellow", no_wrap=True)
+            table.add_column("Model", style="white")
+            table.add_column("Epoch", style="green", justify="right")
+            table.add_column("Size", style="cyan", justify="right")
+            table.add_column("Published", style="dim")
+            
+            for ckpt in checkpoints:
+                version = ckpt.get("version", "")
+                model_name = ckpt.get("model", "")
+                epoch = str(ckpt.get("epoch", ""))
+                size = ckpt.get("size_bytes", 0)
+                size_str = f"{size / (1024**3):.2f} GB" if size > 1024**3 else f"{size / (1024**2):.2f} MB"
+                
+                import datetime
+                published = ckpt.get("published_at", 0)
+                published_str = datetime.datetime.fromtimestamp(published).strftime("%Y-%m-%d %H:%M") if published else "-"
+                
+                table.add_row(
+                    version,
+                    model_name,
+                    epoch,
+                    size_str,
+                    published_str,
+                )
+            
+            console.print(table)
+            console.print(f"\n[dim]Fetch a checkpoint with:[/dim]")
+            console.print(f"[dim]  animica ena checkpoints fetch <version>[/dim]")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to list checkpoints: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@checkpoints_app.command("publish")
+def checkpoints_publish(
+    job_id: str = typer.Argument(..., help="Training job ID"),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Manually trigger checkpoint publish."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    if not json_output:
+        console.print(f"[bold]Publishing Checkpoint[/bold]\n")
+        console.print(f"Job ID: {job_id}")
+    
+    publish_url = f"{ena_endpoint}/v1/checkpoints/publish"
+    request_data = {"job_id": job_id}
+    
+    try:
+        with httpx.Client(timeout=60) as client:
+            response = client.post(publish_url, json=request_data)
+            response.raise_for_status()
+            result = response.json()
+        
+        if json_output:
+            console.print(json.dumps(result, indent=2))
+        else:
+            version = result.get("version")
+            console.print(f"[green]✓ Checkpoint published successfully[/green]")
+            console.print(f"Version: {version}")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to publish checkpoint: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@checkpoints_app.command("fetch")
+def checkpoints_fetch(
+    version: str = typer.Argument(..., help="Checkpoint version to fetch"),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output directory (default: ./checkpoints)",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Fetch a specific checkpoint version."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    output_dir = Path(output) if output else Path("./checkpoints")
+    
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    if not json_output:
+        console.print(f"[bold]Fetching Checkpoint[/bold]\n")
+        console.print(f"Version: {version}")
+        console.print(f"Output: {output_dir}\n")
+    
+    fetch_url = f"{ena_endpoint}/v1/checkpoints/fetch/{version}"
+    
+    try:
+        with httpx.Client(timeout=300) as client:
+            with console.status("[bold green]Downloading checkpoint..."):
+                response = client.get(fetch_url)
+                response.raise_for_status()
+            
+            # Save checkpoint file
+            checkpoint_file = output_dir / f"{version}.ckpt"
+            with open(checkpoint_file, "wb") as f:
+                f.write(response.content)
+        
+        if json_output:
+            result = {
+                "version": version,
+                "path": str(checkpoint_file),
+                "size_bytes": len(response.content),
+            }
+            console.print(json.dumps(result, indent=2))
+        else:
+            size_mb = len(response.content) / (1024**2)
+            console.print(f"[green]✓ Checkpoint downloaded successfully[/green]")
+            console.print(f"Size: {size_mb:.2f} MB")
+            console.print(f"Path: {checkpoint_file}")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to fetch checkpoint: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ============================================================================
+# Models Commands
+# ============================================================================
+
+@models_app.command("pull")
+def models_pull(
+    model: str = typer.Argument(..., help="Model name to pull"),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output directory (default: ./models)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Pull/download a model."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    output_dir = Path(output) if output else Path("./models")
+    
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    if not json_output:
+        console.print(f"[bold]Pulling Model[/bold]\n")
+        console.print(f"Model: {model}")
+        console.print(f"Output: {output_dir}\n")
+    
+    pull_url = f"{ena_endpoint}/v1/models/pull/{model}"
+    
+    try:
+        with httpx.Client(timeout=600) as client:
+            with console.status("[bold green]Downloading model..."):
+                response = client.get(pull_url)
+                response.raise_for_status()
+            
+            # Save model file
+            model_file = output_dir / f"{model.replace('/', '_')}.model"
+            with open(model_file, "wb") as f:
+                f.write(response.content)
+        
+        if json_output:
+            result = {
+                "model": model,
+                "path": str(model_file),
+                "size_bytes": len(response.content),
+            }
+            console.print(json.dumps(result, indent=2))
+        else:
+            size_mb = len(response.content) / (1024**2)
+            console.print(f"[green]✓ Model downloaded successfully[/green]")
+            console.print(f"Size: {size_mb:.2f} MB")
+            console.print(f"Path: {model_file}")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to pull model: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@models_app.command("export")
+def models_export(
+    model: str = typer.Argument(..., help="Model name to export"),
+    format: str = typer.Option(
+        "onnx",
+        "--format",
+        help="Export format (onnx, tensorrt, safetensors)",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="ENA endpoint URL",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output as JSON",
+    ),
+):
+    """Export a model to different format."""
+    _ensure_httpx()
+    
+    ena_endpoint = endpoint or _get_ena_endpoint()
+    
+    if not json_output:
+        console.print(f"[bold]Exporting Model[/bold]\n")
+        console.print(f"Model: {model}")
+        console.print(f"Format: {format}\n")
+    
+    export_url = f"{ena_endpoint}/v1/models/export"
+    request_data = {
+        "model": model,
+        "format": format,
+    }
+    
+    try:
+        with httpx.Client(timeout=600) as client:
+            with console.status("[bold green]Exporting model..."):
+                response = client.post(export_url, json=request_data)
+                response.raise_for_status()
+            
+            # Save exported model
+            if output:
+                output_file = Path(output)
+            else:
+                output_file = Path(f"{model.replace('/', '_')}.{format}")
+            
+            with open(output_file, "wb") as f:
+                f.write(response.content)
+        
+        if json_output:
+            result = {
+                "model": model,
+                "format": format,
+                "path": str(output_file),
+                "size_bytes": len(response.content),
+            }
+            console.print(json.dumps(result, indent=2))
+        else:
+            size_mb = len(response.content) / (1024**2)
+            console.print(f"[green]✓ Model exported successfully[/green]")
+            console.print(f"Format: {format}")
+            console.print(f"Size: {size_mb:.2f} MB")
+            console.print(f"Path: {output_file}")
+    
+    except httpx.HTTPError as e:
+        console.print(f"[red]Error: Failed to export model: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ============================================================================
+# Serve Commands
+# ============================================================================
+
+@serve_app.command("start")
+def serve_start(
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Model to serve (default: ena.latest)",
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        help="Port to listen on",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Host to bind to",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        "-d",
+        help="Run in background",
+    ),
+):
+    """Start local inference daemon."""
+    import subprocess
+    
+    model_arg = model or "ena.latest"
+    
+    console.print(f"[bold]Starting ENA Inference Daemon[/bold]\n")
+    console.print(f"Model: {model_arg}")
+    console.print(f"Host: {host}")
+    console.print(f"Port: {port}\n")
+    
+    # Build command
+    cmd = [
+        "python",
+        "-m",
+        "ena.server",
+        "--model",
+        model_arg,
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    
+    try:
+        if daemon:
+            # Run in background
+            console.print("[yellow]Starting daemon...[/yellow]")
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            console.print(f"[green]✓ Daemon started successfully[/green]")
+            console.print(f"Endpoint: http://{host}:{port}")
+            console.print(f"\n[dim]Test with:[/dim]")
+            console.print(f"[dim]  animica ena infer --local 'Hello, world!'[/dim]")
+        else:
+            # Run in foreground
+            console.print("[yellow]Starting server (Ctrl+C to stop)...[/yellow]\n")
+            subprocess.run(cmd)
+    
+    except FileNotFoundError:
+        console.print("[red]Error: ENA server module not found[/red]")
+        console.print("[yellow]Install ENA server dependencies with:[/yellow]")
+        console.print("[dim]  pip install animica[ena][/dim]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Server stopped[/yellow]")
 
 
 if __name__ == "__main__":
