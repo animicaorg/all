@@ -87,7 +87,7 @@ def on_block_finalized(
             
             log.info(f"Published checkpoint {manifest.version} to DA: {commitment}")
             
-            # Store commitment on-chain (TODO: implement state storage)
+            # Store commitment on-chain (Phase 2 - Integration pending: state storage)
             _store_checkpoint_commitment(state, height, commitment, receipt)
             
             return {
@@ -120,7 +120,7 @@ def _get_training_runs_since_last_checkpoint(state: Any, current_height: int) ->
     Returns:
         List of training run records
     """
-    # TODO: Implement actual query against AICF job state
+    # Phase 2 - Integration pending: query against AICF job state.
     # For now, return stub data
     
     from ena.checkpoint import CHECKPOINT_INTERVAL_BLOCKS
@@ -145,7 +145,7 @@ def _get_datasets_used(state: Any, current_height: int) -> list[Dict[str, Any]]:
     Returns:
         List of dataset records with provenance
     """
-    # TODO: Implement actual query
+    # Phase 2 - Integration pending: dataset provenance query.
     # In production, this would track:
     # - Dataset source URLs
     # - License information
@@ -166,7 +166,7 @@ def _get_eval_results(state: Any, current_height: int) -> list[Dict[str, Any]]:
     Returns:
         List of eval records with metrics
     """
-    # TODO: Implement actual query
+    # Phase 2 - Integration pending: eval results query.
     # In production, this would include:
     # - Perplexity scores
     # - Accuracy metrics
@@ -187,7 +187,7 @@ def _get_weights_metadata(state: Any, current_height: int) -> Dict[str, Any]:
     Returns:
         Weights metadata dict
     """
-    # TODO: Implement actual metadata extraction
+    # Phase 2 - Integration pending: model weights metadata extraction.
     # In production, this would include:
     # - Hash of weight file
     # - Size in bytes
@@ -213,7 +213,7 @@ def _get_aicf_budget_summary(state: Any, current_height: int) -> Dict[str, Any]:
     Returns:
         Budget summary dict
     """
-    # TODO: Implement actual AICF budget query
+    # Phase 2 - Integration pending: AICF budget query.
     # In production, this would query:
     # - Total credits allocated to ENA training
     # - Credits spent on jobs
@@ -244,7 +244,7 @@ def _get_top_contributors(state: Any, current_height: int) -> list[Dict[str, Any
     Returns:
         List of contributor records
     """
-    # TODO: Implement actual contributor tracking
+    # Phase 2 - Integration pending: contributor tracking query.
     # In production, this would query:
     # - Top miners by credits earned
     # - Top GPU providers by compute contributed
@@ -268,7 +268,7 @@ def _store_checkpoint_commitment(
         commitment: DA commitment hash
         receipt: DA receipt
     """
-    # TODO: Implement actual state storage
+    # Phase 2 - Integration pending: chain state DB storage.
     # In production, this would:
     # - Store commitment in a chain state DB
     # - Index by height for fast lookup
