@@ -93,10 +93,10 @@ class MainWindow(QMainWindow):
 
         pages: list[_NavEntry] = [
             _NavEntry("Dashboard", "📊", DashboardPage()),
-            _NavEntry("Wallet", "💳", WalletPage()),
-            _NavEntry("Node", "🖥️", NodePage()),
+            _NavEntry("Wallet", "💳", WalletPage(config=self._config)),
+            _NavEntry("Node", "🖥️", NodePage(config=self._config)),
             _NavEntry("Console", "🖱️", ConsolePage()),
-            _NavEntry("Settings", "⚙️", SettingsPage()),
+            _NavEntry("Settings", "⚙️", SettingsPage(config=self._config)),
         ]
 
         body_layout.addWidget(self._build_sidebar(pages))
