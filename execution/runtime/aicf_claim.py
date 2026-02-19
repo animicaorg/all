@@ -229,25 +229,65 @@ def apply_aicf_claim(
     aicf_params = (params or {}).get("aicf", {})
     max_claim_epochs = aicf_params.get("max_claim_epochs", 100)
     
+    # Get current block height
+    current_height = int(getattr(block_env, "height", 0) or 0)
+    
     # Compute current epoch
     epoch_length = get_epoch_length(state)
     if epoch_length <= 0:
         epoch_length = aicf_params.get("epoch_length_blocks", 100)
     
-    current_height = int(getattr(block_env, "height", 0) or 0)
     current_epoch = compute_epoch(current_height, epoch_length)
     
-    # Compute claimable credits for sender
+    # Get claim parameters (min_claim, cooldown)
+    min_claim = aicf_params.get("min_claim_amount", 1_000_000)
+    cooldown_blocks = aicf_params.get("claim_cooldown_blocks", 100)
+    
+    # Process claim (partial or full)
+    # If amount is 0, this becomes a "claim all" operation (backward compat)
     try:
-        claimable_info = compute_claimable(
-            state, sender, current_epoch, max_claim_epochs
+        from execution.state.aicf_state import process_partial_claim
+        
+        actual_paid, epochs_claimed = process_partial_claim(
+            state=state,
+            address=sender,
+            amount=claim_amount,  # 0 means claim all
+            current_epoch=current_epoch,
+            current_height=current_height,
+            max_epochs=max_claim_epochs,
+            min_claim=min_claim,
+            cooldown_blocks=cooldown_blocks,
         )
-    except Exception as e:
-        log.error(f"Failed to compute claimable: {e}", exc_info=True)
+    except ValueError as e:
+        # Validation error (cooldown, amount, etc.)
         return ApplyResult(
             status=TxStatus.REVERT,
             gas_used=21000,
             logs=[
+                LogEvent(
+                    address=b"\x00" * 20,
+                    topics=[b"aicf.claim.error"],
+                    data=str(e).encode("utf-8")[:256],
+                )
+            ],
+            state_root=_state_root(state),
+            receipt=None,
+        )
+    except Exception as e:
+        log.error(f"Failed to process claim: {e}", exc_info=True)
+        return ApplyResult(
+            status=TxStatus.REVERT,
+            gas_used=21000,
+            logs=[
+                LogEvent(
+                    address=b"\x00" * 20,
+                    topics=[b"aicf.claim.error"],
+                    data=b"claim processing failed",
+                )
+            ],
+            state_root=_state_root(state),
+            receipt=None,
+        )
                 LogEvent(
                     address=b"\x00" * 20,
                     topics=[b"aicf.claim.error"],
