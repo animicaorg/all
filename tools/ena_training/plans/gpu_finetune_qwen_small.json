@@ -1,0 +1,21 @@
+{
+  "type": "gpu_finetune",
+  "job_id": "gpu_finetune_qwen_small_001",
+  "description": "GPU fine-tune on Qwen small model",
+  "dataset": "local://finetune_dataset",
+  "model": "Qwen/Qwen-1_8B",
+  "epochs": 1,
+  "batch_size": 4,
+  "gradient_accumulation_steps": 4,
+  "learning_rate": 2e-5,
+  "max_seq_length": 2048,
+  "expected_runtime_sec": 3600,
+  "unit_definition": "per_epoch",
+  "reward_rate_hint": 100,
+  "required_capabilities": ["gpu", "cuda", "16gb_vram"],
+  "min_python_version": "3.8",
+  "gpu_requirements": {
+    "min_vram_gb": 16,
+    "cuda_version": ">=11.0"
+  }
+}

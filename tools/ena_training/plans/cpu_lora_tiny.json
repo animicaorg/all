@@ -1,0 +1,18 @@
+{
+  "type": "cpu_lora",
+  "job_id": "cpu_lora_tiny_001",
+  "description": "CPU-friendly LoRA training on tiny model",
+  "dataset": "local://tiny_dataset",
+  "model": "gpt2",
+  "epochs": 3,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "learning_rate": 5e-5,
+  "lora_r": 8,
+  "lora_alpha": 16,
+  "expected_runtime_sec": 1800,
+  "unit_definition": "per_epoch",
+  "reward_rate_hint": 10,
+  "required_capabilities": ["cpu", "4gb_ram"],
+  "min_python_version": "3.8"
+}

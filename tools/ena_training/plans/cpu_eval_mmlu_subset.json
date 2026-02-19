@@ -1,0 +1,14 @@
+{
+  "type": "cpu_eval",
+  "job_id": "cpu_eval_mmlu_subset_001",
+  "description": "Fast MMLU subset evaluation on CPU",
+  "dataset": "local://mmlu_subset_100",
+  "model": "gpt2",
+  "num_samples": 100,
+  "batch_size": 1,
+  "expected_runtime_sec": 600,
+  "unit_definition": "per_sample",
+  "reward_rate_hint": 0.5,
+  "required_capabilities": ["cpu", "2gb_ram"],
+  "min_python_version": "3.8"
+}

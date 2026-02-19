@@ -170,7 +170,9 @@ def aicf_doctor(
         help="Output as JSON",
     ),
 ):
-    """Diagnose RPC connectivity and list available methods."""
+    """Diagnose RPC connectivity, data directory, and list available methods."""
+    from . import data_dir
+    
     try:
         with Progress(
             SpinnerColumn(),
@@ -180,13 +182,28 @@ def aicf_doctor(
             progress.add_task(description="Diagnosing RPC endpoint...", total=None)
             results = aicf_utils.rpc_doctor(url=rpc_url)
         
+        # Check data directory
+        data_dir_writable, data_dir_error = data_dir.check_data_dir_writable()
+        data_dir_path = str(data_dir.get_data_dir())
+        
         if json_output:
+            results["data_dir"] = {
+                "path": data_dir_path,
+                "writable": data_dir_writable,
+                "error": data_dir_error,
+            }
             console.print(aicf_utils.safe_json_encode(results))
         else:
             url = results["url"]
             console.print(f"[bold]RPC Doctor Results[/bold]")
             console.print(f"  URL: {url}")
             console.print(f"  Reachable: {'✓' if results['reachable'] else '✗'}")
+            
+            console.print(f"\n[bold]Data Directory:[/bold]")
+            console.print(f"  Path: {data_dir_path}")
+            console.print(f"  Writable: {'✓' if data_dir_writable else '✗'}")
+            if data_dir_error:
+                console.print(f"  [red]Error: {data_dir_error}[/red]")
             
             if results.get("methods"):
                 console.print(f"\n[bold]Available Methods ({len(results['methods'])}):[/bold]")
