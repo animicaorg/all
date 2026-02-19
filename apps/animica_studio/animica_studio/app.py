@@ -7,7 +7,7 @@ import sys
 import traceback
 from typing import Type
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from animica_studio import __app_name__, __org_name__, __version__
@@ -49,6 +49,19 @@ QLabel#headerSep {
     color: #45475a;
 }
 
+QComboBox#profileCombo {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+}
+
+QComboBox#profileCombo::drop-down {
+    border: none;
+}
+
 QFrame#sidebar {
     background-color: #181825;
     border-right: 1px solid #313244;
@@ -74,9 +87,40 @@ QPushButton#navButton:checked {
     font-weight: bold;
 }
 
+QPushButton#primaryButton {
+    background-color: #89b4fa;
+    color: #1e1e2e;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 6px 14px;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: #b4befe;
+}
+
 QLabel#placeholderLabel {
     color: #6c7086;
     font-size: 18px;
+}
+
+QLabel#wizardPageTitle {
+    color: #cba6f7;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+QLabel#wizardPageSubtitle {
+    color: #a6adc8;
+    font-size: 13px;
+}
+
+QLabel#wizardSummary {
+    background: #313244;
+    border-radius: 6px;
+    padding: 12px;
+    color: #cdd6f4;
+    font-size: 13px;
 }
 """
 
@@ -150,10 +194,33 @@ def main() -> None:
     app = _create_app()
 
     # Import here so Qt is already initialised
+    from animica_studio.services.profile_service import ProfileService  # noqa: PLC0415
     from animica_studio.ui.main_window import MainWindow  # noqa: PLC0415
 
-    window = MainWindow(config)
+    # Initialise profile service (runs migration + ensure_defaults)
+    profile_service = ProfileService(config)
+
+    window = MainWindow(config, profile_service)
     window.show()
+
+    # Launch wizard if first run not completed or no profiles configured
+    should_run_wizard = (
+        not config.first_run_completed
+        or not config.rpc_profiles
+    )
+    if should_run_wizard:
+        from animica_studio.ui.wizard.wizard_window import SetupWizard  # noqa: PLC0415
+
+        def _launch_wizard() -> None:
+            dlg = SetupWizard(profile_service, parent=window)
+            result = dlg.exec()
+            if result != dlg.DialogCode.Accepted:
+                # User cancelled — show banner
+                window.show_no_profile_banner()
+            else:
+                window.refresh_header()
+
+        QTimer.singleShot(200, _launch_wizard)
 
     log.info("Application window shown")
     exit_code = app.exec()
