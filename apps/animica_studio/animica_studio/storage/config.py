@@ -101,6 +101,36 @@ class Config:
     stop_node_on_exit: bool = True
 
     # ---------------------------------------------------------------------------
+    # Feature defaults
+    # ---------------------------------------------------------------------------
+    mining_defaults: dict[str, Any] = field(
+        default_factory=lambda: {
+            "miner_address": "",
+            "threads": 1,
+            "automine": False,
+        }
+    )
+    aicf_defaults: dict[str, Any] = field(
+        default_factory=lambda: {
+            "default_job_type": "ai",
+            "default_budget": 100,
+        }
+    )
+    da_defaults: dict[str, Any] = field(
+        default_factory=lambda: {
+            "default_namespace": "",
+            "chunk_size": 262144,
+        }
+    )
+    quantum_defaults: dict[str, Any] = field(
+        default_factory=lambda: {
+            "default_shots": 1024,
+            "default_qubits": 4,
+        }
+    )
+    workspace_root: str | None = None
+
+    # ---------------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------------
 
@@ -184,6 +214,11 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         ide_open_tabs=list(d.get("ide_open_tabs") or []),
         ide_last_active_file=d.get("ide_last_active_file") or None,
         stop_node_on_exit=bool(d.get("stop_node_on_exit", True)),
+        mining_defaults=d.get("mining_defaults") or {"miner_address": "", "threads": 1, "automine": False},
+        aicf_defaults=d.get("aicf_defaults") or {"default_job_type": "ai", "default_budget": 100},
+        da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
+        quantum_defaults=d.get("quantum_defaults") or {"default_shots": 1024, "default_qubits": 4},
+        workspace_root=d.get("workspace_root") or None,
     )
 
 

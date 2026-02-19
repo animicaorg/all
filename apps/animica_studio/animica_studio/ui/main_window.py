@@ -23,10 +23,14 @@ from PySide6.QtWidgets import (
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
 from animica_studio.storage.config import Config
+from animica_studio.ui.pages.aicf_page import AicfPage
 from animica_studio.ui.pages.console_page import ConsolePage
+from animica_studio.ui.pages.da_page import DaPage
 from animica_studio.ui.pages.dashboard import DashboardPage
 from animica_studio.ui.pages.ide_page import IdePage
+from animica_studio.ui.pages.mining_page import MiningPage
 from animica_studio.ui.pages.node import NodePage
+from animica_studio.ui.pages.quantum_page import QuantumPage
 from animica_studio.ui.pages.settings import SettingsPage
 from animica_studio.ui.pages.wallet_page import WalletPage
 
@@ -132,6 +136,10 @@ class MainWindow(QMainWindow):
             _NavEntry("Dashboard", "📊", DashboardPage()),
             _NavEntry("Wallet", "💳", self._wallet_page),
             _NavEntry("Node", "🖥️", NodePage(config=self._config)),
+            _NavEntry("Mining", "⛏️", MiningPage(config=self._config)),
+            _NavEntry("AICF", "🤖", AicfPage(config=self._config)),
+            _NavEntry("DA", "🗄️", DaPage(config=self._config)),
+            _NavEntry("Quantum", "⚛️", QuantumPage(config=self._config)),
             _NavEntry("Console", "🖱️", ConsolePage()),
             _NavEntry("IDE", "📝", IdePage()),
             _NavEntry("Settings", "⚙️", SettingsPage(config=self._config)),

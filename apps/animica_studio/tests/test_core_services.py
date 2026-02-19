@@ -489,3 +489,123 @@ def test_process_manager_status_stale_pid(tmp_path):
     assert status["running"] is False
     # Stale PID file should be removed
     assert not (tmp_path / "node.pid").exists()
+
+
+# ---------------------------------------------------------------------------
+# New services
+# ---------------------------------------------------------------------------
+
+
+def test_aicf_ensure_rpc_path_bare_url():
+    from animica_studio.services.aicf_service import _ensure_rpc_path
+    assert _ensure_rpc_path("http://localhost:8545") == "http://localhost:8545/rpc"
+
+
+def test_aicf_ensure_rpc_path_already_has_rpc():
+    from animica_studio.services.aicf_service import _ensure_rpc_path
+    assert _ensure_rpc_path("http://localhost:8545/rpc") == "http://localhost:8545/rpc"
+
+
+def test_aicf_ensure_rpc_path_trailing_slash():
+    from animica_studio.services.aicf_service import _ensure_rpc_path
+    assert _ensure_rpc_path("http://localhost:8545/") == "http://localhost:8545/rpc"
+
+
+def test_rpc_client_uses_safe_json_dumps_for_large_int():
+    """RpcClient serializes large int params without error (BigInt fix)."""
+    from animica_studio.services.rpc_client import RpcClient
+    large_int = 10 ** 30  # larger than JS Number.MAX_SAFE_INTEGER
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = _make_mock_response({
+            "jsonrpc": "2.0", "id": 1, "result": "ok"
+        })
+        client = RpcClient("http://localhost:8545/rpc", max_retries=1)
+        result = client.call("some_method", [large_int])
+        assert result == "ok"
+        # Verify the serialised body contains the large int as a number (not truncated)
+        call_args = mock_post.call_args
+        body = json.loads(call_args.kwargs.get("data") or call_args.args[0] if call_args.args else call_args.kwargs["data"])
+        assert body["params"][0] == large_int
+        client.close()
+
+
+def test_config_has_new_feature_defaults():
+    from animica_studio.storage.config import Config
+    cfg = Config()
+    assert isinstance(cfg.mining_defaults, dict)
+    assert isinstance(cfg.aicf_defaults, dict)
+    assert isinstance(cfg.da_defaults, dict)
+    assert isinstance(cfg.quantum_defaults, dict)
+    assert cfg.workspace_root is None
+
+
+def test_config_new_fields_round_trip(tmp_path):
+    from animica_studio.storage.config import Config, save_config, load_config
+    from unittest.mock import patch as _patch
+    import animica_studio.storage.config as cfg_mod
+
+    test_path = tmp_path / "config.json"
+    with _patch.object(cfg_mod, "config_file", return_value=test_path):
+        cfg = Config()
+        cfg.mining_defaults["miner_address"] = "0xdeadbeef"
+        cfg.workspace_root = "/tmp/ws"
+        save_config(cfg)
+        cfg2 = load_config()
+        assert cfg2.mining_defaults.get("miner_address") == "0xdeadbeef"
+        assert cfg2.workspace_root == "/tmp/ws"
+
+
+def test_wallet_service_clear_balance_cache():
+    from animica_studio.storage.config import Config
+    from animica_studio.services.wallet_service import WalletService
+    from animica_studio.models.wallet_models import BalanceState
+
+    cfg = Config()
+    ws = WalletService(cfg)
+    ws._balances["anim1test"] = BalanceState(
+        address="anim1test", balance_wei=1000, formatted="1000 wei"
+    )
+    assert ws.get_cached_balance("anim1test") is not None
+    ws.clear_balance_cache()
+    assert ws.get_cached_balance("anim1test") is None
+
+
+def test_da_service_ensure_rpc_path():
+    """DaService normalises RPC URL."""
+    from animica_studio.storage.config import Config
+    from animica_studio.services.da_service import DaService
+    cfg = Config()
+    svc = DaService(cfg)
+    assert svc._rpc_url("http://localhost:8545") == "http://localhost:8545/rpc"
+    assert svc._rpc_url("http://localhost:8545/rpc") == "http://localhost:8545/rpc"
+
+
+def test_capability_registry_parse_cli_commands():
+    from animica_studio.services.capability_registry import _parse_cli_commands
+    help_text = """
+Usage: animica [OPTIONS] COMMAND [ARGS]...
+
+Commands:
+  node      Node management
+  wallet    Wallet operations
+  mining    Mining controls
+  aicf      AICF credits
+  da        Data availability
+  quantum   Quantum jobs
+"""
+    cmds = _parse_cli_commands(help_text)
+    assert "node" in cmds
+    assert "wallet" in cmds
+    assert "mining" in cmds
+    assert "aicf" in cmds
+    assert "da" in cmds
+    assert "quantum" in cmds
+
+
+def test_node_status_as_dict():
+    from animica_studio.services.node_service import NodeStatus
+    s = NodeStatus(running=True, pid=1234, rpc_reachable=True, head_number=42)
+    d = s.as_dict()
+    assert d["running"] is True
+    assert d["pid"] == 1234
+    assert d["head_number"] == 42

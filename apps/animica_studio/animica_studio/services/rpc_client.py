@@ -11,7 +11,6 @@ Features
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import time
@@ -27,6 +26,7 @@ from animica_studio.models.rpc_models import (
     RpcResponse,
     parse_hex_quantity,
 )
+from animica_studio.services.error_format import safe_json_dumps
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class RpcClient:
         if params is not None:
             payload["params"] = params
 
-        body = json.dumps(payload)
+        body = safe_json_dumps(payload)
         last_exc: Exception | None = None
 
         for attempt in range(self._max_retries):
