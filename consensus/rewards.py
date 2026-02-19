@@ -148,8 +148,22 @@ def compute_block_reward(
             height_for_halving, schedule
         )
         
+        # Apply AICF block reward slice if configured
+        aicf_params = params.get("aicf", {})
+        (
+            final_miner,
+            final_aicf_base,
+            aicf_slice_from_miner,
+            final_treasury,
+        ) = apply_aicf_block_reward_slice(
+            miner_amount, aicf_amount, treasury_amount, aicf_params
+        )
+        
+        # Combine AICF base allocation + slice from miner
+        final_aicf = final_aicf_base + aicf_slice_from_miner
+        
         # If all amounts are zero, no subsidy at this height
-        if miner_amount == 0 and aicf_amount == 0 and treasury_amount == 0:
+        if final_miner == 0 and final_aicf == 0 and final_treasury == 0:
             return []
         
         # Get system addresses from params
@@ -167,27 +181,38 @@ def compute_block_reward(
             remaining = MAX_MONEY - MAINNET_PREMINE_TOTAL - total_before
             if remaining <= 0:
                 return []
-            current_total = miner_amount + aicf_amount + treasury_amount
+            current_total = final_miner + final_aicf + final_treasury
             if current_total > remaining:
-                miner_amount, aicf_amount, treasury_amount = _split_subsidy_total(
-                    remaining, schedule
+                # Recalculate with capped total
+                capped_total = remaining
+                miner_amount_capped, aicf_amount_capped, treasury_amount_capped = _split_subsidy_total(
+                    capped_total, schedule
                 )
+                (
+                    final_miner,
+                    final_aicf_base,
+                    aicf_slice_from_miner,
+                    final_treasury,
+                ) = apply_aicf_block_reward_slice(
+                    miner_amount_capped, aicf_amount_capped, treasury_amount_capped, aicf_params
+                )
+                final_aicf = final_aicf_base + aicf_slice_from_miner
 
         # Miner reward (this will be overridden with payout address in RPC layer)
-        if miner_amount > 0:
+        if final_miner > 0:
             # Use coinbase_default as placeholder; RPC layer will use actual payout address
             miner_addr = system_addresses.get("coinbase_default", "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-            rewards.append((miner_addr, miner_amount))
+            rewards.append((miner_addr, final_miner))
         
-        # AICF treasury reward
-        if aicf_amount > 0:
+        # AICF treasury reward (combined base + slice)
+        if final_aicf > 0:
             aicf_addr = system_addresses.get("aicf_treasury", "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-            rewards.append((aicf_addr, aicf_amount))
+            rewards.append((aicf_addr, final_aicf))
         
         # Chain treasury reward
-        if treasury_amount > 0:
+        if final_treasury > 0:
             treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-            rewards.append((treasury_addr, treasury_amount))
+            rewards.append((treasury_addr, final_treasury))
         
         return rewards
     except (KeyError, ValueError, TypeError) as e:
@@ -378,6 +403,48 @@ def _split_subsidy_total(total: int, schedule: Dict[str, Any]) -> Tuple[int, int
     return miner, aicf, treasury
 
 
+def apply_aicf_block_reward_slice(
+    miner_amount: int,
+    aicf_amount: int,
+    treasury_amount: int,
+    aicf_params: Mapping[str, Any] | None = None,
+) -> Tuple[int, int, int, int]:
+    """
+    Apply AICF block reward slice on top of base subsidy distribution.
+    
+    This implements the additional AICF funding from block rewards specified
+    in params.aicf.block_reward_slice_bps (default 500 = 5%).
+    
+    The slice is taken from the miner's portion and added to AICF pool.
+    
+    Args:
+        miner_amount: Base miner reward before AICF slice
+        aicf_amount: Base AICF allocation from subsidy split
+        treasury_amount: Base treasury allocation from subsidy split
+        aicf_params: AICF parameters with block_reward_slice_bps
+    
+    Returns:
+        (final_miner, final_aicf_base, aicf_slice_from_miner, final_treasury)
+        where aicf_slice_from_miner is the additional amount for AICF pool
+    """
+    if aicf_params is None:
+        # No AICF slice configured
+        return (miner_amount, aicf_amount, 0, treasury_amount)
+    
+    # Get AICF block reward slice in basis points (default 500 = 5%)
+    slice_bps = int(aicf_params.get("block_reward_slice_bps", 0))
+    
+    if slice_bps <= 0 or slice_bps >= 10_000:
+        # No valid slice configured
+        return (miner_amount, aicf_amount, 0, treasury_amount)
+    
+    # Calculate slice from miner's portion
+    aicf_slice = (miner_amount * slice_bps) // 10_000
+    final_miner = miner_amount - aicf_slice
+    
+    return (final_miner, aicf_amount, aicf_slice, treasury_amount)
+
+
 def _total_subsidy_through_height(height: int, schedule: Dict[str, Any]) -> int:
     if height <= 0:
         return 0
@@ -424,4 +491,5 @@ __all__ = [
     "validate_mainnet_genesis_coinbase",
     "parse_emission_schedule",
     "compute_subsidy_for_height",
+    "apply_aicf_block_reward_slice",
 ]
