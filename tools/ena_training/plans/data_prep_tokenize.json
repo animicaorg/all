@@ -1,0 +1,15 @@
+{
+  "type": "data_prep",
+  "job_id": "data_prep_tokenize_001",
+  "description": "Dataset preprocessing and tokenization",
+  "dataset": "local://raw_text_data",
+  "tokenizer": "gpt2",
+  "max_length": 2048,
+  "num_workers": 4,
+  "output_format": "jsonl",
+  "expected_runtime_sec": 1200,
+  "unit_definition": "per_10k_samples",
+  "reward_rate_hint": 20,
+  "required_capabilities": ["cpu", "8gb_ram", "50gb_disk"],
+  "min_python_version": "3.8"
+}

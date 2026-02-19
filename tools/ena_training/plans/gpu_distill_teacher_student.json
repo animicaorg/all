@@ -1,0 +1,21 @@
+{
+  "type": "gpu_distill",
+  "job_id": "gpu_distill_teacher_student_001",
+  "description": "Knowledge distillation from teacher to student model",
+  "dataset": "local://distill_dataset",
+  "teacher_model": "Qwen/Qwen-7B",
+  "student_model": "Qwen/Qwen-1_8B",
+  "epochs": 2,
+  "batch_size": 2,
+  "temperature": 2.0,
+  "alpha": 0.5,
+  "expected_runtime_sec": 7200,
+  "unit_definition": "per_epoch",
+  "reward_rate_hint": 150,
+  "required_capabilities": ["gpu", "cuda", "32gb_vram"],
+  "min_python_version": "3.8",
+  "gpu_requirements": {
+    "min_vram_gb": 32,
+    "cuda_version": ">=11.0"
+  }
+}
