@@ -118,45 +118,35 @@ async def healthz() -> JSONResponse:
     
     all_healthy = True
     
-    # TODO: Get actual state_db, mempool, state from dependencies
-    # For now, we'll return a stub response
+    # Note: Detailed health checks require wiring up dependencies (state_db, mempool, etc.)
+    # to the FastAPI dependency injection system. For MVP, we return basic liveness.
+    # 
+    # Future work: Wire up actual checks using FastAPI Depends() to inject:
+    # - state_db from ctx
+    # - mempool from ctx
+    # - AICF state from execution layer
+    # 
+    # The helper functions (_check_db_writable, _check_mempool_available, _check_aicf_pool_balance)
+    # are ready to use once dependencies are injected.
     
-    # Check 1: State DB writable
-    # state_db_ok, state_db_msg = _check_db_writable(state_db)
-    # health_status["checks"]["state_db_writable"] = {
-    #     "status": "ok" if state_db_ok else "error",
-    #     "message": state_db_msg,
-    # }
-    # all_healthy = all_healthy and state_db_ok
+    # Basic liveness: process is responding to HTTP requests
+    health_status["checks"]["http_server"] = {
+        "status": "ok",
+        "message": "responding",
+    }
     
-    # Check 2: Mempool available
-    # mempool_ok, mempool_msg = _check_mempool_available(mempool)
-    # health_status["checks"]["mempool_available"] = {
-    #     "status": "ok" if mempool_ok else "error",
-    #     "message": mempool_msg,
-    # }
-    # all_healthy = all_healthy and mempool_ok
-    
-    # Check 3: AICF pool balance
-    # pool_ok, pool_msg = _check_aicf_pool_balance(state)
-    # health_status["checks"]["aicf_pool_balance"] = {
-    #     "status": "ok" if pool_ok else "error",
-    #     "message": pool_msg,
-    # }
-    # all_healthy = all_healthy and pool_ok
-    
-    # Stub response (until we wire up dependencies)
+    # Placeholder checks (require dependency injection to implement)
     health_status["checks"]["state_db_writable"] = {
         "status": "ok",
-        "message": "not implemented yet",
+        "message": "check not wired up (requires FastAPI Depends)",
     }
     health_status["checks"]["mempool_available"] = {
         "status": "ok",
-        "message": "not implemented yet",
+        "message": "check not wired up (requires FastAPI Depends)",
     }
     health_status["checks"]["aicf_pool_balance"] = {
         "status": "ok",
-        "message": "not implemented yet",
+        "message": "check not wired up (requires FastAPI Depends)",
     }
     
     if not all_healthy:
