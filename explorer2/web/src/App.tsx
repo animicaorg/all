@@ -7,8 +7,15 @@ import AddressPage from './pages/AddressPage'
 import MempoolPage from './pages/MempoolPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import { RichListPage } from './pages/RichListPage'
+import AICFPage from './pages/AICFPage'
+import MiningPage from './pages/MiningPage'
+import DAPage from './pages/DAPage'
+import QuantumPage from './pages/QuantumPage'
+import RpcInspectorPage from './pages/RpcInspectorPage'
+import DebugBundlePage from './pages/DebugBundlePage'
 import SearchBar from './components/SearchBar'
 import ThemeToggle from './components/ThemeToggle'
+import NetworkHealthBanner from './components/NetworkHealthBanner'
 
 export default function App() {
   return (
@@ -24,7 +31,7 @@ export default function App() {
               <span className="sm:hidden">Explorer</span>
             </Link>
             <div className="flex items-center gap-2 sm:gap-3">
-              <nav className="flex gap-2 text-sm text-gray-600 dark:text-slate-300 sm:gap-4">
+              <nav className="flex flex-wrap gap-2 text-sm text-gray-600 dark:text-slate-300 sm:gap-3">
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/blocks">
                   Blocks
                 </Link>
@@ -34,8 +41,26 @@ export default function App() {
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/mempool">
                   Mempool
                 </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/aicf">
+                  AICF
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/mining">
+                  Mining
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/da">
+                  DA
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/quantum">
+                  Quantum
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/rpc-inspector">
+                  RPC
+                </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/diagnostics">
                   Diagnostics
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/debug">
+                  Debug
                 </Link>
               </nav>
               <ThemeToggle />
@@ -44,6 +69,8 @@ export default function App() {
           <SearchBar />
         </div>
       </header>
+
+      <NetworkHealthBanner />
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <Routes>
@@ -54,7 +81,13 @@ export default function App() {
           <Route path="/address/:address" element={<AddressPage />} />
           <Route path="/richlist" element={<RichListPage />} />
           <Route path="/mempool" element={<MempoolPage />} />
+          <Route path="/aicf" element={<AICFPage />} />
+          <Route path="/mining" element={<MiningPage />} />
+          <Route path="/da" element={<DAPage />} />
+          <Route path="/quantum" element={<QuantumPage />} />
+          <Route path="/rpc-inspector" element={<RpcInspectorPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
+          <Route path="/debug" element={<DebugBundlePage />} />
           <Route
             path="*"
             element={
