@@ -5,6 +5,9 @@ import pinoHttp from 'pino-http'
 import type { ApiError } from '@animica/explorer2-shared'
 import { ExplorerService } from './service.js'
 import { HttpError } from './errors.js'
+import { rpcDiscover, getServiceStatus, getAICFInfo, getMiningInfo, getDAInfo, daGetBlob, daGetProof, daPutBlob, daListHistory, getQuantumInfo } from './rpcExtended.js'
+import type { RpcClient } from './rpcClient.js'
+import { bigIntSafeStringify } from './bigIntJson.js'
 import fs from 'node:fs'
 
 interface DiagnosticsInfo {
@@ -16,13 +19,18 @@ interface DiagnosticsInfo {
   timestamp: string
 }
 
-export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo) {
+export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo, rpc?: RpcClient) {
   const app = express()
   const logger = pino({ level: logLevel })
 
   app.use(cors({ origin: corsOrigin }))
   app.use(express.json({ limit: '1mb' }))
   app.use(pinoHttp({ logger: logger as any }))
+
+  // BigInt-safe JSON responder helper
+  const jsonSafe = (res: express.Response, data: unknown, status = 200) => {
+    res.status(status).type('application/json').send(bigIntSafeStringify(data))
+  }
 
   app.get('/api/health', async (_req, res) => {
     res.json({ ok: true, timestamp: new Date().toISOString() })
@@ -45,7 +53,6 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
 
   app.get('/api/diagnostics', async (_req, res) => {
     try {
-      // Get current head from service
       interface HeadData {
         head?: {
           height: number
@@ -57,7 +64,7 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       try {
         const headData = await service.getHead() as HeadData
         currentHead = headData?.head ?? null
-      } catch (err) {
+      } catch {
         // Ignore errors, diagnostics should still work
       }
 
@@ -97,9 +104,9 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
         currentTime: new Date().toISOString()
       })
     } catch (err) {
-      res.status(500).json({ 
-        error: 'diagnostics_failed', 
-        message: err instanceof Error ? err.message : String(err) 
+      res.status(500).json({
+        error: 'diagnostics_failed',
+        message: err instanceof Error ? err.message : String(err)
       })
     }
   })
@@ -194,6 +201,200 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  // ── Network Health / Service Status ────────────────────────────────────────
+
+  app.get('/api/network/status', async (_req, res) => {
+    if (!rpc) {
+      res.json({ timestamp: new Date().toISOString(), services: [], note: 'Service status requires RPC mode' })
+      return
+    }
+    try {
+      const status = await getServiceStatus(rpc)
+      jsonSafe(res, status)
+    } catch (err) {
+      res.status(500).json({ error: 'status_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── RPC Inspector ───────────────────────────────────────────────────────────
+
+  app.get('/api/rpc/discover', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false, methods: [], note: 'RPC inspector requires RPC mode' })
+      return
+    }
+    try {
+      const result = await rpcDiscover(rpc)
+      jsonSafe(res, result)
+    } catch (err) {
+      res.status(500).json({ error: 'discover_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── AICF ────────────────────────────────────────────────────────────────────
+
+  app.get('/api/aicf/info', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    const address = typeof req.query.address === 'string' ? req.query.address : undefined
+    try {
+      const info = await getAICFInfo(rpc, address)
+      jsonSafe(res, info)
+    } catch (err) {
+      res.status(500).json({ error: 'aicf_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── Mining ──────────────────────────────────────────────────────────────────
+
+  app.get('/api/mining/info', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    try {
+      const info = await getMiningInfo(rpc)
+      jsonSafe(res, info)
+    } catch (err) {
+      res.status(500).json({ error: 'mining_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── DA ──────────────────────────────────────────────────────────────────────
+
+  app.get('/api/da/info', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    try {
+      const info = await getDAInfo(rpc)
+      jsonSafe(res, info)
+    } catch (err) {
+      res.status(500).json({ error: 'da_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/blob/:commitment', async (req, res) => {
+    if (!rpc) {
+      res.status(503).json({ error: 'rpc_required', message: 'DA requires RPC mode' })
+      return
+    }
+    try {
+      const blob = await daGetBlob(rpc, req.params.commitment)
+      if (blob === null) {
+        res.status(404).json({ error: 'not_found', message: 'Blob not found or DA not available on this node' })
+        return
+      }
+      jsonSafe(res, blob)
+    } catch (err) {
+      res.status(500).json({ error: 'da_get_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/proof/:commitment', async (req, res) => {
+    if (!rpc) {
+      res.status(503).json({ error: 'rpc_required', message: 'DA requires RPC mode' })
+      return
+    }
+    try {
+      const proof = await daGetProof(rpc, req.params.commitment)
+      if (proof === null) {
+        res.status(404).json({ error: 'not_found', message: 'Proof not found or DA not available on this node' })
+        return
+      }
+      jsonSafe(res, proof)
+    } catch (err) {
+      res.status(500).json({ error: 'da_proof_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/history', async (req, res) => {
+    if (!rpc) {
+      res.json([])
+      return
+    }
+    try {
+      const limit = Math.min(Number(req.query.limit || 20), 100)
+      const history = await daListHistory(rpc, limit)
+      jsonSafe(res, history)
+    } catch (err) {
+      res.status(500).json({ error: 'da_history_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.post('/api/da/put', async (req, res) => {
+    if (!rpc) {
+      res.status(503).json({ error: 'rpc_required', message: 'DA requires RPC mode' })
+      return
+    }
+    const { namespace, data } = req.body || {}
+    if (typeof namespace !== 'string' || typeof data !== 'string') {
+      res.status(400).json({ error: 'bad_request', message: 'namespace and data (base64 string) are required' })
+      return
+    }
+    try {
+      const result = await daPutBlob(rpc, namespace, data)
+      if (result === null) {
+        res.status(503).json({ error: 'not_available', message: 'da.putBlob not available on this node' })
+        return
+      }
+      jsonSafe(res, result)
+    } catch (err) {
+      res.status(500).json({ error: 'da_put_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── Quantum ─────────────────────────────────────────────────────────────────
+
+  app.get('/api/quantum/info', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    try {
+      const info = await getQuantumInfo(rpc)
+      jsonSafe(res, info)
+    } catch (err) {
+      res.status(500).json({ error: 'quantum_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── Debug Bundle ────────────────────────────────────────────────────────────
+
+  app.get('/api/debug/bundle', async (_req, res) => {
+    try {
+      let headData: unknown = null
+      try { headData = await service.getHead() } catch { /* ignore */ }
+
+      let discoverData: unknown = null
+      let statusData: unknown = null
+      if (rpc) {
+        try { discoverData = await rpcDiscover(rpc) } catch { /* ignore */ }
+        try { statusData = await getServiceStatus(rpc) } catch { /* ignore */ }
+      }
+
+      const bundle = {
+        exportedAt: new Date().toISOString(),
+        explorerVersion: '0.1.0',
+        profile: {
+          mode: diagnostics?.mode || 'Unknown',
+          chainId: diagnostics?.chainId || null,
+          rpcUrl: diagnostics?.rpcUrl ? redactUrl(diagnostics.rpcUrl) : null,
+        },
+        rpcDiscover: discoverData,
+        serviceStatus: statusData,
+        currentHead: headData,
+        recentErrors: [],
+      }
+      jsonSafe(res, bundle)
+    } catch (err) {
+      res.status(500).json({ error: 'bundle_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
   app.get('/api/debug/rpc', async (_req, res) => {
     if (process.env.NODE_ENV === 'production') {
       res.status(404).json({ error: 'not_found', message: 'Debug endpoints disabled in production' })
@@ -203,8 +404,8 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     res.json({
       mode: diagnostics?.mode || 'Unknown',
       rpcUrl: diagnostics?.rpcUrl || null,
-      timeout: 30000, // From config
-      maxRetries: 3,   // From config
+      timeout: 30000,
+      maxRetries: 3,
       timestamp: new Date().toISOString()
     })
   })
@@ -220,4 +421,16 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
   })
 
   return app
+}
+
+/** Redact credentials from URLs (user:pass@ patterns). */
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    if (u.password) u.password = '***'
+    if (u.username) u.username = '***'
+    return u.toString()
+  } catch {
+    return url
+  }
 }

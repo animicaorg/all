@@ -1,9 +1,10 @@
 /**
  * JSON-RPC 2.0 client for Animica node.
- * Implements retries, timeouts, and proper error handling.
+ * Implements retries, timeouts, URL normalisation, and 405 detection.
  */
 
 import pino from 'pino'
+import { classifyHttpError, normalizeRpcUrl } from './urlNormalizer.js'
 
 const log = pino({ name: 'rpc-client' })
 
@@ -40,7 +41,11 @@ export class RpcClient {
   private requestId = 0
 
   constructor(config: RpcClientConfig) {
-    this.url = config.url
+    const norm = normalizeRpcUrl(config.url)
+    if (norm.wasNormalized) {
+      log.info({ original: config.url, normalized: norm.url, note: norm.note }, 'RPC URL normalized')
+    }
+    this.url = norm.url
     this.timeout = config.timeout ?? 30000 // 30s default
     this.maxRetries = config.maxRetries ?? 3
     this.retryDelay = config.retryDelay ?? 1000
@@ -104,9 +109,11 @@ export class RpcClient {
       clearTimeout(timeoutId)
 
       if (!response.ok) {
+        const classified = classifyHttpError(response.status, response.statusText)
         throw new RpcError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status
+          `HTTP ${response.status}: ${classified.hint}`,
+          response.status,
+          { kind: classified.kind, remediation: classified.remediation }
         )
       }
 
