@@ -8,6 +8,8 @@ These methods return placeholders and should be wired to an indexer that listens
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import os
+import time
 
 from rpc.methods import method
 
@@ -53,19 +55,79 @@ def _index_result(job_id: str, result: Dict[str, Any]):
     _RESULTS.setdefault(job_id, []).append(result)
 
 
-@method("quantum.status", aliases=("quantum_status", "quantum.getStatus", "quantum_getStatus"), desc="Get quantum worker status")
-def quantum_status(*_args, **_kwargs) -> Dict[str, Any]:
-    """
-    Returns the status of the Quantum compute module.
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-    Returns a stable schema: {enabled, ok, reason, message, details}.
-    """
+
+@method("quantum.status", aliases=("quantum_status", "quantum.getStatus", "quantum_getStatus", "quantum.workerStatus"), desc="Get quantum worker status")
+def quantum_status(params=None, *_args, **_kwargs) -> Dict[str, Any]:
+    if isinstance(params, dict) and "params" in params:
+        params = params.get("params")
+
+    supported = _bool_env("ANIMICA_QUANTUM_SUPPORTED", True)
+    worker_enabled = _bool_env("ANIMICA_MINER_QUANTUM_WORKER", False)
+    cpu = _bool_env("ANIMICA_QUANTUM_CAP_CPU", True)
+    gpu = _bool_env("ANIMICA_QUANTUM_CAP_GPU", False)
+    qpu = _bool_env("ANIMICA_QUANTUM_CAP_QPU", False)
+    accepted = [x.strip() for x in os.getenv("ANIMICA_QUANTUM_ACCEPTED_JOB_TYPES", "").split(",") if x.strip()]
+
+    if not supported:
+        return {
+            "enabled": False,
+            "ok": False,
+            "reason": "not_supported",
+            "message": "Quantum compute is not supported in this node build.",
+            "details": {
+                "worker_enabled": False,
+                "accepted_job_types": accepted,
+                "capabilities": {"cpu": cpu, "gpu": gpu, "qpu": qpu},
+                "last_heartbeat": None,
+            },
+        }
+
+    if not worker_enabled:
+        return {
+            "enabled": False,
+            "ok": False,
+            "reason": "disabled",
+            "message": "Quantum compute is disabled. Enable via ANIMICA_MINER_QUANTUM_WORKER=1.",
+            "details": {
+                "worker_enabled": False,
+                "accepted_job_types": accepted,
+                "capabilities": {"cpu": cpu, "gpu": gpu, "qpu": qpu},
+                "last_heartbeat": None,
+            },
+        }
+
+    backend_available = _bool_env("ANIMICA_QUANTUM_BACKEND_AVAILABLE", True)
+    if not backend_available:
+        return {
+            "enabled": True,
+            "ok": False,
+            "reason": "service_unavailable",
+            "message": "Quantum worker is enabled but backend is unavailable.",
+            "details": {
+                "worker_enabled": True,
+                "accepted_job_types": accepted,
+                "capabilities": {"cpu": cpu, "gpu": gpu, "qpu": qpu},
+                "last_heartbeat": None,
+            },
+        }
+
     return {
-        "enabled": False,
-        "ok": False,
-        "reason": "unavailable",
-        "message": "Quantum compute is not enabled on this node",
-        "details": {},
+        "enabled": True,
+        "ok": True,
+        "reason": None,
+        "message": None,
+        "details": {
+            "worker_enabled": True,
+            "accepted_job_types": accepted,
+            "capabilities": {"cpu": cpu, "gpu": gpu, "qpu": qpu},
+            "last_heartbeat": int(time.time()),
+        },
     }
 
 

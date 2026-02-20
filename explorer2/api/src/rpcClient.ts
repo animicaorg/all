@@ -54,13 +54,15 @@ export class RpcClient {
   /**
    * Make a JSON-RPC call with retries and timeout.
    */
-  async call<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
+  async call<T = unknown>(method: string, params?: unknown[] | Record<string, unknown> | null): Promise<T> {
     const id = ++this.requestId
-    const payload = {
+    const payload: Record<string, unknown> = {
       jsonrpc: '2.0',
       id,
       method,
-      params
+    }
+    if (params !== undefined && params !== null) {
+      payload.params = params
     }
 
     let lastError: Error | null = null
