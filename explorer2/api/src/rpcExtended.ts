@@ -30,7 +30,126 @@ async function tryCall<T>(rpc: RpcClient, method: string, params: unknown[] = []
   }
 }
 
-// ── RPC Inspector ─────────────────────────────────────────────────────────────
+/**
+ * Probe a method and distinguish "not found" from "real error".
+ * Returns { notFound: true } when method doesn't exist.
+ * Returns { notFound: false, value, error } when method exists (value may be null on error).
+ */
+async function probeMethod<T>(
+  rpc: RpcClient,
+  method: string,
+  params: unknown[] = []
+): Promise<{ notFound: true } | { notFound: false; value: T | null; error: Error | null }> {
+  try {
+    const value = await rpc.call<T>(method, params)
+    return { notFound: false, value, error: null }
+  } catch (err) {
+    if (isMethodNotFound(err)) return { notFound: true }
+    const error = err instanceof Error ? err : new Error(String(err))
+    log.warn({ method, err: error.message }, 'RPC probe failed')
+    return { notFound: false, value: null, error }
+  }
+}
+
+// ── RPC Capabilities ──────────────────────────────────────────────────────────
+
+/** Capability booleans derived from rpc.discover. */
+export interface RpcCapabilitiesResult {
+  supportsAicfStatus: boolean
+  supportsDaStatus: boolean
+  supportsMinerStatus: boolean
+  supportsQuantumStatus: boolean
+  supportsMempoolStatus: boolean
+  /** Whether capability data comes from rpc.discover (true) or individual probes (false). */
+  fromDiscover: boolean
+  /** All methods known to the node (may be empty if discover not available). */
+  knownMethods: Set<string>
+}
+
+/** Cache entry for capability detection. TTL = 60 seconds. */
+interface CapabilityCache {
+  result: RpcCapabilitiesResult
+  expiresAt: number
+}
+
+const CAPABILITY_CACHE_TTL_MS = 60_000
+// Use a WeakMap key'd by RpcClient instance so different nodes don't share cache.
+const capabilityCache = new WeakMap<RpcClient, CapabilityCache>()
+
+/** Canonical aliases checked per service (order: preferred first). */
+const AICF_STATUS_METHODS = ['aicf.status', 'aicf_status', 'aicf.getStatus', 'aicf_getStatus']
+const DA_STATUS_METHODS = ['da.status', 'da_status', 'da.getStatus', 'da_getStatus', 'da.putBlob', 'da.getBlob']
+const MINER_STATUS_METHODS = ['miner.status', 'miner_status', 'miner.getStatus', 'miner_getStatus', 'mining.getTemplateStatus']
+const QUANTUM_STATUS_METHODS = ['quantum.status', 'quantum_status', 'quantum.getStatus', 'quantum_getStatus', 'quantum.workerStatus']
+const MEMPOOL_STATUS_METHODS = ['mempool.getStats', 'mempool_getStats', 'mempool.status']
+
+/** Derive capabilities from a known methods set. */
+function deriveCaps(known: Set<string>): Omit<RpcCapabilitiesResult, 'fromDiscover' | 'knownMethods'> {
+  return {
+    supportsAicfStatus: AICF_STATUS_METHODS.some(m => known.has(m)),
+    supportsDaStatus: DA_STATUS_METHODS.some(m => known.has(m)),
+    supportsMinerStatus: MINER_STATUS_METHODS.some(m => known.has(m)),
+    supportsQuantumStatus: QUANTUM_STATUS_METHODS.some(m => known.has(m)),
+    supportsMempoolStatus: MEMPOOL_STATUS_METHODS.some(m => known.has(m)),
+  }
+}
+
+/**
+ * Detect RPC capabilities for AICF, DA, Miner, Quantum, Mempool.
+ * Calls rpc.discover once and caches the result for 60 seconds.
+ * Falls back to per-method probing if discover is unavailable.
+ */
+export async function getRpcCapabilities(rpc: RpcClient): Promise<RpcCapabilitiesResult> {
+  const now = Date.now()
+  const cached = capabilityCache.get(rpc)
+  if (cached && cached.expiresAt > now) {
+    return cached.result
+  }
+
+  // Try rpc.discover to get list of methods.
+  const discoverResult = await rpcDiscover(rpc)
+  if (discoverResult.available && discoverResult.methods.length > 0) {
+    const known = new Set(discoverResult.methods)
+    const result: RpcCapabilitiesResult = {
+      ...deriveCaps(known),
+      fromDiscover: true,
+      knownMethods: known,
+    }
+    capabilityCache.set(rpc, { result, expiresAt: now + CAPABILITY_CACHE_TTL_MS })
+    return result
+  }
+
+  // discover not available — probe each service's primary method individually.
+  const [aicfProbe, daProbe, minerProbe, quantumProbe, mempoolProbe] = await Promise.all([
+    probeMethod(rpc, 'aicf.status'),
+    probeMethod(rpc, 'da.status'),
+    probeMethod(rpc, 'miner.status'),
+    probeMethod(rpc, 'quantum.status'),
+    probeMethod(rpc, 'mempool.getStats'),
+  ])
+
+  // Build a synthetic known-methods set from probes.
+  const known = new Set<string>()
+  if (!aicfProbe.notFound) known.add('aicf.status')
+  if (!daProbe.notFound) known.add('da.status')
+  if (!minerProbe.notFound) known.add('miner.status')
+  if (!quantumProbe.notFound) known.add('quantum.status')
+  if (!mempoolProbe.notFound) known.add('mempool.getStats')
+
+  const result: RpcCapabilitiesResult = {
+    ...deriveCaps(known),
+    fromDiscover: false,
+    knownMethods: known,
+  }
+  capabilityCache.set(rpc, { result, expiresAt: now + CAPABILITY_CACHE_TTL_MS })
+  return result
+}
+
+/** Invalidate the capability cache for a given RPC client (e.g. after reconnect). */
+export function invalidateCapabilityCache(rpc: RpcClient): void {
+  capabilityCache.delete(rpc)
+}
+
 
 export interface RpcDiscoverResult {
   available: boolean
@@ -90,84 +209,162 @@ export interface ServiceStatus {
   timestamp: string
   services: {
     name: string
-    status: 'ok' | 'degraded' | 'down' | 'unknown'
+    /** ok=healthy, degraded=partial, down=error, not_supported=method absent (not an error), unknown=probe inconclusive */
+    status: 'ok' | 'degraded' | 'down' | 'unknown' | 'not_supported'
     hint?: string
     remediation?: string
     detail?: unknown
   }[]
 }
 
+/**
+ * Standard status schema returned by aicf.status, da.status, miner.status, quantum.status.
+ * Nodes that implement these methods return this shape.
+ */
+interface NodeStatusPayload {
+  enabled?: boolean
+  ok?: boolean
+  reason?: string | null
+  message?: string | null
+  details?: unknown
+}
+
+/** Map a NodeStatusPayload to a ServiceStatus entry status. */
+function mapNodeStatus(payload: NodeStatusPayload): {
+  status: ServiceStatus['services'][number]['status']
+  hint: string | undefined
+  remediation: string | undefined
+} {
+  if (!payload.enabled) {
+    const reason = payload.reason ?? 'disabled'
+    return {
+      status: 'down',
+      hint: payload.message ?? `Disabled on this node (reason: ${reason})`,
+      remediation: reason === 'disabled'
+        ? 'Enable the module via node configuration or compose profile'
+        : undefined,
+    }
+  }
+  if (payload.ok) {
+    return { status: 'ok', hint: undefined, remediation: undefined }
+  }
+  const reason = payload.reason ?? 'unknown'
+  let remediation: string | undefined
+  if (reason === 'read_only') {
+    remediation = 'Check file permissions on the data directory (mount as read-write in docker/k8s)'
+  } else if (reason === 'dependency_missing') {
+    remediation = 'Ensure all required node modules are installed and enabled'
+  }
+  return {
+    status: 'degraded',
+    hint: payload.message ?? `Service error (reason: ${reason})`,
+    remediation,
+  }
+}
+
 export async function getServiceStatus(rpc: RpcClient): Promise<ServiceStatus> {
-  const checks = await Promise.allSettled([
+  // First, detect capabilities to distinguish "not supported" from "down".
+  const caps = await getRpcCapabilities(rpc)
+
+  // Always probe chain (required for basic operation).
+  const [adminStatus, nodeStatus, chainHead, mempoolProbe] = await Promise.allSettled([
     tryCall<unknown>(rpc, 'admin.serviceStatus', []),
     tryCall<unknown>(rpc, 'node.getStatus', []),
-    tryCall<unknown>(rpc, 'chain.getHead', []),
-    tryCall<unknown>(rpc, 'mempool.getStats', []),
-    tryCall<unknown>(rpc, 'aicf.getStatus', []),
-    tryCall<unknown>(rpc, 'da.getStatus', []),
-    tryCall<unknown>(rpc, 'miner.getStatus', []),
-    tryCall<unknown>(rpc, 'quantum.getStatus', []),
+    probeMethod<unknown>(rpc, 'chain.getHead'),
+    caps.supportsMempoolStatus
+      ? probeMethod<NodeStatusPayload>(rpc, 'mempool.getStats')
+      : Promise.resolve({ notFound: true } as const),
   ])
-
-  const [adminStatus, nodeStatus, chainHead, mempoolStats, aicfStatus, daStatus, minerStatus, quantumStatus] = checks
 
   const services: ServiceStatus['services'] = []
 
   // Chain
-  const headOk = chainHead.status === 'fulfilled' && chainHead.value !== null
+  const chainResult = chainHead.status === 'fulfilled' ? chainHead.value : null
+  const headOk = chainResult !== null && !chainResult.notFound && chainResult.value !== null
   services.push({
     name: 'chain',
     status: headOk ? 'ok' : 'down',
     hint: headOk ? undefined : 'Chain head is not accessible via RPC',
-    remediation: headOk ? undefined : 'Check the node is running and EXPLORER2_RPC_URL is correct'
+    remediation: headOk ? undefined : 'Check the node is running and EXPLORER2_RPC_URL is correct',
   })
 
   // Mempool
-  const mempoolOk = mempoolStats.status === 'fulfilled' && mempoolStats.value !== null
-  services.push({
-    name: 'mempool',
-    status: mempoolOk ? 'ok' : 'unknown',
-    hint: mempoolOk ? undefined : 'Mempool stats not available',
-    detail: mempoolOk ? mempoolStats.value : undefined
-  })
+  if (!caps.supportsMempoolStatus) {
+    services.push({
+      name: 'mempool',
+      status: 'not_supported',
+      hint: 'Not supported by this RPC',
+    })
+  } else {
+    const mempoolResult = mempoolProbe.status === 'fulfilled' ? mempoolProbe.value : null
+    if (mempoolResult === null || mempoolResult.notFound) {
+      services.push({ name: 'mempool', status: 'not_supported', hint: 'Not supported by this RPC' })
+    } else if (mempoolResult.error) {
+      services.push({
+        name: 'mempool',
+        status: 'down',
+        hint: `Mempool error: ${mempoolResult.error.message}`,
+      })
+    } else {
+      services.push({
+        name: 'mempool',
+        status: 'ok',
+        detail: mempoolResult.value ?? undefined,
+      })
+    }
+  }
 
-  // AICF
-  const aicfOk = aicfStatus.status === 'fulfilled' && aicfStatus.value !== null
-  services.push({
-    name: 'aicf',
-    status: aicfOk ? 'ok' : 'unknown',
-    hint: aicfOk ? undefined : 'AICF status not available on this node',
-    detail: aicfOk ? aicfStatus.value : undefined
-  })
+  // Helper to probe a service status method using the preferred aliases.
+  const probeServiceStatus = async (
+    supported: boolean,
+    primaryMethod: string,
+    aliases: string[],
+    serviceName: string,
+  ): Promise<ServiceStatus['services'][number]> => {
+    if (!supported) {
+      return {
+        name: serviceName,
+        status: 'not_supported',
+        hint: 'Not supported by this RPC',
+      }
+    }
 
-  // DA
-  const daOk = daStatus.status === 'fulfilled' && daStatus.value !== null
-  services.push({
-    name: 'da',
-    status: daOk ? 'ok' : 'unknown',
-    hint: daOk ? undefined : 'DA status not available on this node',
-    detail: daOk ? daStatus.value : undefined
-  })
+    // Try methods in alias order — use the first one that the node knows about.
+    const methodToUse = aliases.find(m => caps.knownMethods.has(m)) ?? primaryMethod
 
-  // Miner
-  const minerOk = minerStatus.status === 'fulfilled' && minerStatus.value !== null
-  services.push({
-    name: 'miner',
-    status: minerOk ? 'ok' : 'unknown',
-    hint: minerOk ? undefined : 'Miner status not available on this node',
-    detail: minerOk ? minerStatus.value : undefined
-  })
+    const probe = await probeMethod<NodeStatusPayload>(rpc, methodToUse)
+    if (probe.notFound) {
+      return { name: serviceName, status: 'not_supported', hint: 'Not supported by this RPC' }
+    }
+    if (probe.error) {
+      return {
+        name: serviceName,
+        status: 'down',
+        hint: `Service error: ${probe.error.message}`,
+      }
+    }
+    if (!probe.value) {
+      return { name: serviceName, status: 'unknown', hint: 'Probe returned empty response' }
+    }
 
-  // Quantum
-  const quantumOk = quantumStatus.status === 'fulfilled' && quantumStatus.value !== null
-  services.push({
-    name: 'quantum',
-    status: quantumOk ? 'ok' : 'unknown',
-    hint: quantumOk ? undefined : 'Quantum worker status not available on this node',
-    detail: quantumOk ? quantumStatus.value : undefined
-  })
+    const mapped = mapNodeStatus(probe.value)
+    return {
+      name: serviceName,
+      ...mapped,
+      detail: probe.value,
+    }
+  }
 
-  // If admin/node status provides enriched data, merge it
+  const [aicfEntry, daEntry, minerEntry, quantumEntry] = await Promise.all([
+    probeServiceStatus(caps.supportsAicfStatus, 'aicf.status', AICF_STATUS_METHODS, 'aicf'),
+    probeServiceStatus(caps.supportsDaStatus, 'da.status', DA_STATUS_METHODS, 'da'),
+    probeServiceStatus(caps.supportsMinerStatus, 'miner.status', MINER_STATUS_METHODS, 'miner'),
+    probeServiceStatus(caps.supportsQuantumStatus, 'quantum.status', QUANTUM_STATUS_METHODS, 'quantum'),
+  ])
+
+  services.push(aicfEntry, daEntry, minerEntry, quantumEntry)
+
+  // If admin/node status provides enriched data, merge it.
   const richStatus = (adminStatus.status === 'fulfilled' && adminStatus.value) ||
                      (nodeStatus.status === 'fulfilled' && nodeStatus.value)
   if (richStatus && typeof richStatus === 'object') {
@@ -181,6 +378,7 @@ export async function getServiceStatus(rpc: RpcClient): Promise<ServiceStatus> {
 
   return { timestamp: new Date().toISOString(), services }
 }
+
 
 // ── AICF ─────────────────────────────────────────────────────────────────────
 
