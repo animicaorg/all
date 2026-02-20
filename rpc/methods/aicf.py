@@ -442,14 +442,30 @@ async def topUp(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     }
 
 
-@method("aicf.status", aliases=("aicf_status",), desc="Get AICF status in standard schema")
-async def aicf_status_endpoint(ctx: Any, params: List[Any]) -> Dict[str, Any]:
+def _normalize_status_params(raw_params: Any) -> Any:
+    """Accept zero/empty/legacy wrapped params for status methods."""
+    if raw_params is None:
+        return None
+    if isinstance(raw_params, dict) and "params" in raw_params:
+        return raw_params.get("params")
+    if isinstance(raw_params, list) and len(raw_params) == 1 and isinstance(raw_params[0], dict) and "params" in raw_params[0]:
+        return raw_params[0].get("params")
+    return raw_params
+
+
+@method(
+    "aicf.status",
+    aliases=("aicf_status", "aicf.getStatus", "aicf_getStatus"),
+    desc="Get AICF status in standard schema",
+)
+async def aicf_status_endpoint(ctx: Any, params: Any = None) -> Dict[str, Any]:
     """
     aicf.status - Get AICF pool status in the standard status schema.
 
     Returns: {enabled, ok, reason, message, details}
     """
     try:
+        _ = _normalize_status_params(params)
         from execution.state.aicf_state import (
             compute_epoch,
             get_epoch_length,
@@ -491,6 +507,12 @@ async def aicf_status_endpoint(ctx: Any, params: List[Any]) -> Dict[str, Any]:
             "reason": None,
             "message": None,
             "details": {
+                "pool_address": None,
+                "total_credits": _to_hex_quantity(pool_balance),
+                "block_reward_bp": None,
+                "fee_bp": None,
+                "last_updated": height,
+                # Backward-compatible detail fields for older consumers.
                 "pool_balance": _to_hex_quantity(pool_balance),
                 "current_epoch": current_epoch,
                 "current_height": height,
@@ -515,4 +537,3 @@ __all__ = [
     "topUp",
     "aicf_status_endpoint",
 ]
-
