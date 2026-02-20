@@ -29,6 +29,10 @@ except ImportError:
 console = Console()
 app = typer.Typer(help="ENA LLM inference commands")
 
+# Models commands group – must be defined before any @models_app decorators below.
+models_app = typer.Typer(help="ENA model management commands")
+app.add_typer(models_app, name="models")
+
 # Import upgrade CLI
 try:
     from . import ena_upgrade
@@ -790,11 +794,6 @@ app.add_typer(train_app, name="train")
 # Checkpoints commands group
 checkpoints_app = typer.Typer(help="ENA model checkpoint commands")
 app.add_typer(checkpoints_app, name="checkpoints")
-
-
-# Models commands group (rename existing 'models' command and create group)
-models_app = typer.Typer(help="ENA model management commands")
-app.add_typer(models_app, name="models")
 
 
 # Serve commands group

@@ -35,6 +35,13 @@ try:
 except Exception:
     HAVE_STRATUM = False
 
+    class _StubPoolCli:  # noqa: B903
+        """Stub used when animica[stratum] is not installed."""
+        def main(self, argv=None):
+            raise RuntimeError("Stratum pool not installed; run: pip install 'animica[stratum]'")
+
+    pool_cli = _StubPoolCli()  # type: ignore[assignment]
+
 app = typer.Typer(help="Mining operations and Stratum pool management.")
 
 RPC_ENV = "ANIMICA_RPC_URL"
@@ -527,7 +534,6 @@ def run_pool(
     ),
 ) -> None:
     """Start the Animica Stratum mining pool."""
-    _ensure_stratum_available()
     _ensure_network_env()
     effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
     guard_bootstrap_rpc(effective_rpc, allow_remote=allow_remote_rpc, method="miner.runPool")
@@ -541,7 +547,11 @@ def run_pool(
     for key, value in env_overrides.items():
         if value is not None:
             os.environ[key] = value
-    pool_cli.main([])
+    try:
+        pool_cli.main([])
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("solo")
@@ -762,26 +772,42 @@ def da_run() -> None:
 @app.command("show-config")
 def show_config() -> None:
     """Display the effective pool configuration."""
-    _ensure_stratum_available()
     _ensure_network_env()
-    # load_config_from_env is provided by animica.stratum_pool when installed
-    try:
-        cfg: PoolConfig = load_config_from_env()
-    except Exception as e:
+    if HAVE_STRATUM:
+        # load_config_from_env is provided by animica.stratum_pool when installed
+        try:
+            cfg: PoolConfig = load_config_from_env()
+        except Exception as e:
+            typer.echo(
+                "Error: could not load pool config; ensure animica[stratum] is installed",
+                err=True,
+            )
+            raise typer.Exit(1)
         typer.echo(
-            "Error: could not load pool config; ensure animica[stratum] is installed",
-            err=True,
+            f"RPC URL: {cfg.rpc_url}\n"
+            f"DB URL: {cfg.db_url}\n"
+            f"Chain ID: {cfg.chain_id}\n"
+            f"Pool address: {cfg.pool_address}\n"
+            f"Stratum bind: {cfg.host}:{cfg.port}\n"
+            f"API bind: {cfg.api_host}:{cfg.api_port}\n"
+            f"Log level: {cfg.log_level}"
         )
-        raise typer.Exit(1)
-    typer.echo(
-        f"RPC URL: {cfg.rpc_url}\n"
-        f"DB URL: {cfg.db_url}\n"
-        f"Chain ID: {cfg.chain_id}\n"
-        f"Pool address: {cfg.pool_address}\n"
-        f"Stratum bind: {cfg.host}:{cfg.port}\n"
-        f"API bind: {cfg.api_host}:{cfg.api_port}\n"
-        f"Log level: {cfg.log_level}"
-    )
+    else:
+        # Stratum not installed; show what's available from env vars
+        import os
+        rpc_url = os.getenv(RPC_ENV, "(not set)")
+        db_url = os.getenv(DB_ENV, "(not set)")
+        stratum_bind = os.getenv(STRATUM_BIND_ENV, "(not set)")
+        api_bind = os.getenv(API_BIND_ENV, "(not set)")
+        log_level = os.getenv(LOG_LEVEL_ENV, "info")
+        typer.echo(
+            f"RPC URL: {rpc_url}\n"
+            f"DB URL: {db_url}\n"
+            f"Stratum bind: {stratum_bind}\n"
+            f"API bind: {api_bind}\n"
+            f"Log level: {log_level}\n"
+            f"Note: animica[stratum] not installed; full pool config unavailable."
+        )
 
 
 @app.command("generate-payout-address")
@@ -797,11 +823,18 @@ def generate_payout_address(
     # Delegate to wallet module for key generation (no stratum dependency required)
     try:
         from animica.cli.wallet import (_generate_entry, _load_store,
+                                        _resolve_signature_alg,
                                         _save_store, _wallet_file_path)
 
         path = _wallet_file_path(wallet_file)
         store = _load_store(path)
-        entry = _generate_entry(label, allow_fallback=True)
+        alg_info = _resolve_signature_alg(None)
+        entry = _generate_entry(
+            label,
+            allow_fallback=True,
+            alg_info=alg_info,
+            allow_default_fallback=True,
+        )
         store.setdefault("wallets", []).append(entry.to_dict())
         _save_store(path, store)
         typer.echo(f"Generated payout address {entry.address} (label: {entry.label})")
@@ -1239,6 +1272,8 @@ def mine_blocks(
                 i = blocks_attempted
                 stale_attempts = 0
                 submit_result = None
+                _stale_cooldown_applied = False
+                _block_accepted = False
                 while True:
                     def _rpc_error_details(error: Exception) -> tuple[int | None, str, object | None]:
                         code = getattr(error, "code", None)
@@ -1519,6 +1554,7 @@ def mine_blocks(
                         # Exhausted stale retries - wait before moving to next block
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         _apply_stale_template_cooldown()
+                        _stale_cooldown_applied = True
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
@@ -1620,6 +1656,8 @@ def mine_blocks(
                                 head_now = client.request("chain.getHead", [])
                             except Exception:
                                 head_now = {}
+                            if not isinstance(head_now, dict):
+                                head_now = {}
                             typer.secho(
                                 "  STALE_DIFF: "
                                 f"template.parent={template.get('parent', {}).get('hash')} "
@@ -1640,12 +1678,13 @@ def mine_blocks(
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         if is_stale:
                             _apply_stale_template_cooldown()
+                            _stale_cooldown_applied = True
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
 
                     if not submit_result or not submit_result.get("accepted", False):
-                        rejection_reason = submit_result.get("reason")
+                        rejection_reason = submit_result.get("reason") if isinstance(submit_result, dict) else None
                         _emit_mining_summary(summary, verbose=verbose, force=True)
                         
                         # REJECTED - node did not accept
@@ -1664,6 +1703,7 @@ def mine_blocks(
                         # to give blockchain time to stabilize and avoid rapid retry loops
                         if isinstance(rejection_reason, str) and "stale" in rejection_reason:
                             _apply_stale_template_cooldown()
+                            _stale_cooldown_applied = True
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
@@ -1685,6 +1725,7 @@ def mine_blocks(
                     # ACCEPTED - block fully validated and committed to canonical state
                     total_mined += 1
                     blocks_attempted += 1
+                    _block_accepted = True
                     block_reward = int(template.get("coinbase", {}).get("amount") or 0)
                     total_reward += block_reward
                     reward_anm = block_reward / COIN_UNIT
@@ -1755,10 +1796,17 @@ def mine_blocks(
                 # The inner loop has already handled retry logic (up to 1 attempt for stale)
                 # and decided to break, so we just move on to the next block in the sequence
 
-                # Sleep between attempts to avoid overwhelming the node
-                # Skip sleep after the last successful block
-                if total_mined < count:
-                    time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
+                # Sleep between attempts to avoid overwhelming the node.
+                # - Skip if a stale cooldown was already applied (it already served as the delay)
+                # - Sleep only when a block was accepted (pacing between accepted blocks) or when the
+                #   attempt did not result in acceptance (light throttle on persistent errors)
+                # - For generic non-stale errors: use a shorter delay to fail fast
+                if total_mined < count and not _stale_cooldown_applied:
+                    if _block_accepted:
+                        time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
+                    else:
+                        # Short delay to avoid hammering the node on repeated errors
+                        time.sleep(0.1)
             
             # Check if we exceeded maximum attempts
             if blocks_attempted >= MAX_TOTAL_ATTEMPTS and total_mined < count:
