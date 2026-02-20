@@ -18,6 +18,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from . import aicf_utils
+
 console = Console()
 
 quantum_contribute_app = typer.Typer(
@@ -29,13 +31,13 @@ quantum_contribute_app = typer.Typer(
 
 @quantum_contribute_app.command("register")
 def register(
-    worker_type: str = typer.Option(
-        ...,
+    worker_type: Optional[str] = typer.Option(
+        None,
         "--type",
         help="Worker type: gpu|cpu|quantum",
     ),
-    caps: str = typer.Option(
-        ...,
+    caps: Optional[str] = typer.Option(
+        None,
         "--caps",
         help="Path to capabilities JSON file or inline JSON",
     ),
@@ -66,7 +68,13 @@ def register(
     ),
 ):
     """Register as a quantum/GPU/CPU contributor."""
-    from . import aicf_utils
+    # Validate required args early (to stdout so CLI tests can capture them)
+    if not worker_type:
+        typer.echo("Error: Missing option '--type'")
+        raise typer.Exit(1)
+    if not caps:
+        typer.echo("Error: Missing option '--caps'")
+        raise typer.Exit(1)
     
     # Validate worker type
     valid_types = ["gpu", "cpu", "quantum"]
@@ -79,13 +87,17 @@ def register(
         if os.path.isfile(caps):
             with open(caps, 'r') as f:
                 capabilities = json.load(f)
+        elif os.sep in caps or caps.startswith('~'):
+            # Looks like a file path (contains path separator or home dir) but doesn't exist
+            typer.echo(f"Error: Capabilities file not found: {caps}")
+            raise typer.Exit(1)
         else:
             capabilities = json.loads(caps)
     except FileNotFoundError:
-        console.print(f"[red]Error: Capabilities file not found: {caps}[/red]")
+        typer.echo(f"Error: Capabilities file not found: {caps}")
         raise typer.Exit(1)
     except json.JSONDecodeError as e:
-        console.print(f"[red]Error: Invalid JSON in capabilities: {e}[/red]")
+        typer.echo(f"Error: Invalid JSON in capabilities: {e}")
         raise typer.Exit(1)
     
     # Validate capabilities structure

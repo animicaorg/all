@@ -94,27 +94,45 @@ def get_rpc_url(override: Optional[str] = None, debug: bool = False) -> str:
     return normalized
 
 
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder that converts large ints to strings and bytes to hex."""
+
+    def encode(self, o: Any) -> str:
+        return super().encode(self._coerce(o))
+
+    def iterencode(self, o: Any, _one_shot: bool = False):  # type: ignore[override]
+        return super().iterencode(self._coerce(o), _one_shot)
+
+    @classmethod
+    def _coerce(cls, o: Any) -> Any:
+        if isinstance(o, bool):
+            return o
+        if isinstance(o, int) and (o >= 2**53 or o <= -(2**53)):
+            return str(o)
+        if isinstance(o, bytes):
+            return "0x" + o.hex()
+        if isinstance(o, dict):
+            return {k: cls._coerce(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [cls._coerce(v) for v in o]
+        return o
+
+
 def safe_json_encode(obj: Any) -> str:
     """
     Safely encode objects to JSON, handling BigInt and other non-standard types.
-    
+
+    Large integers (>= 2^53 or <= -2^53) are serialized as strings to preserve
+    precision in environments that use IEEE-754 doubles (JavaScript, JSON parsers).
+    Bytes values are encoded as ``0x``-prefixed hex strings.
+
     Args:
         obj: Object to encode
-        
+
     Returns:
         JSON string
     """
-    def _convert(o: Any) -> Any:
-        # Handle large integers (convert to string to avoid precision loss)
-        if isinstance(o, int) and (o > 2**53 or o < -(2**53)):
-            return str(o)
-        # Handle bytes
-        if isinstance(o, bytes):
-            return "0x" + o.hex()
-        # For other types, let json.dumps handle or raise
-        raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
-    
-    return json.dumps(obj, default=_convert, indent=2)
+    return json.dumps(obj, cls=_SafeEncoder, indent=2)
 
 
 def create_rpc_session(timeout: int = 30, retries: int = 3) -> requests.Session:
