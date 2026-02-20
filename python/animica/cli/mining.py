@@ -35,7 +35,7 @@ try:
 except Exception:
     HAVE_STRATUM = False
 
-    class _StubPoolCli:  # noqa: B903
+    class _StubPoolCli:
         """Stub used when animica[stratum] is not installed."""
         def main(self, argv=None):
             raise RuntimeError("Stratum pool not installed; run: pip install 'animica[stratum]'")
@@ -794,7 +794,6 @@ def show_config() -> None:
         )
     else:
         # Stratum not installed; show what's available from env vars
-        import os
         rpc_url = os.getenv(RPC_ENV, "(not set)")
         db_url = os.getenv(DB_ENV, "(not set)")
         stratum_bind = os.getenv(STRATUM_BIND_ENV, "(not set)")

@@ -87,8 +87,8 @@ def register(
         if os.path.isfile(caps):
             with open(caps, 'r') as f:
                 capabilities = json.load(f)
-        elif caps.startswith('/') or caps.startswith('./') or caps.startswith('~/') or (len(caps) > 1 and caps[1] == ':'):
-            # Looks like a file path but doesn't exist
+        elif os.sep in caps or caps.startswith('~'):
+            # Looks like a file path (contains path separator or home dir) but doesn't exist
             typer.echo(f"Error: Capabilities file not found: {caps}")
             raise typer.Exit(1)
         else:
