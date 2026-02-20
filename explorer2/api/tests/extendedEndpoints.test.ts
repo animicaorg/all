@@ -2,6 +2,7 @@ import request from 'supertest'
 import { describe, expect, it, beforeAll } from 'vitest'
 import { createServer } from '../src/server'
 import { ExplorerService } from '../src/service'
+import { invalidateCapabilityCache } from '../src/rpcExtended'
 
 /**
  * Mock RPC client that simulates method-not-found for unknown methods.
@@ -20,13 +21,25 @@ class MockRpc {
       throw err
     }
     // Return minimal mock data per method
+    const methods = [...this.available]
     const mocks: Record<string, unknown> = {
-      'rpc.discover': { methods: ['chain.getHead', 'rpc.discover'], version: '1.0.0' },
-      'rpc.listMethods': ['chain.getHead'],
+      // rpc.discover returns the actual list of available methods so capability detection works.
+      'rpc.discover': { methods, version: '1.0.0' },
+      'rpc.listMethods': methods,
       'node.ping': 'pong',
       'chain.getHead': { height: 10, hash: '0xhead', time: 1700000000 },
       'mempool.getStats': { count: 3, totalBytes: 360, oldestAgeSec: 5 },
       'admin.serviceStatus': { chain: 'ok', mempool: 'ok' },
+      // Standard status schema methods
+      'aicf.status': { enabled: true, ok: true, reason: null, message: null, details: { pool_balance: '0x64', current_epoch: 5 } },
+      'aicf_status': { enabled: true, ok: true, reason: null, message: null, details: {} },
+      'da.status': { enabled: false, ok: false, reason: 'unavailable', message: 'DA not yet available', details: {} },
+      'da_status': { enabled: false, ok: false, reason: 'unavailable', message: 'DA not yet available', details: {} },
+      'miner.status': { enabled: true, ok: true, reason: null, message: null, details: { sync_phase: 'synced' } },
+      'miner_status': { enabled: true, ok: true, reason: null, message: null, details: {} },
+      'quantum.status': { enabled: false, ok: false, reason: 'unavailable', message: 'Quantum not enabled', details: {} },
+      'quantum_status': { enabled: false, ok: false, reason: 'unavailable', message: 'Quantum not enabled', details: {} },
+      // Legacy method names (still supported)
       'aicf.getStatus': { pool: 100, credits: 50 },
       'aicf.getCredits': { address: 'anim1test', credits: 42 },
       'aicf.listJobs': { items: [] },
@@ -71,13 +84,14 @@ describe('New API endpoints — with full RPC mock', () => {
   let api: ReturnType<typeof createServer>
   const rpc = new MockRpc([
     'rpc.discover', 'chain.getHead', 'mempool.getStats', 'admin.serviceStatus',
-    'aicf.getStatus', 'aicf.getCredits', 'aicf.listJobs', 'aicf.listPlans',
-    'miner.getStatus', 'miner.getBlockTemplate', 'miner.getMetrics',
-    'da.getStatus', 'da.getQuotas', 'da.listCommitments', 'da.getBlob', 'da.getProof',
-    'quantum.getStatus', 'quantum.listWorkers', 'quantum.listJobs', 'quantum.getPolicy',
+    'aicf.status', 'aicf.getStatus', 'aicf.getCredits', 'aicf.listJobs', 'aicf.listPlans',
+    'miner.status', 'miner.getStatus', 'miner.getBlockTemplate', 'miner.getMetrics',
+    'da.status', 'da.getStatus', 'da.getQuotas', 'da.listCommitments', 'da.getBlob', 'da.getProof',
+    'quantum.status', 'quantum.getStatus', 'quantum.listWorkers', 'quantum.listJobs', 'quantum.getPolicy',
   ])
 
   beforeAll(() => {
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
     const service = new ExplorerService(makeMockChainClient())
     api = createServer(service, '*', 'silent', {
       mode: 'RPC',
@@ -102,6 +116,37 @@ describe('New API endpoints — with full RPC mock', () => {
     expect(res.body.timestamp).toBeDefined()
     expect(Array.isArray(res.body.services)).toBe(true)
     expect(res.body.services.length).toBeGreaterThan(0)
+  })
+
+  it('GET /api/network/status — chain is ok when chain.getHead succeeds', async () => {
+    const res = await request(api).get('/api/network/status')
+    expect(res.status).toBe(200)
+    const chain = res.body.services.find((s: { name: string }) => s.name === 'chain')
+    expect(chain).toBeDefined()
+    expect(chain.status).toBe('ok')
+  })
+
+  it('GET /api/network/status — aicf shows ok (method returns enabled:true ok:true)', async () => {
+    const res = await request(api).get('/api/network/status')
+    const aicf = res.body.services.find((s: { name: string }) => s.name === 'aicf')
+    expect(aicf).toBeDefined()
+    expect(aicf.status).toBe('ok')
+  })
+
+  it('GET /api/network/status — da shows down/disabled (method returns enabled:false)', async () => {
+    const res = await request(api).get('/api/network/status')
+    const da = res.body.services.find((s: { name: string }) => s.name === 'da')
+    expect(da).toBeDefined()
+    // da.status returns enabled:false so it should be 'down' (not 'not_supported')
+    expect(da.status).toBe('down')
+  })
+
+  it('GET /api/network/status — quantum shows down/disabled (method returns enabled:false)', async () => {
+    const res = await request(api).get('/api/network/status')
+    const quantum = res.body.services.find((s: { name: string }) => s.name === 'quantum')
+    expect(quantum).toBeDefined()
+    // quantum.status returns enabled:false so it should be 'down' (not 'not_supported')
+    expect(quantum.status).toBe('down')
   })
 
   it('GET /api/aicf/info returns AICF info', async () => {
@@ -229,6 +274,7 @@ describe('New API endpoints — RPC with no extended methods', () => {
   const rpc = new MockRpc(['chain.getHead']) // only chain.getHead available
 
   beforeAll(() => {
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
     const service = new ExplorerService(makeMockChainClient())
     api = createServer(service, '*', 'silent', {
       mode: 'RPC',
@@ -259,3 +305,84 @@ describe('New API endpoints — RPC with no extended methods', () => {
     expect(res.body.available).toBe(false)
   })
 })
+
+describe('Capability detection — not_supported vs down', () => {
+  it('returns not_supported for services when rpc.discover shows methods absent', async () => {
+    // rpc.discover lists only chain.getHead — no aicf/da/miner/quantum status methods
+    const rpc = new MockRpc(['rpc.discover', 'chain.getHead'])
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
+    const service = new ExplorerService(makeMockChainClient())
+    const app = createServer(service, '*', 'silent', {
+      mode: 'RPC', rpcUrl: 'http://test/', chainDbPath: null,
+      chainId: 1, detectedHead: 0, timestamp: new Date().toISOString()
+    }, rpc as unknown as import('../src/rpcClient').RpcClient)
+
+    const res = await request(app).get('/api/network/status')
+    expect(res.status).toBe(200)
+    const services: Array<{ name: string; status: string; hint?: string }> = res.body.services
+    const aicf = services.find(s => s.name === 'aicf')
+    const da = services.find(s => s.name === 'da')
+    const miner = services.find(s => s.name === 'miner')
+    const quantum = services.find(s => s.name === 'quantum')
+
+    expect(aicf?.status).toBe('not_supported')
+    expect(aicf?.hint).toBe('Not supported by this RPC')
+    expect(da?.status).toBe('not_supported')
+    expect(miner?.status).toBe('not_supported')
+    expect(quantum?.status).toBe('not_supported')
+  })
+
+  it('returns down with hint when aicf.status returns enabled:false', async () => {
+    // Node has aicf.status but reports disabled
+    const rpc = new MockRpc(['rpc.discover', 'chain.getHead', 'aicf.status'])
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
+    const service = new ExplorerService(makeMockChainClient())
+    const app = createServer(service, '*', 'silent', {
+      mode: 'RPC', rpcUrl: 'http://test/', chainDbPath: null,
+      chainId: 1, detectedHead: 0, timestamp: new Date().toISOString()
+    }, rpc as unknown as import('../src/rpcClient').RpcClient)
+
+    const res = await request(app).get('/api/network/status')
+    expect(res.status).toBe(200)
+    const aicf = res.body.services.find((s: { name: string }) => s.name === 'aicf')
+    // aicf.status mock returns { enabled: true, ok: true } so this should be ok
+    expect(aicf?.status).toBe('ok')
+  })
+
+  it('returns down when da.status returns enabled:false (unavailable)', async () => {
+    // Node has da.status but reports disabled
+    const rpc = new MockRpc(['rpc.discover', 'chain.getHead', 'da.status'])
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
+    const service = new ExplorerService(makeMockChainClient())
+    const app = createServer(service, '*', 'silent', {
+      mode: 'RPC', rpcUrl: 'http://test/', chainDbPath: null,
+      chainId: 1, detectedHead: 0, timestamp: new Date().toISOString()
+    }, rpc as unknown as import('../src/rpcClient').RpcClient)
+
+    const res = await request(app).get('/api/network/status')
+    expect(res.status).toBe(200)
+    const da = res.body.services.find((s: { name: string }) => s.name === 'da')
+    // da.status mock returns { enabled: false, ok: false } so it should be 'down'
+    expect(da?.status).toBe('down')
+    expect(da?.hint).toContain('DA not yet available')
+  })
+
+  it('chain ok, mempool not_supported when mempool method absent', async () => {
+    // Only chain.getHead available (rpc.discover lists it)
+    const rpc = new MockRpc(['rpc.discover', 'chain.getHead'])
+    invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
+    const service = new ExplorerService(makeMockChainClient())
+    const app = createServer(service, '*', 'silent', {
+      mode: 'RPC', rpcUrl: 'http://test/', chainDbPath: null,
+      chainId: 1, detectedHead: 0, timestamp: new Date().toISOString()
+    }, rpc as unknown as import('../src/rpcClient').RpcClient)
+
+    const res = await request(app).get('/api/network/status')
+    expect(res.status).toBe(200)
+    const chain = res.body.services.find((s: { name: string }) => s.name === 'chain')
+    const mempool = res.body.services.find((s: { name: string }) => s.name === 'mempool')
+    expect(chain?.status).toBe('ok')
+    expect(mempool?.status).toBe('not_supported')
+  })
+})
+

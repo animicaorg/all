@@ -7,8 +7,9 @@ These methods return placeholders and should be wired to an indexer that listens
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List
+
+from rpc.methods import method
 
 # Simple in-memory placeholders (indexer should populate this from events)
 _JOBS: Dict[str, Dict[str, Any]] = {}
@@ -50,6 +51,22 @@ def _index_job(job: Dict[str, Any]):
 
 def _index_result(job_id: str, result: Dict[str, Any]):
     _RESULTS.setdefault(job_id, []).append(result)
+
+
+@method("quantum.status", aliases=("quantum_status", "quantum.getStatus", "quantum_getStatus"), desc="Get quantum worker status")
+def quantum_status(*_args, **_kwargs) -> Dict[str, Any]:
+    """
+    Returns the status of the Quantum compute module.
+
+    Returns a stable schema: {enabled, ok, reason, message, details}.
+    """
+    return {
+        "enabled": False,
+        "ok": False,
+        "reason": "unavailable",
+        "message": "Quantum compute is not enabled on this node",
+        "details": {},
+    }
 
 
 # Example exports for dispatcher registration (depends on rpc framework)

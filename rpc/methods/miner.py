@@ -5909,6 +5909,38 @@ def mining_get_template_status() -> dict[str, Any]:
         }
 
 
+@method("miner.status", aliases=("miner_status", "miner.getStatus", "miner_getStatus"), desc="Get miner status")
+def miner_status() -> dict[str, Any]:
+    """
+    Get the current miner status in a stable schema: {enabled, ok, reason, message, details}.
+
+    Internally delegates to mining.getTemplateStatus and maps the result.
+    """
+    try:
+        template_status = mining_get_template_status()
+        can_mine = bool(template_status.get("can_mine", False))
+        reason = template_status.get("reason") or None
+        return {
+            "enabled": True,
+            "ok": can_mine,
+            "reason": None if can_mine else (reason or "not_ready"),
+            "message": None if can_mine else reason,
+            "details": {
+                "sync_phase": template_status.get("sync_phase"),
+                "head": template_status.get("head", {}),
+                "mempool": template_status.get("mempool", {}),
+            },
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "enabled": True,
+            "ok": False,
+            "reason": "internal",
+            "message": str(e),
+            "details": {},
+        }
+
+
 @method("mining.getCredits", desc="Get mining credits audit trail")
 def mining_get_credits(
     address: str | None = None,

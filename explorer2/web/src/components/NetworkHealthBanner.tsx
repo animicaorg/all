@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 
 interface ServiceEntry {
   name: string
-  status: 'ok' | 'degraded' | 'down' | 'unknown'
+  status: 'ok' | 'degraded' | 'down' | 'unknown' | 'not_supported'
   hint?: string
   remediation?: string
 }
@@ -13,6 +13,7 @@ const STATUS_COLOR: Record<string, string> = {
   degraded: 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300',
   down: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300',
   unknown: 'bg-gray-50 border-gray-200 text-gray-700 dark:bg-night-800 dark:border-night-700 dark:text-slate-300',
+  not_supported: 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-night-800 dark:border-night-700 dark:text-slate-400',
 }
 
 const STATUS_ICON: Record<string, string> = {
@@ -20,6 +21,7 @@ const STATUS_ICON: Record<string, string> = {
   degraded: '⚠',
   down: '✗',
   unknown: '?',
+  not_supported: '—',
 }
 
 export default function NetworkHealthBanner() {
@@ -36,14 +38,16 @@ export default function NetworkHealthBanner() {
 
   if (loading || services.length === 0) return null
 
-  const hasIssues = services.some(s => s.status === 'down' || s.status === 'degraded')
-  const allOk = services.every(s => s.status === 'ok')
+  // not_supported is informational — not an actionable issue.
+  const actionableServices = services.filter(s => s.status !== 'not_supported')
+  const hasIssues = actionableServices.some(s => s.status === 'down' || s.status === 'degraded')
+  const allOk = actionableServices.every(s => s.status === 'ok')
 
   if (allOk) return null // Don't show banner when everything is healthy
 
-  const worstStatus = services.some(s => s.status === 'down')
+  const worstStatus = actionableServices.some(s => s.status === 'down')
     ? 'down'
-    : services.some(s => s.status === 'degraded')
+    : actionableServices.some(s => s.status === 'degraded')
     ? 'degraded'
     : 'unknown'
 
@@ -72,11 +76,17 @@ export default function NetworkHealthBanner() {
                   <span>{STATUS_ICON[svc.status]}</span>
                   <span>{svc.name}</span>
                 </div>
-                {svc.hint && (
-                  <p className="mt-1 text-xs opacity-80">{svc.hint}</p>
-                )}
-                {svc.remediation && (
-                  <p className="mt-1 text-xs italic opacity-70">{svc.remediation}</p>
+                {svc.status === 'not_supported' ? (
+                  <p className="mt-1 text-xs opacity-60">Not supported by this RPC</p>
+                ) : (
+                  <>
+                    {svc.hint && (
+                      <p className="mt-1 text-xs opacity-80">{svc.hint}</p>
+                    )}
+                    {svc.remediation && (
+                      <p className="mt-1 text-xs italic opacity-70">{svc.remediation}</p>
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -86,3 +96,4 @@ export default function NetworkHealthBanner() {
     </div>
   )
 }
+

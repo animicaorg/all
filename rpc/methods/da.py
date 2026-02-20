@@ -27,4 +27,20 @@ def da_get_proof(*_args, **_kwargs):
     raise rpc_errors.TemporarilyUnavailable("Blob proof not available")
 
 
-__all__ = ["da_put_blob", "da_get_blob", "da_get_proof"]
+@method("da.status", aliases=("da_status", "da.getStatus", "da_getStatus"), desc="Get DA layer status")
+def da_status(*_args, **_kwargs) -> dict:
+    """
+    Returns the status of the DA (Data Availability) layer.
+
+    Returns a stable schema: {enabled, ok, reason, message, details}.
+    """
+    return {
+        "enabled": False,
+        "ok": False,
+        "reason": "unavailable",
+        "message": "DA layer is not yet available on this node",
+        "details": {},
+    }
+
+
+__all__ = ["da_put_blob", "da_get_blob", "da_get_proof", "da_status"]
