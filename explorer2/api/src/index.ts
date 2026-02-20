@@ -12,6 +12,7 @@ const log = pino({ name: 'explorer2-api', level: config.logLevel })
 let chain: ChainClient
 let mode: 'RPC' | 'Local DB' = 'RPC'
 let detectedHead: number | null = null
+let rpcClientRef: RpcClient | undefined
 
 // Try RPC connection first
 if (config.rpcUrl) {
@@ -22,6 +23,7 @@ if (config.rpcUrl) {
     timeout: config.rpcTimeout,
     maxRetries: config.rpcMaxRetries
   })
+  rpcClientRef = rpcClient
   
   const rpcChain = new RpcChainClient(rpcClient)
   
@@ -107,7 +109,7 @@ export const diagnostics = {
   timestamp: new Date().toISOString()
 }
 
-const app = createServer(service, config.corsOrigin, config.logLevel, diagnostics)
+const app = createServer(service, config.corsOrigin, config.logLevel, diagnostics, rpcClientRef)
 
 app.listen(config.port, () => {
   log.info({ 
