@@ -4,7 +4,7 @@ import math
 import random
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPaintEvent, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPaintEvent, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
 _PARTICLE_COUNT = 28
@@ -139,7 +139,7 @@ class HeroVisual(QWidget):
         painter.setPen(QColor("#d8e4ff"))
         font = painter.font()
         font.setPointSize(11)
-        font.setWeight(600)
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         painter.drawText(18, 28, "Animica Network")
 
@@ -147,7 +147,7 @@ class HeroVisual(QWidget):
         painter.setPen(QColor("#5b8cff"))
         small_font = painter.font()
         small_font.setPointSize(9)
-        small_font.setWeight(400)
+        small_font.setWeight(QFont.Weight.Normal)
         painter.setFont(small_font)
         painter.drawText(18, 46, "● Live")
 
