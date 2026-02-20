@@ -5,6 +5,7 @@ import logging
 import shlex
 
 from PySide6.QtCore import Qt, QTimer
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -358,15 +359,59 @@ class ConsolePage(QWidget):
             else:
                 return pm.status()
 
-        if self._node_worker and self._node_worker.isRunning():
-            return
+        if self._node_worker_alive():
+            try:
+                if self._node_worker is not None and self._node_worker.isRunning():
+                    return
+            except RuntimeError:
+                self._node_worker = None
 
         self._node_worker = WorkerThread(_task)
         self._node_worker.worker.result.connect(self._on_node_result)
         self._node_worker.worker.error.connect(
             lambda msg, _tb: self._node_status_label.setText(f"Error: {msg[:80]}")
         )
+        self._node_worker.finished.connect(self._on_node_worker_finished)
+        self._node_worker.destroyed.connect(self._on_node_worker_destroyed)
         self._node_worker.start()
+
+    def _node_worker_alive(self) -> bool:
+        return self._node_worker is not None and isValid(self._node_worker)
+
+    def _on_node_worker_finished(self) -> None:
+        worker = self._node_worker
+        self._node_worker = None
+        if worker is None:
+            return
+        try:
+            if isValid(worker):
+                worker.deleteLater()
+        except RuntimeError:
+            pass
+
+    def _on_node_worker_destroyed(self) -> None:
+        self._node_worker = None
+
+    def _stop_node_worker(self) -> None:
+        if not self._node_worker_alive():
+            self._node_worker = None
+            return
+
+        worker = self._node_worker
+        self._node_worker = None
+        if worker is None:
+            return
+
+        try:
+            if worker.isRunning():
+                worker.quit()
+                worker.wait(1500)
+        except RuntimeError:
+            pass
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._stop_node_worker()
+        super().closeEvent(event)
 
     def _on_node_result(self, result: object) -> None:
         if not isinstance(result, dict):
