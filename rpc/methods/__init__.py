@@ -147,6 +147,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.aicf",  # AICF (AI Compute Fund) methods
         "rpc.methods.ena",   # ENA (Embedded Neural Agent) methods
         "rpc.methods.phase2",  # Phase 2: GPU providers, receipts, payouts, training
+        "rpc.methods.quantum",  # Quantum compute status and job stubs
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent

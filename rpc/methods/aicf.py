@@ -442,10 +442,77 @@ async def topUp(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     }
 
 
+@method("aicf.status", aliases=("aicf_status",), desc="Get AICF status in standard schema")
+async def aicf_status_endpoint(ctx: Any, params: List[Any]) -> Dict[str, Any]:
+    """
+    aicf.status - Get AICF pool status in the standard status schema.
+
+    Returns: {enabled, ok, reason, message, details}
+    """
+    try:
+        from execution.state.aicf_state import (
+            compute_epoch,
+            get_epoch_length,
+            get_pool_balance,
+        )
+    except ImportError:
+        return {
+            "enabled": False,
+            "ok": False,
+            "reason": "dependency_missing",
+            "message": "AICF state module not available on this node",
+            "details": {},
+        }
+
+    state = getattr(ctx, "state", None)
+    if state is None:
+        return {
+            "enabled": False,
+            "ok": False,
+            "reason": "dependency_missing",
+            "message": "State not available",
+            "details": {},
+        }
+
+    try:
+        block_env = getattr(ctx, "block_env", None)
+        height = 0
+        if block_env is not None:
+            height = int(getattr(block_env, "height", 0) or 0)
+
+        epoch_length = get_epoch_length(state)
+        current_epoch = compute_epoch(height, epoch_length)
+        pool_balance = get_pool_balance(state)
+        last_finalized = max(0, current_epoch - 2)
+
+        return {
+            "enabled": True,
+            "ok": True,
+            "reason": None,
+            "message": None,
+            "details": {
+                "pool_balance": _to_hex_quantity(pool_balance),
+                "current_epoch": current_epoch,
+                "current_height": height,
+                "last_finalized_epoch": last_finalized,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "enabled": True,
+            "ok": False,
+            "reason": "internal",
+            "message": str(exc),
+            "details": {},
+        }
+
+
 __all__ = [
     "getParams",
     "getStatus",
     "getClaimable",
     "claim",
     "topUp",
+    "aicf_status_endpoint",
 ]
+
