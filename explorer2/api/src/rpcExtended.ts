@@ -20,7 +20,7 @@ function isMethodNotFound(err: unknown): boolean {
 }
 
 /** Try an RPC call; return null if method not available; throw on real errors. */
-async function tryCall<T>(rpc: RpcClient, method: string, params: unknown[] = []): Promise<T | null> {
+async function tryCall<T>(rpc: RpcClient, method: string, params?: unknown[] | Record<string, unknown>): Promise<T | null> {
   try {
     return await rpc.call<T>(method, params)
   } catch (err) {
@@ -38,7 +38,7 @@ async function tryCall<T>(rpc: RpcClient, method: string, params: unknown[] = []
 async function probeMethod<T>(
   rpc: RpcClient,
   method: string,
-  params: unknown[] = []
+  params?: unknown[] | Record<string, unknown>
 ): Promise<{ notFound: true } | { notFound: false; value: T | null; error: Error | null }> {
   try {
     const value = await rpc.call<T>(method, params)
@@ -78,7 +78,7 @@ const capabilityCache = new WeakMap<RpcClient, CapabilityCache>()
 
 /** Canonical aliases checked per service (order: preferred first). */
 const AICF_STATUS_METHODS = ['aicf.status', 'aicf_status', 'aicf.getStatus', 'aicf_getStatus']
-const DA_STATUS_METHODS = ['da.status', 'da_status', 'da.getStatus', 'da_getStatus', 'da.putBlob', 'da.getBlob']
+const DA_STATUS_METHODS = ['da.status', 'da_status', 'da.getStatus', 'da_getStatus']
 const MINER_STATUS_METHODS = ['miner.status', 'miner_status', 'miner.getStatus', 'miner_getStatus', 'mining.getTemplateStatus']
 const QUANTUM_STATUS_METHODS = ['quantum.status', 'quantum_status', 'quantum.getStatus', 'quantum_getStatus', 'quantum.workerStatus']
 const MEMPOOL_STATUS_METHODS = ['mempool.getStats', 'mempool_getStats', 'mempool.status']
@@ -229,8 +229,14 @@ interface NodeStatusPayload {
   details?: unknown
 }
 
+const ENABLE_HINTS: Record<string, string> = {
+  aicf: 'Enable AICF by configuring pool/module settings and exposing the AICF RPC methods.',
+  da: 'Enable DA via ANIMICA_DA_ENABLED=1, set ANIMICA_DA_STORAGE_DIR, and mount it read-write.',
+  quantum: 'Enable Quantum via ANIMICA_MINER_QUANTUM_WORKER=1 and start the worker process.',
+}
+
 /** Map a NodeStatusPayload to a ServiceStatus entry status. */
-function mapNodeStatus(payload: NodeStatusPayload): {
+function mapNodeStatus(payload: NodeStatusPayload, serviceName?: string): {
   status: ServiceStatus['services'][number]['status']
   hint: string | undefined
   remediation: string | undefined
@@ -238,11 +244,9 @@ function mapNodeStatus(payload: NodeStatusPayload): {
   if (!payload.enabled) {
     const reason = payload.reason ?? 'disabled'
     return {
-      status: 'down',
-      hint: payload.message ?? `Disabled on this node (reason: ${reason})`,
-      remediation: reason === 'disabled'
-        ? 'Enable the module via node configuration or compose profile'
-        : undefined,
+      status: 'not_supported',
+      hint: payload.message ?? `Disabled/Not configured on this node (reason: ${reason})`,
+      remediation: undefined,
     }
   }
   if (payload.ok) {
@@ -332,6 +336,9 @@ export async function getServiceStatus(rpc: RpcClient): Promise<ServiceStatus> {
     // Try methods in alias order — use the first one that the node knows about.
     const methodToUse = aliases.find(m => caps.knownMethods.has(m)) ?? primaryMethod
 
+    if (process.env.NODE_ENV !== 'production') {
+      log.info({ service: serviceName, method: methodToUse, params: null }, 'Explorer2 status RPC probe')
+    }
     const probe = await probeMethod<NodeStatusPayload>(rpc, methodToUse)
     if (probe.notFound) {
       return { name: serviceName, status: 'not_supported', hint: 'Not supported by this RPC' }
@@ -347,7 +354,10 @@ export async function getServiceStatus(rpc: RpcClient): Promise<ServiceStatus> {
       return { name: serviceName, status: 'unknown', hint: 'Probe returned empty response' }
     }
 
-    const mapped = mapNodeStatus(probe.value)
+    const mapped = mapNodeStatus(probe.value, serviceName)
+    if (mapped.status === 'not_supported' && !mapped.remediation && serviceName in ENABLE_HINTS) {
+      mapped.remediation = ENABLE_HINTS[serviceName]
+    }
     return {
       name: serviceName,
       ...mapped,

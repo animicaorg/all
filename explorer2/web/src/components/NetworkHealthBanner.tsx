@@ -76,18 +76,17 @@ export default function NetworkHealthBanner() {
                   <span>{STATUS_ICON[svc.status]}</span>
                   <span>{svc.name}</span>
                 </div>
-                {svc.status === 'not_supported' ? (
-                  <p className="mt-1 text-xs opacity-60">Not supported by this RPC</p>
-                ) : (
-                  <>
-                    {svc.hint && (
-                      <p className="mt-1 text-xs opacity-80">{svc.hint}</p>
-                    )}
-                    {svc.remediation && (
-                      <p className="mt-1 text-xs italic opacity-70">{svc.remediation}</p>
-                    )}
-                  </>
-                )}
+                <>
+                  {svc.hint && (
+                    <p className="mt-1 text-xs opacity-80">{svc.hint}</p>
+                  )}
+                  {svc.status === 'not_supported' && !svc.hint && (
+                    <p className="mt-1 text-xs opacity-60">Disabled on this node</p>
+                  )}
+                  {svc.remediation && (
+                    <p className="mt-1 text-xs italic opacity-70">How to enable: {svc.remediation}</p>
+                  )}
+                </>
               </div>
             ))}
           </div>

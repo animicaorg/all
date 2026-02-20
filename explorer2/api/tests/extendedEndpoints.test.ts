@@ -33,12 +33,12 @@ class MockRpc {
       // Standard status schema methods
       'aicf.status': { enabled: true, ok: true, reason: null, message: null, details: { pool_balance: '0x64', current_epoch: 5 } },
       'aicf_status': { enabled: true, ok: true, reason: null, message: null, details: {} },
-      'da.status': { enabled: false, ok: false, reason: 'unavailable', message: 'DA not yet available', details: {} },
-      'da_status': { enabled: false, ok: false, reason: 'unavailable', message: 'DA not yet available', details: {} },
+      'da.status': { enabled: false, ok: false, reason: 'not_configured', message: 'DA is disabled/not configured. Set ANIMICA_DA_ENABLED=1.', details: {} },
+      'da_status': { enabled: false, ok: false, reason: 'not_configured', message: 'DA is disabled/not configured. Set ANIMICA_DA_ENABLED=1.', details: {} },
       'miner.status': { enabled: true, ok: true, reason: null, message: null, details: { sync_phase: 'synced' } },
       'miner_status': { enabled: true, ok: true, reason: null, message: null, details: {} },
-      'quantum.status': { enabled: false, ok: false, reason: 'unavailable', message: 'Quantum not enabled', details: {} },
-      'quantum_status': { enabled: false, ok: false, reason: 'unavailable', message: 'Quantum not enabled', details: {} },
+      'quantum.status': { enabled: false, ok: false, reason: 'disabled', message: 'Quantum compute is disabled. Enable via ANIMICA_MINER_QUANTUM_WORKER=1.', details: {} },
+      'quantum_status': { enabled: false, ok: false, reason: 'disabled', message: 'Quantum compute is disabled. Enable via ANIMICA_MINER_QUANTUM_WORKER=1.', details: {} },
       // Legacy method names (still supported)
       'aicf.getStatus': { pool: 100, credits: 50 },
       'aicf.getCredits': { address: 'anim1test', credits: 42 },
@@ -137,16 +137,16 @@ describe('New API endpoints — with full RPC mock', () => {
     const res = await request(api).get('/api/network/status')
     const da = res.body.services.find((s: { name: string }) => s.name === 'da')
     expect(da).toBeDefined()
-    // da.status returns enabled:false so it should be 'down' (not 'not_supported')
-    expect(da.status).toBe('down')
+    // da.status returns enabled:false so it should be neutral/not_supported
+    expect(da.status).toBe('not_supported')
   })
 
   it('GET /api/network/status — quantum shows down/disabled (method returns enabled:false)', async () => {
     const res = await request(api).get('/api/network/status')
     const quantum = res.body.services.find((s: { name: string }) => s.name === 'quantum')
     expect(quantum).toBeDefined()
-    // quantum.status returns enabled:false so it should be 'down' (not 'not_supported')
-    expect(quantum.status).toBe('down')
+    // quantum.status returns enabled:false so it should be neutral/not_supported
+    expect(quantum.status).toBe('not_supported')
   })
 
   it('GET /api/aicf/info returns AICF info', async () => {
@@ -349,7 +349,7 @@ describe('Capability detection — not_supported vs down', () => {
     expect(aicf?.status).toBe('ok')
   })
 
-  it('returns down when da.status returns enabled:false (unavailable)', async () => {
+  it('returns neutral when da.status returns enabled:false (not configured)', async () => {
     // Node has da.status but reports disabled
     const rpc = new MockRpc(['rpc.discover', 'chain.getHead', 'da.status'])
     invalidateCapabilityCache(rpc as unknown as import('../src/rpcClient').RpcClient)
@@ -362,9 +362,9 @@ describe('Capability detection — not_supported vs down', () => {
     const res = await request(app).get('/api/network/status')
     expect(res.status).toBe(200)
     const da = res.body.services.find((s: { name: string }) => s.name === 'da')
-    // da.status mock returns { enabled: false, ok: false } so it should be 'down'
-    expect(da?.status).toBe('down')
-    expect(da?.hint).toContain('DA not yet available')
+    // da.status mock returns { enabled: false, ok: false } so it should be neutral
+    expect(da?.status).toBe('not_supported')
+    expect(da?.hint).toContain('disabled/not configured')
   })
 
   it('chain ok, mempool not_supported when mempool method absent', async () => {
