@@ -370,3 +370,19 @@ node scripts/verify_richlist.js --sample 10
 
 This compares rich list balances against direct RPC queries to ensure accuracy.
 
+
+
+## Enable optional features (DA / Quantum / AICF)
+
+Explorer2 shows DA/Quantum/AICF as neutral "Disabled on this node" when not configured.
+
+- **Enable DA**
+  - Set `ANIMICA_DA_ENABLED=1`
+  - Set `ANIMICA_DA_STORAGE_DIR=/var/lib/animica/da`
+  - Ensure the volume mount is **read-write**
+- **Enable Quantum**
+  - Set `ANIMICA_MINER_QUANTUM_WORKER=1`
+  - Start/enable the quantum worker process
+- **Enable AICF**
+  - Configure AICF pool/module in node params
+  - Expose AICF RPC methods (`aicf.status`, aliases) on the node RPC endpoint
