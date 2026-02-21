@@ -23,6 +23,10 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.services.ide_service import IdeService
+from animica_studio.services.template_service import TemplateService
+from animica_studio.storage.config import load_config
+from animica_studio.ui.dialogs.template_dialog import NewFromTemplateDialog
+from animica_studio.ui.widgets.ena_panel import EnaPanel
 from animica_studio.ui.widgets.stream_console import StreamConsole
 
 log = logging.getLogger(__name__)
@@ -47,6 +51,11 @@ class IdePage(QWidget):
     def __init__(self, parent: "QWidget | None" = None) -> None:
         super().__init__(parent)
         self._svc = IdeService()
+        self._cfg = load_config()
+        self._template_service = TemplateService(user_templates_dir=self._cfg.templates_user_path)
+        self._template_service.load_builtin_templates()
+        self._template_service.load_user_templates()
+        self._current_rel_path = ""
         self._QWebEngineView, self._QWebEngineSettings, self._QWebChannel = _try_import_webengine()
         self._webview = None
         self._bridge = None
@@ -68,7 +77,11 @@ class IdePage(QWidget):
         splitter.addWidget(self._build_tree_panel())
 
         right = QSplitter(Qt.Orientation.Vertical)
-        right.addWidget(self._build_editor_area())
+        top = QSplitter(Qt.Orientation.Horizontal)
+        top.addWidget(self._build_editor_area())
+        top.addWidget(self._build_ena_panel())
+        top.setSizes([720, 320])
+        right.addWidget(top)
         right.addWidget(self._build_output_panel())
         right.setSizes([500, 200])
         splitter.addWidget(right)
@@ -95,6 +108,10 @@ class IdePage(QWidget):
         new_file_btn = QPushButton("📄 New File")
         new_file_btn.clicked.connect(self._on_new_file)
         row.addWidget(new_file_btn)
+
+        new_template_btn = QPushButton("🧩 New from Template")
+        new_template_btn.clicked.connect(self._on_new_from_template)
+        row.addWidget(new_template_btn)
 
         new_dir_btn = QPushButton("📁 New Folder")
         new_dir_btn.clicked.connect(self._on_new_folder)
@@ -209,6 +226,31 @@ class IdePage(QWidget):
         layout.addWidget(self._output, stretch=1)
         return panel
 
+
+    def _build_ena_panel(self) -> QWidget:
+        panel = EnaPanel(
+            get_workspace=lambda: self._svc.workspace,
+            get_current_file_text=self._get_current_file_and_text,
+            get_selection_text=self._get_selection_text,
+            ena_config=self._cfg.ena,
+            parent=self,
+        )
+        return panel
+
+    def _get_current_file_and_text(self) -> tuple[str, str]:
+        rel = self._current_rel_path
+        if not rel:
+            return "", ""
+        try:
+            return rel, self._svc.read_file(rel)
+        except Exception:
+            return rel, ""
+
+    def _get_selection_text(self) -> str:
+        if self._plain_editor is not None:
+            return self._plain_editor.textCursor().selectedText()
+        return ""
+
     def _build_status_bar(self) -> QWidget:
         bar = QWidget()
         row = QHBoxLayout(bar)
@@ -218,6 +260,10 @@ class IdePage(QWidget):
         row.addWidget(self._status_bar_label)
         row.addStretch()
         return bar
+
+
+    def new_script_from_template(self) -> None:
+        self._on_new_from_template()
 
     # ------------------------------------------------------------------
     # Workspace
@@ -285,6 +331,7 @@ class IdePage(QWidget):
         elif self._plain_editor is not None:
             self._plain_editor.setPlainText(content)
             self._status_bar_label.setText(rel_path)
+            self._current_rel_path = rel_path
 
     def _on_tree_context_menu(self, pos: "QPoint") -> None:
         from PySide6.QtWidgets import QMenu  # noqa: PLC0415
@@ -314,6 +361,48 @@ class IdePage(QWidget):
 
     def _on_new_file(self) -> None:
         self._prompt_create_file(".")
+
+    def _on_new_from_template(self) -> None:
+        if self._svc.workspace is None:
+            QMessageBox.information(self, "Template", "Select a workspace first.")
+            return
+        dlg = NewFromTemplateDialog(self._template_service, self)
+        if dlg.exec() != dlg.DialogCode.Accepted or dlg.selection() is None:
+            return
+        sel = dlg.selection()
+        assert sel is not None
+        template = self._template_service.get(sel.template_id)
+        try:
+            rendered = self._template_service.render(sel.template_id, sel.params)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Template", str(exc))
+            return
+        filename = template.default_filename
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Create Script From Template",
+            str(self._svc.workspace / filename),
+            "Python Files (*.py);;All Files (*)",
+        )
+        if not filename:
+            return
+        ws = self._svc.workspace
+        if ws is None:
+            return
+        try:
+            rel = str(Path(filename).resolve().relative_to(ws.resolve()))
+        except Exception:
+            QMessageBox.warning(self, "Template", "Target file must be inside workspace.")
+            return
+        try:
+            self._svc.write_file(rel, rendered)
+            self._refresh_tree()
+            self._current_rel_path = rel
+            if self._plain_editor is not None:
+                self._plain_editor.setPlainText(rendered)
+            self._status_bar_label.setText(rel)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Template", str(exc))
 
     def _on_new_folder(self) -> None:
         self._prompt_create_dir(".")
@@ -402,6 +491,7 @@ class IdePage(QWidget):
             if not rel_path or rel_path == "Ready":
                 QMessageBox.information(self, "Run Script", "No file open.")
                 return
+            self._current_rel_path = rel_path
             self._do_run_script(rel_path)
 
     def _do_run_script(self, rel_path: str) -> None:

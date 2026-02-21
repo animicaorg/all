@@ -1,0 +1,10 @@
+{
+  "id": "tx_simulation_script",
+  "name": "TX simulation script",
+  "category": "Transactions",
+  "description": "simulate_tx / run_call workflow scaffold.",
+  "tags": ["tx", "simulate", "rpc"],
+  "language": "python",
+  "default_filename": "simulate_tx.py",
+  "placeholders": []
+}
