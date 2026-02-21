@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from animica_studio.models.exec_models import StreamEvent
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.cancel import CancelToken
+from animica_studio.util.qt import qthread_running, stop_thread
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class ConsolePage(QWidget):
         layout.addWidget(self._output, stretch=1)
 
     def _on_run(self) -> None:
-        if self._worker_thread and self._worker_thread.isRunning():
+        if qthread_running(self._worker_thread):
             return
 
         raw = self._cmd_edit.text().strip()
@@ -99,9 +100,21 @@ class ConsolePage(QWidget):
         self._worker_thread.worker.error.connect(
             lambda msg, _tb: self._append_line(f"[error] {msg}")
         )
-        self._worker_thread.worker.finished.connect(lambda: self._cancel_btn.setEnabled(False))
+        self._worker_thread.worker.finished.connect(self._on_worker_finished)
+        self._worker_thread.destroyed.connect(lambda *_: setattr(self, "_worker_thread", None))
         self._cancel_btn.setEnabled(True)
         self._worker_thread.start()
+
+
+    def _on_worker_finished(self) -> None:
+        self._worker_thread = None
+        self._cancel_btn.setEnabled(False)
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        thread = self._worker_thread
+        self._worker_thread = None
+        stop_thread(thread)
+        super().closeEvent(event)
 
     def _on_cancel(self) -> None:
         if self._cancel_token:
