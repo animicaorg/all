@@ -602,6 +602,28 @@ Commands:
     assert "quantum" in cmds
 
 
+def test_cli_registry_parse_commands_from_rich_help_box():
+    from animica_studio.services.cli_registry import _parse_commands
+
+    help_text = """
+ Usage: animica [OPTIONS] COMMAND [ARGS]...
+
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ node      Manage and query Animica nodes.                                    │
+│ wallet    Wallet helper for creating and listing addresses.                  │
+│ miner     Mining operations and Stratum pool management.                     │
+│ aicf      AICF credit and job management commands                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+"""
+
+    cmds = _parse_commands(help_text)
+
+    assert "node" in cmds
+    assert "wallet" in cmds
+    assert "miner" in cmds
+    assert "aicf" in cmds
+
+
 def test_node_status_as_dict():
     from animica_studio.services.node_service import NodeStatus
     s = NodeStatus(running=True, pid=1234, rpc_reachable=True, head_number=42)
