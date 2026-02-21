@@ -65,22 +65,24 @@ CREATE INDEX IF NOT EXISTS idx_gpu_workers_status ON gpu_workers(status);
 CREATE INDEX IF NOT EXISTS idx_gpu_workers_address ON gpu_workers(address);
 
 CREATE TRIGGER IF NOT EXISTS trg_gpu_workers_timestamps_ins
-BEFORE INSERT ON gpu_workers
+AFTER INSERT ON gpu_workers
 FOR EACH ROW
 BEGIN
-  SELECT CASE
-    WHEN NEW.created_at IS NULL THEN NEW.created_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
-  SELECT CASE
-    WHEN NEW.updated_at IS NULL THEN NEW.updated_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
+  UPDATE gpu_workers
+  SET
+    created_at = COALESCE(NEW.created_at, CAST(strftime('%s','now') AS INTEGER)),
+    updated_at = COALESCE(NEW.updated_at, CAST(strftime('%s','now') AS INTEGER))
+  WHERE rowid = NEW.rowid;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_gpu_workers_updated_at_upd
-BEFORE UPDATE ON gpu_workers
+AFTER UPDATE ON gpu_workers
 FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-  SELECT NEW.updated_at := CAST(strftime('%s','now') AS INTEGER);
+  UPDATE gpu_workers
+  SET updated_at = CAST(strftime('%s','now') AS INTEGER)
+  WHERE rowid = NEW.rowid;
 END;
 
 -- ---------------------------------------------------------------------
@@ -289,22 +291,24 @@ CREATE INDEX IF NOT EXISTS idx_miner_credits_earned ON aicf_miner_credits(lifeti
 
 -- Timestamp triggers
 CREATE TRIGGER IF NOT EXISTS trg_miner_credits_timestamps_ins
-BEFORE INSERT ON aicf_miner_credits
+AFTER INSERT ON aicf_miner_credits
 FOR EACH ROW
 BEGIN
-  SELECT CASE
-    WHEN NEW.created_at IS NULL THEN NEW.created_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
-  SELECT CASE
-    WHEN NEW.updated_at IS NULL THEN NEW.updated_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
+  UPDATE aicf_miner_credits
+  SET
+    created_at = COALESCE(NEW.created_at, CAST(strftime('%s','now') AS INTEGER)),
+    updated_at = COALESCE(NEW.updated_at, CAST(strftime('%s','now') AS INTEGER))
+  WHERE rowid = NEW.rowid;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_miner_credits_updated_at_upd
-BEFORE UPDATE ON aicf_miner_credits
+AFTER UPDATE ON aicf_miner_credits
 FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-  SELECT NEW.updated_at := CAST(strftime('%s','now') AS INTEGER);
+  UPDATE aicf_miner_credits
+  SET updated_at = CAST(strftime('%s','now') AS INTEGER)
+  WHERE rowid = NEW.rowid;
 END;
 
 -- ---------------------------------------------------------------------
@@ -326,22 +330,24 @@ CREATE INDEX IF NOT EXISTS idx_pool_credits_earned ON aicf_pool_credits(lifetime
 
 -- Timestamp triggers
 CREATE TRIGGER IF NOT EXISTS trg_pool_credits_timestamps_ins
-BEFORE INSERT ON aicf_pool_credits
+AFTER INSERT ON aicf_pool_credits
 FOR EACH ROW
 BEGIN
-  SELECT CASE
-    WHEN NEW.created_at IS NULL THEN NEW.created_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
-  SELECT CASE
-    WHEN NEW.updated_at IS NULL THEN NEW.updated_at := CAST(strftime('%s','now') AS INTEGER)
-    ELSE NULL END;
+  UPDATE aicf_pool_credits
+  SET
+    created_at = COALESCE(NEW.created_at, CAST(strftime('%s','now') AS INTEGER)),
+    updated_at = COALESCE(NEW.updated_at, CAST(strftime('%s','now') AS INTEGER))
+  WHERE rowid = NEW.rowid;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_pool_credits_updated_at_upd
-BEFORE UPDATE ON aicf_pool_credits
+AFTER UPDATE ON aicf_pool_credits
 FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-  SELECT NEW.updated_at := CAST(strftime('%s','now') AS INTEGER);
+  UPDATE aicf_pool_credits
+  SET updated_at = CAST(strftime('%s','now') AS INTEGER)
+  WHERE rowid = NEW.rowid;
 END;
 
 -- ---------------------------------------------------------------------
