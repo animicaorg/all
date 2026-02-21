@@ -32,7 +32,7 @@ from animica_studio.util.cancel import CancelToken
 
 log = logging.getLogger(__name__)
 
-_MAX_LINES = 20_000
+_MAX_LINES = 5_000
 _MAX_BYTES = 5 * 1024 * 1024  # 5 MB soft cap
 
 
