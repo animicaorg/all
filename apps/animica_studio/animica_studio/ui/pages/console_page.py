@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import shlex
-import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -316,13 +315,12 @@ class ConsolePage(QWidget):
     def _on_output(self, job_id: str, stream: str, text: str) -> None:
         if job_id != self._active_job_id:
             return
-        ts = time.strftime("%H:%M:%S")
-        self._stream.append_line(f"[{ts}] [{stream}] {text}")
+        self._stream.append_line(stream, text)
 
     def _on_job_error(self, job_id: str, message: str, _details: str) -> None:
         if job_id != self._active_job_id:
             return
-        self._stream.append_line(f"[error] {message}")
+        self._stream.append_error(message)
 
     def _on_cancel(self) -> None:
         if self._active_job_id:
