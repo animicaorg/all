@@ -548,7 +548,7 @@ class TestConfigWalletFields:
         assert cfg.accounts == []
         assert cfg.pending_txs == []
         assert cfg.wallet_settings["decimals"] == 18
-        assert "animica.org" in cfg.wallet_settings["explorer_base_url"]
+        assert "explorer.animica.org" in cfg.wallet_settings["explorer_base_url"]
 
     def test_roundtrip(self):
         from animica_studio.storage.config import Config, _config_to_dict, _config_from_dict
