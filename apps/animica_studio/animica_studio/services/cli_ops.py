@@ -82,11 +82,7 @@ class CliOps:
 
         if op is CliOperation.MINE_BLOCKS:
             count = int(params.get("count", 1))
-            out = [*path]
-            if self._registry.has_opt(path, "--count"):
-                out.extend(["--count", str(count)])
-            else:
-                out.append(str(count))
+            out = [*path, "--count", str(count)]
 
             address = str(params.get("address") or "").strip()
             if address:

@@ -702,3 +702,32 @@ def test_cli_ops_reports_mine_blocks_with_hyphenated_name():
 
     with pytest.raises(CliOperationError, match=r"does not support mine-blocks"):
         CliOps(_EmptyRegistry()).selected_path(CliOperation.MINE_BLOCKS)
+
+
+def test_cli_ops_mine_blocks_always_uses_count_flag():
+    from animica_studio.services.cli_ops import CliOperation, CliOps
+
+    class _Registry:
+        def best_match(self, _group: str) -> list[str]:
+            return ["miner", "mine-blocks"]
+
+        def has_opt(self, _path: list[str], opt: str) -> bool:
+            return opt == "--address"
+
+    out = CliOps(_Registry()).build(
+        CliOperation.MINE_BLOCKS,
+        {"count": 3, "address": "anim1qqqqqqqqqq"},
+    )
+
+    assert out == ["miner", "mine-blocks", "--count", "3", "--address", "anim1qqqqqqqqqq"]
+
+
+def test_config_from_dict_wallet_settings_migrates_legacy_animica_org_explorer_url():
+    """Legacy animica.org wallet explorer URL should migrate to explorer subdomain."""
+    from animica_studio.storage.config import _config_from_dict
+
+    cfg_root = _config_from_dict({"wallet_settings": {"explorer_base_url": "https://animica.org"}})
+    cfg_path = _config_from_dict({"wallet_settings": {"explorer_base_url": "https://animica.org/explorer"}})
+
+    assert cfg_root.wallet_settings["explorer_base_url"] == "https://explorer.animica.org"
+    assert cfg_path.wallet_settings["explorer_base_url"] == "https://explorer.animica.org"

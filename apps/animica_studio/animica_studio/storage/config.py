@@ -11,10 +11,29 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from animica_studio.util.paths import config_file, app_data_dir, default_chain_data_dir
 
 log = logging.getLogger(__name__)
+
+
+def _normalize_explorer_base_url(value: Any) -> str:
+    """Normalize explorer base URL and migrate legacy animica.org values."""
+    raw = str(value or "").strip()
+    if not raw:
+        return "https://explorer.animica.org"
+
+    try:
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").strip("/").lower()
+        if host in {"animica.org", "www.animica.org"} and path in {"", "explorer"}:
+            return "https://explorer.animica.org"
+    except Exception:
+        pass
+
+    return raw.rstrip("/")
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -227,7 +246,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     wallet_settings = {
         **wallet_settings_raw,
         "decimals": int(wallet_settings_raw.get("decimals", 18)),
-        "explorer_base_url": str(
+        "explorer_base_url": _normalize_explorer_base_url(
             wallet_settings_raw.get("explorer_base_url", "https://explorer.animica.org")
         ),
     }
