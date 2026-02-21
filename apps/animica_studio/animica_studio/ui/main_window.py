@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
             _NavEntry("AICF", "◇", lambda: AicfPage(config=self._config)),
             _NavEntry("DA", "◌", lambda: DaPage(config=self._config)),
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
-            _NavEntry("Console", "▣", lambda: ConsolePage()),
+            _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
             _NavEntry("IDE", "✎", self._build_ide_placeholder),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]

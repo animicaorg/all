@@ -11,16 +11,17 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QMessageBox,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from animica_studio.services.mining_service import MiningService
+from animica_studio.services.job_runner import JobHandle, JobRunner
 from animica_studio.services.workers import WorkerThread
 from animica_studio.storage.config import Config
 from animica_studio.ui.widgets.stream_console import StreamConsole
-from animica_studio.util.cancel import CancelToken
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +34,8 @@ class MiningPage(QWidget):
         from animica_studio.storage.config import load_config  # noqa: PLC0415
         self._config = config or load_config()
         self._service = MiningService(self._config)
-        self._cancel_token = CancelToken()
-        self._worker: WorkerThread | None = None
+        self._runner = JobRunner.instance()
+        self._job: JobHandle | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -89,40 +90,44 @@ class MiningPage(QWidget):
     def _on_mine(self) -> None:
         count = self._count_spin.value()
         addr = self._miner_addr.text().strip() or None
-        self._cancel_token = CancelToken()
         self._console.append_system(f"Mining {count} block(s)…")
         self._mine_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
 
-        service = self._service
-        token = self._cancel_token
-        console = self._console
-
-        def _task():
-            return service.mine_blocks(
-                count,
-                miner_address=addr,
-                cancel_token=token,
-                stream_cb=lambda ev: console.append_line(ev.stream, ev.line),
-            )
-
-        def _done(result):
+        try:
+            cmd, env = self._service.build_mine_blocks_command(count, addr)
+        except Exception as exc:  # noqa: BLE001
             self._mine_btn.setEnabled(True)
             self._cancel_btn.setEnabled(False)
-            if result.success:
-                console.append_system("✅ Done.")
-            else:
-                console.append_system(f"⚠ Finished (rc={result.returncode}). {result.stderr[:200]}")
+            diag = self._service.mining_diagnostics()
+            self._console.append_system(f"❌ {exc}")
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Mining CLI unsupported")
+            box.setText("Your animica CLI does not support mine-blocks from this Studio build.")
+            box.setDetailedText(diag)
+            copy_btn = box.addButton("Copy diagnostics", QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Close)
+            box.exec()
+            if box.clickedButton() is copy_btn:
+                from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
-        def _err(msg, _tb):
-            self._mine_btn.setEnabled(True)
-            self._cancel_btn.setEnabled(False)
-            console.append_system(f"❌ Error: {msg}")
+                QApplication.clipboard().setText(diag)
+            return
 
-        self._worker = WorkerThread(_task)
-        self._worker.worker.result.connect(_done)
-        self._worker.worker.error.connect(_err)
-        self._worker.start()
+        self._job = self._runner.run_cli(cmd, env=env or None, timeout_s=120)
+        self._job.output.connect(lambda _jid, stream, text: self._console.append_line(stream, text))
+        self._job.error.connect(lambda _jid, msg, _details: self._console.append_system(f"❌ Error: {msg}"))
+        self._job.finished.connect(self._on_job_finished)
+
+    def _on_job_finished(self, _job_id: str, exit_code: int, _payload: object) -> None:
+        self._mine_btn.setEnabled(True)
+        self._cancel_btn.setEnabled(False)
+        self._job = None
+        if exit_code == 0:
+            self._console.append_system("✅ Done.")
+        else:
+            self._console.append_system(f"⚠ Finished (rc={exit_code}).")
 
     def _on_automine(self) -> None:
         enabled = self._automine_check.isChecked()
@@ -147,6 +152,7 @@ class MiningPage(QWidget):
         w.start()
 
     def _on_cancel(self) -> None:
-        self._cancel_token.cancel()
+        if self._job is not None:
+            self._runner.cancel(self._job.job_id)
         self._cancel_btn.setEnabled(False)
         self._console.append_system("[Cancellation requested…]")
