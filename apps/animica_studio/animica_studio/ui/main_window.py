@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMenu, QVBoxLayo
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
+from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.storage.config import Config
 from animica_studio.ui.components.primitives import Toast
 from animica_studio.ui.pages.aicf_page import AicfPage
@@ -55,6 +56,7 @@ class MainWindow(QMainWindow):
         self._last_rpc_error: str | None = None
         self._last_actual_chain_id: int | None = None
         self._health_worker = None
+        self._shutdown = ShutdownManager.instance()
         self._ide_page: QWidget | None = None
         self._ide_index: int | None = None
         self.setWindowTitle("Animica Studio")
@@ -234,6 +236,8 @@ class MainWindow(QMainWindow):
     def _trigger_health_check(self) -> None:
         if self._safe_mode:
             return
+        if self._health_worker is not None and self._health_worker.isRunning():
+            return
         try:
             active = self._profile_service.get_active()
         except Exception:
@@ -260,6 +264,7 @@ class MainWindow(QMainWindow):
         from animica_studio.services.workers import WorkerThread  # noqa: PLC0415
 
         self._health_worker = WorkerThread(_do_check)
+        self._shutdown.track_thread(self._health_worker)
         self._health_worker.worker.result.connect(self._on_health_result)
         self._health_worker.worker.error.connect(
             lambda m, _tb: self._on_health_result({"ok": False, "error": str(m)})

@@ -68,7 +68,11 @@ class WalletRecord:
 class WalletStore:
     """Single source of truth for local wallet-file reads."""
 
+    def __init__(self) -> None:
+        self.last_warning: str | None = None
+
     def load_local_wallets(self, wallets_path: Path) -> list[WalletRecord]:
+        self.last_warning = None
         if not wallets_path.exists():
             return []
 
@@ -76,6 +80,7 @@ class WalletStore:
             text = wallets_path.read_text(encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             log.warning("WalletStore: failed to read wallets file %s: %s", wallets_path, exc)
+            self.last_warning = f"Failed to read wallets file: {exc}"
             return []
 
         source_wallets: list[Any] = []
@@ -86,15 +91,18 @@ class WalletStore:
                 source_wallets = wallets
         except WalletParseError as exc:
             log.warning("WalletStore: strict wallet parse failed for %s: %s", wallets_path, exc)
+            self.last_warning = f"Wallet format warning: {exc}"
 
         if not source_wallets:
             try:
                 raw = json.loads(text)
             except json.JSONDecodeError as exc:
                 log.warning("WalletStore: invalid wallets.json at %s: %s", wallets_path, exc)
+                self.last_warning = f"Invalid wallets.json: {exc}"
                 return []
             except Exception as exc:  # noqa: BLE001
                 log.warning("WalletStore: failed to decode wallet JSON at %s: %s", wallets_path, exc)
+                self.last_warning = f"Failed to decode wallets.json: {exc}"
                 return []
 
             if isinstance(raw, dict):
@@ -103,15 +111,18 @@ class WalletStore:
                     source_wallets = wallets
                 else:
                     log.warning("WalletStore: wallets key has unexpected type: %s", type(wallets).__name__)
+                    self.last_warning = "wallets.json has unexpected schema: wallets is not a list"
                     return []
             else:
                 log.warning("WalletStore: root JSON is not an object: %s", type(raw).__name__)
+                self.last_warning = "wallets.json has unexpected schema: root is not an object"
                 return []
 
         records: list[WalletRecord] = []
         for idx, wallet in enumerate(source_wallets):
             if not isinstance(wallet, dict):
                 log.warning("WalletStore: skipping non-object wallet entry at index %d", idx)
+                self.last_warning = "wallets.json contains non-object wallet entries"
                 continue
             label = str(wallet.get("label") or wallet.get("name") or f"wallet-{idx + 1}")
             address = str(wallet.get("address") or "")
