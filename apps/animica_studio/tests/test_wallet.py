@@ -410,14 +410,17 @@ class TestWalletServiceCreateWallet:
         with pytest.raises(ValueError, match="Wallet label"):
             ws.build_create_wallet_args("bad/label")
 
-    def test_parse_and_store_created_wallet(self):
+    def test_resolve_and_store_created_wallet(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        address = ws.parse_created_wallet_address(
-            "=== Wallet created ===\nAddress: anim1acdefghjklmnpqrstuvwxyz0234567890\n"
-        )
+        known_addresses = {"anim1existingaddr000000000000000"}
+        ws._load_wallet_store_addresses = lambda: {
+            "anim1existingaddr000000000000000",
+            "anim1acdefghjklmnpqrstuvwxyz0234567890",
+        }
+        address = ws.resolve_created_wallet_address(known_addresses)
         account = ws.store_created_wallet("Wallet1", address, "dilithium3")
 
         assert account.label == "Wallet1"

@@ -15,9 +15,11 @@ import logging
 import os
 import re
 import subprocess
+import json
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
 from animica_studio.models.wallet_models import (
@@ -27,7 +29,7 @@ from animica_studio.models.wallet_models import (
     format_amount,
 )
 from animica_studio.services.error_format import format_rpc_error, safe_str
-from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
 from animica_studio.services.tx_builder import (
     build_transfer_tx,
@@ -148,11 +150,60 @@ class WalletService:
         return args, clean_label, scheme
 
     def parse_created_wallet_address(self, stdout: str) -> str:
-        """Extract created wallet address from CLI output."""
+        """Extract created wallet address from legacy CLI output."""
         match = _WALLET_ADDRESS_RE.search(stdout)
         if not match:
             raise RuntimeError("Wallet was created but Studio could not read the new address from CLI output.")
         return match.group(1)
+
+    def _wallet_store_path(self) -> str:
+        return os.environ.get("ANIMICA_WALLETS_FILE") or str((Path.home() / ".animica" / "wallets.json"))
+
+    def _load_wallet_store_addresses(self) -> set[str]:
+        path = self._wallet_store_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                parsed = json.load(f)
+            wallets = parsed.get("wallets") if isinstance(parsed, dict) else []
+            if not isinstance(wallets, list):
+                return set()
+            return {str(w.get("address", "")).strip() for w in wallets if isinstance(w, dict) and w.get("address")}
+        except FileNotFoundError:
+            return set()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("WalletService: failed to load wallet store path=%s error=%s", path, exc)
+            return set()
+
+    def resolve_created_wallet_address(self, known_addresses: set[str]) -> str:
+        current = self._load_wallet_store_addresses()
+        new_addresses = current - known_addresses
+        if len(new_addresses) == 1:
+            return next(iter(new_addresses))
+        if len(new_addresses) > 1:
+            return sorted(new_addresses)[-1]
+        raise RuntimeError("Wallet was created but Studio could not resolve a new address from wallet store.")
+
+    def start_create_wallet(
+        self,
+        runner: JobRunner,
+        label: str,
+        sig_scheme: str = "dilithium3",
+        *,
+        allow_insecure_fallback: bool = False,
+        timeout_s: int = 15,
+    ) -> tuple[JobHandle, str, str, set[str]]:
+        wallet_args, clean_label, scheme = self.build_create_wallet_args(
+            label,
+            sig_scheme,
+            allow_insecure_fallback=allow_insecure_fallback,
+        )
+        program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
+        argv = [program, *base_args, *wallet_args]
+        log.info("WalletService: resolved CLI path=%s", program)
+        log.info("WalletService: create wallet argv=%r", argv)
+        known_addresses = self._load_wallet_store_addresses()
+        job = runner.run_cli(argv, env=resolved_env, timeout_s=timeout_s)
+        return job, clean_label, scheme, known_addresses
 
     def store_created_wallet(self, label: str, address: str, sig_scheme: str) -> Account:
         """Persist a wallet record from validated CLI creation output."""
@@ -162,9 +213,19 @@ class WalletService:
         save_config(self._config)
         return account
 
-    def create_wallet(self, label: str, sig_scheme: str = "dilithium3") -> Account:
+    def create_wallet(
+        self,
+        label: str,
+        sig_scheme: str = "dilithium3",
+        *,
+        allow_insecure_fallback: bool = False,
+    ) -> Account:
         """Create a new wallet via Animica CLI and persist it."""
-        wallet_args, clean_label, scheme = self.build_create_wallet_args(label, sig_scheme)
+        wallet_args, clean_label, scheme = self.build_create_wallet_args(
+            label,
+            sig_scheme,
+            allow_insecure_fallback=allow_insecure_fallback,
+        )
         try:
             program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         except FileNotFoundError as exc:
@@ -174,6 +235,7 @@ class WalletService:
         started = time.perf_counter()
         log.info("WalletService: create wallet requested label=%s scheme=%s argv=%r", clean_label, scheme, cmd)
 
+        known_addresses = self._load_wallet_store_addresses()
         try:
             result = subprocess.run(
                 cmd,
@@ -194,7 +256,7 @@ class WalletService:
             log.warning("WalletService: create wallet CLI failed label=%s scheme=%s duration_ms=%s error=%s", clean_label, scheme, elapsed, details)
             raise RuntimeError(details)
 
-        address = self.parse_created_wallet_address(result.stdout)
+        address = self.resolve_created_wallet_address(known_addresses)
         account = self.store_created_wallet(clean_label, address, scheme)
         elapsed = int((time.perf_counter() - started) * 1000)
         log.info("WalletService: create wallet success label=%s scheme=%s address=%s duration_ms=%s", clean_label, scheme, address, elapsed)
