@@ -5,7 +5,6 @@ import logging
 import shlex
 
 from PySide6.QtCore import Qt, QTimer
-from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -25,6 +24,7 @@ from animica_studio.services.console_service import ConsoleService
 from animica_studio.services.workers import WorkerThread
 from animica_studio.ui.widgets.stream_console import StreamConsole
 from animica_studio.util.cancel import CancelToken
+from animica_studio.util.qt import qalive, qthread_running, stop_thread
 
 log = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ class ConsolePage(QWidget):
         self._run_argv(parts)
 
     def _run_argv(self, argv: list[str]) -> None:
-        if self._worker and self._worker.isRunning():
+        if qthread_running(self._worker):
             return
 
         self._cancel_token = CancelToken()
@@ -312,10 +312,16 @@ class ConsolePage(QWidget):
         self._worker.worker.error.connect(
             lambda msg, _tb: self._stream.append_line(f"[error] {msg}")
         )
-        self._worker.worker.finished.connect(lambda: self._stop_btn.setEnabled(False))
+        self._worker.worker.finished.connect(self._on_worker_finished)
+        self._worker.destroyed.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.start()
 
         self._cmd_edit.set_history(self._svc.get_history())
+
+    def _on_worker_finished(self) -> None:
+        self._worker = None
+        self._stop_btn.setEnabled(False)
+        self._stream.set_running(False)
 
     def _on_cancel(self) -> None:
         if self._cancel_token:
@@ -359,12 +365,8 @@ class ConsolePage(QWidget):
             else:
                 return pm.status()
 
-        if self._node_worker_alive():
-            try:
-                if self._node_worker is not None and self._node_worker.isRunning():
-                    return
-            except RuntimeError:
-                self._node_worker = None
+        if qthread_running(self._node_worker):
+            return
 
         self._node_worker = WorkerThread(_task)
         self._node_worker.worker.result.connect(self._on_node_result)
@@ -375,42 +377,25 @@ class ConsolePage(QWidget):
         self._node_worker.destroyed.connect(self._on_node_worker_destroyed)
         self._node_worker.start()
 
-    def _node_worker_alive(self) -> bool:
-        return self._node_worker is not None and isValid(self._node_worker)
-
     def _on_node_worker_finished(self) -> None:
         worker = self._node_worker
         self._node_worker = None
         if worker is None:
             return
-        try:
-            if isValid(worker):
-                worker.deleteLater()
-        except RuntimeError:
-            pass
 
     def _on_node_worker_destroyed(self) -> None:
         self._node_worker = None
 
     def _stop_node_worker(self) -> None:
-        if not self._node_worker_alive():
-            self._node_worker = None
-            return
-
         worker = self._node_worker
         self._node_worker = None
-        if worker is None:
-            return
-
-        try:
-            if worker.isRunning():
-                worker.quit()
-                worker.wait(1500)
-        except RuntimeError:
-            pass
+        stop_thread(worker)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if qalive(self._node_timer):
+            self._node_timer.stop()
         self._stop_node_worker()
+        self._worker = None
         super().closeEvent(event)
 
     def _on_node_result(self, result: object) -> None:

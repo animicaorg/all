@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from animica_studio.services.workers import WorkerThread
 from animica_studio.storage.config import Config
+from animica_studio.util.qt import qthread_running, stop_thread
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class NodePage(QWidget):
         )
 
     def _run_task(self, fn) -> None:  # type: ignore[type-arg]
-        if self._worker_thread and self._worker_thread.isRunning():
+        if qthread_running(self._worker_thread):
             return
         self._status_label.setText("⏳ Working…")
         self._worker_thread = WorkerThread(fn)
@@ -76,7 +77,19 @@ class NodePage(QWidget):
         self._worker_thread.worker.error.connect(
             lambda msg, _tb: self._status_label.setText(f"❌ {msg}")
         )
+        self._worker_thread.worker.finished.connect(self._on_worker_finished)
+        self._worker_thread.destroyed.connect(lambda *_: setattr(self, "_worker_thread", None))
         self._worker_thread.start()
+
+
+    def _on_worker_finished(self) -> None:
+        self._worker_thread = None
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        thread = self._worker_thread
+        self._worker_thread = None
+        stop_thread(thread)
+        super().closeEvent(event)
 
     def _on_result(self, status: object) -> None:
         if not isinstance(status, dict):

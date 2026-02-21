@@ -18,7 +18,6 @@ import logging
 import time
 from typing import Any, Callable
 
-from shiboken6 import isValid
 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 from PySide6.QtGui import QDesktopServices
@@ -63,6 +62,7 @@ from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
+from animica_studio.util.qt import qalive, qthread_running
 
 log = logging.getLogger(__name__)
 
@@ -471,7 +471,7 @@ class _SendTab(QWidget):
         if self._account is None:
             self._status_label.setText("❌ Select an account first.")
             return
-        if self._active_thread and self._active_thread.isRunning():
+        if qthread_running(self._active_thread):
             self._status_label.setText("⏳ Send already in progress…")
             return
         inputs = self._validate_inputs()
@@ -590,7 +590,7 @@ class _HistoryTab(QWidget):
     def _refresh_receipts(self) -> None:
         if self._account is None:
             return
-        if self._active_thread and self._active_thread.isRunning():
+        if qthread_running(self._active_thread):
             return
 
         account = self._account
@@ -836,7 +836,7 @@ class WalletPage(QWidget):
             self._reload_accounts_list()
 
     def _on_create_wallet(self) -> None:
-        if self._create_wallet_thread is not None and self._create_wallet_thread.isRunning():
+        if qthread_running(self._create_wallet_thread):
             return
 
         dlg = _CreateWalletDialog(self)
@@ -846,9 +846,9 @@ class WalletPage(QWidget):
         dlg.exec()
 
     def _start_create_wallet(self, label: str) -> None:
-        if self._create_wallet_thread is not None and self._create_wallet_thread.isRunning():
+        if qthread_running(self._create_wallet_thread):
             return
-        if self._create_wallet_dialog is None or not isValid(self._create_wallet_dialog):
+        if not qalive(self._create_wallet_dialog):
             return
 
         self._create_wallet_dialog.set_busy(True)
@@ -862,13 +862,13 @@ class WalletPage(QWidget):
             self._reload_accounts_list()
             self._select_account_by_id(account.id)
             self._refresh_all()
-            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+            if qalive(self._create_wallet_dialog):
                 self._create_wallet_dialog.accept()
             QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
 
         def _on_error(msg: str) -> None:
             log.error("WalletPage: create wallet failed: %s", msg)
-            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+            if qalive(self._create_wallet_dialog):
                 self._create_wallet_dialog.set_busy(False)
                 self._create_wallet_dialog.set_error(msg)
 
@@ -878,10 +878,10 @@ class WalletPage(QWidget):
 
         def _cleanup() -> None:
             self._create_wallet_btn.setEnabled(True)
-            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+            if qalive(self._create_wallet_dialog):
                 self._create_wallet_dialog.set_busy(False)
             self._create_wallet_thread = None
-            self._active_threads = [t for t in self._active_threads if isValid(t) and t.isRunning()]
+            self._active_threads = [t for t in self._active_threads if qthread_running(t)]
 
         thread.finished.connect(_cleanup)
 
@@ -940,7 +940,7 @@ class WalletPage(QWidget):
         self._balance_thread = t
         self._active_threads.append(t)
         # Prune finished threads
-        self._active_threads = [t for t in self._active_threads if t.isRunning()]
+        self._active_threads = [t for t in self._active_threads if qthread_running(t)]
 
     def _refresh_selected(self) -> None:
         """Refresh balance for the currently selected account only."""

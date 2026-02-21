@@ -90,4 +90,8 @@ class WorkerThread(QThread):
         self.worker.moveToThread(self)
         self.started.connect(self.worker.run)
         self.worker.finished.connect(self.quit)
-        self.finished.connect(self.deleteLater)
+        _ACTIVE_THREADS.add(self)
+        self.finished.connect(lambda: _ACTIVE_THREADS.discard(self))
+
+
+_ACTIVE_THREADS: set[WorkerThread] = set()
