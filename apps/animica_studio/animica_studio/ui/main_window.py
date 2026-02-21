@@ -12,6 +12,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMenu, QVBoxLayo
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
+from animica_studio.services.ena_automation_service import EnaService
+from animica_studio.services.ena_store import EnaStore
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.storage.config import Config
 from animica_studio.ui.components.primitives import Toast
@@ -19,7 +21,12 @@ from animica_studio.ui.pages.aicf_page import AicfPage
 from animica_studio.ui.pages.console_page import ConsolePage
 from animica_studio.ui.pages.da_page import DaPage
 from animica_studio.ui.pages.dashboard import DashboardPage
-from animica_studio.ui.pages.ena_page import EnaPage
+from animica_studio.ui.pages.ena_dashboard_page import EnaDashboardPage
+from animica_studio.ui.pages.contribute_page import ContributePage
+from animica_studio.ui.pages.checkpoints_page import CheckpointsPage
+from animica_studio.ui.pages.train_page import TrainPage
+from animica_studio.ui.pages.publish_page import PublishPage
+from animica_studio.ui.pages.infer_page import InferPage
 from animica_studio.ui.pages.ide_page import IdePage
 from animica_studio.ui.pages.mining_page import MiningPage
 from animica_studio.ui.pages.node import NodePage
@@ -52,6 +59,7 @@ class MainWindow(QMainWindow):
         self._profile_service = profile_service
         self._safe_mode = safe_mode
         self._theme_manager = ThemeManager(config)
+        self._ena_service = EnaService(config, EnaStore())
         self._icons = IconProvider()
         self._nav_entries: list[_NavEntry] = []
         self._last_rpc_success_ts = 0.0
@@ -110,7 +118,12 @@ class MainWindow(QMainWindow):
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
             _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
             _NavEntry("IDE", "✎", self._build_ide_placeholder),
-            _NavEntry("ENA", "✦", lambda: EnaPage(config=self._config)),
+            _NavEntry("ENA Dashboard", "✦", lambda: EnaDashboardPage(config=self._config, service=self._ena_service)),
+            _NavEntry("ENA Contribute", "◐", lambda: ContributePage(self._ena_service)),
+            _NavEntry("ENA Checkpoints", "◑", lambda: CheckpointsPage(self._ena_service)),
+            _NavEntry("ENA Train", "◒", lambda: TrainPage(self._ena_service)),
+            _NavEntry("ENA Publish", "◓", lambda: PublishPage(self._ena_service)),
+            _NavEntry("ENA Infer", "◔", lambda: InferPage(self._ena_service)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
