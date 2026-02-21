@@ -84,6 +84,29 @@ _validate_premine_distribution()
 # ==================================================================================
 
 
+def _is_zero_address_string(addr: str) -> bool:
+    v = (addr or "").strip().lower()
+    if v.startswith("0x"):
+        v = v[2:]
+    return v in {"0" * 64, "0" * 40}
+
+
+def _resolve_dev_fee_config(params: Mapping[str, Any] | None) -> tuple[bool, str | None, int | None]:
+    """Return (enabled, address, bps) for optional per-block dev fee."""
+    if not isinstance(params, Mapping):
+        return (False, None, None)
+    raw_enabled = params.get("dev_fee_enabled", False)
+    if not bool(raw_enabled):
+        return (False, None, None)
+    addr = params.get("dev_fee_address")
+    if not isinstance(addr, str) or not addr.strip() or _is_zero_address_string(addr):
+        raise ValueError("dev_fee_enabled requires a valid non-zero dev_fee_address")
+    bps_raw = int(params.get("dev_fee_bps", 0) or 0)
+    if bps_raw < 0 or bps_raw > 10_000:
+        raise ValueError("dev_fee_bps must be in [0, 10000]")
+    return (True, addr.strip(), bps_raw)
+
+
 def compute_block_reward(
     chain_id: int,
     height: int,
@@ -148,8 +171,16 @@ def compute_block_reward(
             height_for_halving, schedule
         )
         
-        # Apply AICF block reward slice if configured
-        aicf_params = params.get("aicf", {})
+        # Optional dev fee is explicit and off by default.
+        dev_fee_enabled, dev_fee_addr, dev_fee_bps = _resolve_dev_fee_config(params)
+
+        # Mainnet default: no automatic secondary reward outputs unless explicitly enabled.
+        if chain_id == 1 and not dev_fee_enabled:
+            aicf_amount = 0
+            treasury_amount = 0
+            aicf_params = {}
+        else:
+            aicf_params = params.get("aicf", {})
         (
             final_miner,
             final_aicf_base,
@@ -213,7 +244,18 @@ def compute_block_reward(
         if final_treasury > 0:
             treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
             rewards.append((treasury_addr, final_treasury))
-        
+
+        # Optional explicit dev fee: applied as a slice from miner reward.
+        if dev_fee_enabled and dev_fee_addr and dev_fee_bps and final_miner > 0:
+            dev_fee_amount = (final_miner * dev_fee_bps) // 10_000
+            if dev_fee_amount > 0:
+                final_miner_after_fee = final_miner - dev_fee_amount
+                rewards = [
+                    (addr, (final_miner_after_fee if idx == 0 else amt))
+                    for idx, (addr, amt) in enumerate(rewards)
+                ]
+                rewards.append((dev_fee_addr, dev_fee_amount))
+
         return rewards
     except (KeyError, ValueError, TypeError) as e:
         # If emission schedule is invalid or missing, return empty
