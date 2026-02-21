@@ -139,6 +139,14 @@ class Config:
         default_factory=lambda: {
             "enabled": True,
             "provider": "local",
+            "mode": "local_daemon",
+            "endpoint": "http://127.0.0.1:8765",
+            "ws_endpoint": "",
+            "auth_token": "",
+            "local_port": 8765,
+            "tool_policy": "ask",
+            "allow_modify_files": False,
+            "allow_exec": False,
             "remote": {"endpoint": "", "api_key": "", "model": ""},
             "context": {"max_files": 12, "max_bytes": 1_000_000},
             "tools": {
@@ -248,12 +256,21 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         cli_path_override=d.get("cli_path_override") or None,
         use_repo_venv_automatically=bool(d.get("use_repo_venv_automatically", True)),
         templates_user_path=d.get("templates_user_path") or None,
-        ena=d.get("ena") or {
+        ena={
             "enabled": True,
             "provider": "local",
+            "mode": "local_daemon",
+            "endpoint": "http://127.0.0.1:8765",
+            "ws_endpoint": "",
+            "auth_token": "",
+            "local_port": 8765,
+            "tool_policy": "ask",
+            "allow_modify_files": False,
+            "allow_exec": False,
             "remote": {"endpoint": "", "api_key": "", "model": ""},
             "context": {"max_files": 12, "max_bytes": 1_000_000},
             "tools": {"allowlist": ["python -m ruff", "python -m pytest", "npm run", "pnpm run"]},
+            **(d.get("ena") or {}),
         },
     )
 
