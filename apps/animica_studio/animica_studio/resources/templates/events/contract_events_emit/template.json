@@ -1,0 +1,12 @@
+{
+  "id": "contract_events_emit",
+  "name": "Contract: Events Emit",
+  "category": "Events",
+  "description": "Event emission skeleton and usage pattern.",
+  "tags": ["contract", "events"],
+  "language": "python",
+  "default_filename": "events_contract.py",
+  "placeholders": [
+    {"key": "EVENT_NAME", "label": "Event Name", "default": "Transfer", "required": true, "validation_regex": "^[A-Za-z_][A-Za-z0-9_]{2,40}$", "help_text": "Event identifier."}
+  ]
+}

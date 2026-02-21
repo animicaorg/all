@@ -1,0 +1,15 @@
+{
+  "id": "hello_animica_vm",
+  "name": "Hello Animica VM",
+  "category": "VM Basics",
+  "description": "Deterministic hello-world style script for the Animica VM.",
+  "tags": ["vm", "deterministic", "starter"],
+  "language": "python",
+  "default_filename": "hello_animica_vm.py",
+  "placeholders": [
+    {"key": "PROJECT_NAME", "label": "Project Name", "default": "MyAnimicaProject", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_\\-]{2,40}$", "help_text": "Letters/numbers/dash/underscore."},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true, "validation_regex": ".{2,64}", "help_text": "Human readable author name."},
+    {"key": "DATE", "label": "Date", "default": "2026-01-01", "required": true, "validation_regex": "^\\d{4}-\\d{2}-\\d{2}$", "help_text": "ISO date YYYY-MM-DD."}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

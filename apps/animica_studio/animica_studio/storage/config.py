@@ -134,6 +134,23 @@ class Config:
     repo_root: str | None = None
     cli_path_override: str | None = None
     use_repo_venv_automatically: bool = True
+    templates_user_path: str | None = None
+    ena: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "provider": "local",
+            "remote": {"endpoint": "", "api_key": "", "model": ""},
+            "context": {"max_files": 12, "max_bytes": 1_000_000},
+            "tools": {
+                "allowlist": [
+                    "python -m ruff",
+                    "python -m pytest",
+                    "npm run",
+                    "pnpm run",
+                ]
+            },
+        }
+    )
 
     # ---------------------------------------------------------------------------
     # Convenience helpers
@@ -230,6 +247,14 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         repo_root=d.get("repo_root") or None,
         cli_path_override=d.get("cli_path_override") or None,
         use_repo_venv_automatically=bool(d.get("use_repo_venv_automatically", True)),
+        templates_user_path=d.get("templates_user_path") or None,
+        ena=d.get("ena") or {
+            "enabled": True,
+            "provider": "local",
+            "remote": {"endpoint": "", "api_key": "", "model": ""},
+            "context": {"max_files": 12, "max_bytes": 1_000_000},
+            "tools": {"allowlist": ["python -m ruff", "python -m pytest", "npm run", "pnpm run"]},
+        },
     )
 
 
