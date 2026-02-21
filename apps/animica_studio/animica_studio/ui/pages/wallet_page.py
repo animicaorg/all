@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Callable
 

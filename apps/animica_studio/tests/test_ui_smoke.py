@@ -144,3 +144,14 @@ def test_command_palette_filter() -> None:
     assert palette._list.count() == 2
     palette._refilter("")
     assert palette._list.count() == 4
+
+
+def test_top_level_imports_smoke() -> None:
+    """Top-level module imports should not crash at import-time."""
+    import importlib
+
+    app_mod = importlib.import_module("animica_studio.app")
+    wallet_page_mod = importlib.import_module("animica_studio.ui.pages.wallet_page")
+
+    assert app_mod is not None
+    assert wallet_page_mod is not None
