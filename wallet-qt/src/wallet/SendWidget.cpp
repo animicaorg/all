@@ -77,7 +77,7 @@ void SendWidget::setupUI()
     formLayout->addRow("From Account:", m_fromAccountCombo);
     
     // Balance label (below from account)
-    m_balanceLabel = new QLabel("Balance: --", this);
+    m_balanceLabel = new QLabel("Balance: 0.000000000 ANM", this);
     m_balanceLabel->setStyleSheet("color: #666; font-size: 12px;");
     formLayout->addRow("", m_balanceLabel);
     
@@ -479,7 +479,11 @@ void SendWidget::onAccountChanged(int)
         QString displayText = account.label + " (" + account.address + ")";
         m_fromAccountCombo->addItem(displayText, account.accountId);
     }
-    
+
+    // Ensure tracked balances are refreshed when account list changes
+    // so placeholders don't persist in the wallet view.
+    m_walletEngine->refreshBalances();
+
     updateBalanceLabel();
     updateFeeDisplay();
 }
@@ -514,7 +518,7 @@ void SendWidget::updateBalanceLabel()
 {
     QString accountId = getCurrentAccountId();
     if (accountId.isEmpty()) {
-        m_balanceLabel->setText("Balance: --");
+        m_balanceLabel->setText("Balance: 0.000000000 ANM");
         return;
     }
     
