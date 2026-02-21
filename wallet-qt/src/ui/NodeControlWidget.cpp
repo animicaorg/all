@@ -5,6 +5,7 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QDesktopServices>
+#include <QScrollBar>
 #include <QUrl>
 
 NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
@@ -260,12 +261,21 @@ void NodeControlWidget::onSyncProgress(int currentBlock, int highestBlock, bool 
 
 void NodeControlWidget::onLogLinesAvailable(const QStringList& lines)
 {
+    QScrollBar* scrollBar = m_logViewer->verticalScrollBar();
+    const bool wasNearBottom = !scrollBar || (scrollBar->maximum() - scrollBar->value() <= 4);
+
     for (const QString& line : lines) {
         m_logViewer->append(line);
     }
-    
-    // Auto-scroll to bottom
-    m_logViewer->moveCursor(QTextCursor::End);
+
+    // Auto-scroll only if the user was already near the bottom.
+    // This preserves manual scrolling when inspecting older log lines.
+    if (wasNearBottom) {
+        m_logViewer->moveCursor(QTextCursor::End);
+        if (scrollBar) {
+            scrollBar->setValue(scrollBar->maximum());
+        }
+    }
 }
 
 void NodeControlWidget::updateUI()
