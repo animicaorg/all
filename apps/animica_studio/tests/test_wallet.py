@@ -708,3 +708,35 @@ class TestWalletServiceSchemeLabel:
 
         assert WalletService.scheme_label("unknown") == "Unknown"
         assert WalletService.scheme_label("") == "Unknown"
+
+
+class TestWalletServiceSendCli:
+    def test_build_and_send_uses_cli_tx_send(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "submitted tx 0x" + "a" * 64
+        completed.stderr = ""
+
+        with patch("animica_studio.services.wallet_service.resolve_animica_cli_program_and_env", return_value=("animica", [], {})):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                ptx = ws.build_and_send(
+                    rpc_url="http://localhost:8545/rpc",
+                    chain_id=1,
+                    from_addr="anim1from",
+                    to_addr="anim1to",
+                    amount_wei=1_500_000_000_000_000_000,
+                )
+
+        assert ptx.status == "PENDING"
+        assert ptx.tx_hash == "0x" + "a" * 64
+        cmd = mock_run.call_args.args[0]
+        assert cmd[:3] == ["animica", "tx", "send"]
+        assert "--from" in cmd and "anim1from" in cmd
+        assert "--to" in cmd and "anim1to" in cmd
+        assert "--value" in cmd and "1.5" in cmd

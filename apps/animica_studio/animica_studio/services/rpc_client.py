@@ -254,15 +254,39 @@ class RpcClient:
         """Return the balance (as integer) for *address*.
 
         Tries ``state_getBalance``, then ``state.getBalance``.
+
+        Some Animica node versions require named-object params instead of
+        positional-list params. We probe both styles before failing.
         """
-        method = self._pick_method("state_getBalance", "state.getBalance")
-        result = self.call(method, [address])
-        if isinstance(result, dict):
-            for key in ("balance", "amount", "value"):
-                if key in result:
-                    result = result[key]
-                    break
-        return parse_hex_quantity(result, "balance")
+        methods = ["state_getBalance", "state.getBalance", "wallet_getBalance", "wallet.getBalance"]
+        chosen = self._pick_method(*methods)
+        attempts: list[tuple[str, list[Any] | dict[str, Any]]] = [
+            (chosen, [address]),
+            (chosen, {"address": address}),
+        ]
+        if chosen != methods[0]:
+            attempts.extend(
+                [
+                    (methods[0], [address]),
+                    (methods[0], {"address": address}),
+                ]
+            )
+
+        last_exc: Exception | None = None
+        for method, params in attempts:
+            try:
+                result = self.call(method, params)
+                if isinstance(result, dict):
+                    for key in ("balance", "amount", "value"):
+                        if key in result:
+                            result = result[key]
+                            break
+                return parse_hex_quantity(result, "balance")
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+        raise RpcParseError("Unable to fetch balance from RPC")
 
     def get_pending_nonce(self, address: str) -> int:
         """Return the pending nonce for *address*.
