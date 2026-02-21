@@ -257,6 +257,11 @@ class RpcClient:
         """
         method = self._pick_method("state_getBalance", "state.getBalance")
         result = self.call(method, [address])
+        if isinstance(result, dict):
+            for key in ("balance", "amount", "value"):
+                if key in result:
+                    result = result[key]
+                    break
         return parse_hex_quantity(result, "balance")
 
     def get_pending_nonce(self, address: str) -> int:
