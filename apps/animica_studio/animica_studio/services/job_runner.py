@@ -60,6 +60,7 @@ class ResolvedCli:
     env: dict[str, str]
     repo_root: str | None = None
     error: str | None = None
+    attempted_paths: list[str] | None = None
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -80,15 +81,19 @@ def _venv_env(repo_root: Path) -> dict[str, str]:
 
 def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
     cfg = cfg or load_config()
+    attempted: list[str] = []
 
     if cfg.cli_path_override:
         override = Path(cfg.cli_path_override).expanduser()
+        attempted.append(str(override))
         if _is_executable_file(override):
             cli = _norm(override)
             log.info('CLI resolved to: %s (settings override)', cli)
             return ResolvedCli(argv_prefix=[cli], env={})
 
     found = shutil.which('animica')
+    if found:
+        attempted.append(found)
     if found:
         cli = _norm(found)
         log.info('CLI resolved to: %s (PATH)', cli)
@@ -106,6 +111,7 @@ def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
         venv_bin = repo_root / '.venv' / 'bin'
         venv_cli = venv_bin / 'animica'
         venv_python = venv_bin / 'python'
+        attempted.extend([str(venv_cli), str(venv_python)])
         env = _venv_env(repo_root)
         if _is_executable_file(venv_cli):
             cli = str(venv_cli)
@@ -116,21 +122,33 @@ def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
             log.info('CLI resolved to: %s -m animica (repo .venv python)', cli)
             return ResolvedCli(argv_prefix=[cli, '-m', 'animica'], env=env, repo_root=str(repo_root))
 
-        err = (
-            f'Animica venv not found at {repo_root}/.venv. '
-            'Run: python -m venv .venv && pip install -e .'
-        )
-        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err)
+        err = 'Animica CLI not found. Install it or configure its path in Settings.'
+        log.warning('Animica CLI resolution failed (repo .venv enabled). attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
+        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err, attempted_paths=attempted)
 
     if repo_root and not cfg.use_repo_venv_automatically:
-        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error='Animica CLI not found. Configure CLI path in Settings.')
+        err = 'Animica CLI not found. Install it or configure its path in Settings.'
+        log.warning('Animica CLI resolution failed (repo .venv disabled). attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
+        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err, attempted_paths=attempted)
 
+    err = 'Animica CLI not found. Install it or configure its path in Settings.'
+    log.warning('Animica CLI resolution failed. attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
     return ResolvedCli(
         argv_prefix=[],
         env={},
         repo_root=str(repo_root) if repo_root else None,
-        error='Animica CLI not found. Install it or configure its path in Settings.',
+        error=err,
+        attempted_paths=attempted,
     )
+
+
+def resolve_animica_cli_program_and_env(cfg: Config | None = None) -> tuple[str, list[str], dict[str, str]]:
+    resolved = resolve_animica_cli(cfg)
+    if not resolved.argv_prefix:
+        msg = resolved.error or 'Animica CLI not found. Install it or configure its path in Settings.'
+        raise FileNotFoundError(msg)
+    program, *base_args = resolved.argv_prefix
+    return program, base_args, resolved.env
 
 
 def resolve_cli_argv(argv: list[str]) -> tuple[list[str], dict[str, str], str | None]:
@@ -341,4 +359,3 @@ class JobRunner(QObject):
         self._stderr_buffers.pop(job_id, None)
         self._stderr_captures.pop(job_id, None)
         self._jobs.pop(job_id, None)
-

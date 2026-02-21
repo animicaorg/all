@@ -58,7 +58,11 @@ from animica_studio.models.wallet_models import (
     shorten_address,
 )
 from animica_studio.services.error_format import format_exception, format_rpc_error, safe_str
-from animica_studio.services.job_runner import JobHandle, JobRunner
+from animica_studio.services.job_runner import (
+    JobHandle,
+    JobRunner,
+    resolve_animica_cli_program_and_env,
+)
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
@@ -237,6 +241,13 @@ class _CreateWalletDialog(QDialog):
         self._error_label.setWordWrap(True)
         layout.addWidget(self._error_label)
 
+        self._output_log = QTextEdit()
+        self._output_log.setReadOnly(True)
+        self._output_log.setVisible(False)
+        self._output_log.setMinimumHeight(120)
+        self._output_log.setPlaceholderText("Wallet CLI output will appear here…")
+        layout.addWidget(self._output_log)
+
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -289,6 +300,17 @@ class _CreateWalletDialog(QDialog):
         self._cancel_btn.setEnabled(not busy)
         self._progress.setVisible(busy)
         self._progress_text.setVisible(busy)
+
+    def append_output(self, stream: str, text: str) -> None:
+        line = text.rstrip("\n")
+        if not line:
+            return
+        self._output_log.setVisible(True)
+        self._output_log.append(f"[{stream}] {line}")
+
+    def clear_output(self) -> None:
+        self._output_log.clear()
+        self._output_log.setVisible(False)
 
     def set_error(self, message: str) -> None:
         self._error_label.setText(message)
@@ -882,44 +904,79 @@ class WalletPage(QWidget):
         if not qalive(self._create_wallet_dialog):
             return
 
+        self._create_wallet_dialog.set_error("")
+        self._create_wallet_dialog.clear_output()
+
+        try:
+            wallet_args, clean_label, scheme = self._wallet_service.build_create_wallet_args(
+                label, sig_scheme=sig_scheme
+            )
+        except ValueError as exc:
+            self._create_wallet_dialog.set_error(format_exception(exc))
+            return
+
+        try:
+            program, base_args, resolved_env = resolve_animica_cli_program_and_env()
+        except FileNotFoundError as exc:
+            self._create_wallet_dialog.set_error(str(exc))
+            return
+
         self._create_wallet_dialog.set_busy(True)
         self._create_wallet_btn.setEnabled(False)
 
         started = time.perf_counter()
+        collected_stdout: list[str] = []
 
-        def _task() -> Account:
-            return self._wallet_service.create_wallet(label, sig_scheme=sig_scheme)
-
-        job = self._runner.run_callable(_task, timeout_s=60)
+        job = self._runner.run_cli([program, *base_args, *wallet_args], env=resolved_env, timeout_s=60)
         self._create_wallet_job = job
 
-        def _on_error(_job_id: str, msg: str, _details: str) -> None:
-            log.error("WalletPage: create wallet failed: %s", msg)
+        def _on_output(_job_id: str, stream: str, text: str) -> None:
+            if self._create_wallet_job is None:
+                return
+            log.info("WalletPage: create wallet %s: %s", stream, text.rstrip())
+            if stream == "stdout":
+                collected_stdout.append(text)
+            if qalive(self._create_wallet_dialog):
+                self._create_wallet_dialog.append_output(stream, text)
+
+        def _on_error(_job_id: str, msg: str, details: str) -> None:
+            log.error("WalletPage: create wallet failed: %s details=%s", msg, details)
             if qalive(self._create_wallet_dialog):
                 self._create_wallet_dialog.set_error(msg)
 
-        def _on_finished(_job_id: str, exit_code: int, payload: object) -> None:
-            self._create_wallet_btn.setEnabled(True)
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.set_busy(False)
-            self._create_wallet_job = None
+        def _on_finished(_job_id: str, exit_code: int, _payload: object) -> None:
+            try:
+                if exit_code != 0:
+                    return
 
-            if exit_code != 0:
-                return
-            if not isinstance(payload, Account):
+                stdout = "".join(collected_stdout)
+                address = self._wallet_service.parse_created_wallet_address(stdout)
+                account = self._wallet_service.store_created_wallet(clean_label, address, scheme)
+                elapsed = int((time.perf_counter() - started) * 1000)
+                log.info(
+                    "WalletPage: wallet created label=%s address=%s scheme=%s duration_ms=%s",
+                    account.label,
+                    account.address,
+                    account.sig_scheme,
+                    elapsed,
+                )
+                self._reload_accounts_list()
+                self._select_account_by_id(account.id)
+                self._refresh_all()
                 if qalive(self._create_wallet_dialog):
-                    self._create_wallet_dialog.set_error("Wallet created but invalid response payload received.")
-                return
-            account = payload
-            elapsed = int((time.perf_counter() - started) * 1000)
-            log.info("WalletPage: wallet created label=%s address=%s scheme=%s duration_ms=%s", account.label, account.address, account.sig_scheme, elapsed)
-            self._reload_accounts_list()
-            self._select_account_by_id(account.id)
-            self._refresh_all()
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.accept()
-            QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
+                    self._create_wallet_dialog.accept()
+                QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
+            except Exception as exc:  # noqa: BLE001
+                log.error("WalletPage: wallet finalization failed: %s", exc)
+                if qalive(self._create_wallet_dialog):
+                    self._create_wallet_dialog.set_error(format_exception(exc))
+            finally:
+                self._create_wallet_btn.setEnabled(True)
+                if qalive(self._create_wallet_dialog):
+                    self._create_wallet_dialog.set_busy(False)
+                self._create_wallet_job = None
 
+        job.output.connect(_on_output)
         job.error.connect(_on_error)
         job.finished.connect(_on_finished)
 

@@ -361,24 +361,24 @@ class TestWalletServiceAccounts:
 
 
 class TestWalletServiceCreateWallet:
-    def test_create_wallet_success(self):
+    def test_build_create_wallet_args(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
-        cfg = Config()
-        ws = WalletService(cfg)
+        ws = WalletService(Config())
+        args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="=== Wallet created ===\nAddress: anim1acdefghjklmnpqrstuvwxyz0234567890\n",
-                stderr="",
-            )
-            account = ws.create_wallet("My Wallet")
-
-        assert account.label == "My Wallet"
-        assert account.address == "anim1acdefghjklmnpqrstuvwxyz0234567890"
-        assert len(ws.list_accounts()) == 1
+        assert clean_label == "My Wallet"
+        assert scheme == "dilithium3"
+        assert args == [
+            "wallet",
+            "create",
+            "--label",
+            "My Wallet",
+            "--sig-scheme",
+            "dilithium3",
+            "--allow-insecure-fallback",
+        ]
 
     def test_create_wallet_bad_label_raises(self):
         from animica_studio.storage.config import Config
@@ -386,17 +386,21 @@ class TestWalletServiceCreateWallet:
 
         ws = WalletService(Config())
         with pytest.raises(ValueError, match="Wallet label"):
-            ws.create_wallet("bad/label")
+            ws.build_create_wallet_args("bad/label")
 
-    def test_create_wallet_cli_error_raises(self):
+    def test_parse_and_store_created_wallet(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="cli failed")
-            with pytest.raises(RuntimeError, match="cli failed"):
-                ws.create_wallet("Wallet1")
+        address = ws.parse_created_wallet_address(
+            "=== Wallet created ===\nAddress: anim1acdefghjklmnpqrstuvwxyz0234567890\n"
+        )
+        account = ws.store_created_wallet("Wallet1", address, "dilithium3")
+
+        assert account.label == "Wallet1"
+        assert account.address == "anim1acdefghjklmnpqrstuvwxyz0234567890"
+        assert account.sig_scheme == "dilithium3"
 
 
 class TestWalletServiceExplorerUrls:
