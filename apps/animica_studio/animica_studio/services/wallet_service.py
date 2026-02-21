@@ -47,6 +47,7 @@ _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _ANM_BALANCE_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*ANM", re.IGNORECASE)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 _SCHEME_ALIASES = {
     "dilithium3": "dilithium3",
     "sphincs128s": "sphincs_shake_128s",
@@ -355,23 +356,57 @@ class WalletService:
 
     def _parse_wallet_show_balance(self, output: str) -> tuple[int, str]:
         """Extract raw + formatted balance from ``animica wallet show`` output."""
-        text = (output or "").strip()
+        text = (output or "").replace("\x00", "").strip()
         if not text:
             raise RuntimeError("wallet show returned no output")
 
+        parsed: dict[str, Any] | None = None
         try:
-            parsed = json.loads(text)
+            candidate = text
+            if not candidate.startswith("{"):
+                match = _JSON_OBJECT_RE.search(candidate)
+                if match:
+                    candidate = match.group(0)
+            loaded = json.loads(candidate)
+            if isinstance(loaded, dict):
+                parsed = loaded
         except json.JSONDecodeError:
             parsed = None
 
-        if isinstance(parsed, dict):
-            raw = parsed.get("balance_confirmed")
-            if isinstance(raw, (int, float)):
-                raw_int = int(raw)
-                formatted = str(parsed.get("balance_confirmed_formatted") or format_amount(raw_int, self._decimals())).strip()
+        if parsed:
+            raw_int: int | None = None
+            for key in ("balance_confirmed", "balance", "available_balance"):
+                maybe_raw = parsed.get(key)
+                if isinstance(maybe_raw, str):
+                    maybe_raw = maybe_raw.strip()
+                    if maybe_raw.startswith("0x"):
+                        try:
+                            raw_int = int(maybe_raw, 16)
+                            break
+                        except ValueError:
+                            continue
+                    try:
+                        raw_int = int(maybe_raw)
+                        break
+                    except ValueError:
+                        continue
+                if isinstance(maybe_raw, (int, float)):
+                    raw_int = int(maybe_raw)
+                    break
+
+            if raw_int is not None:
+                formatted = str(
+                    parsed.get("balance_confirmed_formatted")
+                    or parsed.get("balance_formatted")
+                    or format_amount(raw_int, self._decimals())
+                ).strip()
                 return raw_int, formatted
 
-            formatted = str(parsed.get("balance_confirmed_formatted") or "").strip()
+            formatted = str(
+                parsed.get("balance_confirmed_formatted")
+                or parsed.get("balance_formatted")
+                or ""
+            ).strip()
             if formatted and "ANM" in formatted.upper():
                 return 0, formatted
 
