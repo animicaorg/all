@@ -296,6 +296,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._health_timer.stop()
         event.accept()
+
     def _build_ide_page_safe(self) -> QWidget:
         try:
             self._ide_page = IdePage()

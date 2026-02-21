@@ -113,7 +113,14 @@ def _run_in_thread(
     on_result: Callable[[Any], None] | None = None,
     on_error: Callable[[str], None] | None = None,
 ) -> QThread:
-    """Run *fn* on a background thread; wire signals and return the thread."""
+    """Run *fn* on a background thread; wire signals and return the thread.
+
+    ``on_result`` and ``on_error`` are always invoked on the main thread via
+    ``Qt.ConnectionType.QueuedConnection``.  Without this, plain Python
+    callables connected to a worker that lives on a background thread would be
+    called *from* that background thread, causing Qt widget access from a
+    non-GUI thread and a guaranteed crash.
+    """
     thread = QThread()
     worker = _Worker(fn)
     worker.moveToThread(thread)
@@ -121,9 +128,9 @@ def _run_in_thread(
     worker.finished.connect(thread.quit)
     thread.finished.connect(thread.deleteLater)
     if on_result:
-        worker.result.connect(on_result)
+        worker.result.connect(on_result, Qt.ConnectionType.QueuedConnection)
     if on_error:
-        worker.error.connect(on_error)
+        worker.error.connect(on_error, Qt.ConnectionType.QueuedConnection)
     thread.start()
     return thread
 
