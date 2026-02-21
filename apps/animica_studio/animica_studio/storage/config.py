@@ -197,7 +197,10 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     wallet_settings_raw = d.get("wallet_settings") or {}
     if not isinstance(wallet_settings_raw, dict):
         wallet_settings_raw = {}
+    # Preserve ALL saved keys (e.g. ui_theme set by ThemeManager) so that
+    # preferences are not silently discarded on the next load.
     wallet_settings = {
+        **wallet_settings_raw,
         "decimals": int(wallet_settings_raw.get("decimals", 18)),
         "explorer_base_url": str(
             wallet_settings_raw.get("explorer_base_url", "https://animica.org/explorer")
