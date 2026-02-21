@@ -375,8 +375,30 @@ class TestWalletServiceCreateWallet:
             "create",
             "--label",
             "My Wallet",
-            "--sig-scheme",
+            "--alg",
             "dilithium3",
+        ]
+
+    def test_build_create_wallet_args_sphincs_and_fallback(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        args, clean_label, scheme = ws.build_create_wallet_args(
+            "SPX Wallet",
+            "sphincs128s",
+            allow_insecure_fallback=True,
+        )
+
+        assert clean_label == "SPX Wallet"
+        assert scheme == "sphincs_shake_128s"
+        assert args == [
+            "wallet",
+            "create",
+            "--label",
+            "SPX Wallet",
+            "--alg",
+            "sphincs_shake_128s",
             "--allow-insecure-fallback",
         ]
 
