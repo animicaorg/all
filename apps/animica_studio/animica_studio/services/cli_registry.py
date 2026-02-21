@@ -22,6 +22,16 @@ def _norm_path(path: list[str]) -> str:
     return " ".join(path)
 
 
+def _is_help_section_header(line: str, header: str) -> bool:
+    lowered = line.strip().lower()
+    if not lowered:
+        return False
+    if lowered.startswith(header):
+        return True
+    # Rich/Typer layouts often render section headers as "╭─ Commands ...".
+    return bool(re.match(rf"^[╭├┌].*\b{re.escape(header.rstrip(':'))}\b", lowered))
+
+
 def _parse_block(help_text: str, header: str) -> list[str]:
     out: list[str] = []
     in_block = False
@@ -31,14 +41,21 @@ def _parse_block(help_text: str, header: str) -> list[str]:
             if in_block:
                 break
             continue
-        if stripped.strip().lower().startswith(header):
+        if _is_help_section_header(stripped, header):
             in_block = True
             continue
         if not in_block:
             continue
+        if _is_help_section_header(stripped, "options:") and header != "options:":
+            break
+        if _is_help_section_header(stripped, "commands:") and header != "commands:":
+            break
+        if stripped.strip().startswith("╰"):
+            break
         if not line.startswith(" ") and stripped.endswith(":"):
             break
-        token = stripped.strip().split()[0].rstrip(",")
+        cleaned = stripped.strip().strip("│").strip()
+        token = cleaned.split()[0].rstrip(",") if cleaned else ""
         if token:
             out.append(token)
     return out
@@ -187,4 +204,3 @@ class CliRegistry:
             lines.append(f"\n$ animica {key} --help")
             lines.append(node.raw_help)
         return "\n".join(lines)
-
