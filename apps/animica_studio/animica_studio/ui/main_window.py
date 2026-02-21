@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMenu, QVBoxLayout, QWidget
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
@@ -30,6 +30,7 @@ from animica_studio.ui.shell.main_stack import AnimatedStack
 from animica_studio.ui.shell.sidebar import Sidebar
 from animica_studio.ui.theme.stylesheet import build_stylesheet
 from animica_studio.ui.theme.theme_manager import ThemeManager
+from animica_studio.util.qt import safe_slot
 
 log = logging.getLogger(__name__)
 _HEALTH_INTERVAL_MS = 10_000
@@ -38,14 +39,15 @@ _HEALTH_INTERVAL_MS = 10_000
 class _NavEntry(NamedTuple):
     label: str
     icon: str
-    page: QWidget
+    page_factory: Callable[[], QWidget]
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config: Config, profile_service: ProfileService) -> None:
+    def __init__(self, config: Config, profile_service: ProfileService, *, safe_mode: bool = False) -> None:
         super().__init__()
         self._config = config
         self._profile_service = profile_service
+        self._safe_mode = safe_mode
         self._theme_manager = ThemeManager(config)
         self._icons = IconProvider()
         self._nav_entries: list[_NavEntry] = []
@@ -53,6 +55,8 @@ class MainWindow(QMainWindow):
         self._last_rpc_error: str | None = None
         self._last_actual_chain_id: int | None = None
         self._health_worker = None
+        self._ide_page: QWidget | None = None
+        self._ide_index: int | None = None
         self.setWindowTitle("Animica Studio")
         self.resize(1220, 760)
         self._profile_service.subscribe(self._on_profile_changed)
@@ -64,8 +68,6 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+\\"), self, activated=self._toggle_sidebar)
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._trigger_health_check)
-        self._health_timer.start(_HEALTH_INTERVAL_MS)
-        QTimer.singleShot(1200, self._trigger_health_check)
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -90,24 +92,26 @@ class MainWindow(QMainWindow):
         root.addWidget(body, 1)
         self.setCentralWidget(central)
 
-        self._wallet_page = WalletPage(config=self._config)
+        self._wallet_page = WalletPage(config=self._config, safe_mode=self._safe_mode)
         self._dashboard_page = DashboardPage()
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
         self._nav_entries = [
-            _NavEntry("Dashboard", "◈", self._dashboard_page),
-            _NavEntry("Wallet", "◉", self._wallet_page),
-            _NavEntry("Node", "◍", NodePage(config=self._config)),
-            _NavEntry("Mining", "◎", MiningPage(config=self._config)),
-            _NavEntry("AICF", "◇", AicfPage(config=self._config)),
-            _NavEntry("DA", "◌", DaPage(config=self._config)),
-            _NavEntry("Quantum", "⬡", QuantumPage(config=self._config)),
-            _NavEntry("Console", "▣", ConsolePage()),
-            _NavEntry("IDE", "✎", IdePage()),
-            _NavEntry("Settings", "⚙", self._settings_page),
+            _NavEntry("Dashboard", "◈", lambda: self._dashboard_page),
+            _NavEntry("Wallet", "◉", lambda: self._wallet_page),
+            _NavEntry("Node", "◍", lambda: NodePage(config=self._config)),
+            _NavEntry("Mining", "◎", lambda: MiningPage(config=self._config)),
+            _NavEntry("AICF", "◇", lambda: AicfPage(config=self._config)),
+            _NavEntry("DA", "◌", lambda: DaPage(config=self._config)),
+            _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
+            _NavEntry("Console", "▣", lambda: ConsolePage()),
+            _NavEntry("IDE", "✎", self._build_ide_placeholder),
+            _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
-            self._stack.addWidget(e.page)
+            self._stack.addWidget(e.page_factory())
             self._sidebar.add_item(e.label, e.icon, i)
+            if e.label == "IDE":
+                self._ide_index = i
         self._sidebar.navigate.connect(self._navigate)
         self._navigate(0)
         self.refresh_header()
@@ -115,16 +119,35 @@ class MainWindow(QMainWindow):
     def _apply_theme(self) -> None:
         self.setStyleSheet(build_stylesheet(self._theme_manager.palette()))
         self._dashboard_page.set_visual_effects(
-            self._theme_manager.visual_effects(), self._theme_manager.reduced_motion()
+            False if self._safe_mode else self._theme_manager.visual_effects(),
+            self._theme_manager.reduced_motion(),
         )
 
     def _toggle_sidebar(self) -> None:
         self._sidebar.toggle(animate=not self._theme_manager.reduced_motion())
 
     def _navigate(self, index: int) -> None:
+        self._ensure_lazy_pages(index)
         self._stack.setCurrentIndexAnimated(index, reduced_motion=self._theme_manager.reduced_motion())
         self._sidebar.set_active(index)
 
+    def _ensure_lazy_pages(self, index: int) -> None:
+        if self._ide_index is None or index != self._ide_index or self._ide_page is not None:
+            return
+        self._ide_page = self._build_ide_page_safe()
+        current = self._stack.widget(index)
+        self._stack.insertWidget(index, self._ide_page)
+        if current is not None:
+            self._stack.removeWidget(current)
+            current.deleteLater()
+
+    def _build_ide_placeholder(self) -> QWidget:
+        placeholder = QWidget(self)
+        layout = QVBoxLayout(placeholder)
+        layout.addWidget(QLabel("IDE will load on demand."))
+        return placeholder
+
+    @safe_slot(log)
     def _open_palette(self) -> None:
         dlg = CommandPalette([e.label for e in self._nav_entries], self)
         dlg.navigate.connect(self._navigate)
@@ -164,6 +187,7 @@ class MainWindow(QMainWindow):
         half = (max_len - 1) // 2
         return f"{url[:half]}…{url[-half:]}"
 
+    @safe_slot(log)
     def _on_profile_combo_changed(self, index: int) -> None:
         if index < 0:
             return
@@ -175,11 +199,13 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self._toast(f"Failed to switch profile: {str(exc)}")
 
+    @safe_slot(log)
     def _on_profile_changed(self, profile: RpcProfile) -> None:
         self._last_actual_chain_id = None
         self.refresh_header()
         self._wallet_page.on_profile_changed(profile)
 
+    @safe_slot(log)
     def _open_profiles_menu(self) -> None:
         menu = QMenu(self)
         wizard_action = menu.addAction("Setup Wizard…")
@@ -188,6 +214,7 @@ class MainWindow(QMainWindow):
         manage_action.triggered.connect(self._open_profiles_dialog)
         menu.exec(self.cursor().pos())
 
+    @safe_slot(log)
     def _open_wizard(self) -> None:
         from animica_studio.ui.wizard.wizard_window import SetupWizard  # noqa: PLC0415
 
@@ -195,6 +222,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() == dlg.DialogCode.Accepted:
             self.refresh_header()
 
+    @safe_slot(log)
     def _open_profiles_dialog(self) -> None:
         from animica_studio.ui.dialogs.profiles_dialog import ProfilesDialog  # noqa: PLC0415
 
@@ -202,7 +230,10 @@ class MainWindow(QMainWindow):
         dlg.exec()
         self.refresh_header()
 
+    @safe_slot(log)
     def _trigger_health_check(self) -> None:
+        if self._safe_mode:
+            return
         try:
             active = self._profile_service.get_active()
         except Exception:
@@ -252,6 +283,27 @@ class MainWindow(QMainWindow):
     def show_no_profile_banner(self) -> None:
         self._toast("No profile configured. Open Setup Wizard from Profiles.")
 
+    def show_startup_degraded_banner(self, message: str) -> None:
+        self._toast(message)
+
+    def run_post_start_init(self) -> None:
+        if self._safe_mode:
+            self.show_startup_degraded_banner("Safe mode enabled")
+            return
+        self._health_timer.start(_HEALTH_INTERVAL_MS)
+        QTimer.singleShot(1200, self._trigger_health_check)
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._health_timer.stop()
         event.accept()
+    def _build_ide_page_safe(self) -> QWidget:
+        try:
+            self._ide_page = IdePage()
+            return self._ide_page
+        except Exception:
+            log.exception("IDE page initialisation failed")
+            placeholder = QWidget()
+            layout = QVBoxLayout(placeholder)
+            layout.addWidget(QLabel("IDE unavailable (startup degraded mode)."))
+            self.show_startup_degraded_banner("Startup degraded mode: IDE is unavailable")
+            return placeholder

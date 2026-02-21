@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import traceback
 from typing import Type
+import faulthandler
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -75,6 +77,12 @@ def main() -> None:
     setup_logging(logs_dir(), app_version=__version__)
     log.info("Starting %s v%s", __app_name__, __version__)
 
+    # Capture fatal traces from crashes/segfaults as early as possible.
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        log.exception("Failed to enable faulthandler")
+
     # Install global exception hook
     sys.excepthook = _exception_hook  # type: ignore[assignment]
 
@@ -91,27 +99,44 @@ def main() -> None:
     # Initialise profile service (runs migration + ensure_defaults)
     profile_service = ProfileService(config)
 
-    window = MainWindow(config, profile_service)
+    safe_mode = os.getenv("ANIMICA_STUDIO_SAFE_MODE", "").strip() == "1"
+    window = MainWindow(config, profile_service, safe_mode=safe_mode)
     window.show()
 
-    # Launch wizard if first run not completed or no profiles configured
-    should_run_wizard = (
-        not config.first_run_completed
-        or not config.rpc_profiles
-    )
-    if should_run_wizard:
-        from animica_studio.ui.wizard.wizard_window import SetupWizard  # noqa: PLC0415
+    def _post_start_init() -> None:
+        try:
+            window.run_post_start_init()
 
-        def _launch_wizard() -> None:
-            dlg = SetupWizard(profile_service, parent=window)
-            result = dlg.exec()
-            if result != dlg.DialogCode.Accepted:
-                # User cancelled — show banner
-                window.show_no_profile_banner()
-            else:
-                window.refresh_header()
+            # Launch wizard if first run not completed or no profiles configured
+            should_run_wizard = (
+                not config.first_run_completed
+                or not config.rpc_profiles
+            )
+            if should_run_wizard:
+                from animica_studio.ui.wizard.wizard_window import SetupWizard  # noqa: PLC0415
 
-        QTimer.singleShot(200, _launch_wizard)
+                def _launch_wizard() -> None:
+                    try:
+                        dlg = SetupWizard(profile_service, parent=window)
+                        result = dlg.exec()
+                        if result != dlg.DialogCode.Accepted:
+                            window.show_no_profile_banner()
+                        else:
+                            window.refresh_header()
+                    except Exception:
+                        log.exception("Startup wizard launch failed")
+                        window.show_startup_degraded_banner(
+                            "Startup degraded mode: setup wizard unavailable."
+                        )
+
+                QTimer.singleShot(200, _launch_wizard)
+        except Exception:
+            log.exception("Post-start initialisation failed")
+            window.show_startup_degraded_banner(
+                "Startup degraded mode: optional startup tasks failed."
+            )
+
+    QTimer.singleShot(0, _post_start_init)
 
     log.info("Application window shown")
     exit_code = app.exec()
