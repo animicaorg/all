@@ -559,3 +559,52 @@ class TestConfigWalletFields:
         cfg2 = _config_from_dict(d)
         assert cfg2.accounts[0]["address"] == "anim1x"
         assert cfg2.wallet_settings["decimals"] == 18
+
+class TestWalletStoreLocalFile:
+    def test_load_local_wallets_from_v2_file(self, tmp_path):
+        from animica_studio.services.wallet_store import WalletStore
+
+        wallets_path = tmp_path / "wallets.json"
+        wallets_path.write_text(
+            """
+{
+  "format": "animica.wallets",
+  "version": 2,
+  "wallets": [
+    {"label": "Alice", "address": "anim1acdefghjklmnpqrstuvwxyz023456", "alg_name": "dilithium3", "alg_id": 4097, "public_key_hex": "aa11", "created_at": "2026-01-01T00:00:00Z"},
+    {"label": "Bob", "address": "anim1bcdefghjklmnpqrstuvwxyz0234567", "alg_name": "sphincs_shake_128s", "alg_id": 4098, "public_key_hex": "bb22"}
+  ]
+}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        records = WalletStore().load_local_wallets(wallets_path)
+        assert len(records) == 2
+        assert records[0].label == "Alice"
+        assert records[0].algorithm == "dilithium3"
+        assert records[1].algorithm == "sphincs_shake_128s"
+
+    def test_load_local_wallets_missing_file_raises(self, tmp_path):
+        from animica_studio.services.wallet_store import WalletStore
+
+        with pytest.raises(FileNotFoundError):
+            WalletStore().load_local_wallets(tmp_path / "wallets.json")
+
+
+class TestProfileHelpers:
+    def test_is_local_rpc_url_hosts(self):
+        from animica_studio.services.profile_helpers import is_local_rpc_url
+
+        assert is_local_rpc_url("http://127.0.0.1:8545/rpc") is True
+        assert is_local_rpc_url("http://localhost:8545/rpc") is True
+        assert is_local_rpc_url("http://0.0.0.0:8545/rpc") is True
+        assert is_local_rpc_url("https://mainnet.animica.org/rpc") is False
+
+
+class TestWalletServiceSchemeLabel:
+    def test_unknown_scheme_friendly_label(self):
+        from animica_studio.services.wallet_service import WalletService
+
+        assert WalletService.scheme_label("unknown") == "Unknown"
+        assert WalletService.scheme_label("") == "Unknown"
