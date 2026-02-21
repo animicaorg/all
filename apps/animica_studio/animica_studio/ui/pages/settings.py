@@ -91,6 +91,39 @@ class SettingsPage(QWidget):
         self._cli_path_edit.textChanged.connect(self._refresh_cli_resolution_label)
         self._use_repo_venv.toggled.connect(self._refresh_cli_resolution_label)
 
+
+        templates_group = QGroupBox("Templates")
+        tform = QFormLayout(templates_group)
+        self._templates_path_edit = QLineEdit(self._config.templates_user_path or "")
+        trow = QHBoxLayout()
+        trow.addWidget(self._templates_path_edit)
+        tbrowse = QPushButton("Browse…")
+        tbrowse.clicked.connect(self._browse_templates_path)
+        trow.addWidget(tbrowse)
+        tform.addRow("User templates path:", trow)
+        layout.addWidget(templates_group)
+
+        ena_group = QGroupBox("ENA Assistant")
+        eform = QFormLayout(ena_group)
+        ena = self._config.ena
+        self._ena_enabled = QCheckBox("Enable ENA")
+        self._ena_enabled.setChecked(bool(ena.get("enabled", True)))
+        eform.addRow("", self._ena_enabled)
+        self._ena_provider = QComboBox()
+        self._ena_provider.addItems(["local", "remote"])
+        self._ena_provider.setCurrentText(str(ena.get("provider", "local")))
+        eform.addRow("Provider:", self._ena_provider)
+        remote = ena.get("remote", {})
+        self._ena_endpoint = QLineEdit(str(remote.get("endpoint", "")))
+        self._ena_api_key = QLineEdit(str(remote.get("api_key", "")))
+        self._ena_model = QLineEdit(str(remote.get("model", "")))
+        eform.addRow("Remote endpoint:", self._ena_endpoint)
+        eform.addRow("Remote API key:", self._ena_api_key)
+        eform.addRow("Remote model:", self._ena_model)
+        self._ena_allowlist = QLineEdit(";".join(ena.get("tools", {}).get("allowlist", [])))
+        eform.addRow("Tools allowlist (; separated):", self._ena_allowlist)
+        layout.addWidget(ena_group)
+
         appearance = QGroupBox("Appearance")
         aform = QFormLayout(appearance)
         self._mode_combo = QComboBox()
@@ -108,6 +141,18 @@ class SettingsPage(QWidget):
         self._config.repo_root = self._repo_root_edit.text().strip() or None
         self._config.cli_path_override = self._cli_path_edit.text().strip() or None
         self._config.use_repo_venv_automatically = self._use_repo_venv.isChecked()
+        self._config.templates_user_path = self._templates_path_edit.text().strip() or None
+        self._config.ena = {
+            "enabled": self._ena_enabled.isChecked(),
+            "provider": self._ena_provider.currentText(),
+            "remote": {
+                "endpoint": self._ena_endpoint.text().strip(),
+                "api_key": self._ena_api_key.text().strip(),
+                "model": self._ena_model.text().strip(),
+            },
+            "context": self._config.ena.get("context", {"max_files": 12, "max_bytes": 1_000_000}),
+            "tools": {"allowlist": [x.strip() for x in self._ena_allowlist.text().split(";") if x.strip()]},
+        }
         if self._theme_manager:
             self._mode_combo.setCurrentText(self._theme_manager.mode())
             self._effects_combo.setCurrentText(self._theme_manager.visual_effects())
@@ -149,6 +194,18 @@ class SettingsPage(QWidget):
             self._status_label.setText("Invalid chain id; kept previous value.")
         cmd_text = self._start_cmd_edit.text().strip()
         profile.node.start_cmd = cmd_text.split() if cmd_text else ["animica", "node", "start"]
+        self._config.templates_user_path = self._templates_path_edit.text().strip() or None
+        self._config.ena = {
+            "enabled": self._ena_enabled.isChecked(),
+            "provider": self._ena_provider.currentText(),
+            "remote": {
+                "endpoint": self._ena_endpoint.text().strip(),
+                "api_key": self._ena_api_key.text().strip(),
+                "model": self._ena_model.text().strip(),
+            },
+            "context": self._config.ena.get("context", {"max_files": 12, "max_bytes": 1_000_000}),
+            "tools": {"allowlist": [x.strip() for x in self._ena_allowlist.text().split(";") if x.strip()]},
+        }
         if self._theme_manager:
             self._theme_manager.set_mode(self._mode_combo.currentText())
             self._theme_manager.set_accent(self._accent_combo.currentText())
@@ -164,6 +221,12 @@ class SettingsPage(QWidget):
         if selected:
             self._repo_root_edit.setText(selected)
             self._refresh_cli_resolution_label()
+
+    def _browse_templates_path(self) -> None:
+        current = self._templates_path_edit.text().strip() or ""
+        selected = QFileDialog.getExistingDirectory(self, "Select Templates Folder", current)
+        if selected:
+            self._templates_path_edit.setText(selected)
 
     def _browse_cli_path(self) -> None:
         current = self._cli_path_edit.text().strip() or ""

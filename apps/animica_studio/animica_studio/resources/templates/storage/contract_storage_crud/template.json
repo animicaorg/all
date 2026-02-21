@@ -1,0 +1,12 @@
+{
+  "id": "contract_storage_crud",
+  "name": "Contract: Storage CRUD",
+  "category": "Storage",
+  "description": "Storage CRUD patterns for u256/bool/bytes fields.",
+  "tags": ["contract", "storage", "crud"],
+  "language": "python",
+  "default_filename": "storage_contract.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "StorageContract", "required": true, "validation_regex": "^[A-Za-z_][A-Za-z0-9_]{2,40}$", "help_text": "Python identifier style."}
+  ]
+}

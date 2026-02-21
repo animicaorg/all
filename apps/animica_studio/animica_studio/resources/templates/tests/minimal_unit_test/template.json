@@ -1,0 +1,12 @@
+{
+  "id": "minimal_unit_test",
+  "name": "Minimal unit test",
+  "category": "Tests",
+  "description": "Pytest skeleton for script behavior.",
+  "tags": ["tests", "pytest"],
+  "language": "python",
+  "default_filename": "test_sample.py",
+  "placeholders": [
+    {"key": "MODULE_NAME", "label": "Module Name", "default": "my_module", "required": true, "validation_regex": "^[A-Za-z_][A-Za-z0-9_]{1,40}$", "help_text": "Importable module name."}
+  ]
+}
