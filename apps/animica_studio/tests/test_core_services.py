@@ -704,7 +704,7 @@ def test_cli_ops_reports_mine_blocks_with_hyphenated_name():
         CliOps(_EmptyRegistry()).selected_path(CliOperation.MINE_BLOCKS)
 
 
-def test_cli_ops_mine_blocks_always_uses_count_flag():
+def test_cli_ops_mine_blocks_uses_address_count_and_threads_flags():
     from animica_studio.services.cli_ops import CliOperation, CliOps
 
     class _Registry:
@@ -719,7 +719,41 @@ def test_cli_ops_mine_blocks_always_uses_count_flag():
         {"count": 3, "address": "anim1qqqqqqqqqq"},
     )
 
-    assert out == ["miner", "mine-blocks", "--count", "3", "--address", "anim1qqqqqqqqqq"]
+    assert out == [
+        "miner",
+        "mine-blocks",
+        "--address",
+        "anim1qqqqqqqqqq",
+        "--count",
+        "3",
+    ]
+
+
+def test_cli_ops_mine_blocks_includes_threads_when_supported():
+    from animica_studio.services.cli_ops import CliOperation, CliOps
+
+    class _Registry:
+        def best_match(self, _group: str) -> list[str]:
+            return ["miner", "mine-blocks"]
+
+        def has_opt(self, _path: list[str], opt: str) -> bool:
+            return opt in {"--address", "--threads"}
+
+    out = CliOps(_Registry()).build(
+        CliOperation.MINE_BLOCKS,
+        {"count": 2, "address": "anim1qqqqqqqqqq", "threads": 8},
+    )
+
+    assert out == [
+        "miner",
+        "mine-blocks",
+        "--address",
+        "anim1qqqqqqqqqq",
+        "--count",
+        "2",
+        "--threads",
+        "8",
+    ]
 
 
 def test_config_from_dict_wallet_settings_migrates_legacy_animica_org_explorer_url():

@@ -57,8 +57,14 @@ class MiningPage(QWidget):
         mine_layout.addWidget(self._count_spin)
         mine_layout.addWidget(QLabel("Miner address:"))
         self._miner_addr = QLineEdit()
-        self._miner_addr.setPlaceholderText("0x… or blank for node default")
+        self._miner_addr.setPlaceholderText("anim1… wallet address (blank for node default)")
         mine_layout.addWidget(self._miner_addr, 1)
+        mine_layout.addWidget(QLabel("Threads:"))
+        self._threads_spin = QSpinBox()
+        self._threads_spin.setRange(0, 256)
+        self._threads_spin.setValue(0)
+        self._threads_spin.setToolTip("0 = auto-detect CPU threads")
+        mine_layout.addWidget(self._threads_spin)
         self._mine_btn = QPushButton("▶  Mine Blocks")
         self._mine_btn.clicked.connect(self._on_mine)
         mine_layout.addWidget(self._mine_btn)
@@ -90,12 +96,13 @@ class MiningPage(QWidget):
     def _on_mine(self) -> None:
         count = self._count_spin.value()
         addr = self._miner_addr.text().strip() or None
-        self._console.append_system(f"Mining {count} block(s)…")
+        threads = self._threads_spin.value()
+        self._console.append_system(f"Mining {count} block(s) with threads={threads}…")
         self._mine_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
 
         try:
-            cmd, env = self._service.build_mine_blocks_command(count, addr)
+            cmd, env = self._service.build_mine_blocks_command(count, addr, threads)
         except Exception as exc:  # noqa: BLE001
             self._mine_btn.setEnabled(True)
             self._cancel_btn.setEnabled(False)
