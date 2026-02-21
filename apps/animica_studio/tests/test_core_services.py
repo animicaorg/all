@@ -609,3 +609,82 @@ def test_node_status_as_dict():
     assert d["running"] is True
     assert d["pid"] == 1234
     assert d["head_number"] == 42
+
+
+# ---------------------------------------------------------------------------
+# config._config_from_dict — wallet_settings key preservation
+# ---------------------------------------------------------------------------
+
+
+def test_config_from_dict_preserves_extra_wallet_settings_keys():
+    """_config_from_dict must not silently drop extra wallet_settings keys.
+
+    ThemeManager stores its ui_theme prefs inside wallet_settings; losing them
+    on every load would reset the user's theme on each Studio restart.
+    """
+    from animica_studio.storage.config import _config_from_dict
+
+    raw = {
+        "wallet_settings": {
+            "decimals": 9,
+            "explorer_base_url": "https://example.com/explorer",
+            "ui_theme": {
+                "mode": "light",
+                "accent": "#ff5500",
+                "reduced_motion": True,
+                "visual_effects": "off",
+            },
+            "custom_key": "custom_value",
+        }
+    }
+    cfg = _config_from_dict(raw)
+
+    assert cfg.wallet_settings["decimals"] == 9
+    assert cfg.wallet_settings["explorer_base_url"] == "https://example.com/explorer"
+    # ui_theme and other extra keys must be preserved
+    assert "ui_theme" in cfg.wallet_settings, "ui_theme key was dropped by _config_from_dict"
+    assert cfg.wallet_settings["ui_theme"]["mode"] == "light"
+    assert cfg.wallet_settings["ui_theme"]["accent"] == "#ff5500"
+    assert cfg.wallet_settings["ui_theme"]["reduced_motion"] is True
+    assert cfg.wallet_settings.get("custom_key") == "custom_value"
+
+
+def test_config_wallet_settings_round_trip_preserves_ui_theme(tmp_path):
+    """Saving and reloading config must not lose the ui_theme sub-dict."""
+    from animica_studio.storage.config import Config, save_config, load_config
+    import animica_studio.storage.config as cfg_mod
+
+    test_path = tmp_path / "config.json"
+    with patch.object(cfg_mod, "config_file", return_value=test_path):
+        cfg = Config()
+        # Simulate what ThemeManager does on first boot
+        cfg.wallet_settings.setdefault("ui_theme", {})
+        cfg.wallet_settings["ui_theme"].update(
+            {"mode": "light", "accent": "#aabbcc", "reduced_motion": False, "visual_effects": "high"}
+        )
+        save_config(cfg)
+
+        cfg2 = load_config()
+        assert "ui_theme" in cfg2.wallet_settings, "ui_theme dropped after save+load round-trip"
+        assert cfg2.wallet_settings["ui_theme"]["mode"] == "light"
+        assert cfg2.wallet_settings["ui_theme"]["accent"] == "#aabbcc"
+        assert cfg2.wallet_settings["ui_theme"]["visual_effects"] == "high"
+
+
+def test_config_from_dict_wallet_settings_defaults_when_missing():
+    """_config_from_dict must fill in decimals/explorer defaults when absent."""
+    from animica_studio.storage.config import _config_from_dict
+
+    cfg = _config_from_dict({})
+    assert cfg.wallet_settings["decimals"] == 18
+    assert cfg.wallet_settings["explorer_base_url"] == "https://animica.org/explorer"
+
+
+def test_config_from_dict_wallet_settings_coerces_types():
+    """decimals and explorer_base_url must always be the right types."""
+    from animica_studio.storage.config import _config_from_dict
+
+    raw = {"wallet_settings": {"decimals": "9", "explorer_base_url": 42}}
+    cfg = _config_from_dict(raw)
+    assert isinstance(cfg.wallet_settings["decimals"], int)
+    assert isinstance(cfg.wallet_settings["explorer_base_url"], str)
