@@ -18,12 +18,15 @@ import logging
 import time
 from typing import Any, Callable
 
+from shiboken6 import isValid
+
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSizePolicy,
     QTabWidget,
     QTableWidget,
@@ -166,6 +170,103 @@ class _AddAccountDialog(QDialog):
         return label, addr
 
 
+# ---------------------------------------------------------------------------
+# Create Wallet Dialog
+# ---------------------------------------------------------------------------
+
+
+class _CreateWalletDialog(QDialog):
+    """Dialog to create a new wallet entry via backend wallet service."""
+
+    create_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create Wallet")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        self._is_busy = False
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self._label_edit = QLineEdit()
+        self._label_edit.setPlaceholderText("My Wallet")
+        self._label_edit.returnPressed.connect(self._on_accept)
+        form.addRow("Wallet label:", self._label_edit)
+
+        self._encrypt_toggle = QCheckBox("Encrypt wallet")
+        self._encrypt_toggle.setEnabled(False)
+        self._encrypt_toggle.setToolTip("Encryption is not available in this Studio wallet flow yet.")
+        form.addRow("Security:", self._encrypt_toggle)
+
+        layout.addLayout(form)
+
+        self._progress_text = QLabel("Creating wallet…")
+        self._progress_text.setVisible(False)
+        layout.addWidget(self._progress_text)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setVisible(False)
+        layout.addWidget(self._progress)
+
+        self._error_label = QLabel("")
+        self._error_label.setStyleSheet("color: red;")
+        self._error_label.setWordWrap(True)
+        layout.addWidget(self._error_label)
+
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._create_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self._cancel_btn = self._buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self._create_btn.setText("Create")
+        self._create_btn.clicked.connect(self._on_accept)
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
+
+    def _on_accept(self) -> None:
+        if self._is_busy:
+            return
+        self._error_label.setText("")
+        if not self._is_valid_label():
+            return
+        self.create_requested.emit(self.label)
+
+    def _is_valid_label(self) -> bool:
+        label = self.label
+        if not label:
+            self._error_label.setText("Wallet label is required.")
+            return False
+        if len(label) > 32:
+            self._error_label.setText("Wallet label must be 1–32 characters.")
+            return False
+        import re
+
+        if not re.match(r"^[A-Za-z0-9 _-]{1,32}$", label):
+            self._error_label.setText(
+                "Use only letters, numbers, spaces, underscores, and hyphens."
+            )
+            return False
+        return True
+
+    @property
+    def label(self) -> str:
+        return self._label_edit.text().strip()
+
+    def set_busy(self, busy: bool) -> None:
+        self._is_busy = busy
+        self._label_edit.setEnabled(not busy)
+        self._encrypt_toggle.setEnabled(False)
+        self._create_btn.setEnabled(not busy)
+        self._cancel_btn.setEnabled(not busy)
+        self._progress.setVisible(busy)
+        self._progress_text.setVisible(busy)
+
+    def set_error(self, message: str) -> None:
+        self._error_label.setText(message)
 # ---------------------------------------------------------------------------
 # Overview tab
 # ---------------------------------------------------------------------------
@@ -565,6 +666,8 @@ class WalletPage(QWidget):
         self._balance_thread: QThread | None = None
         self._poll_timer: QTimer | None = None
         self._active_threads: list[QThread] = []
+        self._create_wallet_dialog: _CreateWalletDialog | None = None
+        self._create_wallet_thread: QThread | None = None
 
         self._build_ui()
         # Defer first refresh to after window is shown
@@ -586,6 +689,11 @@ class WalletPage(QWidget):
         title.setObjectName("placeholderLabel")
         top_bar.addWidget(title)
         top_bar.addStretch()
+
+        self._create_wallet_btn = QPushButton("Create Wallet")
+        self._create_wallet_btn.clicked.connect(self._on_create_wallet)
+        self._create_wallet_btn.setDefault(False)
+        top_bar.addWidget(self._create_wallet_btn)
 
         self._debug_btn = QPushButton("📦 Copy Debug Bundle")
         self._debug_btn.clicked.connect(self._copy_debug_bundle)
@@ -726,6 +834,66 @@ class WalletPage(QWidget):
             self._wallet_service.remove_account(acc.id)
             self._selected_account = None
             self._reload_accounts_list()
+
+    def _on_create_wallet(self) -> None:
+        if self._create_wallet_thread is not None and self._create_wallet_thread.isRunning():
+            return
+
+        dlg = _CreateWalletDialog(self)
+        self._create_wallet_dialog = dlg
+        dlg.destroyed.connect(self._on_create_wallet_dialog_destroyed)
+        dlg.create_requested.connect(self._start_create_wallet)
+        dlg.exec()
+
+    def _start_create_wallet(self, label: str) -> None:
+        if self._create_wallet_thread is not None and self._create_wallet_thread.isRunning():
+            return
+        if self._create_wallet_dialog is None or not isValid(self._create_wallet_dialog):
+            return
+
+        self._create_wallet_dialog.set_busy(True)
+        self._create_wallet_btn.setEnabled(False)
+
+        def _task() -> Account:
+            return self._wallet_service.create_wallet(label)
+
+        def _on_result(account: Account) -> None:
+            log.info("WalletPage: wallet created label=%s address=%s", account.label, account.address)
+            self._reload_accounts_list()
+            self._select_account_by_id(account.id)
+            self._refresh_all()
+            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+                self._create_wallet_dialog.accept()
+            QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
+
+        def _on_error(msg: str) -> None:
+            log.error("WalletPage: create wallet failed: %s", msg)
+            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+                self._create_wallet_dialog.set_busy(False)
+                self._create_wallet_dialog.set_error(msg)
+
+        thread = _run_in_thread(_task, _on_result, _on_error)
+        self._create_wallet_thread = thread
+        self._active_threads.append(thread)
+
+        def _cleanup() -> None:
+            self._create_wallet_btn.setEnabled(True)
+            if self._create_wallet_dialog is not None and isValid(self._create_wallet_dialog):
+                self._create_wallet_dialog.set_busy(False)
+            self._create_wallet_thread = None
+            self._active_threads = [t for t in self._active_threads if isValid(t) and t.isRunning()]
+
+        thread.finished.connect(_cleanup)
+
+    def _on_create_wallet_dialog_destroyed(self) -> None:
+        self._create_wallet_dialog = None
+
+    def _select_account_by_id(self, account_id: str) -> None:
+        for row in range(self._accounts_list.count()):
+            item = self._accounts_list.item(row)
+            if item and item.data(Qt.ItemDataRole.UserRole) == account_id:
+                self._accounts_list.setCurrentRow(row)
+                return
 
     # ------------------------------------------------------------------
     # Balance refresh

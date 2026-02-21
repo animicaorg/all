@@ -358,6 +358,47 @@ class TestWalletServiceAccounts:
         assert bob_bal.formatted == "2 ANM"
 
 
+
+
+class TestWalletServiceCreateWallet:
+    def test_create_wallet_success(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="=== Wallet created ===\nAddress: anim1acdefghjklmnpqrstuvwxyz0234567890\n",
+                stderr="",
+            )
+            account = ws.create_wallet("My Wallet")
+
+        assert account.label == "My Wallet"
+        assert account.address == "anim1acdefghjklmnpqrstuvwxyz0234567890"
+        assert len(ws.list_accounts()) == 1
+
+    def test_create_wallet_bad_label_raises(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        with pytest.raises(ValueError, match="Wallet label"):
+            ws.create_wallet("bad/label")
+
+    def test_create_wallet_cli_error_raises(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="cli failed")
+            with pytest.raises(RuntimeError, match="cli failed"):
+                ws.create_wallet("Wallet1")
+
+
 class TestWalletServiceExplorerUrls:
     def _make_service(self):
         from animica_studio.storage.config import Config
