@@ -20,15 +20,16 @@ class CliOperation(str, Enum):
 @dataclass
 class OperationSpec:
     path_group: str
+    display_name: str
     required_opts: tuple[str, ...] = ()
 
 
 _SPECS: dict[CliOperation, OperationSpec] = {
-    CliOperation.WALLET_CREATE: OperationSpec("wallet_create", required_opts=("--label", "--alg")),
-    CliOperation.WALLET_LIST: OperationSpec("wallet_list"),
-    CliOperation.AICF_STATUS: OperationSpec("aicf_status"),
-    CliOperation.AICF_JOBS_WATCH: OperationSpec("aicf_jobs_watch"),
-    CliOperation.MINE_BLOCKS: OperationSpec("mine_blocks"),
+    CliOperation.WALLET_CREATE: OperationSpec("wallet_create", display_name="wallet create", required_opts=("--label", "--alg")),
+    CliOperation.WALLET_LIST: OperationSpec("wallet_list", display_name="wallet list"),
+    CliOperation.AICF_STATUS: OperationSpec("aicf_status", display_name="aicf status"),
+    CliOperation.AICF_JOBS_WATCH: OperationSpec("aicf_jobs_watch", display_name="aicf jobs watch"),
+    CliOperation.MINE_BLOCKS: OperationSpec("mine_blocks", display_name="mine-blocks"),
 }
 
 
@@ -42,16 +43,17 @@ class CliOps:
 
     def selected_path(self, op: CliOperation) -> list[str]:
         spec = _SPECS[op]
+        display_name = spec.display_name
         path = self._registry.best_match(spec.path_group)
         if not path:
             raise CliOperationError(
-                f"Your animica CLI does not support {op.value}. "
+                f"Your animica CLI does not support {display_name}. "
                 f"Detected commands: {', '.join(self._registry.top_level_commands()) or '<none>'}."
             )
         for req in spec.required_opts:
             if not self._registry.has_opt(path, req):
                 raise CliOperationError(
-                    f"Your animica CLI does not support {op.value}: missing required option {req} "
+                    f"Your animica CLI does not support {display_name}: missing required option {req} "
                     f"for {' '.join(path)}."
                 )
         return path

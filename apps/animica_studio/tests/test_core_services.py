@@ -688,3 +688,17 @@ def test_config_from_dict_wallet_settings_coerces_types():
     cfg = _config_from_dict(raw)
     assert isinstance(cfg.wallet_settings["decimals"], int)
     assert isinstance(cfg.wallet_settings["explorer_base_url"], str)
+
+
+def test_cli_ops_reports_mine_blocks_with_hyphenated_name():
+    from animica_studio.services.cli_ops import CliOperation, CliOperationError, CliOps
+
+    class _EmptyRegistry:
+        def best_match(self, _group: str) -> list[str]:
+            return []
+
+        def top_level_commands(self) -> list[str]:
+            return []
+
+    with pytest.raises(CliOperationError, match=r"does not support mine-blocks"):
+        CliOps(_EmptyRegistry()).selected_path(CliOperation.MINE_BLOCKS)
