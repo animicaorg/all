@@ -12,6 +12,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import time
@@ -26,6 +27,7 @@ from animica_studio.models.wallet_models import (
     format_amount,
 )
 from animica_studio.services.error_format import format_rpc_error, safe_str
+from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
 from animica_studio.services.tx_builder import (
     build_transfer_tx,
@@ -102,16 +104,8 @@ class WalletService:
         log.info("WalletService: added account %s (%s)", label, address)
         return acc
 
-    def create_wallet(self, label: str, sig_scheme: str = "dilithium3") -> Account:
-        """Create a new wallet via Animica CLI and add it to tracked accounts.
-
-        Raises
-        ------
-        ValueError
-            If label validation fails.
-        RuntimeError
-            If CLI wallet creation fails or output cannot be parsed.
-        """
+    def validate_wallet_create_request(self, label: str, sig_scheme: str = "dilithium3") -> tuple[str, str]:
+        """Validate and normalize wallet creation inputs."""
         clean_label = label.strip()
         if not _WALLET_LABEL_RE.match(clean_label):
             raise ValueError(
@@ -121,10 +115,12 @@ class WalletService:
         scheme = sig_scheme.strip().lower()
         if scheme not in {"dilithium3", "sphincs128s"}:
             raise ValueError("Signature scheme must be dilithium3 or sphincs128s")
+        return clean_label, scheme
 
-        cli_bin = self._config.get_active_profile().cli.animica_bin
-        cmd = [
-            cli_bin,
+    def build_create_wallet_args(self, label: str, sig_scheme: str = "dilithium3") -> tuple[list[str], str, str]:
+        """Build CLI args for wallet creation and return normalized values."""
+        clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme)
+        return [
             "wallet",
             "create",
             "--label",
@@ -132,9 +128,34 @@ class WalletService:
             "--sig-scheme",
             scheme,
             "--allow-insecure-fallback",
-        ]
+        ], clean_label, scheme
+
+    def parse_created_wallet_address(self, stdout: str) -> str:
+        """Extract created wallet address from CLI output."""
+        match = _WALLET_ADDRESS_RE.search(stdout)
+        if not match:
+            raise RuntimeError("Wallet was created but Studio could not read the new address from CLI output.")
+        return match.group(1)
+
+    def store_created_wallet(self, label: str, address: str, sig_scheme: str) -> Account:
+        """Persist a wallet record from validated CLI creation output."""
+        account = Account(label=label, address=address, sig_scheme=sig_scheme)
+        raw: list[dict[str, Any]] = self._config.accounts  # type: ignore[attr-defined]
+        raw.append(account.to_dict())
+        save_config(self._config)
+        return account
+
+    def create_wallet(self, label: str, sig_scheme: str = "dilithium3") -> Account:
+        """Create a new wallet via Animica CLI and persist it."""
+        wallet_args, clean_label, scheme = self.build_create_wallet_args(label, sig_scheme)
+        try:
+            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
+        except FileNotFoundError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        cmd = [program, *base_args, *wallet_args]
         started = time.perf_counter()
-        log.info("WalletService: create wallet requested label=%s scheme=%s", clean_label, scheme)
+        log.info("WalletService: create wallet requested label=%s scheme=%s argv=%r", clean_label, scheme, cmd)
 
         try:
             result = subprocess.run(
@@ -144,6 +165,7 @@ class WalletService:
                 timeout=45,
                 check=False,
                 stdin=subprocess.DEVNULL,
+                env={**os.environ, **resolved_env} if resolved_env else None,
             )
         except Exception as exc:  # noqa: BLE001
             log.error("WalletService: create wallet failed to invoke CLI: %s", exc)
@@ -155,17 +177,8 @@ class WalletService:
             log.warning("WalletService: create wallet CLI failed label=%s scheme=%s duration_ms=%s error=%s", clean_label, scheme, elapsed, details)
             raise RuntimeError(details)
 
-        match = _WALLET_ADDRESS_RE.search(result.stdout)
-        if not match:
-            elapsed = int((time.perf_counter() - started) * 1000)
-            log.warning("WalletService: create wallet address parse failed label=%s scheme=%s duration_ms=%s output=%r", clean_label, scheme, elapsed, result.stdout)
-            raise RuntimeError("Wallet was created but Studio could not read the new address from CLI output.")
-
-        address = match.group(1)
-        account = Account(label=clean_label, address=address, sig_scheme=scheme)
-        raw: list[dict[str, Any]] = self._config.accounts  # type: ignore[attr-defined]
-        raw.append(account.to_dict())
-        save_config(self._config)
+        address = self.parse_created_wallet_address(result.stdout)
+        account = self.store_created_wallet(clean_label, address, scheme)
         elapsed = int((time.perf_counter() - started) * 1000)
         log.info("WalletService: create wallet success label=%s scheme=%s address=%s duration_ms=%s", clean_label, scheme, address, elapsed)
         return account
