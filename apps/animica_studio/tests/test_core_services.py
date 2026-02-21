@@ -677,7 +677,7 @@ def test_config_from_dict_wallet_settings_defaults_when_missing():
 
     cfg = _config_from_dict({})
     assert cfg.wallet_settings["decimals"] == 18
-    assert cfg.wallet_settings["explorer_base_url"] == "https://animica.org/explorer"
+    assert cfg.wallet_settings["explorer_base_url"] == "https://explorer.animica.org"
 
 
 def test_config_from_dict_wallet_settings_coerces_types():

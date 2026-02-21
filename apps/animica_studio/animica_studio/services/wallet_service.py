@@ -562,4 +562,4 @@ class WalletService:
             url = ws.get("explorer_base_url", "")
             if url:
                 return url.rstrip("/")
-        return "https://animica.org/explorer"
+        return "https://explorer.animica.org"
