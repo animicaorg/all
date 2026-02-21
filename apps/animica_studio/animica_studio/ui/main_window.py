@@ -7,6 +7,7 @@ from typing import Callable, NamedTuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMenu, QVBoxLayout, QWidget
 
 from animica_studio.models.profile_models import RpcProfile
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         self.resize(1220, 760)
         self._profile_service.subscribe(self._on_profile_changed)
         self._build_ui()
+        self._build_menu()
         self._apply_theme()
         self._theme_manager.theme_changed.connect(lambda _p: self._apply_theme())
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
@@ -117,6 +119,22 @@ class MainWindow(QMainWindow):
         self._sidebar.navigate.connect(self._navigate)
         self._navigate(0)
         self.refresh_header()
+
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("File")
+        new_menu = file_menu.addMenu("New")
+        act = QAction("Script from Template…", self)
+        act.triggered.connect(self._on_file_new_template)
+        new_menu.addAction(act)
+
+    def _on_file_new_template(self) -> None:
+        if self._ide_index is None:
+            return
+        self._navigate(self._ide_index)
+        self._ensure_lazy_pages(self._ide_index)
+        if self._ide_page is not None and hasattr(self._ide_page, "new_script_from_template"):
+            self._ide_page.new_script_from_template()
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(build_stylesheet(self._theme_manager.palette()))

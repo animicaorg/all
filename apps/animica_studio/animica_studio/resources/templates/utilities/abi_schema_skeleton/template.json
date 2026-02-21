@@ -1,0 +1,12 @@
+{
+  "id": "abi_schema_skeleton",
+  "name": "ABI schema skeleton",
+  "category": "Utilities",
+  "description": "Minimal ABI schema represented in Python dict/list form.",
+  "tags": ["abi", "schema"],
+  "language": "python",
+  "default_filename": "abi_schema.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "MyContract", "required": true, "validation_regex": "^[A-Za-z_][A-Za-z0-9_]{2,40}$", "help_text": "Contract identifier."}
+  ]
+}
