@@ -465,14 +465,16 @@ class TestWalletServiceFetchBalance:
         cfg = Config()
         ws = WalletService(cfg)
 
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get_balance.return_value = 5 * 10**18
+        mock_completed = MagicMock()
+        mock_completed.returncode = 0
+        mock_completed.stdout = '{"balance_confirmed": 5000000000000000000, "balance_confirmed_formatted": "5 ANM"}'
 
-        with patch(
-            "animica_studio.services.rpc_client.RpcClient",
-            return_value=mock_client,
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=mock_completed),
         ):
             state = ws.fetch_balance("anim1test", "http://localhost:8545")
 
@@ -487,19 +489,46 @@ class TestWalletServiceFetchBalance:
         cfg = Config()
         ws = WalletService(cfg)
 
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get_balance.side_effect = ConnectionError("Connection refused")
+        mock_completed = MagicMock()
+        mock_completed.returncode = 1
+        mock_completed.stdout = ""
+        mock_completed.stderr = "Connection refused"
 
-        with patch(
-            "animica_studio.services.rpc_client.RpcClient",
-            return_value=mock_client,
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=mock_completed),
         ):
             state = ws.fetch_balance("anim1test", "http://localhost:8545")
 
         assert state.error is not None
         assert state.balance_wei == 0
+
+    def test_plain_text_output_parses_anm_balance(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        mock_completed = MagicMock()
+        mock_completed.returncode = 0
+        mock_completed.stdout = "Wallet: premine\nBalance: 1.25 ANM\n"
+        mock_completed.stderr = ""
+
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=mock_completed),
+        ):
+            state = ws.fetch_balance("anim1test", "http://localhost:8545")
+
+        assert state.error is None
+        assert state.formatted == "1.25 ANM"
 
     def test_error_does_not_propagate_to_other_accounts(self):
         """Per-account errors must NOT affect other accounts."""
@@ -511,19 +540,24 @@ class TestWalletServiceFetchBalance:
         ws.add_account("Alice", "anim1alice")
         ws.add_account("Bob", "anim1bob")
 
-        def fake_balance(address: str):
-            if address == "anim1alice":
-                raise ConnectionError("Alice's RPC failed")
-            return 3 * 10**18
+        def fake_run(cmd, **_kwargs):
+            completed = MagicMock()
+            if cmd[-1] == "anim1alice":
+                completed.returncode = 1
+                completed.stdout = ""
+                completed.stderr = "Alice's RPC failed"
+                return completed
+            completed.returncode = 0
+            completed.stdout = '{"balance_confirmed": 3000000000000000000, "balance_confirmed_formatted": "3 ANM"}'
+            completed.stderr = ""
+            return completed
 
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get_balance.side_effect = fake_balance
-
-        with patch(
-            "animica_studio.services.rpc_client.RpcClient",
-            return_value=mock_client,
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", side_effect=fake_run),
         ):
             results = ws.refresh_all_balances("http://localhost:8545")
 
