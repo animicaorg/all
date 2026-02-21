@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -129,6 +131,9 @@ class Config:
         }
     )
     workspace_root: str | None = None
+    repo_root: str | None = None
+    cli_path_override: str | None = None
+    use_repo_venv_automatically: bool = True
 
     # ---------------------------------------------------------------------------
     # Convenience helpers
@@ -219,6 +224,9 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
         quantum_defaults=d.get("quantum_defaults") or {"default_shots": 1024, "default_qubits": 4},
         workspace_root=d.get("workspace_root") or None,
+        repo_root=d.get("repo_root") or None,
+        cli_path_override=d.get("cli_path_override") or None,
+        use_repo_venv_automatically=bool(d.get("use_repo_venv_automatically", True)),
     )
 
 
@@ -226,6 +234,51 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     d = asdict(cfg)
     # rpc_profiles is already a list[dict] — asdict wraps it as-is
     return d
+
+
+def discover_repo_root() -> Path | None:
+    """Best-effort discovery of the Animica monorepo root."""
+    env_override = os.getenv("ANIMICA_REPO_ROOT", "").strip()
+    if env_override:
+        p = Path(env_override).expanduser().resolve()
+        if _is_repo_root(p):
+            return p
+
+    search_roots: list[Path] = []
+    search_roots.append(Path.cwd())
+    search_roots.append(Path(sys.executable).resolve().parent)
+    search_roots.append(Path(__file__).resolve())
+
+    seen: set[Path] = set()
+    for start in search_roots:
+        node = start if start.is_dir() else start.parent
+        while True:
+            if node in seen:
+                break
+            seen.add(node)
+            if _is_repo_root(node):
+                return node
+            if node.parent == node:
+                break
+            node = node.parent
+
+    home = Path.home()
+    for candidate in [home / "animica", home / "all", home / "src" / "animica"]:
+        if _is_repo_root(candidate):
+            return candidate
+    return None
+
+
+def _is_repo_root(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    by_layout = (
+        (path / "pyproject.toml").exists()
+        and (path / "ops" / "docker").exists()
+        and (path / "apps" / "animica_studio").exists()
+    )
+    by_git = (path / ".git").exists() and (path / "ops" / "docker" / "docker-compose.mainnet.yml").exists()
+    return by_layout or by_git
 
 
 # ---------------------------------------------------------------------------

@@ -10,10 +10,17 @@ import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import logging
+
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThreadPool, QTimer, Signal
+
+from animica_studio.storage.config import Config, discover_repo_root, load_config, save_config
+
+log = logging.getLogger(__name__)
 
 
 class JobHandle(QObject):
@@ -45,6 +52,100 @@ class _CallableTask:
             self._signals.error.emit(str(exc), repr(exc))
 
 
+
+
+@dataclass
+class ResolvedCli:
+    argv_prefix: list[str]
+    env: dict[str, str]
+    repo_root: str | None = None
+    error: str | None = None
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.exists() and path.is_file() and os.access(path, os.X_OK)
+
+
+def _norm(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
+def _venv_env(repo_root: Path) -> dict[str, str]:
+    venv = repo_root / '.venv'
+    venv_bin = venv / 'bin'
+    existing_path = os.environ.get('PATH', '')
+    merged_path = f"{venv_bin}:{existing_path}" if existing_path else str(venv_bin)
+    return {'VIRTUAL_ENV': str(venv), 'PATH': merged_path}
+
+
+def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
+    cfg = cfg or load_config()
+
+    if cfg.cli_path_override:
+        override = Path(cfg.cli_path_override).expanduser()
+        if _is_executable_file(override):
+            cli = _norm(override)
+            log.info('CLI resolved to: %s (settings override)', cli)
+            return ResolvedCli(argv_prefix=[cli], env={})
+
+    found = shutil.which('animica')
+    if found:
+        cli = _norm(found)
+        log.info('CLI resolved to: %s (PATH)', cli)
+        return ResolvedCli(argv_prefix=[cli], env={})
+
+    repo_root: Path | None = Path(cfg.repo_root).expanduser().resolve() if cfg.repo_root else None
+    if repo_root is None or not repo_root.exists():
+        discovered = discover_repo_root()
+        if discovered is not None:
+            cfg.repo_root = str(discovered)
+            save_config(cfg)
+            repo_root = discovered
+
+    if repo_root and cfg.use_repo_venv_automatically:
+        venv_bin = repo_root / '.venv' / 'bin'
+        venv_cli = venv_bin / 'animica'
+        venv_python = venv_bin / 'python'
+        env = _venv_env(repo_root)
+        if _is_executable_file(venv_cli):
+            cli = str(venv_cli)
+            log.info('CLI resolved to: %s (repo .venv bin)', cli)
+            return ResolvedCli(argv_prefix=[cli], env=env, repo_root=str(repo_root))
+        if _is_executable_file(venv_python):
+            cli = str(venv_python)
+            log.info('CLI resolved to: %s -m animica (repo .venv python)', cli)
+            return ResolvedCli(argv_prefix=[cli, '-m', 'animica'], env=env, repo_root=str(repo_root))
+
+        err = (
+            f'Animica venv not found at {repo_root}/.venv. '
+            'Run: python -m venv .venv && pip install -e .'
+        )
+        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err)
+
+    if repo_root and not cfg.use_repo_venv_automatically:
+        return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error='Animica CLI not found. Configure CLI path in Settings.')
+
+    return ResolvedCli(
+        argv_prefix=[],
+        env={},
+        repo_root=str(repo_root) if repo_root else None,
+        error='Animica CLI not found. Install it or configure its path in Settings.',
+    )
+
+
+def resolve_cli_argv(argv: list[str]) -> tuple[list[str], dict[str, str], str | None]:
+    if not argv:
+        return [], {}, None
+    cmd = argv[0]
+    if cmd != 'animica':
+        return argv, {}, None
+
+    resolved = resolve_animica_cli()
+    if not resolved.argv_prefix:
+        return [], {}, resolved.error
+    return [*resolved.argv_prefix, *argv[1:]], resolved.env, None
+
+
 class JobRunner(QObject):
     _instance: "JobRunner | None" = None
 
@@ -56,6 +157,7 @@ class JobRunner(QObject):
         self._grace_timers: dict[str, QTimer] = {}
         self._stdout_buffers: dict[str, str] = {}
         self._stderr_buffers: dict[str, str] = {}
+        self._stderr_captures: dict[str, str] = {}
         self._pool = QThreadPool.globalInstance()
 
     @classmethod
@@ -76,26 +178,30 @@ class JobRunner(QObject):
         handle = JobHandle(job_id, self)
         self._jobs[job_id] = handle
 
-        resolved = resolve_cli_argv(argv)
-        if not resolved:
-            QTimer.singleShot(0, lambda: self._emit_missing_cli(handle))
+        resolved_argv, resolved_env, resolve_error = resolve_cli_argv(argv)
+        if not resolved_argv:
+            QTimer.singleShot(0, lambda: self._emit_missing_cli(handle, resolve_error or "animica CLI not found."))
             return handle
 
-        program, *args = resolved
+        program, *args = resolved_argv
+        log.info("Running argv: %r", [program, *args])
         proc = QProcess(self)
         proc.setProgram(program)
         proc.setArguments(args)
         if cwd:
             proc.setWorkingDirectory(cwd)
+        pe = QProcessEnvironment.systemEnvironment()
+        merged_env = dict(resolved_env)
         if env:
-            pe = QProcessEnvironment.systemEnvironment()
-            for k, v in env.items():
-                pe.insert(k, v)
-            proc.setProcessEnvironment(pe)
+            merged_env.update(env)
+        for k, v in merged_env.items():
+            pe.insert(k, v)
+        proc.setProcessEnvironment(pe)
 
         self._processes[job_id] = proc
         self._stdout_buffers[job_id] = ""
         self._stderr_buffers[job_id] = ""
+        self._stderr_captures[job_id] = ""
 
         proc.started.connect(lambda: handle.started.emit(job_id))
         proc.readyReadStandardOutput.connect(lambda: self._read_stream(job_id, handle, "stdout"))
@@ -145,9 +251,8 @@ class JobRunner(QObject):
             self._grace_timers[job_id] = grace
             grace.start(1500)
 
-    def _emit_missing_cli(self, handle: JobHandle) -> None:
+    def _emit_missing_cli(self, handle: JobHandle, msg: str) -> None:
         handle.started.emit(handle.job_id)
-        msg = "animica CLI not found. Install it or configure its path in Settings."
         handle.output.emit(handle.job_id, "system", msg)
         handle.error.emit(handle.job_id, msg, "")
         handle.finished.emit(handle.job_id, 127, {"error": msg})
@@ -158,6 +263,8 @@ class JobRunner(QObject):
         if proc is None:
             return
         data = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace") if stream == "stdout" else bytes(proc.readAllStandardError()).decode("utf-8", errors="replace")
+        if stream == "stderr" and data:
+            self._stderr_captures[job_id] = (self._stderr_captures.get(job_id, "") + data)[-4000:]
         buf_key = self._stdout_buffers if stream == "stdout" else self._stderr_buffers
         pending = buf_key.get(job_id, "") + data
         lines = pending.splitlines(keepends=True)
@@ -182,14 +289,22 @@ class JobRunner(QObject):
         self.cancel(job_id)
 
     def _on_process_error(self, job_id: str, handle: JobHandle, err: QProcess.ProcessError) -> None:
-        handle.error.emit(job_id, "Process error", f"QProcess error: {int(err)}")
+        proc = self._processes.get(job_id)
+        program = proc.program() if proc else "<unknown>"
+        details = proc.errorString() if proc else f"QProcess error: {int(err)}"
+        handle.error.emit(job_id, f"Process failed to start: {program}", details)
 
     def _on_finished(self, job_id: str, handle: JobHandle, exit_code: int) -> None:
         self._flush_partial(job_id, handle)
         self._stop_timers(job_id)
         payload = {"ended_ts": time.time()}
         if exit_code != 0:
+            stderr_preview = self._stderr_captures.get(job_id, "")[:300]
+            log.info("Exit code: %s", exit_code)
+            log.info("stderr (first N chars): %s", stderr_preview)
             handle.error.emit(job_id, f"Command exited with code {exit_code}", "")
+        else:
+            log.info("Exit code: %s", exit_code)
         handle.finished.emit(job_id, exit_code, payload)
         self._cleanup(job_id)
 
@@ -224,30 +339,6 @@ class JobRunner(QObject):
             proc.deleteLater()
         self._stdout_buffers.pop(job_id, None)
         self._stderr_buffers.pop(job_id, None)
+        self._stderr_captures.pop(job_id, None)
         self._jobs.pop(job_id, None)
 
-
-def resolve_cli_argv(argv: list[str]) -> list[str]:
-    """Resolve the animica executable for dev and packaged Studio layouts."""
-    if not argv:
-        return []
-    cmd = argv[0]
-    if cmd != "animica":
-        return argv
-
-    found = shutil.which("animica")
-    if found:
-        return [found, *argv[1:]]
-
-    exe_dir = Path(os.path.dirname(os.path.abspath(os.getenv("PYTHONEXECUTABLE") or os.sys.executable)))
-    candidates = [
-        exe_dir / "animica",
-        exe_dir / "_internal" / "animica",
-        exe_dir / "animica.exe",
-        exe_dir / "_internal" / "animica.exe",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return [str(candidate), *argv[1:]]
-
-    return []
