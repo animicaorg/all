@@ -420,6 +420,34 @@ def test_rpc_client_get_balance_from_object_result():
         assert balance == 100
         client.close()
 
+def test_rpc_client_get_balance_with_named_params_fallback():
+    from animica_studio.services.rpc_client import RpcClient
+
+    discover_resp = {
+        "jsonrpc": "2.0", "id": 1,
+        "result": {"methods": [{"name": "state_getBalance"}]}
+    }
+    invalid_params_resp = {
+        "jsonrpc": "2.0", "id": 2,
+        "error": {"code": -32602, "message": "Invalid params"}
+    }
+    balance_resp = {
+        "jsonrpc": "2.0", "id": 3,
+        "result": {"balance": "0x64"}
+    }
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [
+            _make_mock_response(discover_resp),
+            _make_mock_response(invalid_params_resp),
+            _make_mock_response(balance_resp),
+        ]
+        client = RpcClient("http://localhost:8545/rpc", max_retries=1)
+        balance = client.get_balance("anim1test")
+        assert balance == 100
+        client.close()
+
+
 
 def test_rpc_client_retries_on_transport_error():
     import requests.exceptions
