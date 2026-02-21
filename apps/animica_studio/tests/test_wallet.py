@@ -585,11 +585,11 @@ class TestWalletStoreLocalFile:
         assert records[0].algorithm == "dilithium3"
         assert records[1].algorithm == "sphincs_shake_128s"
 
-    def test_load_local_wallets_missing_file_raises(self, tmp_path):
+    def test_load_local_wallets_missing_file_returns_empty(self, tmp_path):
         from animica_studio.services.wallet_store import WalletStore
 
-        with pytest.raises(FileNotFoundError):
-            WalletStore().load_local_wallets(tmp_path / "wallets.json")
+        records = WalletStore().load_local_wallets(tmp_path / "wallets.json")
+        assert records == []
 
 
 class TestProfileHelpers:

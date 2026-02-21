@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import functools
+import logging
+from collections.abc import Callable
+from typing import ParamSpec, TypeVar
+
 from PySide6.QtCore import QThread
 from shiboken6 import isValid
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 def qalive(obj: object | None) -> bool:
@@ -36,3 +44,24 @@ def stop_thread(thread: QThread | None, wait_ms: int = 1500) -> None:
             thread.wait(wait_ms)
     except RuntimeError:
         return
+
+
+def safe_slot(
+    logger: logging.Logger,
+    *,
+    message: str = "Unhandled exception in Qt slot",
+) -> Callable[[Callable[P, R]], Callable[P, R | None]]:
+    """Decorator that logs exceptions from Qt slot handlers and swallows them."""
+
+    def decorator(fn: Callable[P, R]) -> Callable[P, R | None]:
+        @functools.wraps(fn)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> R | None:
+            try:
+                return fn(*args, **kwargs)
+            except Exception:  # noqa: BLE001
+                logger.exception("%s: %s", message, fn.__qualname__)
+                return None
+
+        return wrapped
+
+    return decorator
