@@ -497,9 +497,20 @@ class WalletService:
 
         try:
             program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-            cmd = [program, *base_args, "tx", "send", "--from", from_addr, "--to", to_addr, "--value", amount_arg]
-            if memo:
-                cmd.extend(["--memo", memo])
+            # Keep the send invocation aligned with the expected wallet UX flow:
+            # clicking "Send" should fire the same CLI command users run manually.
+            cmd = [
+                program,
+                *base_args,
+                "tx",
+                "send",
+                "--from",
+                from_addr,
+                "--to",
+                to_addr,
+                "--value",
+                amount_arg,
+            ]
             result = subprocess.run(
                 cmd,
                 capture_output=True,
