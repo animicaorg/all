@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QFileDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from animica_studio.services.diagnostics import diagnostics
 from animica_studio.services.workers import WorkerThread
+from animica_studio.services.job_runner import resolve_animica_cli
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.theme.theme_manager import ThemeManager
 from animica_studio.util.qt import qthread_running, stop_thread
@@ -59,6 +61,36 @@ class SettingsPage(QWidget):
         form.addRow("Node start cmd:", self._start_cmd_edit)
         layout.addWidget(profile_group)
 
+        cli_group = QGroupBox("CLI")
+        cform = QFormLayout(cli_group)
+        self._repo_root_edit = QLineEdit(self._config.repo_root or "")
+        repo_row = QHBoxLayout()
+        repo_row.addWidget(self._repo_root_edit)
+        repo_browse = QPushButton("Browse…")
+        repo_browse.clicked.connect(self._browse_repo_root)
+        repo_row.addWidget(repo_browse)
+        cform.addRow("Repo root:", repo_row)
+
+        self._cli_path_edit = QLineEdit(self._config.cli_path_override or "")
+        cli_row = QHBoxLayout()
+        cli_row.addWidget(self._cli_path_edit)
+        cli_browse = QPushButton("Browse…")
+        cli_browse.clicked.connect(self._browse_cli_path)
+        cli_row.addWidget(cli_browse)
+        cform.addRow("CLI path override:", cli_row)
+
+        self._use_repo_venv = QCheckBox("Use repo .venv automatically")
+        self._use_repo_venv.setChecked(self._config.use_repo_venv_automatically)
+        cform.addRow("", self._use_repo_venv)
+
+        self._resolved_cli_label = QLabel("")
+        cform.addRow("Resolved CLI:", self._resolved_cli_label)
+        layout.addWidget(cli_group)
+
+        self._repo_root_edit.textChanged.connect(self._refresh_cli_resolution_label)
+        self._cli_path_edit.textChanged.connect(self._refresh_cli_resolution_label)
+        self._use_repo_venv.toggled.connect(self._refresh_cli_resolution_label)
+
         appearance = QGroupBox("Appearance")
         aform = QFormLayout(appearance)
         self._mode_combo = QComboBox()
@@ -73,6 +105,9 @@ class SettingsPage(QWidget):
         aform.addRow("Visual effects:", self._effects_combo)
         aform.addRow("", self._reduced_motion)
         layout.addWidget(appearance)
+        self._config.repo_root = self._repo_root_edit.text().strip() or None
+        self._config.cli_path_override = self._cli_path_edit.text().strip() or None
+        self._config.use_repo_venv_automatically = self._use_repo_venv.isChecked()
         if self._theme_manager:
             self._mode_combo.setCurrentText(self._theme_manager.mode())
             self._effects_combo.setCurrentText(self._theme_manager.visual_effects())
@@ -103,6 +138,7 @@ class SettingsPage(QWidget):
         layout.addWidget(diag_group)
         layout.addStretch()
         self._refresh_diagnostics()
+        self._refresh_cli_resolution_label()
 
     def _on_save(self) -> None:
         profile = self._config.get_active_profile()
@@ -120,6 +156,31 @@ class SettingsPage(QWidget):
             self._theme_manager.set_reduced_motion(self._reduced_motion.isChecked())
         save_config(self._config)
         self._status_label.setText("Settings saved.")
+        self._refresh_cli_resolution_label()
+
+    def _browse_repo_root(self) -> None:
+        current = self._repo_root_edit.text().strip() or ""
+        selected = QFileDialog.getExistingDirectory(self, "Select Animica Repo Root", current)
+        if selected:
+            self._repo_root_edit.setText(selected)
+            self._refresh_cli_resolution_label()
+
+    def _browse_cli_path(self) -> None:
+        current = self._cli_path_edit.text().strip() or ""
+        selected, _ = QFileDialog.getOpenFileName(self, "Select Animica CLI", current)
+        if selected:
+            self._cli_path_edit.setText(selected)
+            self._refresh_cli_resolution_label()
+
+    def _refresh_cli_resolution_label(self) -> None:
+        self._config.repo_root = self._repo_root_edit.text().strip() or None
+        self._config.cli_path_override = self._cli_path_edit.text().strip() or None
+        self._config.use_repo_venv_automatically = self._use_repo_venv.isChecked()
+        resolved = resolve_animica_cli(self._config)
+        if resolved.argv_prefix:
+            self._resolved_cli_label.setText(" ".join(resolved.argv_prefix))
+        else:
+            self._resolved_cli_label.setText(resolved.error or "CLI unresolved")
 
     def _on_test_rpc(self) -> None:
         if qthread_running(self._worker_thread):
