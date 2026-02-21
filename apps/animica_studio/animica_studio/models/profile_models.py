@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from animica_studio.util.paths import default_chain_data_dir
+
 
 class ProfileType(str, Enum):
     """Connection profile type."""
@@ -79,6 +81,7 @@ class RpcProfile:
     chain_id_expected: int
     node_start_cmd: list[str] | None = None
     node_datadir: str | None = None
+    node_datadir_custom: bool = False
     node_rpc_url: str | None = None
     created_ts: float = field(default_factory=time.time)
     last_used_ts: float = field(default_factory=time.time)
@@ -116,6 +119,7 @@ class RpcProfile:
             "chain_id_expected": self.chain_id_expected,
             "node_start_cmd": self.node_start_cmd,
             "node_datadir": self.node_datadir,
+            "node_datadir_custom": self.node_datadir_custom,
             "node_rpc_url": self.node_rpc_url,
             "created_ts": self.created_ts,
             "last_used_ts": self.last_used_ts,
@@ -162,6 +166,9 @@ class RpcProfile:
             node_start_cmd = [str(s) for s in raw_cmd]
 
         node_datadir = str(d["node_datadir"]) if d.get("node_datadir") else None
+        node_datadir_custom = bool(d.get("node_datadir_custom", bool(node_datadir)))
+        if not node_datadir_custom:
+            node_datadir = str(default_chain_data_dir(chain_id))
         node_rpc_url_raw = d.get("node_rpc_url")
         node_rpc_url: str | None = None
         if node_rpc_url_raw:
@@ -196,6 +203,7 @@ class RpcProfile:
             node_start_cmd=node_start_cmd,
             node_datadir=node_datadir,
             node_rpc_url=node_rpc_url,
+            node_datadir_custom=node_datadir_custom,
             created_ts=created_ts,
             last_used_ts=last_used_ts,
             notes=notes,
@@ -213,15 +221,19 @@ class RpcProfile:
         )
 
     @classmethod
-    def make_default_local(cls, datadir: str, name: str = "Local Node") -> "RpcProfile":
+    def make_default_local(
+        cls, datadir: str | None = None, chain_id: int = 1, name: str = "Local Node"
+    ) -> "RpcProfile":
         """Create a default local-node profile."""
+        datadir = datadir or str(default_chain_data_dir(chain_id))
         return cls(
             id=str(uuid.uuid4()),
             name=name,
             type=ProfileType.LOCAL_NODE,
             rpc_url="http://127.0.0.1:8545/rpc",
-            chain_id_expected=1,
+            chain_id_expected=int(chain_id),
             node_start_cmd=["animica", "node", "start"],
             node_datadir=datadir,
+            node_datadir_custom=False,
             node_rpc_url="http://127.0.0.1:8545/rpc",
         )

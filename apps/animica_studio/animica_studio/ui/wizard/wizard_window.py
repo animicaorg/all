@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 from animica_studio.models.profile_models import ProfileType, RpcProfile
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.fs import check_writable_dir
-from animica_studio.util.paths import app_data_dir
+from animica_studio.util.paths import default_chain_data_dir, running_as_root
 
 log = logging.getLogger(__name__)
 
@@ -288,14 +288,27 @@ class LocalNodePage(QWidget):
             layout.addLayout(widget_layout)
 
         # Datadir
-        layout.addWidget(QLabel("Node Data Directory:"))
+        layout.addWidget(QLabel("Data Directory:"))
+        self._chain_id = _DEFAULT_CHAIN_ID
+        self._datadir_is_custom = False
         datadir_row = QHBoxLayout()
-        self.datadir_edit = QLineEdit(str(app_data_dir() / "node"))
+        self.datadir_edit = QLineEdit(str(self._default_data_dir()))
+        self.datadir_edit.textChanged.connect(self._on_datadir_text_changed)
         datadir_row.addWidget(self.datadir_edit, stretch=1)
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._browse_datadir)
         datadir_row.addWidget(browse_btn)
+        reset_btn = QPushButton("Reset to default")
+        reset_btn.clicked.connect(self._reset_datadir_to_default)
+        datadir_row.addWidget(reset_btn)
         layout.addLayout(datadir_row)
+
+        self._datadir_default_lbl = _status_label()
+        layout.addWidget(self._datadir_default_lbl)
+        self._root_warn_lbl = _status_label(color="#f9e2af")
+        self._root_warn_lbl.setVisible(False)
+        layout.addWidget(self._root_warn_lbl)
+        self._refresh_datadir_hints()
 
         # RPC URL
         layout.addWidget(QLabel("Local RPC URL:"))
@@ -325,10 +338,40 @@ class LocalNodePage(QWidget):
         self._last_actual_chain_id: int | None = None
 
     def _browse_datadir(self) -> None:
-        current = self.datadir_edit.text().strip() or str(app_data_dir())
+        current = self.datadir_edit.text().strip() or str(self._default_data_dir())
         chosen = QFileDialog.getExistingDirectory(self, "Select Node Data Directory", current)
         if chosen:
             self.datadir_edit.setText(chosen)
+
+    def _default_data_dir(self) -> Path:
+        return default_chain_data_dir(self._chain_id)
+
+    def _refresh_datadir_hints(self) -> None:
+        default_txt = str(self._default_data_dir())
+        self._datadir_default_lbl.setText(f"Default: {default_txt}")
+        if running_as_root():
+            self._root_warn_lbl.setVisible(True)
+            self._root_warn_lbl.setText(
+                "⚠ Running as root. Default path uses /root/.animica/... "
+                "Run Studio as non-root for consistent wallet/data paths."
+            )
+        else:
+            self._root_warn_lbl.setVisible(False)
+
+    def _on_datadir_text_changed(self, _text: str) -> None:
+        current = self.datadir_edit.text().strip()
+        self._datadir_is_custom = bool(current and current != str(self._default_data_dir()))
+
+    def _reset_datadir_to_default(self) -> None:
+        self._datadir_is_custom = False
+        self.datadir_edit.setText(str(self._default_data_dir()))
+        self._refresh_datadir_hints()
+
+    def set_chain_id(self, chain_id: int) -> None:
+        self._chain_id = int(chain_id)
+        if not self._datadir_is_custom:
+            self.datadir_edit.setText(str(self._default_data_dir()))
+        self._refresh_datadir_hints()
 
     def _set_status(self, text: str, color: str = "#a6adc8") -> None:
         self._status_lbl.setText(text)
@@ -405,6 +448,8 @@ class LocalNodePage(QWidget):
     def _on_start_result(self, result: dict[str, Any]) -> None:
         if result.get("ok"):
             self._last_actual_chain_id = result.get("chain_id")
+            if self._last_actual_chain_id is not None:
+                self.set_chain_id(self._last_actual_chain_id)
             self._set_status(
                 f"✅  Node running (pid={result.get('pid')}), "
                 f"head #{result.get('head_number')}.",
@@ -427,7 +472,11 @@ class LocalNodePage(QWidget):
 
     @property
     def chain_id_expected(self) -> int:
-        return _DEFAULT_CHAIN_ID
+        return int(self._last_actual_chain_id or self._chain_id)
+
+    @property
+    def datadir_is_custom(self) -> bool:
+        return self._datadir_is_custom
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +722,7 @@ class SetupWizard(QDialog):
             rpc_url = self._page_local.rpc_url
             chain_id = self._page_local.chain_id_expected
             node_start_cmd = self._page_local.node_start_cmd or ["animica", "node", "start"]
-            node_datadir = self._page_local.node_datadir or str(app_data_dir() / "node")
+            node_datadir = self._page_local.node_datadir or str(default_chain_data_dir(chain_id))
             node_rpc_url = rpc_url
 
         profile = RpcProfile(
@@ -684,6 +733,7 @@ class SetupWizard(QDialog):
             chain_id_expected=chain_id,
             node_start_cmd=node_start_cmd,
             node_datadir=node_datadir,
+            node_datadir_custom=self._page_local.datadir_is_custom,
             node_rpc_url=node_rpc_url,
         )
 
