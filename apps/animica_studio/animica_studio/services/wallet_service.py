@@ -12,6 +12,8 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+import re
+import subprocess
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -38,6 +40,8 @@ log = logging.getLogger(__name__)
 _MAX_PENDING_TXS = 100  # keep only the last N pending/sent txs; older entries are trimmed on save
 _BALANCE_CONCURRENCY = 4
 _DEFAULT_DECIMALS = 18
+_WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
+_WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
 
 
 class WalletService:
@@ -97,6 +101,54 @@ class WalletService:
         save_config(self._config)
         log.info("WalletService: added account %s (%s)", label, address)
         return acc
+
+    def create_wallet(self, label: str) -> Account:
+        """Create a new wallet via Animica CLI and add it to tracked accounts.
+
+        Raises
+        ------
+        ValueError
+            If label validation fails.
+        RuntimeError
+            If CLI wallet creation fails or output cannot be parsed.
+        """
+        clean_label = label.strip()
+        if not _WALLET_LABEL_RE.match(clean_label):
+            raise ValueError(
+                "Wallet label must be 1–32 chars and use only letters, numbers, spaces, '_' or '-'."
+            )
+
+        cli_bin = self._config.get_active_profile().cli.animica_bin
+        cmd = [
+            cli_bin,
+            "wallet",
+            "create",
+            "--label",
+            clean_label,
+            "--allow-insecure-fallback",
+        ]
+        log.info("WalletService: create wallet requested label=%s", clean_label)
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        except Exception as exc:  # noqa: BLE001
+            log.error("WalletService: create wallet failed to invoke CLI: %s", exc)
+            raise RuntimeError(f"Failed to start wallet CLI: {safe_str(exc)}") from exc
+
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "Unknown CLI error").strip()
+            log.warning("WalletService: create wallet CLI failed label=%s error=%s", clean_label, details)
+            raise RuntimeError(details)
+
+        match = _WALLET_ADDRESS_RE.search(result.stdout)
+        if not match:
+            log.warning("WalletService: create wallet address parse failed output=%r", result.stdout)
+            raise RuntimeError("Wallet was created but Studio could not read the new address from CLI output.")
+
+        address = match.group(1)
+        account = self.add_account(clean_label, address)
+        log.info("WalletService: create wallet success label=%s address=%s", clean_label, address)
+        return account
 
     def remove_account(self, account_id: str) -> bool:
         """Remove account by ID.  Returns True if removed."""
