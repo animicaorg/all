@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNetwork } from "../state/network";
 import { useAccount } from "../state/account";
 import { useToasts } from "../state/toasts";
+import { formatUnits } from "../utils/format";
 
 /**
  * TopBar — network/account controls + head height
@@ -29,7 +30,7 @@ function isProbablyRpcUrl(url: string) {
 
 export default function TopBar() {
   const { rpcUrl, chainId, presets, setNetwork } = useNetwork();
-  const { address, connected, connecting, connect, disconnect, providerStatus } = useAccount();
+  const { address, balance, connected, connecting, connect, disconnect, providerStatus, refreshBalance } = useAccount();
   const { push } = useToasts();
 
   const [head, setHead] = useState<Head | null>(null);
@@ -98,6 +99,17 @@ export default function TopBar() {
     };
   }, [rpcUrl, push]);
 
+  useEffect(() => {
+    if (!connected || !address) return;
+
+    void refreshBalance();
+    const timer = window.setInterval(() => {
+      void refreshBalance();
+    }, 15_000);
+
+    return () => window.clearInterval(timer);
+  }, [connected, address, refreshBalance]);
+
   async function onConnect() {
     try {
       await connect();
@@ -146,6 +158,16 @@ export default function TopBar() {
     return connected && walletChain && chainId && walletChain !== chainId;
   }, [connected, chainId]);
 
+  const balanceLabel = useMemo(() => {
+    if (!connected) return "—";
+    if (!balance) return "…";
+    try {
+      return `${formatUnits(balance, 18, 4)} ANIM`;
+    } catch {
+      return `${balance} ANIM`;
+    }
+  }, [connected, balance]);
+
   return (
     <header className="topbar">
       <div className="left">
@@ -193,6 +215,11 @@ export default function TopBar() {
           <span className={`dot ${loadingHead ? "blink" : head ? "ok" : "error"}`} />
           <span className="label">Head</span>
           <span className="value mono">{headLabel}</span>
+        </div>
+
+        <div className="group wallet-balance" title={connected ? "Wallet balance" : "Connect wallet to view balance"}>
+          <span className="label">Balance</span>
+          <span className="value mono">{balanceLabel}</span>
         </div>
 
         {providerStatus === "unavailable" && (
