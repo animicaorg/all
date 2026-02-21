@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from animica_studio.util.paths import config_file, app_data_dir
+from animica_studio.util.paths import config_file, app_data_dir, default_chain_data_dir
 
 log = logging.getLogger(__name__)
 
@@ -308,8 +308,8 @@ def _migrate_legacy_profiles(cfg: Config) -> bool:
 
         node_datadir: str | None = None
         if is_local:
-            # Default node datadir to <app_data_dir>/node
-            node_datadir = str(app_data_dir() / "node")
+            # Default node datadir to canonical ~/.animica/chain-<id>
+            node_datadir = str(default_chain_data_dir(lp.chain_id_expected))
 
         ptype = ProfileType.LOCAL_NODE if is_local else ProfileType.REMOTE_RPC
 
@@ -322,6 +322,7 @@ def _migrate_legacy_profiles(cfg: Config) -> bool:
             node_start_cmd=list(lp.node.start_cmd) if is_local else None,
             node_datadir=node_datadir,
             node_rpc_url=lp.node.rpc_local_url if is_local else None,
+            node_datadir_custom=False,
         )
         migrated.append(rp.to_dict())
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.models.profile_models import ProfileType, RpcProfile
+from animica_studio.util.paths import default_chain_data_dir, running_as_root
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +54,35 @@ class _EditProfileDialog(QDialog):
         form.addRow("RPC URL:", self.url_edit)
 
         self.chain_id_edit = QLineEdit(str(profile.chain_id_expected if profile else 1))
+        self.chain_id_edit.textChanged.connect(self._on_chain_id_changed)
         form.addRow("Chain ID:", self.chain_id_edit)
+
+        self._is_local = (profile.type == ProfileType.LOCAL_NODE) if profile else False
+        self._datadir_custom = bool(profile.node_datadir_custom) if profile else False
+        datadir_row = QHBoxLayout()
+        self.datadir_edit = QLineEdit(profile.node_datadir if profile and profile.node_datadir else "")
+        self.datadir_edit.textChanged.connect(self._on_datadir_changed)
+        datadir_row.addWidget(self.datadir_edit)
+        datadir_browse = QPushButton("Browse…")
+        datadir_browse.clicked.connect(self._browse_datadir)
+        datadir_row.addWidget(datadir_browse)
+        datadir_reset = QPushButton("Reset to default")
+        datadir_reset.clicked.connect(self._reset_datadir)
+        datadir_row.addWidget(datadir_reset)
+        datadir_open = QPushButton("Open folder")
+        datadir_open.clicked.connect(self._open_datadir)
+        datadir_row.addWidget(datadir_open)
+        if self._is_local:
+            form.addRow("Data Directory:", datadir_row)
+        self._datadir_hint = QLabel("")
+        self._datadir_hint.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        if self._is_local:
+            form.addRow("", self._datadir_hint)
+        self._root_warn = QLabel("")
+        self._root_warn.setStyleSheet("color: #f9e2af; font-size: 12px;")
+        if self._is_local:
+            form.addRow("", self._root_warn)
+        self._refresh_datadir_ui()
 
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet("color: #f38ba8; font-size: 12px;")
@@ -63,6 +94,54 @@ class _EditProfileDialog(QDialog):
         btns.accepted.connect(self._validate_and_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+
+    def _chain_id(self) -> int:
+        try:
+            return int(self.chain_id_edit.text().strip())
+        except ValueError:
+            return 1
+
+    def _default_datadir(self) -> str:
+        return str(default_chain_data_dir(self._chain_id()))
+
+    def _refresh_datadir_ui(self) -> None:
+        if not self._is_local:
+            return
+        self._datadir_hint.setText(f"Default: {self._default_datadir()}")
+        if not self._datadir_custom and not self.datadir_edit.text().strip():
+            self.datadir_edit.setText(self._default_datadir())
+        if running_as_root():
+            self._root_warn.setText(
+                "⚠ Running as root. Default path uses /root/.animica/... Use non-root for consistency."
+            )
+        else:
+            self._root_warn.setText("")
+
+    def _on_chain_id_changed(self, _text: str) -> None:
+        if self._is_local and not self._datadir_custom:
+            self.datadir_edit.setText(self._default_datadir())
+        self._refresh_datadir_ui()
+
+    def _on_datadir_changed(self, _text: str) -> None:
+        if not self._is_local:
+            return
+        current = self.datadir_edit.text().strip()
+        self._datadir_custom = bool(current and current != self._default_datadir())
+
+    def _browse_datadir(self) -> None:
+        current = self.datadir_edit.text().strip() or self._default_datadir()
+        chosen = QFileDialog.getExistingDirectory(self, "Select Data Directory", current)
+        if chosen:
+            self.datadir_edit.setText(chosen)
+
+    def _reset_datadir(self) -> None:
+        self._datadir_custom = False
+        self.datadir_edit.setText(self._default_datadir())
+        self._refresh_datadir_ui()
+
+    def _open_datadir(self) -> None:
+        path = self.datadir_edit.text().strip() or self._default_datadir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _validate_and_accept(self) -> None:
         from animica_studio.models.profile_models import validate_rpc_url  # noqa: PLC0415
@@ -91,7 +170,8 @@ class _EditProfileDialog(QDialog):
             rpc_url=self.url_edit.text().strip(),
             chain_id_expected=int(self.chain_id_edit.text().strip()),
             node_start_cmd=self._original.node_start_cmd if self._original else None,
-            node_datadir=self._original.node_datadir if self._original else None,
+            node_datadir=(self.datadir_edit.text().strip() or self._default_datadir()) if self._is_local else (self._original.node_datadir if self._original else None),
+            node_datadir_custom=self._datadir_custom if self._is_local else (self._original.node_datadir_custom if self._original else False),
             node_rpc_url=self._original.node_rpc_url if self._original else None,
         )
 

@@ -20,7 +20,6 @@ from typing import Callable
 
 from animica_studio.models.profile_models import RpcProfile, ProfileType
 from animica_studio.storage.config import Config, save_config
-from animica_studio.util.paths import app_data_dir
 
 log = logging.getLogger(__name__)
 
