@@ -198,6 +198,8 @@ class WalletService:
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
         )
+        if "--label" not in wallet_args:
+            raise RuntimeError("wallet create command is missing required --label flag")
         program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         argv = [program, *base_args, *wallet_args]
         log.info("WalletService: resolved CLI path=%s", program)
@@ -227,6 +229,8 @@ class WalletService:
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
         )
+        if "--label" not in wallet_args:
+            raise RuntimeError("wallet create command is missing required --label flag")
         try:
             program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         except FileNotFoundError as exc:
@@ -341,14 +345,32 @@ class WalletService:
                 error=None,
             )
         except Exception as exc:  # noqa: BLE001
-            state = BalanceState(
-                address=address,
-                balance_wei=0,
-                formatted="—",
-                updated_ts=time.time(),
-                error=format_rpc_error(exc),
-            )
-            log.warning("WalletService: balance fetch error for %s: %s", address, exc)
+            log.warning("WalletService: wallet show failed for %s: %s", address, exc)
+            try:
+                from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
+
+                with RpcClient(rpc_url) as client:
+                    raw = client.get_balance(address)
+                state = BalanceState(
+                    address=address,
+                    balance_wei=raw,
+                    formatted=format_amount(raw, self._decimals()),
+                    updated_ts=time.time(),
+                    error=None,
+                )
+            except Exception as rpc_exc:  # noqa: BLE001
+                state = BalanceState(
+                    address=address,
+                    balance_wei=0,
+                    formatted="—",
+                    updated_ts=time.time(),
+                    error=format_rpc_error(rpc_exc),
+                )
+                log.warning(
+                    "WalletService: balance fetch fallback RPC error for %s: %s",
+                    address,
+                    rpc_exc,
+                )
 
         # Store keyed by address — never aliased
         self._balances[address] = state
