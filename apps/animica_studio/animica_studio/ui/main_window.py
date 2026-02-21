@@ -8,7 +8,16 @@ from typing import Callable, NamedTuple
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
@@ -79,6 +88,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Meta+K"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Ctrl+\\"), self, activated=self._toggle_sidebar)
+        QTimer.singleShot(0, self._clamp_to_screen)
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._trigger_health_check)
 
@@ -100,8 +110,15 @@ class MainWindow(QMainWindow):
         b.setSpacing(0)
         self._sidebar = Sidebar()
         self._stack = AnimatedStack()
+        self._stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._content_scroll = QScrollArea()
+        self._content_scroll.setWidgetResizable(True)
+        self._content_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._content_scroll.setWidget(self._stack)
         b.addWidget(self._sidebar)
-        b.addWidget(self._stack, 1)
+        b.addWidget(self._content_scroll, 1)
         root.addWidget(body, 1)
         self.setCentralWidget(central)
 
@@ -160,6 +177,15 @@ class MainWindow(QMainWindow):
 
     def _toggle_sidebar(self) -> None:
         self._sidebar.toggle(animate=not self._theme_manager.reduced_motion())
+
+    def _clamp_to_screen(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        bounded_width = min(max(self.width(), 960), available.width())
+        bounded_height = min(max(self.height(), 640), available.height())
+        self.resize(bounded_width, bounded_height)
 
     def _navigate(self, index: int) -> None:
         self._ensure_lazy_pages(index)
