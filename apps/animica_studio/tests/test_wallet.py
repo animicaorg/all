@@ -591,6 +591,106 @@ class TestWalletStoreLocalFile:
         records = WalletStore().load_local_wallets(tmp_path / "wallets.json")
         assert records == []
 
+    def test_load_local_wallets_invalid_json_returns_empty(self, tmp_path):
+        from animica_studio.services.wallet_store import WalletStore
+
+        wallets_path = tmp_path / "wallets.json"
+        wallets_path.write_text("{not valid json!!!", encoding="utf-8")
+        records = WalletStore().load_local_wallets(wallets_path)
+        assert records == []
+
+    def test_load_local_wallets_unexpected_schema_returns_empty(self, tmp_path):
+        """Root JSON that is a list (not a dict) should return [] without raising."""
+        from animica_studio.services.wallet_store import WalletStore
+
+        wallets_path = tmp_path / "wallets.json"
+        wallets_path.write_text("[1, 2, 3]", encoding="utf-8")
+        records = WalletStore().load_local_wallets(wallets_path)
+        assert records == []
+
+    def test_load_local_wallets_partial_entries(self, tmp_path):
+        """Non-dict entries are skipped; dict entries without address get empty address."""
+        from animica_studio.services.wallet_store import WalletStore
+
+        wallets_path = tmp_path / "wallets.json"
+        wallets_path.write_text(
+            """{
+  "wallets": [
+    {"label": "Good", "address": "anim1goodaddr0000000"},
+    "bad_entry",
+    {"no_address": true}
+  ]
+}""",
+            encoding="utf-8",
+        )
+        records = WalletStore().load_local_wallets(wallets_path)
+        # "bad_entry" (not a dict) is skipped; the other two are returned
+        assert len(records) == 2
+        assert records[0].label == "Good"
+        assert records[0].address == "anim1goodaddr0000000"
+        # Third entry has no address; address is empty string
+        assert records[1].address == ""
+
+
+class TestLoadWalletsFunction:
+    """Tests for the canonical load_wallets() free function."""
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        from animica_studio.services.wallet_store import load_wallets
+
+        result = load_wallets(tmp_path / "wallets.json")
+        assert result == []
+
+    def test_invalid_json_returns_empty_no_exception(self, tmp_path):
+        from animica_studio.services.wallet_store import load_wallets
+
+        p = tmp_path / "wallets.json"
+        p.write_text("{ broken json", encoding="utf-8")
+        result = load_wallets(p)
+        assert result == []
+
+    def test_valid_json_returns_wallets(self, tmp_path):
+        from animica_studio.services.wallet_store import load_wallets
+
+        p = tmp_path / "wallets.json"
+        p.write_text(
+            '{"wallets": [{"label": "Test", "address": "anim1testaddr000000000"}]}',
+            encoding="utf-8",
+        )
+        result = load_wallets(p)
+        assert len(result) == 1
+        assert result[0].label == "Test"
+        assert result[0].address == "anim1testaddr000000000"
+
+
+class TestWalletStoreImportSmoke:
+    """wallet_store must be importable even when animica.wallet.serialization is absent."""
+
+    def test_import_wallet_store(self):
+        import importlib
+
+        mod = importlib.import_module("animica_studio.services.wallet_store")
+        assert mod is not None
+        assert hasattr(mod, "WalletStore")
+        assert hasattr(mod, "WalletRecord")
+        assert hasattr(mod, "load_wallets")
+
+    def test_wallet_page_importable(self):
+        pytest.importorskip("PySide6.QtWidgets", reason="PySide6 not available in this environment", exc_type=ImportError)
+        import importlib
+
+        mod = importlib.import_module("animica_studio.ui.pages.wallet_page")
+        assert mod is not None
+        assert hasattr(mod, "WalletPage")
+
+    def test_app_module_importable(self):
+        pytest.importorskip("PySide6.QtWidgets", reason="PySide6 not available in this environment", exc_type=ImportError)
+        import importlib
+
+        mod = importlib.import_module("animica_studio.app")
+        assert mod is not None
+        assert hasattr(mod, "main")
+
 
 class TestProfileHelpers:
     def test_is_local_rpc_url_hosts(self):

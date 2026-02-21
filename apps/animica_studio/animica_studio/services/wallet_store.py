@@ -11,6 +11,23 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+class _FallbackWalletParseError(Exception):
+    """Stub used when the animica.wallet.serialization module is unavailable."""
+
+
+def _fallback_parse_wallets_text(text: str, **kwargs: Any) -> Any:
+    """No-op stub: always returns an object with an empty store.
+
+    The ``text`` and keyword arguments are accepted but ignored; this stub is
+    only used when the real serialization module is unavailable.
+    """
+
+    class _R:
+        store: dict = {}
+
+    return _R()
+
+
 def _load_wallet_serialization() -> tuple[type[Exception], Callable[..., Any]]:
     try:
         from animica.wallet.serialization import WalletParseError, parse_wallets_text
@@ -20,13 +37,17 @@ def _load_wallet_serialization() -> tuple[type[Exception], Callable[..., Any]]:
         here = Path(__file__).resolve()
         root = here.parents[4]
         module_path = root / "python" / "animica" / "wallet" / "serialization.py"
-        spec = importlib.util.spec_from_file_location("animica_wallet_serialization", module_path)
-        if spec is None or spec.loader is None:
-            raise
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-        return mod.WalletParseError, mod.parse_wallets_text
+        try:
+            spec = importlib.util.spec_from_file_location("animica_wallet_serialization", module_path)
+            if spec is None or spec.loader is None:
+                raise ModuleNotFoundError(f"wallet serialization module not found at {module_path}")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            return mod.WalletParseError, mod.parse_wallets_text
+        except Exception:  # noqa: BLE001
+            # Serialization helpers unavailable — fall back to plain JSON parsing in WalletStore
+            return _FallbackWalletParseError, _fallback_parse_wallets_text
 
 
 WalletParseError, _parse_wallets_text = _load_wallet_serialization()
@@ -107,4 +128,16 @@ class WalletStore:
         return records
 
 
-__all__ = ["WalletStore", "WalletRecord", "WalletParseError"]
+def load_wallets(wallets_path: Path) -> list[WalletRecord]:
+    """Load wallets from *wallets_path* safely.
+
+    Returns an empty list when the file is missing, contains invalid JSON,
+    or has an unexpected schema.  Never raises.
+    """
+    log.info("Loading wallets from: %s", wallets_path)
+    records = WalletStore().load_local_wallets(wallets_path)
+    log.info("Loaded %d wallets", len(records))
+    return records
+
+
+__all__ = ["WalletStore", "WalletRecord", "WalletParseError", "load_wallets"]

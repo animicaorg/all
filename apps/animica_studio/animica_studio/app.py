@@ -75,6 +75,16 @@ def main() -> None:
     """Bootstrap and run the Animica Studio application."""
     # Logging must be set up before anything else
     setup_logging(logs_dir(), app_version=__version__)
+
+    import platform  # noqa: PLC0415
+    uid = getattr(os, "geteuid", lambda: -1)()
+    log.info(
+        "Studio bootstrap start (version=%s, platform=%s, uid=%s, cwd=%s)",
+        __version__,
+        platform.platform(),
+        uid,
+        os.getcwd(),
+    )
     log.info("Starting %s v%s", __app_name__, __version__)
 
     # Capture fatal traces from crashes/segfaults as early as possible.
