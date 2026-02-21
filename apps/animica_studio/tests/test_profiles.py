@@ -51,6 +51,15 @@ def test_sanitize_name_normal():
     assert sanitize_name(None, fallback="Custom") == "Custom"
 
 
+
+
+def test_default_chain_data_dir_uses_home(monkeypatch):
+    from animica_studio.util.paths import default_chain_data_dir
+
+    monkeypatch.setattr("animica_studio.util.paths.Path.home", lambda: Path("/home/employee"))
+    assert default_chain_data_dir(1) == Path("/home/employee/.animica/chain-1")
+    assert default_chain_data_dir(1337) == Path("/home/employee/.animica/chain-1337")
+
 def test_rpc_profile_is_local_remote():
     from animica_studio.models.profile_models import RpcProfile, ProfileType
 
@@ -113,6 +122,7 @@ def test_rpc_profile_to_dict_round_trip():
         chain_id_expected=42,
         node_start_cmd=["animica", "node", "start"],
         node_datadir="/tmp/node",
+        node_datadir_custom=True,
         node_rpc_url="http://127.0.0.1:8545/rpc",
         notes="a note",
     )
@@ -158,6 +168,25 @@ def test_rpc_profile_from_dict_heals_bad_type():
     assert p.type == ProfileType.REMOTE_RPC
 
 
+
+
+def test_rpc_profile_from_dict_implicit_datadir_follows_chain(monkeypatch):
+    from animica_studio.models.profile_models import RpcProfile
+
+    monkeypatch.setattr("animica_studio.util.paths.Path.home", lambda: Path("/home/employee"))
+    p = RpcProfile.from_dict(
+        {
+            "id": "abc",
+            "name": "Local",
+            "type": "local_node",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "chain_id_expected": 1337,
+            "node_datadir_custom": False,
+        }
+    )
+    assert p.node_datadir == "/home/employee/.animica/chain-1337"
+    assert p.node_datadir_custom is False
+
 def test_rpc_profile_make_default_remote():
     from animica_studio.models.profile_models import RpcProfile, ProfileType
 
@@ -167,6 +196,25 @@ def test_rpc_profile_make_default_remote():
     assert p.chain_id_expected == 1
     assert p.id  # has a UUID
 
+
+
+
+def test_rpc_profile_custom_datadir_preserved_when_marked_custom():
+    from animica_studio.models.profile_models import RpcProfile
+
+    p = RpcProfile.from_dict(
+        {
+            "id": "abc",
+            "name": "Local",
+            "type": "local_node",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "chain_id_expected": 1,
+            "node_datadir": "/tmp/custom-dir",
+            "node_datadir_custom": True,
+        }
+    )
+    assert p.node_datadir == "/tmp/custom-dir"
+    assert p.node_datadir_custom is True
 
 def test_rpc_profile_make_default_local():
     from animica_studio.models.profile_models import RpcProfile, ProfileType
