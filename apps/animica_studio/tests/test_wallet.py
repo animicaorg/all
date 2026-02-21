@@ -530,6 +530,56 @@ class TestWalletServiceFetchBalance:
         assert state.error is None
         assert state.formatted == "1.25 ANM"
 
+
+    def test_json_with_log_prefix_parses_balance(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        mock_completed = MagicMock()
+        mock_completed.returncode = 0
+        mock_completed.stdout = 'INFO connected\n{"balance": "0x3b9aca00", "balance_formatted": "1 ANM"}\n'
+        mock_completed.stderr = ""
+
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=mock_completed),
+        ):
+            state = ws.fetch_balance("anim1test", "http://localhost:8545")
+
+        assert state.error is None
+        assert state.balance_wei == 1_000_000_000
+        assert state.formatted == "1 ANM"
+
+    def test_json_with_nul_bytes_parses_balance(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        mock_completed = MagicMock()
+        mock_completed.returncode = 0
+        mock_completed.stdout = '{"balance_confirmed": 2000000000, "balance_confirmed_formatted": "2 ANM"}\x00\x00'
+        mock_completed.stderr = ""
+
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=mock_completed),
+        ):
+            state = ws.fetch_balance("anim1test", "http://localhost:8545")
+
+        assert state.error is None
+        assert state.balance_wei == 2_000_000_000
+        assert state.formatted == "2 ANM"
     def test_error_does_not_propagate_to_other_accounts(self):
         """Per-account errors must NOT affect other accounts."""
         from animica_studio.storage.config import Config
