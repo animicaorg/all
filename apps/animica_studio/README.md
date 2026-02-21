@@ -95,6 +95,7 @@ Animica Studio provides a complete desktop interface to all Animica CLI operatio
 | **Quantum** | Quantum job status, credits, submit, and stream watch |
 | **Console** | Raw CLI runner with presets, history, and streaming output |
 | **IDE** | Monaco editor with run-script placeholder |
+| **ENA** | ENA chat/agent, local daemon controls, profile-scoped endpoints, training push wizard |
 | **Settings** | Profiles, RPC config, timeouts |
 
 ### Bug fixes included
@@ -187,3 +188,35 @@ After starting the app (`python -m animica_studio`):
 8. **Profile switch**: Switch profile in header → wallet balances clear and re-fetch (no stale cross-profile values).
 9. **Console page**: Run `node status` → streaming output appears; history with Up arrow.
 10. **Settings page**: Update profile, save.
+
+
+## ENA integration (local / remote / network)
+
+Studio now supports three ENA modes under the **ENA** page:
+
+1. **Local daemon (CPU)** — click **Start ENA (CPU)** to launch the bundled local server.
+2. **Remote HTTP/WS** — configure endpoint + auth token in ENA settings fields.
+3. **Network RPC** — uses node JSON-RPC feature detection (`rpc.discover`) for `ena.*` methods.
+
+### Running local ENA daemon manually
+
+```bash
+python -m animica_studio.services.ena_daemon_server --host 127.0.0.1 --port 8765
+```
+
+### Push training bundle to chain
+
+From ENA page:
+
+1. Select training files.
+2. Click **Push to Chain**.
+3. Studio validates file types, computes sha3-256 per file + bundle merkle root,
+   creates deterministic `bundle.tar` manifest package, uploads to DA (or fallback),
+   then submits transaction reference via RPC.
+4. Resume state is persisted in app data under `training_push/state.json`.
+
+### Troubleshooting
+
+- If ping fails repeatedly, ENA client opens a short circuit-breaker cooldown.
+- If DA methods are unavailable, upload falls back to `local://export-only` URI.
+- All ENA/network errors are JSON-stringified to avoid `[object Object]` messages.

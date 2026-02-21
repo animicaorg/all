@@ -19,6 +19,7 @@ from animica_studio.ui.pages.aicf_page import AicfPage
 from animica_studio.ui.pages.console_page import ConsolePage
 from animica_studio.ui.pages.da_page import DaPage
 from animica_studio.ui.pages.dashboard import DashboardPage
+from animica_studio.ui.pages.ena_page import EnaPage
 from animica_studio.ui.pages.ide_page import IdePage
 from animica_studio.ui.pages.mining_page import MiningPage
 from animica_studio.ui.pages.node import NodePage
@@ -80,7 +81,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
         self._header = HeaderBar(self._icons)
         self._header.open_palette.connect(self._open_palette)
-        self._header.open_settings.connect(lambda: self._navigate(9))
+        self._header.open_settings.connect(lambda: self._navigate(len(self._nav_entries)-1))
         self._header.open_profiles.connect(self._open_profiles_menu)
         self._header.profile_combo().currentIndexChanged.connect(self._on_profile_combo_changed)
         root.addWidget(self._header)
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
             _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
             _NavEntry("IDE", "✎", self._build_ide_placeholder),
+            _NavEntry("ENA", "✦", lambda: EnaPage(config=self._config)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
