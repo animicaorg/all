@@ -18,6 +18,7 @@ import subprocess
 import json
 import time
 import uuid
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -33,11 +34,7 @@ from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
 from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
-from animica_studio.services.tx_builder import (
-    build_transfer_tx,
-    encode_to_cbor_hex,
-    estimate_fee,
-)
+from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.cancel import CancelToken
 
@@ -48,6 +45,7 @@ _BALANCE_CONCURRENCY = 4
 _DEFAULT_DECIMALS = 18
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
+_TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _SCHEME_ALIASES = {
     "dilithium3": "dilithium3",
     "sphincs128s": "sphincs_shake_128s",
@@ -430,35 +428,16 @@ class WalletService:
         ValueError
             If the transaction cannot be built.
         """
-        from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
-
-        # 1. Fetch nonce
-        nonce = self.fetch_nonce(from_addr, rpc_url)
-
-        # 2. Estimate fee / gas params
+        # Keep fee/nonce metadata for history UI; CLI derives the canonical tx details.
+        nonce = 0
         _gas_limit = gas_limit or 21_000
         _gas_price = gas_price_wei or 10 ** 9
         fee = estimate_fee(_gas_limit, _gas_price)
 
-        # 3. Build tx dict
-        tx_dict = build_transfer_tx(
-            chain_id=chain_id,
-            from_addr=from_addr,
-            to_addr=to_addr,
-            value_wei=amount_wei,
-            nonce=nonce,
-            gas_limit=_gas_limit,
-            gas_price_wei=_gas_price,
-            memo=memo,
-        )
+        # Decimal ANM value (no scientific notation) for: animica tx send --value
+        amount_anm = (Decimal(amount_wei) / Decimal(10 ** 18)).normalize()
+        amount_arg = format(amount_anm, "f")
 
-        # 4. Sign
-        signed_tx = self._signer.sign_tx(tx_dict, from_addr)
-
-        # 5. Encode to hex
-        raw_tx_hex = encode_to_cbor_hex(signed_tx)
-
-        # 6. Build PendingTx record
         ptx = PendingTx(
             from_addr=from_addr,
             to_addr=to_addr,
@@ -466,25 +445,40 @@ class WalletService:
             nonce=nonce,
             fee=fee,
             memo=memo,
-            raw_tx_hex=raw_tx_hex,
+            raw_tx_hex="",
             status="SENT",
             created_ts=time.time(),
             updated_ts=time.time(),
         )
 
-        # 7. Submit
         try:
-            with RpcClient(rpc_url) as c:
-                tx_hash = c.send_raw_tx(raw_tx_hex)
-            ptx.tx_hash = tx_hash
+            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
+            cmd = [program, *base_args, "tx", "send", "--from", from_addr, "--to", to_addr, "--value", amount_arg]
+            if memo:
+                cmd.extend(["--memo", memo])
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, **resolved_env} if resolved_env else None,
+            )
+            if result.returncode != 0:
+                details = (result.stderr or result.stdout or "Unknown CLI error").strip()
+                raise RuntimeError(details)
+
+            output = "\n".join([result.stdout or "", result.stderr or ""])
+            match = _TX_HASH_RE.search(output)
+            ptx.tx_hash = match.group(0) if match else None
             ptx.status = "PENDING"
-            log.info("WalletService: submitted tx %s", tx_hash)
+            log.info("WalletService: submitted tx via CLI hash=%s", ptx.tx_hash or "(not reported)")
         except Exception as exc:  # noqa: BLE001
             ptx.status = "FAILED"
             ptx.error = format_rpc_error(exc)
-            log.error("WalletService: tx submit failed: %s", exc)
+            log.error("WalletService: tx send CLI failed: %s", exc)
 
-        # 8. Persist
         self._save_pending_tx(ptx)
         return ptx
 
