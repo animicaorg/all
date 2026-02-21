@@ -402,6 +402,36 @@ class TestWalletServiceCreateWallet:
             "--allow-insecure-fallback",
         ]
 
+
+    def test_start_create_wallet_requires_label_flag(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        runner = MagicMock()
+
+        with patch.object(
+            ws,
+            "build_create_wallet_args",
+            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
+        ):
+            with pytest.raises(RuntimeError, match="--label"):
+                ws.start_create_wallet(runner, "My Wallet")
+
+    def test_create_wallet_requires_label_flag(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+
+        with patch.object(
+            ws,
+            "build_create_wallet_args",
+            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
+        ):
+            with pytest.raises(RuntimeError, match="--label"):
+                ws.create_wallet("My Wallet")
+
     def test_create_wallet_bad_label_raises(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
@@ -481,6 +511,40 @@ class TestWalletServiceFetchBalance:
         assert state.balance_wei == 5 * 10**18
         assert state.error is None
         assert "5" in state.formatted
+
+
+    def test_wallet_show_failure_falls_back_to_rpc_balance(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        cfg = Config()
+        ws = WalletService(cfg)
+
+        cli_failed = MagicMock()
+        cli_failed.returncode = 1
+        cli_failed.stdout = ""
+        cli_failed.stderr = "wallet show failed"
+
+        rpc_client = MagicMock()
+        rpc_client.get_balance.return_value = 42
+
+        rpc_ctx = MagicMock()
+        rpc_ctx.__enter__.return_value = rpc_client
+        rpc_ctx.__exit__.return_value = False
+
+        with (
+            patch(
+                "animica_studio.services.wallet_service.resolve_animica_cli_program_and_env",
+                return_value=("animica", [], {}),
+            ),
+            patch("animica_studio.services.wallet_service.subprocess.run", return_value=cli_failed),
+            patch("animica_studio.services.rpc_client.RpcClient", return_value=rpc_ctx),
+        ):
+            state = ws.fetch_balance("anim1test", "http://localhost:8545")
+
+        assert state.error is None
+        assert state.balance_wei == 42
+        assert state.formatted.endswith("ANM")
 
     def test_network_error_returns_error_state(self):
         from animica_studio.storage.config import Config
