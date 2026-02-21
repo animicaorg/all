@@ -44,6 +44,15 @@ _BALANCE_CONCURRENCY = 4
 _DEFAULT_DECIMALS = 18
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
+_SCHEME_ALIASES = {
+    "dilithium3": "dilithium3",
+    "sphincs128s": "sphincs_shake_128s",
+    "sphincs_shake_128s": "sphincs_shake_128s",
+}
+_SCHEME_LABELS = {
+    "dilithium3": "Dilithium3",
+    "sphincs_shake_128s": "SPHINCS+ 128s",
+}
 
 
 class WalletService:
@@ -112,23 +121,31 @@ class WalletService:
                 "Wallet label must be 1–32 chars and use only letters, numbers, spaces, '_' or '-'."
             )
 
-        scheme = sig_scheme.strip().lower()
-        if scheme not in {"dilithium3", "sphincs128s"}:
-            raise ValueError("Signature scheme must be dilithium3 or sphincs128s")
+        scheme = _SCHEME_ALIASES.get(sig_scheme.strip().lower())
+        if scheme is None:
+            raise ValueError("Signature scheme must be dilithium3 or sphincs_shake_128s")
         return clean_label, scheme
 
-    def build_create_wallet_args(self, label: str, sig_scheme: str = "dilithium3") -> tuple[list[str], str, str]:
+    def build_create_wallet_args(
+        self,
+        label: str,
+        sig_scheme: str = "dilithium3",
+        *,
+        allow_insecure_fallback: bool = False,
+    ) -> tuple[list[str], str, str]:
         """Build CLI args for wallet creation and return normalized values."""
         clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme)
-        return [
+        args = [
             "wallet",
             "create",
             "--label",
             clean_label,
-            "--sig-scheme",
+            "--alg",
             scheme,
-            "--allow-insecure-fallback",
-        ], clean_label, scheme
+        ]
+        if allow_insecure_fallback:
+            args.append("--allow-insecure-fallback")
+        return args, clean_label, scheme
 
     def parse_created_wallet_address(self, stdout: str) -> str:
         """Extract created wallet address from CLI output."""
@@ -162,7 +179,7 @@ class WalletService:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=45,
+                timeout=15,
                 check=False,
                 stdin=subprocess.DEVNULL,
                 env={**os.environ, **resolved_env} if resolved_env else None,
@@ -182,6 +199,12 @@ class WalletService:
         elapsed = int((time.perf_counter() - started) * 1000)
         log.info("WalletService: create wallet success label=%s scheme=%s address=%s duration_ms=%s", clean_label, scheme, address, elapsed)
         return account
+
+    @staticmethod
+    def scheme_label(sig_scheme: str) -> str:
+        """Return a friendly display label for a stored wallet signature scheme ID."""
+        clean = _SCHEME_ALIASES.get(sig_scheme.strip().lower(), sig_scheme.strip().lower())
+        return _SCHEME_LABELS.get(clean, sig_scheme)
 
     def remove_account(self, account_id: str) -> bool:
         """Remove account by ID.  Returns True if removed."""
