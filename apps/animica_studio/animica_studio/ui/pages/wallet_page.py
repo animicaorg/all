@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QFileSystemWatcher
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QFileSystemWatcher, QSignalBlocker
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -65,16 +65,16 @@ from animica_studio.services.error_format import format_exception, format_rpc_er
 from animica_studio.services.job_runner import (
     JobHandle,
     JobRunner,
-    resolve_animica_cli_program_and_env,
 )
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
+from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.services.profile_helpers import get_active_rpc_url, is_local_rpc_url
 from animica_studio.services.wallet_store import WalletStore
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
-from animica_studio.util.qt import qalive, qthread_running, safe_slot
+from animica_studio.util.qt import qalive, qthread_running, safe_slot, stop_thread
 
 log = logging.getLogger(__name__)
 
@@ -739,8 +739,11 @@ class WalletPage(QWidget):
         self._balance_thread: QThread | None = None
         self._poll_timer: QTimer | None = None
         self._active_threads: list[QThread] = []
+        self._selection_refresh_scheduled = False
+        self._selection_refresh_row = -1
         self._create_wallet_dialog: _CreateWalletDialog | None = None
         self._runner = JobRunner.instance()
+        self._shutdown = ShutdownManager.instance()
         self._create_wallet_job: JobHandle | None = None
         self._wallet_store = WalletStore()
         self._display_accounts: list[Account] = []
@@ -750,10 +753,14 @@ class WalletPage(QWidget):
         self._last_wallets_mtime_ns: int | None = None
 
         self._build_ui()
-        QTimer.singleShot(0, self._run_wallet_cli_compat_check)
-        QTimer.singleShot(0, self._init_wallet_file_watcher)
-        # Defer first refresh to after window is shown
-        QTimer.singleShot(500, self._refresh_all)
+        QTimer.singleShot(0, self._post_start_init)
+
+    def _post_start_init(self) -> None:
+        try:
+            self._init_wallet_file_watcher()
+            QTimer.singleShot(0, self._refresh_all)
+        except Exception:
+            log.exception("WalletPage: post-start init failed")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -869,7 +876,7 @@ class WalletPage(QWidget):
     def _reload_accounts_list(self) -> None:
         """Repopulate the accounts QListWidget from the wallet service."""
         accounts = self._display_accounts
-        self._accounts_list.blockSignals(True)
+        blocker = QSignalBlocker(self._accounts_list)
         # Remember current selection by id
         prev_id = self._selected_account.id if self._selected_account else None
         self._accounts_list.clear()
@@ -889,15 +896,31 @@ class WalletPage(QWidget):
             if acc.id == prev_id:
                 restore_row = i
 
-        self._accounts_list.blockSignals(False)
+        del blocker
         if self._accounts_list.count() > 0:
             self._accounts_list.setCurrentRow(restore_row)
+            self._schedule_account_refresh(restore_row)
         else:
             self._selected_account = None
             self._overview_tab.set_account(None)
             self._send_tab.set_account(None)
             self._history_tab.set_account(None)
 
+    def _schedule_account_refresh(self, row: int) -> None:
+        self._selection_refresh_row = row
+        if self._selection_refresh_scheduled:
+            return
+        self._selection_refresh_scheduled = True
+        QTimer.singleShot(0, self._dispatch_scheduled_account_refresh)
+
+    @safe_slot(log)
+    def _dispatch_scheduled_account_refresh(self) -> None:
+        self._selection_refresh_scheduled = False
+        row = self._selection_refresh_row
+        if row >= 0:
+            self._on_account_selected(row)
+
+    @safe_slot(log)
     def _on_account_selected(self, row: int) -> None:
         item = self._accounts_list.item(row)
         if item is None:
@@ -1050,37 +1073,6 @@ class WalletPage(QWidget):
             self._create_wallet_btn.setEnabled(True)
         self._create_wallet_dialog = None
 
-    def _run_wallet_cli_compat_check(self) -> None:
-        try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env()
-        except FileNotFoundError:
-            return
-
-        job = self._runner.run_cli(
-            [program, *base_args, "wallet", "create", "--help"],
-            env=resolved_env,
-            timeout_s=15,
-        )
-        help_chunks: list[str] = []
-
-        def _on_output(_job_id: str, stream: str, text: str) -> None:
-            if stream in {"stdout", "stderr"}:
-                help_chunks.append(text)
-
-        def _on_finished(_job_id: str, exit_code: int, _payload: object) -> None:
-            if exit_code != 0:
-                return
-            help_text = "\n".join(help_chunks)
-            if "--alg" not in help_text:
-                QMessageBox.warning(
-                    self,
-                    "Wallet CLI Compatibility",
-                    "Studio expects animica CLI supporting --alg; your CLI version differs.",
-                )
-
-        job.output.connect(_on_output)
-        job.finished.connect(_on_finished)
-
     def _select_account_by_id(self, account_id: str) -> None:
         for row in range(self._accounts_list.count()):
             item = self._accounts_list.item(row)
@@ -1133,8 +1125,15 @@ class WalletPage(QWidget):
         t = _run_in_thread(_task, _on_result, _on_error)
         self._balance_thread = t
         self._active_threads.append(t)
+        self._shutdown.track_thread(t)
+        t.finished.connect(lambda: self._on_worker_thread_finished(t))
         # Prune finished threads
         self._active_threads = [t for t in self._active_threads if qthread_running(t)]
+
+    def _on_worker_thread_finished(self, thread: QThread) -> None:
+        self._active_threads = [t for t in self._active_threads if t is not thread and qthread_running(t)]
+        if self._balance_thread is thread:
+            self._balance_thread = None
 
     def _refresh_selected(self) -> None:
         """Refresh balance for the currently selected account only."""
@@ -1154,7 +1153,10 @@ class WalletPage(QWidget):
             self._overview_tab.set_balance(state)
             self._reload_accounts_list()
 
-        _run_in_thread(_task, _on_result, None)
+        t = _run_in_thread(_task, _on_result, None)
+        self._active_threads.append(t)
+        self._shutdown.track_thread(t)
+        t.finished.connect(lambda: self._on_worker_thread_finished(t))
 
     def _poll_receipts(self) -> None:
         """Background receipt polling for pending txs."""
@@ -1172,7 +1174,10 @@ class WalletPage(QWidget):
                 if ptx.status in ("PENDING", "SENT"):
                     wallet_service.poll_receipt(ptx, rpc_url)
 
-        _run_in_thread(_task, None, None)
+        t = _run_in_thread(_task, None, None)
+        self._active_threads.append(t)
+        self._shutdown.track_thread(t)
+        t.finished.connect(lambda: self._on_worker_thread_finished(t))
 
     # ------------------------------------------------------------------
     # Profile switch
@@ -1274,6 +1279,9 @@ class WalletPage(QWidget):
                 if not records:
                     self._wallet_banner.setText("⚠ No wallets found at ~/.animica/wallets.json")
                     self._wallet_banner.setVisible(True)
+                if self._wallet_store.last_warning:
+                    self._wallet_banner.setText(f"⚠ {self._wallet_store.last_warning}")
+                    self._wallet_banner.setVisible(True)
             except Exception as exc:  # noqa: BLE001
                 log.exception("WalletPage: wallets.json load failed")
                 self._display_accounts = list(self._last_good_local_accounts)
@@ -1331,4 +1339,9 @@ class WalletPage(QWidget):
         if self._create_wallet_job is not None:
             self._runner.cancel(self._create_wallet_job.job_id)
             self._create_wallet_job = None
+        for thread in list(self._active_threads):
+            stop_thread(thread)
+        self._active_threads.clear()
+        stop_thread(self._balance_thread)
+        self._balance_thread = None
         super().closeEvent(event)
