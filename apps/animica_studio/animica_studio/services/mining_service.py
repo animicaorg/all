@@ -24,9 +24,14 @@ class MiningService:
         self._config = config
         self._runner = CliRunner()
 
-    def build_mine_blocks_command(self, count: int, miner_address: str | None = None) -> tuple[list[str], dict[str, str]]:
+    def build_mine_blocks_command(
+        self,
+        count: int,
+        miner_address: str | None = None,
+        threads: int = 0,
+    ) -> tuple[list[str], dict[str, str]]:
         ops = get_cli_ops(self._config)
-        op_args = ops.build(CliOperation.MINE_BLOCKS, {"count": count, "address": miner_address})
+        op_args = ops.build(CliOperation.MINE_BLOCKS, {"count": count, "address": miner_address, "threads": threads})
         program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         return [program, *base_args, *op_args], resolved_env
 
@@ -48,7 +53,7 @@ class MiningService:
             ops = get_cli_ops(self._config)
             op_args = ops.build(
                 CliOperation.MINE_BLOCKS,
-                {"count": count, "address": miner_address},
+                {"count": count, "address": miner_address, "threads": 0},
             )
             program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         except (FileNotFoundError, CliOperationError) as exc:

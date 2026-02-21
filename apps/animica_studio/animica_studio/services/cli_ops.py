@@ -82,7 +82,8 @@ class CliOps:
 
         if op is CliOperation.MINE_BLOCKS:
             count = int(params.get("count", 1))
-            out = [*path, "--count", str(count)]
+            threads = int(params.get("threads", 0))
+            out = [*path]
 
             address = str(params.get("address") or "").strip()
             if address:
@@ -94,6 +95,10 @@ class CliOps:
                     raise CliOperationError(
                         "Your animica CLI does not expose a payout address option for mine-blocks."
                     )
+
+            out.extend(["--count", str(count)])
+            if self._registry.has_opt(path, "--threads"):
+                out.extend(["--threads", str(threads)])
             return out
 
         raise CliOperationError(f"Unsupported operation: {op.value}")
