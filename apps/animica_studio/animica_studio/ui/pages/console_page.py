@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from animica_studio.models.console_models import CommandPreset
 from animica_studio.services.console_service import ConsoleService
 from animica_studio.services.job_runner import JobHandle, JobRunner
+from animica_studio.storage.config import Config
 from animica_studio.ui.widgets.stream_console import StreamConsole
 from animica_studio.util.qt import qalive
 
@@ -71,9 +72,9 @@ class _HistoryLineEdit(QLineEdit):
 class ConsolePage(QWidget):
     """Full-featured console page with presets, history, node controls, and streaming output."""
 
-    def __init__(self, parent: "QWidget | None" = None) -> None:
+    def __init__(self, config: Config | None = None, parent: "QWidget | None" = None) -> None:
         super().__init__(parent)
-        self._svc = ConsoleService()
+        self._svc = ConsoleService(config=config)
         self._runner = JobRunner.instance()
         self._worker: "JobHandle | None" = None
         self._node_worker: "JobHandle | None" = None

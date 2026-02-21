@@ -14,7 +14,10 @@ import logging
 from typing import Callable
 
 from animica_studio.models.exec_models import ExecResult, StreamEvent
+from animica_studio.services.cli_capabilities import get_cli_ops
+from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
+from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
 from animica_studio.services.rpc_client import RpcClient
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
@@ -31,10 +34,6 @@ def _ensure_rpc_path(url: str) -> str:
     if not url.endswith("/rpc"):
         url = url + "/rpc"
     return url
-
-
-def _animica_bin(config: Config) -> str:
-    return config.get_active_profile().cli.animica_bin
 
 
 class AicfService:
@@ -154,9 +153,12 @@ class AicfService:
         timeout_s: float = 300.0,
     ) -> ExecResult:
         """Stream job watch output via CLI."""
-        bin_ = _animica_bin(self._config)
+        ops = get_cli_ops(self._config)
+        program, base_args, env = resolve_animica_cli_program_and_env(self._config)
+        op_args = ops.build(CliOperation.AICF_JOBS_WATCH, {"job_id": job_id})
         return self._runner.run(
-            [bin_, "aicf", "jobs", "watch", job_id],
+            [program, *base_args, *op_args],
+            env=env or None,
             cancel_token=cancel_token,
             stream_cb=stream_cb,
             timeout_s=timeout_s,
