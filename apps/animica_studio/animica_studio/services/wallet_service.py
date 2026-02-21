@@ -203,7 +203,10 @@ class WalletService:
     @staticmethod
     def scheme_label(sig_scheme: str) -> str:
         """Return a friendly display label for a stored wallet signature scheme ID."""
-        clean = _SCHEME_ALIASES.get(sig_scheme.strip().lower(), sig_scheme.strip().lower())
+        raw = (sig_scheme or "").strip().lower()
+        if not raw or raw == "unknown":
+            return "Unknown"
+        clean = _SCHEME_ALIASES.get(raw, raw)
         return _SCHEME_LABELS.get(clean, sig_scheme)
 
     def remove_account(self, account_id: str) -> bool:
