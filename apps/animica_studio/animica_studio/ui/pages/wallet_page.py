@@ -15,8 +15,9 @@ Layout
 from __future__ import annotations
 
 import logging
+import os
 import time
-import weakref
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -68,6 +69,8 @@ from animica_studio.services.job_runner import (
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
+from animica_studio.services.profile_helpers import get_active_rpc_url, is_local_rpc_url
+from animica_studio.services.wallet_store import WalletParseError, WalletStore
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
 from animica_studio.util.qt import qalive, qthread_running
@@ -76,6 +79,8 @@ log = logging.getLogger(__name__)
 
 _REFRESH_DEBOUNCE_MS = 300  # ms to wait after profile switch before triggering balance refresh
 _POLL_INTERVAL_MS = 15_000  # receipt poll
+_WALLETS_RELOAD_DEBOUNCE_MS = 350
+_WALLETS_POLL_INTERVAL_MS = 1_000
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +563,7 @@ class _SendTab(QWidget):
         def _task() -> PendingTx:
             from animica_studio.storage.config import load_config  # noqa: PLC0415
             cfg = wallet_service._config
-            rpc_url = _get_rpc_url(cfg)
+            rpc_url = get_active_rpc_url(cfg)
             chain_id = _get_chain_id(cfg)
             return wallet_service.build_and_send(
                 rpc_url=rpc_url,
@@ -666,7 +671,7 @@ class _HistoryTab(QWidget):
 
         def _task() -> list[PendingTx]:
             cfg = wallet_service._config
-            rpc_url = _get_rpc_url(cfg)
+            rpc_url = get_active_rpc_url(cfg)
             pending = wallet_service.list_pending_txs(account.address)
             updated = []
             for ptx in pending:
@@ -691,21 +696,6 @@ class _HistoryTab(QWidget):
 # ---------------------------------------------------------------------------
 # Wallet Page
 # ---------------------------------------------------------------------------
-
-
-def _get_rpc_url(config: Config) -> str:
-    """Extract the active RPC URL from config."""
-    active_id = config.active_profile_id
-    for d in config.rpc_profiles:
-        if isinstance(d, dict) and d.get("id") == active_id:
-            url = d.get("node_rpc_url") or d.get("rpc_url") or ""
-            if url:
-                return url
-    # Fall back to legacy profile
-    try:
-        return config.get_active_profile().rpc_url
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 def _get_chain_id(config: Config) -> int:
@@ -737,6 +727,12 @@ class WalletPage(QWidget):
         self._create_wallet_dialog: _CreateWalletDialog | None = None
         self._runner = JobRunner.instance()
         self._create_wallet_job: JobHandle | None = None
+        self._wallet_store = WalletStore()
+        self._display_accounts: list[Account] = []
+        self._last_good_local_accounts: list[Account] = []
+        self._wallets_reload_timer: QTimer | None = None
+        self._wallets_watch_timer: QTimer | None = None
+        self._last_wallets_mtime_ns: int | None = None
 
         self._build_ui()
         QTimer.singleShot(0, self._run_wallet_cli_compat_check)
@@ -780,6 +776,20 @@ class WalletPage(QWidget):
         self._rpc_banner.setVisible(False)
         root.addWidget(self._rpc_banner)
 
+        self._wallet_banner = QLabel("")
+        self._wallet_banner.setObjectName("errorBanner")
+        self._wallet_banner.setStyleSheet(
+            "background: #fff3cd; color: #856404; padding: 4px 12px; border-radius: 4px;"
+        )
+        self._wallet_banner.setWordWrap(True)
+        self._wallet_banner.setVisible(False)
+        root.addWidget(self._wallet_banner)
+
+        self._mode_hint_label = QLabel("")
+        self._mode_hint_label.setStyleSheet("color: #9aa0a6; padding: 0 12px;")
+        self._mode_hint_label.setWordWrap(True)
+        root.addWidget(self._mode_hint_label)
+
         # Main splitter: left=accounts, right=tabs
         body = QHBoxLayout()
         body.setContentsMargins(12, 8, 12, 12)
@@ -806,6 +816,9 @@ class WalletPage(QWidget):
         remove_btn = QPushButton("✕ Remove")
         remove_btn.clicked.connect(self._on_remove_account)
         acct_btn_row.addWidget(remove_btn)
+        self._refresh_wallets_btn = QPushButton("🔄 Refresh")
+        self._refresh_wallets_btn.clicked.connect(self._schedule_wallets_reload)
+        acct_btn_row.addWidget(self._refresh_wallets_btn)
         left.addLayout(acct_btn_row)
 
         body.addLayout(left)
@@ -828,13 +841,21 @@ class WalletPage(QWidget):
         self._poll_timer.timeout.connect(self._poll_receipts)
         self._poll_timer.start(_POLL_INTERVAL_MS)
 
+        self._wallets_reload_timer = QTimer(self)
+        self._wallets_reload_timer.setSingleShot(True)
+        self._wallets_reload_timer.timeout.connect(self._reload_accounts_from_source)
+
+        self._wallets_watch_timer = QTimer(self)
+        self._wallets_watch_timer.timeout.connect(self._poll_wallet_file_changes)
+        self._wallets_watch_timer.start(_WALLETS_POLL_INTERVAL_MS)
+
     # ------------------------------------------------------------------
     # Account list management
     # ------------------------------------------------------------------
 
     def _reload_accounts_list(self) -> None:
         """Repopulate the accounts QListWidget from the wallet service."""
-        accounts = self._wallet_service.list_accounts()
+        accounts = self._display_accounts
         self._accounts_list.blockSignals(True)
         # Remember current selection by id
         prev_id = self._selected_account.id if self._selected_account else None
@@ -869,7 +890,7 @@ class WalletPage(QWidget):
         if item is None:
             return
         account_id = item.data(Qt.ItemDataRole.UserRole)
-        account = self._wallet_service.get_account(account_id)
+        account = next((acc for acc in self._display_accounts if acc.id == account_id), None)
         self._selected_account = account
         self._overview_tab.set_account(account)
         self._send_tab.set_account(account)
@@ -881,6 +902,9 @@ class WalletPage(QWidget):
             self._refresh_selected()
 
     def _on_add_account(self) -> None:
+        if self._is_local_mode():
+            QMessageBox.information(self, "Accounts", "Use Create Wallet; local accounts are loaded from ~/.animica/wallets.json.")
+            return
         dlg = _AddAccountDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             label, addr = dlg.get_values()
@@ -892,6 +916,9 @@ class WalletPage(QWidget):
                 QMessageBox.warning(self, "Add Account", format_exception(exc))
 
     def _on_remove_account(self) -> None:
+        if self._is_local_mode():
+            QMessageBox.information(self, "Accounts", "Local account entries are controlled by ~/.animica/wallets.json.")
+            return
         if self._selected_account is None:
             return
         acc = self._selected_account
@@ -977,22 +1004,18 @@ class WalletPage(QWidget):
                         dialog.set_error(stderr)
                     return
 
-                address = page._wallet_service.resolve_created_wallet_address(known_addresses)
-                account = page._wallet_service.store_created_wallet(clean_label, address, scheme)
                 elapsed = int((time.perf_counter() - started) * 1000)
                 log.info(
-                    "WalletPage: wallet created label=%s address=%s scheme=%s duration_ms=%s",
-                    account.label,
-                    account.address,
-                    account.sig_scheme,
+                    "WalletPage: wallet created label=%s scheme=%s duration_ms=%s",
+                    clean_label,
+                    scheme,
                     elapsed,
                 )
-                page._reload_accounts_list()
-                page._select_account_by_id(account.id)
-                page._refresh_all()
-                if qalive(dialog):
-                    dialog.accept()
-                QMessageBox.information(page, "Wallet", f"Wallet created: {account.label}")
+                self._schedule_wallets_reload()
+                self._refresh_all()
+                if qalive(self._create_wallet_dialog):
+                    self._create_wallet_dialog.accept()
+                QMessageBox.information(self, "Wallet", f"Wallet created: {clean_label}")
             except Exception as exc:  # noqa: BLE001
                 log.error("WalletPage: wallet finalization failed: %s", exc)
                 if qalive(dialog):
@@ -1058,7 +1081,8 @@ class WalletPage(QWidget):
 
     def _refresh_all(self) -> None:
         """Refresh balances for all accounts (off UI thread)."""
-        rpc_url = _get_rpc_url(self._config)
+        self._reload_accounts_from_source()
+        rpc_url = get_active_rpc_url(self._config)
         if not rpc_url:
             self._show_rpc_banner("No RPC URL configured — check your profile settings.")
             return
@@ -1103,7 +1127,7 @@ class WalletPage(QWidget):
         """Refresh balance for the currently selected account only."""
         if self._selected_account is None:
             return
-        rpc_url = _get_rpc_url(self._config)
+        rpc_url = get_active_rpc_url(self._config)
         if not rpc_url:
             return
 
@@ -1123,7 +1147,7 @@ class WalletPage(QWidget):
         """Background receipt polling for pending txs."""
         if self._selected_account is None:
             return
-        rpc_url = _get_rpc_url(self._config)
+        rpc_url = get_active_rpc_url(self._config)
         if not rpc_url:
             return
         account = self._selected_account
@@ -1149,8 +1173,86 @@ class WalletPage(QWidget):
         self._cancel_token = CancelToken()
         # Clear stale balance cache so old-profile balances are not shown
         self._wallet_service.clear_balance_cache()
+        self._display_accounts = []
         # Re-read RPC config (config object is shared, already updated)
         QTimer.singleShot(_REFRESH_DEBOUNCE_MS, self._refresh_all)
+
+    def _wallets_path(self) -> Path:
+        return Path.home() / ".animica" / "wallets.json"
+
+    def _is_local_mode(self) -> bool:
+        return is_local_rpc_url(get_active_rpc_url(self._config))
+
+    def _schedule_wallets_reload(self) -> None:
+        if self._wallets_reload_timer is not None:
+            self._wallets_reload_timer.start(_WALLETS_RELOAD_DEBOUNCE_MS)
+
+    def _poll_wallet_file_changes(self) -> None:
+        if not self._is_local_mode():
+            return
+        wallets_path = self._wallets_path()
+        try:
+            stat = wallets_path.stat()
+            mtime_ns = stat.st_mtime_ns
+        except FileNotFoundError:
+            mtime_ns = -1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("WalletPage: wallet file stat failed: %s", exc)
+            return
+
+        if self._last_wallets_mtime_ns != mtime_ns:
+            self._last_wallets_mtime_ns = mtime_ns
+            self._schedule_wallets_reload()
+
+    def _reload_accounts_from_source(self) -> None:
+        wallets_path = self._wallets_path()
+        local_mode = self._is_local_mode()
+        self._wallet_banner.setVisible(False)
+
+        if local_mode:
+            self._mode_hint_label.setText("Local wallet file: ~/.animica/wallets.json")
+            try:
+                uid = getattr(os, "geteuid", lambda: -1)()
+                if uid == 0:
+                    self._wallet_banner.setText(f"⚠ You are running Studio as root; wallets will be read from {wallets_path}.")
+                    self._wallet_banner.setVisible(True)
+            except Exception:
+                pass
+            try:
+                records = self._wallet_store.load_local_wallets(wallets_path)
+                self._display_accounts = [
+                    Account(
+                        id=rec.wallet_id,
+                        label=rec.label,
+                        address=rec.address,
+                        sig_scheme=(rec.algorithm or "unknown"),
+                    )
+                    for rec in records
+                    if rec.address
+                ]
+                self._last_good_local_accounts = list(self._display_accounts)
+                if not records:
+                    self._wallet_banner.setText("⚠ No wallets found at ~/.animica/wallets.json")
+                    self._wallet_banner.setVisible(True)
+            except FileNotFoundError:
+                self._display_accounts = []
+                self._wallet_banner.setText("⚠ No wallets found at ~/.animica/wallets.json")
+                self._wallet_banner.setVisible(True)
+            except WalletParseError as exc:
+                log.warning("WalletPage: wallets.json parse warning: %s", exc)
+                self._display_accounts = list(self._last_good_local_accounts)
+                self._wallet_banner.setText(f"⚠ Could not read wallets.json yet: {exc}")
+                self._wallet_banner.setVisible(True)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("WalletPage: wallets.json load failed")
+                self._display_accounts = list(self._last_good_local_accounts)
+                self._wallet_banner.setText(f"⚠ Failed to read wallets.json: {safe_str(exc)}")
+                self._wallet_banner.setVisible(True)
+        else:
+            self._mode_hint_label.setText("Accounts are shown only for local node profiles (wallets.json).")
+            self._display_accounts = []
+
+        self._reload_accounts_list()
 
     # ------------------------------------------------------------------
     # RPC banner helpers
