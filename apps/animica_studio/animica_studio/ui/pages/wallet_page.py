@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
-    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -37,6 +36,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QButtonGroup,
+    QRadioButton,
     QSizePolicy,
     QTabWidget,
     QTableWidget,
@@ -57,6 +58,7 @@ from animica_studio.models.wallet_models import (
     shorten_address,
 )
 from animica_studio.services.error_format import format_exception, format_rpc_error, safe_str
+from animica_studio.services.job_runner import JobHandle, JobRunner
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
@@ -178,7 +180,7 @@ class _AddAccountDialog(QDialog):
 class _CreateWalletDialog(QDialog):
     """Dialog to create a new wallet entry via backend wallet service."""
 
-    create_requested = Signal(str)
+    create_requested = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -196,12 +198,30 @@ class _CreateWalletDialog(QDialog):
         self._label_edit.returnPressed.connect(self._on_accept)
         form.addRow("Wallet label:", self._label_edit)
 
-        self._encrypt_toggle = QCheckBox("Encrypt wallet")
-        self._encrypt_toggle.setEnabled(False)
-        self._encrypt_toggle.setToolTip("Encryption is not available in this Studio wallet flow yet.")
-        form.addRow("Security:", self._encrypt_toggle)
-
         layout.addLayout(form)
+
+        scheme_box = QGroupBox("Signature Scheme")
+        scheme_layout = QVBoxLayout(scheme_box)
+        self._scheme_group = QButtonGroup(self)
+
+        self._dilithium_radio = QRadioButton("Dilithium3 (Recommended)")
+        self._dilithium_radio.setChecked(True)
+        self._dilithium_desc = QLabel("Fast signing/verification and smaller signatures; lattice-based post-quantum scheme. Good default for most users.")
+        self._dilithium_desc.setWordWrap(True)
+        self._dilithium_desc.setStyleSheet("color: #9aa0a6;")
+
+        self._sphincs_radio = QRadioButton("SPHINCS+ 128s (sphincs128s)")
+        self._sphincs_desc = QLabel("Hash-based post-quantum scheme with very large signatures and slower signing; conservative security assumptions.")
+        self._sphincs_desc.setWordWrap(True)
+        self._sphincs_desc.setStyleSheet("color: #9aa0a6;")
+
+        self._scheme_group.addButton(self._dilithium_radio)
+        self._scheme_group.addButton(self._sphincs_radio)
+        scheme_layout.addWidget(self._dilithium_radio)
+        scheme_layout.addWidget(self._dilithium_desc)
+        scheme_layout.addWidget(self._sphincs_radio)
+        scheme_layout.addWidget(self._sphincs_desc)
+        layout.addWidget(scheme_box)
 
         self._progress_text = QLabel("Creating wallet…")
         self._progress_text.setVisible(False)
@@ -233,7 +253,7 @@ class _CreateWalletDialog(QDialog):
         self._error_label.setText("")
         if not self._is_valid_label():
             return
-        self.create_requested.emit(self.label)
+        self.create_requested.emit(self.label, self.sig_scheme)
 
     def _is_valid_label(self) -> bool:
         label = self.label
@@ -256,10 +276,15 @@ class _CreateWalletDialog(QDialog):
     def label(self) -> str:
         return self._label_edit.text().strip()
 
+    @property
+    def sig_scheme(self) -> str:
+        return "sphincs128s" if self._sphincs_radio.isChecked() else "dilithium3"
+
     def set_busy(self, busy: bool) -> None:
         self._is_busy = busy
         self._label_edit.setEnabled(not busy)
-        self._encrypt_toggle.setEnabled(False)
+        self._dilithium_radio.setEnabled(not busy)
+        self._sphincs_radio.setEnabled(not busy)
         self._create_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(not busy)
         self._progress.setVisible(busy)
@@ -295,6 +320,9 @@ class _OverviewTab(QWidget):
 
         self._balance_label = QLabel("—")
         form.addRow("Balance:", self._balance_label)
+
+        self._scheme_label = QLabel("—")
+        form.addRow("Signature:", self._scheme_label)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -323,9 +351,11 @@ class _OverviewTab(QWidget):
         if account is None:
             self._addr_label.setText("—")
             self._balance_label.setText("—")
+            self._scheme_label.setText("—")
             self._error_label.setText("")
             return
         self._addr_label.setText(account.address)
+        self._scheme_label.setText(account.sig_scheme)
 
     def set_balance(self, state: BalanceState | None) -> None:
         if state is None:
@@ -667,7 +697,8 @@ class WalletPage(QWidget):
         self._poll_timer: QTimer | None = None
         self._active_threads: list[QThread] = []
         self._create_wallet_dialog: _CreateWalletDialog | None = None
-        self._create_wallet_thread: QThread | None = None
+        self._runner = JobRunner.instance()
+        self._create_wallet_job: JobHandle | None = None
 
         self._build_ui()
         # Defer first refresh to after window is shown
@@ -778,7 +809,7 @@ class WalletPage(QWidget):
                 bal_text = balance_state.formatted
             else:
                 bal_text = "—"
-            item = QListWidgetItem(f"{acc.label}\n{shorten_address(acc.address)}  {bal_text}")
+            item = QListWidgetItem(f"{acc.label} [{acc.sig_scheme}]\n{shorten_address(acc.address)}  {bal_text}")
             item.setData(Qt.ItemDataRole.UserRole, acc.id)
             self._accounts_list.addItem(item)
             if acc.id == prev_id:
@@ -836,7 +867,7 @@ class WalletPage(QWidget):
             self._reload_accounts_list()
 
     def _on_create_wallet(self) -> None:
-        if qthread_running(self._create_wallet_thread):
+        if self._create_wallet_job is not None:
             return
 
         dlg = _CreateWalletDialog(self)
@@ -845,8 +876,8 @@ class WalletPage(QWidget):
         dlg.create_requested.connect(self._start_create_wallet)
         dlg.exec()
 
-    def _start_create_wallet(self, label: str) -> None:
-        if qthread_running(self._create_wallet_thread):
+    def _start_create_wallet(self, label: str, sig_scheme: str) -> None:
+        if self._create_wallet_job is not None:
             return
         if not qalive(self._create_wallet_dialog):
             return
@@ -854,11 +885,34 @@ class WalletPage(QWidget):
         self._create_wallet_dialog.set_busy(True)
         self._create_wallet_btn.setEnabled(False)
 
-        def _task() -> Account:
-            return self._wallet_service.create_wallet(label)
+        started = time.perf_counter()
 
-        def _on_result(account: Account) -> None:
-            log.info("WalletPage: wallet created label=%s address=%s", account.label, account.address)
+        def _task() -> Account:
+            return self._wallet_service.create_wallet(label, sig_scheme=sig_scheme)
+
+        job = self._runner.run_callable(_task, timeout_s=60)
+        self._create_wallet_job = job
+
+        def _on_error(_job_id: str, msg: str, _details: str) -> None:
+            log.error("WalletPage: create wallet failed: %s", msg)
+            if qalive(self._create_wallet_dialog):
+                self._create_wallet_dialog.set_error(msg)
+
+        def _on_finished(_job_id: str, exit_code: int, payload: object) -> None:
+            self._create_wallet_btn.setEnabled(True)
+            if qalive(self._create_wallet_dialog):
+                self._create_wallet_dialog.set_busy(False)
+            self._create_wallet_job = None
+
+            if exit_code != 0:
+                return
+            if not isinstance(payload, Account):
+                if qalive(self._create_wallet_dialog):
+                    self._create_wallet_dialog.set_error("Wallet created but invalid response payload received.")
+                return
+            account = payload
+            elapsed = int((time.perf_counter() - started) * 1000)
+            log.info("WalletPage: wallet created label=%s address=%s scheme=%s duration_ms=%s", account.label, account.address, account.sig_scheme, elapsed)
             self._reload_accounts_list()
             self._select_account_by_id(account.id)
             self._refresh_all()
@@ -866,24 +920,8 @@ class WalletPage(QWidget):
                 self._create_wallet_dialog.accept()
             QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
 
-        def _on_error(msg: str) -> None:
-            log.error("WalletPage: create wallet failed: %s", msg)
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.set_busy(False)
-                self._create_wallet_dialog.set_error(msg)
-
-        thread = _run_in_thread(_task, _on_result, _on_error)
-        self._create_wallet_thread = thread
-        self._active_threads.append(thread)
-
-        def _cleanup() -> None:
-            self._create_wallet_btn.setEnabled(True)
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.set_busy(False)
-            self._create_wallet_thread = None
-            self._active_threads = [t for t in self._active_threads if qthread_running(t)]
-
-        thread.finished.connect(_cleanup)
+        job.error.connect(_on_error)
+        job.finished.connect(_on_finished)
 
     def _on_create_wallet_dialog_destroyed(self) -> None:
         self._create_wallet_dialog = None
@@ -1025,3 +1063,12 @@ class WalletPage(QWidget):
             QTimer.singleShot(2000, lambda: self._debug_btn.setText("📦 Copy Debug Bundle"))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Debug Bundle", f"Failed to collect bundle: {format_exception(exc)}")
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._cancel_token.cancel()
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+        if self._create_wallet_job is not None:
+            self._runner.cancel(self._create_wallet_job.job_id)
+            self._create_wallet_job = None
+        super().closeEvent(event)

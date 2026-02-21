@@ -8,7 +8,12 @@ from shiboken6 import isValid
 
 def qalive(obj: object | None) -> bool:
     """Return ``True`` when *obj* is a non-deleted Qt wrapper."""
-    return obj is not None and isValid(obj)
+    if obj is None:
+        return False
+    try:
+        return bool(isValid(obj))
+    except RuntimeError:
+        return False
 
 
 def qthread_running(thread: QThread | None) -> bool:

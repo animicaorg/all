@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -19,12 +20,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_studio.models.console_models import CommandPreset, RunRecord
+from animica_studio.models.console_models import CommandPreset
 from animica_studio.services.console_service import ConsoleService
-from animica_studio.services.workers import WorkerThread
+from animica_studio.services.job_runner import JobHandle, JobRunner
 from animica_studio.ui.widgets.stream_console import StreamConsole
-from animica_studio.util.cancel import CancelToken
-from animica_studio.util.qt import qalive, qthread_running, stop_thread
+from animica_studio.util.qt import qalive
 
 log = logging.getLogger(__name__)
 
@@ -75,9 +75,11 @@ class ConsolePage(QWidget):
     def __init__(self, parent: "QWidget | None" = None) -> None:
         super().__init__(parent)
         self._svc = ConsoleService()
-        self._worker: "WorkerThread | None" = None
-        self._cancel_token: "CancelToken | None" = None
-        self._node_worker: "WorkerThread | None" = None
+        self._runner = JobRunner.instance()
+        self._worker: "JobHandle | None" = None
+        self._node_worker: "JobHandle | None" = None
+        self._node_job_id: str | None = None
+        self._active_job_id: str | None = None
 
         self._build_ui()
         self._refresh_presets()
@@ -285,55 +287,46 @@ class ConsolePage(QWidget):
         self._run_argv(parts)
 
     def _run_argv(self, argv: list[str]) -> None:
-        if qthread_running(self._worker):
+        if self._active_job_id is not None:
             return
 
-        self._cancel_token = CancelToken()
-        self._stream.set_cancel_token(self._cancel_token)
+        self._stream.set_cancel_token(None)
         self._stream.set_running(True)
         self._stop_btn.setEnabled(True)
 
-        token = self._cancel_token
-        svc = self._svc
-        stream = self._stream
-
-        def _task() -> RunRecord:
-            return svc.run(
-                argv,
-                cancel_token=token,
-                stream_cb=lambda ev: stream.append_line(
-                    ev.line if ev.stream == "stdout"
-                    else (f"[stderr] {ev.line}" if ev.stream == "stderr" else f"[sys] {ev.line}")
-                ),
-            )
-
-        self._worker = WorkerThread(_task)
-        self._worker.worker.result.connect(self._on_done)
-        self._worker.worker.error.connect(
-            lambda msg, _tb: self._stream.append_line(f"[error] {msg}")
-        )
-        self._worker.worker.finished.connect(self._on_worker_finished)
-        self._worker.destroyed.connect(lambda *_: setattr(self, "_worker", None))
-        self._worker.start()
+        self._svc.push_history(" ".join(argv))
+        self._worker = self._runner.run_cli(argv, timeout_s=120)
+        self._active_job_id = self._worker.job_id
+        self._worker.started.connect(lambda _jid: self._stream.set_running(True))
+        self._worker.output.connect(self._on_output)
+        self._worker.error.connect(self._on_job_error)
+        self._worker.finished.connect(self._on_job_finished)
 
         self._cmd_edit.set_history(self._svc.get_history())
 
-    def _on_worker_finished(self) -> None:
+    def _on_job_finished(self, job_id: str, exit_code: int, _payload: object) -> None:
+        if job_id != self._active_job_id:
+            return
+        self._stream.set_exit_status(exit_code, 0, cancelled=(exit_code == 143))
+        self._active_job_id = None
         self._worker = None
         self._stop_btn.setEnabled(False)
         self._stream.set_running(False)
 
-    def _on_cancel(self) -> None:
-        if self._cancel_token:
-            self._cancel_token.cancel()
+    def _on_output(self, job_id: str, stream: str, text: str) -> None:
+        if job_id != self._active_job_id:
+            return
+        ts = time.strftime("%H:%M:%S")
+        self._stream.append_line(f"[{ts}] [{stream}] {text}")
 
-    def _on_done(self, record: object) -> None:
-        if isinstance(record, RunRecord):
-            self._stream.set_running(False)
-            self._stream.set_exit_status(record.exit_code, record.duration_ms, record.cancelled)
-            log.info(
-                "ConsolePage: run done exit=%s duration=%dms", record.exit_code, record.duration_ms
-            )
+    def _on_job_error(self, job_id: str, message: str, _details: str) -> None:
+        if job_id != self._active_job_id:
+            return
+        self._stream.append_line(f"[error] {message}")
+
+    def _on_cancel(self) -> None:
+        if self._active_job_id:
+            self._runner.cancel(self._active_job_id)
 
     # ------------------------------------------------------------------
     # Node control
@@ -352,49 +345,42 @@ class ConsolePage(QWidget):
         self._run_node_op("restart")
 
     def _run_node_op(self, op: str) -> None:
-        from animica_studio.services.process_manager import ProcessManager  # noqa: PLC0415
-
-        def _task() -> dict:
-            pm = ProcessManager()
-            if op == "start":
-                return pm.start()
-            elif op == "stop":
-                return pm.stop()
-            elif op == "restart":
-                return pm.restart()
-            else:
-                return pm.status()
-
-        if qthread_running(self._node_worker):
+        if self._node_job_id is not None:
             return
+        self._node_worker = self._runner.run_cli(["animica", "node", op], timeout_s=45)
+        self._node_job_id = self._node_worker.job_id
+        self._node_worker.output.connect(self._on_node_output)
+        self._node_worker.error.connect(lambda _j, msg, _d: self._node_status_label.setText(f"Error: {msg[:80]}"))
+        self._node_worker.finished.connect(self._on_node_finished)
 
-        self._node_worker = WorkerThread(_task)
-        self._node_worker.worker.result.connect(self._on_node_result)
-        self._node_worker.worker.error.connect(
-            lambda msg, _tb: self._node_status_label.setText(f"Error: {msg[:80]}")
-        )
-        self._node_worker.finished.connect(self._on_node_worker_finished)
-        self._node_worker.destroyed.connect(self._on_node_worker_destroyed)
-        self._node_worker.start()
-
-    def _on_node_worker_finished(self) -> None:
-        worker = self._node_worker
-        self._node_worker = None
-        if worker is None:
+    def _on_node_output(self, job_id: str, stream: str, text: str) -> None:
+        if job_id != self._node_job_id:
             return
+        if stream == "stdout" and "running" in text.lower():
+            self._node_status_label.setText("🟢 Running")
+        elif stream == "stdout" and "stopped" in text.lower():
+            self._node_status_label.setText("🔴 Stopped")
 
-    def _on_node_worker_destroyed(self) -> None:
+    def _on_node_finished(self, job_id: str, _exit_code: int, _payload: object) -> None:
+        if job_id != self._node_job_id:
+            return
         self._node_worker = None
+        self._node_job_id = None
 
     def _stop_node_worker(self) -> None:
         worker = self._node_worker
+        node_job_id = self._node_job_id
         self._node_worker = None
-        stop_thread(worker)
+        self._node_job_id = None
+        if node_job_id:
+            self._runner.cancel(node_job_id)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if qalive(self._node_timer):
             self._node_timer.stop()
         self._stop_node_worker()
+        if self._active_job_id:
+            self._runner.cancel(self._active_job_id)
         self._worker = None
         super().closeEvent(event)
 

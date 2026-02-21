@@ -104,6 +104,7 @@ class Account:
     address: str = ""
     created_ts: float = field(default_factory=time.time)
     last_used_ts: float = field(default_factory=time.time)
+    sig_scheme: str = "dilithium3"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +113,7 @@ class Account:
             "address": self.address,
             "created_ts": self.created_ts,
             "last_used_ts": self.last_used_ts,
+            "sig_scheme": self.sig_scheme,
         }
 
     @classmethod
@@ -122,6 +124,7 @@ class Account:
             address=str(d.get("address", "")),
             created_ts=float(d.get("created_ts", time.time())),
             last_used_ts=float(d.get("last_used_ts", time.time())),
+            sig_scheme=str(d.get("sig_scheme", "dilithium3")),
         )
 
 
