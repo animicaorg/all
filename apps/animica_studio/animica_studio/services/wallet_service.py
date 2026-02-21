@@ -46,6 +46,7 @@ _DEFAULT_DECIMALS = 18
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
+_ANM_BALANCE_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*ANM", re.IGNORECASE)
 _SCHEME_ALIASES = {
     "dilithium3": "dilithium3",
     "sphincs128s": "sphincs_shake_128s",
@@ -306,21 +307,35 @@ class WalletService:
         return self._balances.get(address)
 
     def fetch_balance(self, address: str, rpc_url: str) -> BalanceState:
-        """Fetch balance for a single *address* from the RPC.
+        """Fetch balance for a single *address* via ``animica wallet show``.
 
         Returns a :class:`BalanceState` with either a value or an error.
         Never raises.
         """
-        from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
-
         try:
-            with RpcClient(rpc_url) as c:
-                raw = c.get_balance(address)
-            decimals = self._decimals()
+            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
+            cmd = [program, *base_args, "wallet", "show", address]
+            merged_env = {**os.environ, **resolved_env} if resolved_env else dict(os.environ)
+            if rpc_url:
+                merged_env["ANIMICA_RPC_URL"] = rpc_url
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=merged_env,
+            )
+            if result.returncode != 0:
+                details = (result.stderr or result.stdout or "Unknown CLI error").strip()
+                raise RuntimeError(details)
+
+            raw, formatted = self._parse_wallet_show_balance(result.stdout)
             state = BalanceState(
                 address=address,
                 balance_wei=raw,
-                formatted=format_amount(raw, decimals),
+                formatted=formatted,
                 updated_ts=time.time(),
                 error=None,
             )
@@ -337,6 +352,35 @@ class WalletService:
         # Store keyed by address — never aliased
         self._balances[address] = state
         return state
+
+    def _parse_wallet_show_balance(self, output: str) -> tuple[int, str]:
+        """Extract raw + formatted balance from ``animica wallet show`` output."""
+        text = (output or "").strip()
+        if not text:
+            raise RuntimeError("wallet show returned no output")
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            raw = parsed.get("balance_confirmed")
+            if isinstance(raw, (int, float)):
+                raw_int = int(raw)
+                formatted = str(parsed.get("balance_confirmed_formatted") or format_amount(raw_int, self._decimals())).strip()
+                return raw_int, formatted
+
+            formatted = str(parsed.get("balance_confirmed_formatted") or "").strip()
+            if formatted and "ANM" in formatted.upper():
+                return 0, formatted
+
+        match = _ANM_BALANCE_RE.search(text)
+        if match:
+            amount = match.group(1)
+            return 0, f"{amount} ANM"
+
+        raise RuntimeError("Unable to parse ANM balance from wallet show output")
 
     def refresh_all_balances(
         self,
