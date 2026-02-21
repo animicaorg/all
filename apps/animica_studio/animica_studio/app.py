@@ -99,6 +99,14 @@ def main() -> None:
     # Load config (creates defaults on first run)
     config = load_config()
 
+    # Load cached CLI registry early so pages can resolve commands quickly.
+    try:
+        from animica_studio.services.cli_capabilities import get_cli_registry  # noqa: PLC0415
+
+        get_cli_registry(config)
+    except Exception:
+        log.exception("CLI registry preload failed")
+
     # Create application
     app = _create_app()
 

@@ -28,6 +28,8 @@ from animica_studio.models.wallet_models import (
     PendingTx,
     format_amount,
 )
+from animica_studio.services.cli_capabilities import get_cli_ops
+from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
 from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
@@ -137,16 +139,15 @@ class WalletService:
     ) -> tuple[list[str], str, str]:
         """Build CLI args for wallet creation and return normalized values."""
         clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme)
-        args = [
-            "wallet",
-            "create",
-            "--label",
-            clean_label,
-            "--alg",
-            scheme,
-        ]
-        if allow_insecure_fallback:
-            args.append("--allow-insecure-fallback")
+        ops = get_cli_ops(self._config)
+        args = ops.build(
+            CliOperation.WALLET_CREATE,
+            {
+                "label": clean_label,
+                "alg": scheme,
+                "allow_insecure_fallback": allow_insecure_fallback,
+            },
+        )
         return args, clean_label, scheme
 
     def parse_created_wallet_address(self, stdout: str) -> str:

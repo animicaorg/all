@@ -7,7 +7,11 @@ from typing import Callable
 
 from animica_studio.models.console_models import CommandPreset, RunRecord
 from animica_studio.models.exec_models import ExecResult, StreamEvent
+from animica_studio.services.cli_capabilities import get_cli_ops
+from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
+from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.storage.config import Config, load_config
 from animica_studio.util.cancel import CancelToken
 
 log = logging.getLogger(__name__)
@@ -15,45 +19,33 @@ log = logging.getLogger(__name__)
 _MAX_HISTORY = 200
 _MAX_RUN_RECORDS = 100
 
-_DEFAULT_PRESETS = [
-    # Node group
-    {"group": "Node", "label": "Node Status", "argv": ["animica", "node", "status"]},
-    {"group": "Node", "label": "Node Start", "argv": ["animica", "node", "start"]},
-    {"group": "Node", "label": "Node Stop",  "argv": ["animica", "node", "stop"]},
-    {"group": "Node", "label": "Sync Status","argv": ["animica", "sync", "status"]},
-    # Chain/RPC
-    {"group": "Chain/RPC", "label": "RPC Discover", "argv": ["animica", "rpc", "call", "rpc.discover"]},
-    {"group": "Chain/RPC", "label": "Chain Head",   "argv": ["animica", "rpc", "call", "chain_getHead"]},
-    # Wallet
-    {"group": "Wallet", "label": "Wallet List",    "argv": ["animica", "wallet", "list"]},
-    # AICF
-    {"group": "AICF", "label": "AICF Status",      "argv": ["animica", "aicf", "status"]},
-    {"group": "AICF", "label": "AICF Jobs List",   "argv": ["animica", "aicf", "jobs", "list"]},
-]
-
-
-def _default_presets() -> list[CommandPreset]:
-    presets = []
-    for raw in _DEFAULT_PRESETS:
-        p = CommandPreset.make(
-            group=raw["group"],
-            label=raw["label"],
-            argv=raw["argv"],
-        )
-        presets.append(p)
-    return presets
-
 
 class ConsoleService:
     """Manages presets, history and run-records for the Console page."""
 
-    def __init__(self) -> None:
-        self._presets: list[CommandPreset] = _default_presets()
+    def __init__(self, config: Config | None = None) -> None:
+        self._config = config or load_config()
+        self._presets: list[CommandPreset] = self._default_presets()
         self._history: list[str] = []
         self._run_records: list[RunRecord] = []
         self._runner = CliRunner()
 
-    # -- Presets ----------------------------------------------------------------
+    def _default_presets(self) -> list[CommandPreset]:
+        presets: list[dict[str, object]] = [
+            {"group": "Node", "label": "Node Status", "argv": ["animica", "node", "status"]},
+            {"group": "Node", "label": "Node Start", "argv": ["animica", "node", "start"]},
+            {"group": "Node", "label": "Node Stop", "argv": ["animica", "node", "stop"]},
+            {"group": "Node", "label": "Sync Status", "argv": ["animica", "sync", "status"]},
+            {"group": "Chain/RPC", "label": "RPC Discover", "argv": ["animica", "rpc", "call", "rpc.discover"]},
+            {"group": "Chain/RPC", "label": "Chain Head", "argv": ["animica", "rpc", "call", "chain_getHead"]},
+        ]
+        try:
+            ops = get_cli_ops(self._config)
+            presets.append({"group": "Wallet", "label": "Wallet List", "argv": ["animica", *ops.build(CliOperation.WALLET_LIST)]})
+            presets.append({"group": "AICF", "label": "AICF Status", "argv": ["animica", *ops.build(CliOperation.AICF_STATUS)]})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ConsoleService: failed to build op presets: %s", exc)
+        return [CommandPreset.make(group=str(p["group"]), label=str(p["label"]), argv=list(p["argv"])) for p in presets]
 
     def get_presets(self) -> list[CommandPreset]:
         return list(self._presets)
@@ -68,12 +60,9 @@ class ConsoleService:
     def save_presets_to(self) -> list[dict]:
         return [p.to_dict() for p in self._presets]
 
-    # -- History ----------------------------------------------------------------
-
     def push_history(self, cmd_str: str) -> None:
         if not cmd_str:
             return
-        # Remove duplicate if present
         if cmd_str in self._history:
             self._history.remove(cmd_str)
         self._history.append(cmd_str)
@@ -81,12 +70,10 @@ class ConsoleService:
             self._history = self._history[-_MAX_HISTORY:]
 
     def get_history(self) -> list[str]:
-        return list(reversed(self._history))  # newest first
+        return list(reversed(self._history))
 
     def load_history(self, raw: list[str]) -> None:
         self._history = list(raw)[-_MAX_HISTORY:]
-
-    # -- Run records -----------------------------------------------------------
 
     def get_run_records(self) -> list[RunRecord]:
         return list(self._run_records)
@@ -95,8 +82,6 @@ class ConsoleService:
         self._run_records.append(record)
         if len(self._run_records) > _MAX_RUN_RECORDS:
             self._run_records = self._run_records[-_MAX_RUN_RECORDS:]
-
-    # -- Execution -------------------------------------------------------------
 
     def run(
         self,
@@ -107,16 +92,25 @@ class ConsoleService:
         cancel_token: CancelToken | None = None,
         stream_cb: Callable[[StreamEvent], None] | None = None,
     ) -> RunRecord:
-        """Run *argv* and return a :class:`RunRecord`."""
         cmd_str = " ".join(argv)
         self.push_history(cmd_str)
 
         record_id = str(uuid.uuid4())
         started_ts = time.time()
 
+        resolved = argv
+        env: dict[str, str] | None = None
+        if argv and argv[0] == "animica":
+            try:
+                program, base_args, env = resolve_animica_cli_program_and_env(self._config)
+                resolved = [program, *base_args, *argv[1:]]
+            except FileNotFoundError:
+                pass
+
         result: ExecResult = self._runner.run(
-            argv,
+            resolved,
             cwd=cwd,
+            env=env,
             timeout_s=timeout_s,
             cancel_token=cancel_token,
             stream_cb=stream_cb,
@@ -136,8 +130,4 @@ class ConsoleService:
             stdout_snippet=result.stdout[-500:] if result.stdout else "",
         )
         self._add_record(record)
-        log.info(
-            "ConsoleService: run completed exit_code=%s duration_ms=%d cancelled=%s argv=%r",
-            result.returncode, result.duration_ms, result.cancelled, argv,
-        )
         return record
