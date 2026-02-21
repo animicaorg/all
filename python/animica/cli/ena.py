@@ -29,6 +29,11 @@ except ImportError:
 console = Console()
 app = typer.Typer(help="ENA LLM inference commands")
 
+try:
+    from animica.ena.smoke import run_ena_smoke_test
+except Exception:
+    run_ena_smoke_test = None  # type: ignore
+
 # Models commands group – must be defined before any @models_app decorators below.
 models_app = typer.Typer(help="ENA model management commands")
 app.add_typer(models_app, name="models")
@@ -54,6 +59,32 @@ DEFAULT_ENA_ENDPOINT = os.getenv("ENA_ENDPOINT", "https://ena.animica.org")
 DEFAULT_RPC_URL = os.getenv("ANIMICA_RPC_URL", "https://mainnet.animica.org/rpc")
 
 ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
+
+
+@app.command("smoke-test")
+def smoke_test(
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON report"),
+    work_dir: Optional[Path] = typer.Option(None, "--work-dir", help="Working directory for artifacts"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="RPC URL for optional DA discovery"),
+):
+    """Run ENA end-to-end smoke test (deterministic CPU dev flow)."""
+    if run_ena_smoke_test is None:
+        console.print("[red]Error: smoke test module unavailable[/red]")
+        raise typer.Exit(1)
+
+    try:
+        report = run_ena_smoke_test(work_dir=work_dir, rpc_url=rpc_url)
+    except Exception as exc:
+        console.print(f"[red]ENA smoke test failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+    if json_output:
+        console.print(json.dumps(report, indent=2))
+    else:
+        console.print("[green]ENA smoke test passed[/green]")
+        console.print(f"Hash: {report['hashes']['full_snapshot_hash']}")
+        console.print(f"DA mode: {report['da_mode']}")
+        console.print(f"Work dir: {report['work_dir']}")
 
 
 def _ensure_httpx():
