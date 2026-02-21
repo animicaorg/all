@@ -325,6 +325,35 @@ def _tx_unsigned(tx: Any) -> Any:
     return None
 
 
+
+
+def _is_zero_address(addr: Any) -> bool:
+    try:
+        if isinstance(addr, (bytes, bytearray)):
+            return bytes(addr) == b"\x00" * 32
+        if isinstance(addr, str):
+            v = addr.lower().strip()
+            if v.startswith("0x"):
+                v = v[2:]
+            return v in {"0" * 64, "0" * 40}
+    except Exception:
+        return False
+    return False
+
+
+def _validate_coinbase_outputs_nonzero(block: Block) -> None:
+    """Consensus rule: no coinbase output may target zero address."""
+    for tx in getattr(block, "txs", ()):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is None:
+            continue
+        kind = getattr(unsigned, "kind", None)
+        if int(kind) != 3:
+            continue
+        payload = getattr(unsigned, "payload", None)
+        to_addr = getattr(payload, "to", None) if payload is not None else None
+        if to_addr is not None and _is_zero_address(to_addr):
+            raise BlockImportError("CORE/BLOCK_IMPORT", "invalid coinbase: zero-address output is forbidden")
 def _is_coinbase_tx(tx: Any) -> bool:
     unsigned = _tx_unsigned(tx)
     if unsigned is None:
@@ -1028,6 +1057,9 @@ class BlockImporter:
 
             # Basic header sanity
             self._sanity_header(header)
+
+            # Consensus rule: coinbase outputs may never target zero address.
+            _validate_coinbase_outputs_nonzero(block)
 
             pow_error = self._pow_sanity(
                 header=header, header_hash=h, payload=hdr_map

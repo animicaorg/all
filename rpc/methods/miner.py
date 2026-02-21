@@ -607,7 +607,7 @@ def _as_bytes32_addr(val: Any) -> bytes:
                 hex_str = "0" + hex_str
             addr_bytes = bytes.fromhex(hex_str)
         except Exception:
-            # Fall back to zero address for invalid input
+            # Keep legacy behavior for non-payout call sites.
             return ZERO32
     else:
         return ZERO32
@@ -633,11 +633,13 @@ def _validate_payout_address(addr: Any) -> str:
     value = addr.strip()
     if value.lower().startswith("anim"):
         try:
-            _decode_bech32_address(value)
+            decoded = _decode_bech32_address(value)
         except Exception as exc:
             raise rpc_errors.InvalidParams(
                 "address must be a valid anim bech32 address"
             ) from exc
+        if decoded == ZERO32:
+            raise rpc_errors.InvalidParams("address must not be the zero address")
         return value
 
     hex_str = value[2:] if value.startswith("0x") else value
@@ -646,12 +648,25 @@ def _validate_payout_address(addr: Any) -> str:
             "address must be a 32-byte 0x-prefixed hex or anim bech32 address"
         )
     try:
-        bytes.fromhex(hex_str)
+        decoded = bytes.fromhex(hex_str)
     except Exception as exc:
         raise rpc_errors.InvalidParams(
             "address must be a 32-byte 0x-prefixed hex or anim bech32 address"
         ) from exc
+    if decoded == ZERO32:
+        raise rpc_errors.InvalidParams("address must not be the zero address")
     return "0x" + hex_str
+
+
+def _require_payout_address_bytes(addr: Any, *, field_name: str = "address") -> bytes:
+    """Strictly parse payout address and reject missing/invalid/zero values."""
+    if not isinstance(addr, str) or not addr.strip():
+        raise rpc_errors.InvalidParams(f"{field_name}: Select payout address")
+    normalized = _validate_payout_address(addr.strip())
+    decoded = _as_bytes32_addr(normalized)
+    if decoded == ZERO32:
+        raise rpc_errors.InvalidParams(f"{field_name} must not be the zero address")
+    return decoded
 
 
 def _derive_sender_from_envelope_raw(raw: bytes) -> bytes | None:
@@ -1574,8 +1589,7 @@ def _get_miner_address() -> bytes:
     
     Priority:
     1. Environment variable ANIMICA_MINER_ADDRESS (bech32 address)
-    2. Genesis premine address for the chain (if available)
-    3. Zero address (fallback)
+    2. None (missing address is now a hard error)
     
     Returns:
         bytes: 32-byte miner address
@@ -1585,38 +1599,24 @@ def _get_miner_address() -> bytes:
     if env_addr:
         try:
             # Try to decode bech32 address to raw bytes
-            return _decode_bech32_address(env_addr)
+            decoded = _decode_bech32_address(env_addr)
+            if decoded == ZERO32:
+                raise ValueError("zero address is not allowed")
+            return decoded
         except Exception as e:
             log.debug(f"Failed to decode ANIMICA_MINER_ADDRESS as bech32: {e}")
             # If bech32 decode fails, try hex
             try:
                 if env_addr.startswith("0x"):
                     env_addr = env_addr[2:]
-                addr_bytes = bytes.fromhex(env_addr)
-                return addr_bytes[:32].ljust(32, b"\x00")
+                addr_bytes = bytes.fromhex(env_addr)[:32].ljust(32, b"\x00")
+                if addr_bytes == ZERO32:
+                    raise ValueError("zero address is not allowed")
+                return addr_bytes
             except Exception as hex_err:
                 log.warning(f"Failed to decode ANIMICA_MINER_ADDRESS as hex: {hex_err}")
     
-    # Try to get premine address from consensus.rewards
-    try:
-        from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION  # type: ignore[import-not-found]
-        
-        ctx = _ctx()
-        chain_id = ctx.cfg.chain_id
-        
-        # For mainnet (chain_id=1) or devnet (chain_id=1337), use first premine address
-        if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
-            premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
-            try:
-                return _decode_bech32_address(premine_addr)
-            except Exception as e:
-                log.warning(f"Failed to decode premine address: {e}")
-    except Exception as e:
-        log.debug(f"Could not load premine address: {e}")
-    
-    # Fallback to zero address
-    log.warning("No miner address configured; using zero address for block rewards")
-    return ZERO32
+    raise rpc_errors.InvalidParams("Select payout address")
 
 
 def _build_coinbase_transactions(ctx: Any, height: int, payout_address: bytes | None = None, instant_block: bool = False, canonical_height: int | None = None) -> tuple[list, int]:
@@ -4336,29 +4336,15 @@ def miner_mine(
         extra={"workers": workers},
     )
     
-    # Parse payout address if provided
+    # Parse payout address strictly (no silent fallback to default/zero)
     payout_address_bytes: bytes | None = None
-    if address:
-        try:
-            # Try to decode as bech32 first
-            payout_address_bytes = _decode_bech32_address(address)
-            log.info(f"Using custom payout address: {address}")
-        except Exception as bech32_err:
-            # Try hex fallback (validate length before conversion)
-            try:
-                addr_str = address[2:] if address.startswith("0x") else address
-                # Validate hex string is exactly 64 characters (32 bytes)
-                if len(addr_str) != 64:
-                    raise ValueError(f"Hex address must be exactly 64 hex characters (32 bytes), got {len(addr_str)}")
-                payout_address_bytes = bytes.fromhex(addr_str)
-                # No need for second validation: 64 hex chars always => exactly 32 bytes
-                log.info(f"Using custom payout address (hex): {address}")
-            except Exception as hex_err:
-                log.warning(
-                    f"Failed to decode payout address '{address}': bech32={bech32_err}, hex={hex_err}. "
-                    f"Using default miner address."
-                )
-                payout_address_bytes = None
+    if address is not None:
+        payout_address_bytes = _require_payout_address_bytes(address)
+        log.info(f"Using custom payout address: {address}")
+    else:
+        payout_address_bytes = _get_miner_address()
+        if payout_address_bytes == ZERO32:
+            raise rpc_errors.InvalidParams("Select payout address")
     
     log.info(
         "miner.mine request",
@@ -4912,8 +4898,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
         timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
         
-        # Convert payout address to bytes for coinbase
-        coinbase_bytes = _as_bytes32_addr(payout_address)
+        # Convert payout address to bytes for coinbase (strict/no zero fallback)
+        coinbase_bytes = _require_payout_address_bytes(payout_address)
         
         header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
 
