@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QFileSystemWatcher
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,10 +70,10 @@ from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.signer_service import SigningNotAvailableError
 from animica_studio.services.profile_helpers import get_active_rpc_url, is_local_rpc_url
-from animica_studio.services.wallet_store import WalletParseError, WalletStore
+from animica_studio.services.wallet_store import WalletStore
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
-from animica_studio.util.qt import qalive, qthread_running
+from animica_studio.util.qt import qalive, qthread_running, safe_slot
 
 log = logging.getLogger(__name__)
 
@@ -713,12 +713,19 @@ def _get_chain_id(config: Config) -> int:
 class WalletPage(QWidget):
     """Full multi-account wallet page."""
 
-    def __init__(self, config: Config | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        parent: QWidget | None = None,
+        *,
+        safe_mode: bool = False,
+    ) -> None:
         super().__init__(parent)
         from animica_studio.storage.config import load_config  # noqa: PLC0415
 
         self._config = config or load_config()
         self._wallet_service = WalletService(self._config)
+        self._safe_mode = safe_mode
         self._selected_account: Account | None = None
         self._cancel_token: CancelToken = CancelToken()
         self._balance_thread: QThread | None = None
@@ -731,11 +738,12 @@ class WalletPage(QWidget):
         self._display_accounts: list[Account] = []
         self._last_good_local_accounts: list[Account] = []
         self._wallets_reload_timer: QTimer | None = None
-        self._wallets_watch_timer: QTimer | None = None
+        self._wallets_watcher: QFileSystemWatcher | None = None
         self._last_wallets_mtime_ns: int | None = None
 
         self._build_ui()
         QTimer.singleShot(0, self._run_wallet_cli_compat_check)
+        QTimer.singleShot(0, self._init_wallet_file_watcher)
         # Defer first refresh to after window is shown
         QTimer.singleShot(500, self._refresh_all)
 
@@ -839,15 +847,12 @@ class WalletPage(QWidget):
         # Receipt poll timer
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._poll_receipts)
-        self._poll_timer.start(_POLL_INTERVAL_MS)
+        if not self._safe_mode:
+            self._poll_timer.start(_POLL_INTERVAL_MS)
 
         self._wallets_reload_timer = QTimer(self)
         self._wallets_reload_timer.setSingleShot(True)
-        self._wallets_reload_timer.timeout.connect(self._reload_accounts_from_source)
-
-        self._wallets_watch_timer = QTimer(self)
-        self._wallets_watch_timer.timeout.connect(self._poll_wallet_file_changes)
-        self._wallets_watch_timer.start(_WALLETS_POLL_INTERVAL_MS)
+        self._wallets_reload_timer.timeout.connect(self._reload_accounts_from_source_safe)
 
     # ------------------------------------------------------------------
     # Account list management
@@ -1183,26 +1188,53 @@ class WalletPage(QWidget):
     def _is_local_mode(self) -> bool:
         return is_local_rpc_url(get_active_rpc_url(self._config))
 
+    @safe_slot(log)
     def _schedule_wallets_reload(self) -> None:
         if self._wallets_reload_timer is not None:
             self._wallets_reload_timer.start(_WALLETS_RELOAD_DEBOUNCE_MS)
 
-    def _poll_wallet_file_changes(self) -> None:
-        if not self._is_local_mode():
+    def _init_wallet_file_watcher(self) -> None:
+        if self._safe_mode:
+            log.info("WalletPage: safe mode enabled; skipping wallet watcher")
+            return
+        if self._wallets_watcher is not None:
+            return
+        self._wallets_watcher = QFileSystemWatcher(self)
+        self._wallets_watcher.fileChanged.connect(self._on_wallet_file_changed)
+        self._wallets_watcher.directoryChanged.connect(self._on_wallet_dir_changed)
+        self._refresh_wallet_watcher_paths()
+
+    def _refresh_wallet_watcher_paths(self) -> None:
+        if self._wallets_watcher is None:
             return
         wallets_path = self._wallets_path()
+        wallet_dir = wallets_path.parent
         try:
-            stat = wallets_path.stat()
-            mtime_ns = stat.st_mtime_ns
-        except FileNotFoundError:
-            mtime_ns = -1
-        except Exception as exc:  # noqa: BLE001
-            log.warning("WalletPage: wallet file stat failed: %s", exc)
-            return
+            existing_paths = set(self._wallets_watcher.files() + self._wallets_watcher.directories())
+            if existing_paths:
+                self._wallets_watcher.removePaths(list(existing_paths))
+            if wallets_path.exists():
+                self._wallets_watcher.addPath(str(wallets_path))
+            if wallet_dir.exists():
+                self._wallets_watcher.addPath(str(wallet_dir))
+        except Exception:
+            log.exception("WalletPage: failed to refresh wallet watcher paths")
 
-        if self._last_wallets_mtime_ns != mtime_ns:
-            self._last_wallets_mtime_ns = mtime_ns
-            self._schedule_wallets_reload()
+    @safe_slot(log)
+    def _on_wallet_file_changed(self, _path: str) -> None:
+        self._refresh_wallet_watcher_paths()
+        self._schedule_wallets_reload()
+
+    @safe_slot(log)
+    def _on_wallet_dir_changed(self, _path: str) -> None:
+        self._refresh_wallet_watcher_paths()
+        self._schedule_wallets_reload()
+
+    def _reload_accounts_from_source_safe(self) -> None:
+        try:
+            self._reload_accounts_from_source()
+        except Exception:
+            log.exception("WalletPage: wallet reload failed")
 
     def _reload_accounts_from_source(self) -> None:
         wallets_path = self._wallets_path()
@@ -1234,15 +1266,6 @@ class WalletPage(QWidget):
                 if not records:
                     self._wallet_banner.setText("⚠ No wallets found at ~/.animica/wallets.json")
                     self._wallet_banner.setVisible(True)
-            except FileNotFoundError:
-                self._display_accounts = []
-                self._wallet_banner.setText("⚠ No wallets found at ~/.animica/wallets.json")
-                self._wallet_banner.setVisible(True)
-            except WalletParseError as exc:
-                log.warning("WalletPage: wallets.json parse warning: %s", exc)
-                self._display_accounts = list(self._last_good_local_accounts)
-                self._wallet_banner.setText(f"⚠ Could not read wallets.json yet: {exc}")
-                self._wallet_banner.setVisible(True)
             except Exception as exc:  # noqa: BLE001
                 log.exception("WalletPage: wallets.json load failed")
                 self._display_accounts = list(self._last_good_local_accounts)
@@ -1289,6 +1312,14 @@ class WalletPage(QWidget):
         self._cancel_token.cancel()
         if self._poll_timer is not None:
             self._poll_timer.stop()
+        if self._wallets_reload_timer is not None:
+            self._wallets_reload_timer.stop()
+        if self._wallets_watcher is not None:
+            try:
+                self._wallets_watcher.fileChanged.disconnect(self._on_wallet_file_changed)
+                self._wallets_watcher.directoryChanged.disconnect(self._on_wallet_dir_changed)
+            except Exception:
+                pass
         if self._create_wallet_job is not None:
             self._runner.cancel(self._create_wallet_job.job_id)
             self._create_wallet_job = None
