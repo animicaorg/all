@@ -17,6 +17,7 @@ from typing import Any, Callable
 import logging
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThreadPool, QTimer, Signal
+from PySide6.QtWidgets import QApplication
 
 from animica_studio.storage.config import Config, discover_repo_root, load_config, save_config
 
@@ -177,6 +178,9 @@ class JobRunner(QObject):
         self._stderr_buffers: dict[str, str] = {}
         self._stderr_captures: dict[str, str] = {}
         self._pool = QThreadPool.globalInstance()
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.shutdown)
 
     @classmethod
     def instance(cls) -> "JobRunner":
@@ -268,6 +272,22 @@ class JobRunner(QObject):
             grace.timeout.connect(lambda: proc.kill())
             self._grace_timers[job_id] = grace
             grace.start(1500)
+
+    def shutdown(self) -> None:
+        """Best-effort stop of active subprocess jobs during app shutdown."""
+        for job_id in list(self._processes.keys()):
+            self.cancel(job_id)
+
+        deadline = time.monotonic() + 1.5
+        while self._processes and time.monotonic() < deadline:
+            app = QApplication.instance()
+            if app is None:
+                break
+            app.processEvents()
+
+        for proc in list(self._processes.values()):
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                proc.kill()
 
     def _emit_missing_cli(self, handle: JobHandle, msg: str) -> None:
         handle.started.emit(handle.job_id)
