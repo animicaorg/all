@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -184,7 +185,7 @@ class _AddAccountDialog(QDialog):
 class _CreateWalletDialog(QDialog):
     """Dialog to create a new wallet entry via backend wallet service."""
 
-    create_requested = Signal(str, str)
+    create_requested = Signal(str, str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -214,7 +215,7 @@ class _CreateWalletDialog(QDialog):
         self._dilithium_desc.setWordWrap(True)
         self._dilithium_desc.setStyleSheet("color: #9aa0a6;")
 
-        self._sphincs_radio = QRadioButton("SPHINCS+ 128s (sphincs128s)")
+        self._sphincs_radio = QRadioButton("SPHINCS+ 128s")
         self._sphincs_desc = QLabel("Hash-based post-quantum scheme with very large signatures and slower signing; conservative security assumptions.")
         self._sphincs_desc.setWordWrap(True)
         self._sphincs_desc.setStyleSheet("color: #9aa0a6;")
@@ -226,6 +227,15 @@ class _CreateWalletDialog(QDialog):
         scheme_layout.addWidget(self._sphincs_radio)
         scheme_layout.addWidget(self._sphincs_desc)
         layout.addWidget(scheme_box)
+
+        self._allow_insecure_fallback = QCheckBox("Allow insecure fallback (dev/test)")
+        self._allow_insecure_fallback.setChecked(False)
+        layout.addWidget(self._allow_insecure_fallback)
+
+        fallback_warning = QLabel("Uses pure-Python PQ fallbacks when native libs are unavailable; dev/test only.")
+        fallback_warning.setWordWrap(True)
+        fallback_warning.setStyleSheet("color: #9aa0a6;")
+        layout.addWidget(fallback_warning)
 
         self._progress_text = QLabel("Creating wallet…")
         self._progress_text.setVisible(False)
@@ -264,7 +274,7 @@ class _CreateWalletDialog(QDialog):
         self._error_label.setText("")
         if not self._is_valid_label():
             return
-        self.create_requested.emit(self.label, self.sig_scheme)
+        self.create_requested.emit(self.label, self.sig_scheme, self.allow_insecure_fallback)
 
     def _is_valid_label(self) -> bool:
         label = self.label
@@ -289,13 +299,18 @@ class _CreateWalletDialog(QDialog):
 
     @property
     def sig_scheme(self) -> str:
-        return "sphincs128s" if self._sphincs_radio.isChecked() else "dilithium3"
+        return "sphincs_shake_128s" if self._sphincs_radio.isChecked() else "dilithium3"
+
+    @property
+    def allow_insecure_fallback(self) -> bool:
+        return self._allow_insecure_fallback.isChecked()
 
     def set_busy(self, busy: bool) -> None:
         self._is_busy = busy
         self._label_edit.setEnabled(not busy)
         self._dilithium_radio.setEnabled(not busy)
         self._sphincs_radio.setEnabled(not busy)
+        self._allow_insecure_fallback.setEnabled(not busy)
         self._create_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(not busy)
         self._progress.setVisible(busy)
@@ -723,6 +738,7 @@ class WalletPage(QWidget):
         self._create_wallet_job: JobHandle | None = None
 
         self._build_ui()
+        QTimer.singleShot(0, self._run_wallet_cli_compat_check)
         # Defer first refresh to after window is shown
         QTimer.singleShot(500, self._refresh_all)
 
@@ -831,7 +847,8 @@ class WalletPage(QWidget):
                 bal_text = balance_state.formatted
             else:
                 bal_text = "—"
-            item = QListWidgetItem(f"{acc.label} [{acc.sig_scheme}]\n{shorten_address(acc.address)}  {bal_text}")
+            scheme_label = self._wallet_service.scheme_label(acc.sig_scheme)
+            item = QListWidgetItem(f"{acc.label} [{scheme_label}]\n{shorten_address(acc.address)}  {bal_text}")
             item.setData(Qt.ItemDataRole.UserRole, acc.id)
             self._accounts_list.addItem(item)
             if acc.id == prev_id:
@@ -898,7 +915,7 @@ class WalletPage(QWidget):
         dlg.create_requested.connect(self._start_create_wallet)
         dlg.exec()
 
-    def _start_create_wallet(self, label: str, sig_scheme: str) -> None:
+    def _start_create_wallet(self, label: str, sig_scheme: str, allow_insecure_fallback: bool) -> None:
         if self._create_wallet_job is not None:
             return
         if not qalive(self._create_wallet_dialog):
@@ -909,7 +926,7 @@ class WalletPage(QWidget):
 
         try:
             wallet_args, clean_label, scheme = self._wallet_service.build_create_wallet_args(
-                label, sig_scheme=sig_scheme
+                label, sig_scheme=sig_scheme, allow_insecure_fallback=allow_insecure_fallback
             )
         except ValueError as exc:
             self._create_wallet_dialog.set_error(format_exception(exc))
@@ -926,8 +943,9 @@ class WalletPage(QWidget):
 
         started = time.perf_counter()
         collected_stdout: list[str] = []
+        collected_stderr: list[str] = []
 
-        job = self._runner.run_cli([program, *base_args, *wallet_args], env=resolved_env, timeout_s=60)
+        job = self._runner.run_cli([program, *base_args, *wallet_args], env=resolved_env, timeout_s=15)
         self._create_wallet_job = job
 
         def _on_output(_job_id: str, stream: str, text: str) -> None:
@@ -936,6 +954,8 @@ class WalletPage(QWidget):
             log.info("WalletPage: create wallet %s: %s", stream, text.rstrip())
             if stream == "stdout":
                 collected_stdout.append(text)
+            elif stream == "stderr":
+                collected_stderr.append(text)
             if qalive(self._create_wallet_dialog):
                 self._create_wallet_dialog.append_output(stream, text)
 
@@ -947,6 +967,9 @@ class WalletPage(QWidget):
         def _on_finished(_job_id: str, exit_code: int, _payload: object) -> None:
             try:
                 if exit_code != 0:
+                    stderr = "\n".join(x.strip() for x in collected_stderr if x.strip()).strip()
+                    if stderr and qalive(self._create_wallet_dialog):
+                        self._create_wallet_dialog.set_error(stderr)
                     return
 
                 stdout = "".join(collected_stdout)
@@ -982,6 +1005,37 @@ class WalletPage(QWidget):
 
     def _on_create_wallet_dialog_destroyed(self) -> None:
         self._create_wallet_dialog = None
+
+    def _run_wallet_cli_compat_check(self) -> None:
+        try:
+            program, base_args, resolved_env = resolve_animica_cli_program_and_env()
+        except FileNotFoundError:
+            return
+
+        job = self._runner.run_cli(
+            [program, *base_args, "wallet", "create", "--help"],
+            env=resolved_env,
+            timeout_s=15,
+        )
+        help_chunks: list[str] = []
+
+        def _on_output(_job_id: str, stream: str, text: str) -> None:
+            if stream in {"stdout", "stderr"}:
+                help_chunks.append(text)
+
+        def _on_finished(_job_id: str, exit_code: int, _payload: object) -> None:
+            if exit_code != 0:
+                return
+            help_text = "\n".join(help_chunks)
+            if "--alg" not in help_text:
+                QMessageBox.warning(
+                    self,
+                    "Wallet CLI Compatibility",
+                    "Studio expects animica CLI supporting --alg; your CLI version differs.",
+                )
+
+        job.output.connect(_on_output)
+        job.finished.connect(_on_finished)
 
     def _select_account_by_id(self, account_id: str) -> None:
         for row in range(self._accounts_list.count()):
