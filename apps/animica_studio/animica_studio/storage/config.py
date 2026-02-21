@@ -59,7 +59,7 @@ class WalletSettings:
     """Per-profile wallet display settings."""
 
     decimals: int = 18
-    explorer_base_url: str = "https://animica.org/explorer"
+    explorer_base_url: str = "https://explorer.animica.org"
 
 
 @dataclass
@@ -79,7 +79,7 @@ class Config:
     # ---------------------------------------------------------------------------
     accounts: list[dict[str, Any]] = field(default_factory=list)
     wallet_settings: dict[str, Any] = field(
-        default_factory=lambda: {"decimals": 18, "explorer_base_url": "https://animica.org/explorer"}
+        default_factory=lambda: {"decimals": 18, "explorer_base_url": "https://explorer.animica.org"}
     )
     pending_txs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -228,7 +228,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         **wallet_settings_raw,
         "decimals": int(wallet_settings_raw.get("decimals", 18)),
         "explorer_base_url": str(
-            wallet_settings_raw.get("explorer_base_url", "https://animica.org/explorer")
+            wallet_settings_raw.get("explorer_base_url", "https://explorer.animica.org")
         ),
     }
     return Config(
