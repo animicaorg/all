@@ -38,7 +38,7 @@ _MAX_BYTES = 5 * 1024 * 1024  # 5 MB soft cap
 
 class _Forwarder(QObject):
     """Cross-thread signal forwarder."""
-    line_received: Signal = Signal(str)
+    line_received: Signal = Signal(str, str)
 
 
 class StreamConsole(QWidget):
@@ -141,9 +141,37 @@ class StreamConsole(QWidget):
         else:
             self._status_label.setText(f"❌ Exit {exit_code} | {duration_ms}ms")
 
-    def append_line(self, line: str) -> None:
-        """Thread-safe append. May be called from any thread."""
-        self._fwd.line_received.emit(line)
+    def append_line(self, *args: str) -> None:
+        """Thread-safe append. May be called from any thread.
+
+        Supported signatures:
+        * append_line(line)
+        * append_line(kind, text)
+        """
+        if len(args) == 1:
+            line = args[0]
+            self._fwd.line_received.emit("", line)
+            return
+        if len(args) == 2:
+            kind, text = args
+            self._fwd.line_received.emit(kind, text)
+            return
+        raise TypeError("append_line expects 1 or 2 string arguments")
+
+    def append_system(self, text: str) -> None:
+        self.append_line("system", text)
+
+    def append_stdout(self, text: str) -> None:
+        self.append_line("stdout", text)
+
+    def append_stderr(self, text: str) -> None:
+        self.append_line("stderr", text)
+
+    def append_error(self, text: str) -> None:
+        self.append_line("error", text)
+
+    def append_info(self, text: str) -> None:
+        self.append_line("info", text)
 
     def clear(self) -> None:
         self._output.clear()
@@ -157,8 +185,9 @@ class StreamConsole(QWidget):
     # Internal slots
     # ------------------------------------------------------------------
 
-    def _do_append(self, line: str) -> None:
+    def _do_append(self, kind: str, text: str) -> None:
         """Actual Qt-thread append; enforces max lines / bytes."""
+        line = self._format_line(kind, text)
         if self._line_count >= _MAX_LINES or self._byte_count >= _MAX_BYTES:
             # Trim first half
             self._output.clear()
@@ -171,6 +200,12 @@ class StreamConsole(QWidget):
         self._output.appendPlainText(line)
         # Auto-scroll to bottom
         self._output.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _format_line(self, kind: str, text: str) -> str:
+        if not kind:
+            return text
+        ts = time.strftime("%H:%M:%S")
+        return f"[{ts}] [{kind}] {text}"
 
     def _on_filter_changed(self, text: str) -> None:
         # Highlight matching text (basic: just scroll to first match)
