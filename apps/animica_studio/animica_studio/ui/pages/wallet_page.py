@@ -19,7 +19,7 @@ import time
 from typing import Any, Callable
 
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QPointer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -925,16 +925,11 @@ class WalletPage(QWidget):
         self._create_wallet_dialog.clear_output()
 
         try:
-            wallet_args, clean_label, scheme = self._wallet_service.build_create_wallet_args(
+            job, clean_label, scheme, known_addresses = self._wallet_service.start_create_wallet(
+                self._runner,
                 label, sig_scheme=sig_scheme, allow_insecure_fallback=allow_insecure_fallback
             )
-        except ValueError as exc:
-            self._create_wallet_dialog.set_error(format_exception(exc))
-            return
-
-        try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env()
-        except FileNotFoundError as exc:
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
             self._create_wallet_dialog.set_error(str(exc))
             return
 
@@ -945,36 +940,39 @@ class WalletPage(QWidget):
         collected_stdout: list[str] = []
         collected_stderr: list[str] = []
 
-        job = self._runner.run_cli([program, *base_args, *wallet_args], env=resolved_env, timeout_s=15)
         self._create_wallet_job = job
+        page_ref = QPointer(self)
+        dialog_ref = QPointer(self._create_wallet_dialog)
 
         def _on_output(_job_id: str, stream: str, text: str) -> None:
-            if self._create_wallet_job is None:
+            if not page_ref or page_ref._create_wallet_job is None:
                 return
             log.info("WalletPage: create wallet %s: %s", stream, text.rstrip())
             if stream == "stdout":
                 collected_stdout.append(text)
             elif stream == "stderr":
                 collected_stderr.append(text)
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.append_output(stream, text)
+            if dialog_ref and qalive(dialog_ref):
+                dialog_ref.append_output(stream, text)
 
         def _on_error(_job_id: str, msg: str, details: str) -> None:
             log.error("WalletPage: create wallet failed: %s details=%s", msg, details)
-            if qalive(self._create_wallet_dialog):
-                self._create_wallet_dialog.set_error(msg)
+            if dialog_ref and qalive(dialog_ref):
+                rendered = msg if not details else f"{msg}\n{details}"
+                dialog_ref.set_error(rendered)
 
         def _on_finished(_job_id: str, exit_code: int, _payload: object) -> None:
+            if not page_ref:
+                return
             try:
                 if exit_code != 0:
                     stderr = "\n".join(x.strip() for x in collected_stderr if x.strip()).strip()
-                    if stderr and qalive(self._create_wallet_dialog):
-                        self._create_wallet_dialog.set_error(stderr)
+                    if stderr and dialog_ref and qalive(dialog_ref):
+                        dialog_ref.set_error(stderr)
                     return
 
-                stdout = "".join(collected_stdout)
-                address = self._wallet_service.parse_created_wallet_address(stdout)
-                account = self._wallet_service.store_created_wallet(clean_label, address, scheme)
+                address = page_ref._wallet_service.resolve_created_wallet_address(known_addresses)
+                account = page_ref._wallet_service.store_created_wallet(clean_label, address, scheme)
                 elapsed = int((time.perf_counter() - started) * 1000)
                 log.info(
                     "WalletPage: wallet created label=%s address=%s scheme=%s duration_ms=%s",
@@ -983,27 +981,31 @@ class WalletPage(QWidget):
                     account.sig_scheme,
                     elapsed,
                 )
-                self._reload_accounts_list()
-                self._select_account_by_id(account.id)
-                self._refresh_all()
-                if qalive(self._create_wallet_dialog):
-                    self._create_wallet_dialog.accept()
-                QMessageBox.information(self, "Wallet", f"Wallet created: {account.label}")
+                page_ref._reload_accounts_list()
+                page_ref._select_account_by_id(account.id)
+                page_ref._refresh_all()
+                if dialog_ref and qalive(dialog_ref):
+                    dialog_ref.accept()
+                QMessageBox.information(page_ref, "Wallet", f"Wallet created: {account.label}")
             except Exception as exc:  # noqa: BLE001
                 log.error("WalletPage: wallet finalization failed: %s", exc)
-                if qalive(self._create_wallet_dialog):
-                    self._create_wallet_dialog.set_error(format_exception(exc))
+                if dialog_ref and qalive(dialog_ref):
+                    dialog_ref.set_error(format_exception(exc))
             finally:
-                self._create_wallet_btn.setEnabled(True)
-                if qalive(self._create_wallet_dialog):
-                    self._create_wallet_dialog.set_busy(False)
-                self._create_wallet_job = None
+                page_ref._create_wallet_btn.setEnabled(True)
+                if dialog_ref and qalive(dialog_ref):
+                    dialog_ref.set_busy(False)
+                page_ref._create_wallet_job = None
 
         job.output.connect(_on_output)
         job.error.connect(_on_error)
         job.finished.connect(_on_finished)
 
     def _on_create_wallet_dialog_destroyed(self) -> None:
+        if self._create_wallet_job is not None:
+            self._runner.cancel(self._create_wallet_job.job_id)
+            self._create_wallet_job = None
+            self._create_wallet_btn.setEnabled(True)
         self._create_wallet_dialog = None
 
     def _run_wallet_cli_compat_check(self) -> None:
