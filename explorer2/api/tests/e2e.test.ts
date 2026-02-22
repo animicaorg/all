@@ -12,22 +12,22 @@ describe('Explorer API e2e', () => {
         getHead: async () => ({ chainId: 1, height: 10, hash: '0xabc', time: 1000 }),
         getBlockByNumber: async () => ({
           header: { height: 10, hash: '0xabc', parentHash: '0xdef', time: 1000 },
-          txs: [{ hash: '0xtx1', from: 'anim1from', to: 'anim1to', value: '0x1' }]
+          txs: [{ hash: '0x' + '1'.repeat(64), from: 'anim1from', to: 'anim1to', value: '0x1' }]
         }),
         getBlockByHash: async () => ({
           header: { height: 10, hash: '0xabc', parentHash: '0xdef', time: 1000 },
-          txs: [{ hash: '0xtx1', from: 'anim1from', to: 'anim1to', value: '0x1' }]
+          txs: [{ hash: '0x' + '1'.repeat(64), from: 'anim1from', to: 'anim1to', value: '0x1' }]
         }),
-        getTransactionByHash: async () => ({ hash: '0xtx1', from: 'anim1from', to: 'anim1to', value: '0x1' }),
+        getTransactionByHash: async () => ({ hash: '0x' + '1'.repeat(64), from: 'anim1from', to: 'anim1to', value: '0x1' }),
         getTransactionReceipt: async () => ({
-          txHash: '0xtx1',
+          txHash: '0x' + '1'.repeat(64),
           blockHash: '0xabc',
           blockNumber: 10,
           status: 'SUCCESS',
           gasUsed: '0x10',
           logs: []
         }),
-        getMempoolPending: async () => ['0xtx2'],
+        getMempoolPending: async () => ['0x' + '2'.repeat(64)],
         getMempoolStats: async () => ({ count: 1, totalBytes: 120, oldestAgeSec: 3 }),
         getPeers: async () => [{ direction: 'inbound' }, { direction: 'outbound' }],
         getBalance: async () => '0x5'
@@ -51,7 +51,7 @@ describe('Explorer API e2e', () => {
   })
 
   it('serves tx detail', async () => {
-    const res = await request(api).get('/api/tx/0xtx1')
+    const res = await request(api).get('/api/tx/0x1111111111111111111111111111111111111111111111111111111111111111')
     expect(res.status).toBe(200)
     expect(res.body.status).toBe('confirmed')
   })
