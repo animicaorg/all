@@ -405,6 +405,21 @@ def _make_wallet_create_ops(*, allow_insecure_fallback_opt: bool = False):
     return CliOps(registry)
 
 
+def _make_wallet_create_ops_alt_flags():
+    """Return CliOps configured with --name/--scheme variants for wallet create."""
+    from animica_studio.services.cli_ops import CliOps
+    from animica_studio.services.cli_registry import CliNode, CliRegistry
+
+    registry = object.__new__(CliRegistry)
+    registry._nodes = {
+        "": CliNode(commands=["wallet"]),
+        "wallet": CliNode(commands=["create", "list"]),
+        "wallet create": CliNode(options=["--name", "--scheme"]),
+    }
+    registry._cli_path = ""
+    return CliOps(registry)
+
+
 class TestWalletServiceCreateWallet:
     def test_build_create_wallet_args(self):
         from animica_studio.storage.config import Config
@@ -423,6 +438,26 @@ class TestWalletServiceCreateWallet:
             "--label",
             "My Wallet",
             "--alg",
+            "dilithium3",
+        ]
+
+    def test_build_create_wallet_args_uses_detected_cli_flags(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        ops = _make_wallet_create_ops_alt_flags()
+        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
+            args, clean_label, scheme = ws.build_create_wallet_argv("Legacy CLI", "dilithium3")
+
+        assert clean_label == "Legacy CLI"
+        assert scheme == "dilithium3"
+        assert args == [
+            "wallet",
+            "create",
+            "--name",
+            "Legacy CLI",
+            "--scheme",
             "dilithium3",
         ]
 

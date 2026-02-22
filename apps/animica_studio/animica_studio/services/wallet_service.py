@@ -142,11 +142,14 @@ class WalletService:
     ) -> tuple[list[str], str, str]:
         """Build CLI argv for wallet creation and return normalized values."""
         clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme or "dilithium3")
-        argv: list[str] = ["wallet", "create", "--label", clean_label]
-        if scheme:
-            argv.extend(["--alg", scheme])
-        if allow_insecure_fallback:
-            argv.append("--allow-insecure-fallback")
+        argv = get_cli_ops(self._config).build(
+            CliOperation.WALLET_CREATE,
+            {
+                "label": clean_label,
+                "alg": scheme,
+                "allow_insecure_fallback": allow_insecure_fallback,
+            },
+        )
         log.info("WalletService: build create wallet argv=%r", argv)
         return argv, clean_label, scheme
 
