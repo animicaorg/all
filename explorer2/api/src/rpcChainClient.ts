@@ -132,7 +132,7 @@ export class RpcChainClient implements ChainClient {
 
   async getTransactionByHash(hash: string): Promise<unknown> {
     const normalizedHash = normalizeTxHash(hash)
-    const methods = ['tx.getTransactionByHash', 'tx.getTransaction', 'chain.getTx', 'mempool.getTx']
+    const methods = ['tx.getTransactionByHash', 'tx.getTransaction', 'chain.getTransactionByHash', 'chain.getTx', 'mempool.getTx']
     try {
       for (const method of methods) {
         try {

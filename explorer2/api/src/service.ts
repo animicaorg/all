@@ -5,8 +5,10 @@ import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTx
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
 import { normalizeTxHash } from './txHash.js'
 import pino from 'pino'
+import { TxLifecycleStore } from './txLifecycle.js'
 
 const log = pino({ name: 'explorer-service' })
+const txLifecycle = new TxLifecycleStore()
 export interface ChainClient {
   getHead: () => Promise<unknown>
   getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
@@ -79,26 +81,117 @@ export class ExplorerService {
         { allowNotFound: true }
       )
       if (!raw) throw new HttpError(404, 'Block not found')
-      return normalizeBlockDetail(raw)
+      const detail = normalizeBlockDetail(raw)
+      detail.txs.forEach((tx, index) => {
+        try {
+          const normalizedTxHash = normalizeTxHash(String(tx.hash))
+          txLifecycle.upsertConfirmed({
+            hash: normalizedTxHash,
+            includedHeight: detail.height,
+            includedBlockHash: String(detail.hash),
+            includedIndex: index,
+            timestamp: detail.time,
+            from: tx.from,
+            to: tx.to,
+            value: tx.value
+          })
+          log.debug({ txHash: tx.hash, normalizedHash: normalizedTxHash, insertResult: 'upserted' }, 'block ingestion tx upsert')
+        } catch (error) {
+          log.warn({ txHash: tx.hash, error }, 'block ingestion tx skipped due to invalid hash format')
+        }
+      })
+      return detail
     })
   }
 
-  async getTxDetail(hash: string): Promise<TxDetail> {
+  async getTxDetail(hash: string): Promise<TxDetail & { tx_hash: string; included_height: number | null; included_block_hash: string | null; confirmations: number; timestamp: number | null; explorer_head_height: number }> {
     const normalizedHash = normalizeTxHash(hash)
     const cacheKey = `tx:${normalizedHash}`
     return this.coalescer.run(cacheKey, async () => {
+      log.debug({ normalizedHash, store: 'confirmed+pending' }, 'tx lookup start')
       const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(normalizedHash)).catch(() => null)
       const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(normalizedHash)).catch(() => null)
+      const head = normalizeHead(await this.safeRpc(() => this.rpc.getHead()))
 
-      if (!tx && !receipt) {
-        const pending = await this.safeRpc(() => this.rpc.getMempoolPending()).catch(() => [])
-        const pendingMatch = pending.some((h) => normalizeTxHash(h) === normalizedHash)
-        if (pendingMatch) {
-          return normalizeTxDetail({ hash: normalizedHash, status: 'pending' }, null)
+      if (tx || receipt) {
+        const detail = normalizeTxDetail(tx ?? { hash: normalizedHash }, receipt)
+        const includedHeight = detail.blockHeight ?? null
+        const includedBlockHash = detail.blockHash ? String(detail.blockHash) : null
+        const confirmations = includedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
+        txLifecycle.upsertConfirmed({
+          hash: normalizedHash,
+          includedHeight: includedHeight ?? head.height,
+          includedBlockHash: includedBlockHash ?? normalizedHash,
+          includedIndex: 0,
+          timestamp: includedHeight ? head.time : null,
+          from: detail.from,
+          to: detail.to,
+          value: detail.value,
+          fee: detail.feePaid,
+          rawTx: detail.raw,
+          rawReceipt: detail.receipt
+        })
+        log.debug({ normalizedHash, store: 'confirmed', result: 'hit' }, 'tx lookup result')
+        return {
+          ...detail,
+          tx_hash: normalizedHash,
+          included_height: includedHeight,
+          included_block_hash: includedBlockHash,
+          confirmations,
+          timestamp: includedHeight ? head.time : null,
+          explorer_head_height: head.height
         }
-        throw new HttpError(404, 'Transaction not found')
       }
-      return normalizeTxDetail(tx ?? { hash: normalizedHash }, receipt)
+
+      const pending = await this.safeRpc(() => this.rpc.getMempoolPending()).catch(() => [])
+      const normalizedPending = pending.flatMap((h) => {
+        try {
+          return [txLifecycle.recordPending(h)]
+        } catch {
+          return []
+        }
+      })
+
+      if (normalizedPending.includes(normalizedHash)) {
+        const detail = normalizeTxDetail({ hash: normalizedHash, status: 'pending' }, null)
+        log.debug({ normalizedHash, store: 'mempool', result: 'hit' }, 'tx lookup result')
+        return {
+          ...detail,
+          tx_hash: normalizedHash,
+          included_height: null,
+          included_block_hash: null,
+          confirmations: 0,
+          timestamp: null,
+          explorer_head_height: head.height
+        }
+      }
+
+      const storeRecord = txLifecycle.get(normalizedHash)
+      if (storeRecord) {
+        const confirmations = storeRecord.included_height ? Math.max(0, head.height - storeRecord.included_height + 1) : 0
+        log.debug({ normalizedHash, store: 'lifecycle-store', result: 'hit' }, 'tx lookup result')
+        return {
+          hash: storeRecord.tx_hash,
+          tx_hash: storeRecord.tx_hash,
+          status: storeRecord.status,
+          blockHash: storeRecord.included_block_hash ?? undefined,
+          blockHeight: storeRecord.included_height ?? undefined,
+          included_height: storeRecord.included_height,
+          included_block_hash: storeRecord.included_block_hash,
+          confirmations,
+          timestamp: storeRecord.timestamp,
+          explorer_head_height: head.height,
+          from: storeRecord.from,
+          to: storeRecord.to,
+          value: storeRecord.value,
+          feePaid: storeRecord.fee,
+          raw: storeRecord.rawTx ?? { hash: storeRecord.tx_hash },
+          receipt: storeRecord.rawReceipt
+        }
+      }
+
+      log.debug({ normalizedHash, store: 'confirmed+mempool+lifecycle-store', result: 'miss' }, 'tx lookup result')
+      throw new HttpError(404, 'Transaction not found')
     })
   }
 
