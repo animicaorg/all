@@ -25,7 +25,7 @@ class OperationSpec:
 
 
 _SPECS: dict[CliOperation, OperationSpec] = {
-    CliOperation.WALLET_CREATE: OperationSpec("wallet_create", display_name="wallet create", required_opts=("--label", "--alg")),
+    CliOperation.WALLET_CREATE: OperationSpec("wallet_create", display_name="wallet create"),
     CliOperation.WALLET_LIST: OperationSpec("wallet_list", display_name="wallet list"),
     CliOperation.AICF_STATUS: OperationSpec("aicf_status", display_name="aicf status"),
     CliOperation.AICF_JOBS_WATCH: OperationSpec("aicf_jobs_watch", display_name="aicf jobs watch"),
@@ -56,7 +56,30 @@ class CliOps:
                     f"Your animica CLI does not support {display_name}: missing required option {req} "
                     f"for {' '.join(path)}."
                 )
+        if op is CliOperation.WALLET_CREATE:
+            self._wallet_create_label_opt(path)
+            self._wallet_create_alg_opt(path)
         return path
+
+    def _wallet_create_label_opt(self, path: list[str]) -> str:
+        if self._registry.has_opt(path, "--label"):
+            return "--label"
+        if self._registry.has_opt(path, "--name"):
+            return "--name"
+        raise CliOperationError(
+            f"Your animica CLI does not support wallet create: missing required option --label (or --name) "
+            f"for {' '.join(path)}."
+        )
+
+    def _wallet_create_alg_opt(self, path: list[str]) -> str:
+        if self._registry.has_opt(path, "--alg"):
+            return "--alg"
+        if self._registry.has_opt(path, "--scheme"):
+            return "--scheme"
+        raise CliOperationError(
+            f"Your animica CLI does not support wallet create: missing required option --alg (or --scheme) "
+            f"for {' '.join(path)}."
+        )
 
     def build(self, op: CliOperation, params: dict[str, Any] | None = None) -> list[str]:
         params = params or {}
@@ -65,7 +88,7 @@ class CliOps:
         if op is CliOperation.WALLET_CREATE:
             label = str(params["label"])
             alg = str(params["alg"])
-            out = [*path, "--label", label, "--alg", alg]
+            out = [*path, self._wallet_create_label_opt(path), label, self._wallet_create_alg_opt(path), alg]
             if params.get("allow_insecure_fallback") and self._registry.has_opt(path, "--allow-insecure-fallback"):
                 out.append("--allow-insecure-fallback")
             return out
