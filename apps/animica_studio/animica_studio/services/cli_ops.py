@@ -64,16 +64,20 @@ class CliOps:
     def _wallet_create_label_opt(self, path: list[str]) -> str:
         if self._registry.has_opt(path, "--label"):
             return "--label"
+        if self._registry.has_opt(path, "--name"):
+            return "--name"
         raise CliOperationError(
-            f"Your animica CLI does not support wallet create: missing required option --label "
+            f"Your animica CLI does not support wallet create: missing required option --label/--name "
             f"for {' '.join(path)}."
         )
 
     def _wallet_create_alg_opt(self, path: list[str]) -> str:
         if self._registry.has_opt(path, "--alg"):
             return "--alg"
+        if self._registry.has_opt(path, "--scheme"):
+            return "--scheme"
         raise CliOperationError(
-            f"Your animica CLI does not support wallet create: missing required option --alg "
+            f"Your animica CLI does not support wallet create: missing required option --alg/--scheme "
             f"for {' '.join(path)}."
         )
 
