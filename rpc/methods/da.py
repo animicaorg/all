@@ -1,27 +1,24 @@
-"""Data availability RPC surface."""
+"""Data availability RPC surface — node-side implementation."""
 
 from __future__ import annotations
 
+import base64
+import logging
 import os
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from rpc import errors as rpc_errors
 from rpc.methods import method
 
+_log = logging.getLogger("animica.rpc.da")
 
-@method("da.putBlob", aliases=("da_putBlob",))
-def da_put_blob(*_args, **_kwargs):
-    raise rpc_errors.TemporarilyUnavailable("Blob submission not available")
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-
-@method("da.getBlob", aliases=("da_getBlob",))
-def da_get_blob(*_args, **_kwargs):
-    raise rpc_errors.TemporarilyUnavailable("Blob retrieval not available")
-
-
-@method("da.getProof", aliases=("da_getProof",))
-def da_get_proof(*_args, **_kwargs):
-    raise rpc_errors.TemporarilyUnavailable("Blob proof not available")
+_DA_VERSION = "1.0.0"
+_MAX_PUT_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -31,69 +28,448 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-@method("da.status", aliases=("da_status", "da.getStatus", "da_getStatus"), desc="Get DA layer status")
+def _default_da_dir() -> str:
+    base = os.getenv("ANIMICA_DATA_DIR") or os.path.expanduser("~/.animica")
+    chain_id = os.getenv("ANIMICA_CHAIN_ID", "1")
+    return os.path.join(base, f"chain-{chain_id}", "da")
+
+
+def _get_store(da_dir: Optional[str] = None):
+    """Return (or lazily create) the NodeDAStore for the configured directory."""
+    try:
+        from da.node_store import get_store
+    except ImportError as exc:
+        raise rpc_errors.TemporarilyUnavailable(
+            f"DA node store not available: {exc}"
+        )
+    root = da_dir or _default_da_dir()
+    return get_store(root)
+
+
+def _require_store():
+    """Return the store only if DA is enabled; raise otherwise."""
+    store = _get_store()
+    if not store.config.enabled:
+        raise rpc_errors.TemporarilyUnavailable(
+            "DA is not enabled on this node. "
+            "Run da.configure with enabled=true to activate."
+        )
+    return store
+
+
+# ---------------------------------------------------------------------------
+# RPC methods
+# ---------------------------------------------------------------------------
+
+
+@method("da.status", aliases=("da_status", "da.getStatus", "da_getStatus"),
+        desc="Get node-side DA layer status")
 def da_status(params=None, *_args, **_kwargs) -> dict:
-    """Returns DA status in stable schema: {enabled, ok, reason, message, details}."""
-    if isinstance(params, dict) and "params" in params:
-        params = params.get("params")
+    """
+    Return DA node status.
 
-    da_supported = _bool_env("ANIMICA_DA_SUPPORTED", True)
-    if not da_supported:
+    Returns a stable schema compatible with Studio/Explorer integration:
+    {
+      enabled, dir, max_bytes, used_bytes, free_bytes_fs,
+      blob_count, last_error, peer_serving,
+      allow_remote_get, allow_remote_put,
+      version
+    }
+    """
+    try:
+        store = _get_store()
+        cfg = store.config
+        stats = store.stats()
+        return {
+            "enabled": cfg.enabled,
+            "dir": store.root_dir,
+            "max_bytes": cfg.max_bytes,
+            "used_bytes": stats["used_bytes"],
+            "free_bytes_fs": stats["free_bytes_fs"],
+            "blob_count": stats["blob_count"],
+            "last_error": None,
+            "peer_serving": cfg.allow_remote_get,
+            "allow_remote_get": cfg.allow_remote_get,
+            "allow_remote_put": cfg.allow_remote_put,
+            "eviction_policy": cfg.eviction_policy,
+            "on_full": cfg.on_full,
+            "version": _DA_VERSION,
+        }
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        _log.warning("da.status failed: %s", exc)
         return {
             "enabled": False,
-            "ok": False,
-            "reason": "not_supported",
-            "message": "DA is not supported in this node build. Use a DA-enabled node image/profile.",
-            "details": {"supported": False},
+            "dir": _default_da_dir(),
+            "max_bytes": 0,
+            "used_bytes": 0,
+            "free_bytes_fs": 0,
+            "blob_count": 0,
+            "last_error": str(exc),
+            "peer_serving": False,
+            "allow_remote_get": False,
+            "allow_remote_put": False,
+            "eviction_policy": "lru",
+            "on_full": "evict",
+            "version": _DA_VERSION,
         }
 
-    da_enabled = _bool_env("ANIMICA_DA_ENABLED", False)
-    storage_dir = Path(os.getenv("ANIMICA_DA_STORAGE_DIR", "./data/da")).expanduser().resolve()
 
-    if not da_enabled:
-        return {
-            "enabled": False,
-            "ok": False,
-            "reason": "not_configured",
-            "message": "DA is disabled/not configured. Set ANIMICA_DA_ENABLED=1 and configure ANIMICA_DA_STORAGE_DIR.",
-            "details": {"storage_path": str(storage_dir)},
-        }
+@method("da.configure", aliases=("da_configure",), desc="Configure node-side DA store")
+def da_configure(params=None, **kwargs) -> dict:
+    """
+    Configure or reconfigure the node-side DA store.
 
-    if not storage_dir.exists():
-        return {
-            "enabled": False,
-            "ok": False,
-            "reason": "not_configured",
-            "message": f"DA storage directory does not exist: {storage_dir}. Create it and mount it read-write.",
-            "details": {"storage_path": str(storage_dir)},
-        }
+    Accepted parameters (all optional; pass only what you want to change):
+      enabled        bool
+      dir            str   — absolute path to the store root
+      max_bytes      int   — hard storage cap (0 = unlimited)
+      eviction_policy str  — "lru" (default; only supported value)
+      on_full        str   — "evict" (default) or "reject"
+      allow_remote_get bool
+      allow_remote_put bool
 
-    if not os.access(storage_dir, os.W_OK):
-        return {
-            "enabled": True,
-            "ok": False,
-            "reason": "read_only",
-            "message": f"DA storage path is read-only: {storage_dir}. Remount as read-write.",
-            "details": {"storage_path": str(storage_dir)},
-        }
+    Returns the resulting da.status dict.
+    """
+    # Normalise params: accept positional list, dict, or kwargs
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        if isinstance(params[0], dict):
+            kwargs.update(params[0])
 
-    backend_available = _bool_env("ANIMICA_DA_BACKEND_AVAILABLE", True)
-    if not backend_available:
-        return {
-            "enabled": True,
-            "ok": False,
-            "reason": "service_unavailable",
-            "message": "DA backend is enabled but currently unavailable. Verify DA service wiring and connectivity.",
-            "details": {"storage_path": str(storage_dir)},
-        }
+    # Validate
+    enabled = kwargs.get("enabled")
+    da_dir = kwargs.get("dir")
+    max_bytes = kwargs.get("max_bytes")
+    eviction_policy = kwargs.get("eviction_policy", "lru")
+    on_full = kwargs.get("on_full", "evict")
+    allow_remote_get = kwargs.get("allow_remote_get")
+    allow_remote_put = kwargs.get("allow_remote_put")
+
+    if eviction_policy not in ("lru",):
+        raise rpc_errors.InvalidParams(
+            f"Invalid eviction_policy: {eviction_policy!r}. Must be 'lru'."
+        )
+    if on_full not in ("evict", "reject"):
+        raise rpc_errors.InvalidParams(
+            f"Invalid on_full: {on_full!r}. Must be 'evict' or 'reject'."
+        )
+    if max_bytes is not None and int(max_bytes) < 0:
+        raise rpc_errors.InvalidParams("max_bytes must be >= 0")
+
+    # Resolve directory
+    try:
+        root = os.path.abspath(da_dir) if da_dir else _default_da_dir()
+        Path(root).mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise rpc_errors.InvalidParams(f"Cannot create DA directory: {exc}")
+
+    if not os.access(root, os.W_OK):
+        raise rpc_errors.InvalidParams(f"DA directory is not writable: {root}")
+
+    try:
+        from da.node_store import get_store, invalidate_store
+    except ImportError as exc:
+        raise rpc_errors.TemporarilyUnavailable(f"DA node store not available: {exc}")
+
+    # Invalidate cache so we get a fresh store at the new dir if it changed
+    invalidate_store(root)
+    store = get_store(root)
+
+    update_kwargs: Dict[str, Any] = {"dir": root}
+    if enabled is not None:
+        update_kwargs["enabled"] = bool(enabled)
+    if max_bytes is not None:
+        update_kwargs["max_bytes"] = int(max_bytes)
+    if eviction_policy:
+        update_kwargs["eviction_policy"] = eviction_policy
+    if on_full:
+        update_kwargs["on_full"] = on_full
+    if allow_remote_get is not None:
+        update_kwargs["allow_remote_get"] = bool(allow_remote_get)
+    if allow_remote_put is not None:
+        update_kwargs["allow_remote_put"] = bool(allow_remote_put)
+
+    store.update_config(**update_kwargs)
+
+    # Return current status
+    return da_status()
+
+
+@method("da.put", aliases=("da_put", "da.putBlob", "da_putBlob"),
+        desc="Ingest a blob into the node DA store")
+def da_put(params=None, **kwargs) -> dict:
+    """
+    Ingest a blob.
+
+    Params (dict or positional):
+      bytes          str  — base64-encoded blob data (required)
+      metadata       dict — optional metadata (content_type, owner, tags, ...)
+
+    Returns:
+      {blob_id, size_bytes}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        if isinstance(params[0], dict):
+            kwargs.update(params[0])
+        else:
+            kwargs["bytes"] = params[0]
+            if len(params) > 1 and isinstance(params[1], dict):
+                kwargs["metadata"] = params[1]
+
+    raw = kwargs.get("bytes") or kwargs.get("data")
+    if not raw:
+        raise rpc_errors.InvalidParams("Missing required parameter: bytes")
+
+    # Accept base64 or hex
+    try:
+        if isinstance(raw, str):
+            # Try base64 first, then hex
+            try:
+                blob_bytes = base64.b64decode(raw)
+            except Exception:
+                blob_bytes = bytes.fromhex(raw.replace("0x", "").replace("0X", ""))
+        elif isinstance(raw, bytes):
+            blob_bytes = raw
+        else:
+            raise rpc_errors.InvalidParams(
+                f"bytes must be a base64 or hex string, got {type(raw).__name__}"
+            )
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InvalidParams(f"Cannot decode bytes: {exc}")
+
+    if len(blob_bytes) > _MAX_PUT_BYTES:
+        raise rpc_errors.InvalidParams(
+            f"Blob too large: {len(blob_bytes)} > {_MAX_PUT_BYTES}"
+        )
+
+    metadata = kwargs.get("metadata")
+    content_type = None
+    owner = None
+    if isinstance(metadata, dict):
+        content_type = metadata.get("content_type")
+        owner = metadata.get("owner")
+
+    try:
+        store = _require_store()
+        blob_id, size_bytes = store.put(
+            blob_bytes,
+            content_type=content_type,
+            owner=owner,
+            metadata=metadata,
+        )
+    except rpc_errors.RpcError:
+        raise
+    except ValueError as exc:
+        raise rpc_errors.InvalidParams(str(exc))
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA put failed: {exc}")
+
+    return {"blob_id": blob_id, "size_bytes": size_bytes}
+
+
+@method("da.get", aliases=("da_get", "da.getBlob", "da_getBlob"),
+        desc="Retrieve a blob by id from the node DA store")
+def da_get(params=None, **kwargs) -> dict:
+    """
+    Retrieve a blob.
+
+    Params:
+      blob_id  str — the blob identifier returned by da.put
+
+    Returns:
+      {blob_id, bytes (base64), size_bytes, metadata}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        kwargs["blob_id"] = params[0]
+
+    blob_id = kwargs.get("blob_id") or kwargs.get("id") or kwargs.get("commitment")
+    if not blob_id:
+        raise rpc_errors.InvalidParams("Missing required parameter: blob_id")
+
+    try:
+        store = _require_store()
+        data, meta = store.get(str(blob_id))
+    except FileNotFoundError:
+        raise rpc_errors.NotFound(f"blob {blob_id}")
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA get failed: {exc}")
 
     return {
-        "enabled": True,
-        "ok": True,
-        "reason": None,
-        "message": None,
-        "details": {"storage_path": str(storage_dir)},
+        "blob_id": blob_id,
+        "bytes": base64.b64encode(data).decode("ascii"),
+        "size_bytes": len(data),
+        "metadata": meta,
     }
 
 
-__all__ = ["da_put_blob", "da_get_blob", "da_get_proof", "da_status"]
+@method("da.has", aliases=("da_has",), desc="Check if a blob exists in the node DA store")
+def da_has(params=None, **kwargs) -> dict:
+    """
+    Check blob existence.
+
+    Params:
+      blob_id  str
+
+    Returns:
+      {blob_id, exists: bool}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        kwargs["blob_id"] = params[0]
+
+    blob_id = kwargs.get("blob_id") or kwargs.get("id") or kwargs.get("commitment")
+    if not blob_id:
+        raise rpc_errors.InvalidParams("Missing required parameter: blob_id")
+
+    try:
+        store = _require_store()
+        exists = store.has(str(blob_id))
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA has failed: {exc}")
+
+    return {"blob_id": blob_id, "exists": exists}
+
+
+@method("da.list", aliases=("da_list",), desc="List blobs in the node DA store")
+def da_list(params=None, **kwargs) -> dict:
+    """
+    List stored blobs with pagination.
+
+    Params (all optional):
+      limit   int    — max results (default 50, max 1000)
+      cursor  str    — opaque pagination cursor from previous call
+      order   str    — "newest" (default) or "lru"
+
+    Returns:
+      {items: [{blob_id, size_bytes, created_at, last_accessed_at}], next_cursor}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params and isinstance(params[0], dict):
+        kwargs.update(params[0])
+
+    limit = int(kwargs.get("limit", 50))
+    cursor = kwargs.get("cursor")
+    order = str(kwargs.get("order", "newest"))
+
+    if order not in ("newest", "lru"):
+        raise rpc_errors.InvalidParams(
+            f"Invalid order: {order!r}. Must be 'newest' or 'lru'."
+        )
+
+    try:
+        store = _require_store()
+        items, next_cursor = store.list_blobs(
+            limit=limit, cursor=cursor, order=order
+        )
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA list failed: {exc}")
+
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@method("da.delete", aliases=("da_delete",), desc="Delete a blob from the node DA store")
+def da_delete(params=None, **kwargs) -> dict:
+    """
+    Delete a blob.
+
+    Params:
+      blob_id  str
+
+    Returns:
+      {blob_id, deleted: bool}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        kwargs["blob_id"] = params[0]
+
+    blob_id = kwargs.get("blob_id") or kwargs.get("id")
+    if not blob_id:
+        raise rpc_errors.InvalidParams("Missing required parameter: blob_id")
+
+    try:
+        store = _require_store()
+        deleted = store.delete(str(blob_id))
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA delete failed: {exc}")
+
+    return {"blob_id": blob_id, "deleted": deleted}
+
+
+@method("da.gc", aliases=("da_gc", "da.prune", "da_prune"),
+        desc="Garbage-collect blobs from the node DA store")
+def da_gc(params=None, **kwargs) -> dict:
+    """
+    Garbage-collect (prune) blobs.
+
+    Params (at least one required):
+      target_bytes        int — free at least this many bytes via LRU eviction
+      older_than_seconds  int — remove blobs older than this many seconds
+
+    Returns:
+      {freed_bytes, removed_count}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params and isinstance(params[0], dict):
+        kwargs.update(params[0])
+
+    target_bytes = kwargs.get("target_bytes")
+    older_than_seconds = kwargs.get("older_than_seconds")
+
+    if target_bytes is None and older_than_seconds is None:
+        raise rpc_errors.InvalidParams(
+            "Requires at least one of: target_bytes, older_than_seconds"
+        )
+
+    try:
+        store = _require_store()
+        freed, removed = store.gc(
+            target_bytes=int(target_bytes) if target_bytes is not None else None,
+            older_than_seconds=int(older_than_seconds) if older_than_seconds is not None else None,
+        )
+    except rpc_errors.RpcError:
+        raise
+    except ValueError as exc:
+        raise rpc_errors.InvalidParams(str(exc))
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA gc failed: {exc}")
+
+    return {"freed_bytes": freed, "removed_count": removed}
+
+
+@method("da.getProof", aliases=("da_getProof",), desc="Get DA proof for a blob commitment")
+def da_get_proof(*_args, **_kwargs):
+    raise rpc_errors.TemporarilyUnavailable("Blob proof not available on this node")
+
+
+__all__ = [
+    "da_status",
+    "da_configure",
+    "da_put",
+    "da_get",
+    "da_has",
+    "da_list",
+    "da_delete",
+    "da_gc",
+    "da_get_proof",
+]
