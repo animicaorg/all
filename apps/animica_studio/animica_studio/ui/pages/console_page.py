@@ -6,6 +6,7 @@ import shlex
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -211,13 +212,35 @@ class ConsolePage(QWidget):
         layout.addWidget(box)
         layout.addStretch()
 
-        # Auto-refresh node status every 15s
+        self._poll_toggle = QCheckBox("Enable polling")
+        self._poll_toggle.setChecked(False)
+        self._poll_toggle.toggled.connect(self._on_poll_toggle)
+        box_layout.addWidget(self._poll_toggle)
+
         self._node_timer = QTimer(self)
         self._node_timer.timeout.connect(self._on_node_refresh)
-        self._node_timer.start(15_000)
-        QTimer.singleShot(2000, self._on_node_refresh)
+        QTimer.singleShot(1500, self._on_node_refresh)
 
         return panel
+
+    def _on_poll_toggle(self, enabled: bool) -> None:
+        if enabled:
+            self._node_timer.start(60_000)
+            self._stream.append_system("Node polling enabled (60s interval).")
+            self._on_node_refresh()
+        else:
+            self._node_timer.stop()
+            self._stream.append_system("Node polling paused.")
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._poll_toggle.isChecked():
+            self._node_timer.start(60_000)
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        if qalive(self._node_timer):
+            self._node_timer.stop()
+        super().hideEvent(event)
 
     # ------------------------------------------------------------------
     # Presets
@@ -288,10 +311,12 @@ class ConsolePage(QWidget):
 
     def _run_argv(self, argv: list[str]) -> None:
         if self._active_job_id is not None:
+            self._stream.append_error("A command is already running.")
             return
 
         self._stream.set_cancel_token(None)
         self._stream.set_running(True)
+        self._stream.append_system(f"Running: {' '.join(argv)}")
         self._stop_btn.setEnabled(True)
 
         self._svc.push_history(" ".join(argv))
@@ -345,11 +370,13 @@ class ConsolePage(QWidget):
 
     def _run_node_op(self, op: str) -> None:
         if self._node_job_id is not None:
+            self._stream.append_system(f"Node operation already running: {op}")
             return
+        self._stream.append_system(f"Running node {op}…")
         self._node_worker = self._runner.run_cli(["animica", "node", op], timeout_s=45)
         self._node_job_id = self._node_worker.job_id
         self._node_worker.output.connect(self._on_node_output)
-        self._node_worker.error.connect(lambda _j, msg, _d: self._node_status_label.setText(f"Error: {msg[:80]}"))
+        self._node_worker.error.connect(lambda _j, msg, _d: (self._node_status_label.setText(f"Error: {msg[:80]}"), self._stream.append_error(msg)))
         self._node_worker.finished.connect(self._on_node_finished)
 
     def _on_node_output(self, job_id: str, stream: str, text: str) -> None:

@@ -68,10 +68,12 @@ from animica_studio.services.job_runner import (
 )
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.wallet_service import WalletService
+from animica_studio.services.tx_service import TxService
 from animica_studio.services.signer_service import SigningNotAvailableError
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.services.profile_helpers import get_active_rpc_url, is_local_rpc_url
 from animica_studio.services.wallet_store import WalletStore
+from animica_studio.ui.widgets.stream_console import StreamConsole
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
 from animica_studio.util.qt import qalive, qthread_running, safe_slot, stop_thread
@@ -444,6 +446,8 @@ class _SendTab(QWidget):
         self._wallet_service = wallet_service
         self._account: Account | None = None
         self._active_thread: QThread | None = None
+        self._runner = JobRunner.instance()
+        self._send_job: JobHandle | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -454,6 +458,9 @@ class _SendTab(QWidget):
         form = QFormLayout()
         self._from_label = QLabel("—")
         form.addRow("From:", self._from_label)
+
+        self._scheme_label = QLabel("Unknown")
+        form.addRow("PQ scheme:", self._scheme_label)
 
         self._to_edit = QLineEdit()
         self._to_edit.setPlaceholderText("anim1…")
@@ -466,6 +473,10 @@ class _SendTab(QWidget):
         self._memo_edit = QLineEdit()
         self._memo_edit.setPlaceholderText("Optional memo")
         form.addRow("Memo:", self._memo_edit)
+
+        self._auto_fee = QCheckBox("Auto fee")
+        self._auto_fee.setChecked(True)
+        form.addRow("Fee:", self._auto_fee)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -483,6 +494,10 @@ class _SendTab(QWidget):
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
 
+        self._console = StreamConsole()
+        self._console.setMaximumHeight(180)
+        layout.addWidget(self._console)
+
         self._result_area = QTextEdit()
         self._result_area.setReadOnly(True)
         self._result_area.setMaximumHeight(120)
@@ -493,6 +508,11 @@ class _SendTab(QWidget):
         self._explorer_btn.setVisible(False)
         self._explorer_btn.clicked.connect(self._open_tx_explorer)
         layout.addWidget(self._explorer_btn)
+
+        self._copy_hash_btn = QPushButton("📋 Copy tx hash")
+        self._copy_hash_btn.setVisible(False)
+        self._copy_hash_btn.clicked.connect(self._copy_tx_hash)
+        layout.addWidget(self._copy_hash_btn)
         layout.addStretch()
 
         self._last_tx_hash: str | None = None
@@ -501,11 +521,14 @@ class _SendTab(QWidget):
         self._account = account
         if account:
             self._from_label.setText(f"{account.label} — {shorten_address(account.address)}")
+            self._scheme_label.setText(account.sig_scheme or "Unknown")
         else:
             self._from_label.setText("—")
+            self._scheme_label.setText("Unknown")
         self._status_label.setText("")
         self._result_area.setVisible(False)
         self._explorer_btn.setVisible(False)
+        self._copy_hash_btn.setVisible(False)
 
     def _validate_inputs(self) -> tuple[str, int, str | None] | None:
         """Validate inputs; return (to_addr, amount_wei, memo) or None."""
@@ -516,14 +539,14 @@ class _SendTab(QWidget):
         if not to_addr:
             self._status_label.setText("❌ 'To' address is required.")
             return None
-        if not is_valid_address(to_addr):
-            self._status_label.setText("❌ Invalid 'To' address format.")
+        if not TxService.validate_to_address(to_addr):
+            self._status_label.setText("❌ Invalid 'To' address format (expected anim1… or 0x…).")
             return None
         if not amount_text:
             self._status_label.setText("❌ Amount is required.")
             return None
         try:
-            amount_wei = parse_amount_to_wei(amount_text)
+            amount_wei = TxService.parse_amount(amount_text)
         except ValueError as exc:
             self._status_label.setText(f"❌ {format_exception(exc)}")
             return None
@@ -553,7 +576,7 @@ class _SendTab(QWidget):
         if self._account is None:
             self._status_label.setText("❌ Select an account first.")
             return
-        if qthread_running(self._active_thread):
+        if self._send_job is not None:
             self._status_label.setText("⏳ Send already in progress…")
             return
         inputs = self._validate_inputs()
@@ -565,52 +588,93 @@ class _SendTab(QWidget):
         self._status_label.setText("⏳ Sending…")
         self._result_area.setVisible(False)
         self._explorer_btn.setVisible(False)
+        self._copy_hash_btn.setVisible(False)
 
         account = self._account
         wallet_service = self._wallet_service
+        tx_service = TxService(wallet_service._config)
+        self._console.clear()
 
         def _task() -> PendingTx:
-            from animica_studio.storage.config import load_config  # noqa: PLC0415
             cfg = wallet_service._config
             rpc_url = get_active_rpc_url(cfg)
             chain_id = _get_chain_id(cfg)
-            return wallet_service.build_and_send(
-                rpc_url=rpc_url,
-                chain_id=chain_id,
+            self._console.append_system("Building tx…")
+            self._console.append_system(f"Signing tx with {account.sig_scheme or 'wallet default'}…")
+            self._console.append_system("Submitting tx…")
+            result = tx_service.send_via_cli(
                 from_addr=account.address,
                 to_addr=to_addr,
                 amount_wei=amount_wei,
-                memo=memo,
+                rpc_url=rpc_url,
+                chain_id=chain_id,
             )
+            ptx = PendingTx(
+                from_addr=account.address,
+                to_addr=to_addr,
+                amount_wei=amount_wei,
+                nonce=0,
+                fee=estimate_fee(),
+                memo=memo,
+                status="PENDING" if result.ok else "FAILED",
+                tx_hash=result.tx_hash,
+                error=result.error,
+                created_ts=time.time(),
+                updated_ts=time.time(),
+            )
+            wallet_service._save_pending_tx(ptx)
+            for line in (result.stdout or "").splitlines():
+                self._console.append_stdout(line)
+            for line in (result.stderr or "").splitlines():
+                self._console.append_stderr(line)
+            if result.error:
+                self._console.append_error(result.error)
+            return ptx
 
-        def _on_result(ptx: PendingTx) -> None:
+        self._send_job = self._runner.run_callable(_task, timeout_s=45)
+
+        def _finish() -> None:
             self._send_btn.setEnabled(True)
-            if ptx.status == "FAILED":
-                err_msg = ptx.error or "Unknown error"
+            self._send_job = None
+
+        def _on_finished(_job_id: str, exit_code: int, payload: object) -> None:
+            _finish()
+            ptx = payload if isinstance(payload, PendingTx) else None
+            if ptx is None or exit_code != 0 or ptx.status == "FAILED":
+                err_msg = ptx.error if ptx and ptx.error else "Unknown error"
                 self._status_label.setText(f"❌ Send failed: {err_msg}")
                 self._result_area.setText(f"Status: FAILED\nError: {err_msg}")
-            else:
-                hash_str = ptx.tx_hash or "(no hash)"
-                self._last_tx_hash = ptx.tx_hash
-                self._status_label.setText(f"✅ Sent! Tx hash: {hash_str}")
-                self._result_area.setText(
-                    f"Status : {ptx.status}\nTx hash: {hash_str}\nNonce  : {ptx.nonce}"
-                )
-                self._explorer_btn.setVisible(bool(ptx.tx_hash))
-            self._result_area.setVisible(True)
+                self._result_area.setVisible(True)
+                return
 
-        def _on_error(msg: str) -> None:
-            self._send_btn.setEnabled(True)
-            self._status_label.setText(f"❌ {msg}")
-            self._result_area.setText(f"Error: {msg}")
+            hash_str = ptx.tx_hash or "(no hash)"
+            self._last_tx_hash = ptx.tx_hash
+            self._status_label.setText(f"✅ Sent! Tx hash: {hash_str}")
+            self._result_area.setText(f"Status : {ptx.status}\nTx hash: {hash_str}\nNonce  : {ptx.nonce}")
             self._result_area.setVisible(True)
+            self._explorer_btn.setVisible(bool(ptx.tx_hash))
+            self._copy_hash_btn.setVisible(bool(ptx.tx_hash))
 
-        self._active_thread = _run_in_thread(_task, _on_result, _on_error)
+        def _on_error(_job_id: str, message: str, details: str) -> None:
+            _finish()
+            self._status_label.setText(f"❌ {message}")
+            self._result_area.setText(f"Error: {message}\n{details}")
+            self._result_area.setVisible(True)
+            self._console.append_error(message)
+            if details:
+                self._console.append_stderr(details)
+
+        self._send_job.finished.connect(_on_finished)
+        self._send_job.error.connect(_on_error)
 
     def _open_tx_explorer(self) -> None:
         if self._last_tx_hash:
             url = self._wallet_service.explorer_url_for_tx(self._last_tx_hash)
             QDesktopServices.openUrl(QUrl(url))
+
+    def _copy_tx_hash(self) -> None:
+        if self._last_tx_hash:
+            QApplication.clipboard().setText(self._last_tx_hash)
 
 
 # ---------------------------------------------------------------------------
