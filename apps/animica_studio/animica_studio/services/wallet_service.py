@@ -23,12 +23,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from animica_studio.models.profile_models import RpcProfile
 from animica_studio.models.wallet_models import (
     Account,
     BalanceState,
     PendingTx,
     format_amount,
 )
+from animica_studio.services.balance_service import BalanceService
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
@@ -80,6 +82,7 @@ class WalletService:
         self._signer = signer or SignerService()
         # In-memory balance cache keyed by address
         self._balances: dict[str, BalanceState] = {}
+        self._balance_service = BalanceService()
 
     # ------------------------------------------------------------------
     # Account management
@@ -302,6 +305,7 @@ class WalletService:
         balances from a different RPC endpoint being shown.
         """
         self._balances.clear()
+        self._balance_service.clear()
 
     def get_cached_balance(self, address: str) -> BalanceState | None:
         """Return cached balance for *address*, or None.
@@ -311,70 +315,12 @@ class WalletService:
         """
         return self._balances.get(address)
 
-    def fetch_balance(self, address: str, rpc_url: str) -> BalanceState:
-        """Fetch balance for a single *address* via ``animica wallet show``.
-
-        Returns a :class:`BalanceState` with either a value or an error.
-        Never raises.
-        """
-        try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-            cmd = [program, *base_args, "wallet", "show", address]
-            merged_env = {**os.environ, **resolved_env} if resolved_env else dict(os.environ)
-            if rpc_url:
-                merged_env["ANIMICA_RPC_URL"] = rpc_url
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                env=merged_env,
-            )
-            if result.returncode != 0:
-                details = (result.stderr or result.stdout or "Unknown CLI error").strip()
-                raise RuntimeError(details)
-
-            raw, formatted = self._parse_wallet_show_balance(result.stdout)
-            state = BalanceState(
-                address=address,
-                balance_wei=raw,
-                formatted=formatted,
-                updated_ts=time.time(),
-                error=None,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("WalletService: wallet show failed for %s: %s", address, exc)
-            try:
-                from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
-
-                with RpcClient(rpc_url) as client:
-                    raw = client.get_balance(address)
-                state = BalanceState(
-                    address=address,
-                    balance_wei=raw,
-                    formatted=format_amount(raw, self._decimals()),
-                    updated_ts=time.time(),
-                    error=None,
-                )
-            except Exception as rpc_exc:  # noqa: BLE001
-                state = BalanceState(
-                    address=address,
-                    balance_wei=0,
-                    # Store "Unavailable" (not "—") so callers always see a
-                    # meaningful string rather than the silent placeholder.
-                    formatted="Unavailable",
-                    updated_ts=time.time(),
-                    error=format_rpc_error(rpc_exc),
-                )
-                log.warning(
-                    "WalletService: balance fetch fallback RPC error for %s: %s",
-                    address,
-                    rpc_exc,
-                )
-
-        # Store keyed by address — never aliased
+    def fetch_balance(self, address: str, rpc_url: str, profile: RpcProfile | None = None) -> BalanceState:
+        """Fetch balance for a single *address* using RPC with explorer fallback."""
+        effective_profile = profile or RpcProfile.make_default_remote()
+        if rpc_url:
+            effective_profile.rpc_url = rpc_url
+        state = self._balance_service.get_balance(address, effective_profile, self._decimals())
         self._balances[address] = state
         return state
 
@@ -445,6 +391,7 @@ class WalletService:
         self,
         rpc_url: str,
         cancel: CancelToken | None = None,
+        profile: RpcProfile | None = None,
     ) -> dict[str, BalanceState]:
         """Fetch balances for all accounts concurrently.
 
@@ -467,7 +414,7 @@ class WalletService:
         # Use a thread pool capped at _BALANCE_CONCURRENCY
         with ThreadPoolExecutor(max_workers=_BALANCE_CONCURRENCY) as pool:
             futures = {
-                pool.submit(self.fetch_balance, acc.address, rpc_url): acc.address
+                pool.submit(self.fetch_balance, acc.address, rpc_url, profile): acc.address
                 for acc in accounts
             }
             for fut in as_completed(futures):
@@ -670,4 +617,4 @@ class WalletService:
             url = ws.get("explorer_base_url", "")
             if url:
                 return url.rstrip("/")
-        return "https://explorer.animica.org"
+        return ""

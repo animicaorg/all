@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from animica_studio.models.profile_models import RpcProfile, validate_explorer_base_url
 from animica_studio.services.diagnostics import diagnostics
 from animica_studio.services.workers import WorkerThread
 from animica_studio.services.job_runner import resolve_animica_cli
@@ -55,6 +56,9 @@ class SettingsPage(QWidget):
 
         self._rpc_url_edit = QLineEdit(profile.rpc_url)
         form.addRow("RPC URL:", self._rpc_url_edit)
+        self._explorer_url_edit = QLineEdit(self._active_rpc_profile().explorer_base_url)
+        self._explorer_url_edit.setPlaceholderText("https://explorer.example.org")
+        form.addRow("Explorer URL:", self._explorer_url_edit)
         self._chain_id_edit = QLineEdit(str(profile.chain_id_expected))
         form.addRow("Chain ID:", self._chain_id_edit)
         self._start_cmd_edit = QLineEdit(" ".join(profile.node.start_cmd))
@@ -185,6 +189,27 @@ class SettingsPage(QWidget):
         self._refresh_diagnostics()
         self._refresh_cli_resolution_label()
 
+    def _active_rpc_profile(self) -> RpcProfile:
+        active_id = getattr(self._config, "active_profile_id", None)
+        for raw in list(getattr(self._config, "rpc_profiles", []) or []):
+            if isinstance(raw, dict) and raw.get("id") == active_id:
+                return RpcProfile.from_dict(raw)
+        profiles = list(getattr(self._config, "rpc_profiles", []) or [])
+        if profiles and isinstance(profiles[0], dict):
+            return RpcProfile.from_dict(profiles[0])
+        return RpcProfile.make_default_remote()
+
+    def _save_active_rpc_profile_explorer(self, explorer_url: str) -> None:
+        active_id = getattr(self._config, "active_profile_id", None)
+        rows = list(getattr(self._config, "rpc_profiles", []) or [])
+        for idx, raw in enumerate(rows):
+            if isinstance(raw, dict) and raw.get("id") == active_id:
+                profile = RpcProfile.from_dict(raw)
+                profile.explorer_base_url = explorer_url
+                rows[idx] = profile.to_dict()
+                self._config.rpc_profiles = rows
+                return
+
     def _on_save(self) -> None:
         profile = self._config.get_active_profile()
         profile.rpc_url = self._rpc_url_edit.text().strip()
@@ -192,6 +217,12 @@ class SettingsPage(QWidget):
             profile.chain_id_expected = int(self._chain_id_edit.text().strip())
         except ValueError:
             self._status_label.setText("Invalid chain id; kept previous value.")
+        try:
+            explorer_url = validate_explorer_base_url(self._explorer_url_edit.text())
+        except ValueError as exc:
+            self._status_label.setText(str(exc))
+            return
+        self._save_active_rpc_profile_explorer(explorer_url)
         cmd_text = self._start_cmd_edit.text().strip()
         profile.node.start_cmd = cmd_text.split() if cmd_text else ["animica", "node", "start"]
         self._config.templates_user_path = self._templates_path_edit.text().strip() or None

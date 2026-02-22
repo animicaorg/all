@@ -52,8 +52,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QUrl
 
+from animica_studio.models.profile_models import RpcProfile
 from animica_studio.models.wallet_models import (
     Account,
+    BalanceSource,
     BalanceState,
     PendingTx,
     format_amount,
@@ -373,6 +375,9 @@ class _OverviewTab(QWidget):
 
         self._balance_label = QLabel("—")
         form.addRow("Balance:", self._balance_label)
+        self._balance_meta_label = QLabel("")
+        self._balance_meta_label.setStyleSheet("color: #9aa0a6;")
+        form.addRow("", self._balance_meta_label)
 
         self._scheme_label = QLabel("—")
         form.addRow("Signature:", self._scheme_label)
@@ -406,6 +411,7 @@ class _OverviewTab(QWidget):
             self._balance_label.setText("—")
             self._scheme_label.setText("—")
             self._error_label.setText("")
+            self._balance_meta_label.setText("")
             return
         self._addr_label.setText(account.address)
         self._scheme_label.setText(account.sig_scheme)
@@ -414,13 +420,23 @@ class _OverviewTab(QWidget):
         if state is None:
             self._balance_label.setText("—")
             self._error_label.setText("")
+            self._balance_meta_label.setText("")
             return
-        if state.error:
-            # Show "Unavailable" not "—" so users know a fetch was attempted but failed
-            self._balance_label.setText("Unavailable")
+        if state.error and state.formatted in {"", "—"}:
+            self._balance_label.setText("—")
             self._error_label.setText(f"Balance unavailable: {state.error}")
+            self._balance_meta_label.setText("")
         else:
-            self._balance_label.setText(state.formatted)
+            self._balance_label.setText(state.formatted or "—")
+            source_label = ""
+            if state.source == BalanceSource.EXPLORER:
+                source_label = "Explorer (fallback)"
+            elif state.source == BalanceSource.RPC:
+                source_label = "RPC"
+            if state.is_stale:
+                source_label = f"{source_label} (cached)" if source_label else "Cached"
+            self._balance_meta_label.setText(source_label)
+            self._balance_meta_label.setToolTip(state.tooltip or "")
             self._error_label.setText("")
 
     def _copy_address(self) -> None:
@@ -786,6 +802,8 @@ def _get_chain_id(config: Config) -> int:
 class WalletPage(QWidget):
     """Full multi-account wallet page."""
 
+    open_settings_requested = Signal()
+
     def __init__(
         self,
         config: Config | None = None,
@@ -816,6 +834,7 @@ class WalletPage(QWidget):
         self._wallets_reload_timer: QTimer | None = None
         self._wallets_watcher: QFileSystemWatcher | None = None
         self._last_wallets_mtime_ns: int | None = None
+        self._missing_explorer_banner_shown = False
 
         self._build_ui()
         QTimer.singleShot(0, self._post_start_init)
@@ -863,6 +882,15 @@ class WalletPage(QWidget):
         self._rpc_banner.setWordWrap(True)
         self._rpc_banner.setVisible(False)
         root.addWidget(self._rpc_banner)
+
+        self._rpc_actions = QHBoxLayout()
+        self._rpc_actions.setContentsMargins(12, 0, 12, 0)
+        self._open_settings_btn = QPushButton("Open Settings")
+        self._open_settings_btn.setVisible(False)
+        self._open_settings_btn.clicked.connect(self.open_settings_requested.emit)
+        self._rpc_actions.addWidget(self._open_settings_btn)
+        self._rpc_actions.addStretch()
+        root.addLayout(self._rpc_actions)
 
         self._wallet_banner = QLabel("")
         self._wallet_banner.setObjectName("errorBanner")
@@ -948,10 +976,14 @@ class WalletPage(QWidget):
         restore_row = 0
         for i, acc in enumerate(accounts):
             balance_state = self._wallet_service.get_cached_balance(acc.address)
-            if balance_state and balance_state.error:
-                bal_text = f"⚠ Unavailable"
+            if balance_state and balance_state.error and balance_state.formatted in {"", "—"}:
+                bal_text = "⚠ —"
             elif balance_state:
                 bal_text = balance_state.formatted
+                if balance_state.source == BalanceSource.EXPLORER:
+                    bal_text += " [Explorer]"
+                if balance_state.is_stale:
+                    bal_text += " [cached]"
             else:
                 bal_text = "—"
             scheme_label = self._wallet_service.scheme_label(acc.sig_scheme)
@@ -1149,13 +1181,21 @@ class WalletPage(QWidget):
     # Balance refresh
     # ------------------------------------------------------------------
 
+    def _active_rpc_profile(self) -> RpcProfile:
+        active_id = getattr(self._config, "active_profile_id", None)
+        for raw in list(getattr(self._config, "rpc_profiles", []) or []):
+            if isinstance(raw, dict) and raw.get("id") == active_id:
+                return RpcProfile.from_dict(raw)
+        profiles = list(getattr(self._config, "rpc_profiles", []) or [])
+        if profiles and isinstance(profiles[0], dict):
+            return RpcProfile.from_dict(profiles[0])
+        return RpcProfile.make_default_remote()
+
     def _refresh_all(self) -> None:
         """Refresh balances for all accounts (off UI thread)."""
         self._reload_accounts_from_source()
         rpc_url = get_active_rpc_url(self._config)
-        if not rpc_url:
-            self._show_rpc_banner("No RPC URL configured — check your profile settings.")
-            return
+        profile = self._active_rpc_profile()
 
         # Cancel previous cycle
         self._cancel_token.cancel()
@@ -1165,17 +1205,18 @@ class WalletPage(QWidget):
         wallet_service = self._wallet_service
 
         def _task() -> dict[str, BalanceState]:
-            return wallet_service.refresh_all_balances(rpc_url, cancel=new_token)
+            return wallet_service.refresh_all_balances(rpc_url, cancel=new_token, profile=profile)
 
         def _on_result(results: dict[str, BalanceState]) -> None:
             # Check if any errors occurred — show/hide banner
             errors = [s for s in results.values() if s.error]
             if errors and len(errors) == len(results):
-                self._show_rpc_banner(
-                    f"RPC unavailable: {errors[0].error}"
-                )
+                if not profile.explorer_base_url:
+                    self._show_rpc_banner("RPC unreachable and Explorer not configured. Set Explorer URL in Settings → Network.", show_settings=True)
+                else:
+                    self._show_rpc_banner(f"RPC unavailable; using explorer fallback where possible: {errors[0].error}")
             elif errors:
-                self._hide_rpc_banner()
+                self._show_rpc_banner("Some balances are stale or from fallback sources.")
             else:
                 self._hide_rpc_banner()
             self._reload_accounts_list()
@@ -1211,8 +1252,10 @@ class WalletPage(QWidget):
         account = self._selected_account
         wallet_service = self._wallet_service
 
+        profile = self._active_rpc_profile()
+
         def _task() -> BalanceState:
-            return wallet_service.fetch_balance(account.address, rpc_url)
+            return wallet_service.fetch_balance(account.address, rpc_url, profile=profile)
 
         def _on_result(state: BalanceState) -> None:
             self._overview_tab.set_balance(state)
@@ -1362,12 +1405,14 @@ class WalletPage(QWidget):
     # RPC banner helpers
     # ------------------------------------------------------------------
 
-    def _show_rpc_banner(self, msg: str) -> None:
+    def _show_rpc_banner(self, msg: str, *, show_settings: bool = False) -> None:
         self._rpc_banner.setText(f"⚠ {msg}")
         self._rpc_banner.setVisible(True)
+        self._open_settings_btn.setVisible(show_settings)
 
     def _hide_rpc_banner(self) -> None:
         self._rpc_banner.setVisible(False)
+        self._open_settings_btn.setVisible(False)
 
     # ------------------------------------------------------------------
     # Debug bundle
