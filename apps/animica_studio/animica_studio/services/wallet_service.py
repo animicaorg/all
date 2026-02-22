@@ -362,7 +362,9 @@ class WalletService:
                 state = BalanceState(
                     address=address,
                     balance_wei=0,
-                    formatted="—",
+                    # Store "Unavailable" (not "—") so callers always see a
+                    # meaningful string rather than the silent placeholder.
+                    formatted="Unavailable",
                     updated_ts=time.time(),
                     error=format_rpc_error(rpc_exc),
                 )

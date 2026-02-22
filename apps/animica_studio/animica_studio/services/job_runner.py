@@ -16,8 +16,25 @@ from typing import Any, Callable
 
 import logging
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThreadPool, QTimer, Signal
-from PySide6.QtWidgets import QApplication
+try:
+    from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThreadPool, QTimer, Signal
+    from PySide6.QtWidgets import QApplication
+except ImportError:
+    # Allow headless import for CLI-only utilities and unit tests that don't use Qt.
+    QObject = object  # type: ignore[assignment,misc]
+    QApplication = None  # type: ignore[assignment,misc]
+    QProcess = None  # type: ignore[assignment,misc]
+    QProcessEnvironment = None  # type: ignore[assignment,misc]
+    QThreadPool = None  # type: ignore[assignment,misc]
+    QTimer = None  # type: ignore[assignment,misc]
+
+    class Signal:  # type: ignore[misc,no-redef]
+        """No-op Signal stub used when PySide6 is unavailable (headless/test)."""
+
+        def __init__(self, *args: object) -> None: ...
+        def connect(self, *args: object) -> None: ...
+        def emit(self, *args: object) -> None: ...
+        def disconnect(self, *args: object) -> None: ...
 
 from animica_studio.storage.config import Config, discover_repo_root, load_config, save_config
 
@@ -169,6 +186,12 @@ class JobRunner(QObject):
     _instance: "JobRunner | None" = None
 
     def __init__(self, parent: QObject | None = None) -> None:
+        # Raise early if the Qt runtime is absent so callers get a clear message
+        # instead of an obscure AttributeError on QThreadPool / QApplication.
+        if QThreadPool is None:
+            raise RuntimeError(
+                "JobRunner requires PySide6 Qt libraries which are not available in this environment."
+            )
         super().__init__(parent)
         self._jobs: dict[str, JobHandle] = {}
         self._processes: dict[str, QProcess] = {}
