@@ -60,6 +60,7 @@ from animica_studio.models.wallet_models import (
     BalanceState,
     PendingTx,
     format_amount,
+    format_amount_compact,
     is_valid_address,
     parse_amount_to_wei,
     shorten_address,
@@ -439,7 +440,8 @@ class _OverviewTab(QWidget):
             self._error_label.setText(f"Balance unavailable: {state.error}")
             self._balance_meta_label.setText("")
         else:
-            self._balance_label.setText(state.formatted or "—")
+            compact = format_amount_compact(state.balance_wei)
+            self._balance_label.setText(compact if compact.strip() else (state.formatted or "—"))
             source_label = ""
             if state.source == BalanceSource.EXPLORER:
                 source_label = "Explorer (fallback)"
@@ -991,7 +993,7 @@ class WalletPage(QWidget):
             if balance_state and balance_state.error and balance_state.formatted in {"", "—"}:
                 bal_text = "⚠ —"
             elif balance_state:
-                bal_text = balance_state.formatted
+                bal_text = format_amount_compact(balance_state.balance_wei)
                 if balance_state.source == BalanceSource.EXPLORER:
                     bal_text += " [Explorer]"
                 if balance_state.is_stale:
