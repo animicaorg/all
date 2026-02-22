@@ -311,6 +311,15 @@ class WalletService:
         """
         return self._balances.get(address)
 
+    def update_balance(self, address: str, state: "BalanceState") -> None:
+        """Store *state* in the balance cache for *address*.
+
+        Used by external sources (e.g. ExplorerBalanceService) to write
+        Explorer-sourced balances into the shared cache without bypassing
+        encapsulation.
+        """
+        self._balances[address] = state
+
     def fetch_balance(self, address: str, rpc_url: str, profile: RpcProfile | None = None) -> BalanceState:
         """Fetch balance for a single *address* using Explorer2-parity RPC calls."""
         effective_profile = profile or RpcProfile.make_default_remote()
