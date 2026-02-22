@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
@@ -51,6 +52,7 @@ class ReserveMode(str, Enum):
 @dataclass
 class DAStatusResult:
     enabled: bool
+    configured: bool
     running: bool
     directory: str
     limit_bytes: int
@@ -59,7 +61,7 @@ class DAStatusResult:
     served_bytes: int
     stored_chunks: int
     last_error: str
-    health: str  # "online" | "offline" | "misconfigured"
+    health: str  # "online" | "offline" | "misconfigured" | "configured"
     preview_mode: bool = True
 
     def as_dict(self) -> dict:
@@ -96,6 +98,7 @@ class DAContributionService:
 
     def __init__(self) -> None:
         self._enabled = False
+        self._configured = False
         self._directory: Path | None = None
         self._limit_bytes: int = 50 * 1024 ** 3  # 50 GB default
         self._reserve_mode: ReserveMode = ReserveMode.QUOTA
@@ -105,6 +108,7 @@ class DAContributionService:
         self._chunks: list[_ChunkRecord] = []
         self._log_lines: list[str] = []
         self._log_cb: Callable[[str], None] | None = None
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Configuration
@@ -128,6 +132,7 @@ class DAContributionService:
             return {"ok": False, "error": str(exc)}
 
         self._enabled = enabled
+        self._configured = True
         self._directory = Path(directory).expanduser().resolve()
         self._limit_bytes = max_bytes
         try:
@@ -200,11 +205,14 @@ class DAContributionService:
             health = "misconfigured"
         elif self._running:
             health = "online"
+        elif self._configured:
+            health = "configured"
         else:
             health = "offline"
 
         return DAStatusResult(
             enabled=self._enabled,
+            configured=self._configured,
             running=self._running,
             directory=directory,
             limit_bytes=self._limit_bytes,
