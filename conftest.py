@@ -113,6 +113,10 @@ def pytest_collection_modifyitems(config, items):
         "mining/tests/test_stratum_roundtrip.py",
         "aicf/tests/test_slashing.py",
     )
+    # Node-store tests only use stdlib (no heavy deps); don't skip them.
+    optional_allowlist = (
+        "da/tests/test_node_store.py",
+    )
     opt_skip = pytest.mark.skip(
         reason="Optional suite skipped in lightweight environment"
     )
@@ -120,7 +124,8 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         nodeid = item.nodeid
         if any(nodeid.startswith(prefix) for prefix in optional_prefixes):
-            item.add_marker(opt_skip)
+            if not any(nodeid.startswith(allow) for allow in optional_allowlist):
+                item.add_marker(opt_skip)
 
 
 @pytest.hookimpl(tryfirst=True)
