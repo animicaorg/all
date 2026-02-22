@@ -711,6 +711,7 @@ def _get_chain_id(config: Config) -> int:
 class WalletPage(QWidget):
     """Full multi-account wallet page."""
     open_settings_requested = Signal()
+    run_in_console_requested = Signal(str)
     def __init__(
         self,
         config: Config | None = None,
@@ -950,11 +951,7 @@ class WalletPage(QWidget):
     def _on_create_wallet(self) -> None:
         if self._create_wallet_job is not None:
             return
-        dlg = _CreateWalletDialog(self)
-        self._create_wallet_dialog = dlg
-        dlg.destroyed.connect(self._on_create_wallet_dialog_destroyed)
-        dlg.create_requested.connect(self._start_create_wallet)
-        dlg.exec()
+        self.run_in_console_requested.emit("wallet create")
     def _start_create_wallet(self, label: str, sig_scheme: str, allow_insecure_fallback: bool) -> None:
         if self._create_wallet_job is not None:
             return
