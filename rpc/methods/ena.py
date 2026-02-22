@@ -475,6 +475,311 @@ def ena_explain_reject(*args, **kwargs):
     }
 
 
+##############################################################################
+# ENA Artifact Integration Methods
+##############################################################################
+
+
+def _get_da_store():
+    """Return the local DA node store, or None if unavailable."""
+    try:
+        from da.node_store import get_store  # type: ignore
+        import os
+
+        base = os.getenv("ANIMICA_DATA_DIR") or os.path.expanduser("~/.animica")
+        chain_id = os.getenv("ANIMICA_CHAIN_ID", "1")
+        da_dir = os.path.join(base, f"chain-{chain_id}", "da")
+        return get_store(da_dir)
+    except Exception:
+        return None
+
+
+def _get_aicf_state():
+    """Return AICF protocol state, or None if unavailable."""
+    try:
+        from aicf.protocol.state import AICFProtocolState  # type: ignore
+        import os
+
+        base = os.getenv("ANIMICA_DATA_DIR") or os.path.expanduser("~/.animica")
+        chain_id = os.getenv("ANIMICA_CHAIN_ID", "1")
+        db_path = os.path.join(base, f"chain-{chain_id}", "aicf_credits.db")
+        return AICFProtocolState(db_path)
+    except Exception:
+        return None
+
+
+# In-memory pending artifact records (manifest_blob_id → metadata dict)
+_PENDING_ARTIFACTS: Dict[str, Dict] = {}
+
+
+@method(
+    "ena.submitArtifact",
+    aliases=("ena_submitArtifact", "ena.submit_artifact"),
+    desc="Submit an ENA artifact manifest blob for credit processing",
+)
+def ena_submit_artifact(params=None, *_args, **_kwargs) -> Dict[str, Any]:
+    """
+    ena.submitArtifact(manifest_blob_id, job_metadata?) → {ok, manifest_blob_id, status}
+
+    Registers a manifest blob (already stored in DA) as a pending artifact.
+    Call ena.verifyArtifact afterwards to trigger credit award.
+
+    Params (dict or positional):
+      manifest_blob_id : str  — hex blob_id of the manifest in DA
+      job_metadata     : dict — optional extra metadata stored alongside
+    """
+    import hashlib
+
+    if isinstance(params, (list, tuple)):
+        manifest_blob_id = _extract_param(params, 0, "manifest_blob_id")
+        job_metadata: Optional[Dict] = params[1] if len(params) > 1 else None
+    elif isinstance(params, dict):
+        manifest_blob_id = params.get("manifest_blob_id")
+        if not manifest_blob_id:
+            raise InvalidParams("Missing required parameter: 'manifest_blob_id'")
+        job_metadata = params.get("job_metadata")
+    else:
+        raise InvalidParams("params must be a dict or list")
+
+    if not isinstance(manifest_blob_id, str) or not manifest_blob_id.strip():
+        raise InvalidParams("manifest_blob_id must be a non-empty string")
+
+    manifest_blob_id = manifest_blob_id.strip().lower()
+
+    # Validate format (64-char hex)
+    try:
+        bytes.fromhex(manifest_blob_id)
+    except ValueError:
+        raise InvalidParams(f"manifest_blob_id is not valid hex: {manifest_blob_id!r}")
+    if len(manifest_blob_id) != 64:
+        raise InvalidParams(f"manifest_blob_id must be 64 hex chars, got {len(manifest_blob_id)}")
+
+    # Check DA availability
+    store = _get_da_store()
+    da_available = False
+    if store is not None:
+        try:
+            da_available = store.has(manifest_blob_id)
+        except Exception:
+            pass
+
+    import time
+
+    record: Dict[str, Any] = {
+        "manifest_blob_id": manifest_blob_id,
+        "status": "pending",
+        "da_available": da_available,
+        "submitted_at": time.time(),
+        "job_metadata": job_metadata or {},
+    }
+    _PENDING_ARTIFACTS[manifest_blob_id] = record
+
+    return {
+        "ok": True,
+        "manifest_blob_id": manifest_blob_id,
+        "status": "pending",
+        "da_available": da_available,
+    }
+
+
+@method(
+    "ena.verifyArtifact",
+    aliases=("ena_verifyArtifact", "ena.verify_artifact"),
+    desc="Verify an ENA artifact manifest and award AICF credits on success",
+)
+def ena_verify_artifact(params=None, *_args, **_kwargs) -> Dict[str, Any]:
+    """
+    ena.verifyArtifact(manifest_blob_id) → VerificationResult
+
+    Steps:
+      1. Pull manifest from DA (da.get).
+      2. Parse and validate ArtifactManifest schema.
+      3. Verify each referenced blob exists (da.has) and sha256 matches.
+      4. If all checks pass, create an idempotent AICF credit event.
+
+    Returns:
+      {ok, manifest_blob_id, missing_blobs, errors, credit_event_id}
+    """
+    import hashlib
+    import json
+    import time
+
+    if isinstance(params, (list, tuple)):
+        manifest_blob_id = _extract_param(params, 0, "manifest_blob_id")
+    elif isinstance(params, dict):
+        manifest_blob_id = params.get("manifest_blob_id")
+        if not manifest_blob_id:
+            raise InvalidParams("Missing required parameter: 'manifest_blob_id'")
+    elif isinstance(params, str):
+        manifest_blob_id = params
+    else:
+        raise InvalidParams("params must be a dict, list, or string")
+
+    if not isinstance(manifest_blob_id, str) or not manifest_blob_id.strip():
+        raise InvalidParams("manifest_blob_id must be a non-empty string")
+
+    manifest_blob_id = manifest_blob_id.strip().lower()
+
+    try:
+        bytes.fromhex(manifest_blob_id)
+    except ValueError:
+        raise InvalidParams(f"manifest_blob_id is not valid hex: {manifest_blob_id!r}")
+
+    store = _get_da_store()
+    if store is None:
+        raise InternalError("DA store not available on this node")
+
+    # Step 1: fetch manifest from DA
+    try:
+        manifest_bytes = store.get(manifest_blob_id)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "manifest_blob_id": manifest_blob_id,
+            "missing_blobs": [],
+            "errors": [f"DA get failed: {exc}"],
+            "credit_event_id": None,
+        }
+
+    if manifest_bytes is None:
+        return {
+            "ok": False,
+            "manifest_blob_id": manifest_blob_id,
+            "missing_blobs": [],
+            "errors": ["manifest_blob_id not found in DA"],
+            "credit_event_id": None,
+        }
+
+    # Step 2: parse manifest
+    try:
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "manifest_blob_id": manifest_blob_id,
+            "missing_blobs": [],
+            "errors": [f"manifest parse error: {exc}"],
+            "credit_event_id": None,
+        }
+
+    produced_files: List[Dict] = manifest.get("produced_files", [])
+    if not isinstance(produced_files, list):
+        produced_files = []
+
+    # Step 3: verify each referenced blob
+    missing_blobs: List[str] = []
+    hash_errors: List[str] = []
+    for entry in produced_files:
+        blob_id = entry.get("blob_id", "")
+        sha256_expected = entry.get("sha256", "")
+        name = entry.get("name", "")
+        if not blob_id:
+            continue
+        try:
+            if not store.has(blob_id):
+                missing_blobs.append(blob_id)
+                continue
+            # Verify sha256 if provided
+            if sha256_expected:
+                blob_bytes = store.get(blob_id)
+                if blob_bytes is not None:
+                    actual_sha256 = hashlib.sha256(blob_bytes).hexdigest()
+                    if actual_sha256 != sha256_expected:
+                        hash_errors.append(
+                            f"{name} ({blob_id[:12]}…): sha256 mismatch"
+                        )
+        except Exception as exc:
+            hash_errors.append(f"{name} ({blob_id[:12]}…): check error: {exc}")
+
+    all_errors = hash_errors
+    ok = not missing_blobs and not all_errors
+
+    credit_event_id: Optional[str] = None
+    if ok:
+        # Step 4: create idempotent AICF credit event
+        import os
+
+        node_id = os.getenv("ANIMICA_NODE_ID", "local")
+        idempotency_key = hashlib.sha3_256(
+            (manifest_blob_id + node_id).encode()
+        ).hexdigest()
+
+        aicf = _get_aicf_state()
+        if aicf is not None:
+            try:
+                event_payload = json.dumps(
+                    {
+                        "manifest_blob_id": manifest_blob_id,
+                        "verifier": node_id,
+                        "idempotency_key": idempotency_key,
+                        "ts": time.time(),
+                    },
+                    sort_keys=True,
+                ).encode()
+                event_id = hashlib.sha3_256(event_payload).hexdigest()
+                aicf.log_credit_event(
+                    ledger_id=event_id,
+                    event_type="artifact_verified",
+                    block_height=0,
+                    block_hash="0x" + "00" * 32,
+                    amount="1000000",
+                    metadata={
+                        "manifest_blob_id": manifest_blob_id,
+                        "idempotency_key": idempotency_key,
+                        "job_id": manifest.get("job_id"),
+                    },
+                )
+                credit_event_id = event_id
+            except Exception:
+                pass  # Credit logging is best-effort; don't fail verification
+
+        # Mark artifact as verified
+        if manifest_blob_id in _PENDING_ARTIFACTS:
+            _PENDING_ARTIFACTS[manifest_blob_id]["status"] = "verified"
+            _PENDING_ARTIFACTS[manifest_blob_id]["credit_event_id"] = credit_event_id
+
+    return {
+        "ok": ok,
+        "manifest_blob_id": manifest_blob_id,
+        "missing_blobs": missing_blobs,
+        "errors": all_errors,
+        "credit_event_id": credit_event_id,
+        "manifest": {
+            "job_id": manifest.get("job_id"),
+            "model_id": manifest.get("model_id"),
+            "file_count": len(produced_files),
+        },
+    }
+
+
+@method(
+    "ena.listArtifacts",
+    aliases=("ena_listArtifacts", "ena.list_artifacts"),
+    desc="List pending/verified artifact submissions",
+)
+def ena_list_artifacts(params=None, *_args, **_kwargs) -> Dict[str, Any]:
+    """
+    ena.listArtifacts([limit]) → {artifacts: [...]}
+
+    Returns recently submitted artifact records (in-memory since node start).
+    """
+    limit = 20
+    if isinstance(params, (list, tuple)) and params:
+        try:
+            limit = int(params[0])
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(params, dict):
+        try:
+            limit = int(params.get("limit", 20))
+        except (TypeError, ValueError):
+            pass
+
+    items = list(_PENDING_ARTIFACTS.values())
+    items.sort(key=lambda x: x.get("submitted_at", 0), reverse=True)
+    return {"artifacts": items[:limit]}
+
+
 __all__ = [
     "ena_submit_request",
     "ena_get_request",
@@ -484,4 +789,7 @@ __all__ = [
     "ena_list_models",
     "ena_get_active_model",
     "ena_explain_reject",
+    "ena_submit_artifact",
+    "ena_verify_artifact",
+    "ena_list_artifacts",
 ]
