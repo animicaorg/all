@@ -119,6 +119,7 @@ export default function AddressPage() {
                 </Link>
                 <div className="mt-1 text-xs text-gray-500 dark:text-slate-500">
                   {shorten(tx.from ?? '—', 8, 6)} → {shorten(tx.to ?? '—', 8, 6)}
+                  <span className="ml-2">• Amount: {tx.value ? `${formatBalance(tx.value).anm} ANM` : '—'}</span>
                 </div>
               </div>
               <span className="text-xs font-medium text-gray-600 dark:text-slate-400">{tx.status ?? 'confirmed'}</span>
