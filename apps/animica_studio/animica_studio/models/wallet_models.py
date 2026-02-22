@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -133,6 +134,11 @@ class Account:
 # ---------------------------------------------------------------------------
 
 
+
+class BalanceSource(str, Enum):
+    RPC = "rpc"
+    EXPLORER = "explorer"
+
 @dataclass
 class BalanceState:
     """Per-address balance snapshot."""
@@ -142,6 +148,9 @@ class BalanceState:
     formatted: str = "—"
     updated_ts: float = field(default_factory=time.time)
     error: str | None = None
+    source: BalanceSource | None = None
+    is_stale: bool = False
+    tooltip: str | None = None
 
     def is_ok(self) -> bool:
         return self.error is None
