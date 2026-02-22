@@ -44,6 +44,25 @@ class TestFormatAmount:
         assert "ANM" in result
 
 
+
+
+class TestFormatAmountCompact:
+    def test_limits_fractional_digits_like_extension(self):
+        from animica_studio.models.wallet_models import format_amount_compact
+
+        assert format_amount_compact(1_234_567_890_123_456_789) == "1.234567 ANM"
+
+    def test_trims_trailing_zeroes(self):
+        from animica_studio.models.wallet_models import format_amount_compact
+
+        assert format_amount_compact(1_500_000_000_000_000_000) == "1.5 ANM"
+
+    def test_zero(self):
+        from animica_studio.models.wallet_models import format_amount_compact
+
+        assert format_amount_compact(0) == "0 ANM"
+
+
 class TestParseAmountToWei:
     def test_integer_string(self):
         from animica_studio.models.wallet_models import parse_amount_to_wei
