@@ -55,14 +55,18 @@ def _parse_block(help_text: str, header: str) -> list[str]:
         if not line.startswith(" ") and stripped.endswith(":"):
             break
         cleaned = stripped.strip().strip("│").strip()
-        token = cleaned.split()[0].rstrip(",") if cleaned else ""
-        if token:
-            out.append(token)
+        if cleaned:
+            out.append(cleaned)
     return out
 
 
 def _parse_commands(help_text: str) -> list[str]:
-    return [c.rstrip(":") for c in _parse_block(help_text, "commands:") if c and c[0].isalnum()]
+    commands: list[str] = []
+    for line in _parse_block(help_text, "commands:"):
+        token = line.split()[0].rstrip(",").rstrip(":") if line else ""
+        if token and token[0].isalnum():
+            commands.append(token)
+    return commands
 
 
 _OPT_RE = re.compile(r"(--[a-zA-Z0-9][a-zA-Z0-9\-_]*)")

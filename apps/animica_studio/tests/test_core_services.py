@@ -677,6 +677,28 @@ def test_cli_registry_parse_commands_from_rich_help_box():
     assert "aicf" in cmds
 
 
+def test_cli_registry_parse_options_with_wrapped_help_descriptions():
+    from animica_studio.services.cli_registry import _parse_options
+
+    help_text = """
+ Usage: animica wallet create [OPTIONS]
+
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --label   TEXT  Label for the new wallet.                                   │
+│                  (required)                                                  │
+│ --alg     TEXT  Signing algorithm to use.                                   │
+│                  [default: dilithium3]                                      │
+│ --help          Show this message and exit.                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+"""
+
+    opts = _parse_options(help_text)
+
+    assert "--label" in opts
+    assert "--alg" in opts
+    assert "--help" in opts
+
+
 def test_node_status_as_dict():
     from animica_studio.services.node_service import NodeStatus
     s = NodeStatus(running=True, pid=1234, rpc_reachable=True, head_number=42)
