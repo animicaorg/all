@@ -10,7 +10,7 @@ from animica_studio.models.exec_models import ExecResult, StreamEvent
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
-from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.services.job_runner import run_cli_blocking
 from animica_studio.storage.config import Config, load_config
 from animica_studio.util.cancel import CancelToken
 
@@ -32,17 +32,17 @@ class ConsoleService:
 
     def _default_presets(self) -> list[CommandPreset]:
         presets: list[dict[str, object]] = [
-            {"group": "Node", "label": "Node Status", "argv": ["animica", "node", "status"]},
-            {"group": "Node", "label": "Node Start", "argv": ["animica", "node", "start"]},
-            {"group": "Node", "label": "Node Stop", "argv": ["animica", "node", "stop"]},
-            {"group": "Node", "label": "Sync Status", "argv": ["animica", "sync", "status"]},
-            {"group": "Chain/RPC", "label": "RPC Discover", "argv": ["animica", "rpc", "call", "rpc.discover"]},
-            {"group": "Chain/RPC", "label": "Chain Head", "argv": ["animica", "rpc", "call", "chain_getHead"]},
+            {"group": "Node", "label": "Node Status", "argv": ["node", "status"]},
+            {"group": "Node", "label": "Node Start", "argv": ["node", "start"]},
+            {"group": "Node", "label": "Node Stop", "argv": ["node", "stop"]},
+            {"group": "Node", "label": "Sync Status", "argv": ["sync", "status"]},
+            {"group": "Chain/RPC", "label": "RPC Discover", "argv": ["rpc", "call", "rpc.discover"]},
+            {"group": "Chain/RPC", "label": "Chain Head", "argv": ["rpc", "call", "chain_getHead"]},
         ]
         try:
             ops = get_cli_ops(self._config)
-            presets.append({"group": "Wallet", "label": "Wallet List", "argv": ["animica", *ops.build(CliOperation.WALLET_LIST)]})
-            presets.append({"group": "AICF", "label": "AICF Status", "argv": ["animica", *ops.build(CliOperation.AICF_STATUS)]})
+            presets.append({"group": "Wallet", "label": "Wallet List", "argv": ops.build(CliOperation.WALLET_LIST)})
+            presets.append({"group": "AICF", "label": "AICF Status", "argv": ops.build(CliOperation.AICF_STATUS)})
         except Exception as exc:  # noqa: BLE001
             log.warning("ConsoleService: failed to build op presets: %s", exc)
         return [CommandPreset.make(group=str(p["group"]), label=str(p["label"]), argv=list(p["argv"])) for p in presets]
@@ -98,22 +98,20 @@ class ConsoleService:
         record_id = str(uuid.uuid4())
         started_ts = time.time()
 
-        resolved = argv
-        env: dict[str, str] | None = None
-        if argv and argv[0] == "animica":
-            try:
-                program, base_args, env = resolve_animica_cli_program_and_env(self._config)
-                resolved = [program, *base_args, *argv[1:]]
-            except FileNotFoundError:
-                pass
-
-        result: ExecResult = self._runner.run(
-            resolved,
-            cwd=cwd,
-            env=env,
-            timeout_s=timeout_s,
-            cancel_token=cancel_token,
-            stream_cb=stream_cb,
+        cp = run_cli_blocking(argv, cwd=cwd, timeout_s=int(timeout_s), config=self._config)
+        result = ExecResult(
+            cmd=cp.args if isinstance(cp.args, list) else argv,
+            returncode=cp.returncode,
+            timed_out=False,
+            cancelled=bool(cancel_token and cancel_token.is_cancelled),
+            start_ts=started_ts,
+            end_ts=time.time(),
+            duration_ms=int((time.time() - started_ts) * 1000),
+            stdout=cp.stdout or "",
+            stderr=cp.stderr or "",
+            stdout_lines=(cp.stdout or "").splitlines(),
+            stderr_lines=(cp.stderr or "").splitlines(),
+            error=None if cp.returncode == 0 else (cp.stderr or cp.stdout or "").strip(),
         )
 
         record = RunRecord(

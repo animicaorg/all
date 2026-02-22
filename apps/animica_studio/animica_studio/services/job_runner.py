@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass
@@ -182,6 +183,17 @@ def resolve_cli_argv(argv: list[str]) -> tuple[list[str], dict[str, str], str | 
     return [*resolved.argv_prefix, *argv[1:]], resolved.env, None
 
 
+def _is_program_like_token(token: str) -> bool:
+    normalized = token.strip().strip('"').strip("'")
+    if not normalized:
+        return False
+    leaf = Path(normalized).name.lower()
+    if leaf == "animica":
+        return True
+    candidate = Path(normalized).expanduser()
+    return candidate.is_absolute() or any(sep in normalized for sep in ("/", "\\"))
+
+
 class JobRunner(QObject):
     _instance: "JobRunner | None" = None
 
@@ -213,7 +225,7 @@ class JobRunner(QObject):
 
     def run_cli(
         self,
-        argv: list[str],
+        args: list[str],
         *,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
@@ -223,20 +235,28 @@ class JobRunner(QObject):
         handle = JobHandle(job_id, self)
         self._jobs[job_id] = handle
 
-        resolved_argv, resolved_env, resolve_error = resolve_cli_argv(argv)
-        if not resolved_argv:
-            QTimer.singleShot(0, lambda: self._emit_missing_cli(handle, resolve_error or "animica CLI not found."))
-            return handle
+        if not args:
+            raise ValueError("run_cli() requires subcommand args")
+        if _is_program_like_token(args[0]):
+            msg = f"run_cli() expects subcommand args only, got program-like token: {args[0]!r}"
+            log.error(msg)
+            raise ValueError(msg)
 
-        program, *args = resolved_argv
-        log.info("Running argv: %r", [program, *args])
+        resolved = resolve_animica_cli()
+        if not resolved.argv_prefix:
+            QTimer.singleShot(0, lambda: self._emit_missing_cli(handle, "Animica CLI not found. Configure CLI path in Settings."))
+            return handle
+        log.info("CLI resolved to: %s", resolved.argv_prefix[0])
+        resolved_argv = [*resolved.argv_prefix, *args]
+        program, *program_args = resolved_argv
+        log.info("Running argv: %r", [program, *program_args])
         proc = QProcess(self)
         proc.setProgram(program)
-        proc.setArguments(args)
+        proc.setArguments(program_args)
         if cwd:
             proc.setWorkingDirectory(cwd)
         pe = QProcessEnvironment.systemEnvironment()
-        merged_env = dict(resolved_env)
+        merged_env = dict(resolved.env)
         if env:
             merged_env.update(env)
         for k, v in merged_env.items():
@@ -262,6 +282,7 @@ class JobRunner(QObject):
 
         proc.start()
         return handle
+
 
     def run_callable(self, fn: Callable[[], Any], timeout_s: int = 30) -> JobHandle:
         job_id = str(uuid.uuid4())
@@ -402,3 +423,40 @@ class JobRunner(QObject):
         self._stderr_buffers.pop(job_id, None)
         self._stderr_captures.pop(job_id, None)
         self._jobs.pop(job_id, None)
+
+def run_cli_blocking(
+    args: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout_s: int = 120,
+    config: Config | None = None,
+) -> subprocess.CompletedProcess[str]:
+    if not args:
+        raise ValueError("run_cli_blocking() requires subcommand args")
+    if _is_program_like_token(args[0]):
+        msg = f"run_cli_blocking() expects subcommand args only, got program-like token: {args[0]!r}"
+        log.error(msg)
+        raise ValueError(msg)
+
+    resolved = resolve_animica_cli(config)
+    if not resolved.argv_prefix:
+        raise FileNotFoundError("Animica CLI not found. Configure CLI path in Settings.")
+    log.info("CLI resolved to: %s", resolved.argv_prefix[0])
+    argv = [*resolved.argv_prefix, *args]
+    log.info("Running argv: %r", argv)
+    merged_env = dict(os.environ)
+    merged_env.update(resolved.env)
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        env=merged_env,
+    )
+
