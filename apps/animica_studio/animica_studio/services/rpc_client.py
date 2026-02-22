@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from typing import Any
 
@@ -34,7 +35,10 @@ _DEFAULT_CONNECT_TIMEOUT = 5.0  # seconds
 _DEFAULT_READ_TIMEOUT = 15.0  # seconds
 _MAX_RETRIES = 3
 _BASE_BACKOFF_S = 0.5
-_DISCOVER_CACHE_TTL_S = 60.0
+_DISCOVER_CACHE_TTL_S = 300.0
+
+_DISCOVER_CACHE_BY_URL: dict[str, tuple[float, dict[str, Any]]] = {}
+_DISCOVER_CACHE_LOCK = threading.Lock()
 
 
 class RpcTransportError(Exception):
@@ -87,6 +91,7 @@ class RpcClient:
         self._discover_ts: float = 0.0
 
         self._req_id = 0
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Low-level call
@@ -110,8 +115,9 @@ class RpcClient:
             When the response is not valid JSON-RPC 2.0.
         """
         if request_id is None:
-            self._req_id += 1
-            request_id = self._req_id
+            with self._lock:
+                self._req_id += 1
+                request_id = self._req_id
 
         payload = {
             "jsonrpc": "2.0",
@@ -199,18 +205,26 @@ class RpcClient:
     def discover(self) -> dict[str, Any]:
         """Call ``rpc.discover`` and return the methods description dict.
 
-        Results are cached for :attr:`_DISCOVER_CACHE_TTL_S` seconds.
+        Results are cached per RPC URL for :attr:`_DISCOVER_CACHE_TTL_S` seconds.
         """
         now = time.time()
-        if self._discover_cache is not None and (now - self._discover_ts) < _DISCOVER_CACHE_TTL_S:
-            return self._discover_cache
+        with _DISCOVER_CACHE_LOCK:
+            cached = _DISCOVER_CACHE_BY_URL.get(self._url)
+            if cached is not None:
+                ts, payload = cached
+                if (now - ts) < _DISCOVER_CACHE_TTL_S:
+                    self._discover_cache = payload
+                    self._discover_ts = ts
+                    return payload
 
         result = self.call("rpc.discover")
         if not isinstance(result, dict):
             result = {"raw": result}
         self._discover_cache = result
         self._discover_ts = now
-        log.debug("RpcClient: discover cache updated")
+        with _DISCOVER_CACHE_LOCK:
+            _DISCOVER_CACHE_BY_URL[self._url] = (now, result)
+        log.debug("RpcClient: discover cache updated for %s", self._url)
         return result
 
     def _known_methods(self) -> set[str]:
@@ -356,22 +370,34 @@ class RpcClient:
                 raise RpcParseError(f"Cannot parse chain_id from {result!r}: {exc}") from exc
         raise RpcParseError(f"Unexpected chain_id result type {type(result).__name__}: {result!r}")
 
-    def ping(self) -> bool:
-        """Attempt a lightweight RPC call to check if the node is reachable.
+    def ping_details(self) -> dict[str, Any]:
+        """Return structured ping diagnostics suitable for background workers."""
+        details: dict[str, Any] = {
+            "ok": False,
+            "method": "",
+            "head_number": None,
+            "head_hash": None,
+            "error": "",
+            "exception": "",
+        }
+        method = self._pick_method("chain_getHead", "chain.getHead")
+        details["method"] = method
+        try:
+            result = self.call(method)
+            if isinstance(result, dict):
+                details["ok"] = True
+                details["head_number"] = result.get("number")
+                details["head_hash"] = result.get("hash")
+            else:
+                details["error"] = f"Unexpected result type: {type(result).__name__}"
+        except Exception as exc:  # noqa: BLE001
+            details["error"] = str(exc)
+            details["exception"] = exc.__class__.__name__
+        return details
 
-        Returns ``True`` on success, ``False`` on any error.
-        """
-        try:
-            self.get_head()
-            return True
-        except Exception:  # noqa: BLE001
-            pass
-        # Fallback: try discover
-        try:
-            self.discover()
-            return True
-        except Exception:  # noqa: BLE001
-            return False
+    def ping(self) -> bool:
+        """Attempt a lightweight RPC call to check if the node is reachable."""
+        return bool(self.ping_details().get("ok", False))
 
     # ------------------------------------------------------------------
     # Context manager support

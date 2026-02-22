@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import ParamSpec, TypeVar
 
 from PySide6.QtCore import QThread
+from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
 P = ParamSpec("P")
@@ -60,6 +61,31 @@ def safe_slot(
                 return fn(*args, **kwargs)
             except Exception:  # noqa: BLE001
                 logger.exception("%s: %s", message, fn.__qualname__)
+                return None
+
+        return wrapped
+
+    return decorator
+
+
+def ui_thread_only(
+    logger: logging.Logger,
+    *,
+    message: str = "UI slot invoked off the main Qt thread",
+) -> Callable[[Callable[P, R]], Callable[P, R | None]]:
+    """Decorator that blocks UI slot execution when called off GUI thread."""
+
+    def decorator(fn: Callable[P, R]) -> Callable[P, R | None]:
+        @functools.wraps(fn)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> R | None:
+            app = QApplication.instance()
+            if app is not None and QThread.currentThread() != app.thread():
+                logger.error("%s: %s", message, fn.__qualname__)
+                return None
+            try:
+                return fn(*args, **kwargs)
+            except Exception:  # noqa: BLE001
+                logger.exception("Unhandled exception in guarded UI slot: %s", fn.__qualname__)
                 return None
 
         return wrapped

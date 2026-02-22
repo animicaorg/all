@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -19,6 +20,9 @@ from PySide6.QtWidgets import (
 from animica_studio.services.activity_store import ActivityKind, ActivityStore
 from animica_studio.services.explorer_balance_service import ExplorerBalanceService, TotalBalanceResult
 from animica_studio.services.wallet_store import WalletStore
+from animica_studio.services.cli_runner import CliRunner
+from animica_studio.services.workers import run_in_threadpool
+from animica_studio.util.qt import ui_thread_only
 from animica_studio.ui.components.primitives import (
     Badge,
     Card,
@@ -46,6 +50,8 @@ class DashboardPage(QWidget):
         self._config = config
         self._profile_service = profile_service
         self._net_worker = None
+        self._health_job = None
+        self._last_health_payload: dict[str, Any] = {}
         self._build_ui()
 
         # Deferred init — run after the window is shown
@@ -90,6 +96,9 @@ class DashboardPage(QWidget):
         net_refresh.setToolTip("Re-check network")
         net_refresh.clicked.connect(self.refresh_network_status)
         badge_row.addWidget(net_refresh)
+        diag_btn = QPushButton("Copy diagnostics")
+        diag_btn.clicked.connect(self._copy_diagnostics)
+        status_card.layout().addWidget(diag_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         row.addWidget(status_card, 1)
 
         # Total balance card
@@ -173,101 +182,117 @@ class DashboardPage(QWidget):
         self._status_badge.setStyleSheet("")
         self._status_detail.setText("")
 
-        from animica_studio.services.workers import WorkerThread  # noqa: PLC0415
-
-        def _check() -> dict:
+        def _check() -> dict[str, Any]:
             import requests as _req  # noqa: PLC0415
+            from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
 
-            rpc_ok = False
-            rpc_err = ""
-            exp_ok = False
-            exp_err = ""
+            rpc = {"ok": False, "error": "", "detail": {}, "url": rpc_url}
+            cli = {"ok": False, "error": "", "returncode": None}
+            explorer = {"ok": False, "error": ""}
 
             try:
-                from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
-
-                c = RpcClient(rpc_url, connect_timeout=3.0, read_timeout=6.0, max_retries=1)
+                c = RpcClient(rpc_url, connect_timeout=3.0, read_timeout=8.0, max_retries=1)
                 try:
-                    rpc_ok = c.ping()
-                    if not rpc_ok:
-                        rpc_err = "RPC did not respond"
-                except Exception as exc:
-                    rpc_err = str(exc)
+                    ping = c.ping_details()
+                    rpc["ok"] = bool(ping.get("ok"))
+                    rpc["detail"] = ping
+                    rpc["error"] = str(ping.get("error", ""))
                 finally:
                     c.close()
-            except Exception as exc:
-                rpc_err = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                rpc["error"] = str(exc)
+
+            runner = CliRunner()
+            cmd = ["animica", "node", "status"]
+            cli_result = runner.run(cmd, timeout_s=8.0)
+            cli["returncode"] = cli_result.returncode
+            cli["ok"] = (cli_result.returncode == 0)
+            cli["error"] = cli_result.error or (cli_result.stderr_lines[-1] if cli_result.stderr_lines else "")
 
             if explorer_url:
                 try:
-                    r = _req.get(f"{explorer_url}/api/health", timeout=(3, 6))
-                    exp_ok = r.status_code < 500
-                    if not exp_ok:
-                        exp_err = f"HTTP {r.status_code}"
-                except Exception as exc:
-                    # Fallback: try root URL
-                    try:
-                        r2 = _req.get(explorer_url, timeout=(3, 6))
-                        exp_ok = r2.status_code < 500
-                        if not exp_ok:
-                            exp_err = f"HTTP {r2.status_code}"
-                    except Exception as exc2:
-                        exp_err = str(exc2)
+                    r = _req.get(f"{explorer_url}/api/health", timeout=(3, 8))
+                    explorer["ok"] = r.status_code < 500
+                    if not explorer["ok"]:
+                        explorer["error"] = f"HTTP {r.status_code}"
+                except Exception as exc:  # noqa: BLE001
+                    explorer["error"] = str(exc)
 
-            return {"rpc_ok": rpc_ok, "rpc_err": rpc_err, "exp_ok": exp_ok, "exp_err": exp_err, "ts": time.time()}
+            return {"rpc": rpc, "cli": cli, "explorer": explorer, "ts": time.time()}
 
-        worker = WorkerThread(_check)
-        # Always finalize — connect both result and error paths
-        worker.worker.result.connect(self._on_network_result)
-        worker.worker.error.connect(
-            lambda m, _tb: self._on_network_result({"rpc_ok": False, "rpc_err": str(m), "exp_ok": False, "exp_err": str(m), "ts": time.time()})
+        self._health_job = run_in_threadpool(_check)
+        self._health_job.signals.result.connect(self._on_network_result)
+        self._health_job.signals.error.connect(
+            lambda m, _tb: self._on_network_result({"rpc": {"ok": False, "error": m, "url": rpc_url}, "cli": {"ok": False, "error": m, "returncode": None}, "explorer": {"ok": False, "error": m}, "ts": time.time()})
         )
-        # Safety fallback: if thread somehow never emits, resolve after 12 s
         QTimer.singleShot(12_000, lambda: self._ensure_status_resolved())
-        self._net_worker = worker
-        worker.start()
-
     def _ensure_status_resolved(self) -> None:
         """If status is still "Checking…", mark as unknown."""
         if "Checking" in self._status_badge.text():
             self._set_status("? Unknown", "#9aa0a6", "Check timed out — will retry.")
 
+    @ui_thread_only(log)
     def _on_network_result(self, result: dict) -> None:
-        rpc_ok: bool = result.get("rpc_ok", False)
-        exp_ok: bool = result.get("exp_ok", False)
-        rpc_err: str = result.get("rpc_err", "")
-        exp_err: str = result.get("exp_err", "")
+        self._last_health_payload = result
+        rpc = result.get("rpc", {})
+        cli = result.get("cli", {})
+        explorer = result.get("explorer", {})
 
-        profile = self._active_profile()
-        explorer_configured = bool(profile and profile.explorer_base_url)
+        rpc_ok = bool(rpc.get("ok"))
+        cli_ok = bool(cli.get("ok"))
+        exp_ok = bool(explorer.get("ok"))
 
         if rpc_ok:
-            label = "● Online"
+            label = "● ONLINE"
             color = "#34a853"
-            detail = "RPC reachable"
-            if explorer_configured:
-                detail += f" | Explorer: {'✓' if exp_ok else '✗'}"
-        elif explorer_configured and exp_ok:
-            label = "⚠ Degraded"
+            detail = f"RPC reachable at {rpc.get('url', '')}"
+            if exp_ok:
+                detail += " | Explorer reachable"
+        elif cli_ok:
+            label = "⚠ DEGRADED"
             color = "#e8a029"
-            detail = f"RPC offline ({rpc_err}) | Explorer reachable"
+            detail = (
+                f"Node running (CLI), RPC unreachable at {rpc.get('url', '')}. "
+                f"Hint: verify host/port/path (/rpc). {rpc.get('error', '')}"
+            ).strip()
         else:
-            label = "✗ Offline"
+            label = "✗ OFFLINE"
             color = "#ea4335"
             parts = []
-            if rpc_err:
-                parts.append(f"RPC: {rpc_err}")
-            if explorer_configured and exp_err:
-                parts.append(f"Explorer: {exp_err}")
+            if rpc.get("error"):
+                parts.append(f"RPC: {rpc.get('error')}")
+            if cli.get("error"):
+                parts.append(f"CLI: {cli.get('error')}")
+            if explorer.get("error"):
+                parts.append(f"Explorer: {explorer.get('error')}")
             detail = " | ".join(parts) if parts else "No connection"
 
         self._set_status(label, color, detail)
         ActivityStore.instance().record_network_check(
             f"Network: {label.strip('●⚠✗ ')}",
-            ok=rpc_ok,
+            ok=rpc_ok or cli_ok,
             detail=detail,
         )
 
+    @ui_thread_only(log)
+    def _copy_diagnostics(self) -> None:
+        payload = self._last_health_payload or {}
+        rpc = payload.get("rpc", {})
+        cli = payload.get("cli", {})
+        lines = [
+            "Dashboard diagnostics",
+            f"rpc_url: {rpc.get('url', '')}",
+            f"last_ping_ok: {rpc.get('ok', False)}",
+            f"last_ping_error: {rpc.get('error', '')}",
+            f"cli_status_ok: {cli.get('ok', False)}",
+            f"cli_status_returncode: {cli.get('returncode')}",
+            f"cli_status_error: {cli.get('error', '')}",
+            f"checked_at: {payload.get('ts', '')}",
+        ]
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._status_detail.setText("Diagnostics copied to clipboard")
+
+    @ui_thread_only(log)
     def _set_status(self, label: str, color: str, detail: str) -> None:
         self._status_badge.setText(label)
         self._status_badge.setStyleSheet(f"color: {color};")
@@ -400,3 +425,10 @@ class DashboardPage(QWidget):
 
     def set_visual_effects(self, mode: str, reduced_motion: bool) -> None:
         self.hero.set_effect_mode(mode, reduced_motion)
+
+    def closeEvent(self, event: Any) -> None:
+        if hasattr(self, "_poll_timer") and self._poll_timer.isActive():
+            self._poll_timer.stop()
+        if hasattr(self, "_activity_timer") and self._activity_timer.isActive():
+            self._activity_timer.stop()
+        super().closeEvent(event)
