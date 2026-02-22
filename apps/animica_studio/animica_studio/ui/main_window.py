@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
 
         self._wallet_page = WalletPage(config=self._config, safe_mode=self._safe_mode)
         self._wallet_page.open_settings_requested.connect(self._open_settings_from_wallet)
+        self._wallet_page.run_in_console_requested.connect(self._open_console_with_command)
         self._dashboard_page = DashboardPage(config=self._config, profile_service=self._profile_service)
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
         self._nav_entries = [
@@ -194,6 +195,15 @@ class MainWindow(QMainWindow):
         self._ensure_lazy_pages(index)
         self._stack.setCurrentIndexAnimated(index, reduced_motion=self._theme_manager.reduced_motion())
         self._sidebar.set_active(index)
+
+    def _open_console_with_command(self, command: str) -> None:
+        console_index = next((i for i, e in enumerate(self._nav_entries) if e.label == "Console"), None)
+        if console_index is None:
+            return
+        self._navigate(console_index)
+        console_widget = self._stack.widget(console_index)
+        if isinstance(console_widget, ConsolePage):
+            console_widget.run_command(command, auto_run=True)
 
     def _ensure_lazy_pages(self, index: int) -> None:
         if self._ide_index is None or index != self._ide_index or self._ide_page is not None:
