@@ -12,9 +12,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-import os
 import re
-import subprocess
 import json
 import time
 import uuid
@@ -33,7 +31,7 @@ from animica_studio.models.wallet_models import (
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
-from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env
+from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.explorer_style_rpc import ExplorerStyleRpcClient
@@ -216,9 +214,8 @@ class WalletService:
             allow_insecure_fallback=allow_insecure_fallback,
         )
         get_cli_ops(self._config).selected_path(CliOperation.WALLET_CREATE)
-        program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-        argv = [program, *base_args, *wallet_args]
-        log.info("WalletService: resolved CLI path=%s", program)
+        argv = list(wallet_args)
+        resolved_env: dict[str, str] = {}
         log.info("WalletService: create wallet argv=%r", argv)
         known_addresses = self._load_wallet_store_addresses()
         job = runner.run_cli(argv, env=resolved_env, timeout_s=timeout_s)
@@ -246,26 +243,13 @@ class WalletService:
             allow_insecure_fallback=allow_insecure_fallback,
         )
         get_cli_ops(self._config).selected_path(CliOperation.WALLET_CREATE)
-        try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-        except FileNotFoundError as exc:
-            raise RuntimeError(str(exc)) from exc
-
-        cmd = [program, *base_args, *wallet_args]
+        cmd = list(wallet_args)
         started = time.perf_counter()
         log.info("WalletService: create wallet requested label=%s scheme=%s argv=%r", clean_label, scheme, cmd)
 
         known_addresses = self._load_wallet_store_addresses()
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                env={**os.environ, **resolved_env} if resolved_env else None,
-            )
+            result = run_cli_blocking(cmd, timeout_s=15, config=self._config)
         except Exception as exc:  # noqa: BLE001
             log.error("WalletService: create wallet failed to invoke CLI: %s", exc)
             raise RuntimeError(f"Failed to start wallet CLI: {safe_str(exc)}") from exc
@@ -537,12 +521,9 @@ class WalletService:
         )
 
         try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
             # Keep the send invocation aligned with the expected wallet UX flow:
             # clicking "Send" should fire the same CLI command users run manually.
             cmd = [
-                program,
-                *base_args,
                 "tx",
                 "send",
                 "--from",
@@ -552,15 +533,7 @@ class WalletService:
                 "--value",
                 amount_arg,
             ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                env={**os.environ, **resolved_env} if resolved_env else None,
-            )
+            result = run_cli_blocking(cmd, timeout_s=20, config=self._config)
             if result.returncode != 0:
                 details = (result.stderr or result.stdout or "Unknown CLI error").strip()
                 raise RuntimeError(details)
