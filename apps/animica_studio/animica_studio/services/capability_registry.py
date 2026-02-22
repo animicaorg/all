@@ -8,10 +8,9 @@ enable/disable buttons.
 from __future__ import annotations
 
 import logging
-import subprocess
-import sys
 from typing import Any
 
+from animica_studio.services.job_runner import run_cli_blocking
 from animica_studio.services.rpc_client import RpcClient
 from animica_studio.storage.config import Config
 
@@ -91,15 +90,9 @@ class CapabilityRegistry:
             log.debug("CapabilityRegistry: RPC discover failed: %s", exc)
 
     def _discover_cli(self, config: Config) -> None:
-        bin_ = config.get_active_profile().cli.animica_bin
         try:
-            result = subprocess.run(
-                [bin_, "--help"],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-            )
-            output = result.stdout + result.stderr
+            result = run_cli_blocking(["--help"], timeout_s=5, config=config)
+            output = (result.stdout or "") + (result.stderr or "")
             self._cli_commands = _parse_cli_commands(output)
         except Exception as exc:  # noqa: BLE001
             log.debug("CapabilityRegistry: CLI discover failed: %s", exc)

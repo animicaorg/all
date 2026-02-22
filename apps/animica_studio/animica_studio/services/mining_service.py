@@ -8,8 +8,7 @@ from typing import Callable
 from animica_studio.models.exec_models import ExecResult, StreamEvent
 from animica_studio.services.cli_capabilities import get_cli_ops, get_cli_registry
 from animica_studio.services.cli_ops import CliOperation, CliOperationError
-from animica_studio.services.cli_runner import CliRunner
-from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.services.job_runner import run_cli_blocking
 from animica_studio.services.rpc_client import RpcClient, RpcResponseError, RpcTransportError
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
@@ -22,7 +21,6 @@ class MiningService:
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._runner = CliRunner()
 
     def build_mine_blocks_command(
         self,
@@ -32,8 +30,7 @@ class MiningService:
     ) -> tuple[list[str], dict[str, str]]:
         ops = get_cli_ops(self._config)
         op_args = ops.build(CliOperation.MINE_BLOCKS, {"count": count, "address": miner_address, "threads": threads})
-        program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-        return [program, *base_args, *op_args], resolved_env
+        return op_args, {}
 
     def mining_diagnostics(self) -> str:
         registry = get_cli_registry(self._config)
@@ -55,7 +52,7 @@ class MiningService:
                 CliOperation.MINE_BLOCKS,
                 {"count": count, "address": miner_address, "threads": 0},
             )
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
+            resolved_env = {}
         except (FileNotFoundError, CliOperationError) as exc:
             registry = get_cli_registry(self._config)
             diag = registry.diagnostics(["miner", "mine-blocks"])
@@ -74,11 +71,9 @@ class MiningService:
                 error=str(exc),
             )
 
-        cmd = [program, *base_args, *op_args]
-        env: dict[str, str] = dict(resolved_env)
-        if extra_env:
-            env.update(extra_env)
-        return self._runner.run(cmd, env=env or None, timeout_s=timeout_s, cancel_token=cancel_token, stream_cb=stream_cb)
+        cmd = list(op_args)
+        cp = run_cli_blocking(cmd, timeout_s=int(timeout_s), config=self._config, env=extra_env)
+        return ExecResult(cmd=cmd, returncode=cp.returncode, timed_out=False, cancelled=False, start_ts=0, end_ts=0, duration_ms=0, stdout=cp.stdout or "", stderr=cp.stderr or "", stdout_lines=(cp.stdout or "").splitlines(), stderr_lines=(cp.stderr or "").splitlines(), error=None if cp.returncode == 0 else (cp.stderr or cp.stdout or "").strip())
 
     def set_automine(self, enabled: bool, rpc_url: str | None = None) -> dict:
         url = rpc_url or self._config.get_active_profile().node.rpc_local_url
@@ -123,6 +118,6 @@ class MiningService:
         cancel_token: CancelToken | None = None,
         stream_cb: Callable[[StreamEvent], None] | None = None,
     ) -> ExecResult:
-        program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-        cmd = [program, *base_args, "hash-worker", "start", "--threads", str(threads)]
-        return self._runner.run(cmd, env=resolved_env or None, cancel_token=cancel_token, stream_cb=stream_cb, timeout_s=None)
+        cmd = ["hash-worker", "start", "--threads", str(threads)]
+        cp = run_cli_blocking(cmd, timeout_s=120, config=self._config)
+        return ExecResult(cmd=cmd, returncode=cp.returncode, timed_out=False, cancelled=False, start_ts=0, end_ts=0, duration_ms=0, stdout=cp.stdout or "", stderr=cp.stderr or "", stdout_lines=(cp.stdout or "").splitlines(), stderr_lines=(cp.stderr or "").splitlines(), error=None if cp.returncode == 0 else (cp.stderr or cp.stdout or "").strip())
