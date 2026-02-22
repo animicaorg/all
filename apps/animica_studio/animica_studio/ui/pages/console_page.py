@@ -223,6 +223,16 @@ class ConsolePage(QWidget):
 
         return panel
 
+    def run_command(self, command: str, *, auto_run: bool = True) -> None:
+        """Populate the command input (and optionally execute it)."""
+        text = (command or "").strip()
+        if not text:
+            return
+        self._cmd_edit.setText(text)
+        self._cmd_edit.setFocus()
+        if auto_run:
+            self._on_run()
+
     def _on_poll_toggle(self, enabled: bool) -> None:
         if enabled:
             self._node_timer.start(60_000)
