@@ -408,8 +408,7 @@ class TestWalletServiceCreateWallet:
 
         ws = WalletService(Config())
         ops = _make_wallet_create_ops()
-        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            args, clean_label, scheme = ws.build_create_wallet_argv("My Wallet", "dilithium3")
+        args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
 
         assert clean_label == "My Wallet"
         assert scheme == "dilithium3"
@@ -422,29 +421,17 @@ class TestWalletServiceCreateWallet:
             "dilithium3",
         ]
 
-    def test_build_create_wallet_args_requires_modern_cli_flags(self):
-        from animica_studio.storage.config import Config
-        from animica_studio.services.cli_ops import CliOperationError
-        from animica_studio.services.wallet_service import WalletService
-
-        ws = WalletService(Config())
-        ops = _make_wallet_create_ops(options=["--name", "--scheme"])
-        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            with pytest.raises(CliOperationError, match=r"missing required option --label"):
-                ws.build_create_wallet_argv("Legacy CLI", "dilithium3")
-
     def test_build_create_wallet_args_sphincs_and_fallback(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
         ops = _make_wallet_create_ops()
-        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            args, clean_label, scheme = ws.build_create_wallet_argv(
-                "SPX Wallet",
-                "sphincs128s",
-                allow_insecure_fallback=True,
-            )
+        args, clean_label, scheme = ws.build_create_wallet_args(
+            "SPX Wallet",
+            "sphincs128s",
+            allow_insecure_fallback=True,
+        )
 
         assert clean_label == "SPX Wallet"
         assert scheme == "sphincs_shake_128s"
@@ -455,6 +442,7 @@ class TestWalletServiceCreateWallet:
             "SPX Wallet",
             "--alg",
             "sphincs_shake_128s",
+            "--allow-insecure-fallback",
         ]
 
 
@@ -464,7 +452,7 @@ class TestWalletServiceCreateWallet:
 
         ws = WalletService(Config())
         with pytest.raises(ValueError, match="Wallet label"):
-            ws.build_create_wallet_argv("bad/label")
+            ws.build_create_wallet_args("bad/label")
 
     def test_create_wallet_empty_label_raises(self):
         from animica_studio.storage.config import Config
@@ -472,7 +460,7 @@ class TestWalletServiceCreateWallet:
 
         ws = WalletService(Config())
         with pytest.raises(ValueError, match="Wallet label"):
-            ws.build_create_wallet_argv("   ")
+            ws.build_create_wallet_args("   ")
 
     def test_resolve_and_store_created_wallet(self):
         from animica_studio.storage.config import Config
@@ -1051,7 +1039,6 @@ class TestWalletCreateIncludesLabel:
 
     def test_build_create_wallet_args_includes_label_flag(self):
         """When CliOps is available, build_create_wallet_args always emits --label."""
-        from unittest.mock import MagicMock, patch
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
@@ -1061,8 +1048,7 @@ class TestWalletCreateIncludesLabel:
         ]
 
         ws = WalletService(Config())
-        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=mock_ops):
-            args, clean_label, scheme = ws.build_create_wallet_argv("My Wallet", "dilithium3")
+        args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
 
         assert "--label" in args
         assert "My Wallet" in args

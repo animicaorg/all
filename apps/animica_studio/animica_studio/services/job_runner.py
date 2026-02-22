@@ -229,6 +229,7 @@ class JobRunner(QObject):
         *,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        env_overrides: dict[str, str] | None = None,
         timeout_s: int = 120,
     ) -> JobHandle:
         job_id = str(uuid.uuid4())
@@ -259,9 +260,18 @@ class JobRunner(QObject):
         merged_env = dict(resolved.env)
         if env:
             merged_env.update(env)
+        if env_overrides:
+            merged_env.update(env_overrides)
         for k, v in merged_env.items():
             pe.insert(k, v)
         proc.setProcessEnvironment(pe)
+        log.info(
+            "JobRunner.run_cli start: resolved_program=%s args=%r cwd=%s env_keys=%s",
+            program,
+            program_args,
+            cwd or "<current>",
+            sorted([k for k in merged_env.keys() if k in {"PATH", "VIRTUAL_ENV", "PYTHONPATH"}]),
+        )
 
         self._processes[job_id] = proc
         self._stdout_buffers[job_id] = ""
@@ -375,6 +385,7 @@ class JobRunner(QObject):
         program = proc.program() if proc else "<unknown>"
         details = proc.errorString() if proc else f"QProcess error: {int(err)}"
         handle.error.emit(job_id, f"Process failed to start: {program}", details)
+        log.error("JobRunner process error: program=%s error=%s details=%s", program, int(err), details)
 
     def _on_finished(self, job_id: str, handle: JobHandle, exit_code: int) -> None:
         self._flush_partial(job_id, handle)
@@ -384,6 +395,9 @@ class JobRunner(QObject):
             stderr_preview = self._stderr_captures.get(job_id, "")[:300]
             log.info("Exit code: %s", exit_code)
             log.info("stderr (first N chars): %s", stderr_preview)
+            stdout_preview = self._stdout_buffers.get(job_id, "")[:300]
+            if stdout_preview:
+                log.info("stdout (first N chars): %s", stdout_preview)
             handle.error.emit(job_id, f"Command exited with code {exit_code}", "")
             self._record_activity(ok=False, detail=f"exit {exit_code}")
         else:
@@ -468,4 +482,3 @@ def run_cli_blocking(
         stdin=subprocess.DEVNULL,
         env=merged_env,
     )
-
