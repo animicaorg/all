@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._wallet_page = WalletPage(config=self._config, safe_mode=self._safe_mode)
+        self._wallet_page.open_settings_requested.connect(self._open_settings_from_wallet)
         self._dashboard_page = DashboardPage()
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
         self._nav_entries = [
@@ -372,3 +373,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(QLabel("IDE unavailable (startup degraded mode)."))
             self.show_startup_degraded_banner("Startup degraded mode: IDE is unavailable")
             return placeholder
+
+
+    def _open_settings_from_wallet(self) -> None:
+        self._navigate(len(self._nav_entries) - 1)
