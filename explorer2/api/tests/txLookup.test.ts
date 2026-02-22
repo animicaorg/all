@@ -65,4 +65,42 @@ describe('transaction lookup lifecycle', () => {
     expect(tx.status).toBe('confirmed')
     expect(tx.included_height).toBe(199)
   })
+
+  it('finds recently confirmed tx by scanning recent blocks when direct tx RPC misses', async () => {
+    const service = new ExplorerService({
+      getHead: async () => ({ height: 220, hash: '0x' + 'f'.repeat(64), time: 3 }),
+      getBlockByNumber: async (height: number | string) => {
+        if (Number(height) !== 220) {
+          return {
+            header: { height: Number(height), hash: '0x' + '0'.repeat(64), time: 1700000000 + Number(height) },
+            txs: []
+          }
+        }
+
+        return {
+          header: {
+            height: 220,
+            hash: '0x' + 'e'.repeat(64),
+            time: 1700000220
+          },
+          txs: [
+            { hash: TX_HASH, from: 'anim1a', to: 'anim1b', value: '0x1', blockNumber: 220, blockHash: '0x' + 'e'.repeat(64) }
+          ]
+        }
+      },
+      getBlockByHash: vi.fn(),
+      getTransactionByHash: async () => null,
+      getTransactionReceipt: async () => null,
+      getMempoolPending: async () => [],
+      getMempoolStats: async () => ({ count: 0, totalBytes: 0, oldestAgeSec: null }),
+      getPeers: async () => [],
+      getBalance: async () => '0x0'
+    })
+
+    const tx = await service.getTxDetail(TX_HASH)
+    expect(tx.status).toBe('confirmed')
+    expect(tx.included_height).toBe(220)
+    expect(tx.included_block_hash).toBe('0x' + 'e'.repeat(64))
+    expect(tx.confirmations).toBe(1)
+  })
 })
