@@ -832,29 +832,21 @@ def test_cli_ops_mine_blocks_includes_threads_when_supported():
 
 
 
-def test_cli_ops_wallet_create_accepts_name_and_scheme_aliases():
-    from animica_studio.services.cli_ops import CliOperation, CliOps
+def test_cli_ops_wallet_create_requires_label_option():
+    from animica_studio.services.cli_ops import CliOperation, CliOperationError, CliOps
 
     class _Registry:
         def best_match(self, _group: str) -> list[str]:
             return ["wallet", "create"]
 
         def has_opt(self, _path: list[str], opt: str) -> bool:
-            return opt in {"--name", "--scheme"}
+            return opt in {"--name", "--alg", "--scheme"}
 
-    out = CliOps(_Registry()).build(
-        CliOperation.WALLET_CREATE,
-        {"label": "main", "alg": "dilithium3"},
-    )
-
-    assert out == [
-        "wallet",
-        "create",
-        "--name",
-        "main",
-        "--scheme",
-        "dilithium3",
-    ]
+    with pytest.raises(CliOperationError, match=r"missing required option --label"):
+        CliOps(_Registry()).build(
+            CliOperation.WALLET_CREATE,
+            {"label": "main", "alg": "dilithium3"},
+        )
 
 
 def test_cli_ops_wallet_create_requires_some_label_option():
