@@ -145,7 +145,7 @@ class Config:
     )
     da_contribution: dict[str, Any] = field(
         default_factory=lambda: {
-            "enabled": False,
+            "enabled": True,
             "directory": "",
             "max_gb": 50,
             "reserve_mode": "quota",
@@ -279,7 +279,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         aicf_defaults=d.get("aicf_defaults") or {"default_job_type": "ai", "default_budget": 100},
         da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
         da_contribution={
-            "enabled": False,
+            "enabled": True,
             "directory": "",
             "max_gb": 50,
             "reserve_mode": "quota",
