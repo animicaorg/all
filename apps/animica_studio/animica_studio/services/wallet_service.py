@@ -16,6 +16,7 @@ import re
 import json
 import time
 import uuid
+import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,6 @@ _MAX_PENDING_TXS = 100  # keep only the last N pending/sent txs; older entries a
 _BALANCE_CONCURRENCY = 6
 _DEFAULT_DECIMALS = 18
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
-_WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _ANM_BALANCE_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*ANM", re.IGNORECASE)
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -131,46 +131,20 @@ class WalletService:
             raise ValueError("Signature scheme must be dilithium3 or sphincs_shake_128s")
         return clean_label, scheme
 
-    def build_create_wallet_argv(
-        self,
-        label: str,
-        sig_scheme: str | None = "dilithium3",
-        *,
-        allow_insecure_fallback: bool = False,
-    ) -> tuple[list[str], str, str]:
-        """Build CLI argv for wallet creation and return normalized values."""
-        clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme or "dilithium3")
-        argv = get_cli_ops(self._config).build(
-            CliOperation.WALLET_CREATE,
-            {
-                "label": clean_label,
-                "alg": scheme,
-                "allow_insecure_fallback": allow_insecure_fallback,
-            },
-        )
-        log.info("WalletService: build create wallet argv=%r", argv)
-        return argv, clean_label, scheme
-
     def build_create_wallet_args(
         self,
         label: str,
-        sig_scheme: str | None = "dilithium3",
+        alg: str | None = "dilithium3",
         *,
         allow_insecure_fallback: bool = False,
     ) -> tuple[list[str], str, str]:
-        """Backward-compatible alias for :meth:`build_create_wallet_argv`."""
-        return self.build_create_wallet_argv(
-            label,
-            sig_scheme,
-            allow_insecure_fallback=allow_insecure_fallback,
-        )
-
-    def parse_created_wallet_address(self, stdout: str) -> str:
-        """Extract created wallet address from legacy CLI output."""
-        match = _WALLET_ADDRESS_RE.search(stdout)
-        if not match:
-            raise RuntimeError("Wallet was created but Studio could not read the new address from CLI output.")
-        return match.group(1)
+        """Build canonical animica subcommand args for wallet creation."""
+        clean_label, scheme = self.validate_wallet_create_request(label, alg or "dilithium3")
+        args = ["wallet", "create", "--label", clean_label, "--alg", scheme]
+        if allow_insecure_fallback:
+            args.append("--allow-insecure-fallback")
+        log.info("WalletService: build create wallet args=%r", args)
+        return args, clean_label, scheme
 
     def _wallet_store_path(self) -> str:
         return os.environ.get("ANIMICA_WALLETS_FILE") or str((Path.home() / ".animica" / "wallets.json"))
@@ -206,20 +180,19 @@ class WalletService:
         sig_scheme: str = "dilithium3",
         *,
         allow_insecure_fallback: bool = False,
-        timeout_s: int = 15,
-    ) -> tuple[JobHandle, str, str, set[str]]:
-        wallet_args, clean_label, scheme = self.build_create_wallet_argv(
+        timeout_s: int = 20,
+        cwd: str | None = None,
+        env_overrides: dict[str, str] | None = None,
+    ) -> tuple[JobHandle, str, str]:
+        wallet_args, clean_label, scheme = self.build_create_wallet_args(
             label,
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
         )
         get_cli_ops(self._config).selected_path(CliOperation.WALLET_CREATE)
-        argv = list(wallet_args)
-        resolved_env: dict[str, str] = {}
-        log.info("WalletService: create wallet argv=%r", argv)
-        known_addresses = self._load_wallet_store_addresses()
-        job = runner.run_cli(argv, env=resolved_env, timeout_s=timeout_s)
-        return job, clean_label, scheme, known_addresses
+        log.info("WalletService: create wallet argv=%r cwd=%s env_override_keys=%s", wallet_args, cwd or "<current>", sorted((env_overrides or {}).keys()))
+        job = runner.run_cli(wallet_args, timeout_s=timeout_s, cwd=cwd, env_overrides=env_overrides or {})
+        return job, clean_label, scheme
 
     def store_created_wallet(self, label: str, address: str, sig_scheme: str) -> Account:
         """Persist a wallet record from validated CLI creation output."""
@@ -237,7 +210,7 @@ class WalletService:
         allow_insecure_fallback: bool = False,
     ) -> Account:
         """Create a new wallet via Animica CLI and persist it."""
-        wallet_args, clean_label, scheme = self.build_create_wallet_argv(
+        wallet_args, clean_label, scheme = self.build_create_wallet_args(
             label,
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
