@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { BlockDetail } from '@animica/explorer2-shared'
 import { api } from '../lib/api'
-import { formatNumber, formatTimestamp, shorten, timeAgo } from '../lib/format'
+import { formatBalance, formatNumber, formatTimestamp, shorten, timeAgo } from '../lib/format'
 import CopyButton from '../components/CopyButton'
 import JsonViewer from '../components/JsonViewer'
 import Skeleton from '../components/Skeleton'
@@ -131,6 +131,7 @@ export default function BlockDetailPage() {
                   <span>Index: {idx}</span>
                   {tx.from && <span>From: {shorten(tx.from, 8, 6)}</span>}
                   {tx.to && <span>To: {shorten(tx.to, 8, 6)}</span>}
+                  <span>Amount: {tx.value ? `${formatBalance(tx.value).anm} ANM` : '—'}</span>
                 </div>
               </div>
               <CopyButton value={tx.hash} className="flex-shrink-0" />
