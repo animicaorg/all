@@ -6,6 +6,7 @@ var editor = null;
 var tabs = []; // [{path, absPath, model, dirty, viewState}]
 var openTabs = {}; // normalized abs path -> index
 var activeTab = -1;
+var pendingOpenFiles = [];
 
 window.currentFilePath = null;
 
@@ -21,7 +22,17 @@ function initChannel() {
   new QWebChannel(qt.webChannelTransport, function(channel) {
     bridge = channel.objects.bridge;
     setupBridgeSignals();
+    flushPendingOpens();
     bridge.log('IDE ready');
+  });
+}
+
+function flushPendingOpens() {
+  if (!bridge || !pendingOpenFiles.length) return;
+  var queued = pendingOpenFiles.slice();
+  pendingOpenFiles = [];
+  queued.forEach(function(file) {
+    openFile(file.path, file.absPath);
   });
 }
 
@@ -63,7 +74,10 @@ function rebuildOpenTabsIndex() {
 }
 
 function openFile(path, absPath) {
-  if (!bridge) { showError('Bridge not ready'); return; }
+  if (!bridge) {
+    pendingOpenFiles.push({path: path, absPath: absPath});
+    return;
+  }
   var normalizedAbsPath = normalizePath(absPath || path);
   if (Object.prototype.hasOwnProperty.call(openTabs, normalizedAbsPath)) {
     activateTab(openTabs[normalizedAbsPath]);
