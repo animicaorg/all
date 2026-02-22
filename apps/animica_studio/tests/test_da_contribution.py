@@ -329,7 +329,7 @@ def test_config_has_da_contribution_defaults():
     from animica_studio.storage.config import Config
     cfg = Config()
     dc = cfg.da_contribution
-    assert dc["enabled"] is False
+    assert dc["enabled"] is True
     assert dc["max_gb"] == 50
     assert dc["reserve_mode"] == "quota"
     assert dc["auto_start"] is True
@@ -366,4 +366,4 @@ def test_config_da_contribution_defaults_on_missing_key(tmp_path):
     with patch.object(cfg_mod, "config_file", return_value=test_path):
         cfg = load_config()
     assert isinstance(cfg.da_contribution, dict)
-    assert cfg.da_contribution["enabled"] is False
+    assert cfg.da_contribution["enabled"] is True
