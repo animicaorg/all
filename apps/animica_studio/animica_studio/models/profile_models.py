@@ -36,6 +36,20 @@ def validate_rpc_url(url: str) -> str:
     return stripped
 
 
+def validate_explorer_base_url(url: str | None) -> str:
+    """Validate and normalize an optional explorer base URL.
+
+    Returns an empty string when unset; otherwise returns an HTTP(S) URL with
+    trailing slashes removed.
+    """
+    stripped = str(url or "").strip()
+    if not stripped:
+        return ""
+    if not _VALID_HTTP_RE.match(stripped):
+        raise ValueError(f"Explorer URL must start with http:// or https://, got: {stripped!r}")
+    return stripped.rstrip("/")
+
+
 def sanitize_name(name: str | None, fallback: str = "Unnamed") -> str:
     """Trim *name* and return *fallback* if the result is empty."""
     if not name:
@@ -83,6 +97,7 @@ class RpcProfile:
     node_datadir: str | None = None
     node_datadir_custom: bool = False
     node_rpc_url: str | None = None
+    explorer_base_url: str = ""
     created_ts: float = field(default_factory=time.time)
     last_used_ts: float = field(default_factory=time.time)
     notes: str | None = None
@@ -121,6 +136,7 @@ class RpcProfile:
             "node_datadir": self.node_datadir,
             "node_datadir_custom": self.node_datadir_custom,
             "node_rpc_url": self.node_rpc_url,
+            "explorer_base_url": self.explorer_base_url,
             "created_ts": self.created_ts,
             "last_used_ts": self.last_used_ts,
             "notes": self.notes,
@@ -177,6 +193,12 @@ class RpcProfile:
             except ValueError:
                 node_rpc_url = None
 
+        explorer_raw = d.get("explorer_base_url", "")
+        try:
+            explorer_base_url = validate_explorer_base_url(str(explorer_raw))
+        except ValueError:
+            explorer_base_url = ""
+
         now = time.time()
         created_ts_raw = d.get("created_ts", now)
         try:
@@ -203,6 +225,7 @@ class RpcProfile:
             node_start_cmd=node_start_cmd,
             node_datadir=node_datadir,
             node_rpc_url=node_rpc_url,
+            explorer_base_url=explorer_base_url,
             node_datadir_custom=node_datadir_custom,
             created_ts=created_ts,
             last_used_ts=last_used_ts,
@@ -236,4 +259,5 @@ class RpcProfile:
             node_datadir=datadir,
             node_datadir_custom=False,
             node_rpc_url="http://127.0.0.1:8545/rpc",
+            explorer_base_url="",
         )

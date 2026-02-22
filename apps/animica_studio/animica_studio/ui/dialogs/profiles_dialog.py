@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_studio.models.profile_models import ProfileType, RpcProfile
+from animica_studio.models.profile_models import ProfileType, RpcProfile, validate_explorer_base_url
 from animica_studio.util.paths import default_chain_data_dir, running_as_root
 
 log = logging.getLogger(__name__)
@@ -56,6 +56,10 @@ class _EditProfileDialog(QDialog):
         self.chain_id_edit = QLineEdit(str(profile.chain_id_expected if profile else 1))
         self.chain_id_edit.textChanged.connect(self._on_chain_id_changed)
         form.addRow("Chain ID:", self.chain_id_edit)
+
+        self.explorer_url_edit = QLineEdit(profile.explorer_base_url if profile else "")
+        self.explorer_url_edit.setPlaceholderText("https://explorer.example.org")
+        form.addRow("Explorer URL:", self.explorer_url_edit)
 
         self._is_local = (profile.type == ProfileType.LOCAL_NODE) if profile else False
         self._datadir_custom = bool(profile.node_datadir_custom) if profile else False
@@ -157,6 +161,11 @@ class _EditProfileDialog(QDialog):
         except ValueError:
             self._status_lbl.setText("Chain ID must be an integer.")
             return
+        try:
+            validate_explorer_base_url(self.explorer_url_edit.text())
+        except ValueError as exc:
+            self._status_lbl.setText(str(exc))
+            return
         self.accept()
 
     def build_profile(self) -> RpcProfile:
@@ -173,6 +182,7 @@ class _EditProfileDialog(QDialog):
             node_datadir=(self.datadir_edit.text().strip() or self._default_datadir()) if self._is_local else (self._original.node_datadir if self._original else None),
             node_datadir_custom=self._datadir_custom if self._is_local else (self._original.node_datadir_custom if self._original else False),
             node_rpc_url=self._original.node_rpc_url if self._original else None,
+            explorer_base_url=validate_explorer_base_url(self.explorer_url_edit.text()),
         )
 
 
