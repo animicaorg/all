@@ -56,6 +56,32 @@ def format_amount(wei: int, decimals: int = 18) -> str:
     return f"{formatted} ANM"
 
 
+def format_amount_compact(wei: int, decimals: int = 18, max_frac: int = 6) -> str:
+    """Format *wei* similar to the extension wallet balance display.
+
+    Shows at most ``max_frac`` decimal places, trimming trailing zeros,
+    and keeps the ``ANM`` suffix.
+    """
+    if decimals <= 0:
+        return f"{int(wei)} ANM"
+
+    n = int(wei)
+    neg = n < 0
+    abs_n = -n if neg else n
+    base = 10 ** decimals
+    whole = abs_n // base
+    frac = abs_n % base
+
+    frac_str = str(frac).rjust(decimals, "0").rstrip("0")
+    if len(frac_str) > max_frac:
+        frac_str = frac_str[:max_frac].rstrip("0")
+
+    number = f"{whole}.{frac_str}" if frac_str else str(whole)
+    if neg:
+        number = f"-{number}"
+    return f"{number} ANM"
+
+
 def parse_amount_to_wei(text: str, decimals: int = 18) -> int:
     """Parse a human-readable amount string into raw integer wei.
 
