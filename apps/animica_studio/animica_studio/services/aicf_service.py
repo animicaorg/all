@@ -18,7 +18,7 @@ from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
 from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
-from animica_studio.services.rpc_client import RpcClient
+from animica_studio.services.rpc_client import RpcClient, RpcResponseError
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
 
@@ -73,8 +73,24 @@ class AicfService:
         """Return miner credits for *address*."""
         client = self._client(rpc_url)
         try:
-            result = client.call("aicf.getMinerCredits", [address])
-            return {"ok": True, "data": result}
+            last_exc: Exception | None = None
+            for method in (
+                "state.getAicfMinerCredits",
+                "mining.getCredits",
+                "aicf.getMinerCredits",
+                "aicf.getClaimable",
+            ):
+                try:
+                    result = client.call(method, [address])
+                    return {"ok": True, "data": result}
+                except RpcResponseError as exc:
+                    if exc.rpc_error.code == -32601:
+                        last_exc = exc
+                        continue
+                    raise
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("No available RPC method for miner credits")
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         finally:
