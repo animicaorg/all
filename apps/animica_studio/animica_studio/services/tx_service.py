@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import os
 import re
-import subprocess
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from animica_studio.services.error_format import safe_str
-from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.services.job_runner import run_cli_blocking
 from animica_studio.storage.config import Config
 
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
@@ -83,14 +81,7 @@ class TxService:
         chain_id: int,
     ) -> TxServiceResult:
         start = time.time()
-        try:
-            program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
-        except Exception as exc:  # noqa: BLE001
-            return TxServiceResult(ok=False, error=safe_str(exc))
-
         cmd = [
-            program,
-            *base_args,
             "tx",
             "send",
             "--from",
@@ -106,22 +97,9 @@ class TxService:
         ]
 
         try:
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self._timeout_s,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                env={**os.environ, **resolved_env} if resolved_env else None,
-            )
-        except subprocess.TimeoutExpired as exc:
-            return TxServiceResult(
-                ok=False,
-                error=f"Send timed out after {self._timeout_s}s",
-                details=safe_str(exc),
-                command=cmd,
-            )
+            res = run_cli_blocking(cmd, timeout_s=self._timeout_s, config=self._config)
+        except TimeoutError as exc:
+            return TxServiceResult(ok=False, error=f"Send timed out after {self._timeout_s}s", details=safe_str(exc), command=cmd)
         except Exception as exc:  # noqa: BLE001
             return TxServiceResult(ok=False, error="Failed to execute tx send", details=safe_str(exc), command=cmd)
 

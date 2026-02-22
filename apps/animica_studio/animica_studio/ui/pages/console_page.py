@@ -296,14 +296,12 @@ class ConsolePage(QWidget):
         if not raw:
             return
 
-        # Build argv: prepend "animica" if not already present
+        # Build subcommand args only; JobRunner resolves the animica executable.
         try:
             parts = shlex.split(raw)
         except ValueError:
             parts = raw.split()
 
-        if parts and parts[0] != "animica":
-            parts = ["animica"] + parts
 
         self._stream.clear()
         self._cmd_edit.clear()
@@ -373,7 +371,7 @@ class ConsolePage(QWidget):
             self._stream.append_system(f"Node operation already running: {op}")
             return
         self._stream.append_system(f"Running node {op}…")
-        self._node_worker = self._runner.run_cli(["animica", "node", op], timeout_s=45)
+        self._node_worker = self._runner.run_cli(["node", op], timeout_s=45)
         self._node_job_id = self._node_worker.job_id
         self._node_worker.output.connect(self._on_node_output)
         self._node_worker.error.connect(lambda _j, msg, _d: (self._node_status_label.setText(f"Error: {msg[:80]}"), self._stream.append_error(msg)))
