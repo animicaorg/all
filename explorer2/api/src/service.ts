@@ -3,6 +3,7 @@ import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
 import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
+import { normalizeTxHash } from './txHash.js'
 import pino from 'pino'
 
 const log = pino({ name: 'explorer-service' })
@@ -83,12 +84,21 @@ export class ExplorerService {
   }
 
   async getTxDetail(hash: string): Promise<TxDetail> {
-    const cacheKey = `tx:${hash}`
+    const normalizedHash = normalizeTxHash(hash)
+    const cacheKey = `tx:${normalizedHash}`
     return this.coalescer.run(cacheKey, async () => {
-      const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(hash)).catch(() => null)
-      const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(hash)).catch(() => null)
-      if (!tx && !receipt) throw new HttpError(404, 'Transaction not found')
-      return normalizeTxDetail(tx, receipt)
+      const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(normalizedHash)).catch(() => null)
+      const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(normalizedHash)).catch(() => null)
+
+      if (!tx && !receipt) {
+        const pending = await this.safeRpc(() => this.rpc.getMempoolPending()).catch(() => [])
+        const pendingMatch = pending.some((h) => normalizeTxHash(h) === normalizedHash)
+        if (pendingMatch) {
+          return normalizeTxDetail({ hash: normalizedHash, status: 'pending' }, null)
+        }
+        throw new HttpError(404, 'Transaction not found')
+      }
+      return normalizeTxDetail(tx ?? { hash: normalizedHash }, receipt)
     })
   }
 
