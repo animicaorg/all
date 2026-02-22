@@ -568,6 +568,7 @@ class DaPage(QWidget):
             f"used_bytes: {st.used_bytes}",
             f"last_error: {st.last_error}",
             f"worker_errors: {' | '.join(self._recent_worker_errors[-5:])}",
+            "note: Local contribution is available now. Network serving remains pending node backend support.",
         ]
         QGuiApplication.clipboard().setText("\n".join(lines))
         self._contrib_console.append_info("Diagnostics copied.")
