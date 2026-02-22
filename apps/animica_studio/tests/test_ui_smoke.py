@@ -155,3 +155,24 @@ def test_top_level_imports_smoke() -> None:
 
     assert app_mod is not None
     assert wallet_page_mod is not None
+
+
+def test_create_wallet_dialog_label_validation() -> None:
+    _app()
+    from animica_studio.ui.pages.wallet_page import _CreateWalletDialog
+
+    dlg = _CreateWalletDialog()
+
+    # Empty label => blocked
+    dlg._label_edit.setText("   ")
+    assert not dlg._create_btn.isEnabled()
+
+    # Invalid chars => blocked
+    dlg._label_edit.setText("bad/label")
+    assert not dlg._create_btn.isEnabled()
+
+    # Valid label => enabled
+    dlg._label_edit.setText("wallet_01")
+    assert dlg._create_btn.isEnabled()
+
+    dlg.close()

@@ -18,6 +18,7 @@ import logging
 import os
 import time
 import weakref
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -86,6 +87,7 @@ _REFRESH_DEBOUNCE_MS = 300  # ms to wait after profile switch before triggering 
 _POLL_INTERVAL_MS = 15_000  # receipt poll
 _WALLETS_RELOAD_DEBOUNCE_MS = 350
 _WALLETS_POLL_INTERVAL_MS = 1_000
+_WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +221,7 @@ class _CreateWalletDialog(QDialog):
         self._label_edit = QLineEdit()
         self._label_edit.setPlaceholderText("My Wallet")
         self._label_edit.returnPressed.connect(self._on_accept)
+        self._label_edit.textChanged.connect(self._on_label_changed)
         form.addRow("Wallet label:", self._label_edit)
 
         layout.addLayout(form)
@@ -285,31 +288,36 @@ class _CreateWalletDialog(QDialog):
         self._create_btn.clicked.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
+        self._update_create_button_state()
 
     def _on_accept(self) -> None:
         if self._is_busy:
             return
-        self._error_label.setText("")
-        if not self._is_valid_label():
+        if not self._validate_label(show_error=True):
             return
         self.create_requested.emit(self.label, self.sig_scheme, self.allow_insecure_fallback)
 
-    def _is_valid_label(self) -> bool:
-        label = self.label
-        if not label:
-            self._error_label.setText("Wallet label is required.")
-            return False
-        if len(label) > 32:
-            self._error_label.setText("Wallet label must be 1–32 characters.")
-            return False
-        import re
+    def _on_label_changed(self) -> None:
+        if self._is_busy:
+            return
+        self._validate_label(show_error=False)
 
-        if not re.match(r"^[A-Za-z0-9 _-]{1,32}$", label):
-            self._error_label.setText(
-                "Use only letters, numbers, spaces, underscores, and hyphens."
-            )
-            return False
-        return True
+    def _validate_label(self, *, show_error: bool) -> bool:
+        label = self.label
+        error = ""
+        if not label:
+            error = "Wallet label is required."
+        elif len(label) > 32:
+            error = "Wallet label must be 1–32 characters."
+        elif not _WALLET_LABEL_RE.match(label):
+            error = "Use only letters, numbers, spaces, underscores, and hyphens."
+        if show_error:
+            self._error_label.setText(error)
+        elif not error:
+            self._error_label.setText("")
+        is_valid = error == ""
+        self._create_btn.setEnabled((not self._is_busy) and is_valid)
+        return is_valid
 
     @property
     def label(self) -> str:
@@ -329,10 +337,14 @@ class _CreateWalletDialog(QDialog):
         self._dilithium_radio.setEnabled(not busy)
         self._sphincs_radio.setEnabled(not busy)
         self._allow_insecure_fallback.setEnabled(not busy)
-        self._create_btn.setEnabled(not busy)
+        self._update_create_button_state()
         self._cancel_btn.setEnabled(not busy)
         self._progress.setVisible(busy)
         self._progress_text.setVisible(busy)
+
+    def _update_create_button_state(self, *, valid: bool | None = None) -> None:
+        is_valid = self._validate_label(show_error=False) if valid is None else valid
+        self._create_btn.setEnabled((not self._is_busy) and is_valid)
 
     def append_output(self, stream: str, text: str) -> None:
         line = text.rstrip("\n")
