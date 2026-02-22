@@ -28,10 +28,10 @@ class EnaService:
         except Exception:
             self.aicf = type('StubAicf', (), {'submit_job': lambda *_a, **_k: {'ok': False, 'error': 'aicf unavailable'}})()
         try:
-            from animica_studio.services.da_service import DaService
-            self.da = DaService(config)
+            from animica_studio.services.da_client import DaClient
+            self.da = DaClient(config.get_active_profile().node.rpc_local_url)
         except Exception:
-            self.da = type('StubDa', (), {'put_blob': lambda *_a, **_k: {'ok': False, 'error': 'da unavailable'}})()
+            self.da = type('StubDa', (), {'upload_bytes': lambda *_a, **_k: {'ok': False, 'error': 'da unavailable'}})()
         self.fees = FeeRoutingService()
 
     def detect_capabilities(self) -> dict[str, Any]:
@@ -179,10 +179,10 @@ class EnaService:
                 commit = f"dev-{checkpoint_sha[:16]}"
                 step_cache["commitment"] = commit
                 return {"commitment": commit, "mode": "local-only"}
-            out = self.da.put_blob(data)
-            if not out.get("ok"):
+            out = self.da.upload_bytes(data)
+            commit = out.get("blob_id")
+            if not commit:
                 raise RuntimeError(out.get("error", "DA unavailable"))
-            commit = out.get("commitment") or out.get("root")
             step_cache["commitment"] = commit
             return {"commitment": commit, "mode": "network"}
 
