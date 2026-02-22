@@ -6,6 +6,7 @@
 import { RpcClient } from './rpcClient.js'
 import type { ChainClient } from './service.js'
 import pino from 'pino'
+import { normalizeTxHash } from './txHash.js'
 
 const log = pino({ name: 'rpc-chain-client' })
 
@@ -130,27 +131,46 @@ export class RpcChainClient implements ChainClient {
   }
 
   async getTransactionByHash(hash: string): Promise<unknown> {
+    const normalizedHash = normalizeTxHash(hash)
+    const methods = ['tx.getTransactionByHash', 'tx.getTransaction', 'chain.getTx', 'mempool.getTx']
     try {
-      return await this.rpc.call('tx.getTransaction', [hash])
+      for (const method of methods) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const out = await this.rpc.call(method, [normalizedHash])
+          if (out) return out
+        } catch (error) {
+          const message = String((error as Error)?.message ?? error).toLowerCase()
+          if (message.includes('method not found') || message.includes('unknown method')) continue
+          log.warn({ hash: normalizedHash, method, error }, 'Failed transaction lookup method')
+        }
+      }
+      return null
     } catch (error) {
-      log.warn({ hash, error }, 'Failed to get transaction by hash')
-      // Some nodes might not have tx index, return null instead of throwing
+      log.warn({ hash: normalizedHash, error }, 'Failed to get transaction by hash')
       return null
     }
   }
 
   async getTransactionReceipt(hash: string): Promise<unknown> {
+    const normalizedHash = normalizeTxHash(hash)
     const caps = await this.detectCapabilities()
     if (!caps.hasReceipts) {
       return null
     }
 
-    try {
-      return await this.rpc.call('receipt.getReceipt', [hash])
-    } catch (error) {
-      log.warn({ hash, error }, 'Failed to get receipt')
-      return null
+    for (const method of ['tx.getTransactionReceipt', 'receipt.getReceipt', 'tx.getReceipt']) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const out = await this.rpc.call(method, [normalizedHash])
+        if (out) return out
+      } catch (error) {
+        const message = String((error as Error)?.message ?? error).toLowerCase()
+        if (message.includes('method not found') || message.includes('unknown method')) continue
+        log.warn({ hash: normalizedHash, method, error }, 'Failed receipt lookup method')
+      }
     }
+    return null
   }
 
   async getMempoolPending(): Promise<string[]> {
