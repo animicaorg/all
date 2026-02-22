@@ -64,20 +64,16 @@ class CliOps:
     def _wallet_create_label_opt(self, path: list[str]) -> str:
         if self._registry.has_opt(path, "--label"):
             return "--label"
-        if self._registry.has_opt(path, "--name"):
-            return "--name"
         raise CliOperationError(
-            f"Your animica CLI does not support wallet create: missing required option --label (or --name) "
+            f"Your animica CLI does not support wallet create: missing required option --label "
             f"for {' '.join(path)}."
         )
 
     def _wallet_create_alg_opt(self, path: list[str]) -> str:
         if self._registry.has_opt(path, "--alg"):
             return "--alg"
-        if self._registry.has_opt(path, "--scheme"):
-            return "--scheme"
         raise CliOperationError(
-            f"Your animica CLI does not support wallet create: missing required option --alg (or --scheme) "
+            f"Your animica CLI does not support wallet create: missing required option --alg "
             f"for {' '.join(path)}."
         )
 
@@ -88,10 +84,7 @@ class CliOps:
         if op is CliOperation.WALLET_CREATE:
             label = str(params["label"])
             alg = str(params["alg"])
-            out = [*path, self._wallet_create_label_opt(path), label, self._wallet_create_alg_opt(path), alg]
-            if params.get("allow_insecure_fallback") and self._registry.has_opt(path, "--allow-insecure-fallback"):
-                out.append("--allow-insecure-fallback")
-            return out
+            return [*path, self._wallet_create_label_opt(path), label, self._wallet_create_alg_opt(path), alg]
 
         if op is CliOperation.WALLET_LIST:
             return path
