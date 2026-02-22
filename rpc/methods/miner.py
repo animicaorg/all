@@ -82,8 +82,12 @@ def _build_useful_work_payload() -> Dict[str, Any]:
             # DA preflight: ensure blob is locally available
             try:
                 from da.node_store import get_store as _da_get_store  # type: ignore
+                import os as _os
 
-                store = _da_get_store(None)
+                _base = _os.getenv("ANIMICA_DATA_DIR") or _os.path.expanduser("~/.animica")
+                _chain_id = _os.getenv("ANIMICA_CHAIN_ID", "1")
+                _da_dir = _os.path.join(_base, f"chain-{_chain_id}", "da")
+                store = _da_get_store(_da_dir)
                 if store is not None and store.has(mid):
                     manifest_blob_ids.append(mid)
                     cev = rec.get("credit_event_id")
@@ -4540,6 +4544,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allow_offline_mining = False
     allow_unsynced_mining = False
     include_aicf = False
+    force_empty_template = False
+    raw_params: dict[str, Any] | list[Any] | None = None
+    template_ttl_s = _TEMPLATE_TTL_S
 
     if args:
         raw_params = list(args)
