@@ -414,8 +414,9 @@ class _OverviewTab(QWidget):
             self._error_label.setText("")
             return
         if state.error:
-            self._balance_label.setText("—")
-            self._error_label.setText(f"Unavailable: {state.error}")
+            # Show "Unavailable" not "—" so users know a fetch was attempted but failed
+            self._balance_label.setText("Unavailable")
+            self._error_label.setText(f"Balance unavailable: {state.error}")
         else:
             self._balance_label.setText(state.formatted)
             self._error_label.setText("")
