@@ -379,7 +379,7 @@ class TestWalletServiceAccounts:
 
 
 
-def _make_wallet_create_ops(*, allow_insecure_fallback_opt: bool = False):
+def _make_wallet_create_ops(*, options: list[str] | None = None):
     """Return a real CliOps instance backed by a pre-populated in-memory registry.
 
     This avoids needing the animica CLI installed in the test environment while
@@ -389,32 +389,13 @@ def _make_wallet_create_ops(*, allow_insecure_fallback_opt: bool = False):
     from animica_studio.services.cli_ops import CliOps
     from animica_studio.services.cli_registry import CliNode, CliRegistry
 
-    options = ["--label", "--alg"]
-    if allow_insecure_fallback_opt:
-        options.append("--allow-insecure-fallback")
-
     # Bypass __init__ (which performs disk I/O) by using object.__new__ and
     # populating only the attributes that CliOps accesses: _nodes and _cli_path.
     registry = object.__new__(CliRegistry)
     registry._nodes = {
         "": CliNode(commands=["wallet"]),
         "wallet": CliNode(commands=["create", "list"]),
-        "wallet create": CliNode(options=options),
-    }
-    registry._cli_path = ""
-    return CliOps(registry)
-
-
-def _make_wallet_create_ops_alt_flags():
-    """Return CliOps configured with --name/--scheme variants for wallet create."""
-    from animica_studio.services.cli_ops import CliOps
-    from animica_studio.services.cli_registry import CliNode, CliRegistry
-
-    registry = object.__new__(CliRegistry)
-    registry._nodes = {
-        "": CliNode(commands=["wallet"]),
-        "wallet": CliNode(commands=["create", "list"]),
-        "wallet create": CliNode(options=["--name", "--scheme"]),
+        "wallet create": CliNode(options=options or ["--label", "--alg"]),
     }
     registry._cli_path = ""
     return CliOps(registry)
@@ -441,32 +422,23 @@ class TestWalletServiceCreateWallet:
             "dilithium3",
         ]
 
-    def test_build_create_wallet_args_uses_detected_cli_flags(self):
+    def test_build_create_wallet_args_requires_modern_cli_flags(self):
         from animica_studio.storage.config import Config
+        from animica_studio.services.cli_ops import CliOperationError
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        ops = _make_wallet_create_ops_alt_flags()
+        ops = _make_wallet_create_ops(options=["--name", "--scheme"])
         with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            args, clean_label, scheme = ws.build_create_wallet_argv("Legacy CLI", "dilithium3")
-
-        assert clean_label == "Legacy CLI"
-        assert scheme == "dilithium3"
-        assert args == [
-            "wallet",
-            "create",
-            "--name",
-            "Legacy CLI",
-            "--scheme",
-            "dilithium3",
-        ]
+            with pytest.raises(CliOperationError, match=r"missing required option --label"):
+                ws.build_create_wallet_argv("Legacy CLI", "dilithium3")
 
     def test_build_create_wallet_args_sphincs_and_fallback(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        ops = _make_wallet_create_ops(allow_insecure_fallback_opt=True)
+        ops = _make_wallet_create_ops()
         with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
             args, clean_label, scheme = ws.build_create_wallet_argv(
                 "SPX Wallet",
@@ -483,7 +455,6 @@ class TestWalletServiceCreateWallet:
             "SPX Wallet",
             "--alg",
             "sphincs_shake_128s",
-            "--allow-insecure-fallback",
         ]
 
 
