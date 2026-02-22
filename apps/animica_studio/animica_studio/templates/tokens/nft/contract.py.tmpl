@@ -1,0 +1,60 @@
+from stdlib import abi, events, storage
+
+KEY_NAME = b"name"
+KEY_SYMBOL = b"symbol"
+KEY_BASE_URI = b"base_uri"
+KEY_ROYALTY_BPS = b"royalty_bps"
+
+
+def init() -> None:
+    storage.set_bytes(KEY_NAME, b"{{NAME}}")
+    storage.set_bytes(KEY_SYMBOL, b"{{SYMBOL}}")
+    storage.set_bytes(KEY_BASE_URI, b"{{BASE_URI}}")
+    storage.set_int(KEY_ROYALTY_BPS, {{ROYALTY_BPS}})
+
+
+def mint(to: str, token_id: int, token_uri: str = "") -> None:
+    abi.require(token_id >= 0, b"INVALID_TOKEN_ID")
+    owner_key = f"owner:{token_id}".encode()
+    abi.require(storage.get_bytes(owner_key, b"") == b"", b"ALREADY_MINTED")
+    storage.set_bytes(owner_key, to.encode())
+    storage.set_bytes(f"token_uri:{token_id}".encode(), token_uri.encode())
+    events.emit(b"Transfer", {b"from": b"", b"to": to.encode(), b"token_id": token_id})
+
+
+def owner_of(token_id: int) -> str:
+    owner = storage.get_bytes(f"owner:{token_id}".encode(), b"")
+    abi.require(owner != b"", b"NOT_MINTED")
+    return owner.decode()
+
+
+def approve(to: str, token_id: int, sender: str) -> None:
+    abi.require(owner_of(token_id) == sender, b"NOT_OWNER")
+    storage.set_bytes(f"approval:{token_id}".encode(), to.encode())
+    events.emit(b"Approval", {b"owner": sender.encode(), b"approved": to.encode(), b"token_id": token_id})
+
+
+def transfer(frm: str, to: str, token_id: int, sender: str) -> None:
+    owner = owner_of(token_id)
+    approved = storage.get_bytes(f"approval:{token_id}".encode(), b"").decode()
+    abi.require(owner == frm, b"FROM_MISMATCH")
+    abi.require(sender == owner or sender == approved, b"NOT_AUTHORIZED")
+    storage.set_bytes(f"owner:{token_id}".encode(), to.encode())
+    storage.delete(f"approval:{token_id}".encode())
+    events.emit(b"Transfer", {b"from": frm.encode(), b"to": to.encode(), b"token_id": token_id})
+
+
+def burn(token_id: int, sender: str) -> None:
+    abi.require(owner_of(token_id) == sender, b"NOT_OWNER")
+    storage.delete(f"owner:{token_id}".encode())
+    storage.delete(f"token_uri:{token_id}".encode())
+    storage.delete(f"approval:{token_id}".encode())
+    events.emit(b"Transfer", {b"from": sender.encode(), b"to": b"", b"token_id": token_id})
+
+
+def tokenURI(token_id: int) -> str:
+    direct = storage.get_bytes(f"token_uri:{token_id}".encode(), b"")
+    if direct:
+        return direct.decode()
+    base_uri = storage.get_bytes(KEY_BASE_URI, b"").decode()
+    return f"{base_uri}{token_id}"

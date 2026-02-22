@@ -1,0 +1,22 @@
+{
+  "name": "{{NAME}}",
+  "version": "1.0.0",
+  "language": "python",
+  "entry": "contract.py",
+  "description": "Animica NFT template.",
+  "abi": {
+    "functions": [
+      {"name": "init", "inputs": [], "outputs": [], "stateMutability": "write"},
+      {"name": "mint", "inputs": [{"name": "to", "type": "str"}, {"name": "token_id", "type": "int"}, {"name": "token_uri", "type": "str"}], "outputs": [], "defaults": {"token_uri": ""}, "stateMutability": "write"},
+      {"name": "owner_of", "inputs": [{"name": "token_id", "type": "int"}], "outputs": [{"type": "str"}], "stateMutability": "view"},
+      {"name": "approve", "inputs": [{"name": "to", "type": "str"}, {"name": "token_id", "type": "int"}, {"name": "sender", "type": "str"}], "outputs": [], "stateMutability": "write"},
+      {"name": "transfer", "inputs": [{"name": "frm", "type": "str"}, {"name": "to", "type": "str"}, {"name": "token_id", "type": "int"}, {"name": "sender", "type": "str"}], "outputs": [], "stateMutability": "write"},
+      {"name": "burn", "inputs": [{"name": "token_id", "type": "int"}, {"name": "sender", "type": "str"}], "outputs": [], "stateMutability": "write"},
+      {"name": "tokenURI", "inputs": [{"name": "token_id", "type": "int"}], "outputs": [{"type": "str"}], "stateMutability": "view"}
+    ],
+    "events": [
+      {"name": "Transfer", "fields": [{"name": "from", "type": "bytes"}, {"name": "to", "type": "bytes"}, {"name": "token_id", "type": "int"}]},
+      {"name": "Approval", "fields": [{"name": "owner", "type": "bytes"}, {"name": "approved", "type": "bytes"}, {"name": "token_id", "type": "int"}]}
+    ]
+  }
+}
