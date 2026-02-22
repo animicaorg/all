@@ -1,8 +1,7 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from animica_studio.models.profile_models import RpcProfile, ProfileType, validate_explorer_base_url
-from animica_studio.models.wallet_models import BalanceSource
-from animica_studio.services.balance_service import BalanceService
+from animica_studio.services.explorer_style_rpc import ExplorerStyleRpcClient
 
 
 def _profile() -> RpcProfile:
@@ -16,36 +15,50 @@ def _profile() -> RpcProfile:
     )
 
 
-def test_balance_service_uses_rpc_first():
-    svc = BalanceService()
-    profile = _profile()
-    with patch("animica_studio.services.balance_service.RpcClient") as rpc_cls, patch(
-        "animica_studio.services.balance_service.ExplorerClient"
-    ) as explorer_cls:
-        rpc = rpc_cls.return_value.__enter__.return_value
-        rpc.get_balance.return_value = 10**18
-        state = svc.get_balance("anim1abc", profile)
-        assert state.source == BalanceSource.RPC
-        assert state.error is None
-        explorer_cls.assert_not_called()
+def test_explorer_style_rpc_balance_parity_contract_hex_result():
+    svc = ExplorerStyleRpcClient()
+    fake_response = Mock()
+    fake_response.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": "0x3b9aca00"}  # 1 ANM in nANM
+    fake_response.raise_for_status.return_value = None
+
+    with patch("animica_studio.services.explorer_style_rpc.requests.post", return_value=fake_response):
+        state = svc.get_balance("anim1abc", "http://127.0.0.1:8545")
+
+    assert state.error is None
+    assert state.raw_nanm == 1_000_000_000
+    assert state.formatted_anm == "1 ANM"
 
 
-def test_balance_service_falls_back_to_explorer():
-    svc = BalanceService()
-    profile = _profile()
-    with patch("animica_studio.services.balance_service.RpcClient") as rpc_cls, patch(
-        "animica_studio.services.balance_service.ExplorerClient"
-    ) as explorer_cls:
-        rpc = rpc_cls.return_value.__enter__.return_value
-        rpc.get_balance.side_effect = RuntimeError("rpc down")
-        explorer = explorer_cls.return_value
-        explorer.get_balance.return_value.balance_wei = 5
-        explorer.get_balance.return_value.formatted = "0.000000000000000005 ANM"
-        explorer.get_balance.return_value.source = BalanceSource.EXPLORER
-        explorer.get_balance.return_value.error = None
-        explorer.get_balance.return_value.is_stale = False
-        state = svc.get_balance("anim1abc", profile)
-        assert state.source == BalanceSource.EXPLORER
+def test_explorer_style_rpc_balance_parity_contract_object_result():
+    svc = ExplorerStyleRpcClient()
+    fake_response = Mock()
+    fake_response.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": {"balance": "1230000000"}}
+    fake_response.raise_for_status.return_value = None
+
+    with patch("animica_studio.services.explorer_style_rpc.requests.post", return_value=fake_response):
+        state = svc.get_balance("anim1abc", "http://127.0.0.1:8545/rpc")
+
+    assert state.error is None
+    assert state.raw_nanm == 1_230_000_000
+    assert state.formatted_anm == "1.23 ANM"
+
+
+def test_explorer_style_rpc_returns_cached_value_on_rpc_error():
+    svc = ExplorerStyleRpcClient()
+    ok_response = Mock()
+    ok_response.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": "0x5"}
+    ok_response.raise_for_status.return_value = None
+
+    with patch("animica_studio.services.explorer_style_rpc.requests.post", return_value=ok_response):
+        first = svc.get_balance("anim1abc", "http://127.0.0.1:8545/rpc")
+
+    with patch("animica_studio.services.explorer_style_rpc.requests.post", side_effect=RuntimeError("down")):
+        second = svc.get_balance("anim1abc", "http://127.0.0.1:8545/rpc", force_refresh=True)
+
+    assert first.error is None
+    assert second.error is not None
+    assert second.from_cache is True
+    assert second.raw_nanm == 5
 
 
 def test_validate_explorer_base_url():

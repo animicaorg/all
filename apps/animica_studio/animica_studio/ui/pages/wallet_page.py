@@ -391,6 +391,9 @@ class _OverviewTab(QWidget):
         self._balance_meta_label = QLabel("")
         self._balance_meta_label.setStyleSheet("color: #9aa0a6;")
         form.addRow("", self._balance_meta_label)
+        self._last_updated_label = QLabel("")
+        self._last_updated_label.setStyleSheet("color: #9aa0a6;")
+        form.addRow("Last updated:", self._last_updated_label)
 
         self._scheme_label = QLabel("—")
         form.addRow("Signature:", self._scheme_label)
@@ -405,7 +408,7 @@ class _OverviewTab(QWidget):
         self._explorer_btn.clicked.connect(self._open_explorer)
         btn_row.addWidget(self._explorer_btn)
 
-        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn = QPushButton("🔄 Refresh balances")
         refresh_btn.clicked.connect(self.refresh_requested)
         btn_row.addWidget(refresh_btn)
         btn_row.addStretch()
@@ -425,6 +428,7 @@ class _OverviewTab(QWidget):
             self._scheme_label.setText("—")
             self._error_label.setText("")
             self._balance_meta_label.setText("")
+            self._last_updated_label.setText("—")
             return
         self._addr_label.setText(account.address)
         self._scheme_label.setText(account.sig_scheme)
@@ -434,24 +438,26 @@ class _OverviewTab(QWidget):
             self._balance_label.setText("—")
             self._error_label.setText("")
             self._balance_meta_label.setText("")
+            self._last_updated_label.setText("—")
             return
         if state.error and state.formatted in {"", "—"}:
             self._balance_label.setText("—")
             self._error_label.setText(f"Balance unavailable: {state.error}")
             self._balance_meta_label.setText("")
+            self._balance_label.setToolTip(state.tooltip or state.error)
         else:
             compact = format_amount_compact(state.balance_wei)
             self._balance_label.setText(compact if compact.strip() else (state.formatted or "—"))
             source_label = ""
-            if state.source == BalanceSource.EXPLORER:
-                source_label = "Explorer (fallback)"
-            elif state.source == BalanceSource.RPC:
+            if state.source == BalanceSource.RPC:
                 source_label = "RPC"
             if state.is_stale:
                 source_label = f"{source_label} (cached)" if source_label else "Cached"
             self._balance_meta_label.setText(source_label)
             self._balance_meta_label.setToolTip(state.tooltip or "")
+            self._balance_label.setToolTip(state.tooltip or "")
             self._error_label.setText("")
+        self._last_updated_label.setText(time.strftime("%H:%M:%S", time.localtime(state.updated_ts)) if state.updated_ts else "—")
 
     def _copy_address(self) -> None:
         if self._account:
@@ -994,8 +1000,6 @@ class WalletPage(QWidget):
                 bal_text = "⚠ —"
             elif balance_state:
                 bal_text = format_amount_compact(balance_state.balance_wei)
-                if balance_state.source == BalanceSource.EXPLORER:
-                    bal_text += " [Explorer]"
                 if balance_state.is_stale:
                     bal_text += " [cached]"
             else:
@@ -1225,12 +1229,9 @@ class WalletPage(QWidget):
             # Check if any errors occurred — show/hide banner
             errors = [s for s in results.values() if s.error]
             if errors and len(errors) == len(results):
-                if not profile.explorer_base_url:
-                    self._show_rpc_banner("RPC unreachable and Explorer not configured. Set Explorer URL in Settings → Network.", show_settings=True)
-                else:
-                    self._show_rpc_banner(f"RPC unavailable; using explorer fallback where possible: {errors[0].error}")
+                self._show_rpc_banner(f"RPC unavailable: {errors[0].error}", show_settings=True)
             elif errors:
-                self._show_rpc_banner("Some balances are stale or from fallback sources.")
+                self._show_rpc_banner("Some balances are cached due to RPC errors.")
             else:
                 self._hide_rpc_banner()
             self._reload_accounts_list()

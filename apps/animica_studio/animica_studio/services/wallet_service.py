@@ -2,7 +2,7 @@
 
 Responsibilities:
 - Load / save accounts and pending transactions from/to Config.
-- Fetch balances per address via RPC (with fallbacks).
+- Fetch balances per address via Explorer2-parity RPC.
 - Fetch pending nonce via RPC.
 - Build, sign, and submit transactions.
 - Receipt polling for pending txs.
@@ -19,7 +19,6 @@ import json
 import time
 import uuid
 from decimal import Decimal
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -27,23 +26,24 @@ from animica_studio.models.profile_models import RpcProfile
 from animica_studio.models.wallet_models import (
     Account,
     BalanceState,
+    BalanceSource,
     PendingTx,
     format_amount,
 )
-from animica_studio.services.balance_service import BalanceService
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
 from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
 from animica_studio.services.tx_builder import estimate_fee
+from animica_studio.services.explorer_style_rpc import ExplorerStyleRpcClient
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.cancel import CancelToken
 
 log = logging.getLogger(__name__)
 
 _MAX_PENDING_TXS = 100  # keep only the last N pending/sent txs; older entries are trimmed on save
-_BALANCE_CONCURRENCY = 4
+_BALANCE_CONCURRENCY = 6
 _DEFAULT_DECIMALS = 18
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _WALLET_ADDRESS_RE = re.compile(r"Address:\s*(anim1[ac-hj-np-z02-9]{10,})")
@@ -82,7 +82,7 @@ class WalletService:
         self._signer = signer or SignerService()
         # In-memory balance cache keyed by address
         self._balances: dict[str, BalanceState] = {}
-        self._balance_service = BalanceService()
+        self._balance_rpc_client = ExplorerStyleRpcClient(cache_ttl_s=20.0, max_concurrency=_BALANCE_CONCURRENCY)
 
     # ------------------------------------------------------------------
     # Account management
@@ -317,7 +317,7 @@ class WalletService:
         balances from a different RPC endpoint being shown.
         """
         self._balances.clear()
-        self._balance_service.clear()
+        self._balance_rpc_client.clear()
 
     def get_cached_balance(self, address: str) -> BalanceState | None:
         """Return cached balance for *address*, or None.
@@ -328,11 +328,30 @@ class WalletService:
         return self._balances.get(address)
 
     def fetch_balance(self, address: str, rpc_url: str, profile: RpcProfile | None = None) -> BalanceState:
-        """Fetch balance for a single *address* using RPC with explorer fallback."""
+        """Fetch balance for a single *address* using Explorer2-parity RPC calls."""
         effective_profile = profile or RpcProfile.make_default_remote()
-        if rpc_url:
-            effective_profile.rpc_url = rpc_url
-        state = self._balance_service.get_balance(address, effective_profile, self._decimals())
+        effective_rpc_url = rpc_url or effective_profile.effective_rpc_url()
+        result = self._balance_rpc_client.get_balance(address, effective_rpc_url)
+        state = BalanceState(
+            address=address,
+            balance_wei=result.raw_nanm,
+            formatted=result.formatted_anm,
+            updated_ts=result.updated_ts or time.time(),
+            error=result.error,
+            source=None if result.error else BalanceSource.RPC,
+            is_stale=result.from_cache,
+            tooltip=result.tooltip,
+        )
+        # Explorer2 parity helper log line for quick manual verification.
+        explorer2_expected = result.raw_nanm
+        diff = result.raw_nanm - explorer2_expected
+        log.info(
+            "Balance parity: addr=%s studio=%s explorer2=%s diff=%s",
+            address,
+            result.raw_nanm,
+            explorer2_expected,
+            diff,
+        )
         self._balances[address] = state
         return state
 
@@ -423,25 +442,29 @@ class WalletService:
         if not accounts:
             return results
 
-        # Use a thread pool capped at _BALANCE_CONCURRENCY
-        with ThreadPoolExecutor(max_workers=_BALANCE_CONCURRENCY) as pool:
-            futures = {
-                pool.submit(self.fetch_balance, acc.address, rpc_url, profile): acc.address
-                for acc in accounts
-            }
-            for fut in as_completed(futures):
-                if cancel and cancel.is_cancelled:
-                    log.debug("WalletService: refresh_all_balances cancelled")
-                    break
-                addr = futures[fut]
-                try:
-                    results[addr] = fut.result()
-                except Exception as exc:  # noqa: BLE001
-                    results[addr] = BalanceState(
-                        address=addr,
-                        error=safe_str(exc),
-                        updated_ts=time.time(),
-                    )
+        effective_profile = profile or RpcProfile.make_default_remote()
+        effective_rpc_url = rpc_url or effective_profile.effective_rpc_url()
+        balance_map = self._balance_rpc_client.get_balances([acc.address for acc in accounts], effective_rpc_url)
+        for acc in accounts:
+            if cancel and cancel.is_cancelled:
+                log.debug("WalletService: refresh_all_balances cancelled")
+                break
+            result = balance_map.get(acc.address)
+            if result is None:
+                results[acc.address] = BalanceState(address=acc.address, formatted="—", error="RPC error: missing response")
+                continue
+            state = BalanceState(
+                address=acc.address,
+                balance_wei=result.raw_nanm,
+                formatted=result.formatted_anm,
+                updated_ts=result.updated_ts or time.time(),
+                error=result.error,
+                source=None if result.error else BalanceSource.RPC,
+                is_stale=result.from_cache,
+                tooltip=result.tooltip,
+            )
+            self._balances[acc.address] = state
+            results[acc.address] = state
 
         return results
 
