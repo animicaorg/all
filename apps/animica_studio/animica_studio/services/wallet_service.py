@@ -133,25 +133,36 @@ class WalletService:
             raise ValueError("Signature scheme must be dilithium3 or sphincs_shake_128s")
         return clean_label, scheme
 
-    def build_create_wallet_args(
+    def build_create_wallet_argv(
         self,
         label: str,
-        sig_scheme: str = "dilithium3",
+        sig_scheme: str | None = "dilithium3",
         *,
         allow_insecure_fallback: bool = False,
     ) -> tuple[list[str], str, str]:
-        """Build CLI args for wallet creation and return normalized values."""
-        clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme)
-        ops = get_cli_ops(self._config)
-        args = ops.build(
-            CliOperation.WALLET_CREATE,
-            {
-                "label": clean_label,
-                "alg": scheme,
-                "allow_insecure_fallback": allow_insecure_fallback,
-            },
+        """Build CLI argv for wallet creation and return normalized values."""
+        clean_label, scheme = self.validate_wallet_create_request(label, sig_scheme or "dilithium3")
+        argv: list[str] = ["wallet", "create", "--label", clean_label]
+        if scheme:
+            argv.extend(["--alg", scheme])
+        if allow_insecure_fallback:
+            argv.append("--allow-insecure-fallback")
+        log.info("WalletService: build create wallet argv=%r", argv)
+        return argv, clean_label, scheme
+
+    def build_create_wallet_args(
+        self,
+        label: str,
+        sig_scheme: str | None = "dilithium3",
+        *,
+        allow_insecure_fallback: bool = False,
+    ) -> tuple[list[str], str, str]:
+        """Backward-compatible alias for :meth:`build_create_wallet_argv`."""
+        return self.build_create_wallet_argv(
+            label,
+            sig_scheme,
+            allow_insecure_fallback=allow_insecure_fallback,
         )
-        return args, clean_label, scheme
 
     def parse_created_wallet_address(self, stdout: str) -> str:
         """Extract created wallet address from legacy CLI output."""
@@ -196,13 +207,12 @@ class WalletService:
         allow_insecure_fallback: bool = False,
         timeout_s: int = 15,
     ) -> tuple[JobHandle, str, str, set[str]]:
-        wallet_args, clean_label, scheme = self.build_create_wallet_args(
+        wallet_args, clean_label, scheme = self.build_create_wallet_argv(
             label,
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
         )
-        if "--label" not in wallet_args:
-            raise RuntimeError("wallet create command is missing required --label flag")
+        get_cli_ops(self._config).selected_path(CliOperation.WALLET_CREATE)
         program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         argv = [program, *base_args, *wallet_args]
         log.info("WalletService: resolved CLI path=%s", program)
@@ -227,13 +237,12 @@ class WalletService:
         allow_insecure_fallback: bool = False,
     ) -> Account:
         """Create a new wallet via Animica CLI and persist it."""
-        wallet_args, clean_label, scheme = self.build_create_wallet_args(
+        wallet_args, clean_label, scheme = self.build_create_wallet_argv(
             label,
             sig_scheme,
             allow_insecure_fallback=allow_insecure_fallback,
         )
-        if "--label" not in wallet_args:
-            raise RuntimeError("wallet create command is missing required --label flag")
+        get_cli_ops(self._config).selected_path(CliOperation.WALLET_CREATE)
         try:
             program, base_args, resolved_env = resolve_animica_cli_program_and_env(self._config)
         except FileNotFoundError as exc:

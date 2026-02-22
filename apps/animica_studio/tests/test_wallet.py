@@ -394,7 +394,7 @@ class TestWalletServiceCreateWallet:
         ws = WalletService(Config())
         ops = _make_wallet_create_ops()
         with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
+            args, clean_label, scheme = ws.build_create_wallet_argv("My Wallet", "dilithium3")
 
         assert clean_label == "My Wallet"
         assert scheme == "dilithium3"
@@ -414,7 +414,7 @@ class TestWalletServiceCreateWallet:
         ws = WalletService(Config())
         ops = _make_wallet_create_ops(allow_insecure_fallback_opt=True)
         with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
-            args, clean_label, scheme = ws.build_create_wallet_args(
+            args, clean_label, scheme = ws.build_create_wallet_argv(
                 "SPX Wallet",
                 "sphincs128s",
                 allow_insecure_fallback=True,
@@ -433,42 +433,21 @@ class TestWalletServiceCreateWallet:
         ]
 
 
-    def test_start_create_wallet_requires_label_flag(self):
-        from animica_studio.storage.config import Config
-        from animica_studio.services.wallet_service import WalletService
-
-        ws = WalletService(Config())
-        runner = MagicMock()
-
-        with patch.object(
-            ws,
-            "build_create_wallet_args",
-            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
-        ):
-            with pytest.raises(RuntimeError, match="--label"):
-                ws.start_create_wallet(runner, "My Wallet")
-
-    def test_create_wallet_requires_label_flag(self):
-        from animica_studio.storage.config import Config
-        from animica_studio.services.wallet_service import WalletService
-
-        ws = WalletService(Config())
-
-        with patch.object(
-            ws,
-            "build_create_wallet_args",
-            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
-        ):
-            with pytest.raises(RuntimeError, match="--label"):
-                ws.create_wallet("My Wallet")
-
     def test_create_wallet_bad_label_raises(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
         with pytest.raises(ValueError, match="Wallet label"):
-            ws.build_create_wallet_args("bad/label")
+            ws.build_create_wallet_argv("bad/label")
+
+    def test_create_wallet_empty_label_raises(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        with pytest.raises(ValueError, match="Wallet label"):
+            ws.build_create_wallet_argv("   ")
 
     def test_resolve_and_store_created_wallet(self):
         from animica_studio.storage.config import Config
@@ -1058,27 +1037,10 @@ class TestWalletCreateIncludesLabel:
 
         ws = WalletService(Config())
         with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=mock_ops):
-            args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
+            args, clean_label, scheme = ws.build_create_wallet_argv("My Wallet", "dilithium3")
 
         assert "--label" in args
         assert "My Wallet" in args
         assert clean_label == "My Wallet"
         assert scheme == "dilithium3"
 
-    def test_start_create_wallet_raises_if_label_missing_from_args(self):
-        """start_create_wallet raises RuntimeError when --label is absent from CLI args."""
-        from unittest.mock import MagicMock, patch
-        from animica_studio.storage.config import Config
-        from animica_studio.services.wallet_service import WalletService
-
-        ws = WalletService(Config())
-        runner = MagicMock()
-
-        # build_create_wallet_args returns args without --label (simulating a broken CLI)
-        with patch.object(
-            ws,
-            "build_create_wallet_args",
-            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
-        ):
-            with pytest.raises(RuntimeError, match="--label"):
-                ws.start_create_wallet(runner, "My Wallet")
