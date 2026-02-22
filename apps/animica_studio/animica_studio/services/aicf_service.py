@@ -136,8 +136,23 @@ class AicfService:
             params: dict = {"limit": limit, "offset": offset}
             if status_filter:
                 params["status"] = status_filter
-            result = client.call("aicf.listJobs", [params])
-            return {"ok": True, "data": result}
+            last_exc: Exception | None = None
+            for method, rpc_params in (
+                ("aicf.listJobs", [params]),
+                ("da.list", [params]),
+                ("da.list", params),
+            ):
+                try:
+                    result = client.call(method, rpc_params)
+                    return {"ok": True, "data": result}
+                except RpcResponseError as exc:
+                    if exc.rpc_error.code in (-32601, -32602):
+                        last_exc = exc
+                        continue
+                    raise
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("No available RPC method for jobs list")
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         finally:

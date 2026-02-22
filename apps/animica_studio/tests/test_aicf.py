@@ -247,6 +247,47 @@ def test_aicf_service_list_jobs_timeout() -> None:
     assert result["error"] is not None
 
 
+def test_aicf_service_list_jobs_falls_back_to_da_list() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    not_found = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}
+    mock_result = {"jobs": [{"id": "job-1"}], "total": 1}
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [
+            _make_mock_response(not_found),
+            _make_mock_response({"jsonrpc": "2.0", "id": 2, "result": mock_result}),
+        ]
+        result = svc.list_jobs()
+
+    assert result["ok"] is True
+    assert result["data"]["total"] == 1
+
+
+def test_aicf_service_list_jobs_falls_back_to_da_list_object_params() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    invalid_params = {"jsonrpc": "2.0", "id": 2, "error": {"code": -32602, "message": "Invalid params"}}
+    not_found = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}
+    mock_result = {"jobs": [], "total": 0}
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [
+            _make_mock_response(not_found),
+            _make_mock_response(invalid_params),
+            _make_mock_response({"jsonrpc": "2.0", "id": 3, "result": mock_result}),
+        ]
+        result = svc.list_jobs(limit=10, offset=5)
+
+    assert result["ok"] is True
+    assert result["data"]["total"] == 0
+
 def test_aicf_service_claim_credits_success() -> None:
     from animica_studio.storage.config import Config
     from animica_studio.services.aicf_service import AicfService
