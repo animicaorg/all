@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
@@ -25,11 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_studio.services.da_contribution_service import (
-    DAContributionService,
-    _validate_config,
-    default_da_dir,
-)
+from animica_studio.services.da_engine import DaContributionEngine, DaEngineConfig, DaEngineState
 from animica_studio.services.da_service import DaService
 from animica_studio.services.error_format import format_rpc_error, safe_json_dumps
 from animica_studio.services.workers import WorkerThread
@@ -49,12 +47,28 @@ class DaPage(QWidget):
         from animica_studio.storage.config import load_config  # noqa: PLC0415
         self._config = config or load_config()
         self._service = DaService(self._config)
-        self._da_contrib = DAContributionService()
+        profile = self._config.get_active_profile()
+        contrib_cfg = self._config.da_contribution
+        self._da_engine = DaContributionEngine(
+            DaEngineConfig(
+                enabled=bool(contrib_cfg.get("enabled", False)),
+                data_dir=str(contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or os.path.expanduser("~/animica-da")),
+                mode=str(contrib_cfg.get("mode") or contrib_cfg.get("reserve_mode") or "quota"),
+                limit_bytes=int(contrib_cfg.get("limit_bytes") or int(contrib_cfg.get("max_gb", 50)) * 1024**3),
+                rpc_url=str(contrib_cfg.get("rpc_url") or profile.node.rpc_local_url),
+                contributor_id=str(contrib_cfg.get("contributor_id") or ""),
+                auto_start=bool(contrib_cfg.get("auto_start", True)),
+            )
+        )
         self._cancel_token = CancelToken()
         self._active_workers: list[WorkerThread] = []
         self._recent_worker_errors: list[str] = []
         self._build_ui()
         self._load_contribution_settings()
+        self._da_engine.stateChanged.connect(self._on_engine_state)
+        self._da_engine.healthChanged.connect(self._on_engine_health)
+        self._da_engine.metricsUpdated.connect(self._on_engine_metrics)
+        self._da_engine.logLine.connect(self._on_engine_log)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -284,12 +298,12 @@ class DaPage(QWidget):
         form = QFormLayout(settings_box)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
-        self._contrib_enable_cb = QCheckBox("Enable disk contribution")
+        self._contrib_enable_cb = QCheckBox("Enable DA contribution")
         form.addRow("", self._contrib_enable_cb)
 
         dir_row = QHBoxLayout()
         self._contrib_dir_edit = QLineEdit()
-        self._contrib_dir_edit.setPlaceholderText(default_da_dir())
+        self._contrib_dir_edit.setPlaceholderText(os.path.expanduser("~/animica-da"))
         dir_row.addWidget(self._contrib_dir_edit, stretch=1)
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._on_contrib_browse_dir)
@@ -299,11 +313,8 @@ class DaPage(QWidget):
         dir_row.addWidget(open_btn)
         form.addRow("Directory:", dir_row)
 
-        self._contrib_max_gb_spin = QSpinBox()
-        self._contrib_max_gb_spin.setRange(1, 10000)
-        self._contrib_max_gb_spin.setValue(50)
-        self._contrib_max_gb_spin.setSuffix(" GB")
-        form.addRow("Max allocation:", self._contrib_max_gb_spin)
+        self._contrib_max_gb_spin = QSpinBox(); self._contrib_max_gb_spin.setRange(1, 20000); self._contrib_max_gb_spin.setValue(50); self._contrib_max_gb_spin.setSuffix(" GiB")
+        form.addRow("Limit:", self._contrib_max_gb_spin)
 
         self._contrib_reserve_combo = QComboBox()
         self._contrib_reserve_combo.addItem("quota  — enforce cap by evicting old chunks", "quota")
@@ -312,6 +323,8 @@ class DaPage(QWidget):
         )
         form.addRow("Reserve mode:", self._contrib_reserve_combo)
 
+        self._contrib_rpc_url = QLineEdit()
+        form.addRow("RPC URL:", self._contrib_rpc_url)
         self._contrib_autostart_cb = QCheckBox("Auto-start on launch")
         form.addRow("", self._contrib_autostart_cb)
 
@@ -323,7 +336,7 @@ class DaPage(QWidget):
         self._contrib_stop_btn = QPushButton("⏹  Stop")
         self._contrib_stop_btn.clicked.connect(self._on_contrib_stop)
         self._contrib_refresh_btn = QPushButton("🔄  Refresh")
-        self._contrib_refresh_btn.clicked.connect(self._refresh_contrib_status)
+        self._contrib_refresh_btn.clicked.connect(lambda: self._on_engine_metrics(self._da_engine.metrics))
         btn_row.addWidget(self._contrib_apply_btn)
         btn_row.addWidget(self._contrib_start_btn)
         btn_row.addWidget(self._contrib_stop_btn)
@@ -365,12 +378,8 @@ class DaPage(QWidget):
         self._contrib_error_label.setStyleSheet("color: #e05050;")
         status_form.addRow("Last error:", self._contrib_error_label)
 
-        preview_note = QLabel(
-            "ℹ️  Local contribution is available now. Network serving remains pending node backend support."
-        )
-        preview_note.setWordWrap(True)
-        preview_note.setStyleSheet("color: #888;")
-        status_form.addRow("", preview_note)
+        self._test_blob_id = QLineEdit(); self._test_blob_id.setReadOnly(True)
+        status_form.addRow("Last blob ID:", self._test_blob_id)
 
         root.addWidget(status_box)
 
@@ -382,7 +391,19 @@ class DaPage(QWidget):
         root.addWidget(log_box, stretch=1)
 
         # Wire log callback
-        self._da_contrib.set_log_callback(self._contrib_console.append_line)
+        test_box = QGroupBox("Test DA Upload")
+        test_form = QFormLayout(test_box)
+        upload_test_btn = QPushButton("Upload test blob")
+        upload_test_btn.clicked.connect(self._upload_test_blob)
+        verify_test_btn = QPushButton("Verify retrieval")
+        verify_test_btn.clicked.connect(self._verify_test_blob)
+        copy_btn = QPushButton("Copy ID")
+        copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._test_blob_id.text().strip()))
+        row = QHBoxLayout(); row.addWidget(upload_test_btn); row.addWidget(verify_test_btn); row.addWidget(copy_btn)
+        self._test_result = QLabel("—")
+        test_form.addRow("", row)
+        test_form.addRow("Result:", self._test_result)
+        root.addWidget(test_box)
 
         return w
 
@@ -394,28 +415,20 @@ class DaPage(QWidget):
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
         saved_dir = cfg.get("directory", "") or ""
         self._contrib_dir_edit.setText(saved_dir)
-        self._contrib_max_gb_spin.setValue(int(cfg.get("max_gb", 50)))
-        mode = cfg.get("reserve_mode", "quota")
+        self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
+        mode = cfg.get("mode") or cfg.get("reserve_mode", "quota")
         idx = self._contrib_reserve_combo.findData(mode)
         if idx >= 0:
             self._contrib_reserve_combo.setCurrentIndex(idx)
         self._contrib_autostart_cb.setChecked(bool(cfg.get("auto_start", True)))
 
-        # Auto-configure service from saved settings so status can be shown
-        directory = saved_dir or default_da_dir()
-        max_bytes = int(cfg.get("max_gb", 50)) * 1024 ** 3
-        self._da_contrib.configure(
-            enabled=bool(cfg.get("enabled", False)),
-            directory=directory,
-            max_bytes=max_bytes,
-            reserve_mode=mode,
-        )
+        self._contrib_rpc_url.setText(str(cfg.get("rpc_url") or self._config.get_active_profile().node.rpc_local_url))
 
         # Auto-start if configured
         if cfg.get("enabled") and cfg.get("auto_start", True):
-            self._da_contrib.start()
-
-        self._refresh_contrib_status()
+            self._da_engine.start()
+        self._on_engine_state(self._da_engine.state.value)
+        self._on_engine_metrics(self._da_engine.metrics)
 
     def _on_contrib_browse_dir(self) -> None:
         try:
@@ -431,7 +444,7 @@ class DaPage(QWidget):
         try:
             import subprocess  # noqa: PLC0415
             import sys as _sys  # noqa: PLC0415
-            path = self._contrib_dir_edit.text().strip() or default_da_dir()
+            path = self._contrib_dir_edit.text().strip() or os.path.expanduser("~/animica-da")
             if not os.path.isdir(path):
                 self._contrib_error_label.setText(f"Directory does not exist: {path}")
                 return
@@ -449,25 +462,14 @@ class DaPage(QWidget):
         try:
             self._contrib_apply_btn.setEnabled(False)
             directory = self._contrib_dir_edit.text().strip() or default_da_dir()
-            max_gb = self._contrib_max_gb_spin.value()
-            max_bytes = max_gb * 1024 ** 3
+            max_gb = self._contrib_max_gb_spin.value(); max_bytes = max_gb * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
             enabled = self._contrib_enable_cb.isChecked()
             auto_start = self._contrib_autostart_cb.isChecked()
-
-            # Validate before touching service
-            try:
-                _validate_config(directory, max_bytes)
-            except ValueError as exc:
-                self._contrib_error_label.setText(str(exc))
-                self._contrib_apply_btn.setEnabled(True)
-                return
-
-            result = self._da_contrib.configure(
-                enabled=enabled, directory=directory, max_bytes=max_bytes, reserve_mode=reserve_mode
-            )
-            if not result.get("ok"):
-                self._contrib_error_label.setText(result.get("error", "Configure failed."))
+            engine_cfg = DaEngineConfig(enabled=enabled, data_dir=directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start)
+            ok, msg = self._da_engine.apply_config(engine_cfg)
+            if not ok:
+                self._contrib_error_label.setText(msg)
                 self._contrib_apply_btn.setEnabled(True)
                 return
 
@@ -477,15 +479,16 @@ class DaPage(QWidget):
             self._config.da_contribution.update(
                 {
                     "enabled": enabled,
-                    "directory": directory,
-                    "max_gb": max_gb,
-                    "reserve_mode": reserve_mode,
+                    "data_dir": directory,
+                    "mode": reserve_mode,
+                    "limit_bytes": max_bytes,
+                    "rpc_url": self._contrib_rpc_url.text().strip(),
                     "auto_start": auto_start,
                 }
             )
             save_config(self._config)
             self._contrib_console.append_info("Settings saved.")
-            self._refresh_contrib_status()
+            self._on_engine_metrics(self._da_engine.metrics)
         except Exception as exc:  # noqa: BLE001
             log.exception("Apply contribution settings failed: %s", exc)
             self._contrib_error_label.setText(f"Error: {exc}")
@@ -495,32 +498,8 @@ class DaPage(QWidget):
     def _on_contrib_start(self) -> None:
         try:
             self._contrib_start_btn.setEnabled(False)
-            contrib = self._da_contrib
-
-            def _task():
-                return contrib.start()
-
-            def _done(result):
-                self._contrib_start_btn.setEnabled(True)
-                if result.get("ok"):
-                    self._contrib_error_label.setText("")
-                    self._contrib_console.append_info(result.get("message", "Started."))
-                else:
-                    self._contrib_error_label.setText(result.get("error", "Start failed."))
-                self._refresh_contrib_status()
-
-            def _err(msg, _tb):
-                self._contrib_start_btn.setEnabled(True)
-                self._contrib_error_label.setText(f"Error: {msg}")
-                self._recent_worker_errors.append(str(msg))
-                log.error("Contribution start error: %s", msg)
-
-            wt = WorkerThread(_task)
-            wt.worker.result.connect(_done)
-            wt.worker.error.connect(_err)
-            wt.worker.finished.connect(lambda: self._active_workers.remove(wt) if wt in self._active_workers else None)
-            self._active_workers.append(wt)
-            wt.start()
+            self._da_engine.start()
+            self._contrib_start_btn.setEnabled(True)
         except Exception as exc:  # noqa: BLE001
             self._contrib_start_btn.setEnabled(True)
             log.exception("Start contribution failed: %s", exc)
@@ -528,27 +507,8 @@ class DaPage(QWidget):
     def _on_contrib_stop(self) -> None:
         try:
             self._contrib_stop_btn.setEnabled(False)
-            contrib = self._da_contrib
-
-            def _task():
-                return contrib.stop()
-
-            def _done(result):
-                self._contrib_stop_btn.setEnabled(True)
-                self._contrib_console.append_info("Stopped.")
-                self._refresh_contrib_status()
-
-            def _err(msg, _tb):
-                self._contrib_stop_btn.setEnabled(True)
-                self._recent_worker_errors.append(str(msg))
-                log.error("Contribution stop error: %s", msg)
-
-            wt = WorkerThread(_task)
-            wt.worker.result.connect(_done)
-            wt.worker.error.connect(_err)
-            wt.worker.finished.connect(lambda: self._active_workers.remove(wt) if wt in self._active_workers else None)
-            self._active_workers.append(wt)
-            wt.start()
+            self._da_engine.stop()
+            self._contrib_stop_btn.setEnabled(True)
         except Exception as exc:  # noqa: BLE001
             self._contrib_stop_btn.setEnabled(True)
             log.exception("Stop contribution failed: %s", exc)
@@ -556,68 +516,76 @@ class DaPage(QWidget):
 
     @ui_thread_only(log)
     def _copy_contrib_diagnostics(self) -> None:
-        st = self._da_contrib.status()
+        d = self._da_engine.diagnostics()
         lines = [
             "DA diagnostics",
-            f"enabled: {st.enabled}",
-            f"configured: {st.configured}",
-            f"running: {st.running}",
-            f"health: {st.health}",
-            f"directory: {st.directory}",
-            f"limit_bytes: {st.limit_bytes}",
-            f"used_bytes: {st.used_bytes}",
-            f"last_error: {st.last_error}",
+            f"state: {d['state']}",
+            f"config: {safe_json_dumps(d['config'], indent=2)}",
+            f"metrics: {safe_json_dumps(d['metrics'], indent=2)}",
             f"worker_errors: {' | '.join(self._recent_worker_errors[-5:])}",
-            "note: Local contribution is available now. Network serving remains pending node backend support.",
         ]
         QGuiApplication.clipboard().setText("\n".join(lines))
         self._contrib_console.append_info("Diagnostics copied.")
 
     @ui_thread_only(log)
-    def _refresh_contrib_status(self) -> None:
+    def _on_engine_state(self, state: str) -> None:
+        mapping = {
+            DaEngineState.DISABLED.value: "Disabled",
+            DaEngineState.CONFIGURED.value: "Configured",
+            DaEngineState.STARTING.value: "Starting",
+            DaEngineState.RUNNING.value: "Running",
+            DaEngineState.STOPPING.value: "Stopping",
+            DaEngineState.ERROR.value: "Error",
+        }
+        self._contrib_health_label.setText(mapping.get(state, state))
+
+    @ui_thread_only(log)
+    def _on_engine_health(self, healthy: bool, detail: str) -> None:
+        if not healthy:
+            self._contrib_error_label.setText(detail)
+
+    @ui_thread_only(log)
+    def _on_engine_metrics(self, metrics) -> None:
+        limit = max(int(metrics.limit_bytes), 1)
+        used = int(metrics.used_bytes)
+        self._contrib_usage_bar.setValue(min(int((used * 100) / limit), 100))
+        self._contrib_used_label.setText(f"{used / 1024**3:.2f} GiB / {limit / 1024**3:.2f} GiB")
+        self._contrib_free_label.setText(f"{int(metrics.remaining_bytes) / 1024**3:.2f} GiB")
+        self._contrib_chunks_label.setText(str(metrics.queued_files))
+        self._contrib_served_label.setText(str(metrics.uploaded_blobs))
+        if metrics.last_error:
+            self._contrib_error_label.setText(metrics.last_error)
+
+    @ui_thread_only(log)
+    def _on_engine_log(self, kind: str, text: str) -> None:
+        self._contrib_console.append_line(f"[{kind}] {text}")
+
+    def _upload_test_blob(self) -> None:
+        started = time.time()
+        payload = {"hello": "world", "ts": started}
         try:
-            st = self._da_contrib.status()
-
-            # Health label
-            health_icons = {"online": "🟢 Running", "configured": "🟡 Configured (inactive)", "offline": "🔴 Disabled", "misconfigured": "⚠️  Misconfigured"}
-            self._contrib_health_label.setText(health_icons.get(st.health, st.health))
-
-            # Usage bar
-            if st.limit_bytes > 0:
-                pct = int(st.used_bytes * 100 / st.limit_bytes)
-                self._contrib_usage_bar.setValue(min(pct, 100))
-                used_gb = st.used_bytes / 1024 ** 3
-                limit_gb = st.limit_bytes / 1024 ** 3
-                self._contrib_used_label.setText(f"{used_gb:.2f} GB / {limit_gb:.1f} GB")
-            else:
-                self._contrib_usage_bar.setValue(0)
-                self._contrib_used_label.setText("—")
-
-            # Free on drive
-            try:
-                import shutil as _shutil  # noqa: PLC0415
-                dir_path = st.directory or default_da_dir()
-                if os.path.exists(dir_path):
-                    disk = _shutil.disk_usage(dir_path)
-                    free_gb = disk.free / 1024 ** 3
-                    self._contrib_free_label.setText(f"{free_gb:.1f} GB free")
-                else:
-                    self._contrib_free_label.setText("—")
-            except OSError:
-                self._contrib_free_label.setText("—")
-
-            self._contrib_chunks_label.setText(str(st.stored_chunks))
-            served_mb = st.served_bytes / 1024 ** 2
-            self._contrib_served_label.setText(f"{served_mb:.2f} MB" if st.served_bytes else "0 MB")
-
-            if st.last_error:
-                self._contrib_error_label.setText(st.last_error)
-            else:
-                self._contrib_error_label.setText("")
+            res = self._da_engine.client().upload_json(payload)
+            self._test_blob_id.setText(str(res["blob_id"]))
+            self._test_result.setText(f"Uploaded in {(time.time()-started)*1000:.0f} ms")
+            self._contrib_console.append_info(f"Test blob uploaded: {res['blob_id']}")
         except Exception as exc:  # noqa: BLE001
-            log.exception("Refresh contribution status failed: %s", exc)
+            self._test_result.setText(f"Upload failed: {exc}")
+
+    def _verify_test_blob(self) -> None:
+        blob_id = self._test_blob_id.text().strip()
+        if not blob_id:
+            self._test_result.setText("No blob ID yet")
+            return
+        started = time.time()
+        try:
+            raw = self._da_engine.client().get_blob(blob_id)
+            digest = hashlib.sha256(raw).hexdigest()
+            self._test_result.setText(f"Verified ({len(raw)} bytes, sha256={digest[:16]}..) in {(time.time()-started)*1000:.0f} ms")
+        except Exception as exc:  # noqa: BLE001
+            self._test_result.setText(f"Verify failed: {exc}")
 
     def closeEvent(self, event) -> None:
+        self._da_engine.stop()
         for wt in list(self._active_workers):
             try:
                 if wt.isRunning():
