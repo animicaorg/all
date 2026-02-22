@@ -143,6 +143,15 @@ class Config:
             "chunk_size": 262144,
         }
     )
+    da_contribution: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "directory": "",
+            "max_gb": 50,
+            "reserve_mode": "quota",
+            "auto_start": True,
+        }
+    )
     quantum_defaults: dict[str, Any] = field(
         default_factory=lambda: {
             "default_shots": 1024,
@@ -269,6 +278,14 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         mining_defaults=d.get("mining_defaults") or {"miner_address": "", "threads": 1, "automine": False},
         aicf_defaults=d.get("aicf_defaults") or {"default_job_type": "ai", "default_budget": 100},
         da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
+        da_contribution={
+            "enabled": False,
+            "directory": "",
+            "max_gb": 50,
+            "reserve_mode": "quota",
+            "auto_start": True,
+            **(d.get("da_contribution") or {}),
+        },
         quantum_defaults=d.get("quantum_defaults") or {"default_shots": 1024, "default_qubits": 4},
         workspace_root=d.get("workspace_root") or None,
         repo_root=d.get("repo_root") or None,
