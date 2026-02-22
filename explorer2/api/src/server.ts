@@ -247,6 +247,47 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/aicf/summary', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false, total_minted: '0', total_spent: '0', balance: '0', event_count: 0, recent_events: [] })
+      return
+    }
+    try {
+      const result = await rpc.call('aicf.summary', [])
+      jsonSafe(res, result ?? { available: false })
+    } catch (err) {
+      res.status(500).json({ error: 'aicf_summary_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/aicf/events', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false, events: [] })
+      return
+    }
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 20 : 20
+    try {
+      const result = await rpc.call('aicf.recentEvents', [limit])
+      jsonSafe(res, result ?? { events: [] })
+    } catch (err) {
+      res.status(500).json({ error: 'aicf_events_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/aicf/address/:addr', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false, address: req.params.addr, balance: '0', events: [] })
+      return
+    }
+    const { addr } = req.params
+    try {
+      const result = await rpc.call('aicf.creditsByAddress', [addr])
+      jsonSafe(res, result ?? { address: addr, balance: '0', events: [] })
+    } catch (err) {
+      res.status(500).json({ error: 'aicf_address_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
   // ── Mining ──────────────────────────────────────────────────────────────────
 
   app.get('/api/mining/info', async (_req, res) => {
@@ -344,6 +385,101 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       jsonSafe(res, result)
     } catch (err) {
       res.status(500).json({ error: 'da_put_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/status', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    try {
+      const result = await rpc.call('da.status', [])
+      jsonSafe(res, result ?? { available: false })
+    } catch (err) {
+      res.status(500).json({ error: 'da_status_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/recent', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false, blobs: [] })
+      return
+    }
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 20 : 20
+    try {
+      const result = await rpc.call('da.list', [{ limit }])
+      jsonSafe(res, result ?? { blobs: [] })
+    } catch (err) {
+      res.status(500).json({ error: 'da_recent_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/da/blob/:id', async (req, res) => {
+    if (!rpc) {
+      res.status(503).json({ error: 'rpc_required', message: 'DA requires RPC mode' })
+      return
+    }
+    const { id } = req.params
+    try {
+      // Return metadata only (no raw bytes)
+      const result = await rpc.call('da.has', [id])
+      if (!result) {
+        res.status(404).json({ error: 'not_found', blob_id: id })
+        return
+      }
+      jsonSafe(res, { blob_id: id, exists: true })
+    } catch (err) {
+      res.status(500).json({ error: 'da_blob_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // ── ENA ──────────────────────────────────────────────────────────────────────
+
+  app.get('/api/ena/jobs', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false, jobs: [] })
+      return
+    }
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 20 : 20
+    try {
+      // Try ena.listModels as a lightweight proxy for job activity
+      const result = await rpc.call('ena.listModels', []) as { models?: unknown[] } | null
+      jsonSafe(res, { jobs: [], models: result?.models ?? [], limit })
+    } catch (err) {
+      res.status(500).json({ error: 'ena_jobs_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/ena/artifacts', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false, artifacts: [] })
+      return
+    }
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 20 : 20
+    try {
+      const result = await rpc.call('ena.listArtifacts', [limit])
+      jsonSafe(res, result ?? { artifacts: [] })
+    } catch (err) {
+      res.status(500).json({ error: 'ena_artifacts_failed', message: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/api/ena/job/:id', async (req, res) => {
+    if (!rpc) {
+      res.status(503).json({ error: 'rpc_required', message: 'ENA requires RPC mode' })
+      return
+    }
+    const { id } = req.params
+    try {
+      const result = await rpc.call('ena.getRequest', [id])
+      if (!result) {
+        res.status(404).json({ error: 'not_found', job_id: id })
+        return
+      }
+      jsonSafe(res, result)
+    } catch (err) {
+      res.status(500).json({ error: 'ena_job_failed', message: err instanceof Error ? err.message : String(err) })
     }
   })
 

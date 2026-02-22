@@ -529,6 +529,202 @@ async def aicf_status_endpoint(ctx: Any, params: Any = None) -> Dict[str, Any]:
         }
 
 
+
+
+# ---------------------------------------------------------------------------
+# Integration methods: summary, creditsByAddress, recentEvents
+# ---------------------------------------------------------------------------
+
+
+def _open_aicf_state():
+    """Open AICFProtocolState for the current chain. Returns None if unavailable."""
+    try:
+        from aicf.protocol.state import AICFProtocolState  # type: ignore
+        import os
+
+        base = os.getenv("ANIMICA_DATA_DIR") or os.path.expanduser("~/.animica")
+        chain_id = os.getenv("ANIMICA_CHAIN_ID", "1")
+        db_path = os.path.join(base, f"chain-{chain_id}", "aicf_credits.db")
+        return AICFProtocolState(db_path)
+    except Exception:
+        return None
+
+
+@method(
+    "aicf.summary",
+    aliases=("aicf_summary",),
+    desc="Return a high-level AICF summary: totals, event count, recent activity",
+)
+async def aicf_summary(ctx: Any, params: Any = None) -> Dict[str, Any]:
+    """
+    aicf.summary → {total_minted, total_spent, balance, event_count, recent_events[5]}
+    """
+    state = _open_aicf_state()
+    if state is None:
+        return {
+            "ok": False,
+            "reason": "aicf_unavailable",
+            "total_minted": "0",
+            "total_spent": "0",
+            "balance": "0",
+            "event_count": 0,
+            "recent_events": [],
+        }
+    try:
+        totals = state.get_aicf_totals()
+        recent = state.get_credit_ledger(limit=5)
+        events_raw = [
+            {
+                "event_id": e.ledger_id,
+                "event_type": e.event_type,
+                "amount": e.amount,
+                "block_height": e.block_height,
+                "timestamp": e.timestamp if hasattr(e, "timestamp") else None,
+                "metadata": e.metadata if hasattr(e, "metadata") else None,
+            }
+            for e in recent
+        ]
+        return {
+            "ok": True,
+            "total_minted": totals.minted_total,
+            "total_spent": totals.spent_total,
+            "balance": totals.balance_total,
+            "event_count": len(events_raw),
+            "recent_events": events_raw,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": str(exc),
+            "total_minted": "0",
+            "total_spent": "0",
+            "balance": "0",
+            "event_count": 0,
+            "recent_events": [],
+        }
+
+
+@method(
+    "aicf.creditsByAddress",
+    aliases=("aicf_creditsByAddress", "aicf.credits_by_address"),
+    desc="Return AICF credits earned by a specific miner/verifier address",
+)
+async def aicf_credits_by_address(ctx: Any, params: Any = None) -> Dict[str, Any]:
+    """
+    aicf.creditsByAddress(address) → {address, balance, spent, minted, events[]}
+    """
+    if isinstance(params, (list, tuple)):
+        if not params:
+            raise InvalidParams("Missing required parameter: 'address'")
+        address = str(params[0]).strip()
+    elif isinstance(params, dict):
+        address = str(params.get("address", "")).strip()
+        if not address:
+            raise InvalidParams("Missing required parameter: 'address'")
+    elif isinstance(params, str):
+        address = params.strip()
+    else:
+        raise InvalidParams("params must be a dict, list, or string address")
+
+    if not address:
+        raise InvalidParams("address must be non-empty")
+
+    state = _open_aicf_state()
+    if state is None:
+        return {
+            "ok": False,
+            "reason": "aicf_unavailable",
+            "address": address,
+            "balance": "0",
+            "events": [],
+        }
+
+    try:
+        # Try get_miner_credits which returns (balance, spent, minted)
+        try:
+            credits = state.get_miner_credits(address)
+            balance = credits.balance if hasattr(credits, "balance") else "0"
+            spent = credits.spent if hasattr(credits, "spent") else "0"
+            minted = credits.minted if hasattr(credits, "minted") else "0"
+        except Exception:
+            balance, spent, minted = "0", "0", "0"
+
+        events = state.get_credit_ledger(miner_address=address, limit=50)
+        events_raw = [
+            {
+                "event_id": e.ledger_id,
+                "event_type": e.event_type,
+                "amount": e.amount,
+                "block_height": e.block_height,
+            }
+            for e in events
+        ]
+        return {
+            "ok": True,
+            "address": address,
+            "balance": balance,
+            "spent": spent,
+            "minted": minted,
+            "events": events_raw,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": str(exc),
+            "address": address,
+            "balance": "0",
+            "events": [],
+        }
+
+
+@method(
+    "aicf.recentEvents",
+    aliases=("aicf_recentEvents", "aicf.recent_events"),
+    desc="Return recent AICF credit events (newest first)",
+)
+async def aicf_recent_events(ctx: Any, params: Any = None) -> Dict[str, Any]:
+    """
+    aicf.recentEvents([limit]) → {events: [...]}
+    """
+    limit = 20
+    if isinstance(params, (list, tuple)) and params:
+        try:
+            limit = int(params[0])
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(params, dict):
+        try:
+            limit = int(params.get("limit", 20))
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(params, int):
+        limit = params
+
+    limit = max(1, min(limit, 200))
+
+    state = _open_aicf_state()
+    if state is None:
+        return {"ok": False, "reason": "aicf_unavailable", "events": []}
+
+    try:
+        events = state.get_credit_ledger(limit=limit)
+        events_raw = [
+            {
+                "event_id": e.ledger_id,
+                "event_type": e.event_type,
+                "amount": e.amount,
+                "block_height": e.block_height,
+                "timestamp": e.timestamp if hasattr(e, "timestamp") else None,
+                "miner_address": e.miner_address if hasattr(e, "miner_address") else None,
+                "metadata": e.metadata if hasattr(e, "metadata") else None,
+            }
+            for e in events
+        ]
+        return {"ok": True, "events": events_raw}
+    except Exception as exc:
+        return {"ok": False, "reason": str(exc), "events": []}
+
+
 __all__ = [
     "getParams",
     "getStatus",
@@ -536,4 +732,7 @@ __all__ = [
     "claim",
     "topUp",
     "aicf_status_endpoint",
+    "aicf_summary",
+    "aicf_credits_by_address",
+    "aicf_recent_events",
 ]
