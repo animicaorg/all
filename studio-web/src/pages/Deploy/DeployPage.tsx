@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as Provider from "../../services/provider";
 import * as Rpc from "../../services/rpc";
+import { getTxStatus, type TxStatusResult } from "../../services/txStatus";
 import { bytesFromHex, hexFromBytes } from "../../utils/bytes";
 import { downloadText } from "../../utils/download";
 import { safeJsonParse } from "../../utils/schema"; // falls back to JSON.parse if not present
@@ -71,6 +72,8 @@ export default function DeployPage() {
   const [txHash, setTxHash] = React.useState<string | null>(null);
   const [receipt, setReceipt] = React.useState<any | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const [txStatus, setTxStatus] = React.useState<TxStatusResult | null>(null);
+  const [txFirstSeenAt, setTxFirstSeenAt] = React.useState<number | null>(null);
   const [forceRawTxCompat, setForceRawTxCompat] = React.useState<boolean>(() => {
     try {
       const v = localStorage.getItem('force_rawtx_compat');
@@ -96,6 +99,31 @@ export default function DeployPage() {
       }
     })();
   }, []);
+
+  React.useEffect(() => {
+    if (!txHash) return;
+    let mounted = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const firstSeen = txFirstSeenAt ?? Date.now();
+    if (!txFirstSeenAt) setTxFirstSeenAt(firstSeen);
+
+    const refresh = async () => {
+      const next = await getTxStatus(txHash, { firstSeenAt: firstSeen });
+      if (!mounted) return;
+      setTxStatus(next);
+    };
+
+    void refresh();
+    timer = setInterval(() => {
+      if (document.hidden) return;
+      void refresh();
+    }, 7000);
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [txHash, txFirstSeenAt]);
 
   const onConnect = async () => {
     setConnecting(true);
@@ -149,6 +177,8 @@ export default function DeployPage() {
     setGas(null);
     setEstimateError(null);
     setTxHash(null);
+    setTxStatus(null);
+    setTxFirstSeenAt(null);
     setReceipt(null);
     setSendError(null);
 
@@ -228,7 +258,10 @@ export default function DeployPage() {
       const tx = builtNow.tx ?? {};
       const sendRes = await sendSignedCompat(tx, signBytes, sig);
       const hash = sendRes.txHash || sendRes.hash || (await deriveHashFallback(tx, signBytes, sig));
-      if (hash) setTxHash(hash);
+      if (hash) {
+        setTxHash(hash);
+        setTxFirstSeenAt(Date.now());
+      }
 
       // Await receipt (SDK or RPC helper)
       const rcpt = await awaitReceiptCompat(hash);
@@ -435,6 +468,9 @@ export default function DeployPage() {
               <KV label="Tx Hash">
                 <code className="text-xs break-all">{txHash || "—"}</code>
               </KV>
+              <KV label="Status">{txStatus?.status ?? "—"}</KV>
+              <KV label="Confirmations">{txStatus?.confirmations ?? "—"}</KV>
+              <KV label="Block Height">{txStatus?.blockHeight ?? "—"}</KV>
             </div>
 
             <label className="flex items-center gap-2 text-xs">
@@ -463,6 +499,14 @@ export default function DeployPage() {
                 {sending ? "Sending…" : "Sign & Send"}
               </button>
               {sendError && <span className="text-xs text-red-600">{sendError}</span>}
+              {txHash && (
+                <button className="px-2 py-1 text-xs rounded border bg-white" onClick={() => getTxStatus(txHash, { firstSeenAt: txFirstSeenAt ?? Date.now() }).then(setTxStatus)}>
+                  Refresh
+                </button>
+              )}
+              {txHash && (
+                <a className="px-2 py-1 text-xs rounded border bg-white" href={`/explorer/tx?q=${encodeURIComponent(txHash)}`} target="_blank" rel="noreferrer">View on explorer</a>
+              )}
             </div>
 
             <div className="border-t pt-2">
