@@ -7,6 +7,8 @@ import CopyButton from '../components/CopyButton'
 import JsonViewer from '../components/JsonViewer'
 import Skeleton from '../components/Skeleton'
 
+const POLL_INTERVAL_MS = 3000
+
 export default function TxDetailPage() {
   const { hash } = useParams()
   const [tx, setTx] = useState<TxDetail | null>(null)
@@ -15,24 +17,35 @@ export default function TxDetailPage() {
 
   useEffect(() => {
     if (!hash) return
-    
-    // Fetch transaction independently
-    api.getTx(hash)
-      .then((txRes) => {
+    let interval: ReturnType<typeof setInterval> | undefined
+
+    const loadTx = async () => {
+      try {
+        const txRes = await api.getTx(hash)
         setTx(txRes)
         setError(null)
-        
-        // Try to get head for confirmations, but don't fail if it errors
-        api.getHead()
-          .then((headRes) => {
-            setHead({ height: headRes.head.height })
-          })
-          .catch((err) => {
-            // Ignore head fetch errors - we can still show the tx
-            console.warn('Could not fetch head for confirmations:', err)
-          })
-      })
-      .catch((err) => setError(String(err)))
+
+        if (txRes.explorer_head_height) {
+          setHead({ height: txRes.explorer_head_height })
+        } else {
+          api.getHead().then((headRes) => setHead({ height: headRes.head.height })).catch(() => undefined)
+        }
+
+        if (txRes.status !== 'pending' && interval) {
+          clearInterval(interval)
+          interval = undefined
+        }
+      } catch (err) {
+        setError(String(err))
+      }
+    }
+
+    void loadTx()
+    interval = setInterval(loadTx, POLL_INTERVAL_MS)
+
+    return () => {
+      if (interval) clearInterval(interval)
+    }
   }, [hash])
 
   if (error) {
@@ -58,20 +71,20 @@ export default function TxDetailPage() {
     return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
   }
 
-  const confirmations = tx.blockHeight && head ? head.height - tx.blockHeight + 1 : 0
+  const confirmations = tx.confirmations ?? (tx.blockHeight && head ? Math.max(0, head.height - tx.blockHeight + 1) : 0)
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">Transaction</h1>
-          <CopyButton value={tx.hash} />
+          <CopyButton value={String(tx.tx_hash ?? tx.hash)} />
         </div>
-        
+
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Transaction Hash</p>
-            <p className="mt-2 break-all font-mono text-sm text-gray-900 dark:text-slate-200">{tx.hash}</p>
+            <p className="mt-2 break-all font-mono text-sm text-gray-900 dark:text-slate-200">{tx.tx_hash ?? tx.hash}</p>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Status</p>
@@ -85,6 +98,24 @@ export default function TxDetailPage() {
                 </span>
               )}
             </div>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Included Block Height</p>
+            {tx.included_height || tx.blockHeight ? (
+              <Link className="mt-2 block font-mono text-sm text-animica-600 hover:underline dark:text-animica-400" to={`/block/${tx.included_height ?? tx.blockHeight}`}>
+                #{formatNumber(tx.included_height ?? tx.blockHeight ?? 0)}
+              </Link>
+            ) : (
+              <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">Pending</p>
+            )}
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Included Block Hash</p>
+            <p className="mt-2 break-all font-mono text-sm text-gray-700 dark:text-slate-200">{tx.included_block_hash ?? tx.blockHash ?? '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Timestamp</p>
+            <p className="mt-2 font-mono text-sm text-gray-700 dark:text-slate-200">{tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : '—'}</p>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">From</p>
@@ -111,30 +142,9 @@ export default function TxDetailPage() {
             </p>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Block</p>
-            {tx.blockHeight ? (
-              <Link 
-                className="mt-2 block font-mono text-sm text-animica-600 hover:underline dark:text-animica-400" 
-                to={`/block/${tx.blockHeight}`}
-              >
-                #{formatNumber(tx.blockHeight)}
-              </Link>
-            ) : (
-              <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">Pending</p>
-            )}
-          </div>
-          <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Fee / Gas Used</p>
             <p className="mt-2 font-mono text-sm text-gray-700 dark:text-slate-200">{tx.feePaid ?? tx.gasUsed ?? '—'}</p>
           </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Details</h2>
-        <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-slate-400">
-          <p>Transaction details are displayed based on available Animica transaction fields.</p>
-          <p className="font-mono text-xs">{shorten(tx.hash, 16, 16)}</p>
         </div>
       </div>
 
