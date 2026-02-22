@@ -139,6 +139,11 @@ class WalletStore:
         return records
 
 
+    def reload_local_wallets(self, wallets_path: Path | None = None) -> list[WalletRecord]:
+        """Reload wallets from ~/.animica/wallets.json by default."""
+        path = wallets_path or (Path.home() / ".animica" / "wallets.json")
+        return self.load_local_wallets(path)
+
 def load_wallets(wallets_path: Path) -> list[WalletRecord]:
     """Load wallets from *wallets_path* safely.
 
