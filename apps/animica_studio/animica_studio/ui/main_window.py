@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
 
         self._wallet_page = WalletPage(config=self._config, safe_mode=self._safe_mode)
         self._wallet_page.open_settings_requested.connect(self._open_settings_from_wallet)
-        self._dashboard_page = DashboardPage()
+        self._dashboard_page = DashboardPage(config=self._config, profile_service=self._profile_service)
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
         self._nav_entries = [
             _NavEntry("Dashboard", "◈", lambda: self._dashboard_page),
