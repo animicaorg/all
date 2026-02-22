@@ -24,8 +24,10 @@ from PySide6.QtWidgets import (
 
 from animica_studio.services.ide_service import IdeService
 from animica_studio.services.template_service import TemplateService
+from animica_studio.services.token_template_service import TokenTemplateService
 from animica_studio.storage.config import load_config
 from animica_studio.ui.dialogs.template_dialog import NewFromTemplateDialog
+from animica_studio.ui.dialogs.token_template_wizard import TokenTemplateWizard
 from animica_studio.ui.widgets.ena_panel import EnaPanel
 from animica_studio.ui.widgets.stream_console import StreamConsole
 
@@ -55,6 +57,7 @@ class IdePage(QWidget):
         self._template_service = TemplateService(user_templates_dir=self._cfg.templates_user_path)
         self._template_service.load_builtin_templates()
         self._template_service.load_user_templates()
+        self._token_template_service = TokenTemplateService()
         self._current_rel_path = ""
         self._QWebEngineView, self._QWebEngineSettings, self._QWebChannel = _try_import_webengine()
         self._webview = None
@@ -112,6 +115,10 @@ class IdePage(QWidget):
         new_template_btn = QPushButton("🧩 New from Template")
         new_template_btn.clicked.connect(self._on_new_from_template)
         row.addWidget(new_template_btn)
+
+        new_token_btn = QPushButton("🪙 New Token…")
+        new_token_btn.clicked.connect(self._on_new_token_template)
+        row.addWidget(new_token_btn)
 
         new_dir_btn = QPushButton("📁 New Folder")
         new_dir_btn.clicked.connect(self._on_new_folder)
@@ -265,6 +272,10 @@ class IdePage(QWidget):
     def new_script_from_template(self) -> None:
         self._on_new_from_template()
 
+    def new_token_from_template(self) -> None:
+        self._on_new_token_template()
+
+
     # ------------------------------------------------------------------
     # Workspace
     # ------------------------------------------------------------------
@@ -332,6 +343,19 @@ class IdePage(QWidget):
             self._plain_editor.setPlainText(content)
             self._status_bar_label.setText(rel_path)
             self._current_rel_path = rel_path
+
+    def _open_relative_file(self, rel_path: str) -> None:
+        content = self._svc.read_file(rel_path)
+        if self._webview is not None and self._bridge is not None:
+            req_id = "open_" + rel_path.replace("/", "_").replace("\\", "_")
+            self._bridge.readFile(req_id, rel_path)
+            self._status_bar_label.setText(rel_path)
+            self._current_rel_path = rel_path
+            return
+        if self._plain_editor is not None:
+            self._plain_editor.setPlainText(content)
+        self._status_bar_label.setText(rel_path)
+        self._current_rel_path = rel_path
 
     def _on_tree_context_menu(self, pos: "QPoint") -> None:
         from PySide6.QtWidgets import QMenu  # noqa: PLC0415
@@ -403,6 +427,51 @@ class IdePage(QWidget):
             self._status_bar_label.setText(rel)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Template", str(exc))
+
+    def _on_new_token_template(self) -> None:
+        if self._svc.workspace is None:
+            QMessageBox.information(self, "Token Template", "Select a workspace first.")
+            return
+        dlg = TokenTemplateWizard(self._token_template_service, self._svc.workspace, self)
+        if dlg.exec() != dlg.DialogCode.Accepted or dlg.selection() is None:
+            return
+        sel = dlg.selection()
+        assert sel is not None
+        try:
+            rendered = self._token_template_service.render(sel.template_id, sel.params)
+            written = self._token_template_service.write_to_project(
+                rendered,
+                self._svc.workspace / sel.output_dir,
+                overwrite=False,
+            )
+        except FileExistsError as exc:
+            reply = QMessageBox.question(
+                self,
+                "Files exist",
+                f"{exc}\nOverwrite existing files?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            rendered = self._token_template_service.render(sel.template_id, sel.params)
+            written = self._token_template_service.write_to_project(
+                rendered,
+                self._svc.workspace / sel.output_dir,
+                overwrite=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Token Template", str(exc))
+            return
+        self._refresh_tree()
+        template = self._token_template_service.get(sel.template_id)
+        if sel.open_after_create:
+            main_path = (self._svc.workspace / sel.output_dir / template.main_file).resolve()
+            try:
+                rel = str(main_path.relative_to(self._svc.workspace.resolve())).replace('\\', '/')
+                self._open_relative_file(rel)
+            except Exception:
+                pass
+        QMessageBox.information(self, "Token Template", f"Generated {len(written)} files.")
 
     def _on_new_folder(self) -> None:
         self._prompt_create_dir(".")

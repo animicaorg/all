@@ -1,0 +1,19 @@
+from stdlib import abi, events, storage
+
+
+def register_collection(collection_id: str, kind: str, metadata_uri: str, sender: str) -> None:
+    owner = storage.get_bytes(b"owner", b"")
+    if owner == b"":
+        storage.set_bytes(b"owner", sender.encode())
+        owner = sender.encode()
+    abi.require(owner.decode() == sender, b"NOT_OWNER")
+    storage.set_bytes(f"collection:{collection_id}:kind".encode(), kind.encode())
+    storage.set_bytes(f"collection:{collection_id}:metadata".encode(), metadata_uri.encode())
+    events.emit(b"CollectionRegistered", {b"id": collection_id.encode(), b"kind": kind.encode()})
+
+
+def get_collection(collection_id: str) -> dict:
+    return {
+        "kind": storage.get_bytes(f"collection:{collection_id}:kind".encode(), b"").decode(),
+        "metadata": storage.get_bytes(f"collection:{collection_id}:metadata".encode(), b"").decode(),
+    }
