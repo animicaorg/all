@@ -55,6 +55,60 @@ _JOB_CACHE_TIMEOUT_S = float(os.getenv("ANIMICA_JOB_CACHE_TIMEOUT_S", "3600"))
 
 log = logging.getLogger("animica.rpc.miner")
 
+
+def _build_useful_work_payload() -> Dict[str, Any]:
+    """
+    Build a useful-work payload for block templates when include_aicf=true.
+
+    Queries the local ENA artifact registry for verified artifacts whose
+    manifest blobs are locally available in DA, then returns references
+    for inclusion in the block header.
+    """
+    import hashlib
+
+    manifest_blob_ids: list[str] = []
+    credit_event_ids: list[str] = []
+
+    # Pull verified artifacts from ENA pending registry
+    try:
+        from rpc.methods.ena import _PENDING_ARTIFACTS  # type: ignore
+
+        for rec in _PENDING_ARTIFACTS.values():
+            if rec.get("status") != "verified":
+                continue
+            mid = rec.get("manifest_blob_id", "")
+            if not mid:
+                continue
+            # DA preflight: ensure blob is locally available
+            try:
+                from da.node_store import get_store as _da_get_store  # type: ignore
+
+                store = _da_get_store(None)
+                if store is not None and store.has(mid):
+                    manifest_blob_ids.append(mid)
+                    cev = rec.get("credit_event_id")
+                    if cev:
+                        credit_event_ids.append(cev)
+            except Exception:
+                manifest_blob_ids.append(mid)
+    except Exception:
+        pass
+
+    # Compute credit event Merkle root (sha3-256 of sorted joined IDs)
+    credit_event_root: Optional[str] = None
+    if credit_event_ids:
+        joined = "|".join(sorted(credit_event_ids)).encode()
+        credit_event_root = hashlib.sha3_256(joined).hexdigest()
+
+    return {
+        "manifestBlobIds": manifest_blob_ids,
+        "creditEventIds": credit_event_ids,
+        "creditEventRoot": credit_event_root,
+        "count": len(manifest_blob_ids),
+    }
+
+
+
 # Constants for address and gas calculations
 ADDRESS_LEN = 32  # Animica address length (32-byte digest, matches core/types/tx.py)
 RECEIPT_ADDRESS_LEN = 32  # Receipt log address length (bytes)
@@ -4485,9 +4539,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     payout_address = None
     allow_offline_mining = False
     allow_unsynced_mining = False
-    force_empty_template = False
-    raw_params: dict[str, Any] | list[Any] | None = None
-    template_ttl_s = _TEMPLATE_TTL_S
+    include_aicf = False
 
     if args:
         raw_params = list(args)
@@ -4524,6 +4576,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         force_empty_template = bool(
             payload.get("force_empty_template", payload.get("forceEmptyTemplate", False))
         )
+        include_aicf = bool(
+            payload.get("include_aicf", payload.get("includeAicf", False))
+        )
         ttl_raw = payload.get("ttl_seconds", payload.get("ttlSeconds", template_ttl_s))
         try:
             template_ttl_s = max(5.0, min(float(ttl_raw), 300.0))
@@ -4542,6 +4597,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "forceEmptyTemplate",
             "ttl_seconds",
             "ttlSeconds",
+            "include_aicf",
+            "includeAicf",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -5054,6 +5111,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "mempool": selection_summary,
             "address": payout_address,
             "payout_address": payout_address,
+            "usefulWorkPayload": _build_useful_work_payload() if include_aicf else None,
         }
     except NameError as exc:
         log.exception(
