@@ -1,15 +1,18 @@
 /* Animica Studio IDE — bridge + Monaco integration */
 'use strict';
 
-// -- State ----------------------------------------------------------------
 var bridge = null;
 var editor = null;
-var tabs = [];          // [{path, model, dirty}]
+var tabs = []; // [{path, absPath, model, dirty, viewState}]
+var openTabs = {}; // normalized abs path -> index
 var activeTab = -1;
 
 window.currentFilePath = null;
 
-// -- QWebChannel init -----------------------------------------------------
+function normalizePath(path) {
+  return String(path || '').replace(/\\/g, '/');
+}
+
 function initChannel() {
   if (typeof QWebChannel === 'undefined') {
     console.error('qwebchannel.js not loaded');
@@ -38,73 +41,100 @@ function setupBridgeSignals() {
     var cb = pendingRequests[reqId];
     if (cb) { delete pendingRequests[reqId]; cb(data); }
   });
-  bridge.runScriptLine.connect(function(line) {
-    bridge.log('script: ' + line);
-  });
-  bridge.workspaceChanged.connect(function(path) {
-    bridge.log('workspace: ' + path);
-  });
 }
 
-// -- Pending request map --------------------------------------------------
 var pendingRequests = {};
 var _reqCounter = 0;
 function makeReqId(prefix) { return prefix + '_' + (++_reqCounter); }
-
 function callBridge(method, args, cb) {
   var reqId = makeReqId(method);
   if (cb) pendingRequests[reqId] = cb;
   bridge[method].apply(bridge, [reqId].concat(args));
 }
-
 function safeParse(str) {
-  try { return JSON.parse(str); } catch(e) { return {ok: false, error: 'JSON parse error: ' + e}; }
+  try { return JSON.parse(str); } catch (e) { return {ok: false, error: 'JSON parse error: ' + e}; }
 }
 
-// -- Tab management -------------------------------------------------------
-function openFile(path) {
-  if (!bridge) { showError('Bridge not ready'); return; }
-  for (var i = 0; i < tabs.length; i++) {
-    if (tabs[i].path === path) { activateTab(i); return; }
-  }
-  callBridge('readFile', [path], function(data) {
-    if (!data.ok) { showError('Cannot open ' + path + ': ' + data.error); return; }
-    addTab(path, data.content);
+function rebuildOpenTabsIndex() {
+  openTabs = {};
+  tabs.forEach(function(tab, i) {
+    openTabs[normalizePath(tab.absPath || tab.path)] = i;
   });
 }
 
-function addTab(path, content) {
+function openFile(path, absPath) {
+  if (!bridge) { showError('Bridge not ready'); return; }
+  var normalizedAbsPath = normalizePath(absPath || path);
+  if (Object.prototype.hasOwnProperty.call(openTabs, normalizedAbsPath)) {
+    activateTab(openTabs[normalizedAbsPath]);
+    return;
+  }
+  callBridge('readFile', [path], function(data) {
+    if (!data.ok) { showError('Cannot open ' + path + ': ' + data.error); return; }
+    addTab(path, normalizedAbsPath, data.content);
+  });
+}
+
+function addTab(path, absPath, content) {
   var model = null;
   if (editor && window.monaco) {
-    var lang = detectLanguage(path);
-    model = monaco.editor.createModel(content, lang);
+    model = monaco.editor.createModel(content, detectLanguage(path));
   }
-  var tab = {path: path, model: model, dirty: false, content: content};
-  tabs.push(tab);
+  tabs.push({path: path, absPath: absPath, model: model, dirty: false, content: content, viewState: null});
+  rebuildOpenTabsIndex();
   activateTab(tabs.length - 1);
   renderTabs();
 }
 
 function activateTab(idx) {
+  if (idx < 0 || idx >= tabs.length) return;
+  if (activeTab >= 0 && tabs[activeTab] && editor) {
+    tabs[activeTab].viewState = editor.saveViewState();
+  }
   activeTab = idx;
-  window.currentFilePath = tabs[idx] ? tabs[idx].path : null;
-  if (editor && tabs[idx] && tabs[idx].model) {
-    editor.setModel(tabs[idx].model);
-  } else if (editor && tabs[idx]) {
-    editor.setValue(tabs[idx].content || '');
+  var tab = tabs[idx];
+  window.currentFilePath = tab.path;
+  if (editor) {
+    if (tab.model) editor.setModel(tab.model);
+    else editor.setValue(tab.content || '');
+    if (tab.viewState) editor.restoreViewState(tab.viewState);
+    editor.focus();
   }
   renderTabs();
 }
 
 function closeTab(idx) {
-  if (tabs[idx] && tabs[idx].dirty) {
-    if (!confirm('Unsaved changes in ' + tabs[idx].path + '. Close anyway?')) return;
+  if (!tabs[idx]) return;
+  var tab = tabs[idx];
+  if (tab.dirty) {
+    var choice = prompt('Unsaved changes in ' + tab.path + '. Type: save / discard / cancel', 'save');
+    if (choice === null || choice.toLowerCase() === 'cancel') return;
+    if (choice.toLowerCase() === 'save') {
+      var content = tab.model ? tab.model.getValue() : (editor ? editor.getValue() : tab.content);
+      callBridge('writeFile', [tab.path, content], function(data) {
+        if (!data.ok) {
+          showError('Save failed: ' + data.error);
+          return;
+        }
+        tab.dirty = false;
+        doCloseTab(idx);
+      });
+      return;
+    }
   }
+  doCloseTab(idx);
+}
+
+function doCloseTab(idx) {
   if (tabs[idx] && tabs[idx].model) tabs[idx].model.dispose();
   tabs.splice(idx, 1);
+  rebuildOpenTabsIndex();
   if (activeTab >= tabs.length) activeTab = tabs.length - 1;
   if (activeTab >= 0) activateTab(activeTab);
-  else { window.currentFilePath = null; if(editor) editor.setValue(''); }
+  else if (editor) {
+    window.currentFilePath = null;
+    editor.setValue('');
+  }
   renderTabs();
 }
 
@@ -114,58 +144,63 @@ function renderTabs() {
   tabs.forEach(function(tab, i) {
     var div = document.createElement('div');
     div.className = 'tab' + (i === activeTab ? ' active' : '') + (tab.dirty ? ' dirty' : '');
-    var name = tab.path.split('/').pop();
-    div.textContent = name;
-    div.onclick = (function(idx) { return function() { activateTab(idx); }; })(i);
+    div.title = tab.path;
+    div.textContent = tab.path.split('/').pop();
+    div.onclick = function() { activateTab(i); };
     var closeBtn = document.createElement('span');
     closeBtn.className = 'close';
     closeBtn.textContent = '\u00d7';
-    closeBtn.onclick = (function(idx) {
-      return function(e) { e.stopPropagation(); closeTab(idx); };
-    })(i);
+    closeBtn.onclick = function(e) { e.stopPropagation(); closeTab(i); };
     div.appendChild(closeBtn);
     container.appendChild(div);
   });
 }
 
-// -- Save -----------------------------------------------------------------
 window.saveCurrentFile = function() {
   if (activeTab < 0 || !tabs[activeTab]) return;
   var tab = tabs[activeTab];
   var content = editor ? (tab.model ? tab.model.getValue() : editor.getValue()) : tab.content;
-  if (!bridge) { showError('Bridge not ready'); return; }
   callBridge('writeFile', [tab.path, content], function(data) {
     if (data.ok) { tab.dirty = false; renderTabs(); }
     else { showError('Save failed: ' + data.error); }
   });
 };
 
-// -- Language detection ---------------------------------------------------
+window.saveAllFiles = function() {
+  tabs.forEach(function(_tab, i) {
+    if (!tabs[i].dirty) return;
+    var tab = tabs[i];
+    var content = tab.model ? tab.model.getValue() : (editor ? editor.getValue() : tab.content);
+    callBridge('writeFile', [tab.path, content], function(data) {
+      if (data.ok) { tab.dirty = false; renderTabs(); }
+      else { showError('Save failed for ' + tab.path + ': ' + data.error); }
+    });
+  });
+};
+
+window.openFileFromHost = function(relPath, absPath) {
+  openFile(relPath, absPath);
+};
+
 function detectLanguage(path) {
   var ext = path.split('.').pop().toLowerCase();
-  var map = {py: 'python', js: 'javascript', ts: 'typescript', json: 'json',
-             md: 'markdown', yaml: 'yaml', yml: 'yaml', html: 'html', css: 'css',
-             sh: 'shell', toml: 'toml', rs: 'rust'};
+  var map = {py: 'python', js: 'javascript', ts: 'typescript', json: 'json', md: 'markdown', yaml: 'yaml', yml: 'yaml', html: 'html', css: 'css', sh: 'shell', toml: 'toml', rs: 'rust'};
   return map[ext] || 'plaintext';
 }
 
-// -- Error display --------------------------------------------------------
 function showError(msg) {
   console.error('IDE:', msg);
   if (bridge) bridge.log('error: ' + msg);
 }
 
-// -- Monaco init ----------------------------------------------------------
 function initMonaco() {
   var editorEl = document.getElementById('editor');
   var noMonacoEl = document.getElementById('no-monaco');
-
   if (typeof monaco === 'undefined') {
     editorEl.style.display = 'none';
     noMonacoEl.style.display = 'flex';
     return;
   }
-
   editor = monaco.editor.create(editorEl, {
     value: '# Welcome to Animica Studio IDE\n',
     language: 'python',
@@ -174,7 +209,7 @@ function initMonaco() {
     minimap: {enabled: false},
     fontSize: 13,
     scrollBeyondLastLine: false,
-    wordWrap: 'off',
+    wordWrap: 'off'
   });
 
   editor.onDidChangeModelContent(function() {
@@ -184,33 +219,25 @@ function initMonaco() {
     }
   });
 
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() {
-    window.saveCurrentFile();
-  });
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() { window.saveCurrentFile(); });
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, function() { window.saveAllFiles(); });
 }
 
-// -- Keyboard shortcut for save (outside Monaco) --------------------------
 document.addEventListener('keydown', function(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    window.saveCurrentFile();
+    if (e.shiftKey) window.saveAllFiles();
+    else window.saveCurrentFile();
   }
 });
 
-// -- Boot sequence --------------------------------------------------------
 (function boot() {
   var monacoScript = document.createElement('script');
   monacoScript.src = 'monaco/vs/loader.js';
   monacoScript.onload = function() {
     require.config({paths: {vs: 'monaco/vs'}});
-    require(['vs/editor/editor.main'], function() {
-      initMonaco();
-      initChannel();
-    });
+    require(['vs/editor/editor.main'], function() { initMonaco(); initChannel(); });
   };
-  monacoScript.onerror = function() {
-    initMonaco();
-    initChannel();
-  };
+  monacoScript.onerror = function() { initMonaco(); initChannel(); };
   document.head.appendChild(monacoScript);
 })();
