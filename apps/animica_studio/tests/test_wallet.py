@@ -360,13 +360,41 @@ class TestWalletServiceAccounts:
 
 
 
+def _make_wallet_create_ops(*, allow_insecure_fallback_opt: bool = False):
+    """Return a real CliOps instance backed by a pre-populated in-memory registry.
+
+    This avoids needing the animica CLI installed in the test environment while
+    still exercising the real CliOps.build logic. We use object.__new__ + manual
+    attribute assignment so that CliRegistry.__init__'s file I/O is never run.
+    """
+    from animica_studio.services.cli_ops import CliOps
+    from animica_studio.services.cli_registry import CliNode, CliRegistry
+
+    options = ["--label", "--alg"]
+    if allow_insecure_fallback_opt:
+        options.append("--allow-insecure-fallback")
+
+    # Bypass __init__ (which performs disk I/O) by using object.__new__ and
+    # populating only the attributes that CliOps accesses: _nodes and _cli_path.
+    registry = object.__new__(CliRegistry)
+    registry._nodes = {
+        "": CliNode(commands=["wallet"]),
+        "wallet": CliNode(commands=["create", "list"]),
+        "wallet create": CliNode(options=options),
+    }
+    registry._cli_path = ""
+    return CliOps(registry)
+
+
 class TestWalletServiceCreateWallet:
     def test_build_create_wallet_args(self):
         from animica_studio.storage.config import Config
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
+        ops = _make_wallet_create_ops()
+        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
+            args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
 
         assert clean_label == "My Wallet"
         assert scheme == "dilithium3"
@@ -384,11 +412,13 @@ class TestWalletServiceCreateWallet:
         from animica_studio.services.wallet_service import WalletService
 
         ws = WalletService(Config())
-        args, clean_label, scheme = ws.build_create_wallet_args(
-            "SPX Wallet",
-            "sphincs128s",
-            allow_insecure_fallback=True,
-        )
+        ops = _make_wallet_create_ops(allow_insecure_fallback_opt=True)
+        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=ops):
+            args, clean_label, scheme = ws.build_create_wallet_args(
+                "SPX Wallet",
+                "sphincs128s",
+                allow_insecure_fallback=True,
+            )
 
         assert clean_label == "SPX Wallet"
         assert scheme == "sphincs_shake_128s"
@@ -888,3 +918,167 @@ class TestWalletServiceSendCli:
         assert "--from" in cmd and "anim1from" in cmd
         assert "--to" in cmd and "anim1to" in cmd
         assert "--value" in cmd and "1.5" in cmd
+
+
+# ---------------------------------------------------------------------------
+# New tests required by problem statement
+# ---------------------------------------------------------------------------
+
+
+class TestBalanceHexParsing:
+    """Balance parsing: hex string → int → ANM string formatting."""
+
+    def test_hex_string_to_int(self):
+        from animica_studio.models.rpc_models import parse_hex_quantity
+
+        # "0x11fc..." (a real-world-style hex balance value) must parse to the correct int
+        assert parse_hex_quantity("0x1", "balance") == 1
+        assert parse_hex_quantity("0xde0b6b3a7640000", "balance") == 10 ** 18
+
+    def test_int_to_anm_string(self):
+        from animica_studio.models.wallet_models import format_amount
+
+        # 1 ANM = 10^18 base units
+        assert format_amount(10 ** 18) == "1 ANM"
+        assert format_amount(0) == "0 ANM"
+
+    def test_hex_balance_full_pipeline(self):
+        """End-to-end: hex RPC response → integer → human-readable ANM."""
+        from animica_studio.models.rpc_models import parse_hex_quantity
+        from animica_studio.models.wallet_models import format_amount
+
+        raw_hex = "0xde0b6b3a7640000"  # 1 ANM in wei
+        qty = parse_hex_quantity(raw_hex, "balance")
+        assert qty == 10 ** 18
+        display = format_amount(qty)
+        assert display == "1 ANM"
+
+    def test_hex_large_balance(self):
+        """A realistic large balance parses and formats without overflow."""
+        from animica_studio.models.rpc_models import parse_hex_quantity
+        from animica_studio.models.wallet_models import format_amount
+
+        raw_hex = "0x11fc3e7aba5d3f1a"  # arbitrary large value
+        qty = parse_hex_quantity(raw_hex, "balance")
+        assert qty > 0
+        display = format_amount(qty)
+        assert "ANM" in display
+
+
+class TestRpcSendRawTxGuard:
+    """RPC param-shape guard: sending dict to tx_sendRawTransaction raises a local error."""
+
+    def test_dict_param_raises_type_error(self):
+        from unittest.mock import patch
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        # Guard must raise BEFORE any network call; verify call() is never reached.
+        with patch.object(client, "call") as mock_call:
+            with pytest.raises(TypeError, match="raw_tx_hex must be a hex str"):
+                client.send_raw_tx({"rawTx": "0x1234"})  # type: ignore[arg-type]
+        mock_call.assert_not_called()
+
+    def test_none_param_raises_type_error(self):
+        from unittest.mock import patch
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        with patch.object(client, "call") as mock_call:
+            with pytest.raises(TypeError, match="raw_tx_hex must be a hex str"):
+                client.send_raw_tx(None)  # type: ignore[arg-type]
+        mock_call.assert_not_called()
+
+    def test_valid_string_does_not_raise_locally(self):
+        """A valid hex string should not raise before the network call."""
+        from unittest.mock import patch
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        # Patch `call` so no actual network is needed
+        with patch.object(client, "call", return_value="0x" + "ab" * 32):
+            with patch.object(client, "_pick_method", return_value="tx_sendRawTransaction"):
+                result = client.send_raw_tx("0x" + "ab" * 32)
+        assert result == "0x" + "ab" * 32
+
+
+class TestRpcMethodSelection:
+    """Method selection: rpc.discover chooses tx_sendRawTransaction and sends params as ['0x...']."""
+
+    def test_pick_method_uses_discover(self):
+        """_pick_method returns tx_sendRawTransaction when discover lists it."""
+        from unittest.mock import patch
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        discover_result = {"methods": [{"name": "tx_sendRawTransaction"}, {"name": "chain_getHead"}]}
+        with patch.object(client, "discover", return_value=discover_result):
+            chosen = client._pick_method("tx_sendRawTransaction", "tx.sendRawTransaction")
+        assert chosen == "tx_sendRawTransaction"
+
+    def test_send_raw_tx_passes_list_param(self):
+        """send_raw_tx always sends params as [raw_tx_hex] (array, not dict)."""
+        from unittest.mock import patch, call as mcall
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        tx_hex = "0x" + "ab" * 32
+        discover_result = {"methods": [{"name": "tx_sendRawTransaction"}]}
+        with patch.object(client, "discover", return_value=discover_result):
+            with patch.object(client, "call", return_value=tx_hex) as mock_call:
+                client.send_raw_tx(tx_hex)
+
+        # The call must use the canonical method name and params as a list
+        mock_call.assert_called_once_with("tx_sendRawTransaction", [tx_hex])
+
+    def test_fallback_to_first_candidate_when_discover_empty(self):
+        """When discover returns no methods, fall back to the first candidate."""
+        from unittest.mock import patch
+        from animica_studio.services.rpc_client import RpcClient
+
+        client = RpcClient("http://localhost:9999")
+        with patch.object(client, "discover", return_value={"methods": []}):
+            chosen = client._pick_method("tx_sendRawTransaction", "tx.sendRawTransaction")
+        assert chosen == "tx_sendRawTransaction"
+
+
+class TestWalletCreateIncludesLabel:
+    """Wallet create command includes --label flag (problem statement requirement)."""
+
+    def test_build_create_wallet_args_includes_label_flag(self):
+        """When CliOps is available, build_create_wallet_args always emits --label."""
+        from unittest.mock import MagicMock, patch
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        mock_ops = MagicMock()
+        mock_ops.build.return_value = [
+            "wallet", "create", "--label", "My Wallet", "--alg", "dilithium3"
+        ]
+
+        ws = WalletService(Config())
+        with patch("animica_studio.services.wallet_service.get_cli_ops", return_value=mock_ops):
+            args, clean_label, scheme = ws.build_create_wallet_args("My Wallet", "dilithium3")
+
+        assert "--label" in args
+        assert "My Wallet" in args
+        assert clean_label == "My Wallet"
+        assert scheme == "dilithium3"
+
+    def test_start_create_wallet_raises_if_label_missing_from_args(self):
+        """start_create_wallet raises RuntimeError when --label is absent from CLI args."""
+        from unittest.mock import MagicMock, patch
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        runner = MagicMock()
+
+        # build_create_wallet_args returns args without --label (simulating a broken CLI)
+        with patch.object(
+            ws,
+            "build_create_wallet_args",
+            return_value=(["wallet", "create", "--alg", "dilithium3"], "My Wallet", "dilithium3"),
+        ):
+            with pytest.raises(RuntimeError, match="--label"):
+                ws.start_create_wallet(runner, "My Wallet")

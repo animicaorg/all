@@ -302,7 +302,18 @@ class RpcClient:
 
         Tries ``tx_sendRawTransaction``, ``tx.sendRawTransaction``,
         ``tx_submitRawTransaction`` in that order.
+
+        Raises
+        ------
+        TypeError
+            If *raw_tx_hex* is not a ``str`` (guards against ``[object Object]``
+            errors that occur when a dict is accidentally passed as the raw tx).
         """
+        # Guard: prevent non-string params from producing -32602 / "[object Object]" RPC errors
+        if not isinstance(raw_tx_hex, str):
+            raise TypeError(
+                f"raw_tx_hex must be a hex str (e.g. '0x…'), got {type(raw_tx_hex).__name__}"
+            )
         method = self._pick_method(
             "tx_sendRawTransaction",
             "tx.sendRawTransaction",
