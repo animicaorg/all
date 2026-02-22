@@ -150,6 +150,18 @@ class MainWindow(QMainWindow):
         act = QAction("Script from Template…", self)
         act.triggered.connect(self._on_file_new_template)
         new_menu.addAction(act)
+        token_act = QAction("Token…", self)
+        token_act.triggered.connect(self._on_file_new_token)
+        new_menu.addAction(token_act)
+
+
+    def _on_file_new_token(self) -> None:
+        if self._ide_index is None:
+            return
+        self._navigate(self._ide_index)
+        self._ensure_lazy_pages(self._ide_index)
+        if self._ide_page is not None and hasattr(self._ide_page, "new_token_from_template"):
+            self._ide_page.new_token_from_template()
 
     def _on_file_new_template(self) -> None:
         if self._ide_index is None:

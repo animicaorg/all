@@ -1,0 +1,30 @@
+from stdlib import abi, events, storage
+
+
+def balance_of(owner: str, token_id: int) -> int:
+    return storage.get_int(f"bal:{token_id}:{owner}".encode(), 0)
+
+
+def mint(to: str, token_id: int, amount: int) -> None:
+    abi.require(amount > 0, b"INVALID_AMOUNT")
+    key = f"bal:{token_id}:{to}".encode()
+    storage.set_int(key, storage.get_int(key, 0) + amount)
+    events.emit(b"TransferSingle", {b"operator": b"", b"from": b"", b"to": to.encode(), b"id": token_id, b"amount": amount})
+
+
+def burn(frm: str, token_id: int, amount: int) -> None:
+    bal = balance_of(frm, token_id)
+    abi.require(bal >= amount, b"INSUFFICIENT_BALANCE")
+    storage.set_int(f"bal:{token_id}:{frm}".encode(), bal - amount)
+    events.emit(b"TransferSingle", {b"operator": b"", b"from": frm.encode(), b"to": b"", b"id": token_id, b"amount": amount})
+
+
+def safe_batch_transfer_from(frm: str, to: str, ids: list[int], amounts: list[int]) -> None:
+    abi.require(len(ids) == len(amounts), b"LENGTH_MISMATCH")
+    for idx, token_id in enumerate(ids):
+        amt = amounts[idx]
+        bal = balance_of(frm, token_id)
+        abi.require(bal >= amt, b"INSUFFICIENT_BALANCE")
+        storage.set_int(f"bal:{token_id}:{frm}".encode(), bal - amt)
+        storage.set_int(f"bal:{token_id}:{to}".encode(), balance_of(to, token_id) + amt)
+    events.emit(b"TransferBatch", {b"from": frm.encode(), b"to": to.encode()})

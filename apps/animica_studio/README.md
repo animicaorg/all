@@ -147,6 +147,28 @@ Assets are unpacked to `animica_studio/ui/web/monaco/vs/`.
   swap in the Animica VM runner in `services/deterministic_runner.py`)
 - Workspace root persisted in `config.json` under `ide_workspace_root`
 
+
+### Token Templates
+
+Studio IDE now includes **File → New → Token…** (and a toolbar **New Token…** button)
+for scaffolding deterministic Python-VM token contracts.
+
+Included templates:
+- Animica NFT
+- Animica FT
+- Animica MultiToken
+- Membership Pass (soulbound toggle)
+- Factory/Registry stub
+
+Generated output includes `contract.py`, `manifest.json`, and `README.md`, written
+into a folder inside your active workspace. Existing files are not overwritten
+unless explicitly confirmed.
+
+To add more templates, create a new folder under
+`animica_studio/templates/tokens/<template_id>/` with `*.tmpl` files and register
+the template metadata/params in
+`animica_studio/services/token_template_service.py`.
+
 ### Install PySide6-WebEngine
 
 ```bash
