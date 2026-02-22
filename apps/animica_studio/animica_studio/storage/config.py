@@ -146,9 +146,11 @@ class Config:
     da_contribution: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": True,
-            "directory": "",
-            "max_gb": 50,
-            "reserve_mode": "quota",
+            "data_dir": "",
+            "mode": "quota",
+            "limit_bytes": 50 * 1024**3,
+            "rpc_url": "",
+            "contributor_id": "",
             "auto_start": True,
         }
     )
@@ -280,9 +282,11 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
         da_contribution={
             "enabled": True,
-            "directory": "",
-            "max_gb": 50,
-            "reserve_mode": "quota",
+            "data_dir": "",
+            "mode": "quota",
+            "limit_bytes": 50 * 1024**3,
+            "rpc_url": "",
+            "contributor_id": "",
             "auto_start": True,
             **(d.get("da_contribution") or {}),
         },
