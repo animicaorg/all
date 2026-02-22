@@ -1,0 +1,22 @@
+from stdlib import abi, events, storage
+
+SOULBOUND = {{SOULBOUND}}
+
+
+def mint(to: str, token_id: int) -> None:
+    abi.require(storage.get_bytes(f"owner:{token_id}".encode(), b"") == b"", b"ALREADY_MINTED")
+    storage.set_bytes(f"owner:{token_id}".encode(), to.encode())
+    events.emit(b"Transfer", {b"from": b"", b"to": to.encode(), b"token_id": token_id})
+
+
+def owner_of(token_id: int) -> str:
+    owner = storage.get_bytes(f"owner:{token_id}".encode(), b"")
+    abi.require(owner != b"", b"NOT_MINTED")
+    return owner.decode()
+
+
+def transfer(frm: str, to: str, token_id: int) -> None:
+    abi.require(not SOULBOUND, b"SOULBOUND")
+    abi.require(owner_of(token_id) == frm, b"NOT_OWNER")
+    storage.set_bytes(f"owner:{token_id}".encode(), to.encode())
+    events.emit(b"Transfer", {b"from": frm.encode(), b"to": to.encode(), b"token_id": token_id})

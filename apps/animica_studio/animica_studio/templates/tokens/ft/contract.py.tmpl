@@ -1,0 +1,47 @@
+from stdlib import abi, events, storage
+
+KEY_TOTAL_SUPPLY = b"total_supply"
+
+
+def init() -> None:
+    storage.set_bytes(b"name", b"{{NAME}}")
+    storage.set_bytes(b"symbol", b"{{SYMBOL}}")
+    storage.set_int(b"decimals", {{DECIMALS}})
+    storage.set_int(KEY_TOTAL_SUPPLY, {{TOTAL_SUPPLY}})
+
+
+def total_supply() -> int:
+    return storage.get_int(KEY_TOTAL_SUPPLY, 0)
+
+
+def balance_of(owner: str) -> int:
+    return storage.get_int(f"bal:{owner}".encode(), 0)
+
+
+def transfer(to: str, amount: int, sender: str) -> None:
+    abi.require(amount >= 0, b"INVALID_AMOUNT")
+    sender_bal = balance_of(sender)
+    abi.require(sender_bal >= amount, b"INSUFFICIENT_BALANCE")
+    storage.set_int(f"bal:{sender}".encode(), sender_bal - amount)
+    storage.set_int(f"bal:{to}".encode(), balance_of(to) + amount)
+    events.emit(b"Transfer", {b"from": sender.encode(), b"to": to.encode(), b"amount": amount})
+
+
+def approve(spender: str, amount: int, sender: str) -> None:
+    storage.set_int(f"allow:{sender}:{spender}".encode(), amount)
+    events.emit(b"Approval", {b"owner": sender.encode(), b"spender": spender.encode(), b"amount": amount})
+
+
+def allowance(owner: str, spender: str) -> int:
+    return storage.get_int(f"allow:{owner}:{spender}".encode(), 0)
+
+
+def transferFrom(frm: str, to: str, amount: int, sender: str) -> None:
+    allowed = allowance(frm, sender)
+    abi.require(allowed >= amount, b"ALLOWANCE_LOW")
+    storage.set_int(f"allow:{frm}:{sender}".encode(), allowed - amount)
+    frm_bal = balance_of(frm)
+    abi.require(frm_bal >= amount, b"INSUFFICIENT_BALANCE")
+    storage.set_int(f"bal:{frm}".encode(), frm_bal - amount)
+    storage.set_int(f"bal:{to}".encode(), balance_of(to) + amount)
+    events.emit(b"Transfer", {b"from": frm.encode(), b"to": to.encode(), b"amount": amount})
