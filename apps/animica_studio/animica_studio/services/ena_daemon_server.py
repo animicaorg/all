@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 from typing import Any
 
@@ -12,10 +14,16 @@ import uvicorn
 
 app = FastAPI(title="Animica ENA Daemon", version="0.1.0")
 
+_DA_BLOBS: dict[str, dict[str, str]] = {}
+
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "version": "0.1.0", "capabilities": {"chat": True, "tools": True, "embed": False}}
+    return {
+        "ok": True,
+        "version": "0.1.0",
+        "capabilities": {"chat": True, "tools": True, "embed": False, "da": True},
+    }
 
 
 @app.get("/version")
@@ -48,6 +56,41 @@ def chat(payload: dict[str, Any]) -> StreamingResponse:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+@app.post("/da/put")
+def da_put_blob(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    namespace = str(payload.get("namespace") or "default")
+    if not isinstance(data, str) or not data.strip():
+        return {"ok": False, "error": "data is required and must be base64 text"}
+    try:
+        decoded = base64.b64decode(data, validate=True)
+    except Exception:
+        return {"ok": False, "error": "invalid base64 payload"}
+    commitment = hashlib.sha256(decoded).hexdigest()
+    _DA_BLOBS[commitment] = {"data": data, "namespace": namespace}
+    return {"ok": True, "commitment": commitment, "namespace": namespace}
+
+
+@app.get("/da/get/{commitment}")
+def da_get_blob(commitment: str) -> dict[str, Any]:
+    entry = _DA_BLOBS.get(commitment)
+    if not entry:
+        return {"ok": False, "error": "commitment not found", "commitment": commitment}
+    return {"ok": True, "commitment": commitment, **entry}
+
+
+@app.get("/da/proof/{commitment}")
+def da_get_proof(commitment: str) -> dict[str, Any]:
+    exists = commitment in _DA_BLOBS
+    if not exists:
+        return {"ok": False, "error": "commitment not found", "commitment": commitment}
+    return {
+        "ok": True,
+        "commitment": commitment,
+        "proof": {"type": "sha256", "verified": True, "note": "Local daemon proof stub"},
+    }
 
 
 def main() -> None:
