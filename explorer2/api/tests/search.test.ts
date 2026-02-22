@@ -50,10 +50,10 @@ describe('Search API', () => {
   })
 
   it('searches for transaction by hash', async () => {
-    const res = await request(api).get('/api/search?q=0x1234abcd')
+    const res = await request(api).get('/api/search?q=0x1111111111111111111111111111111111111111111111111111111111111111')
     expect(res.status).toBe(200)
     expect(res.body.type).toBe('tx')
-    expect(res.body.result.hash).toBe('0x1234abcd')
+    expect(res.body.result.hash).toBe('0x' + '1'.repeat(64))
   })
 
   it('searches for address', async () => {

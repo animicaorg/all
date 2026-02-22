@@ -42,9 +42,15 @@ export interface TxSummary {
 
 export interface TxDetail {
   hash: Hash
+  tx_hash?: Hash
   status: 'pending' | 'confirmed' | 'failed'
   blockHash?: Hash
   blockHeight?: number
+  included_height?: number | null
+  included_block_hash?: Hash | null
+  confirmations?: number
+  explorer_head_height?: number
+  timestamp?: number | null
   from?: Address
   to?: Address
   value?: string
