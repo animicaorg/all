@@ -17,7 +17,7 @@ import weakref
 import re
 from pathlib import Path
 from typing import Any, Callable
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QFileSystemWatcher, QSignalBlocker, QPointer
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QFileSystemWatcher, QSignalBlocker
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
