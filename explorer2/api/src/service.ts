@@ -8,7 +8,6 @@ import pino from 'pino'
 import { TxLifecycleStore } from './txLifecycle.js'
 
 const log = pino({ name: 'explorer-service' })
-const txLifecycle = new TxLifecycleStore()
 export interface ChainClient {
   getHead: () => Promise<unknown>
   getBlockByNumber: (height: number | string, includeTxs?: boolean, includeReceipts?: boolean) => Promise<unknown>
@@ -28,6 +27,7 @@ const ADDRESS_SCAN_WINDOW = 50
 
 export class ExplorerService {
   private coalescer = new RequestCoalescer()
+  private txLifecycle = new TxLifecycleStore()
 
   constructor(
     private rpc: ChainClient
@@ -85,7 +85,7 @@ export class ExplorerService {
       detail.txs.forEach((tx, index) => {
         try {
           const normalizedTxHash = normalizeTxHash(String(tx.hash))
-          txLifecycle.upsertConfirmed({
+          this.txLifecycle.upsertConfirmed({
             hash: normalizedTxHash,
             includedHeight: detail.height,
             includedBlockHash: String(detail.hash),
@@ -118,7 +118,7 @@ export class ExplorerService {
         const includedHeight = detail.blockHeight ?? null
         const includedBlockHash = detail.blockHash ? String(detail.blockHash) : null
         const confirmations = includedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
-        txLifecycle.upsertConfirmed({
+        this.txLifecycle.upsertConfirmed({
           hash: normalizedHash,
           includedHeight: includedHeight ?? head.height,
           includedBlockHash: includedBlockHash ?? normalizedHash,
@@ -146,7 +146,7 @@ export class ExplorerService {
       const pending = await this.safeRpc(() => this.rpc.getMempoolPending()).catch(() => [])
       const normalizedPending = pending.flatMap((h) => {
         try {
-          return [txLifecycle.recordPending(h)]
+          return [this.txLifecycle.recordPending(h)]
         } catch {
           return []
         }
@@ -166,7 +166,7 @@ export class ExplorerService {
         }
       }
 
-      const storeRecord = txLifecycle.get(normalizedHash)
+      const storeRecord = this.txLifecycle.get(normalizedHash)
       if (storeRecord) {
         const confirmations = storeRecord.included_height ? Math.max(0, head.height - storeRecord.included_height + 1) : 0
         log.debug({ normalizedHash, store: 'lifecycle-store', result: 'hit' }, 'tx lookup result')
@@ -187,6 +187,34 @@ export class ExplorerService {
           feePaid: storeRecord.fee,
           raw: storeRecord.rawTx ?? { hash: storeRecord.tx_hash },
           receipt: storeRecord.rawReceipt
+        }
+      }
+
+      const recentBlockMatch = await this.findTxInRecentBlocks(head.height, normalizedHash)
+      if (recentBlockMatch) {
+        const confirmations = Math.max(0, head.height - recentBlockMatch.includedHeight + 1)
+        this.txLifecycle.upsertConfirmed({
+          hash: normalizedHash,
+          includedHeight: recentBlockMatch.includedHeight,
+          includedBlockHash: recentBlockMatch.includedBlockHash,
+          includedIndex: recentBlockMatch.includedIndex,
+          timestamp: recentBlockMatch.timestamp,
+          from: recentBlockMatch.tx.from,
+          to: recentBlockMatch.tx.to,
+          value: recentBlockMatch.tx.value,
+          fee: recentBlockMatch.tx.feePaid,
+          rawTx: recentBlockMatch.tx.raw,
+          rawReceipt: recentBlockMatch.tx.receipt
+        })
+        log.debug({ normalizedHash, store: 'recent-block-scan', result: 'hit' }, 'tx lookup result')
+        return {
+          ...recentBlockMatch.tx,
+          tx_hash: normalizedHash,
+          included_height: recentBlockMatch.includedHeight,
+          included_block_hash: recentBlockMatch.includedBlockHash,
+          confirmations,
+          timestamp: recentBlockMatch.timestamp,
+          explorer_head_height: head.height
         }
       }
 
@@ -442,6 +470,54 @@ export class ExplorerService {
       })
     )
     return blocks.filter((block): block is BlockSummary => block !== null)
+  }
+
+  private async findTxInRecentBlocks(headHeight: number, targetHash: string): Promise<{
+    tx: TxDetail
+    includedHeight: number
+    includedBlockHash: string
+    includedIndex: number
+    timestamp: number | null
+  } | null> {
+    const heights = Array.from({ length: RECENT_BLOCK_WINDOW }, (_, i) => headHeight - i).filter((h) => h >= 0)
+
+    for (const height of heights) {
+      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
+      if (!block) continue
+
+      const detail = normalizeBlockDetail(block)
+      const txs = Array.isArray((block as any)?.txs)
+        ? (block as any).txs
+        : Array.isArray((block as any)?.transactions)
+          ? (block as any).transactions
+          : []
+
+      for (let i = 0; i < txs.length; i += 1) {
+        const tx = txs[i]
+        const hash = tx?.hash ?? tx?.txHash
+        if (!hash) continue
+
+        let normalized: string
+        try {
+          normalized = normalizeTxHash(String(hash))
+        } catch {
+          continue
+        }
+
+        if (normalized !== targetHash) continue
+
+        const txDetail = normalizeTxDetail(tx, tx?.receipt ?? null)
+        return {
+          tx: txDetail,
+          includedHeight: detail.height,
+          includedBlockHash: String(detail.hash),
+          includedIndex: i,
+          timestamp: detail.time || null
+        }
+      }
+    }
+
+    return null
   }
 
   private async safeRpc<T>(fn: () => Promise<T>): Promise<T>
