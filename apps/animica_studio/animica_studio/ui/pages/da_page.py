@@ -6,6 +6,7 @@ import logging
 import os
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -32,6 +33,7 @@ from animica_studio.services.da_contribution_service import (
 from animica_studio.services.da_service import DaService
 from animica_studio.services.error_format import format_rpc_error, safe_json_dumps
 from animica_studio.services.workers import WorkerThread
+from animica_studio.util.qt import ui_thread_only
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.widgets.stream_console import StreamConsole
 from animica_studio.util.cancel import CancelToken
@@ -49,6 +51,8 @@ class DaPage(QWidget):
         self._service = DaService(self._config)
         self._da_contrib = DAContributionService()
         self._cancel_token = CancelToken()
+        self._active_workers: list[WorkerThread] = []
+        self._recent_worker_errors: list[str] = []
         self._build_ui()
         self._load_contribution_settings()
 
@@ -324,6 +328,9 @@ class DaPage(QWidget):
         btn_row.addWidget(self._contrib_start_btn)
         btn_row.addWidget(self._contrib_stop_btn)
         btn_row.addWidget(self._contrib_refresh_btn)
+        self._contrib_diag_btn = QPushButton("Copy diagnostics")
+        self._contrib_diag_btn.clicked.connect(self._copy_contrib_diagnostics)
+        btn_row.addWidget(self._contrib_diag_btn)
         form.addRow("", btn_row)
 
         root.addWidget(settings_box)
@@ -359,7 +366,7 @@ class DaPage(QWidget):
         status_form.addRow("Last error:", self._contrib_error_label)
 
         preview_note = QLabel(
-            "ℹ️  Preview mode: local store active. Network serving enabled once node DA support lands."
+            "ℹ️  Local contribution is available now. Network serving remains pending node backend support."
         )
         preview_note.setWordWrap(True)
         preview_note.setStyleSheet("color: #888;")
@@ -505,11 +512,14 @@ class DaPage(QWidget):
             def _err(msg, _tb):
                 self._contrib_start_btn.setEnabled(True)
                 self._contrib_error_label.setText(f"Error: {msg}")
+                self._recent_worker_errors.append(str(msg))
                 log.error("Contribution start error: %s", msg)
 
             wt = WorkerThread(_task)
             wt.worker.result.connect(_done)
             wt.worker.error.connect(_err)
+            wt.worker.finished.connect(lambda: self._active_workers.remove(wt) if wt in self._active_workers else None)
+            self._active_workers.append(wt)
             wt.start()
         except Exception as exc:  # noqa: BLE001
             self._contrib_start_btn.setEnabled(True)
@@ -530,22 +540,45 @@ class DaPage(QWidget):
 
             def _err(msg, _tb):
                 self._contrib_stop_btn.setEnabled(True)
+                self._recent_worker_errors.append(str(msg))
                 log.error("Contribution stop error: %s", msg)
 
             wt = WorkerThread(_task)
             wt.worker.result.connect(_done)
             wt.worker.error.connect(_err)
+            wt.worker.finished.connect(lambda: self._active_workers.remove(wt) if wt in self._active_workers else None)
+            self._active_workers.append(wt)
             wt.start()
         except Exception as exc:  # noqa: BLE001
             self._contrib_stop_btn.setEnabled(True)
             log.exception("Stop contribution failed: %s", exc)
 
+
+    @ui_thread_only(log)
+    def _copy_contrib_diagnostics(self) -> None:
+        st = self._da_contrib.status()
+        lines = [
+            "DA diagnostics",
+            f"enabled: {st.enabled}",
+            f"configured: {st.configured}",
+            f"running: {st.running}",
+            f"health: {st.health}",
+            f"directory: {st.directory}",
+            f"limit_bytes: {st.limit_bytes}",
+            f"used_bytes: {st.used_bytes}",
+            f"last_error: {st.last_error}",
+            f"worker_errors: {' | '.join(self._recent_worker_errors[-5:])}",
+        ]
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._contrib_console.append_info("Diagnostics copied.")
+
+    @ui_thread_only(log)
     def _refresh_contrib_status(self) -> None:
         try:
             st = self._da_contrib.status()
 
             # Health label
-            health_icons = {"online": "🟢 Online", "offline": "🔴 Offline", "misconfigured": "⚠️  Misconfigured"}
+            health_icons = {"online": "🟢 Running", "configured": "🟡 Configured (inactive)", "offline": "🔴 Disabled", "misconfigured": "⚠️  Misconfigured"}
             self._contrib_health_label.setText(health_icons.get(st.health, st.health))
 
             # Usage bar
@@ -582,3 +615,13 @@ class DaPage(QWidget):
                 self._contrib_error_label.setText("")
         except Exception as exc:  # noqa: BLE001
             log.exception("Refresh contribution status failed: %s", exc)
+
+    def closeEvent(self, event) -> None:
+        for wt in list(self._active_workers):
+            try:
+                if wt.isRunning():
+                    wt.quit()
+                    wt.wait(1200)
+            except RuntimeError:
+                pass
+        super().closeEvent(event)

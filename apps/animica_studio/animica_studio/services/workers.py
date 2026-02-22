@@ -1,4 +1,4 @@
-"""Reusable QThread worker skeleton.
+"""Reusable background-worker helpers for Qt UI code.
 
 Usage example::
 
@@ -17,9 +17,15 @@ import logging
 import traceback
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 
 log = logging.getLogger(__name__)
+
+
+def _ensure_non_ui_callable(fn: Callable[..., Any]) -> None:
+    bound_self = getattr(fn, "__self__", None)
+    if isinstance(bound_self, QObject):
+        raise TypeError("Worker callable must not be a bound QObject/UI method")
 
 
 class Worker(QObject):
@@ -49,6 +55,7 @@ class Worker(QObject):
         **kwargs: Any,
     ) -> None:
         super().__init__()
+        _ensure_non_ui_callable(fn)
         self._fn = fn
         self._args = args
         self._kwargs = kwargs
@@ -95,3 +102,49 @@ class WorkerThread(QThread):
 
 
 _ACTIVE_THREADS: set[WorkerThread] = set()
+
+
+class WorkerSignals(QObject):
+    """Signals emitted by :class:`WorkerRunnable` tasks."""
+
+    started: Signal = Signal()
+    finished: Signal = Signal()
+    result: Signal = Signal(object)
+    error: Signal = Signal(str, str)
+
+
+class WorkerRunnable(QRunnable):
+    """QRunnable that executes a pure background callable and emits signals.
+
+    The callable must only perform non-UI work. UI updates must be connected to
+    :attr:`signals.result` / :attr:`signals.error`, which are delivered to UI
+    slots on the main thread via queued connections.
+    """
+
+    def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+        super().__init__()
+        _ensure_non_ui_callable(fn)
+        self._fn = fn
+        self._args = args
+        self._kwargs = kwargs
+        self.signals = WorkerSignals()
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        self.signals.started.emit()
+        try:
+            value = self._fn(*self._args, **self._kwargs)
+            self.signals.result.emit(value)
+        except Exception as exc:  # noqa: BLE001
+            tb = traceback.format_exc()
+            log.error("WorkerRunnable error: %s\n%s", exc, tb)
+            self.signals.error.emit(str(exc), tb)
+        finally:
+            self.signals.finished.emit()
+
+
+def run_in_threadpool(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> WorkerRunnable:
+    """Run *fn* on Qt's global thread pool and return its runnable handle."""
+    runnable = WorkerRunnable(fn, *args, **kwargs)
+    QThreadPool.globalInstance().start(runnable)
+    return runnable
