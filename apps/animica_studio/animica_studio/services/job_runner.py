@@ -385,10 +385,19 @@ class JobRunner(QObject):
             log.info("Exit code: %s", exit_code)
             log.info("stderr (first N chars): %s", stderr_preview)
             handle.error.emit(job_id, f"Command exited with code {exit_code}", "")
+            self._record_activity(ok=False, detail=f"exit {exit_code}")
         else:
             log.info("Exit code: %s", exit_code)
+            self._record_activity(ok=True)
         handle.finished.emit(job_id, exit_code, payload)
         self._cleanup(job_id)
+
+    def _record_activity(self, *, ok: bool, detail: str = "") -> None:
+        try:
+            from animica_studio.services.activity_store import ActivityStore  # noqa: PLC0415
+            ActivityStore.instance().record_job("CLI job completed", ok=ok, detail=detail)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _finalize_callable(self, job_id: str, handle: JobHandle, value: Any) -> None:
         if job_id not in self._jobs:

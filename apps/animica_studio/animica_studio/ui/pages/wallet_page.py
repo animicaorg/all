@@ -65,7 +65,9 @@ from animica_studio.models.wallet_models import (
     parse_amount_to_wei,
     shorten_address,
 )
+from animica_studio.services.activity_store import ActivityStore
 from animica_studio.services.error_format import format_exception, format_rpc_error, safe_str
+from animica_studio.services.explorer_balance_service import BalanceResult, ExplorerBalanceService
 from animica_studio.services.job_runner import (
     JobHandle,
     JobRunner,
@@ -1239,9 +1241,13 @@ class WalletPage(QWidget):
             if self._selected_account:
                 bal = wallet_service.get_cached_balance(self._selected_account.address)
                 self._overview_tab.set_balance(bal)
+            # Also fetch from Explorer for consistent display
+            self._refresh_from_explorer(profile)
 
         def _on_error(msg: str) -> None:
             self._show_rpc_banner(f"Balance refresh failed: {msg}")
+            # Try explorer even if RPC failed
+            self._refresh_from_explorer(profile)
 
         t = _run_in_thread(_task, _on_result, _on_error)
         self._balance_thread = t
@@ -1250,6 +1256,52 @@ class WalletPage(QWidget):
         t.finished.connect(lambda: self._on_worker_thread_finished(t))
         # Prune finished threads
         self._active_threads = [t for t in self._active_threads if qthread_running(t)]
+
+    def _refresh_from_explorer(self, profile: RpcProfile) -> None:
+        """Dispatch non-blocking Explorer balance requests for all displayed accounts.
+
+        Results are stored in the wallet_service cache and the account list is
+        refreshed so balances show the Explorer-sourced value with "Explorer" tooltip.
+        """
+        addresses = [acc.address for acc in self._display_accounts if acc.address]
+        if not addresses:
+            return
+        explorer_url = (profile.explorer_base_url or "").strip()
+        if not explorer_url:
+            return
+
+        wallet_service = self._wallet_service
+
+        def _on_each(addr: str, result: BalanceResult) -> None:
+            state = BalanceState(
+                address=addr,
+                balance_wei=result.balance_wei if result.ok else 0,
+                formatted=result.formatted if result.ok else "—",
+                updated_ts=result.updated_ts,
+                error=result.error if not result.ok else None,
+                source=BalanceSource.EXPLORER if result.ok else None,
+                is_stale=False,
+                tooltip="Explorer balance" if result.ok else f"Explorer error: {result.error}",
+            )
+            wallet_service.update_balance(addr, state)
+            self._reload_accounts_list()
+            if self._selected_account and self._selected_account.address == addr:
+                self._overview_tab.set_balance(state)
+
+        def _on_all(results: dict) -> None:
+            ok = sum(1 for r in results.values() if r.ok)
+            err = sum(1 for r in results.values() if not r.ok)
+            ActivityStore.instance().record_wallet_load(
+                f"Loaded explorer balances: {ok} ok, {err} error(s)",
+                ok=err == 0,
+            )
+
+        ExplorerBalanceService.instance().get_balances(
+            addresses,
+            profile,
+            on_each=_on_each,
+            on_all=_on_all,
+        )
 
     def _on_worker_thread_finished(self, thread: QThread) -> None:
         self._active_threads = [t for t in self._active_threads if t is not thread and qthread_running(t)]
@@ -1275,6 +1327,26 @@ class WalletPage(QWidget):
         def _on_result(state: BalanceState) -> None:
             self._overview_tab.set_balance(state)
             self._reload_accounts_list()
+            # Also dispatch explorer fetch for this address
+            explorer_url = (profile.explorer_base_url or "").strip()
+            if explorer_url and account.address:
+                def _on_exp(result: BalanceResult) -> None:
+                    if result.ok:
+                        exp_state = BalanceState(
+                            address=account.address,
+                            balance_wei=result.balance_wei,
+                            formatted=result.formatted,
+                            updated_ts=result.updated_ts,
+                            error=None,
+                            source=BalanceSource.EXPLORER,
+                            is_stale=False,
+                            tooltip="Explorer balance",
+                        )
+                        wallet_service.update_balance(account.address, exp_state)
+                        self._overview_tab.set_balance(exp_state)
+                        self._reload_accounts_list()
+
+                ExplorerBalanceService.instance().get_balance(account.address, profile, on_result=_on_exp)
 
         t = _run_in_thread(_task, _on_result, None)
         self._active_threads.append(t)
