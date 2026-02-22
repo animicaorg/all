@@ -88,33 +88,11 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     implementations (animica.pq or pq.py) if liboqs is unavailable.
     """
 
-    # Try oqs (liboqs-python) first
-    oqs_mod, oqs_err = _try_import_oqs()
-    if oqs_mod is not None:
-        ok, ver_msg = _check_versions(oqs_mod)
-        if not ok:
-            return False, ver_msg
-
-        mechs = _enabled_mechs(oqs_mod)
-        want = ["Dilithium3", "ML-DSA-65"]  # ML-DSA kept for forward compat
-        picked = next((w for w in want if w in mechs), want[0])
-
-        try:
-            signer = oqs_mod.Signature(picked)
-            pk = signer.generate_keypair()
-            sk = signer.export_secret_key()
-            msg = b"animica-pq-check"
-            sig = signer.sign(msg)
-            ok = signer.verify(msg, sig, pk)
-            if not ok:
-                return False, f"oqs self-test failed for {picked}"
-            if len(sk) <= len(pk) or bytes(sk) == bytes(pk):
-                return False, f"oqs produced suspicious key sizes for {picked} (pk={len(pk)} sk={len(sk)})"
-            return True, None
-        except Exception as exc:  # pragma: no cover - defensive
-            return False, f"Failed to init/self-test oqs Signature({picked}): {exc}"
-
-    # Fall back to pure-Python animica.pq implementation
+    # Try pure-Python backends first.
+    #
+    # Rationale: importing native oqs bindings can hard-crash (SIGSEGV) on some
+    # mixed system/vendored lib setups. Pure-Python backends are deterministic
+    # and sufficient for wallet create; we therefore prefer them by default.
     try:
         from animica.pq import sig_keygen, sig_sign, sig_verify
         pk, sk = sig_keygen()
@@ -147,6 +125,32 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     ok, err = _test_pq_py_keygen(DILITHIUM3_ID)
     if ok:
         return True, None
+
+    # Try oqs (liboqs-python) last to reduce crash exposure.
+    oqs_mod, oqs_err = _try_import_oqs()
+    if oqs_mod is not None:
+        ok, ver_msg = _check_versions(oqs_mod)
+        if not ok:
+            return False, ver_msg
+
+        mechs = _enabled_mechs(oqs_mod)
+        want = ["Dilithium3", "ML-DSA-65"]  # ML-DSA kept for forward compat
+        picked = next((w for w in want if w in mechs), want[0])
+
+        try:
+            signer = oqs_mod.Signature(picked)
+            pk = signer.generate_keypair()
+            sk = signer.export_secret_key()
+            msg = b"animica-pq-check"
+            sig = signer.sign(msg)
+            ok = signer.verify(msg, sig, pk)
+            if not ok:
+                return False, f"oqs self-test failed for {picked}"
+            if len(sk) <= len(pk) or bytes(sk) == bytes(pk):
+                return False, f"oqs produced suspicious key sizes for {picked} (pk={len(pk)} sk={len(sk)})"
+            return True, None
+        except Exception as exc:  # pragma: no cover - defensive
+            return False, f"Failed to init/self-test oqs Signature({picked}): {exc}"
 
     # Neither backend available
     return False, f"No PQ backend available. oqs error: {oqs_err}"
@@ -255,4 +259,3 @@ def get_pq_missing_error_message() -> str:
         msg += f"  - pq.py: ✗ unavailable ({diag['pq_py_error']})\n"
     
     return msg
-
