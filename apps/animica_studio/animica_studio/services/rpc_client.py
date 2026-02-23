@@ -39,8 +39,10 @@ _MAX_RETRIES = 3
 _BASE_BACKOFF_S = 0.5
 _DISCOVER_CACHE_TTL_S = 300.0
 
-_DISCOVER_CACHE_BY_URL: dict[str, tuple[float, dict[str, Any]]] = {}
+_DISCOVER_CACHE_BY_URL: dict[str, tuple[float, dict[str, Any], "RpcRegistry"]] = {}
 _DISCOVER_CACHE_LOCK = threading.Lock()
+_PARAM_ENCODING_BY_URL: dict[str, dict[str, str]] = {}
+_RESOLVED_METHODS_BY_URL: dict[str, dict[str, str]] = {}
 
 
 _RPC_OPERATION_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -94,7 +96,8 @@ class RpcRegistry:
                                 "schema_type": schema.get("type"),
                             }
                         )
-                self.methods[name] = {"name": name, "params": params}
+                result_schema = item.get("result") if isinstance(item.get("result"), dict) else None
+                self.methods[name] = {"name": name, "params": params, "result": result_schema}
                 self.exact_methods.add(name)
                 normalized = self.normalize(name)
                 self.normalized_methods.setdefault(normalized, []).append(name)
@@ -145,7 +148,7 @@ class RpcRegistry:
                 return sorted(matches, key=self._match_sort_key)[0]
         return None
 
-    def dump_methods(self, prefix: str) -> list[str]:
+    def list_methods(self, prefix: str) -> list[str]:
         normalized_prefix = self.normalize(prefix)
         needle = f"{normalized_prefix}_"
         found = {
@@ -155,6 +158,9 @@ class RpcRegistry:
             for method in methods
         }
         return sorted(found, key=self._match_sort_key)
+
+    def dump_methods(self, prefix: str) -> list[str]:
+        return self.list_methods(prefix)
 
     def closest_matches(self, name: str, limit: int = 5) -> list[str]:
         return get_close_matches(name, sorted(self.methods.keys()), n=limit, cutoff=0.35)
@@ -218,7 +224,8 @@ class RpcClient:
 
         self._req_id = 0
         self._lock = threading.Lock()
-        self._last_param_encoding_by_method: dict[str, str] = {}
+        self._last_param_encoding_by_method = _PARAM_ENCODING_BY_URL.setdefault(self._url, {})
+        self._resolved_methods = _RESOLVED_METHODS_BY_URL.setdefault(self._url, {})
         self._last_request_excerpt: dict[str, Any] = {}
         self._last_response_excerpt: dict[str, Any] = {}
 
@@ -243,6 +250,21 @@ class RpcClient:
         RpcParseError
             When the response is not valid JSON-RPC 2.0.
         """
+        if method == "rpc.discover":
+            resolved_method = method
+        elif method != "" and "." not in method and "_" not in method:
+            resolved_method = method
+        else:
+            cache_key = RpcRegistry.normalize(method)
+            resolved_method = self._resolved_methods.get(cache_key, method)
+            if resolved_method == method:
+                try:
+                    registry = self.registry()
+                    if not registry.has_method(method):
+                        resolved_method = self.resolve_method(method, [method])
+                except Exception:
+                    resolved_method = method
+        rpc_params, param_type = self._encode_params(resolved_method, params)
         if request_id is None:
             with self._lock:
                 self._req_id += 1
@@ -250,20 +272,20 @@ class RpcClient:
 
         payload = {
             "jsonrpc": "2.0",
-            "method": method,
+            "method": resolved_method,
             "id": request_id,
         }
-        if params is not None:
-            payload["params"] = params
+        if rpc_params is not None:
+            payload["params"] = rpc_params
 
         body = safe_json_dumps(payload)
         last_exc: Exception | None = None
-        self._last_request_excerpt = {"method": method, "params": payload.get("params")}
+        self._last_request_excerpt = {"method": resolved_method, "param_type": param_type, "params": payload.get("params")}
 
         for attempt in range(self._max_retries):
             if attempt > 0:
                 backoff = _BASE_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.1)
-                log.debug("RpcClient: retry %d/%d in %.2fs for %s", attempt + 1, self._max_retries, backoff, method)
+                log.debug("RpcClient: retry %d/%d in %.2fs for %s", attempt + 1, self._max_retries, backoff, resolved_method)
                 time.sleep(backoff)
 
             try:
@@ -300,13 +322,51 @@ class RpcClient:
                 continue
 
             # Validate JSON-RPC 2.0 envelope
-            rpc_response = self._parse_response(data, method)
+            rpc_response = self._parse_response(data, resolved_method)
             self._last_response_excerpt = data if isinstance(data, dict) else {"raw": data}
             if rpc_response.error is not None:
-                raise RpcResponseError(rpc_response.error)
+                err = RpcResponseError(rpc_response.error)
+                if self._should_retry_with_positional(err, params):
+                    retry_params = self._params_from_dict(resolved_method, params if isinstance(params, dict) else {})
+                    self._last_param_encoding_by_method[resolved_method] = "positional"
+                    return self.call(resolved_method, retry_params, request_id=request_id)
+                raise err
+            self._last_param_encoding_by_method[resolved_method] = param_type
             return rpc_response.result
 
-        raise (last_exc or RpcTransportError(f"All {self._max_retries} attempts failed for {method!r}"))
+        raise (last_exc or RpcTransportError(f"All {self._max_retries} attempts failed for {resolved_method!r}"))
+
+    def _should_retry_with_positional(self, exc: RpcResponseError, params: list[Any] | dict[str, Any] | None) -> bool:
+        if not isinstance(params, dict):
+            return False
+        msg = (exc.rpc_error.message or "").lower()
+        return exc.rpc_error.code == -32602 and "unexpected keyword argument" in msg and bool(params)
+
+    def _params_from_dict(self, method: str, values: dict[str, Any]) -> list[Any]:
+        spec = self.get_param_spec(method)
+        if not spec:
+            raise RpcParseError(f"Cannot convert object params to positional for {method}: missing OpenRPC params[] spec")
+        ordered: list[Any] = []
+        for p in spec:
+            name = p.get("name")
+            if isinstance(name, str) and name in values:
+                ordered.append(values[name])
+            elif p.get("required"):
+                raise RpcParseError(f"Missing required param {name!r} for method {method}")
+        return ordered
+
+    def _encode_params(self, method: str, params: list[Any] | dict[str, Any] | None) -> tuple[list[Any] | dict[str, Any] | None, str]:
+        if isinstance(params, list):
+            return params, "positional"
+        if params is None:
+            return None, "none"
+        cached = self._last_param_encoding_by_method.get(method)
+        if cached == "object":
+            return params, "object"
+        spec = self.get_param_spec(method)
+        if spec:
+            return self._params_from_dict(method, params), "positional"
+        return params, "object"
 
     def _parse_response(self, data: Any, method: str) -> RpcResponse[Any]:
         if not isinstance(data, dict):
@@ -343,11 +403,11 @@ class RpcClient:
         with _DISCOVER_CACHE_LOCK:
             cached = _DISCOVER_CACHE_BY_URL.get(self._url)
             if cached is not None:
-                ts, payload = cached
+                ts, payload, cached_registry = cached
                 if (now - ts) < _DISCOVER_CACHE_TTL_S:
                     self._discover_cache = payload
                     self._discover_ts = ts
-                    return RpcRegistry(payload)
+                    return cached_registry
 
         discover_client = RpcClient(self._url, connect_timeout=3.0, read_timeout=8.0, max_retries=1)
         try:
@@ -358,10 +418,11 @@ class RpcClient:
             result = {"raw": result}
         self._discover_cache = result
         self._discover_ts = now
+        registry = RpcRegistry(result)
         with _DISCOVER_CACHE_LOCK:
-            _DISCOVER_CACHE_BY_URL[self._url] = (now, result)
+            _DISCOVER_CACHE_BY_URL[self._url] = (now, result, registry)
         log.debug("RpcClient: discover cache updated for %s", self._url)
-        return RpcRegistry(result)
+        return registry
 
     def _known_methods(self) -> set[str]:
         """Return the set of method names from the cached/fetched discover result.
@@ -376,18 +437,28 @@ class RpcClient:
     def resolve_method(self, requested: str, candidates: list[str] | None = None) -> str:
         """Resolve *requested* against registry, raising -32601-style error if missing."""
         names = candidates or [requested]
+        cache_key = RpcRegistry.normalize(requested)
+        cached_resolved = self._resolved_methods.get(cache_key)
+        if cached_resolved:
+            return cached_resolved
         try:
             registry = self.registry()
         except Exception:
             # Discovery unavailable: keep client functional with deterministic fallback.
-            return requested.replace(".", "_") if "." in requested else requested
+            resolved = requested.replace(".", "_") if "." in requested else requested
+            self._resolved_methods[cache_key] = resolved
+            return resolved
         if not registry.method_names:
-            return requested.replace(".", "_") if "." in requested else requested
+            resolved = requested.replace(".", "_") if "." in requested else requested
+            self._resolved_methods[cache_key] = resolved
+            return resolved
         resolved = registry.resolve_any(names)
         if resolved:
+            self._resolved_methods[cache_key] = resolved
             return resolved
         normalized = registry.normalize_legacy(requested)
         if registry.has_method(normalized):
+            self._resolved_methods[cache_key] = normalized
             return normalized
         suggestions: list[str] = []
         for name in names:
@@ -407,7 +478,9 @@ class RpcClient:
         candidates = list(_RPC_OPERATION_CANDIDATES.get(operation, ())) + list(extra_candidates)
         if not candidates:
             raise RpcParseError(f"Unknown RPC operation {operation!r}")
-        return self.resolve_method(candidates[0], candidates)
+        resolved = self.resolve_method(candidates[0], candidates)
+        self._resolved_methods[RpcRegistry.normalize(operation)] = resolved
+        return resolved
 
     def get_param_spec(self, method: str) -> list[dict[str, Any]]:
         try:
@@ -479,15 +552,7 @@ class RpcClient:
         """Return first candidate present in discover list; fallback to first candidate."""
         if not candidates:
             raise RpcParseError("No method candidates provided")
-        known = self._known_methods()
-        if known:
-            for c in candidates:
-                if c in known:
-                    return c
-                normalized = c.replace(".", "_") if "." in c else c
-                if normalized in known:
-                    return normalized
-        return candidates[0]
+        return self.resolve_method(candidates[0], list(candidates))
 
     def rpc_diagnostics(self, prefixes: tuple[str, ...] = ("chain", "tx", "da", "aicf")) -> dict[str, Any]:
         registry = self.registry()
@@ -501,6 +566,7 @@ class RpcClient:
             "discover_info": registry.server_info,
             "method_count": len(registry.method_names),
             "methods": methods,
+            "resolved_methods": dict(self._resolved_methods),
             "param_encoding": dict(self._last_param_encoding_by_method),
             "last_request_excerpt": self._last_request_excerpt,
             "last_response_excerpt": self._last_response_excerpt,

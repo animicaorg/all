@@ -12,6 +12,15 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _clear_rpc_discover_cache() -> None:
+    from animica_studio.services import rpc_client
+
+    rpc_client._DISCOVER_CACHE_BY_URL.clear()  # noqa: SLF001
+    rpc_client._PARAM_ENCODING_BY_URL.clear()  # noqa: SLF001
+    rpc_client._RESOLVED_METHODS_BY_URL.clear()  # noqa: SLF001
+
 # Ensure package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -468,6 +477,88 @@ def test_rpc_client_ping_false_on_error():
         mock_post.side_effect = requests.exceptions.ConnectionError("down")
         client = RpcClient("http://localhost:8545/rpc", max_retries=1)
         assert client.ping() is False
+        client.close()
+
+
+def test_rpc_client_converts_kwargs_to_positional_from_openrpc() -> None:
+    from animica_studio.services.rpc_client import RpcClient
+
+    discover_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "methods": [
+                {
+                    "name": "aicf.creditsByAddress",
+                    "params": [{"name": "address", "required": True, "schema": {"type": "string"}}],
+                }
+            ]
+        },
+    }
+    result_resp = {"jsonrpc": "2.0", "id": 2, "result": {"credits": 5}}
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [_make_mock_response(discover_resp), _make_mock_response(result_resp)]
+        client = RpcClient("http://localhost:8545/rpc", max_retries=1)
+        result = client.call("aicf_creditsByAddress", {"address": "anim1abc"})
+        assert result == {"credits": 5}
+        payload = mock_post.call_args_list[-1].kwargs["data"]
+        assert '"method": "aicf.creditsByAddress"' in payload
+        assert '"params": ["anim1abc"]' in payload
+        diag = client.rpc_diagnostics(prefixes=("aicf",))
+        assert diag["param_encoding"]["aicf.creditsByAddress"] == "positional"
+        client.close()
+
+
+def test_rpc_client_validates_missing_required_param_before_call() -> None:
+    from animica_studio.services.rpc_client import RpcClient, RpcParseError
+
+    discover_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "methods": [
+                {
+                    "name": "da.putBlob",
+                    "params": [
+                        {"name": "namespace", "required": True, "schema": {"type": "integer"}},
+                        {"name": "data", "required": True, "schema": {"type": "string"}},
+                    ],
+                }
+            ]
+        },
+    }
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [_make_mock_response(discover_resp)]
+        client = RpcClient("http://localhost:8545/rpc", max_retries=1)
+        with pytest.raises(RpcParseError):
+            client.call("da.putBlob", {"data": "0x1234"})
+        assert mock_post.call_count == 1
+        client.close()
+
+
+def test_rpc_client_resolves_operation_cache_and_registry_cache() -> None:
+    from animica_studio.services.rpc_client import RpcClient
+
+    discover_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "methods": [
+                {"name": "da.putBlob", "params": [{"name": "namespace", "required": True}, {"name": "data", "required": True}]}
+            ]
+        },
+    }
+    put_resp = {"jsonrpc": "2.0", "id": 2, "result": "0xblob"}
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [_make_mock_response(discover_resp), _make_mock_response(put_resp)]
+        client = RpcClient("http://localhost:8545/rpc", max_retries=1)
+        out = client.call_operation("DA_PUT_BLOB", {"namespace": 0, "data": "0xab"})
+        assert out == "0xblob"
+        diag = client.rpc_diagnostics(prefixes=("da",))
+        assert diag["resolved_methods"].get("da_put_blob") == "da.putBlob"
         client.close()
 
 
