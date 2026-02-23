@@ -18,7 +18,7 @@ from typing import Any, Callable
 import logging
 
 try:
-    from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThreadPool, QTimer, Signal
+    from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QThread, QThreadPool, QTimer, Signal, Slot
     from PySide6.QtWidgets import QApplication
 except ImportError:
     # Allow headless import for CLI-only utilities and unit tests that don't use Qt.
@@ -26,8 +26,10 @@ except ImportError:
     QApplication = None  # type: ignore[assignment,misc]
     QProcess = None  # type: ignore[assignment,misc]
     QProcessEnvironment = None  # type: ignore[assignment,misc]
+    QThread = None  # type: ignore[assignment,misc]
     QThreadPool = None  # type: ignore[assignment,misc]
     QTimer = None  # type: ignore[assignment,misc]
+    Slot = lambda *args, **kwargs: (lambda fn: fn)  # type: ignore[assignment,misc]
 
     class Signal:  # type: ignore[misc,no-redef]
         """No-op Signal stub used when PySide6 is unavailable (headless/test)."""
@@ -40,6 +42,13 @@ except ImportError:
 from animica_studio.storage.config import Config, discover_repo_root, load_config, save_config
 
 log = logging.getLogger(__name__)
+
+
+def assert_ui_thread() -> bool:
+    app = QApplication.instance() if QApplication else None
+    if app is None or QThread is None:
+        return True
+    return QThread.currentThread() == app.thread()
 
 
 class JobHandle(QObject):
@@ -196,6 +205,7 @@ def _is_program_like_token(token: str) -> bool:
 
 class JobRunner(QObject):
     _instance: "JobRunner | None" = None
+    _run_cli_requested = Signal(object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         # Raise early if the Qt runtime is absent so callers get a clear message
@@ -213,6 +223,7 @@ class JobRunner(QObject):
         self._stderr_buffers: dict[str, str] = {}
         self._stderr_captures: dict[str, str] = {}
         self._pool = QThreadPool.globalInstance()
+        self._run_cli_requested.connect(self._run_cli_on_ui_thread)
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
@@ -232,10 +243,6 @@ class JobRunner(QObject):
         env_overrides: dict[str, str] | None = None,
         timeout_s: int = 120,
     ) -> JobHandle:
-        job_id = str(uuid.uuid4())
-        handle = JobHandle(job_id, self)
-        self._jobs[job_id] = handle
-
         if not args:
             raise ValueError("run_cli() requires subcommand args")
         if _is_program_like_token(args[0]):
@@ -243,10 +250,81 @@ class JobRunner(QObject):
             log.error(msg)
             raise ValueError(msg)
 
+        job_id = str(uuid.uuid4())
+        handle = JobHandle(job_id, self)
+        self._jobs[job_id] = handle
+
+        thread_name = QThread.currentThread().objectName() if QThread else "<n/a>"
+        thread_id = int(QThread.currentThreadId()) if QThread else -1
+        log.info("JobRunner.run_cli called on thread=%s id=%s (must be main)", thread_name or "<unnamed>", thread_id)
+        if not assert_ui_thread():
+            self._run_cli_requested.emit({
+                "job_id": job_id,
+                "handle": handle,
+                "args": list(args),
+                "cwd": cwd,
+                "env": dict(env or {}),
+                "env_overrides": dict(env_overrides or {}),
+                "timeout_s": timeout_s,
+            })
+            return handle
+
+        self._start_cli_job(
+            job_id=job_id,
+            handle=handle,
+            args=list(args),
+            cwd=cwd,
+            env=env,
+            env_overrides=env_overrides,
+            timeout_s=timeout_s,
+        )
+        return handle
+
+    @Slot(object)
+    def _run_cli_on_ui_thread(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        job_id = str(payload.get("job_id") or "")
+        handle = payload.get("handle")
+        if not isinstance(handle, JobHandle) or not job_id:
+            return
+        self._start_cli_job(
+            job_id=job_id,
+            handle=handle,
+            args=list(payload.get("args") or []),
+            cwd=payload.get("cwd"),
+            env=dict(payload.get("env") or {}),
+            env_overrides=dict(payload.get("env_overrides") or {}),
+            timeout_s=int(payload.get("timeout_s") or 120),
+        )
+
+    def _start_cli_job(
+        self,
+        *,
+        job_id: str,
+        handle: JobHandle,
+        args: list[str],
+        cwd: str | None,
+        env: dict[str, str] | None,
+        env_overrides: dict[str, str] | None,
+        timeout_s: int,
+    ) -> None:
+        if not assert_ui_thread():
+            QTimer.singleShot(0, lambda: self._start_cli_job(
+                job_id=job_id,
+                handle=handle,
+                args=args,
+                cwd=cwd,
+                env=env,
+                env_overrides=env_overrides,
+                timeout_s=timeout_s,
+            ))
+            return
+
         resolved = resolve_animica_cli()
         if not resolved.argv_prefix:
             QTimer.singleShot(0, lambda: self._emit_missing_cli(handle, "Animica CLI not found. Configure CLI path in Settings."))
-            return handle
+            return
         log.info("CLI resolved to: %s", resolved.argv_prefix[0])
         resolved_argv = [*resolved.argv_prefix, *args]
         program, *program_args = resolved_argv
@@ -291,7 +369,6 @@ class JobRunner(QObject):
         timeout.start(max(1, timeout_s) * 1000)
 
         proc.start()
-        return handle
 
 
     def run_callable(self, fn: Callable[[], Any], timeout_s: int = 30) -> JobHandle:

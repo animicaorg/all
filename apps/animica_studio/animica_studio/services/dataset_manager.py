@@ -11,6 +11,7 @@ from urllib.request import urlopen
 
 from animica_studio.services.dataset_bootstrap_service import BootstrapOptions, DatasetBootstrapService
 from animica_studio.services.dataset_profile import DatasetProfiler
+from animica_studio.storage.config import load_config
 from animica_studio.util.paths import app_data_dir
 
 
@@ -20,7 +21,10 @@ class DatasetManager:
     def __init__(self) -> None:
         self._root = app_data_dir() / "datasets"
         self._root.mkdir(parents=True, exist_ok=True)
-        self._bootstrap = DatasetBootstrapService()
+        cfg = load_config()
+        ena = cfg.ena if isinstance(cfg.ena, dict) else {}
+        source_settings = ena.get("dataset_sources") if isinstance(ena, dict) else {}
+        self._bootstrap = DatasetBootstrapService(source_settings=source_settings if isinstance(source_settings, dict) else {})
 
     def bootstrap_large_dataset(
         self,
