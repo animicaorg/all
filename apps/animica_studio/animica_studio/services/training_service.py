@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 import time
 import uuid
 from dataclasses import asdict
@@ -12,19 +11,10 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.training_models import TrainingConfig, TrainingMetrics, TrainingRun
-from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking
+from animica_studio.services.ena_remote_preflight import RemotePreflightResult, run_remote_preflight
+from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking, resolve_animica_cli
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.paths import app_data_dir
-
-# ENA training CLI discovery (canonical from python/animica/cli/ena.py):
-# - Command group: `animica ena train`
-# - Methods:
-#   - submit: `animica ena train submit --plan <plan.json> --budget <anm> [--endpoint --rpc-url --from --json]`
-#   - watch: `animica ena train watch <job_id> [--interval N] [--json]`
-#   - list:  `animica ena train list [--status --limit --json]`
-# - Checkpoints: `animica ena checkpoints list|fetch|publish`
-# - Primary progress signal: watch output lines containing `Status:`, `Progress:` and optional free-form message.
-# - JSON mode (`--json`) may include structured fields: status, progress, message, budget, spent.
 
 
 class ENATrainingService(QObject):
@@ -45,24 +35,70 @@ class ENATrainingService(QObject):
         self._watch_handles: dict[str, JobHandle] = {}
         self._runtime_timers: dict[str, QTimer] = {}
         self._watch_jobs_to_run: dict[str, str] = {}
+        self._last_argv_by_run: dict[str, list[str]] = {}
+        self._last_error_by_run: dict[str, str] = {}
+        self._last_preflight_by_run: dict[str, RemotePreflightResult] = {}
         self._load_runs()
 
     def last_config(self) -> TrainingConfig:
-        return TrainingConfig.from_dict((self._config.ena.get("training") or {}).get("last_config"))
+        ena_training = dict(self._config.ena.get("training") or {})
+        mode = str(ena_training.get("mode") or "").strip().lower() or "local"
+        services_url = str(self._config.ena.get("aicf", {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
+        api_key = str(self._config.ena.get("aicf", {}).get("api_key") or "").strip()
+        cfg = TrainingConfig.from_dict(ena_training.get("last_config"))
+        cfg.training_mode = mode
+        cfg.services_url = services_url
+        cfg.api_key = api_key
+        return cfg
 
     def save_last_config(self, cfg: TrainingConfig) -> None:
         ena_training = dict(self._config.ena.get("training") or {})
+        ena_training["mode"] = (cfg.training_mode or "local").lower()
         ena_training["last_config"] = cfg.to_dict()
         self._config.ena["training"] = ena_training
+
+        aicf_cfg = dict(self._config.ena.get("aicf") or {})
+        aicf_cfg["services_url"] = (cfg.services_url or "").strip()
+        aicf_cfg["api_key"] = (cfg.api_key or "").strip()
+        self._config.ena["aicf"] = aicf_cfg
         save_config(self._config)
+
+    def ensure_training_mode_migration(self) -> str | None:
+        training = dict(self._config.ena.get("training") or {})
+        had_mode = "mode" in training
+        mode = str(training.get("mode") or training.get("ena_submit_mode") or "local").strip().lower()
+        warning: str | None = None
+        changed = not had_mode
+        if mode not in {"local", "remote"}:
+            mode = "local"
+            warning = "Invalid ENA training mode found. Switched to Local mode."
+            changed = True
+
+        services_url = str((self._config.ena.get("aicf") or {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
+        if mode == "remote" and not services_url:
+            mode = "local"
+            warning = "Remote mode was configured without services_url; switched to Local mode."
+            changed = True
+
+        training["mode"] = mode
+        self._config.ena["training"] = training
+        if changed:
+            save_config(self._config)
+        return warning
 
     def list_runs(self) -> list[TrainingRun]:
         return sorted(self._runs.values(), key=lambda r: r.started_at, reverse=True)
 
     def start_training(self, config: TrainingConfig) -> str:
         self._validate_config(config)
-        self._validate_submit_endpoint(config)
-        self._verify_cli_support()
+        mode = (config.training_mode or "local").strip().lower()
+        if mode not in {"local", "remote"}:
+            raise ValueError("Training mode must be 'local' or 'remote'.")
+
+        if mode == "local":
+            self._verify_local_cli_support()
+        else:
+            self._verify_remote_cli_support()
 
         run_id = f"run-{uuid.uuid4().hex[:12]}"
         plan_path = self._write_plan_file(run_id, config)
@@ -79,15 +115,12 @@ class ENATrainingService(QObject):
         self.save_last_config(config)
         self.status_changed.emit(run_id, "starting")
 
-        args = ["ena", "train", "submit", "--plan", str(plan_path), "--budget", str(config.budget_anm), "--json"]
-        if (config.ena_submit_mode or "local").lower() == "remote":
-            if config.aicf_services_url:
-                args.extend(["--endpoint", config.aicf_services_url])
-        submit_handle = self._runner.run_cli(args, timeout_s=3600)
-        self._handles[run_id] = submit_handle
-        submit_handle.output.connect(lambda _jid, stream, text, rid=run_id: self._on_submit_output(rid, stream, text))
-        submit_handle.error.connect(lambda _jid, msg, details, rid=run_id: self._on_submit_error(rid, msg, details))
-        submit_handle.finished.connect(lambda _jid, code, _payload, rid=run_id: self._on_submit_finished(rid, code))
+        if mode == "local":
+            self.log_line.emit(run_id, "system", "Mode: local (CLI)")
+            self._start_local_training(run_id, config, plan_path)
+        else:
+            self.log_line.emit(run_id, "system", f"Mode: remote (services_url={config.services_url})")
+            self._start_remote_training(run_id, config, plan_path)
 
         if config.max_runtime_minutes:
             timer = QTimer(self)
@@ -110,7 +143,6 @@ class ENATrainingService(QObject):
 
         run = self._runs.get(run_id)
         if run and run.job_id:
-            # CLI currently exposes submit/list/watch. Cancel endpoint may not be supported.
             self.log_line.emit(run_id, "system", "Remote cancel not supported by current CLI; stopped local watch.")
 
         self._set_status(run_id, "stopped")
@@ -124,24 +156,66 @@ class ENATrainingService(QObject):
     def status(self, run_id: str) -> TrainingRun | None:
         return self._runs.get(run_id)
 
-    def _validate_submit_endpoint(self, cfg: TrainingConfig) -> None:
-        mode = (cfg.ena_submit_mode or "local").strip().lower()
-        if mode != "remote":
-            return
-        endpoint = (cfg.aicf_services_url or "").strip()
-        if not endpoint:
-            raise ValueError("Remote submit mode requires AICF services URL. Set it in Training settings or switch to local mode.")
-        host = endpoint.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].strip()
-        if not host:
-            raise ValueError("Invalid AICF services URL host.")
-        try:
-            socket.getaddrinfo(host, None)
-        except OSError as exc:
-            raise ValueError(
-                f"Remote submit endpoint is unreachable ({host}): {exc}. Switch ENA submit mode to local or fix URL."
-            ) from exc
+    def build_diagnostics(self, run_id: str | None) -> dict[str, Any]:
+        cfg = self.last_config()
+        resolved = resolve_animica_cli(self._config)
+        base: dict[str, Any] = {
+            "mode": cfg.training_mode,
+            "services_url": cfg.services_url,
+            "rpc_url": self._config.get_active_profile().rpc_url,
+            "cli_path": " ".join(resolved.argv_prefix) if resolved.argv_prefix else "",
+            "last_error": "",
+            "last_argv": [],
+            "preflight": {},
+        }
+        if not run_id:
+            return base
+        base["last_argv"] = list(self._last_argv_by_run.get(run_id) or [])
+        base["last_error"] = self._last_error_by_run.get(run_id, "")
+        preflight = self._last_preflight_by_run.get(run_id)
+        if preflight:
+            base["preflight"] = preflight.to_dict()
+        return base
 
-    def _verify_cli_support(self) -> None:
+    def _start_local_training(self, run_id: str, cfg: TrainingConfig, plan_path: Path) -> None:
+        args = ["ena", "train", "submit", "--plan", str(plan_path), "--budget", str(cfg.budget_anm), "--json"]
+        self._last_argv_by_run[run_id] = list(args)
+        submit_handle = self._runner.run_cli(args, timeout_s=3600)
+        self._handles[run_id] = submit_handle
+        submit_handle.output.connect(lambda _jid, stream, text, rid=run_id: self._on_submit_output(rid, stream, text))
+        submit_handle.error.connect(lambda _jid, msg, details, rid=run_id: self._on_submit_error(rid, msg, details))
+        submit_handle.finished.connect(lambda _jid, code, _payload, rid=run_id: self._on_submit_finished(rid, code))
+
+    def _start_remote_training(self, run_id: str, cfg: TrainingConfig, plan_path: Path) -> None:
+        preflight = run_remote_preflight(cfg.services_url)
+        self._last_preflight_by_run[run_id] = preflight
+        if not preflight.ok:
+            err = (
+                "Remote training endpoint not reachable (DNS/HTTP). "
+                "Switch to Local mode or fix services_url. "
+                f"host={preflight.host} ips={preflight.resolved_ips} error={preflight.error}"
+            )
+            self._last_error_by_run[run_id] = err
+            self.log_line.emit(run_id, "error", err)
+            self.log_line.emit(run_id, "system", "Action: Switch to Local mode and retry.")
+            self._set_status(run_id, "failed")
+            return
+
+        args = ["ena", "train", "submit", "--plan", str(plan_path), "--budget", str(cfg.budget_anm), "--json", "--endpoint", cfg.services_url]
+        self._last_argv_by_run[run_id] = list(args)
+        submit_handle = self._runner.run_cli(args, timeout_s=3600)
+        self._handles[run_id] = submit_handle
+        submit_handle.output.connect(lambda _jid, stream, text, rid=run_id: self._on_submit_output(rid, stream, text))
+        submit_handle.error.connect(lambda _jid, msg, details, rid=run_id: self._on_submit_error(rid, msg, details))
+        submit_handle.finished.connect(lambda _jid, code, _payload, rid=run_id: self._on_submit_finished(rid, code))
+
+    def _verify_local_cli_support(self) -> None:
+        probe = run_cli_blocking(["ena", "train", "--help"], timeout_s=15, config=self._config)
+        text = (probe.stdout or "") + "\n" + (probe.stderr or "")
+        if probe.returncode != 0 or "submit" not in text:
+            raise RuntimeError("Unable to validate local ENA training CLI. Expected `animica ena train submit`.")
+
+    def _verify_remote_cli_support(self) -> None:
         probe = run_cli_blocking(["ena", "train", "--help"], timeout_s=15, config=self._config)
         text = (probe.stdout or "") + "\n" + (probe.stderr or "")
         if probe.returncode != 0:
@@ -230,13 +304,16 @@ class ENATrainingService(QObject):
                 self._start_watch(run_id, run.job_id)
 
     def _on_submit_error(self, run_id: str, msg: str, details: str) -> None:
-        self.log_line.emit(run_id, "error", f"{msg} {details}".strip())
+        err = f"{msg} {details}".strip()
+        self._last_error_by_run[run_id] = err
+        self.log_line.emit(run_id, "error", err)
 
     def _on_submit_finished(self, run_id: str, exit_code: int) -> None:
         if exit_code != 0:
             run = self._runs.get(run_id)
             if run and not run.job_id:
                 run.error = f"submit failed (exit {exit_code})"
+                self._last_error_by_run[run_id] = run.error
                 self._set_status(run_id, "failed")
 
     def _start_watch(self, run_id: str, job_id: str) -> None:
