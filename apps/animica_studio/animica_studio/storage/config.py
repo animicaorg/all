@@ -72,6 +72,10 @@ class Profile:
     node: NodeConfig = field(default_factory=NodeConfig)
     cli: CliConfig = field(default_factory=CliConfig)
 
+    def get_rpc_url(self) -> str:
+        """Canonical accessor for the profile RPC URL."""
+        return (self.rpc_url or "").strip()
+
 
 @dataclass
 class WalletSettings:
