@@ -37,6 +37,7 @@ class DaStatusService:
             configure_method = registry.resolve_any(["da_configure", "da.configure"])
             if not isinstance(configure_method, str) or not configure_method:
                 configure_method = None
+            configure_param_spec = client.get_param_spec(configure_method) if configure_method else []
             status_method = registry.resolve_any(["da_getStatus", "da.getStatus", "da_status", "da.status"])
             da_found_methods = registry.dump_methods("da")
             payload: dict[str, Any] | None = None
@@ -66,6 +67,8 @@ class DaStatusService:
                     "configure": configure_method,
                     "status": status_method,
                 },
+                "configure_param_spec": configure_param_spec,
+                "can_configure_allow_remote_put": any(p.get("name") == "allow_remote_put" for p in configure_param_spec if isinstance(p, dict)),
             }
         except Exception as exc:  # noqa: BLE001
             return {
