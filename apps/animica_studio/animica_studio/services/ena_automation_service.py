@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+log = logging.getLogger(__name__)
+
 
 class DaPolicyError(RuntimeError):
     """Structured ENA publish DA policy error with actionable remediation."""
@@ -34,7 +40,9 @@ class DaPolicyError(RuntimeError):
     def to_step_payload(self) -> dict[str, Any]:
         actions = []
         if self.can_enable_remote_put:
-            actions.append({"id": "enable_remote_put", "label": "Enable DA uploads (allow_remote_put)"})
+            actions.append({"id": "enable_remote_put", "label": "Enable allow_remote_put and retry"})
+        if bool((self.diagnostics or {}).get("local_node")):
+            actions.append({"id": "local_upload", "label": "Retry local ingest"})
         actions.append({"id": "copy_diagnostics", "label": "Copy diagnostics"})
         return {
             "ok": False,
@@ -86,6 +94,35 @@ class EnaService:
         if not isinstance(spec, list):
             return False
         return any((p or {}).get("name") == "allow_remote_put" for p in spec if isinstance(p, dict))
+
+    @staticmethod
+    def _is_local_rpc(rpc_url: str) -> bool:
+        try:
+            host = (urlparse(rpc_url or "").hostname or "").lower()
+        except Exception:
+            return False
+        return host in {"127.0.0.1", "localhost", "::1"}
+
+    @staticmethod
+    def _map_container_da_dir_to_host(da_dir: str) -> str:
+        if da_dir.startswith("/data/chain-"):
+            return os.path.expanduser("~/.animica") + da_dir.removeprefix("/data")
+        if da_dir.startswith("/data/"):
+            return os.path.expanduser("~/.animica") + da_dir.removeprefix("/data")
+        return da_dir
+
+    def _build_da_diagnostics(self, status: dict[str, Any]) -> dict[str, Any]:
+        da_dir = str(status.get("configured_dir") or status.get("raw", {}).get("dir") or "")
+        rpc_url = str(status.get("rpc_url") or self.config.get_active_profile().node.rpc_local_url or "")
+        return {
+            "da_enabled": bool(status.get("enabled")),
+            "allow_remote_put": bool(status.get("allow_remote_put")),
+            "da_dir": da_dir,
+            "rpc_url": rpc_url,
+            "version": str(status.get("raw", {}).get("version") or ""),
+            "local_node": self._is_local_rpc(rpc_url),
+            "host_da_dir": self._map_container_da_dir_to_host(da_dir),
+        }
 
 
     def detect_capabilities(self) -> dict[str, Any]:
@@ -226,30 +263,30 @@ class EnaService:
             step.logs.append("Preparing checkpoint bytes…")
             step.progress = 25
 
+            diagnostics = self._build_da_diagnostics(status)
+            supports_toggle = self._supports_allow_remote_put(status)
+
+            strategy = "rpc_put"
             if status.get("allow_remote_put") is False:
-                supports_toggle = self._supports_allow_remote_put(status)
-                diagnostics = {
-                    "da_enabled": bool(status.get("enabled")),
-                    "allow_remote_put": bool(status.get("allow_remote_put")),
-                    "da_dir": str(status.get("configured_dir") or status.get("raw", {}).get("dir") or ""),
-                    "rpc_url": str(status.get("rpc_url") or self.config.get_active_profile().node.rpc_local_url or ""),
-                    "version": str(status.get("raw", {}).get("version") or ""),
-                }
-                recs = [
-                    "Open DA settings and enable allow_remote_put for local/dev nodes.",
-                    "Retry publish after toggling DA remote uploads.",
-                ]
-                raise DaPolicyError(
-                    message="DA uploads are blocked by node policy (allow_remote_put=false).",
-                    code="DA_REMOTE_PUT_BLOCKED",
-                    da_enabled=bool(status.get("enabled")),
-                    allow_remote_put=False,
-                    da_dir=diagnostics["da_dir"],
-                    rpc_url=diagnostics["rpc_url"],
-                    can_enable_remote_put=supports_toggle,
-                    diagnostics=diagnostics,
-                    recommendations=recs,
-                )
+                if diagnostics["local_node"]:
+                    strategy = "local_ingest"
+                    step.logs.append("[system] Using local DA ingest (remote puts disabled)")
+                else:
+                    recs = [
+                        "Remote DA uploads are disabled on this node.",
+                        "You must enable allow_remote_put on the node operator side.",
+                    ]
+                    raise DaPolicyError(
+                        message="Remote DA uploads are disabled on this node. You must enable allow_remote_put on the node operator side.",
+                        code="DA_REMOTE_PUT_BLOCKED",
+                        da_enabled=bool(status.get("enabled")),
+                        allow_remote_put=False,
+                        da_dir=diagnostics["da_dir"],
+                        rpc_url=diagnostics["rpc_url"],
+                        can_enable_remote_put=supports_toggle,
+                        diagnostics=diagnostics,
+                        recommendations=recs,
+                    )
 
             step.logs.append("Uploading to DA…")
             step.progress = 60
@@ -260,8 +297,31 @@ class EnaService:
 
             step.logs.append("Verifying blob…")
             step.progress = 90
+            verified = self.da.has_blob(commit)
+            if not verified:
+                try:
+                    _ = self.da.get_blob(commit)
+                    verified = True
+                except Exception:
+                    verified = False
+            if not verified:
+                raise RuntimeError(f"DA verification failed for blob {commit}")
+
+            log.info(
+                "ENA publish DA push strategy=%s commitment=%s verified=%s",
+                strategy,
+                commit,
+                verified,
+            )
             step_cache["commitment"] = commit
-            return {"commitment": commit, "mode": "network", "da_status": status}
+            return {
+                "commitment": commit,
+                "mode": "network" if strategy == "rpc_put" else "local-ingest",
+                "push_strategy": strategy,
+                "verification": {"verified": verified},
+                "da_status": status,
+                "diagnostics": diagnostics,
+            }
 
         def _register(step):
             payload = {"checkpoint_sha": checkpoint_sha, "commitment": step_cache.get("commitment")}

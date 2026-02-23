@@ -85,7 +85,7 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
         out = svc.enable_da("/data/da", 50 * 1024**3)
 
     assert out["ok"] is True
-    configure_call = cli.call_with_schema.call_args_list[1]
+    configure_call = cli.call_with_schema.call_args_list[0]
     assert configure_call.args[0] == "da_configure"
     assert configure_call.args[1]["enabled"] is True
     assert configure_call.args[1]["dir"] == "/data/da"
