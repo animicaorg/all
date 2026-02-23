@@ -20,9 +20,11 @@ from animica_studio.services.ena_store import EnaStore
 from animica_studio.storage.config import Config
 from animica_studio.ui.pages.checkpoints_page import CheckpointsPage
 from animica_studio.ui.pages.contribute_page import ContributePage
+from animica_studio.ui.pages.ena_contribute_page import EnaContributePage
 from animica_studio.ui.pages.infer_page import InferPage
 from animica_studio.ui.pages.publish_page import PublishPage
 from animica_studio.ui.pages.train_page import TrainPage
+from animica_studio.services.ena_contribution_engine import EnaContributionEngine
 
 
 class EnaHubPage(QWidget):
@@ -44,10 +46,12 @@ class EnaHubPage(QWidget):
     TAB_TRAIN = 3
     TAB_PUBLISH = 4
     TAB_INFER = 5
+    TAB_ALWAYS_ON = 6
 
-    def __init__(self, config: Config, service: EnaService | None = None, parent: QWidget | None = None) -> None:
+    def __init__(self, config: Config, service: EnaService | None = None, contrib_engine: EnaContributionEngine | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service = service or EnaService(config, EnaStore())
+        self._contrib_engine = contrib_engine
         self._cap_label = QLabel("Checking capabilities...")
         self._status_label = QLabel()
 
@@ -62,6 +66,8 @@ class EnaHubPage(QWidget):
         self._tabs.addTab(TrainPage(config), "Train")
         self._tabs.addTab(PublishPage(self._service), "Publish")
         self._tabs.addTab(InferPage(self._service), "Infer")
+        if self._contrib_engine is not None:
+            self._tabs.addTab(EnaContributePage(config, self._contrib_engine), "ENA Contribute")
 
         self._refresh_capabilities()
 
