@@ -27,14 +27,22 @@ class DaClient:
         c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
         failures: list[str] = []
         try:
-            for method in methods:
+            if hasattr(c, "resolve_method"):
                 try:
+                    method = c.resolve_method(methods[0], list(methods))
                     return c.call(method, params)
                 except Exception as exc:  # noqa: BLE001
                     if not self._is_method_unavailable_error(exc):
                         raise
-                    failures.append(f"{method}: {exc}")
-                    continue
+                    failures.append(str(exc))
+            else:
+                for method in methods:
+                    try:
+                        return c.call(method, params)
+                    except Exception as exc:  # noqa: BLE001
+                        if not self._is_method_unavailable_error(exc):
+                            raise
+                        failures.append(f"{method}: {exc}")
             details = "; ".join(failures) if failures else "no details"
             raise RuntimeError(f"DA RPC unavailable for methods: {', '.join(methods)} ({details})")
         finally:
@@ -64,7 +72,7 @@ class DaClient:
         raise RuntimeError("Unable to decode DA get blob response")
 
     def status(self) -> dict[str, Any]:
-        return self._call_multi(("da.status", "da_status", "da.getStatus", "da_getStatus"), [{}])
+        return self._call_multi(("da_getStatus", "da.getStatus", "da_status", "da.status"), [{}])
 
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._call_multi(("da.configure", "da_configure"), [params])

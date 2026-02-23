@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from animica_studio.services.da_engine import DaContributionEngine, DaEngineConfig, DaEngineState
 from animica_studio.services.da_service import DaService
 from animica_studio.services.error_format import format_rpc_error, safe_json_dumps
+from animica_studio.services.rpc_client import RpcClient
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.qt import ui_thread_only
 from animica_studio.storage.config import Config, save_config
@@ -414,9 +415,11 @@ class DaPage(QWidget):
         upload_test_btn.clicked.connect(self._upload_test_blob)
         verify_test_btn = QPushButton("Verify retrieval")
         verify_test_btn.clicked.connect(self._verify_test_blob)
+        rpc_diag_btn = QPushButton("Copy RPC diagnostics")
+        rpc_diag_btn.clicked.connect(self._copy_rpc_diagnostics)
         copy_btn = QPushButton("Copy ID")
         copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._test_blob_id.text().strip()))
-        row = QHBoxLayout(); row.addWidget(upload_test_btn); row.addWidget(verify_test_btn); row.addWidget(copy_btn)
+        row = QHBoxLayout(); row.addWidget(upload_test_btn); row.addWidget(verify_test_btn); row.addWidget(rpc_diag_btn); row.addWidget(copy_btn)
         self._test_result = QLabel("—")
         test_form.addRow("", row)
         test_form.addRow("Result:", self._test_result)
@@ -697,6 +700,14 @@ class DaPage(QWidget):
             self._test_result.setText(f"Verified ({len(raw)} bytes, sha256={digest[:16]}..) in {(time.time()-started)*1000:.0f} ms")
         except Exception as exc:  # noqa: BLE001
             self._test_result.setText(f"Verify failed: {exc}")
+
+    def _copy_rpc_diagnostics(self) -> None:
+        rpc_url = self._contrib_rpc_url.text().strip() or self._config.get_active_profile().node.rpc_local_url
+        with RpcClient(rpc_url) as client:
+            diag = client.rpc_diagnostics(prefixes=("chain", "tx", "da", "aicf"))
+        text = safe_json_dumps(diag, indent=2)
+        QGuiApplication.clipboard().setText(text)
+        self._contrib_console.append_info("RPC diagnostics copied.")
 
     def closeEvent(self, event) -> None:
         self._da_engine.stop()
