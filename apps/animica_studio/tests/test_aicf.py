@@ -304,3 +304,15 @@ def test_aicf_service_claim_credits_success() -> None:
 
     assert result["ok"] is True
     assert result["data"]["claimed"] == 100
+
+
+def test_aicf_service_prefers_active_rpc_profile_url() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config(
+        active_profile_id="p1",
+        rpc_profiles=[{"id": "p1", "rpc_url": "http://127.0.0.1:9999"}],
+    )
+    svc = AicfService(cfg)
+    assert svc._rpc_url() == "http://127.0.0.1:9999/rpc"
