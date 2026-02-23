@@ -4,6 +4,49 @@ import json
 from pathlib import Path
 from typing import Any
 
+class DaPolicyError(RuntimeError):
+    """Structured ENA publish DA policy error with actionable remediation."""
+
+    def __init__(
+        self,
+        *,
+        message: str,
+        code: str,
+        da_enabled: bool,
+        allow_remote_put: bool,
+        da_dir: str,
+        rpc_url: str,
+        can_enable_remote_put: bool,
+        diagnostics: dict[str, Any],
+        recommendations: list[str],
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.da_enabled = da_enabled
+        self.allow_remote_put = allow_remote_put
+        self.da_dir = da_dir
+        self.rpc_url = rpc_url
+        self.can_enable_remote_put = can_enable_remote_put
+        self.diagnostics = diagnostics
+        self.recommendations = recommendations
+
+    def to_step_payload(self) -> dict[str, Any]:
+        actions = []
+        if self.can_enable_remote_put:
+            actions.append({"id": "enable_remote_put", "label": "Enable DA uploads (allow_remote_put)"})
+        actions.append({"id": "copy_diagnostics", "label": "Copy diagnostics"})
+        return {
+            "ok": False,
+            "error": self.message,
+            "error_code": self.code,
+            "retry_action": "Retry Push to DA",
+            "diagnostics": self.diagnostics,
+            "recommendations": self.recommendations,
+            "actions": actions,
+        }
+
+
 from animica_studio.services.artifact_service import ArtifactService
 from animica_studio.services.ena_store import EnaStore
 from animica_studio.services.fee_routing_service import FeeRoutingService
@@ -36,6 +79,14 @@ class EnaService:
             self.da = type('StubDa', (), {'upload_bytes': lambda *_a, **_k: {'ok': False, 'error': 'da unavailable'}})()
             self.da_status = type('StubDaStatus', (), {'get_status': lambda *_a, **_k: {'enabled': False, 'allow_remote_put': False}, 'enable_da': lambda *_a, **_k: {'ok': False}})()
         self.fees = FeeRoutingService()
+
+    @staticmethod
+    def _supports_allow_remote_put(status: dict[str, Any]) -> bool:
+        spec = status.get("configure_param_spec")
+        if not isinstance(spec, list):
+            return False
+        return any((p or {}).get("name") == "allow_remote_put" for p in spec if isinstance(p, dict))
+
 
     def detect_capabilities(self) -> dict[str, Any]:
         rpc_url = self.config.get_active_profile().rpc_url
@@ -171,12 +222,44 @@ class EnaService:
                 status = enabled_try.get("status", status)
                 if not status.get("enabled"):
                     raise RuntimeError(f"Node did not enable DA: {status}")
+
+            step.logs.append("Preparing checkpoint bytes…")
+            step.progress = 25
+
             if status.get("allow_remote_put") is False:
-                raise RuntimeError("DA is enabled but allow_remote_put=false on node.")
+                supports_toggle = self._supports_allow_remote_put(status)
+                diagnostics = {
+                    "da_enabled": bool(status.get("enabled")),
+                    "allow_remote_put": bool(status.get("allow_remote_put")),
+                    "da_dir": str(status.get("configured_dir") or status.get("raw", {}).get("dir") or ""),
+                    "rpc_url": str(status.get("rpc_url") or self.config.get_active_profile().node.rpc_local_url or ""),
+                    "version": str(status.get("raw", {}).get("version") or ""),
+                }
+                recs = [
+                    "Open DA settings and enable allow_remote_put for local/dev nodes.",
+                    "Retry publish after toggling DA remote uploads.",
+                ]
+                raise DaPolicyError(
+                    message="DA uploads are blocked by node policy (allow_remote_put=false).",
+                    code="DA_REMOTE_PUT_BLOCKED",
+                    da_enabled=bool(status.get("enabled")),
+                    allow_remote_put=False,
+                    da_dir=diagnostics["da_dir"],
+                    rpc_url=diagnostics["rpc_url"],
+                    can_enable_remote_put=supports_toggle,
+                    diagnostics=diagnostics,
+                    recommendations=recs,
+                )
+
+            step.logs.append("Uploading to DA…")
+            step.progress = 60
             out = self.da.upload_bytes(data)
             commit = out.get("blob_id")
             if not commit:
                 raise RuntimeError(out.get("error", "DA unavailable"))
+
+            step.logs.append("Verifying blob…")
+            step.progress = 90
             step_cache["commitment"] = commit
             return {"commitment": commit, "mode": "network", "da_status": status}
 
