@@ -97,7 +97,7 @@ class TrainingPushService:
                 tx_blob = client.call(register, [payload])
             else:
                 tx_blob = "0x"
-            tx_hash = client.call("tx_sendRawTransaction", [tx_blob])
+            tx_hash = client.call_operation("SEND_RAW_TX", [tx_blob])
             return {"tx_hash": tx_hash, "register_method": register or "none", "payload": payload}
         finally:
             client.close()
@@ -105,7 +105,17 @@ class TrainingPushService:
     def poll_tx_status(self, tx_hash: str) -> dict[str, Any]:
         client = RpcClient(self._rpc_url)
         try:
-            for method in ("tx_getTransactionReceipt", "tx_getTransactionStatus"):
+            methods: list[str] = []
+            try:
+                methods.append(client.resolve_operation_method("GET_TX_RECEIPT"))
+            except Exception:
+                pass
+            for candidate in ("tx_getTransactionStatus", "tx.getTransactionStatus"):
+                try:
+                    methods.append(client.resolve_method(candidate, [candidate]))
+                except Exception:
+                    continue
+            for method in list(dict.fromkeys(methods)):
                 try:
                     result = client.call(method, [tx_hash])
                     return {"ok": True, "method": method, "result": result}
@@ -116,13 +126,11 @@ class TrainingPushService:
             client.close()
 
     def _try_da_put(self, client: RpcClient, payload: dict[str, Any]) -> str:
-        for method in ("da_putBlob", "da.putBlob"):
-            try:
-                out = client.call(method, [payload])
-                return str(out)
-            except Exception:
-                continue
-        return "local://export-only"
+        try:
+            out = client.call_operation("DA_PUT_BLOB", [payload])
+            return str(out)
+        except Exception:
+            return "local://export-only"
 
     def _collect_files(self, inputs: list[Path]) -> list[Path]:
         out: list[Path] = []

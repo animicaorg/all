@@ -15,6 +15,7 @@ import logging
 import random
 import threading
 import time
+from difflib import get_close_matches
 from typing import Any
 
 import requests
@@ -39,6 +40,87 @@ _DISCOVER_CACHE_TTL_S = 300.0
 
 _DISCOVER_CACHE_BY_URL: dict[str, tuple[float, dict[str, Any]]] = {}
 _DISCOVER_CACHE_LOCK = threading.Lock()
+
+
+_RPC_OPERATION_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "GET_HEAD": ("chain_getHead", "chain.getHead"),
+    "GET_BALANCE": ("state_getBalance", "state.getBalance", "wallet_getBalance", "wallet.getBalance"),
+    "GET_PENDING_NONCE": ("state_getPendingNonce", "state.getPendingNonce"),
+    "SEND_RAW_TX": ("tx_sendRawTransaction", "tx.sendRawTransaction", "tx_submitRawTransaction"),
+    "GET_TX_BY_HASH": ("tx_getTransactionByHash", "tx.getTransactionByHash"),
+    "GET_TX_RECEIPT": ("tx_getTransactionReceipt", "tx.getTransactionReceipt", "tx_getReceipt"),
+    "GET_CHAIN_ID": ("chain_getChainId", "chain.getChainId", "eth_chainId"),
+    "DA_PUT_BLOB": ("da_putBlob", "da.putBlob"),
+    "DA_GET_BLOB": ("da_getBlob", "da.getBlob"),
+    "DA_GET_PROOF": ("da_getProof", "da.getProof"),
+    "DA_CONFIGURE": ("da_configure", "da.configure"),
+    "DA_GET_STATUS": ("da_getStatus", "da.getStatus", "da_status", "da.status"),
+    "AICF_CLAIM": ("aicf_claim", "aicf.claim"),
+    "AICF_CREDITS_BY_ADDRESS": ("aicf_creditsByAddress", "aicf.creditsByAddress", "aicf_credits_by_address", "aicf.credits_by_address"),
+    "AICF_LIST_JOBS": ("aicf_listJobs", "aicf.listJobs", "aicf_jobs", "aicf_getJobs"),
+    "AICF_SUBMIT_JOB": ("aicf_submitJob", "aicf.submitJob"),
+}
+
+
+class RpcRegistry:
+    """Per-RPC URL OpenRPC registry from ``rpc.discover``."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+        self.server_info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+        self.methods: dict[str, dict[str, Any]] = {}
+        methods_raw = payload.get("methods", [])
+        if isinstance(methods_raw, list):
+            for item in methods_raw:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                params: list[dict[str, Any]] = []
+                params_raw = item.get("params", [])
+                if isinstance(params_raw, list):
+                    for p in params_raw:
+                        if not isinstance(p, dict):
+                            continue
+                        schema = p.get("schema") if isinstance(p.get("schema"), dict) else {}
+                        params.append(
+                            {
+                                "name": p.get("name"),
+                                "required": bool(p.get("required", False)),
+                                "schema_type": schema.get("type"),
+                            }
+                        )
+                self.methods[name] = {"name": name, "params": params}
+
+    @property
+    def method_names(self) -> set[str]:
+        return set(self.methods.keys())
+
+    def has_method(self, name: str) -> bool:
+        return name in self.methods
+
+    def normalize_legacy(self, name: str) -> str:
+        if self.has_method(name):
+            return name
+        if "." in name:
+            underscored = name.replace(".", "_")
+            if self.has_method(underscored):
+                return underscored
+        return name
+
+    def resolve_any(self, candidates: list[str]) -> str | None:
+        for candidate in candidates:
+            if self.has_method(candidate):
+                return candidate
+        for candidate in candidates:
+            normalized = self.normalize_legacy(candidate)
+            if self.has_method(normalized):
+                return normalized
+        return None
+
+    def closest_matches(self, name: str, limit: int = 5) -> list[str]:
+        return get_close_matches(name, sorted(self.methods.keys()), n=limit, cutoff=0.35)
 
 
 class RpcTransportError(Exception):
@@ -203,10 +285,11 @@ class RpcClient:
     # ------------------------------------------------------------------
 
     def discover(self) -> dict[str, Any]:
-        """Call ``rpc.discover`` and return the methods description dict.
+        """Call ``rpc.discover`` and return the methods description dict."""
+        return self.registry().payload
 
-        Results are cached per RPC URL for :attr:`_DISCOVER_CACHE_TTL_S` seconds.
-        """
+    def registry(self) -> RpcRegistry:
+        """Return cached :class:`RpcRegistry` for this RPC URL."""
         now = time.time()
         with _DISCOVER_CACHE_LOCK:
             cached = _DISCOVER_CACHE_BY_URL.get(self._url)
@@ -215,9 +298,13 @@ class RpcClient:
                 if (now - ts) < _DISCOVER_CACHE_TTL_S:
                     self._discover_cache = payload
                     self._discover_ts = ts
-                    return payload
+                    return RpcRegistry(payload)
 
-        result = self.call("rpc.discover")
+        discover_client = RpcClient(self._url, connect_timeout=3.0, read_timeout=8.0, max_retries=1)
+        try:
+            result = discover_client.call("rpc.discover")
+        finally:
+            discover_client.close()
         if not isinstance(result, dict):
             result = {"raw": result}
         self._discover_cache = result
@@ -225,7 +312,7 @@ class RpcClient:
         with _DISCOVER_CACHE_LOCK:
             _DISCOVER_CACHE_BY_URL[self._url] = (now, result)
         log.debug("RpcClient: discover cache updated for %s", self._url)
-        return result
+        return RpcRegistry(result)
 
     def _known_methods(self) -> set[str]:
         """Return the set of method names from the cached/fetched discover result.
@@ -233,32 +320,90 @@ class RpcClient:
         Falls back to empty set on any error (caller falls back to defaults).
         """
         try:
-            disc = self.discover()
-            methods_raw = disc.get("methods", [])
-            if isinstance(methods_raw, list):
-                return {m.get("name", "") if isinstance(m, dict) else str(m) for m in methods_raw}
+            return self.registry().method_names
         except Exception:  # noqa: BLE001
-            pass
-        return set()
+            return set()
+
+    def resolve_method(self, requested: str, candidates: list[str] | None = None) -> str:
+        """Resolve *requested* against registry, raising -32601-style error if missing."""
+        names = candidates or [requested]
+        try:
+            registry = self.registry()
+        except Exception:
+            # Discovery unavailable: keep client functional with deterministic fallback.
+            return requested.replace(".", "_") if "." in requested else requested
+        if not registry.method_names:
+            return requested.replace(".", "_") if "." in requested else requested
+        resolved = registry.resolve_any(names)
+        if resolved:
+            return resolved
+        normalized = registry.normalize_legacy(requested)
+        if registry.has_method(normalized):
+            return normalized
+        suggestions: list[str] = []
+        for name in names:
+            suggestions.extend(registry.closest_matches(name))
+        if not suggestions:
+            suggestions = registry.closest_matches(requested)
+        uniq_suggestions = list(dict.fromkeys(suggestions))
+        raise RpcResponseError(
+            RpcError(
+                code=-32601,
+                message=f"Method not found: {requested}",
+                data={"requested": requested, "did_you_mean": uniq_suggestions},
+            )
+        )
+
+    def resolve_operation_method(self, operation: str, *, extra_candidates: tuple[str, ...] = ()) -> str:
+        candidates = list(_RPC_OPERATION_CANDIDATES.get(operation, ())) + list(extra_candidates)
+        if not candidates:
+            raise RpcParseError(f"Unknown RPC operation {operation!r}")
+        return self.resolve_method(candidates[0], candidates)
+
+    def call_operation(
+        self,
+        operation: str,
+        params: list[Any] | dict[str, Any] | None = None,
+        *,
+        extra_candidates: tuple[str, ...] = (),
+    ) -> Any:
+        method = self.resolve_operation_method(operation, extra_candidates=extra_candidates)
+        return self.call(method, params)
 
     def _pick_method(self, *candidates: str) -> str:
-        """Return the first candidate found in the discover methods list.
-
-        Falls back to the first candidate if discovery fails or has no match.
-        """
+        """Return first candidate present in discover list; fallback to first candidate."""
+        if not candidates:
+            raise RpcParseError("No method candidates provided")
         known = self._known_methods()
         if known:
             for c in candidates:
                 if c in known:
                     return c
+                normalized = c.replace(".", "_") if "." in c else c
+                if normalized in known:
+                    return normalized
         return candidates[0]
+
+    def rpc_diagnostics(self, prefixes: tuple[str, ...] = ("chain", "tx", "da", "aicf")) -> dict[str, Any]:
+        registry = self.registry()
+        methods = sorted(
+            m
+            for m in registry.method_names
+            if not prefixes or any(m.startswith(f"{prefix}_") or m.startswith(f"{prefix}.") for prefix in prefixes)
+        )
+        return {
+            "rpc_url": self._url,
+            "discover_info": registry.server_info,
+            "method_count": len(registry.method_names),
+            "methods": methods,
+        }
 
     def get_head(self) -> Head:
         """Return the latest chain head.
 
         Tries ``chain_getHead`` first, then ``chain.getHead``.
         """
-        method = self._pick_method("chain_getHead", "chain.getHead")
+        method = self._pick_method(*_RPC_OPERATION_CANDIDATES["GET_HEAD"])
         result = self.call(method)
         if not isinstance(result, dict):
             raise RpcParseError(f"Expected dict from {method}, got {type(result).__name__}")
@@ -272,7 +417,7 @@ class RpcClient:
         Some Animica node versions require named-object params instead of
         positional-list params. We probe both styles before failing.
         """
-        methods = ["state_getBalance", "state.getBalance", "wallet_getBalance", "wallet.getBalance"]
+        methods = list(_RPC_OPERATION_CANDIDATES["GET_BALANCE"])
         chosen = self._pick_method(*methods)
         attempts: list[tuple[str, list[Any] | dict[str, Any]]] = [
             (chosen, [address]),
@@ -307,7 +452,7 @@ class RpcClient:
 
         Tries ``state_getPendingNonce``, then ``state.getPendingNonce``.
         """
-        method = self._pick_method("state_getPendingNonce", "state.getPendingNonce")
+        method = self._pick_method(*_RPC_OPERATION_CANDIDATES["GET_PENDING_NONCE"])
         result = self.call(method, [address])
         return parse_hex_quantity(result, "nonce")
 
@@ -328,11 +473,7 @@ class RpcClient:
             raise TypeError(
                 f"raw_tx_hex must be a hex str (e.g. '0x…'), got {type(raw_tx_hex).__name__}"
             )
-        method = self._pick_method(
-            "tx_sendRawTransaction",
-            "tx.sendRawTransaction",
-            "tx_submitRawTransaction",
-        )
+        method = self._pick_method(*_RPC_OPERATION_CANDIDATES["SEND_RAW_TX"])
         result = self.call(method, [raw_tx_hex])
         if not isinstance(result, str):
             raise RpcParseError(f"Expected str tx hash from {method}, got {type(result).__name__}")
@@ -358,7 +499,7 @@ class RpcClient:
         """
         from animica_studio.models.rpc_models import parse_hex_quantity  # noqa: PLC0415
 
-        method = self._pick_method("chain_getChainId", "chain.getChainId", "eth_chainId")
+        method = self._pick_method(*_RPC_OPERATION_CANDIDATES["GET_CHAIN_ID"])
         result = self.call(method)
         # Integers are returned directly; hex strings come from eth_chainId
         if isinstance(result, int):
@@ -380,7 +521,7 @@ class RpcClient:
             "error": "",
             "exception": "",
         }
-        method = self._pick_method("chain_getHead", "chain.getHead")
+        method = self._pick_method(*_RPC_OPERATION_CANDIDATES["GET_HEAD"])
         details["method"] = method
         try:
             result = self.call(method)

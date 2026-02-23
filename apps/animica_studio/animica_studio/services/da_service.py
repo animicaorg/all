@@ -91,14 +91,11 @@ class DaService:
             params: dict = {"data": b64}
             if namespace:
                 params["namespace"] = namespace
-            # Try multiple method names (node may use either)
-            for method in ("da_putBlob", "da.putBlob"):
-                try:
-                    result = client.call(method, [params])
-                    return {"ok": True, "commitment": result, "chunks": 1}
-                except Exception:  # noqa: BLE001
-                    pass
-            return {"ok": False, "error": "da_putBlob not available on this node"}
+            try:
+                result = client.call_operation("DA_PUT_BLOB", [params])
+                return {"ok": True, "commitment": result, "chunks": 1}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
         finally:
             client.close()
 
@@ -148,16 +145,14 @@ class DaService:
         """Download a blob by commitment hash."""
         client = self._client(rpc_url)
         try:
-            for method in ("da_getBlob", "da.getBlob"):
-                try:
-                    result = client.call(method, [commitment])
-                    if isinstance(result, dict) and result.get("data"):
-                        raw = base64.b64decode(result["data"])
-                        return {"ok": True, "data": raw, "raw": result}
-                    return {"ok": True, "data": result}
-                except Exception:  # noqa: BLE001
-                    pass
-            return {"ok": False, "error": "da_getBlob not available on this node"}
+            try:
+                result = client.call_operation("DA_GET_BLOB", [commitment])
+                if isinstance(result, dict) and result.get("data"):
+                    raw = base64.b64decode(result["data"])
+                    return {"ok": True, "data": raw, "raw": result}
+                return {"ok": True, "data": result}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
         finally:
             client.close()
 
@@ -169,13 +164,11 @@ class DaService:
         """Retrieve inclusion proof for a commitment."""
         client = self._client(rpc_url)
         try:
-            for method in ("da_getProof", "da.getProof"):
-                try:
-                    result = client.call(method, [commitment])
-                    return {"ok": True, "proof": result}
-                except Exception:  # noqa: BLE001
-                    pass
-            return {"ok": False, "error": "da_getProof not available on this node"}
+            try:
+                result = client.call_operation("DA_GET_PROOF", [commitment])
+                return {"ok": True, "proof": result}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
         finally:
             client.close()
 

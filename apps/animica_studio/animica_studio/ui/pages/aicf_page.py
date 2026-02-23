@@ -302,9 +302,9 @@ class AicfPage(QWidget):
         self._refresh_da_btn = QPushButton("🔄  Refresh DA readiness")
         self._refresh_da_btn.clicked.connect(self._refresh_da_readiness)
         btn_row.addWidget(self._refresh_da_btn)
-        self._enable_da_btn = QPushButton("Enable DA on node")
-        self._enable_da_btn.clicked.connect(self._enable_da_on_node)
-        self._enable_da_btn.setEnabled(False)
+        self._enable_da_btn = QPushButton("DA Capability Check")
+        self._enable_da_btn.clicked.connect(self._refresh_da_readiness)
+        self._enable_da_btn.setEnabled(True)
         btn_row.addWidget(self._enable_da_btn)
         self._list_jobs_btn = QPushButton("📋  List Jobs")
         self._list_jobs_btn.clicked.connect(self._list_jobs)
@@ -334,38 +334,16 @@ class AicfPage(QWidget):
         self._refresh_da_btn.setEnabled(True)
         result = payload if isinstance(payload, dict) else {}
         enabled = bool(result.get("enabled", False))
-        self._enable_da_btn.setEnabled(not enabled)
+        self._enable_da_btn.setEnabled(True)
+        methods = result.get("da_methods") if isinstance(result.get("da_methods"), dict) else {}
+        put_method = methods.get("put_blob")
+        get_method = methods.get("get_blob")
         self._rpc_label.setText(f"RPC: {result.get('rpc_url') or get_active_rpc_url(self._config)}")
         self._da_readiness_label.setText(
-            f"DA readiness: {'enabled' if enabled else 'disabled'} | "
-            f"server={result.get('server_version', 'unknown')} | dir={result.get('configured_dir', '')}"
+            f"DA readiness: {'DA RPC available' if put_method else 'DA methods not exposed'} | "
+            f"put={put_method or 'missing'} get={get_method or 'missing'} | "
+            f"server={result.get('server_version', 'unknown')}"
         )
-
-    def _enable_da_on_node(self) -> None:
-        self._enable_da_btn.setEnabled(False)
-        self._jobs_output.setPlainText("Enabling DA on node…")
-
-        def _task() -> dict:
-            return self._da_status.enable_da(dir_path="/data/da", limit_bytes=50 * 1024**3, mode="quota")
-
-        handle = self._track(self._runner.run_callable(_task, timeout_s=25))
-        handle.finished.connect(self._on_enable_da_finished)
-
-    def _on_enable_da_finished(self, _jid: str, rc: int, payload: object) -> None:
-        result = payload if isinstance(payload, dict) else {}
-        if result.get("ok"):
-            self._jobs_output.setPlainText("✅ DA enabled. Retrying job list…")
-            self._refresh_da_readiness()
-            self._list_jobs()
-            return
-        err = format_rpc_error(result.get("error") or result.get("status", {}).get("last_error"))
-        status = result.get("status") if isinstance(result.get("status"), dict) else {}
-        self._jobs_output.setPlainText(
-            f"Failed to enable DA.\nserver_version={status.get('server_version', 'unknown')}\n"
-            f"rpc={status.get('rpc_url', get_active_rpc_url(self._config))}\n"
-            f"error={err}"
-        )
-        self._refresh_da_readiness()
 
     def _list_jobs(self) -> None:
         try:
@@ -398,13 +376,12 @@ class AicfPage(QWidget):
             else:
                 da_status = result.get("da_status") if isinstance(result.get("da_status"), dict) else None
                 if da_status and not da_status.get("enabled"):
-                    self._enable_da_btn.setEnabled(True)
                     self._da_readiness_label.setText(
-                        f"DA readiness: disabled | server={da_status.get('server_version', 'unknown')} | "
-                        f"dir={da_status.get('configured_dir', '')} | last_error={da_status.get('last_error', '')}"
+                        f"DA readiness: DA methods not exposed | server={da_status.get('server_version', 'unknown')} | "
+                        f"last_error={da_status.get('last_error', '')}"
                     )
                     self._rpc_label.setText(f"RPC: {da_status.get('rpc_url', get_active_rpc_url(self._config))}")
-                    self._jobs_output.setPlainText("DA disabled on node. Click 'Enable DA on node'.")
+                    self._jobs_output.setPlainText("DA methods not exposed by this node.")
                 else:
                     err = format_rpc_error(result.get("error"))
                     log.warning("AICF error=%s (list_jobs)", err)
