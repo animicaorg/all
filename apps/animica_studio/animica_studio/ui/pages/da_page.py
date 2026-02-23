@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from animica_studio.services.da_client import DaUploadError
 from animica_studio.services.da_engine import DaContributionEngine, DaEngineConfig, DaEngineState
 from animica_studio.services.da_service import DaService
 from animica_studio.services.error_format import format_rpc_error, safe_json_dumps
@@ -411,6 +412,10 @@ class DaPage(QWidget):
         # Wire log callback
         test_box = QGroupBox("Test DA Upload")
         test_form = QFormLayout(test_box)
+        self._test_namespace = QSpinBox()
+        self._test_namespace.setRange(0, 2_147_483_647)
+        self._test_namespace.setToolTip("DA namespace for blob (integer).")
+        test_form.addRow("Namespace:", self._test_namespace)
         upload_test_btn = QPushButton("Upload test blob")
         upload_test_btn.clicked.connect(self._upload_test_blob)
         verify_test_btn = QPushButton("Verify retrieval")
@@ -421,8 +426,16 @@ class DaPage(QWidget):
         copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._test_blob_id.text().strip()))
         row = QHBoxLayout(); row.addWidget(upload_test_btn); row.addWidget(verify_test_btn); row.addWidget(rpc_diag_btn); row.addWidget(copy_btn)
         self._test_result = QLabel("—")
+        self._test_diag = QTextEdit()
+        self._test_diag.setReadOnly(True)
+        self._test_diag.setPlaceholderText("Diagnostics will appear here on upload errors.")
+        self._test_copy_diag_btn = QPushButton("Copy diagnostics")
+        self._test_copy_diag_btn.setEnabled(False)
+        self._test_copy_diag_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._test_diag.toPlainText()))
         test_form.addRow("", row)
         test_form.addRow("Result:", self._test_result)
+        test_form.addRow("Diagnostics:", self._test_diag)
+        test_form.addRow("", self._test_copy_diag_btn)
         root.addWidget(test_box)
 
         return w
@@ -444,6 +457,11 @@ class DaPage(QWidget):
         self._contrib_autostart_cb.setChecked(bool(cfg.get("auto_start", True)))
 
         self._contrib_rpc_url.setText(str(cfg.get("rpc_url") or self._config.get_active_profile().node.rpc_local_url))
+        saved_ns = self._config.da_defaults.get("test_namespace", self._config.da_defaults.get("default_namespace", 0))
+        try:
+            self._test_namespace.setValue(max(int(saved_ns), 0))
+        except Exception:
+            self._test_namespace.setValue(0)
 
         # Migrate legacy enabled=false + auto_start=true configs and autostart once.
         if self._da_engine.ensure_enabled_if_autostart():
@@ -504,6 +522,7 @@ class DaPage(QWidget):
             self._contrib_console.append_info("Copied permission command to clipboard.")
 
     def _persist_da_settings(self) -> None:
+        self._config.da_defaults["test_namespace"] = int(self._test_namespace.value())
         self._config.da_contribution.update(
             {
                 "enabled": self._da_engine.config.enabled,
@@ -680,11 +699,28 @@ class DaPage(QWidget):
     def _upload_test_blob(self) -> None:
         started = time.time()
         payload = {"hello": "world", "ts": started}
+        namespace = int(self._test_namespace.value())
+        self._test_diag.clear()
+        self._test_copy_diag_btn.setEnabled(False)
         try:
-            res = self._da_engine.client().upload_json(payload)
+            self._persist_da_settings()
+            res = self._da_engine.client().upload_json(payload, namespace=namespace)
             self._test_blob_id.setText(str(res["blob_id"]))
             self._test_result.setText(f"Uploaded in {(time.time()-started)*1000:.0f} ms")
             self._contrib_console.append_info(f"Test blob uploaded: {res['blob_id']}")
+        except DaUploadError as exc:
+            diag = getattr(exc, "diagnostics", {}) or {}
+            lines = [
+                f"resolved_method: {diag.get('resolved_method', 'unknown')}",
+                f"params_len: {diag.get('params_len', 0)}",
+                f"params: {safe_json_dumps(diag.get('params', []))}",
+                f"namespace: {diag.get('namespace', namespace)}",
+                f"data_hex_length: {diag.get('data_hex_length', 0)}",
+                f"server_version: {diag.get('server_version', 'unknown')}",
+            ]
+            self._test_diag.setPlainText("\n".join(lines))
+            self._test_copy_diag_btn.setEnabled(True)
+            self._test_result.setText(f"Upload failed: {exc}")
         except Exception as exc:  # noqa: BLE001
             self._test_result.setText(f"Upload failed: {exc}")
 
