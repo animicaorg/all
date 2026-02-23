@@ -123,6 +123,7 @@ class TrainPage(QWidget):
         self.training_mode = QComboBox(); self.training_mode.addItems(["local", "remote"])
         self.training_mode_help = QLabel("Local: runs training on this machine via animica CLI, streams logs.\nRemote: submits a job to AICF/ENA services URL (requires preflight reachability).")
         self.training_mode_help.setWordWrap(True)
+        self.mode_badge = QLabel("Mode: Local")
         self.backend_label = QLabel("Backend: Local (on this machine)")
         self.services_url = QLineEdit("")
         self.auto_fallback = QCheckBox("Auto fallback to local when remote unreachable")
@@ -164,6 +165,7 @@ class TrainPage(QWidget):
         form.addRow(self.submit_aicf)
         form.addRow("Budget (ANM)", self.budget_anm)
         form.addRow("Mode", self.training_mode)
+        form.addRow("", self.mode_badge)
         form.addRow("", self.training_mode_help)
         form.addRow("Backend", self.backend_label)
         form.addRow("Services URL", self.services_url)
@@ -173,7 +175,7 @@ class TrainPage(QWidget):
         root.addWidget(form_box)
 
         ctl = QHBoxLayout()
-        self.start_btn = QPushButton("Start Training")
+        self.start_btn = QPushButton("Start training (local)")
         self.stop_btn = QPushButton("Stop")
         self.resume_btn = QPushButton("Resume Watch")
         self.switch_local_btn = QPushButton("Switch to Local")
@@ -271,9 +273,21 @@ class TrainPage(QWidget):
         mode = (self.training_mode.currentText() or "local").lower()
         if mode == "remote":
             url = self.services_url.text().strip() or "<unset>"
+            self.mode_badge.setText("Mode: Remote")
             self.backend_label.setText(f"Backend: Remote ({url})")
+            self.start_btn.setText("Submit training job")
+            self.budget_anm.setEnabled(True)
+            self.services_url.setEnabled(True)
+            self.api_key.setEnabled(True)
+            self.auto_fallback.setEnabled(False)
             return
+        self.mode_badge.setText("Mode: Local")
         self.backend_label.setText("Backend: Local (on this machine)")
+        self.start_btn.setText("Start training (local)")
+        self.budget_anm.setEnabled(False)
+        self.services_url.setEnabled(False)
+        self.api_key.setEnabled(False)
+        self.auto_fallback.setEnabled(False)
 
     def _read_config(self) -> TrainingConfig:
         cfg = TrainingConfig(
