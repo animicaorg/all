@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import time
 import uuid
 from dataclasses import asdict
@@ -60,6 +61,7 @@ class ENATrainingService(QObject):
 
     def start_training(self, config: TrainingConfig) -> str:
         self._validate_config(config)
+        self._validate_submit_endpoint(config)
         self._verify_cli_support()
 
         run_id = f"run-{uuid.uuid4().hex[:12]}"
@@ -78,6 +80,9 @@ class ENATrainingService(QObject):
         self.status_changed.emit(run_id, "starting")
 
         args = ["ena", "train", "submit", "--plan", str(plan_path), "--budget", str(config.budget_anm), "--json"]
+        if (config.ena_submit_mode or "local").lower() == "remote":
+            if config.aicf_services_url:
+                args.extend(["--endpoint", config.aicf_services_url])
         submit_handle = self._runner.run_cli(args, timeout_s=3600)
         self._handles[run_id] = submit_handle
         submit_handle.output.connect(lambda _jid, stream, text, rid=run_id: self._on_submit_output(rid, stream, text))
@@ -118,6 +123,23 @@ class ENATrainingService(QObject):
 
     def status(self, run_id: str) -> TrainingRun | None:
         return self._runs.get(run_id)
+
+    def _validate_submit_endpoint(self, cfg: TrainingConfig) -> None:
+        mode = (cfg.ena_submit_mode or "local").strip().lower()
+        if mode != "remote":
+            return
+        endpoint = (cfg.aicf_services_url or "").strip()
+        if not endpoint:
+            raise ValueError("Remote submit mode requires AICF services URL. Set it in Training settings or switch to local mode.")
+        host = endpoint.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].strip()
+        if not host:
+            raise ValueError("Invalid AICF services URL host.")
+        try:
+            socket.getaddrinfo(host, None)
+        except OSError as exc:
+            raise ValueError(
+                f"Remote submit endpoint is unreachable ({host}): {exc}. Switch ENA submit mode to local or fix URL."
+            ) from exc
 
     def _verify_cli_support(self) -> None:
         probe = run_cli_blocking(["ena", "train", "--help"], timeout_s=15, config=self._config)

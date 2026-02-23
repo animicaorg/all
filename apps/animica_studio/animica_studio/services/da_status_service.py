@@ -41,13 +41,14 @@ class DaStatusService:
             payload: dict[str, Any] | None = None
             if status_method:
                 try:
-                    payload = client.call(status_method, [{}])
+                    payload = client.call_with_schema(status_method, {})
                 except RpcResponseError as exc:
                     if exc.rpc_error.code not in (-32601, -32602):
                         raise
-            enabled = bool(put_method and get_method)
+            enabled = bool((payload or {}).get("enabled", False))
+            allow_remote_put = bool((payload or {}).get("allow_remote_put", True))
             return {
-                "ok": enabled,
+                "ok": enabled and bool(put_method),
                 "enabled": enabled,
                 "configured_dir": str((payload or {}).get("dir") or ""),
                 "effective_mode": str((payload or {}).get("on_full") or (payload or {}).get("eviction_policy") or ""),
@@ -55,6 +56,7 @@ class DaStatusService:
                 "server_version": self.get_server_version(rpc_url),
                 "rpc_url": self._rpc_url(rpc_url),
                 "raw": payload,
+                "allow_remote_put": allow_remote_put,
                 "last_error": str((payload or {}).get("last_error") or ""),
                 "da_methods": {
                     "put_blob": put_method,
@@ -97,44 +99,43 @@ class DaStatusService:
     def enable_da(self, dir_path: str, limit_bytes: int, mode: str = "quota", rpc_url: str | None = None) -> dict[str, Any]:
         client = self._client(rpc_url)
         try:
+            before = self.get_status(rpc_url)
+            if before.get("enabled"):
+                return {"ok": True, "response": {"noop": True}, "status": before, "method": before.get("da_methods", {}).get("configure")}
+
             registry = client.registry()
             configure_method = registry.resolve_any(["da_configure", "da.configure"])
             if not isinstance(configure_method, str) or not configure_method:
-                configure_method = "da.configure"
-            method_meta = registry.methods.get(configure_method, {})
-            params_meta = method_meta.get("params", []) if isinstance(method_meta, dict) else []
+                return {"ok": False, "error": "DA configure method not exposed by node.", "status": before}
+
+            spec = client.get_param_spec(configure_method)
             payload: dict[str, Any] = {}
-            if params_meta:
-                for p in params_meta:
-                    if not isinstance(p, dict):
-                        continue
-                    name = p.get("name")
-                    if name == "enabled":
-                        payload["enabled"] = True
-                    elif name == "dir":
-                        payload["dir"] = dir_path
-                    elif name in {"max_bytes", "limit_bytes"}:
-                        payload[name] = int(limit_bytes)
-                    elif name in {"on_full", "mode"}:
-                        payload[name] = "evict" if mode == "quota" else "reject"
-                    elif p.get("required"):
-                        return {"ok": False, "error": f"Unsupported required DA configure param: {name}", "status": self.get_status(rpc_url)}
-            else:
-                # Backward-compatible payload when schema metadata is unavailable.
-                payload = {
-                    "enabled": True,
-                    "dir": dir_path,
-                    "max_bytes": int(limit_bytes),
-                    "on_full": "evict" if mode == "quota" else "reject",
-                }
+            for p in spec:
+                name = p.get("name")
+                if name == "enabled":
+                    payload["enabled"] = True
+                elif name == "dir":
+                    payload["dir"] = dir_path
+                elif name in {"max_bytes", "limit_bytes"}:
+                    payload[name] = int(limit_bytes)
+                elif name in {"on_full", "mode"}:
+                    payload[name] = "evict" if mode == "quota" else "reject"
+                elif p.get("required"):
+                    return {"ok": False, "error": f"Unsupported required DA configure param: {name}", "status": before}
+            if not payload:
+                payload = {"enabled": True}
 
-            if configure_method == "da_configure":
-                configure_method = "da.configure"
-
-            rpc_params: Any = [payload] if payload else [{}]
-            response = client.call(configure_method, rpc_params)
+            response = client.call_with_schema(configure_method, payload)
             check = self.get_status(rpc_url)
-            return {"ok": bool(check.get("enabled")), "response": response, "status": check, "method": configure_method}
+            if not check.get("enabled"):
+                return {
+                    "ok": False,
+                    "error": "Node did not enable DA",
+                    "response": response,
+                    "status": check,
+                    "method": configure_method,
+                }
+            return {"ok": True, "response": response, "status": check, "method": configure_method}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "status": self.get_status(rpc_url)}
         finally:
