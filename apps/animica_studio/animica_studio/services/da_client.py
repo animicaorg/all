@@ -155,3 +155,9 @@ class DaClient:
 
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._call_multi(("da.configure", "da_configure"), [params])
+
+    def has_blob(self, blob_id: str) -> bool:
+        out = self._call_multi(("da.has", "da_has"), [blob_id])
+        if isinstance(out, dict):
+            return bool(out.get("exists"))
+        return bool(out)
