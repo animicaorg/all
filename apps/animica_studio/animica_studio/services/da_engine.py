@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -98,44 +97,17 @@ class DaContributionEngine(QObject):
             return False, str(exc)
 
     def _normalize_data_dir(self, cfg: DaEngineConfig) -> DaEngineConfig:
-        """Ensure configured DA dir is writable; fall back safely when needed."""
-        preferred = (cfg.data_dir or "").strip()
-        candidates: list[Path] = []
-        if preferred:
-            candidates.append(Path(preferred).expanduser())
-        else:
-            candidates.append(Path(os.path.expanduser("~/animica-da")))
-
-        # If home paths are read-only in a container/sandbox, fall back to tmp.
-        tmp_fallback = Path(tempfile.gettempdir()) / f"animica-da-{os.getuid()}"
-        if tmp_fallback not in candidates:
-            candidates.append(tmp_fallback)
-
-        last_error = ""
-        selected: Path | None = None
-        for candidate in candidates:
-            ok, detail = self._is_writable_dir(candidate)
-            if ok:
-                selected = candidate.resolve()
-                if preferred and selected != Path(preferred).expanduser().resolve():
-                    self._path_warning = (
-                        f"Configured DA directory is not writable ({preferred}). "
-                        f"Using fallback: {selected}"
-                    )
-                return DaEngineConfig(
-                    enabled=cfg.enabled,
-                    data_dir=str(selected),
-                    mode=cfg.mode,
-                    limit_bytes=cfg.limit_bytes,
-                    rpc_url=cfg.rpc_url,
-                    contributor_id=cfg.contributor_id,
-                    auto_start=cfg.auto_start,
-                )
-            last_error = detail
-
-        # Keep original path for better diagnostics if everything fails.
-        self._path_warning = f"No writable DA directory found: {last_error}"
-        return cfg
+        """Normalize DA config paths, but never silently switch to a fallback directory."""
+        selected = Path((cfg.data_dir or "").strip() or os.path.expanduser("~/animica-da")).expanduser()
+        return DaEngineConfig(
+            enabled=cfg.enabled,
+            data_dir=str(selected),
+            mode=cfg.mode,
+            limit_bytes=cfg.limit_bytes,
+            rpc_url=cfg.rpc_url,
+            contributor_id=cfg.contributor_id,
+            auto_start=cfg.auto_start,
+        )
 
     def client(self) -> DaClient:
         return DaClient(self.config.rpc_url)
