@@ -36,6 +36,16 @@ class TrainingConfig:
     training_mode: str = "local"
     services_url: str = ""
     api_key: str = ""
+    warmup_steps: int | None = None
+    auto_tune_warmup_steps: int | None = None
+    quality_level: str = "balanced"
+    smart_defaults: bool = True
+    auto_config_rationale: str = ""
+    estimated_runtime_minutes: int | None = None
+    memory_risk: str = "unknown"
+    hardware_profile: dict[str, Any] | None = None
+    dataset_profile: dict[str, Any] | None = None
+    dataset_version_id: str | None = None
 
     def effective_iterations(self) -> int | None:
         if self.iterations and int(self.iterations) > 0:

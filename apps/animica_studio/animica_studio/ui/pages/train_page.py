@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QSlider,
     QSpinBox,
     QDoubleSpinBox,
     QTextEdit,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.models.training_models import TrainingConfig
+from animica_studio.services.dataset_evolution_engine import DatasetEvolutionEngine, EvolutionQuotas
 from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
 from animica_studio.storage.config import Config, save_config
@@ -44,6 +46,8 @@ class TrainPage(QWidget):
         self._cfg = config
         self._svc = ENATrainingService(config, self)
         self._dataset_manager = DatasetManager()
+        self._evolution = DatasetEvolutionEngine()
+        self._last_plan: dict | None = None
         self._active_run_id: str | None = None
         self._mode_migration_warning = self._svc.ensure_training_mode_migration()
         self._build()
@@ -86,6 +90,15 @@ class TrainPage(QWidget):
         custom_btn = QPushButton("Build Custom Dataset")
         custom_btn.clicked.connect(self._custom_dataset)
         dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addStretch(1)
+        self.smart_defaults = QCheckBox("Smart defaults (always on)")
+        self.smart_defaults.setChecked(True)
+        self.auto_config_btn = QPushButton("Auto-Configure")
+        self.auto_config_btn.clicked.connect(self._auto_configure)
+        self.quality_slider = QSlider(Qt.Orientation.Horizontal)
+        self.quality_slider.setRange(0, 3)
+        self.quality_slider.setValue(1)
+        self.quality_label = QLabel("Balanced")
+
         self.base_model = QLineEdit("")
         self.output_dir = QLineEdit("./ena-training-runs")
         pick_out = QPushButton("Browse")
@@ -117,6 +130,16 @@ class TrainPage(QWidget):
         self.resume_ckpt = QComboBox(); self.resume_ckpt.addItem("(none)")
         self.refresh_ckpt_btn = QPushButton("Refresh checkpoints")
         self.refresh_ckpt_btn.clicked.connect(self._refresh_checkpoints)
+
+        self.continuous_improvement = QCheckBox("Auto-evolve dataset and keep improving")
+        self.max_dataset_disk = QDoubleSpinBox(); self.max_dataset_disk.setRange(1, 5000); self.max_dataset_disk.setValue(20)
+        self.max_daily_download = QDoubleSpinBox(); self.max_daily_download.setRange(0.1, 5000); self.max_daily_download.setValue(2)
+        self.max_daily_train = QDoubleSpinBox(); self.max_daily_train.setRange(0.1, 1000); self.max_daily_train.setValue(4)
+        self.retain_versions = QSpinBox(); self.retain_versions.setRange(1, 200); self.retain_versions.setValue(3)
+        self.preview_plan_btn = QPushButton("Preview next dataset plan")
+        self.approve_plan_btn = QPushButton("Approve & apply")
+        self.run_cycle_btn = QPushButton("Run next improvement cycle now")
+        self.recommended = QTextEdit(); self.recommended.setReadOnly(True); self.recommended.setMaximumHeight(140)
 
         self.submit_aicf = QCheckBox("Submit checkpoints/metrics to AICF")
         self.budget_anm = QLineEdit("10")
@@ -171,6 +194,15 @@ class TrainPage(QWidget):
         form.addRow("Services URL", self.services_url)
         form.addRow("", self.auto_fallback)
         form.addRow("API key (optional)", self.api_key)
+        form.addRow("Continuous Improvement", self.continuous_improvement)
+        form.addRow("Max dataset disk (GiB)", self.max_dataset_disk)
+        form.addRow("Max daily download (GiB)", self.max_daily_download)
+        form.addRow("Max daily training time (hours)", self.max_daily_train)
+        form.addRow("Retain last N versions", self.retain_versions)
+        prow = QHBoxLayout(); prow.addWidget(self.preview_plan_btn); prow.addWidget(self.approve_plan_btn); prow.addWidget(self.run_cycle_btn); prow.addStretch(1)
+        pwrap = QWidget(); pwrap.setLayout(prow)
+        form.addRow("Improvement controls", pwrap)
+        form.addRow("Recommended settings", self.recommended)
 
         root.addWidget(form_box)
 
@@ -219,6 +251,10 @@ class TrainPage(QWidget):
         self.resume_btn.clicked.connect(self._resume_watch)
         self.switch_local_btn.clicked.connect(self._switch_to_local)
         self.copy_diag_btn.clicked.connect(self._copy_diagnostics)
+        self.quality_slider.valueChanged.connect(self._update_quality_label)
+        self.preview_plan_btn.clicked.connect(self._preview_next_dataset_plan)
+        self.approve_plan_btn.clicked.connect(self._approve_plan)
+        self.run_cycle_btn.clicked.connect(self._run_improvement_cycle)
 
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
@@ -320,6 +356,8 @@ class TrainPage(QWidget):
             training_mode=self.training_mode.currentText(),
             services_url=self.services_url.text().strip(),
             api_key=self.api_key.text().strip(),
+            quality_level=self._quality_level(),
+            smart_defaults=self.smart_defaults.isChecked(),
         )
         if cfg.iterations and cfg.epochs:
             self._on_log("", "system", "Both iterations and epochs set; iterations takes precedence.")
@@ -330,6 +368,9 @@ class TrainPage(QWidget):
     def _start(self) -> None:
         try:
             cfg = self._read_config()
+            if cfg.smart_defaults:
+                cfg = self._svc.build_auto_recommendation(cfg, cfg.quality_level)
+                self._render_recommendation(cfg)
             self._cfg.ena["job_backend"] = (cfg.training_mode or "local").lower()
             self._cfg.ena["services_url"] = cfg.services_url
             self._cfg.ena["remote_api_key"] = cfg.api_key
@@ -456,6 +497,93 @@ class TrainPage(QWidget):
         for p in sorted(out.rglob("*.ckpt*")):
             self.resume_ckpt.addItem(str(p.name), str(p))
 
+    def _quality_level(self) -> str:
+        return {0: "fast", 1: "balanced", 2: "quality", 3: "max_quality"}.get(self.quality_slider.value(), "balanced")
+
+    def _update_quality_label(self) -> None:
+        self.quality_label.setText(self._quality_level().replace("_", " ").title())
+
+    def _auto_configure(self) -> None:
+        try:
+            cfg = self._read_config()
+            cfg = self._svc.build_auto_recommendation(cfg, self._quality_level())
+            self._apply_training_config(cfg)
+            self._render_recommendation(cfg)
+            self._on_log("", "system", "Auto-configure applied smart defaults.")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Auto-Configure", str(exc))
+
+    def _render_recommendation(self, cfg: TrainingConfig) -> None:
+        self.recommended.setPlainText(
+            "\n".join(
+                [
+                    f"iterations={cfg.iterations} batch={cfg.batch_size} grad_accum={cfg.gradient_accumulation_steps}",
+                    f"lr={cfg.learning_rate:.2e} optimizer={cfg.optimizer} warmup={cfg.warmup_steps}",
+                    f"eval every {cfg.eval_interval_steps} steps, checkpoint every {cfg.checkpoint_interval_steps} steps",
+                    f"device={cfg.device} threads={cfg.threads} precision={cfg.precision}",
+                    f"est runtime={cfg.estimated_runtime_minutes} min, memory risk={cfg.memory_risk}",
+                    f"why: {cfg.auto_config_rationale}",
+                ]
+            )
+        )
+
+    def _apply_training_config(self, cfg: TrainingConfig) -> None:
+        self.iterations.setValue(int(cfg.iterations or 0))
+        self.batch_size.setValue(int(cfg.batch_size))
+        self.grad_accum.setValue(int(cfg.gradient_accumulation_steps or 0))
+        self.learning_rate.setValue(float(cfg.learning_rate))
+        self.optimizer.setCurrentText(cfg.optimizer)
+        self.eval_interval.setValue(int(cfg.eval_interval_steps))
+        self.ckpt_interval.setValue(int(cfg.checkpoint_interval_steps))
+        self.device.setCurrentText(cfg.device)
+        self.threads.setValue(int(cfg.threads or 0))
+        self.workers.setValue(int(cfg.num_workers or 0))
+        self.precision.setCurrentText(cfg.precision)
+
+    def _evolution_quotas(self) -> EvolutionQuotas:
+        return EvolutionQuotas(
+            max_dataset_disk_gib=float(self.max_dataset_disk.value()),
+            max_daily_download_gib=float(self.max_daily_download.value()),
+            max_daily_training_hours=float(self.max_daily_train.value()),
+            retain_last_versions=int(self.retain_versions.value()),
+        )
+
+    def _preview_next_dataset_plan(self) -> None:
+        try:
+            run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
+            report = None
+            if run_id:
+                cfg = self._read_config()
+                rp = Path(cfg.output_dir).expanduser() / str(run_id) / "run_report.json"
+                if rp.exists():
+                    report = json.loads(rp.read_text(encoding="utf-8"))
+            self._last_plan = self._evolution.preview_next_plan(report, self._evolution_quotas(), self._quality_level())
+            self.recommended.append("\nNext Dataset Plan:\n" + json.dumps(self._last_plan, indent=2))
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Continuous Improvement", str(exc))
+
+    def _approve_plan(self) -> None:
+        if not self._last_plan:
+            QMessageBox.information(self, "Continuous Improvement", "Preview a plan first.")
+            return
+        self._on_log("", "system", "Plan approved for dataset evolution.")
+
+    def _run_improvement_cycle(self) -> None:
+        if not self.continuous_improvement.isChecked():
+            QMessageBox.information(self, "Continuous Improvement", "Enable continuous improvement first.")
+            return
+        if not self._last_plan:
+            self._preview_next_dataset_plan()
+        if not self._last_plan:
+            return
+        try:
+            ds = self._evolution.apply_plan(self._last_plan, self._evolution_quotas(), self.run_name.text().strip() or "ena")
+            self.dataset_path.setText(ds["manifest_path"])
+            self.dataset_id.setText(ds.get("dataset_id") or "")
+            self._on_log("", "system", f"Built evolved dataset {self.dataset_id.text()} and updated configuration.")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Continuous Improvement", str(exc))
+
     def _restore_last(self) -> None:
         cfg = self._svc.last_config()
         self.run_name.setText(cfg.run_name)
@@ -486,6 +614,9 @@ class TrainPage(QWidget):
         self.training_mode.setCurrentText(cfg.training_mode or "local")
         self.services_url.setText(cfg.services_url or "")
         self.api_key.setText(cfg.api_key or "")
+        self.smart_defaults.setChecked(bool(cfg.smart_defaults))
+        self.quality_slider.setValue({"fast":0,"balanced":1,"quality":2,"max_quality":3}.get((cfg.quality_level or "balanced").lower(),1))
+        self._update_quality_label()
         self.auto_fallback.setChecked(bool(self._cfg.ena.get("auto_fallback", True)))
         self._refresh_backend_label()
         self._refresh_checkpoints()
