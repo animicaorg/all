@@ -10,6 +10,7 @@ from typing import Any
 from urllib.request import urlopen
 
 from animica_studio.services.dataset_bootstrap_service import BootstrapOptions, DatasetBootstrapService
+from animica_studio.services.dataset_profile import DatasetProfiler
 from animica_studio.util.paths import app_data_dir
 
 
