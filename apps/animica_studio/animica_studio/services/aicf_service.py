@@ -51,10 +51,10 @@ class AicfService:
     _METHOD_CACHE_BY_URL: dict[str, dict[str, str | None]] = {}
 
     _CREDITS_METHODS = (
-        "aicf_creditsByAddress",
         "aicf.creditsByAddress",
-        "aicf_credits_by_address",
+        "aicf_creditsByAddress",
         "aicf.credits_by_address",
+        "aicf_credits_by_address",
     )
     _LIST_JOBS_METHODS = ("aicf.listJobs", "aicf_listJobs", "aicf.jobs", "aicf_jobs", "aicf.getJobs", "aicf_getJobs")
 
@@ -132,12 +132,12 @@ class AicfService:
         try:
             known = self._extract_methods(client.discover())
             if known:
-                claim_m = self._pick_supported(("aicf_claim", "aicf.claim"), known)
-                build_claim_tx_m = self._pick_supported(("aicf_buildClaimTx", "aicf.buildClaimTx"), known)
-                claimable_m = self._pick_supported(("aicf_getClaimable", "aicf.getClaimable"), known)
+                claim_m = self._pick_supported(("aicf.claim", "aicf_claim"), known)
+                build_claim_tx_m = self._pick_supported(("aicf.buildClaimTx", "aicf_buildClaimTx"), known)
+                claimable_m = self._pick_supported(("aicf.getClaimable", "aicf_getClaimable"), known)
                 credits_m = self._pick_supported(self._CREDITS_METHODS, known)
-                list_jobs = self._pick_supported(("aicf_listJobs", "aicf.listJobs", "aicf_jobs", "aicf_getJobs"), known)
-                submit_job = self._pick_supported(("aicf_submitJob", "aicf.submitJob"), known)
+                list_jobs = self._pick_supported(("aicf.listJobs", "aicf_listJobs", "aicf.jobs", "aicf_jobs", "aicf.getJobs", "aicf_getJobs"), known)
+                submit_job = self._pick_supported(("aicf.submitJob", "aicf_submitJob"), known)
                 resolved["claim"] = claim_m
                 resolved["build_claim_tx"] = build_claim_tx_m
                 resolved["claimable"] = claimable_m
@@ -219,8 +219,6 @@ class AicfService:
             last_exc: Exception | None = None
             attempts = [
                 (methods.get("credits"), {"address": address}),
-                (methods.get("credits"), {"addr": address}),
-                (methods.get("credits"), {"account": address}),
                 ("state_getAicfMinerCredits", [address]),
                 ("state.getAicfMinerCredits", [address]),
                 ("mining_getCredits", [address]),
@@ -228,8 +226,6 @@ class AicfService:
                 ("aicf_getMinerCredits", [address]),
                 ("aicf.getMinerCredits", [address]),
                 (methods.get("claimable"), {"address": address}),
-                (methods.get("claimable"), {"addr": address}),
-                (methods.get("claimable"), {"account": address}),
             ]
             for method, params in attempts:
                 if not method:
@@ -386,34 +382,30 @@ class AicfService:
                     "da_methods": registry.dump_methods("da"),
                     "list_jobs_method": None,
                 }
-            for rpc_params in ([params], params):
-                try:
-                    if isinstance(rpc_params, list):
-                        result = client.call(list_method, rpc_params)
-                    else:
-                        result = client.call_with_schema(list_method, rpc_params)
+            try:
+                result = client.call_with_schema(list_method, params)
+                return {
+                    "ok": True,
+                    "data": result,
+                    "method": list_method,
+                    "aicf_methods": registry.dump_methods("aicf"),
+                    "da_methods": registry.dump_methods("da"),
+                    "list_jobs_method": list_method,
+                }
+            except RpcResponseError as exc:
+                if exc.rpc_error.code == -32002 and "da is not enabled" in (exc.rpc_error.message or "").lower():
                     return {
-                        "ok": True,
-                        "data": result,
-                        "method": list_method,
+                        "ok": False,
+                        "error": "DA disabled on node (da.getStatus.enabled=false).",
+                        "error_kind": "da_disabled",
                         "aicf_methods": registry.dump_methods("aicf"),
                         "da_methods": registry.dump_methods("da"),
                         "list_jobs_method": list_method,
+                        "rpc_error": self._format_rpc_error_payload(exc),
                     }
-                except RpcResponseError as exc:
-                    if exc.rpc_error.code == -32002 and "da is not enabled" in (exc.rpc_error.message or "").lower():
-                        return {
-                            "ok": False,
-                            "error": "DA disabled on node (da.getStatus.enabled=false).",
-                            "error_kind": "da_disabled",
-                            "aicf_methods": registry.dump_methods("aicf"),
-                            "da_methods": registry.dump_methods("da"),
-                            "list_jobs_method": list_method,
-                            "rpc_error": self._format_rpc_error_payload(exc),
-                        }
-                    if exc.rpc_error.code in (-32601, -32602):
-                        last_exc = exc
-                        continue
+                if exc.rpc_error.code in (-32601, -32602):
+                    last_exc = exc
+                else:
                     raise
             if last_exc is not None:
                 raise last_exc
