@@ -35,6 +35,7 @@ class AicfPage(QWidget):
         self._config = config or load_config()
         self._service = AicfService(self._config)
         self._runner = JobRunner.instance()
+        self._claimable_amount: int = 0
         # Keep strong references so handles are not GC'd while in flight.
         self._active_handles: list[JobHandle] = []
         self._build_ui()
@@ -136,7 +137,10 @@ class AicfPage(QWidget):
         form = QFormLayout()
         self._credits_addr = QLineEdit()
         self._credits_addr.setPlaceholderText("0x… or bech32 address")
+        self._credits_addr.textChanged.connect(self._on_address_changed)
         form.addRow("Address:", self._credits_addr)
+        self._claimable_label = QLabel("Claimable: 0")
+        form.addRow("", self._claimable_label)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -145,17 +149,26 @@ class AicfPage(QWidget):
         self._claim_amount = QLineEdit()
         self._claim_amount.setPlaceholderText("Amount (blank = full)")
         self._claim_btn = QPushButton("Claim Credits")
+        self._claim_btn.setEnabled(False)
         self._claim_btn.clicked.connect(self._claim_credits)
+        self._diag_btn = QPushButton("Copy diagnostics")
+        self._diag_btn.clicked.connect(self._copy_diagnostics)
         btn_row.addWidget(self._fetch_btn)
         btn_row.addWidget(QLabel("Amount:"))
         btn_row.addWidget(self._claim_amount)
         btn_row.addWidget(self._claim_btn)
+        btn_row.addWidget(self._diag_btn)
         layout.addLayout(btn_row)
 
         self._credits_output = QTextEdit()
         self._credits_output.setReadOnly(True)
         layout.addWidget(self._credits_output, stretch=1)
         return w
+
+    def _on_address_changed(self) -> None:
+        self._claim_btn.setEnabled(False)
+        self._claimable_amount = 0
+        self._claimable_label.setText("Claimable: 0")
 
     def _fetch_credits(self) -> None:
         try:
@@ -164,13 +177,15 @@ class AicfPage(QWidget):
             if not addr:
                 self._credits_output.setPlainText("Enter an address first.")
                 return
-            log.info("AICF argv/rpc: get_miner_credits addr=%s", addr)
-            self._credits_output.setPlainText("Loading…")
+            log.info("AICF argv/rpc: get_miner_credits/get_claimable addr=%s", addr)
+            self._credits_output.setPlainText("[system] Fetching claimable…\nLoading…")
             self._fetch_btn.setEnabled(False)
             service = self._service
 
             def _task() -> dict:
-                return service.get_miner_credits(addr)
+                claimable = service.get_claimable(addr)
+                credits = service.get_miner_credits(addr)
+                return {"claimable": claimable, "credits": credits}
 
             handle = self._track(self._runner.run_callable(_task, timeout_s=20))
             log.info("AICF started job_id=%s (fetch_credits)", handle.job_id)
@@ -184,12 +199,21 @@ class AicfPage(QWidget):
             log.info("AICF finished rc=%s job_id=%s (fetch_credits)", rc, _jid)
             self._fetch_btn.setEnabled(True)
             result = payload if isinstance(payload, dict) else {}
-            if result.get("ok"):
-                self._credits_output.setPlainText(safe_json_dumps(result.get("data"), indent=2))
+            claimable_result = result.get("claimable") if isinstance(result.get("claimable"), dict) else {}
+            credits_result = result.get("credits") if isinstance(result.get("credits"), dict) else {}
+            if claimable_result.get("ok") and credits_result.get("ok"):
+                self._claimable_amount = int(claimable_result.get("claimable") or 0)
+                self._claimable_label.setText(f"Claimable: {self._claimable_amount}")
+                self._claim_btn.setEnabled(self._claimable_amount > 0)
+                self._credits_output.setPlainText(
+                    "[system] Fetching claimable…\n"
+                    f"{safe_json_dumps({'claimable': claimable_result.get('data'), 'credits': credits_result.get('data')}, indent=2)}"
+                )
             else:
-                err = format_rpc_error(result.get("error"))
+                err = format_rpc_error(claimable_result.get("error") or credits_result.get("error"))
                 log.warning("AICF error=%s (fetch_credits)", err)
                 self._credits_output.setPlainText(f"Error: {err}")
+                self._claim_btn.setEnabled(False)
         except Exception:  # noqa: BLE001
             log.error("AICF _on_fetch_finished error:\n%s", traceback.format_exc())
             self._fetch_btn.setEnabled(True)
@@ -203,7 +227,11 @@ class AicfPage(QWidget):
                 return
             amount_text = self._claim_amount.text().strip()
             amount = int(amount_text) if amount_text.isdigit() else None
+            if self._claimable_amount <= 0:
+                self._credits_output.setPlainText("No claimable credits available for this address.")
+                return
             log.info("AICF argv/rpc: claim_credits addr=%s amount=%s", addr, amount)
+            self._credits_output.setPlainText("[system] Fetching claimable…\n[system] Submitting claim…")
             self._claim_btn.setEnabled(False)
             service = self._service
 
@@ -223,16 +251,33 @@ class AicfPage(QWidget):
             self._claim_btn.setEnabled(True)
             result = payload if isinstance(payload, dict) else {}
             if result.get("ok"):
-                self._credits_output.setPlainText(
-                    f"✅ Claimed!\n{safe_json_dumps(result.get('data'), indent=2)}"
+                tx_hash = result.get("tx_hash")
+                tx_line = f"\nTx hash: {tx_hash}" if tx_hash else ""
+                explorer = (
+                    f"\nExplorer: https://explorer.animica.ai/tx/{tx_hash}" if tx_hash else ""
                 )
+                self._credits_output.setPlainText(
+                    f"✅ Claimed!{tx_line}{explorer}\n{safe_json_dumps(result.get('data'), indent=2)}"
+                )
+                self._fetch_credits()
             else:
                 err = format_rpc_error(result.get("error"))
                 log.warning("AICF error=%s (claim_credits)", err)
                 self._credits_output.setPlainText(f"Error: {err}")
+                self._claim_btn.setEnabled(self._claimable_amount > 0)
         except Exception:  # noqa: BLE001
             log.error("AICF _on_claim_finished error:\n%s", traceback.format_exc())
-            self._claim_btn.setEnabled(True)
+            self._claim_btn.setEnabled(self._claimable_amount > 0)
+
+    def _copy_diagnostics(self) -> None:
+        addr = self._credits_addr.text().strip()
+        payload = self._service.get_diagnostics()
+        payload["address"] = addr
+        text = safe_json_dumps(payload, indent=2)
+        from PySide6.QtGui import QGuiApplication  # noqa: PLC0415
+
+        QGuiApplication.clipboard().setText(text)
+        self._credits_output.setPlainText(f"Diagnostics copied to clipboard.\n{text}")
 
     # ------------------------------------------------------------------
     # Jobs tab

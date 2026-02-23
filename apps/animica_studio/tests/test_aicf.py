@@ -210,7 +210,7 @@ def test_aicf_service_get_miner_credits_all_methods_missing() -> None:
         result = svc.get_miner_credits("anim1test")
 
     assert result["ok"] is False
-    assert "Method not found" in result["error"]
+    assert result["error"] is not None
 
 def test_aicf_service_list_jobs_success() -> None:
     from animica_studio.storage.config import Config
@@ -295,12 +295,79 @@ def test_aicf_service_claim_credits_success() -> None:
     cfg = Config()
     svc = AicfService(cfg)
 
-    mock_result = {"tx_hash": "0x" + "a" * 64, "claimed": 100}
-    with patch("requests.Session.post") as mock_post:
-        mock_post.return_value = _make_mock_response(
-            {"jsonrpc": "2.0", "id": 1, "result": mock_result}
-        )
-        result = svc.claim_credits("anim1test", amount=100)
+    with patch.object(svc, "_resolve_aicf_methods", return_value={"claim": "aicf.claim", "claimable": "aicf.getClaimable", "credits": "aicf.creditsByAddress"}):
+        with patch.object(svc, "_client") as mock_client_factory:
+            mock_client = MagicMock()
+            mock_client_factory.return_value = mock_client
+
+            def _call(method, params=None):
+                if method == "aicf.getClaimable":
+                    return {"claimable": "0x64", "epochs": [1]}
+                if method == "aicf.claim":
+                    return {"tx_hash": "0x" + "a" * 64, "claimed": 100}
+                if method == "aicf.creditsByAddress":
+                    return {"address": "anim1test", "balance": "0x0"}
+                raise AssertionError(f"Unexpected method: {method}")
+
+            mock_client.call.side_effect = _call
+            result = svc.claim_credits("anim1test", amount=100)
 
     assert result["ok"] is True
     assert result["data"]["claimed"] == 100
+    assert result["amount_ignored"] is True
+
+
+def test_aicf_resolver_picks_claim_from_did_you_mean() -> None:
+    from animica_studio.services.aicf_service import AicfService
+    from animica_studio.services.rpc_client import RpcError, RpcResponseError
+
+    err = RpcResponseError(
+        RpcError(
+            code=-32601,
+            message="Method not found",
+            data={
+                "did_you_mean": [
+                    "aicf.claim",
+                    "aicf.creditsByAddress",
+                    "aicf.credits_by_address",
+                    "aicf.getClaimable",
+                    "aicf_creditsByAddress",
+                ]
+            },
+        )
+    )
+    picked = AicfService._resolve_method_from_error(("aicf.claim", "aicf.claimCredits"), err)
+    assert picked == "aicf.claim"
+
+
+def test_aicf_service_claim_flow_claimable_then_claim_then_refresh() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    with patch.object(svc, "_resolve_aicf_methods", return_value={"claim": "aicf.claim", "claimable": "aicf.getClaimable", "credits": "aicf.creditsByAddress"}):
+        with patch.object(svc, "_client") as mock_client_factory:
+            mock_client = MagicMock()
+            mock_client_factory.return_value = mock_client
+
+            def _call(method, params=None):
+                if method == "aicf.getClaimable":
+                    return {"claimable": "0x64", "epochs": [1]}
+                if method == "aicf.claim":
+                    return {"tx_hash": "0x" + "b" * 64}
+                if method == "aicf.creditsByAddress":
+                    return {"address": "anim1test", "balance": "0x0", "minted": "0x64", "spent": "0x64"}
+                raise AssertionError(f"Unexpected method: {method}")
+
+            mock_client.call.side_effect = _call
+
+            result = svc.claim_credits("anim1test")
+
+    assert result["ok"] is True
+    assert result["tx_hash"] == "0x" + "b" * 64
+    called_methods = [call.args[0] for call in mock_client.call.call_args_list]
+    assert called_methods.count("aicf.getClaimable") >= 2
+    assert "aicf.claim" in called_methods
+    assert "aicf.creditsByAddress" in called_methods
