@@ -5,7 +5,7 @@ import hashlib
 import json
 from typing import Any
 
-from animica_studio.services.rpc_client import RpcClient
+from animica_studio.services.rpc_client import RpcClient, RpcResponseError, RpcTransportError
 
 
 class DaClient:
@@ -14,15 +14,29 @@ class DaClient:
         if not self.rpc_url.endswith("/rpc"):
             self.rpc_url += "/rpc"
 
+    @staticmethod
+    def _is_method_unavailable_error(exc: Exception) -> bool:
+        """Return ``True`` when the RPC error indicates unknown/unavailable method."""
+        if isinstance(exc, RpcResponseError):
+            code = exc.rpc_error.code
+            msg = (exc.rpc_error.message or "").lower()
+            return code == -32601 or "method not found" in msg or "not available" in msg
+        return isinstance(exc, RpcTransportError)
+
     def _call_multi(self, methods: tuple[str, ...], params: list[Any]) -> Any:
         c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
+        failures: list[str] = []
         try:
             for method in methods:
                 try:
                     return c.call(method, params)
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    if not self._is_method_unavailable_error(exc):
+                        raise
+                    failures.append(f"{method}: {exc}")
                     continue
-            raise RuntimeError(f"DA RPC unavailable for methods: {', '.join(methods)}")
+            details = "; ".join(failures) if failures else "no details"
+            raise RuntimeError(f"DA RPC unavailable for methods: {', '.join(methods)} ({details})")
         finally:
             c.close()
 
@@ -50,7 +64,7 @@ class DaClient:
         raise RuntimeError("Unable to decode DA get blob response")
 
     def status(self) -> dict[str, Any]:
-        return self._call_multi(("da.status",), [{}])
+        return self._call_multi(("da.status", "da_status", "da.getStatus", "da_getStatus"), [{}])
 
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
-        return self._call_multi(("da.configure",), [params])
+        return self._call_multi(("da.configure", "da_configure"), [params])
