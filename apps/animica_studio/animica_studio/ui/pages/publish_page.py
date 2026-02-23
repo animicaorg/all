@@ -20,12 +20,18 @@ class PublishPage(QWidget):
         root.addWidget(b)
 
         actions = QHBoxLayout()
-        self.enable_remote_btn = QPushButton("Enable DA uploads (allow_remote_put)")
+        self.enable_remote_btn = QPushButton("Enable allow_remote_put and retry")
         self.enable_remote_btn.clicked.connect(self._enable_remote_put)
         self.enable_remote_btn.setEnabled(False)
         actions.addWidget(self.enable_remote_btn)
 
-        self.local_upload_btn = QPushButton("Upload locally (no remote put)")
+        self.allow_remote_toggle = QCheckBox("Allow DA uploads from RPC (allow_remote_put)")
+        self.allow_remote_toggle.setChecked(False)
+        self.allow_remote_toggle.setToolTip("Enable only on local/dev nodes you control.")
+        actions.addWidget(self.allow_remote_toggle)
+
+        self.local_upload_btn = QPushButton("Retry local ingest")
+        self.local_upload_btn.clicked.connect(self._retry_local_ingest)
         self.local_upload_btn.setEnabled(False)
         actions.addWidget(self.local_upload_btn)
 
@@ -62,13 +68,20 @@ class PublishPage(QWidget):
                 can_enable = any(a.get("id") == "enable_remote_put" for a in actions if isinstance(a, dict))
                 self.enable_remote_btn.setEnabled(bool(can_enable))
                 self.copy_diag_btn.setEnabled(bool(self._last_diag))
-                self.local_upload_btn.setEnabled(any(a.get("id") == "local_upload" for a in actions if isinstance(a, dict)))
+                self.local_upload_btn.setEnabled(
+                    any(a.get("id") == "local_upload" for a in actions if isinstance(a, dict))
+                    or bool((self._last_diag or {}).get("local_node"))
+                )
         self.out.setPlainText(str(out))
 
     def _enable_remote_put(self) -> None:
+        if not self.allow_remote_toggle.isChecked():
+            self.out.append("\nToggle 'Allow DA uploads from RPC (allow_remote_put)' first.")
+            return
+
         status = self.service.da_status.get_status()
         if not status.get("can_configure_allow_remote_put"):
-            self.out.append("\nNode does not expose allow_remote_put in da.configure schema.")
+            self.out.append("\nNode ignored request; policy cannot be changed via RPC.")
             return
         dir_path = status.get("configured_dir") or status.get("raw", {}).get("dir") or "/data/da"
         limit = int(status.get("effective_limit") or 10 * 1024 * 1024 * 1024)
@@ -77,9 +90,18 @@ class PublishPage(QWidget):
             status_obj = self.service.da.status() if hasattr(self.service.da, "status") else {}
             if isinstance(status_obj, dict) and status_obj.get("allow_remote_put") is not True:
                 self.service.da.configure({"allow_remote_put": True})
-            self.out.append("\nallow_remote_put enabled. Retry Push to DA.")
+            status_after = self.service.da_status.get_status()
+            if status_after.get("allow_remote_put") is True:
+                self.out.append("\nallow_remote_put enabled; retrying Push to DA…")
+                self._run()
+            else:
+                self.out.append("\nNode ignored request; policy cannot be changed via RPC.")
         else:
             self.out.append("\nFailed to enable allow_remote_put: " + str(res.get("error") or res))
+
+    def _retry_local_ingest(self) -> None:
+        self.out.append("\nRetrying local ingest…")
+        self._run()
 
     def _copy_diagnostics(self) -> None:
         if not self._last_diag:

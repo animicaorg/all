@@ -106,7 +106,7 @@ def test_publish_remote_put_blocked_returns_structured_step_error(tmp_path: Path
             "enabled": True,
             "allow_remote_put": False,
             "configured_dir": "/data/da",
-            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "rpc_url": "http://10.1.2.3:8545/rpc",
             "raw": {"version": "1.0.0"},
             "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
         },
@@ -138,8 +138,60 @@ def test_publish_remote_put_enabled_uploads_via_da_put(tmp_path: Path, monkeypat
             "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
         },
     )
-    monkeypatch.setattr(svc.da, "upload_bytes", lambda *_a, **_k: {"blob_id": "blob-123"})
+    monkeypatch.setattr(type(svc.da), "upload_bytes", lambda *_a, **_k: {"blob_id": "blob-123"}, raising=False)
+    monkeypatch.setattr(type(svc.da), "has_blob", lambda *_a, **_k: True, raising=False)
 
     out = svc.publish_checkpoint("feedbeef", dev_mode=False)
     assert out["run"].status == "completed"
     assert out["run"].result["Push to DA"]["commitment"] == "blob-123"
+    assert out["run"].result["Push to DA"]["push_strategy"] == "rpc_put"
+
+
+def test_publish_remote_put_disabled_uses_local_ingest_on_local_node(tmp_path: Path, monkeypatch) -> None:
+    svc = EnaService(Config(), _mk_store(tmp_path))
+    svc.store.set("checkpoints", [{"id": "x", "sha256": "cafebabe"}])
+
+    monkeypatch.setattr(
+        svc.da_status,
+        "get_status",
+        lambda *_a, **_k: {
+            "enabled": True,
+            "allow_remote_put": False,
+            "configured_dir": "/data/chain-1/da",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "raw": {"version": "1.0.0"},
+            "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
+        },
+    )
+    monkeypatch.setattr(type(svc.da), "upload_bytes", lambda *_a, **_k: {"blob_id": "blob-local-1"}, raising=False)
+    monkeypatch.setattr(type(svc.da), "has_blob", lambda *_a, **_k: True, raising=False)
+
+    out = svc.publish_checkpoint("cafebabe", dev_mode=False)
+    assert out["run"].status == "completed"
+    assert out["run"].result["Push to DA"]["push_strategy"] == "local_ingest"
+
+
+def test_publish_remote_put_disabled_remote_node_actionable_error(tmp_path: Path, monkeypatch) -> None:
+    svc = EnaService(Config(), _mk_store(tmp_path))
+    svc.store.set("checkpoints", [{"id": "x", "sha256": "decafbad"}])
+
+    monkeypatch.setattr(
+        svc.da_status,
+        "get_status",
+        lambda *_a, **_k: {
+            "enabled": True,
+            "allow_remote_put": False,
+            "configured_dir": "/data/chain-1/da",
+            "rpc_url": "http://10.1.2.3:8545/rpc",
+            "raw": {"version": "1.0.0"},
+            "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
+        },
+    )
+
+    out = svc.publish_checkpoint("decafbad", dev_mode=False)
+    run = out["run"]
+    assert run.status == "failed"
+    failed = next(s for s in run.steps if s.name == "Push to DA")
+    assert "Remote DA uploads are disabled" in failed.error
+    assert failed.error_details is not None
+    assert failed.error_details["error_code"] == "DA_REMOTE_PUT_BLOCKED"

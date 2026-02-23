@@ -33,7 +33,7 @@ def test_publish_page_shows_actionable_retry_on_da_policy_failure(tmp_path: Path
             "enabled": True,
             "allow_remote_put": False,
             "configured_dir": "/data/da",
-            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "rpc_url": "http://10.1.2.3:8545/rpc",
             "raw": {"version": "1.0.0"},
             "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
         },
