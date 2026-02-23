@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 from pathlib import Path
@@ -135,6 +136,16 @@ class TrainPage(QWidget):
         self.target_size = QComboBox(); self.target_size.addItems(["Starter", "Big", "Huge"]); self.target_size.setCurrentText("Big")
         self.target_size.currentTextChanged.connect(self._refresh_bootstrap_estimate)
         self.auto_start_after_dataset = QCheckBox("Auto-start training after dataset ready")
+        self.dataset_offline_mode = QCheckBox("Offline mode: use cached sources only")
+        self.dataset_offline_mode.setChecked(bool(self._dataset_sources().get("offline_mode", False)))
+        self.dataset_source_wiki_base = QLineEdit(self._get_provider_setting("wikipedia", "base_url", ""))
+        self.dataset_source_wiki_version = QLineEdit(self._get_provider_setting("wikipedia", "version", "latest"))
+        self.dataset_source_arxiv_base = QLineEdit(self._get_provider_setting("arxiv", "base_url", ""))
+        self.dataset_source_arxiv_version = QLineEdit(self._get_provider_setting("arxiv", "version", ""))
+        self.save_dataset_sources_btn = QPushButton("Save dataset source overrides")
+        self.save_dataset_sources_btn.clicked.connect(self._save_dataset_source_settings)
+        self.copy_bootstrap_diag_btn = QPushButton("Copy diagnostics")
+        self.copy_bootstrap_diag_btn.clicked.connect(self._copy_bootstrap_diagnostics)
         self.upload_shards_to_da = QCheckBox("Upload shards to DA")
         self.upload_shards_to_da.setChecked(bool(self._cfg.ena.get("allow_remote_put", False)))
         self.upload_shards_to_da.setEnabled(bool(self._cfg.ena.get("allow_remote_put", False)))
@@ -213,6 +224,13 @@ class TrainPage(QWidget):
         form.addRow("Auto languages (csv)", self.auto_langs)
         form.addRow("Auto topics (csv)", self.auto_topics)
         form.addRow("Target size", self.target_size)
+        form.addRow("Dataset source: Wikipedia base", self.dataset_source_wiki_base)
+        form.addRow("Dataset source: Wikipedia version", self.dataset_source_wiki_version)
+        form.addRow("Dataset source: arXiv base", self.dataset_source_arxiv_base)
+        form.addRow("Dataset source: arXiv version/date", self.dataset_source_arxiv_version)
+        form.addRow("Dataset sources", self.dataset_offline_mode)
+        dataset_source_buttons = QHBoxLayout(); dataset_source_buttons.addWidget(self.save_dataset_sources_btn); dataset_source_buttons.addWidget(self.copy_bootstrap_diag_btn); dataset_source_buttons.addStretch(1)
+        form.addRow("", dataset_source_buttons)
         form.addRow("Bootstrap estimate", self.bootstrap_estimate)
         form.addRow("Bootstrap progress", self.bootstrap_progress)
         form.addRow("", self.auto_start_after_dataset)
@@ -323,6 +341,8 @@ class TrainPage(QWidget):
 
 
     def _maybe_prompt_bootstrap(self) -> None:
+        if os.getenv("ANIMICA_STUDIO_SAFE_MODE", "").strip() == "1":
+            return
         if self.dataset_path.text().strip():
             return
         msg = QMessageBox(self)
@@ -450,6 +470,9 @@ class TrainPage(QWidget):
         self.dataset_id.setText(Path(result.get("dataset_dir") or "").name)
         self.bootstrap_progress.setText("Bootstrap completed.")
         self.console.append(f"[dataset] Bootstrap dataset ready: {result.get('manifest_path')}")
+        diagnostics = result.get("diagnostics")
+        if diagnostics:
+            self.console.append(f"[dataset] Diagnostics: {json.dumps(diagnostics[:3], ensure_ascii=False)}")
         if self.upload_shards_to_da.isChecked():
             self.console.append("[dataset] Upload shards to DA requested (upload workflow pending integration).")
         if self._bootstrap_worker and self._bootstrap_worker.auto_start:
@@ -459,7 +482,50 @@ class TrainPage(QWidget):
         self.bootstrap_btn.setEnabled(True)
         self.cancel_bootstrap_btn.setEnabled(False)
         self.bootstrap_progress.setText("Bootstrap failed.")
-        QMessageBox.warning(self, "Dataset bootstrap", err)
+        self.console.append(f"[dataset] Bootstrap failed: {err}")
+        QMessageBox.warning(self, "Dataset bootstrap", f"{err}\n\nSuggestions:\n- Pick a different version\n- Paste a custom URL\n- Use Starter dataset")
+
+    def _dataset_sources(self) -> dict:
+        ena = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
+        ds = ena.get("dataset_sources") if isinstance(ena, dict) else {}
+        if not isinstance(ds, dict):
+            return {"offline_mode": False, "providers": {}}
+        providers = ds.get("providers") if isinstance(ds.get("providers"), dict) else {}
+        return {"offline_mode": bool(ds.get("offline_mode", False)), "providers": providers}
+
+    def _get_provider_setting(self, provider: str, key: str, default: str) -> str:
+        settings = self._dataset_sources()
+        providers = settings.get("providers", {})
+        p = providers.get(provider, {}) if isinstance(providers, dict) else {}
+        if not isinstance(p, dict):
+            return default
+        return str(p.get(key, default) or default)
+
+    def _save_dataset_source_settings(self) -> None:
+        ena = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
+        if not isinstance(ena, dict):
+            ena = {}
+        ena["dataset_sources"] = {
+            "offline_mode": self.dataset_offline_mode.isChecked(),
+            "providers": {
+                "wikipedia": {
+                    "base_url": self.dataset_source_wiki_base.text().strip(),
+                    "version": self.dataset_source_wiki_version.text().strip() or "latest",
+                },
+                "arxiv": {
+                    "base_url": self.dataset_source_arxiv_base.text().strip(),
+                    "version": self.dataset_source_arxiv_version.text().strip(),
+                },
+            },
+        }
+        self._cfg.ena = ena
+        save_config(self._cfg)
+        self.console.append("[dataset] Saved source overrides.")
+
+    def _copy_bootstrap_diagnostics(self) -> None:
+        text = self.console.toPlainText()
+        QGuiApplication.clipboard().setText(text)
+        self.console.append("[dataset] Copied diagnostics to clipboard.")
 
     def _apply_preset(self, name: str) -> None:
         p = self.PRESETS[name]

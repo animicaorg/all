@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 
 from PySide6.QtCore import Qt, QTimer
@@ -81,6 +82,7 @@ class ConsolePage(QWidget):
         self._node_worker: "JobHandle | None" = None
         self._node_job_id: str | None = None
         self._active_job_id: str | None = None
+        self._safe_mode = os.getenv("ANIMICA_STUDIO_SAFE_MODE", "").strip() == "1"
 
         self._build_ui()
         self._refresh_presets()
@@ -219,7 +221,10 @@ class ConsolePage(QWidget):
 
         self._node_timer = QTimer(self)
         self._node_timer.timeout.connect(self._on_node_refresh)
-        QTimer.singleShot(1500, self._on_node_refresh)
+        if not self._safe_mode:
+            QTimer.singleShot(1500, self._on_node_refresh)
+        else:
+            self._node_status_label.setText("Status: polling disabled (safe mode)")
 
         return panel
 
@@ -234,6 +239,10 @@ class ConsolePage(QWidget):
             self._on_run()
 
     def _on_poll_toggle(self, enabled: bool) -> None:
+        if self._safe_mode and enabled:
+            self._poll_toggle.setChecked(False)
+            self._stream.append_system("Safe mode enabled: node polling is disabled.")
+            return
         if enabled:
             self._node_timer.start(60_000)
             self._stream.append_system("Node polling enabled (60s interval).")
@@ -244,7 +253,7 @@ class ConsolePage(QWidget):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        if self._poll_toggle.isChecked():
+        if self._poll_toggle.isChecked() and not self._safe_mode:
             self._node_timer.start(60_000)
 
     def hideEvent(self, event) -> None:  # type: ignore[override]
@@ -365,6 +374,8 @@ class ConsolePage(QWidget):
     # ------------------------------------------------------------------
 
     def _on_node_refresh(self) -> None:
+        if self._safe_mode or not self.isVisible():
+            return
         self._run_node_op("status")
 
     def _on_node_start(self) -> None:
