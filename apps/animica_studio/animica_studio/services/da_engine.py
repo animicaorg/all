@@ -4,10 +4,12 @@ import logging
 import os
 import shutil
 import time
-from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -84,6 +86,10 @@ class DaContributionEngine(QObject):
         self._busy_worker: WorkerThread | None = None
         self._known_uploaded: set[str] = set()
         self._last_uploaded_bytes = 0
+        self._autostart_attempted = False
+        self._last_state_transition_ts = self._utc_now()
+        self._start_attempts = 0
+        self._config_validation_reasons: list[str] = []
 
     @staticmethod
     def _is_writable_dir(path: Path) -> tuple[bool, str]:
@@ -112,6 +118,64 @@ class DaContributionEngine(QObject):
     def client(self) -> DaClient:
         return DaClient(self.config.rpc_url)
 
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _transition_to(self, new_state: DaEngineState, reason: str) -> None:
+        old = self.state
+        self.state = new_state
+        self._last_state_transition_ts = self._utc_now()
+        log.info("DA state: %s -> %s (%s)", old.value, new_state.value, reason)
+        self.stateChanged.emit(self.state.value)
+
+    @staticmethod
+    def _validate_rpc_url(rpc_url: str) -> str | None:
+        parsed = urlparse((rpc_url or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            return "RPC URL must start with http:// or https://"
+        if not parsed.netloc:
+            return "RPC URL must include host"
+        return None
+
+    def config_validation_details(self, cfg: DaEngineConfig) -> tuple[bool, list[str]]:
+        reasons: list[str] = []
+        if not cfg.data_dir:
+            reasons.append("Data directory is required")
+        if cfg.limit_bytes <= 0:
+            reasons.append("Limit must be greater than 0")
+        rpc_err = self._validate_rpc_url(cfg.rpc_url)
+        if rpc_err:
+            reasons.append(rpc_err)
+        p = Path(cfg.data_dir).expanduser()
+        if cfg.data_dir:
+            writable, detail = self._is_writable_dir(p)
+            if not writable:
+                reasons.append(f"Data directory not writable: {detail}")
+        return (len(reasons) == 0), reasons
+
+    def ensure_enabled_if_autostart(self) -> bool:
+        valid, reasons = self.config_validation_details(self.config)
+        self._config_validation_reasons = reasons
+        if self.config.auto_start and valid and not self.config.enabled:
+            self.config.enabled = True
+            self.metrics.last_error = ""
+            self._transition_to(DaEngineState.CONFIGURED, "auto-enable for auto_start")
+            self.healthChanged.emit(True, "Configured")
+            self.logLine.emit("system", "DA auto-enabled due to auto_start")
+            return True
+        return False
+
+    def autostart_if_configured(self) -> None:
+        if self._autostart_attempted:
+            return
+        self._autostart_attempted = True
+        self.ensure_enabled_if_autostart()
+        valid, reasons = self.config_validation_details(self.config)
+        self._config_validation_reasons = reasons
+        if self.config.auto_start and self.config.enabled and valid and self.state != DaEngineState.RUNNING:
+            self.start()
+
     def apply_config(self, config: DaEngineConfig) -> tuple[bool, str]:
         config = self._normalize_data_dir(config)
         ok, detail = self.validate_config(config)
@@ -121,44 +185,39 @@ class DaContributionEngine(QObject):
         self.config = config
         self.metrics.directory = config.data_dir
         self.metrics.limit_bytes = config.limit_bytes
-        self.state = DaEngineState.CONFIGURED if config.enabled else DaEngineState.DISABLED
-        self.stateChanged.emit(self.state.value)
-        self.healthChanged.emit(True, "Configured")
+        self.metrics.last_error = ""
+        if config.enabled:
+            self._transition_to(DaEngineState.CONFIGURED, "apply")
+            self.healthChanged.emit(True, "Configured")
+        else:
+            self._transition_to(DaEngineState.DISABLED, "apply (toggle off)")
+            self.healthChanged.emit(True, "Disabled (toggle off)")
         self.logLine.emit("system", f"Applied DA config dir={config.data_dir} limit={config.limit_bytes}")
         if self._path_warning:
             self.logLine.emit("warn", self._path_warning)
+        self._update_local_metrics()
         return True, "ok"
 
     def validate_config(self, cfg: DaEngineConfig) -> tuple[bool, str]:
-        p = Path(cfg.data_dir).expanduser()
-        if not cfg.enabled:
-            return True, "disabled"
-        if not cfg.data_dir:
-            return False, "Data directory is required"
-        if cfg.limit_bytes < 1024**3:
-            return False, "Limit must be at least 1 GiB"
-        try:
-            writable, detail = self._is_writable_dir(p)
-            if not writable:
-                raise OSError(detail)
-        except Exception as exc:
-            return False, f"Data directory not writable: {exc}"
-        try:
-            self.client().status()
-        except Exception as exc:
-            return False, f"DA endpoint check failed: {exc}"
-        return True, "ok"
+        ok, reasons = self.config_validation_details(cfg)
+        self._config_validation_reasons = reasons
+        if ok:
+            return True, "ok"
+        return False, "; ".join(reasons)
 
     def start(self) -> None:
         if self.state == DaEngineState.RUNNING:
             return
-        if not self.config.enabled:
-            self.state = DaEngineState.DISABLED
-            self.stateChanged.emit(self.state.value)
-            self.healthChanged.emit(True, "Disabled")
+        self._start_attempts += 1
+        self.logLine.emit("system", f"DA start requested (attempt={self._start_attempts})")
+        ok, detail = self.validate_config(self.config)
+        if not ok:
+            self._set_error(detail)
             return
-        self.state = DaEngineState.STARTING
-        self.stateChanged.emit(self.state.value)
+        if not self.config.enabled:
+            self.config.enabled = True
+            self._transition_to(DaEngineState.CONFIGURED, "start enabled DA feature")
+        self._transition_to(DaEngineState.STARTING, "start")
         try:
             self.client().configure(
                 {
@@ -169,8 +228,7 @@ class DaContributionEngine(QObject):
                 }
             )
             self._timer.start()
-            self.state = DaEngineState.RUNNING
-            self.stateChanged.emit(self.state.value)
+            self._transition_to(DaEngineState.RUNNING, "start success")
             self.healthChanged.emit(True, "Running")
             self.logLine.emit("system", "DA contribution engine running")
             if self._path_warning:
@@ -182,16 +240,29 @@ class DaContributionEngine(QObject):
     def stop(self) -> None:
         if self.state not in {DaEngineState.RUNNING, DaEngineState.STARTING, DaEngineState.ERROR}:
             return
-        self.state = DaEngineState.STOPPING
-        self.stateChanged.emit(self.state.value)
+        self._transition_to(DaEngineState.STOPPING, "stop")
         self._timer.stop()
         if self._busy_worker and self._busy_worker.isRunning():
             self._busy_worker.quit()
             self._busy_worker.wait(1000)
-        self.state = DaEngineState.CONFIGURED
-        self.stateChanged.emit(self.state.value)
+        self._transition_to(DaEngineState.CONFIGURED, "stop complete")
         self.healthChanged.emit(True, "Stopped")
         self.logLine.emit("system", "DA contribution engine stopped")
+
+    def _update_local_metrics(self) -> None:
+        try:
+            p = Path(self.config.data_dir).expanduser()
+            if not p.exists():
+                raise FileNotFoundError(f"Directory does not exist: {p}")
+            used = sum(f.stat().st_size for f in p.glob("**/*") if f.is_file() and not f.name.startswith("."))
+            self.metrics.used_bytes = int(used)
+            if self.config.mode == "quota":
+                self.metrics.remaining_bytes = max(int(self.config.limit_bytes - used), 0)
+            else:
+                self.metrics.remaining_bytes = int(shutil.disk_usage(p).free)
+            self.metricsUpdated.emit(self.metrics)
+        except Exception as exc:
+            self._set_error(str(exc))
 
     def _tick(self) -> None:
         if self.state != DaEngineState.RUNNING or (self._busy_worker and self._busy_worker.isRunning()):
@@ -203,6 +274,8 @@ class DaContributionEngine(QObject):
 
     def _run_cycle(self) -> dict[str, Any]:
         p = Path(self.config.data_dir)
+        if not p.exists() or not os.access(p, os.R_OK):
+            raise RuntimeError(f"Contribution directory unreadable: {p}")
         files = [f for f in p.glob("**/*") if f.is_file() and not f.name.startswith(".")]
         queued = [f for f in files if str(f) not in self._known_uploaded]
         uploaded = []
@@ -233,7 +306,10 @@ class DaContributionEngine(QObject):
             for item in uploaded:
                 self.logLine.emit("stdout", f"Uploaded {item['file']} -> {item['blob_id']}")
         self.metrics.used_bytes = int(out.get("used", 0))
-        self.metrics.remaining_bytes = int(out.get("free", 0))
+        if self.config.mode == "quota":
+            self.metrics.remaining_bytes = max(int(self.config.limit_bytes - self.metrics.used_bytes), 0)
+        else:
+            self.metrics.remaining_bytes = int(out.get("free", 0))
         status = out.get("status") or {}
         if isinstance(status, dict) and status.get("last_error"):
             self.metrics.last_error = str(status.get("last_error"))
@@ -244,9 +320,8 @@ class DaContributionEngine(QObject):
         self.metricsUpdated.emit(self.metrics)
 
     def _set_error(self, detail: str) -> None:
-        self.state = DaEngineState.ERROR
+        self._transition_to(DaEngineState.ERROR, "error")
         self.metrics.last_error = detail
-        self.stateChanged.emit(self.state.value)
         self.healthChanged.emit(False, detail)
         self.logLine.emit("error", detail)
 
@@ -255,4 +330,8 @@ class DaContributionEngine(QObject):
             "state": self.state.value,
             "config": self.config.__dict__,
             "metrics": self.metrics.__dict__,
+            "config_valid": len(self._config_validation_reasons) == 0,
+            "config_validation_reasons": self._config_validation_reasons,
+            "last_state_transition_ts": self._last_state_transition_ts,
+            "start_attempts": self._start_attempts,
         }
