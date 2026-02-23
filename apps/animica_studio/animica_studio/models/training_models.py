@@ -33,8 +33,9 @@ class TrainingConfig:
     resume_checkpoint: str | None = None
     submit_to_aicf: bool = False
     budget_anm: str = "10"
-    ena_submit_mode: str = "local"
-    aicf_services_url: str = ""
+    training_mode: str = "local"
+    services_url: str = ""
+    api_key: str = ""
 
     def effective_iterations(self) -> int | None:
         if self.iterations and int(self.iterations) > 0:
@@ -49,6 +50,11 @@ class TrainingConfig:
         if not isinstance(data, dict):
             return cls()
         merged = cls().to_dict()
+        # Backward compatibility for older saved keys.
+        if "ena_submit_mode" in data and "training_mode" not in data:
+            data = {**data, "training_mode": data.get("ena_submit_mode")}
+        if "aicf_services_url" in data and "services_url" not in data:
+            data = {**data, "services_url": data.get("aicf_services_url")}
         merged.update(data)
         return cls(**merged)
 

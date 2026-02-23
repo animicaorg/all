@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -44,10 +45,13 @@ class TrainPage(QWidget):
         self._svc = ENATrainingService(config, self)
         self._dataset_manager = DatasetManager()
         self._active_run_id: str | None = None
+        self._mode_migration_warning = self._svc.ensure_training_mode_migration()
         self._build()
         self._wire()
         self._restore_last()
         self._refresh_runs()
+        if self._mode_migration_warning:
+            self._on_log("", "system", self._mode_migration_warning)
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -116,8 +120,12 @@ class TrainPage(QWidget):
 
         self.submit_aicf = QCheckBox("Submit checkpoints/metrics to AICF")
         self.budget_anm = QLineEdit("10")
-        self.ena_submit_mode = QComboBox(); self.ena_submit_mode.addItems(["local", "remote"])
-        self.aicf_services_url = QLineEdit("")
+        self.training_mode = QComboBox(); self.training_mode.addItems(["local", "remote"])
+        self.training_mode_help = QLabel("Local: runs training on this machine via animica CLI, streams logs.\nRemote: submits a job to AICF/ENA services URL (requires config).")
+        self.training_mode_help.setWordWrap(True)
+        self.services_url = QLineEdit("")
+        self.api_key = QLineEdit("")
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
 
         form.addRow("Run name", self.run_name)
         form.addRow("Dataset path", dataset_row)
@@ -152,6 +160,10 @@ class TrainPage(QWidget):
         form.addRow("Resume from checkpoint", resume_row)
         form.addRow(self.submit_aicf)
         form.addRow("Budget (ANM)", self.budget_anm)
+        form.addRow("Mode", self.training_mode)
+        form.addRow("", self.training_mode_help)
+        form.addRow("Services URL", self.services_url)
+        form.addRow("API key (optional)", self.api_key)
 
         root.addWidget(form_box)
 
@@ -159,8 +171,10 @@ class TrainPage(QWidget):
         self.start_btn = QPushButton("Start Training")
         self.stop_btn = QPushButton("Stop")
         self.resume_btn = QPushButton("Resume Watch")
+        self.switch_local_btn = QPushButton("Switch to Local")
+        self.copy_diag_btn = QPushButton("Copy diagnostics")
         self.stop_btn.setEnabled(False)
-        ctl.addWidget(self.start_btn); ctl.addWidget(self.stop_btn); ctl.addWidget(self.resume_btn)
+        ctl.addWidget(self.start_btn); ctl.addWidget(self.stop_btn); ctl.addWidget(self.resume_btn); ctl.addWidget(self.switch_local_btn); ctl.addWidget(self.copy_diag_btn)
         ctl.addStretch(1)
         root.addLayout(ctl)
 
@@ -194,6 +208,8 @@ class TrainPage(QWidget):
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.resume_btn.clicked.connect(self._resume_watch)
+        self.switch_local_btn.clicked.connect(self._switch_to_local)
+        self.copy_diag_btn.clicked.connect(self._copy_diagnostics)
 
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
@@ -271,8 +287,9 @@ class TrainPage(QWidget):
             resume_checkpoint=(None if self.resume_ckpt.currentIndex() <= 0 else self.resume_ckpt.currentData(Qt.ItemDataRole.UserRole)),
             submit_to_aicf=self.submit_aicf.isChecked(),
             budget_anm=self.budget_anm.text().strip() or "10",
-            ena_submit_mode=self.ena_submit_mode.currentText(),
-            aicf_services_url=self.aicf_services_url.text().strip(),
+            training_mode=self.training_mode.currentText(),
+            services_url=self.services_url.text().strip(),
+            api_key=self.api_key.text().strip(),
         )
         if cfg.iterations and cfg.epochs:
             self._on_log("", "system", "Both iterations and epochs set; iterations takes precedence.")
@@ -365,6 +382,16 @@ class TrainPage(QWidget):
             self.stop_btn.setEnabled(False)
             self._refresh_runs()
 
+    def _switch_to_local(self) -> None:
+        self.training_mode.setCurrentText("local")
+        self._on_log("", "system", "Switched ENA training mode to local.")
+
+    def _copy_diagnostics(self) -> None:
+        run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
+        payload = self._svc.build_diagnostics(str(run_id) if run_id else None)
+        QGuiApplication.clipboard().setText(json.dumps(payload, indent=2))
+        self._on_log("", "system", "Diagnostics copied to clipboard.")
+
     def _refresh_runs(self) -> None:
         self.runs_combo.clear()
         for run in self._svc.list_runs():
@@ -420,6 +447,7 @@ class TrainPage(QWidget):
         self.lora_rank.setValue(int(cfg.lora_rank or 0))
         self.submit_aicf.setChecked(cfg.submit_to_aicf)
         self.budget_anm.setText(cfg.budget_anm)
-        self.ena_submit_mode.setCurrentText(cfg.ena_submit_mode or "local")
-        self.aicf_services_url.setText(cfg.aicf_services_url or "")
+        self.training_mode.setCurrentText(cfg.training_mode or "local")
+        self.services_url.setText(cfg.services_url or "")
+        self.api_key.setText(cfg.api_key or "")
         self._refresh_checkpoints()
