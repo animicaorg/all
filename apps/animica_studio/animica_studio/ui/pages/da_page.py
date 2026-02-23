@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QMessageBox,
     QSpinBox,
     QTabWidget,
     QTextEdit,
@@ -458,6 +459,25 @@ class DaPage(QWidget):
         except Exception as exc:  # noqa: BLE001
             log.exception("Open folder failed: %s", exc)
 
+
+    def _prompt_directory_permission_fix(self, directory: str) -> None:
+        command = f"sudo chmod -R a+rwx '{directory}'"
+        text = (
+            "The configured DA directory is not writable.\n\n"
+            "To continue using this directory, update permissions with sudo:\n"
+            f"{command}"
+        )
+        dlg = QMessageBox(self)
+        dlg.setIcon(QMessageBox.Warning)
+        dlg.setWindowTitle("Directory permissions required")
+        dlg.setText(text)
+        copy_btn = dlg.addButton("Copy command", QMessageBox.ActionRole)
+        dlg.addButton(QMessageBox.Ok)
+        dlg.exec()
+        if dlg.clickedButton() is copy_btn:
+            QGuiApplication.clipboard().setText(command)
+            self._contrib_console.append_info("Copied permission command to clipboard.")
+
     def _on_contrib_apply(self) -> None:
         try:
             self._contrib_apply_btn.setEnabled(False)
@@ -470,6 +490,8 @@ class DaPage(QWidget):
             ok, msg = self._da_engine.apply_config(engine_cfg)
             if not ok:
                 self._contrib_error_label.setText(msg)
+                if "Data directory not writable" in msg:
+                    self._prompt_directory_permission_fix(directory)
                 self._contrib_apply_btn.setEnabled(True)
                 return
 
