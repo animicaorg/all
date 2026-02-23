@@ -5,10 +5,11 @@ import json
 import re
 import time
 from pathlib import Path
+from threading import Event
 from typing import Any
 from urllib.request import urlopen
 
-from animica_studio.services.dataset_profile import DatasetProfiler
+from animica_studio.services.dataset_bootstrap_service import BootstrapOptions, DatasetBootstrapService
 from animica_studio.util.paths import app_data_dir
 
 
@@ -18,6 +19,37 @@ class DatasetManager:
     def __init__(self) -> None:
         self._root = app_data_dir() / "datasets"
         self._root.mkdir(parents=True, exist_ok=True)
+        self._bootstrap = DatasetBootstrapService()
+
+    def bootstrap_large_dataset(
+        self,
+        name: str,
+        size_preset: str = "big",
+        *,
+        language_filter: str = "en",
+        max_disk_bytes: int | None = None,
+        max_daily_download_bytes: int | None = None,
+        max_mbps: float | None = None,
+        progress_cb=None,
+        cancel_event=None,
+    ) -> dict[str, Any]:
+        opts = BootstrapOptions(
+            name=name,
+            size_preset=size_preset,
+            language_filter=language_filter,
+            output_dir=self._root / f"bootstrap-{re.sub(r'[^a-zA-Z0-9_-]+', '-', name).strip('-') or 'dataset'}",
+            max_disk_bytes=max_disk_bytes,
+            max_daily_download_bytes=max_daily_download_bytes,
+            max_mbps=max_mbps,
+        )
+        return self._bootstrap.bootstrap(
+            options=opts,
+            progress_cb=progress_cb or (lambda _p: None),
+            cancel=cancel_event or Event(),
+        )
+
+    def estimate_bootstrap(self, size_preset: str) -> dict[str, Any]:
+        return self._bootstrap.estimate(size_preset)
 
     def build_auto_dataset(
         self,
