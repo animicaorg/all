@@ -64,6 +64,7 @@ class DaPage(QWidget):
         self._cancel_token = CancelToken()
         self._active_workers: list[WorkerThread] = []
         self._recent_worker_errors: list[str] = []
+        self._enable_toggle_touched = False
         self._build_ui()
         self._load_contribution_settings()
         self._da_engine.stateChanged.connect(self._on_engine_state)
@@ -300,6 +301,7 @@ class DaPage(QWidget):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._contrib_enable_cb = QCheckBox("Enable DA contribution")
+        self._contrib_enable_cb.toggled.connect(lambda _checked: setattr(self, "_enable_toggle_touched", True))
         form.addRow("", self._contrib_enable_cb)
 
         dir_row = QHBoxLayout()
@@ -414,7 +416,7 @@ class DaPage(QWidget):
         """Populate contribution controls from saved config."""
         cfg = self._config.da_contribution
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
-        saved_dir = cfg.get("directory", "") or ""
+        saved_dir = cfg.get("data_dir") or cfg.get("directory", "") or ""
         self._contrib_dir_edit.setText(saved_dir)
         self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
         mode = cfg.get("mode") or cfg.get("reserve_mode", "quota")
@@ -425,9 +427,14 @@ class DaPage(QWidget):
 
         self._contrib_rpc_url.setText(str(cfg.get("rpc_url") or self._config.get_active_profile().node.rpc_local_url))
 
-        # Auto-start if configured
-        if cfg.get("enabled") and cfg.get("auto_start", True):
-            self._da_engine.start()
+        # Migrate legacy enabled=false + auto_start=true configs and autostart once.
+        if self._da_engine.ensure_enabled_if_autostart():
+            self._contrib_enable_cb.setChecked(True)
+            self._persist_da_settings()
+            self._contrib_console.append_info("DA auto-enabled due to auto_start")
+        QTimer.singleShot(0, self._da_engine.autostart_if_configured)
+
+        self._enable_toggle_touched = False
         self._on_engine_state(self._da_engine.state.value)
         self._on_engine_metrics(self._da_engine.metrics)
 
@@ -478,14 +485,31 @@ class DaPage(QWidget):
             QGuiApplication.clipboard().setText(command)
             self._contrib_console.append_info("Copied permission command to clipboard.")
 
+    def _persist_da_settings(self) -> None:
+        self._config.da_contribution.update(
+            {
+                "enabled": self._da_engine.config.enabled,
+                "data_dir": self._da_engine.config.data_dir,
+                "mode": self._da_engine.config.mode,
+                "limit_bytes": self._da_engine.config.limit_bytes,
+                "rpc_url": self._da_engine.config.rpc_url,
+                "auto_start": self._da_engine.config.auto_start,
+            }
+        )
+        save_config(self._config)
+
+
     def _on_contrib_apply(self) -> None:
         try:
             self._contrib_apply_btn.setEnabled(False)
             directory = self._contrib_dir_edit.text().strip() or default_da_dir()
             max_gb = self._contrib_max_gb_spin.value(); max_bytes = max_gb * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
-            enabled = self._contrib_enable_cb.isChecked()
             auto_start = self._contrib_autostart_cb.isChecked()
+            enabled = self._contrib_enable_cb.isChecked()
+            if not self._enable_toggle_touched and auto_start:
+                enabled = True
+                self._contrib_enable_cb.setChecked(True)
             engine_cfg = DaEngineConfig(enabled=enabled, data_dir=directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start)
             ok, msg = self._da_engine.apply_config(engine_cfg)
             if not ok:
@@ -497,18 +521,7 @@ class DaPage(QWidget):
 
             self._contrib_error_label.setText("")
 
-            # Persist to config
-            self._config.da_contribution.update(
-                {
-                    "enabled": enabled,
-                    "data_dir": directory,
-                    "mode": reserve_mode,
-                    "limit_bytes": max_bytes,
-                    "rpc_url": self._contrib_rpc_url.text().strip(),
-                    "auto_start": auto_start,
-                }
-            )
-            save_config(self._config)
+            self._persist_da_settings()
             self._contrib_console.append_info("Settings saved.")
             self._on_engine_metrics(self._da_engine.metrics)
         except Exception as exc:  # noqa: BLE001
@@ -520,11 +533,29 @@ class DaPage(QWidget):
     def _on_contrib_start(self) -> None:
         try:
             self._contrib_start_btn.setEnabled(False)
+            directory = self._contrib_dir_edit.text().strip() or default_da_dir()
+            max_bytes = self._contrib_max_gb_spin.value() * 1024 ** 3
+            reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
+            engine_cfg = DaEngineConfig(
+                enabled=True,
+                data_dir=directory,
+                mode=str(reserve_mode),
+                limit_bytes=max_bytes,
+                rpc_url=self._contrib_rpc_url.text().strip(),
+                auto_start=self._contrib_autostart_cb.isChecked(),
+            )
+            ok, msg = self._da_engine.apply_config(engine_cfg)
+            if not ok:
+                self._contrib_error_label.setText(msg)
+                return
+            self._contrib_enable_cb.setChecked(True)
+            self._persist_da_settings()
             self._da_engine.start()
-            self._contrib_start_btn.setEnabled(True)
         except Exception as exc:  # noqa: BLE001
-            self._contrib_start_btn.setEnabled(True)
             log.exception("Start contribution failed: %s", exc)
+            self._contrib_error_label.setText(f"Error: {exc}")
+        finally:
+            self._contrib_start_btn.setEnabled(True)
 
     def _on_contrib_stop(self) -> None:
         try:
@@ -552,7 +583,7 @@ class DaPage(QWidget):
     @ui_thread_only(log)
     def _on_engine_state(self, state: str) -> None:
         mapping = {
-            DaEngineState.DISABLED.value: "Disabled",
+            DaEngineState.DISABLED.value: "Disabled (not configured or toggle off)",
             DaEngineState.CONFIGURED.value: "Configured",
             DaEngineState.STARTING.value: "Starting",
             DaEngineState.RUNNING.value: "Running",
@@ -560,11 +591,17 @@ class DaPage(QWidget):
             DaEngineState.ERROR.value: "Error",
         }
         self._contrib_health_label.setText(mapping.get(state, state))
+        if state == DaEngineState.DISABLED.value and self._contrib_autostart_cb.isChecked():
+            self._contrib_error_label.setText("Disabled while auto-start is enabled. Click Start to fix now.")
 
     @ui_thread_only(log)
     def _on_engine_health(self, healthy: bool, detail: str) -> None:
-        if not healthy:
-            self._contrib_error_label.setText(detail)
+        if healthy:
+            if detail:
+                self._contrib_console.append_info(detail)
+            self._contrib_error_label.setText("")
+            return
+        self._contrib_error_label.setText(detail)
 
     @ui_thread_only(log)
     def _on_engine_metrics(self, metrics) -> None:
