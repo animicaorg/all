@@ -115,6 +115,14 @@ data:
     enabled         = ${AICF_ENABLED:-true}
     treasury_ratio  = ${AICF_TREASURY_RATIO:-0.10}
 
+    [capabilities]
+    # Useful-work capabilities exposed by the node API.
+    enable_blob_pin        = ${CAP_ENABLE_BLOB_PIN:-true}
+    enable_ai_enqueue      = ${CAP_ENABLE_AI_ENQUEUE:-true}
+    enable_quantum_enqueue = ${CAP_ENABLE_QUANTUM_ENQUEUE:-true}
+    enable_zk_verify       = ${CAP_ENABLE_ZK_VERIFY:-true}
+    queue_max_inflight     = ${CAP_QUEUE_MAX_INFLIGHT:-1024}
+
     [mining]
     # Built-in CPU miner; use in single-node devnet or small testnets
     enabled       = ${MINER_ENABLED:-false}

@@ -68,7 +68,7 @@ data:
     [workers]
     # Off-chain useful-proof helpers for devnet demos (optional)
     ai_enabled       = ${AI_WORKER_ENABLED:-false}
-    quantum_enabled  = ${QUANTUM_WORKER_ENABLED:-false}
+    quantum_enabled  = ${QUANTUM_WORKER_ENABLED:-true}
     storage_enabled  = ${STORAGE_WORKER_ENABLED:-false}
     vdf_enabled      = ${VDF_WORKER_ENABLED:-true}
 
