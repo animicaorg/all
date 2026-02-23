@@ -274,19 +274,71 @@ def test_aicf_service_list_jobs_falls_back_to_da_list_object_params() -> None:
     cfg = Config()
     svc = AicfService(cfg)
 
-    invalid_params = {"jsonrpc": "2.0", "id": 2, "error": {"code": -32602, "message": "Invalid params"}}
-    not_found = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}
     mock_result = {"jobs": [], "total": 0}
-    with patch("requests.Session.post") as mock_post:
-        mock_post.side_effect = [
-            _make_mock_response(not_found),
-            _make_mock_response(invalid_params),
-            _make_mock_response({"jsonrpc": "2.0", "id": 3, "result": mock_result}),
-        ]
+    with patch.object(svc, "_client") as mock_client_factory, patch.object(
+        svc, "_resolve_aicf_methods", return_value={"list_jobs": "aicf.listJobs"}
+    ):
+        mock_client = MagicMock()
+        mock_registry = MagicMock()
+        mock_registry.resolve_any.return_value = "aicf.listJobs"
+        mock_registry.dump_methods.side_effect = [["aicf.listJobs"], ["da.getStatus"]]
+        mock_client.registry.return_value = mock_registry
+        from animica_studio.models.rpc_models import RpcError
+        from animica_studio.services.rpc_client import RpcResponseError
+
+        mock_client.call.side_effect = RpcResponseError(RpcError(code=-32602, message="Invalid params", data={}))
+        mock_client.call_with_schema.return_value = mock_result
+        mock_client_factory.return_value = mock_client
         result = svc.list_jobs(limit=10, offset=5)
 
     assert result["ok"] is True
     assert result["data"]["total"] == 0
+
+
+def test_aicf_service_list_jobs_missing_method_reports_aicf_not_supported() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    with patch.object(svc, "_client") as mock_client_factory:
+        mock_client = MagicMock()
+        mock_registry = MagicMock()
+        mock_registry.resolve_any.return_value = None
+        mock_registry.dump_methods.side_effect = [["aicf.claim"], ["da.getStatus"]]
+        mock_client.registry.return_value = mock_registry
+        svc._resolve_aicf_methods = MagicMock(return_value={"list_jobs": None})
+        mock_client_factory.return_value = mock_client
+        result = svc.list_jobs()
+
+    assert result["ok"] is False
+    assert result["error_kind"] == "missing_aicf_list_jobs"
+    assert result["aicf_methods"] == ["aicf.claim"]
+
+
+def test_aicf_service_list_jobs_maps_da_disabled_rpc_error() -> None:
+    from animica_studio.models.rpc_models import RpcError
+    from animica_studio.services.rpc_client import RpcResponseError
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    with patch.object(svc, "_client") as mock_client_factory:
+        mock_client = MagicMock()
+        mock_registry = MagicMock()
+        mock_registry.resolve_any.return_value = "aicf.listJobs"
+        mock_registry.dump_methods.side_effect = [["aicf.listJobs"], ["da.getStatus"]]
+        mock_client.registry.return_value = mock_registry
+        mock_client.call.side_effect = RpcResponseError(RpcError(code=-32002, message="DA is not enabled", data={}))
+        mock_client_factory.return_value = mock_client
+        result = svc.list_jobs()
+
+    assert result["ok"] is False
+    assert result["error_kind"] == "da_disabled"
+    assert "da.getStatus.enabled=false" in result["error"]
 
 def test_aicf_service_claim_credits_success() -> None:
     from animica_studio.storage.config import Config
@@ -310,6 +362,7 @@ def test_aicf_service_claim_credits_success() -> None:
                 raise AssertionError(f"Unexpected method: {method}")
 
             mock_client.call.side_effect = _call
+            mock_client.call_with_schema.side_effect = lambda method, params=None: _call(method, params)
             result = svc.claim_credits("anim1test", amount=100)
 
     assert result["ok"] is True

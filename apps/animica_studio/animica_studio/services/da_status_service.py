@@ -39,6 +39,7 @@ class DaStatusService:
                 configure_method = None
             configure_param_spec = client.get_param_spec(configure_method) if configure_method else []
             status_method = registry.resolve_any(["da_getStatus", "da.getStatus", "da_status", "da.status"])
+            da_found_methods = registry.dump_methods("da")
             payload: dict[str, Any] | None = None
             if status_method:
                 try:
@@ -59,6 +60,7 @@ class DaStatusService:
                 "raw": payload,
                 "allow_remote_put": allow_remote_put,
                 "last_error": str((payload or {}).get("last_error") or ""),
+                "da_found_methods": da_found_methods,
                 "da_methods": {
                     "put_blob": put_method,
                     "get_blob": get_method,
