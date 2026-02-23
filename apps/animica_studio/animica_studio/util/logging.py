@@ -49,6 +49,11 @@ def setup_logging(log_dir: Path, app_version: str = "unknown") -> None:
     root.addHandler(file_handler)
     root.addHandler(console_handler)
 
+    # Keep noisy HTTP client internals out of Studio consoles by default.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
     # Diagnostics handler — captures ERROR/WARNING into the ring buffer
     try:
         from animica_studio.services.diagnostics import DiagnosticsHandler  # noqa: PLC0415
