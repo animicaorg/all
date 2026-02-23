@@ -11,7 +11,11 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.training_models import TrainingConfig, TrainingMetrics, TrainingRun
+from animica_studio.services.cli_registry import CliRegistry
+from animica_studio.services.dataset_profile import DatasetProfiler
+from animica_studio.services.ena_auto_configurator import EnaAutoConfigurator
 from animica_studio.services.ena_remote_preflight import PreflightResult, ServicesPreflight
+from animica_studio.services.hardware_probe import HardwareProbe
 from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking, resolve_animica_cli
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.paths import app_data_dir
@@ -102,6 +106,7 @@ class ENATrainingService(QObject):
         self._last_error_by_run: dict[str, str] = {}
         self._last_preflight_by_run: dict[str, PreflightResult] = {}
         self._local_mode_impl = "internal"
+        self._cli_registry = CliRegistry(config)
         self._load_runs()
 
     def last_config(self) -> TrainingConfig:
@@ -401,6 +406,9 @@ class ENATrainingService(QObject):
             "early_stop_patience": cfg.early_stop_patience,
             "iterations": cfg.iterations,
             "epochs": cfg.epochs,
+            "warmup_steps": cfg.warmup_steps,
+            "auto_tune_warmup_steps": cfg.auto_tune_warmup_steps,
+            "quality_level": cfg.quality_level,
         }
         plan = {
             "job_id": cfg.run_name or run_id,
@@ -537,10 +545,36 @@ class ENATrainingService(QObject):
             timer = self._runtime_timers.pop(run_id, None)
             if timer:
                 timer.stop()
+            self._write_run_report(run_id)
         self._persist_runs()
         self.status_changed.emit(run_id, status)
         if status in {"completed", "failed", "stopped"}:
             self.run_finished.emit(run_id, status)
+
+    def build_auto_recommendation(self, cfg: TrainingConfig, quality_level: str = "balanced") -> TrainingConfig:
+        hw = HardwareProbe.probe(cfg.output_dir)
+        ds = DatasetProfiler.profile(cfg.dataset_path) if cfg.dataset_path else DatasetProfiler.profile("")
+        return EnaAutoConfigurator.recommend(cfg, hw, ds, quality_level)
+
+    def _write_run_report(self, run_id: str) -> None:
+        run = self._runs.get(run_id)
+        if not run:
+            return
+        cfg = TrainingConfig.from_dict(run.config)
+        run_dir = Path(cfg.output_dir).expanduser() / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        report = {
+            "run_id": run_id,
+            "status": run.status,
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "config": run.config,
+            "metrics": run.last_metrics or {},
+            "rationale": (run.config or {}).get("auto_config_rationale", ""),
+            "dataset_version": (run.config or {}).get("dataset_version_id") or (run.config or {}).get("dataset_id"),
+            "local_mode_impl": self._local_mode_impl,
+        }
+        (run_dir / "run_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     def _load_runs(self) -> None:
         if not self._runs_path.exists():
