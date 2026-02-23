@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.explorer_style_rpc import _format_anm, _normalize_rpc_url, _parse_balance_value
+from animica_studio.storage.config import Profile
 
 log = logging.getLogger(__name__)
 
@@ -40,15 +41,23 @@ class BalanceService(QObject):
     def shutdown(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
 
+    @staticmethod
+    def _resolve_rpc_url(profile: RpcProfile | Profile) -> str:
+        if hasattr(profile, "get_rpc_url"):
+            return str(profile.get_rpc_url()).strip()
+        if hasattr(profile, "effective_rpc_url"):
+            return str(profile.effective_rpc_url()).strip()
+        return str(getattr(profile, "rpc_url", "")).strip()
+
     def get_balance(
         self,
         address: str,
-        profile: RpcProfile,
+        profile: RpcProfile | Profile,
         *,
         force_refresh: bool = False,
         on_result: Callable[[BalanceResult], None] | None = None,
     ) -> BalanceResult:
-        rpc_url = profile.effective_rpc_url()
+        rpc_url = self._resolve_rpc_url(profile)
         key = (rpc_url, address)
         now = time.time()
         with self._lock:
@@ -80,7 +89,13 @@ class BalanceService(QObject):
         QTimer.singleShot(0, lambda: fut.add_done_callback(lambda _f: QTimer.singleShot(0, _done)))
         return BalanceResult(False, None, None, "Unavailable: fetching")
 
-    def get_balances(self, addresses: list[str], profile: RpcProfile, *, force_refresh: bool = False) -> dict[str, BalanceResult]:
+    def get_balances(
+        self,
+        addresses: list[str],
+        profile: RpcProfile | Profile,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, BalanceResult]:
         out: dict[str, BalanceResult] = {}
         for addr in addresses:
             out[addr] = self.get_balance(addr, profile, force_refresh=force_refresh)
