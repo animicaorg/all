@@ -201,6 +201,17 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+
+  app.post('/api/admin/backfill/confirmed-txs', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || req.body?.limit || 100)
+      const payload = await service.backfillConfirmedTxsMissingFields(limit)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   // ── Network Health / Service Status ────────────────────────────────────────
 
   app.get('/api/network/status', async (_req, res) => {

@@ -56,6 +56,7 @@ export interface TxDetail {
   value?: string
   gasUsed?: string
   feePaid?: string
+  fee?: string
   raw: unknown
   receipt?: unknown
 }

@@ -9,7 +9,8 @@
     "dev": "wait-on ../shared/dist/index.js && tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "backfill:confirmed-txs": "tsx src/backfillConfirmedTxs.ts --missing-fields"
   },
   "dependencies": {
     "@animica/explorer2-shared": "workspace:*",
