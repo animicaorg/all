@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from animica_studio.services.ide_service import IdeService
 from animica_studio.services.template_service import TemplateService
 from animica_studio.services.token_template_service import TokenTemplateService
-from animica_studio.storage.config import load_config
+from animica_studio.storage.config import load_config, save_config
 from animica_studio.ui.dialogs.template_dialog import NewFromTemplateDialog
 from animica_studio.ui.dialogs.token_template_wizard import TokenTemplateWizard
 from animica_studio.ui.widgets.ena_panel import EnaPanel
@@ -78,6 +78,7 @@ class IdePage(QWidget):
         self._editor_tabs = None
         self._open_tabs: dict[str, _TabInfo] = {}
         self._build_ui()
+        self._restore_workspace_from_config()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -305,6 +306,29 @@ class IdePage(QWidget):
     # Workspace
     # ------------------------------------------------------------------
 
+    def _restore_workspace_from_config(self) -> None:
+        configured = self._cfg.ide_workspace_root or self._cfg.workspace_root
+        if not configured:
+            return
+        try:
+            self._svc.set_workspace(configured)
+        except ValueError:
+            log.debug("IdePage: ignoring invalid configured workspace %s", configured)
+            return
+        self._ws_label.setText(configured)
+        self._ws_label.setToolTip(configured)
+        self._refresh_tree()
+        if self._bridge is not None:
+            self._bridge.setWorkspace(configured)
+
+    def _persist_workspace(self, path: str) -> None:
+        self._cfg.ide_workspace_root = path
+        self._cfg.workspace_root = path
+        try:
+            save_config(self._cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("IdePage: failed to persist workspace %s: %s", path, exc)
+
     def _on_change_workspace(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Workspace Folder")
         if not path:
@@ -319,6 +343,7 @@ class IdePage(QWidget):
         self._refresh_tree()
         if self._bridge is not None:
             self._bridge.setWorkspace(path)
+        self._persist_workspace(path)
 
     def _refresh_tree(self) -> None:
         self._tree.clear()
