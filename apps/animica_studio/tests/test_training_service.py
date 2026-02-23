@@ -5,7 +5,7 @@ from pathlib import Path
 
 from animica_studio.models.training_models import TrainingConfig
 from animica_studio.services.ena_remote_preflight import ServicesPreflight
-from animica_studio.services.training_service import ENATrainingService
+from animica_studio.services.ena_training_service import ENATrainingService
 from animica_studio.storage.config import Config
 
 
@@ -62,32 +62,66 @@ class _DummyRunner:
         self.calls.append(list(args))
         return _DummyHandle()
 
+    def run_callable(self, fn, timeout_s: int = 0):
+        fn()
+        return _DummyHandle()
+
 
 class _DummyService(ENATrainingService):
     def _verify_local_cli_support(self) -> None:
-        return None
+        self._local_mode_impl = "internal"
 
     def _verify_remote_cli_support(self) -> None:
         return None
 
 
-def test_local_mode_calls_jobrunner_with_expected_argv(monkeypatch, tmp_path: Path) -> None:
+def test_local_mode_never_uses_submit(monkeypatch, tmp_path: Path) -> None:
     runner = _DummyRunner()
-    monkeypatch.setattr("animica_studio.services.training_service.JobRunner.instance", lambda: runner)
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
 
     cfg = Config()
     svc = _DummyService(cfg)
     train_cfg = TrainingConfig(dataset_path="", output_dir=str(tmp_path), iterations=2, training_mode="local", budget_anm="5")
     svc.start_training(train_cfg)
 
-    assert runner.calls
-    assert runner.calls[0][:3] == ["ena", "train", "submit"]
-    assert "--plan" in runner.calls[0]
+    assert svc.list_runs()[0].status in {"running", "completed"}
+    assert runner.calls == []
+
+
+def test_local_guard_blocks_submit_argv(monkeypatch, tmp_path: Path) -> None:
+    runner = _DummyRunner()
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
+    cfg = Config()
+    svc = _DummyService(cfg)
+    svc._local_mode_impl = "submit"
+
+    plan = tmp_path / "plan.json"
+    plan.write_text("{}", encoding="utf-8")
+    train_cfg = TrainingConfig(output_dir=str(tmp_path), iterations=1, training_mode="local")
+
+    try:
+        svc.build_local_train_argv(train_cfg, plan)
+        assert False, "expected guard exception"
+    except RuntimeError as exc:
+        assert "local mode cannot execute submit" in str(exc)
+
+
+def test_remote_mode_requires_services_url_and_blocks(monkeypatch, tmp_path: Path) -> None:
+    runner = _DummyRunner()
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
+
+    cfg = Config()
+    svc = _DummyService(cfg)
+    train_cfg = TrainingConfig(dataset_path="", output_dir=str(tmp_path), iterations=2, training_mode="remote", services_url="")
+    run_id = svc.start_training(train_cfg)
+
+    assert runner.calls == []
+    assert svc.status(run_id).status == "failed"
 
 
 def test_remote_mode_preflight_failure_blocks_submission(monkeypatch, tmp_path: Path) -> None:
     runner = _DummyRunner()
-    monkeypatch.setattr("animica_studio.services.training_service.JobRunner.instance", lambda: runner)
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
 
     class _BadPreflight:
         ok = False
@@ -98,34 +132,9 @@ def test_remote_mode_preflight_failure_blocks_submission(monkeypatch, tmp_path: 
         def to_dict(self):
             return {"ok": False}
 
-    monkeypatch.setattr("animica_studio.services.training_service.ServicesPreflight.check", lambda _url: _BadPreflight())
+    monkeypatch.setattr("animica_studio.services.ena_training_service.ServicesPreflight.check", lambda _url: _BadPreflight())
 
     cfg = Config()
-    svc = _DummyService(cfg)
-    train_cfg = TrainingConfig(dataset_path="", output_dir=str(tmp_path), iterations=2, training_mode="remote", services_url="http://badhost")
-    run_id = svc.start_training(train_cfg)
-
-    assert runner.calls
-    assert "--endpoint" not in runner.calls[0]
-
-
-def test_remote_mode_preflight_failure_blocks_submission_without_auto_fallback(monkeypatch, tmp_path: Path) -> None:
-    runner = _DummyRunner()
-    monkeypatch.setattr("animica_studio.services.training_service.JobRunner.instance", lambda: runner)
-
-    class _BadPreflight:
-        ok = False
-        resolved_ips = []
-        error_kind = "DNS"
-        message = "DNS resolution failed"
-
-        def to_dict(self):
-            return {"ok": False}
-
-    monkeypatch.setattr("animica_studio.services.training_service.ServicesPreflight.check", lambda _url: _BadPreflight())
-
-    cfg = Config()
-    cfg.ena["auto_fallback"] = False
     svc = _DummyService(cfg)
     train_cfg = TrainingConfig(dataset_path="", output_dir=str(tmp_path), iterations=2, training_mode="remote", services_url="http://badhost")
     run_id = svc.start_training(train_cfg)
@@ -141,7 +150,7 @@ def test_config_default_backend_is_local() -> None:
 
 def test_backend_switch_updates_saved_config(monkeypatch, tmp_path: Path) -> None:
     runner = _DummyRunner()
-    monkeypatch.setattr("animica_studio.services.training_service.JobRunner.instance", lambda: runner)
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
 
     cfg = Config()
     svc = _DummyService(cfg)
@@ -152,10 +161,23 @@ def test_backend_switch_updates_saved_config(monkeypatch, tmp_path: Path) -> Non
         resolved_ips = ["127.0.0.1"]
         error_kind = ""
         message = "ok"
+
         def to_dict(self):
             return {"ok": True}
 
-    monkeypatch.setattr("animica_studio.services.training_service.ServicesPreflight.check", lambda _url: _OkPreflight())
+    monkeypatch.setattr("animica_studio.services.ena_training_service.ServicesPreflight.check", lambda _url: _OkPreflight())
     svc.start_training(train_cfg)
     assert cfg.ena.get("job_backend") == "remote"
 
+
+def test_smoke_local_run_reaches_running_or_completed(monkeypatch, tmp_path: Path) -> None:
+    runner = _DummyRunner()
+    monkeypatch.setattr("animica_studio.services.ena_training_service.JobRunner.instance", lambda: runner)
+
+    cfg = Config()
+    svc = _DummyService(cfg)
+    train_cfg = TrainingConfig(dataset_path="", output_dir=str(tmp_path), iterations=3, training_mode="local")
+    run_id = svc.start_training(train_cfg)
+
+    status = svc.status(run_id).status
+    assert status in {"running", "completed"}
