@@ -11,7 +11,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.training_models import TrainingConfig, TrainingMetrics, TrainingRun
-from animica_studio.services.ena_remote_preflight import RemotePreflightResult, run_remote_preflight
+from animica_studio.services.ena_remote_preflight import PreflightResult, ServicesPreflight
 from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking, resolve_animica_cli
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.paths import app_data_dir
@@ -37,14 +37,14 @@ class ENATrainingService(QObject):
         self._watch_jobs_to_run: dict[str, str] = {}
         self._last_argv_by_run: dict[str, list[str]] = {}
         self._last_error_by_run: dict[str, str] = {}
-        self._last_preflight_by_run: dict[str, RemotePreflightResult] = {}
+        self._last_preflight_by_run: dict[str, PreflightResult] = {}
         self._load_runs()
 
     def last_config(self) -> TrainingConfig:
         ena_training = dict(self._config.ena.get("training") or {})
-        mode = str(ena_training.get("mode") or "").strip().lower() or "local"
-        services_url = str(self._config.ena.get("aicf", {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
-        api_key = str(self._config.ena.get("aicf", {}).get("api_key") or "").strip()
+        mode = str(self._config.ena.get("job_backend") or ena_training.get("mode") or "").strip().lower() or "local"
+        services_url = str(self._config.ena.get("services_url") or self._config.ena.get("aicf", {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
+        api_key = str(self._config.ena.get("remote_api_key") or self._config.ena.get("aicf", {}).get("api_key") or "").strip()
         cfg = TrainingConfig.from_dict(ena_training.get("last_config"))
         cfg.training_mode = mode
         cfg.services_url = services_url
@@ -53,20 +53,26 @@ class ENATrainingService(QObject):
 
     def save_last_config(self, cfg: TrainingConfig) -> None:
         ena_training = dict(self._config.ena.get("training") or {})
-        ena_training["mode"] = (cfg.training_mode or "local").lower()
+        backend = (cfg.training_mode or "local").lower()
+        ena_training["mode"] = backend
+        self._config.ena["job_backend"] = backend
         ena_training["last_config"] = cfg.to_dict()
         self._config.ena["training"] = ena_training
 
         aicf_cfg = dict(self._config.ena.get("aicf") or {})
-        aicf_cfg["services_url"] = (cfg.services_url or "").strip()
-        aicf_cfg["api_key"] = (cfg.api_key or "").strip()
+        url = (cfg.services_url or "").strip()
+        key = (cfg.api_key or "").strip()
+        aicf_cfg["services_url"] = url
+        aicf_cfg["api_key"] = key
+        self._config.ena["services_url"] = url
+        self._config.ena["remote_api_key"] = key
         self._config.ena["aicf"] = aicf_cfg
         save_config(self._config)
 
     def ensure_training_mode_migration(self) -> str | None:
         training = dict(self._config.ena.get("training") or {})
         had_mode = "mode" in training
-        mode = str(training.get("mode") or training.get("ena_submit_mode") or "local").strip().lower()
+        mode = str(self._config.ena.get("job_backend") or training.get("mode") or training.get("ena_submit_mode") or "local").strip().lower()
         warning: str | None = None
         changed = not had_mode
         if mode not in {"local", "remote"}:
@@ -74,7 +80,7 @@ class ENATrainingService(QObject):
             warning = "Invalid ENA training mode found. Switched to Local mode."
             changed = True
 
-        services_url = str((self._config.ena.get("aicf") or {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
+        services_url = str(self._config.ena.get("services_url") or (self._config.ena.get("aicf") or {}).get("services_url") or self._config.ena.get("aicf_services_url") or "").strip()
         if mode == "remote" and not services_url:
             mode = "local"
             warning = "Remote mode was configured without services_url; switched to Local mode."
@@ -82,6 +88,7 @@ class ENATrainingService(QObject):
 
         training["mode"] = mode
         self._config.ena["training"] = training
+        self._config.ena["job_backend"] = mode
         if changed:
             save_config(self._config)
         return warning
@@ -116,10 +123,10 @@ class ENATrainingService(QObject):
         self.status_changed.emit(run_id, "starting")
 
         if mode == "local":
-            self.log_line.emit(run_id, "system", "Mode: local (CLI)")
+            self.log_line.emit(run_id, "system", "[system] ENA backend=local")
             self._start_local_training(run_id, config, plan_path)
         else:
-            self.log_line.emit(run_id, "system", f"Mode: remote (services_url={config.services_url})")
+            self.log_line.emit(run_id, "system", f"[system] ENA backend=remote url={config.services_url}")
             self._start_remote_training(run_id, config, plan_path)
 
         if config.max_runtime_minutes:
@@ -187,17 +194,23 @@ class ENATrainingService(QObject):
         submit_handle.finished.connect(lambda _jid, code, _payload, rid=run_id: self._on_submit_finished(rid, code))
 
     def _start_remote_training(self, run_id: str, cfg: TrainingConfig, plan_path: Path) -> None:
-        preflight = run_remote_preflight(cfg.services_url)
+        preflight = ServicesPreflight.check(cfg.services_url)
         self._last_preflight_by_run[run_id] = preflight
         if not preflight.ok:
             err = (
-                "Remote training endpoint not reachable (DNS/HTTP). "
+                "Remote ENA services unreachable (DNS/HTTP). "
                 "Switch to Local mode or fix services_url. "
-                f"host={preflight.host} ips={preflight.resolved_ips} error={preflight.error}"
+                f"kind={preflight.error_kind} ips={preflight.resolved_ips} message={preflight.message}"
             )
             self._last_error_by_run[run_id] = err
             self.log_line.emit(run_id, "error", err)
-            self.log_line.emit(run_id, "system", "Action: Switch to Local mode and retry.")
+            self.log_line.emit(run_id, "system", "Action: Switch to Local Mode")
+            if bool(self._config.ena.get("auto_fallback", True)):
+                self.log_line.emit(run_id, "system", "Auto-fallback enabled; switching backend to local and continuing.")
+                cfg.training_mode = "local"
+                self.save_last_config(cfg)
+                self._start_local_training(run_id, cfg, plan_path)
+                return
             self._set_status(run_id, "failed")
             return
 
