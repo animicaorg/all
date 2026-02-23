@@ -298,6 +298,18 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     da_contribution["node_data_dir"] = str(da_contribution.get("node_data_dir") or "/data/da")
     da_contribution["data_dir"] = da_contribution["host_data_dir"]
 
+    ena_raw = d.get("ena") or {}
+    if not isinstance(ena_raw, dict):
+        ena_raw = {}
+    training_raw = dict(ena_raw.get("training") or {})
+    if "mode" not in training_raw:
+        training_raw["mode"] = str(ena_raw.get("ena_submit_mode") or "local")
+    aicf_raw = dict(ena_raw.get("aicf") or {})
+    if "services_url" not in aicf_raw:
+        aicf_raw["services_url"] = str(ena_raw.get("aicf_services_url") or "")
+    if "api_key" not in aicf_raw:
+        aicf_raw["api_key"] = ""
+
     return Config(
         active_profile=str(d.get("active_profile", "Mainnet")),
         profiles=profiles,
@@ -347,7 +359,9 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
             "remote": {"endpoint": "", "api_key": "", "model": ""},
             "context": {"max_files": 12, "max_bytes": 1_000_000},
             "tools": {"allowlist": ["python -m ruff", "python -m pytest", "npm run", "pnpm run"]},
-            **(d.get("ena") or {}),
+            **ena_raw,
+            "training": {**training_raw, **((ena_raw.get("training") or {}))},
+            "aicf": {**aicf_raw, **((ena_raw.get("aicf") or {}))},
         },
     )
 

@@ -22,6 +22,7 @@ class StepState:
     retry_action: str | None = None
     copy_command: str | None = None
     error: str | None = None
+    error_details: dict[str, Any] | None = None
 
 
 @dataclass
@@ -77,7 +78,17 @@ class StepRunner:
             except Exception as exc:  # noqa: BLE001
                 step.status = "failed"
                 step.error = str(exc)
-                step.retry_action = f"Retry '{name}'"
+                details_getter = getattr(exc, "to_step_payload", None)
+                if callable(details_getter):
+                    details = details_getter()
+                    if isinstance(details, dict):
+                        step.error_details = details
+                        retry_label = details.get("retry_action")
+                        if isinstance(retry_label, str) and retry_label:
+                            step.retry_action = retry_label
+                        run.result[name] = details
+                if not step.retry_action:
+                    step.retry_action = f"Retry '{name}'"
                 step.logs.append(traceback.format_exc(limit=2))
                 run.status = "failed"
                 run.updated_at = _now()

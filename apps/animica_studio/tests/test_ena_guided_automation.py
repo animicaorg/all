@@ -93,3 +93,53 @@ def test_fee_routing_validation() -> None:
     fee = FeeRoutingService()
     ok, _ = fee.validate_credit_increment(1, 3)
     assert ok
+
+
+def test_publish_remote_put_blocked_returns_structured_step_error(tmp_path: Path, monkeypatch) -> None:
+    svc = EnaService(Config(), _mk_store(tmp_path))
+    svc.store.set("checkpoints", [{"id": "x", "sha256": "abc123"}])
+
+    monkeypatch.setattr(
+        svc.da_status,
+        "get_status",
+        lambda *_a, **_k: {
+            "enabled": True,
+            "allow_remote_put": False,
+            "configured_dir": "/data/da",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "raw": {"version": "1.0.0"},
+            "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
+        },
+    )
+
+    out = svc.publish_checkpoint("abc123", dev_mode=False)
+    assert out["ok"] is True
+    run = out["run"]
+    assert run.status == "failed"
+    failed = next(s for s in run.steps if s.name == "Push to DA")
+    assert failed.error_details is not None
+    assert failed.error_details["error_code"] == "DA_REMOTE_PUT_BLOCKED"
+    assert any(a["id"] == "enable_remote_put" for a in failed.error_details["actions"])
+
+
+def test_publish_remote_put_enabled_uploads_via_da_put(tmp_path: Path, monkeypatch) -> None:
+    svc = EnaService(Config(), _mk_store(tmp_path))
+    svc.store.set("checkpoints", [{"id": "x", "sha256": "feedbeef"}])
+
+    monkeypatch.setattr(
+        svc.da_status,
+        "get_status",
+        lambda *_a, **_k: {
+            "enabled": True,
+            "allow_remote_put": True,
+            "configured_dir": "/data/da",
+            "rpc_url": "http://127.0.0.1:8545/rpc",
+            "raw": {"version": "1.0.0"},
+            "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
+        },
+    )
+    monkeypatch.setattr(svc.da, "upload_bytes", lambda *_a, **_k: {"blob_id": "blob-123"})
+
+    out = svc.publish_checkpoint("feedbeef", dev_mode=False)
+    assert out["run"].status == "completed"
+    assert out["run"].result["Push to DA"]["commitment"] == "blob-123"

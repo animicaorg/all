@@ -56,6 +56,7 @@ class AicfService:
         "aicf_credits_by_address",
         "aicf.credits_by_address",
     )
+    _LIST_JOBS_METHODS = ("aicf.listJobs", "aicf_listJobs", "aicf.jobs", "aicf_jobs", "aicf.getJobs", "aicf_getJobs")
 
     def _rpc_url(self, override: str | None = None) -> str:
         raw = override or get_active_rpc_url(self._config) or self._config.get_active_profile().node.rpc_local_url
@@ -88,6 +89,16 @@ class AicfService:
             if method in known_methods:
                 return method
         return None
+
+    @staticmethod
+    def _format_rpc_error_payload(exc: Exception) -> dict[str, Any] | None:
+        if not isinstance(exc, RpcResponseError):
+            return None
+        return {
+            "code": exc.rpc_error.code,
+            "message": exc.rpc_error.message,
+            "data": exc.rpc_error.data,
+        }
 
     @staticmethod
     def _pick_from_did_you_mean(candidates: tuple[str, ...], did_you_mean: Any) -> str | None:
@@ -363,15 +374,43 @@ class AicfService:
                 params["status"] = status_filter
             log.info("AICF list_jobs rpc_url=%s payload=%s", self._rpc_url(rpc_url), params)
             last_exc: Exception | None = None
+            registry = client.registry()
             methods = self._resolve_aicf_methods(client, self._rpc_url(rpc_url))
-            list_method = methods.get("list_jobs")
+            list_method = registry.resolve_any(list(self._LIST_JOBS_METHODS)) or methods.get("list_jobs")
             if not list_method:
-                return {"ok": False, "error": "This node does not expose AICF RPC methods for jobs listing."}
+                return {
+                    "ok": False,
+                    "error": "This node does not expose an AICF job-listing RPC method.",
+                    "error_kind": "missing_aicf_list_jobs",
+                    "aicf_methods": registry.dump_methods("aicf"),
+                    "da_methods": registry.dump_methods("da"),
+                    "list_jobs_method": None,
+                }
             for rpc_params in ([params], params):
                 try:
-                    result = client.call_with_schema(list_method, params)
-                    return {"ok": True, "data": result, "method": list_method}
+                    if isinstance(rpc_params, list):
+                        result = client.call(list_method, rpc_params)
+                    else:
+                        result = client.call_with_schema(list_method, rpc_params)
+                    return {
+                        "ok": True,
+                        "data": result,
+                        "method": list_method,
+                        "aicf_methods": registry.dump_methods("aicf"),
+                        "da_methods": registry.dump_methods("da"),
+                        "list_jobs_method": list_method,
+                    }
                 except RpcResponseError as exc:
+                    if exc.rpc_error.code == -32002 and "da is not enabled" in (exc.rpc_error.message or "").lower():
+                        return {
+                            "ok": False,
+                            "error": "DA disabled on node (da.getStatus.enabled=false).",
+                            "error_kind": "da_disabled",
+                            "aicf_methods": registry.dump_methods("aicf"),
+                            "da_methods": registry.dump_methods("da"),
+                            "list_jobs_method": list_method,
+                            "rpc_error": self._format_rpc_error_payload(exc),
+                        }
                     if exc.rpc_error.code in (-32601, -32602):
                         last_exc = exc
                         continue
@@ -379,6 +418,13 @@ class AicfService:
             if last_exc is not None:
                 raise last_exc
             raise RuntimeError("No available RPC method for jobs list")
+        except RpcResponseError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "error_kind": "rpc_error",
+                "rpc_error": self._format_rpc_error_payload(exc),
+            }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         finally:
