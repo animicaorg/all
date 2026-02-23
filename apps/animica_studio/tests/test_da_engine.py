@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -30,10 +29,17 @@ class _FakeClient:
         return b"hello"
 
 
-def _engine(tmp_path: Path) -> DaContributionEngine:
+def _engine(tmp_path: Path, *, enabled: bool = True, auto_start: bool = True) -> DaContributionEngine:
     app = QCoreApplication.instance() or QCoreApplication([])
     _ = app
-    cfg = DaEngineConfig(enabled=True, data_dir=str(tmp_path), mode="quota", limit_bytes=2 * 1024**3, rpc_url="http://127.0.0.1:8545/rpc")
+    cfg = DaEngineConfig(
+        enabled=enabled,
+        auto_start=auto_start,
+        data_dir=str(tmp_path),
+        mode="quota",
+        limit_bytes=2 * 1024**3,
+        rpc_url="http://127.0.0.1:8545/rpc",
+    )
     e = DaContributionEngine(cfg)
     fake = _FakeClient()
     e.client = lambda: fake  # type: ignore[method-assign]
@@ -42,9 +48,9 @@ def _engine(tmp_path: Path) -> DaContributionEngine:
 
 def test_validate_config_limit(tmp_path: Path):
     e = _engine(tmp_path)
-    ok, msg = e.validate_config(DaEngineConfig(enabled=True, data_dir=str(tmp_path), mode="quota", limit_bytes=100, rpc_url="http://x"))
+    ok, msg = e.validate_config(DaEngineConfig(enabled=True, data_dir=str(tmp_path), mode="quota", limit_bytes=0, rpc_url="http://x"))
     assert not ok
-    assert "1 GiB" in msg
+    assert "greater than 0" in msg
 
 
 def test_state_transitions_start_stop(tmp_path: Path):
@@ -70,29 +76,25 @@ def test_upload_verify_cycle(tmp_path: Path):
     e.stop()
 
 
-def test_normalize_data_dir_falls_back_when_unwritable(tmp_path: Path, monkeypatch):
-    e = _engine(tmp_path)
-    monkeypatch.setattr("animica_studio.services.da_engine.tempfile.gettempdir", lambda: str(tmp_path))
-
-    def _writable_only_for_tmp(path):
-        if str(path).startswith(str(tmp_path)):
-            path.mkdir(parents=True, exist_ok=True)
-            return True, ""
-        return False, "read-only file system"
-
-    monkeypatch.setattr(e, "_is_writable_dir", _writable_only_for_tmp)
-
-    cfg = DaEngineConfig(enabled=True, data_dir="/home/employee/da", mode="quota", limit_bytes=2 * 1024**3, rpc_url="http://127.0.0.1:8545/rpc")
-    normalized = e._normalize_data_dir(cfg)
-    expected = (tmp_path / f"animica-da-{os.getuid()}").resolve()
-    assert normalized.data_dir == str(expected)
-    assert "Using fallback" in e._path_warning
-
-
-def test_start_noop_when_disabled(tmp_path: Path):
-    app = QCoreApplication.instance() or QCoreApplication([])
-    _ = app
-    cfg = DaEngineConfig(enabled=False, data_dir=str(tmp_path), mode="quota", limit_bytes=2 * 1024**3, rpc_url="http://127.0.0.1:8545/rpc")
-    e = DaContributionEngine(cfg)
-    e.start()
+def test_autostart_auto_enables_when_config_valid(tmp_path: Path):
+    e = _engine(tmp_path, enabled=False, auto_start=True)
     assert e.state == DaEngineState.DISABLED
+    changed = e.ensure_enabled_if_autostart()
+    assert changed is True
+    assert e.config.enabled is True
+    assert e.state == DaEngineState.CONFIGURED
+
+
+def test_start_enables_when_disabled(tmp_path: Path):
+    e = _engine(tmp_path, enabled=False, auto_start=True)
+    e.start()
+    assert e.config.enabled is True
+    assert e.state == DaEngineState.RUNNING
+    e.stop()
+
+
+def test_remaining_bytes_uses_quota_limit(tmp_path: Path):
+    e = _engine(tmp_path)
+    out = {"queued": 0, "uploaded": [], "used": 0, "free": 100, "status": {}}
+    e._on_cycle(out)
+    assert e.metrics.remaining_bytes == e.config.limit_bytes
