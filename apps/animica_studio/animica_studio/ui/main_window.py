@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self._ena_contrib_engine = EnaContributionEngine(EnaContributionConfig(
             enabled=bool(contrib_cfg.get('enabled', False)),
             intensity=str(contrib_cfg.get('intensity') or 'medium'),
-            mode=str(contrib_cfg.get('mode') or 'services'),
+            mode=str(contrib_cfg.get('mode') or 'local'),
             services_url=str(contrib_cfg.get('services_url') or ''),
             auto_start=bool(contrib_cfg.get('auto_start', False)),
             rpc_url=config.get_active_profile().node.rpc_local_url,

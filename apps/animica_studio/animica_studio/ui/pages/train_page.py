@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from animica_studio.models.training_models import TrainingConfig
 from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
-from animica_studio.storage.config import Config
+from animica_studio.storage.config import Config, save_config
 
 
 class TrainPage(QWidget):
@@ -121,9 +121,12 @@ class TrainPage(QWidget):
         self.submit_aicf = QCheckBox("Submit checkpoints/metrics to AICF")
         self.budget_anm = QLineEdit("10")
         self.training_mode = QComboBox(); self.training_mode.addItems(["local", "remote"])
-        self.training_mode_help = QLabel("Local: runs training on this machine via animica CLI, streams logs.\nRemote: submits a job to AICF/ENA services URL (requires config).")
+        self.training_mode_help = QLabel("Local: runs training on this machine via animica CLI, streams logs.\nRemote: submits a job to AICF/ENA services URL (requires preflight reachability).")
         self.training_mode_help.setWordWrap(True)
+        self.backend_label = QLabel("Backend: Local (on this machine)")
         self.services_url = QLineEdit("")
+        self.auto_fallback = QCheckBox("Auto fallback to local when remote unreachable")
+        self.auto_fallback.setChecked(True)
         self.api_key = QLineEdit("")
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
 
@@ -162,7 +165,9 @@ class TrainPage(QWidget):
         form.addRow("Budget (ANM)", self.budget_anm)
         form.addRow("Mode", self.training_mode)
         form.addRow("", self.training_mode_help)
+        form.addRow("Backend", self.backend_label)
         form.addRow("Services URL", self.services_url)
+        form.addRow("", self.auto_fallback)
         form.addRow("API key (optional)", self.api_key)
 
         root.addWidget(form_box)
@@ -206,6 +211,8 @@ class TrainPage(QWidget):
 
     def _wire(self) -> None:
         self.start_btn.clicked.connect(self._start)
+        self.training_mode.currentTextChanged.connect(lambda _v: self._refresh_backend_label())
+        self.services_url.textChanged.connect(lambda _v: self._refresh_backend_label())
         self.stop_btn.clicked.connect(self._stop)
         self.resume_btn.clicked.connect(self._resume_watch)
         self.switch_local_btn.clicked.connect(self._switch_to_local)
@@ -259,6 +266,15 @@ class TrainPage(QWidget):
         self.batch_size.setValue(int(p["batch_size"]))
         self.learning_rate.setValue(float(p["learning_rate"]))
 
+
+    def _refresh_backend_label(self) -> None:
+        mode = (self.training_mode.currentText() or "local").lower()
+        if mode == "remote":
+            url = self.services_url.text().strip() or "<unset>"
+            self.backend_label.setText(f"Backend: Remote ({url})")
+            return
+        self.backend_label.setText("Backend: Local (on this machine)")
+
     def _read_config(self) -> TrainingConfig:
         cfg = TrainingConfig(
             run_name=self.run_name.text().strip() or "ena-train",
@@ -300,6 +316,11 @@ class TrainPage(QWidget):
     def _start(self) -> None:
         try:
             cfg = self._read_config()
+            self._cfg.ena["job_backend"] = (cfg.training_mode or "local").lower()
+            self._cfg.ena["services_url"] = cfg.services_url
+            self._cfg.ena["remote_api_key"] = cfg.api_key
+            self._cfg.ena["auto_fallback"] = self.auto_fallback.isChecked()
+            save_config(self._cfg)
             self._check_output_conflict(cfg)
             run_id = self._svc.start_training(cfg)
             self._active_run_id = run_id
@@ -385,6 +406,7 @@ class TrainPage(QWidget):
     def _switch_to_local(self) -> None:
         self.training_mode.setCurrentText("local")
         self._on_log("", "system", "Switched ENA training mode to local.")
+        self._refresh_backend_label()
 
     def _copy_diagnostics(self) -> None:
         run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
@@ -450,4 +472,6 @@ class TrainPage(QWidget):
         self.training_mode.setCurrentText(cfg.training_mode or "local")
         self.services_url.setText(cfg.services_url or "")
         self.api_key.setText(cfg.api_key or "")
+        self.auto_fallback.setChecked(bool(self._cfg.ena.get("auto_fallback", True)))
+        self._refresh_backend_label()
         self._refresh_checkpoints()

@@ -18,6 +18,7 @@ from animica_studio.models.exec_models import ExecResult, StreamEvent
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
+from animica_studio.services.ena_remote_preflight import ServicesPreflight
 from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
 from animica_studio.services.profile_helpers import get_active_rpc_url
 from animica_studio.services.rpc_client import RpcClient, RpcResponseError
@@ -438,6 +439,19 @@ class AicfService:
         rpc_url: str | None = None,
     ) -> dict:
         """Submit an AICF job."""
+        backend = str(self._config.ena.get("job_backend") or "local").strip().lower()
+        services_url = str(self._config.ena.get("services_url") or "").strip()
+        if backend == "remote":
+            preflight = ServicesPreflight.check(services_url)
+            if not preflight.ok:
+                return {
+                    "ok": False,
+                    "error": "Remote ENA services unreachable (DNS/HTTP).",
+                    "error_kind": preflight.error_kind,
+                    "message": preflight.message,
+                    "action": "Switch to Local Mode",
+                    "preflight": preflight.to_dict(),
+                }
         client = self._client(rpc_url)
         try:
             methods = self._resolve_aicf_methods(client, self._rpc_url(rpc_url))
@@ -445,7 +459,7 @@ class AicfService:
             if not submit_method:
                 return {"ok": False, "error": "This node does not expose AICF RPC methods for job submission."}
             result = client.call_with_schema(submit_method, {"type": job_type, "payload": payload, "budget": str(budget)})
-            return {"ok": True, "data": result, "method": submit_method}
+            return {"ok": True, "data": result, "method": submit_method, "backend": backend}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         finally:

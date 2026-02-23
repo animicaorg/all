@@ -54,13 +54,16 @@ class EnaContributePage(QWidget):
         form.addRow("Intensity:", self._intensity)
 
         self._mode = QComboBox()
-        self._mode.addItem("services", "services")
+        self._mode.addItem("local", "local")
+        self._mode.addItem("remote", "remote")
         self._mode.addItem("rpc", "rpc")
         self._mode.currentIndexChanged.connect(self._save_settings)
         form.addRow("Mode:", self._mode)
 
         self._services_url = QLineEdit()
         self._services_url.setPlaceholderText("https://ena.animica.org")
+        self._backend = QLabel("Backend: Local (on this machine)")
+        form.addRow("Backend:", self._backend)
         self._services_url.editingFinished.connect(self._save_settings)
         form.addRow("Services URL:", self._services_url)
 
@@ -74,12 +77,14 @@ class EnaContributePage(QWidget):
         self._stop = QPushButton("Stop")
         self._stop.clicked.connect(self._engine.stop)
         self._test = QPushButton("Test connection")
+        self._switch_local = QPushButton("Switch to local")
+        self._switch_local.clicked.connect(self._switch_to_local)
         self._test.clicked.connect(self._on_test)
         self._copy = QPushButton("Copy diagnostics")
         self._copy.clicked.connect(self._copy_diag)
         self._view_logs = QPushButton("View last logs")
         self._view_logs.clicked.connect(lambda: self._logs.ensureCursorVisible())
-        for b in [self._start, self._stop, self._test, self._copy, self._view_logs]:
+        for b in [self._start, self._stop, self._test, self._switch_local, self._copy, self._view_logs]:
             row.addWidget(b)
         form.addRow("", row)
         root.addWidget(settings)
@@ -103,7 +108,8 @@ class EnaContributePage(QWidget):
         self._enabled.setChecked(bool(raw.get("enabled", False)))
         self._autostart.setChecked(bool(raw.get("auto_start", False)))
         self._services_url.setText(str(raw.get("services_url") or raw.get("aicf_services_url") or ""))
-        self._set_combo(self._mode, str(raw.get("mode") or "services"))
+        self._set_combo(self._mode, str(raw.get("mode") or "local"))
+        self._refresh_backend()
         self._set_combo(self._intensity, str(raw.get("intensity") or "medium"))
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
@@ -125,16 +131,32 @@ class EnaContributePage(QWidget):
         ena_cfg["ena_contrib"] = ena_contrib
         self._config.ena = ena_cfg
         save_config(self._config)
+        self._refresh_backend()
         self._engine.apply_config(
             EnaContributionConfig(
                 enabled=bool(ena_contrib.get("enabled", False)),
                 intensity=str(ena_contrib.get("intensity") or "medium"),
-                mode=str(ena_contrib.get("mode") or "services"),
+                mode=str(ena_contrib.get("mode") or "local"),
                 services_url=str(ena_contrib.get("services_url") or ""),
                 auto_start=bool(ena_contrib.get("auto_start", False)),
                 rpc_url=self._config.get_active_profile().node.rpc_local_url,
             )
         )
+
+
+    def _switch_to_local(self) -> None:
+        self._mode.setCurrentIndex(max(0, self._mode.findData("local")))
+        self._save_settings()
+        self._logs.append("[system] Switched to local backend")
+
+    def _refresh_backend(self) -> None:
+        mode = str(self._mode.currentData() or "local")
+        if mode == "remote":
+            self._backend.setText(f"Backend: Remote ({self._services_url.text().strip() or '<unset>'})")
+        elif mode == "rpc":
+            self._backend.setText("Backend: RPC queue")
+        else:
+            self._backend.setText("Backend: Local (on this machine)")
 
     def _on_start(self) -> None:
         self._save_settings()
