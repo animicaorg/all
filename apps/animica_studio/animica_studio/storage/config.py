@@ -207,6 +207,15 @@ class Config:
                     "pnpm run",
                 ]
             },
+            "dataset_sources": {
+                "offline_mode": False,
+                "providers": {
+                    "wikipedia": {"base_url": "", "version": "latest"},
+                    "arxiv": {"base_url": "", "version": ""},
+                    "gutenberg": {"base_url": ""},
+                    "vetted_repos": {"mirrors": []},
+                },
+            },
         }
     )
 
@@ -381,6 +390,15 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
             "remote": {"endpoint": "", "api_key": "", "model": ""},
             "context": {"max_files": 12, "max_bytes": 1_000_000},
             "tools": {"allowlist": ["python -m ruff", "python -m pytest", "npm run", "pnpm run"]},
+            "dataset_sources": {
+                "offline_mode": False,
+                "providers": {
+                    "wikipedia": {"base_url": "", "version": "latest"},
+                    "arxiv": {"base_url": "", "version": ""},
+                    "gutenberg": {"base_url": ""},
+                    "vetted_repos": {"mirrors": []},
+                },
+            },
             **ena_raw,
             "training": {**training_raw, **((ena_raw.get("training") or {}))},
             "aicf": {**aicf_raw, **((ena_raw.get("aicf") or {}))},

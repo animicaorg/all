@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable, Iterable
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from animica_studio.util.paths import app_data_dir
@@ -46,6 +47,22 @@ class BootstrapOptions:
         return int(SIZE_PRESETS.get(self.size_preset, SIZE_PRESETS["big"])["target_bytes"])
 
 
+@dataclass(slots=True)
+class ProviderUrlCandidate:
+    name: str
+    url: str
+
+
+@dataclass(slots=True)
+class DownloadFailure:
+    source: str
+    url: str
+    status: int | None
+    content_type: str
+    excerpt: str
+    message: str
+
+
 class SourceProvider:
     source_name: str = "base"
     source_version: str = "v1"
@@ -55,18 +72,48 @@ class SourceProvider:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+    def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
+        return self.source_version, []
+
+    def iter_documents(
+        self,
+        manager: "DownloadManager",
+        *,
+        source_settings: dict[str, Any],
+        progress_cb: ProgressCb,
+        cancel: Event,
+    ) -> Iterable[dict[str, Any]]:
         return []
 
 
 class WikipediaAbstractsProvider(SourceProvider):
     source_name = "wikipedia"
     source_version = "enwiki-latest-abstract.xml.gz"
-    _URL = "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract.xml.gz"
 
-    def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+    def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
+        cfg = overrides or {}
+        version = str(cfg.get("version") or "latest").strip() or "latest"
+        base_override = str(cfg.get("base_url") or "").strip().rstrip("/")
+        base_urls = [
+            "https://dumps.wikimedia.org/enwiki",
+            "https://wikimedia.bringyour.com/enwiki",
+        ]
+        if base_override:
+            base_urls.insert(0, base_override)
+        url_path = f"{version}/enwiki-{version}-abstract.xml.gz"
+        candidates = [ProviderUrlCandidate(name=f"mirror-{idx+1}", url=f"{base}/{url_path}") for idx, base in enumerate(base_urls)]
+        return f"enwiki-{version}-abstract.xml.gz", candidates
+
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+        version, candidates = self.resolve_latest(source_settings)
         cache = self.cache_dir(manager.cache_root)
-        dump_path = manager.download(self._URL, cache / self.source_version, progress_cb=progress_cb, cancel=cancel)
+        dump_path = manager.download_with_mirrors(
+            source=self.source_name,
+            candidates=candidates,
+            dest=cache / version,
+            progress_cb=progress_cb,
+            cancel=cancel,
+        )
         with gzip.open(dump_path, "rt", encoding="utf-8", errors="ignore") as fh:
             buf: list[str] = []
             for line in fh:
@@ -85,8 +132,8 @@ class WikipediaAbstractsProvider(SourceProvider):
                         "title": title,
                         "language": "en",
                         "source": self.source_name,
-                        "source_version": self.source_version,
-                        "source_url": self._URL,
+                        "source_version": version,
+                        "source_url": manager.last_success_url(self.source_name),
                     }
 
 
@@ -94,13 +141,38 @@ class ArxivApiProvider(SourceProvider):
     source_name = "arxiv"
     source_version = datetime.now(timezone.utc).strftime("api-snapshot-%Y%m%d")
 
-    def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+    def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
+        cfg = overrides or {}
+        version = str(cfg.get("version") or datetime.now(timezone.utc).strftime("%Y%m%d")).strip()
+        base_override = str(cfg.get("base_url") or "").strip().rstrip("/")
+        base_urls = [
+            "https://export.arxiv.org/api/query",
+            "https://arxiv.org/api/query",
+        ]
+        if base_override:
+            base_urls.insert(0, base_override)
+        return f"api-snapshot-{version}", [ProviderUrlCandidate(name=f"mirror-{i+1}", url=u) for i, u in enumerate(base_urls)]
+
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+        version, bases = self.resolve_latest(source_settings)
         cache = self.cache_dir(manager.cache_root)
         for start in range(0, 4000, 1000):
             if cancel.is_set():
                 return
-            url = f"https://export.arxiv.org/api/query?search_query=cat:cs.LG+OR+cat:cs.AI&start={start}&max_results=1000"
-            xml_path = manager.download(url, cache / f"batch-{start:05d}.xml", progress_cb=progress_cb, cancel=cancel)
+            candidates = [
+                ProviderUrlCandidate(
+                    name=f"{base.name}-batch-{start}",
+                    url=f"{base.url}?search_query=cat:cs.LG+OR+cat:cs.AI&start={start}&max_results=1000",
+                )
+                for base in bases
+            ]
+            xml_path = manager.download_with_mirrors(
+                source=self.source_name,
+                candidates=candidates,
+                dest=cache / f"batch-{start:05d}.xml",
+                progress_cb=progress_cb,
+                cancel=cancel,
+            )
             text = xml_path.read_text(encoding="utf-8", errors="ignore")
             for entry in re.findall(r"<entry>(.*?)</entry>", text, flags=re.S):
                 title = _capture_xml(entry, "title")
@@ -111,8 +183,8 @@ class ArxivApiProvider(SourceProvider):
                         "title": _normalize_text(title),
                         "language": "en",
                         "source": self.source_name,
-                        "source_version": self.source_version,
-                        "source_url": url,
+                        "source_version": version,
+                        "source_url": manager.last_success_url(self.source_name),
                     }
 
 
@@ -121,11 +193,23 @@ class GutenbergProvider(SourceProvider):
     source_version = "pg-epub-feeds-v1"
     _CATALOG = "https://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2"
 
-    def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        # License-safe default: consume cached local text files only (user-provided or previous runs).
-        # We still cache the official catalog blob as provenance.
+    def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
+        cfg = overrides or {}
+        if str(cfg.get("base_url") or "").strip():
+            custom = str(cfg["base_url"]).rstrip("/")
+            return self.source_version, [ProviderUrlCandidate(name="override", url=f"{custom}/cache/epub/feeds/rdf-files.tar.bz2")]
+        return self.source_version, [ProviderUrlCandidate(name="primary", url=self._CATALOG)]
+
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+        version, candidates = self.resolve_latest(source_settings)
         cache = self.cache_dir(manager.cache_root)
-        manager.download(self._CATALOG, cache / "rdf-files.tar.bz2", progress_cb=progress_cb, cancel=cancel)
+        manager.download_with_mirrors(
+            source=self.source_name,
+            candidates=candidates,
+            dest=cache / "rdf-files.tar.bz2",
+            progress_cb=progress_cb,
+            cancel=cancel,
+        )
         texts = sorted((cache / "texts").glob("*.txt"))
         for path in texts:
             if cancel.is_set():
@@ -138,8 +222,8 @@ class GutenbergProvider(SourceProvider):
                     "title": path.stem,
                     "language": "en",
                     "source": self.source_name,
-                    "source_version": self.source_version,
-                    "source_url": self._CATALOG,
+                    "source_version": version,
+                    "source_url": manager.last_success_url(self.source_name),
                 }
 
 
@@ -150,14 +234,24 @@ class VettedReposProvider(SourceProvider):
     def __init__(self, repos: list[str] | None = None) -> None:
         self._repos = repos or [
             "https://raw.githubusercontent.com/animicaorg/all/main/README.md",
+            "https://raw.githubusercontent.com/animicaorg/all/master/README.md",
         ]
 
-    def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
         cache = self.cache_dir(manager.cache_root)
-        for idx, url in enumerate(self._repos):
+        overrides = source_settings.get("mirrors") if isinstance(source_settings, dict) else None
+        repo_urls = list(overrides) if isinstance(overrides, list) and overrides else list(self._repos)
+        for idx, url in enumerate(repo_urls):
             if cancel.is_set():
                 return
-            path = manager.download(url, cache / f"repo-{idx:03d}.txt", progress_cb=progress_cb, cancel=cancel)
+            candidates = [ProviderUrlCandidate(name=f"repo-{idx}", url=str(url))]
+            path = manager.download_with_mirrors(
+                source=self.source_name,
+                candidates=candidates,
+                dest=cache / f"repo-{idx:03d}.txt",
+                progress_cb=progress_cb,
+                cancel=cancel,
+            )
             txt = _normalize_text(path.read_text(encoding="utf-8", errors="ignore"))
             if txt:
                 yield {
@@ -166,19 +260,63 @@ class VettedReposProvider(SourceProvider):
                     "language": "en",
                     "source": self.source_name,
                     "source_version": self.source_version,
-                    "source_url": url,
+                    "source_url": str(url),
                 }
 
 
 class DownloadManager:
-    def __init__(self, cache_root: Path, max_mbps: float | None = None, max_daily_bytes: int | None = None) -> None:
+    def __init__(self, cache_root: Path, *, source_settings: dict[str, Any] | None = None, max_mbps: float | None = None, max_daily_bytes: int | None = None) -> None:
         self.cache_root = cache_root
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self.max_mbps = max_mbps
         self.max_daily_bytes = max_daily_bytes
+        self.source_settings = source_settings or {}
         self._daily_counter_file = self.cache_root / "daily_download_usage.json"
+        self._failures: list[DownloadFailure] = []
+        self._last_success_by_source: dict[str, str] = {}
 
-    def download(self, url: str, dest: Path, *, progress_cb: ProgressCb, cancel: Event) -> Path:
+    def diagnostics(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "source": f.source,
+                "url": f.url,
+                "status": f.status,
+                "content_type": f.content_type,
+                "excerpt": f.excerpt,
+                "message": f.message,
+            }
+            for f in self._failures
+        ]
+
+    def last_success_url(self, source: str) -> str:
+        return self._last_success_by_source.get(source, "")
+
+    def download_with_mirrors(self, *, source: str, candidates: list[ProviderUrlCandidate], dest: Path, progress_cb: ProgressCb, cancel: Event) -> Path:
+        if not candidates:
+            raise RuntimeError(f"No source URLs configured for provider '{source}'.")
+
+        if bool(self.source_settings.get("offline_mode")):
+            if dest.exists():
+                progress_cb({"stage": "cached", "source": source, "url": str(dest), "from_cache": True})
+                return dest
+            raise RuntimeError(f"Offline mode is enabled and cached source is missing for {source}: {dest}")
+
+        last_error = ""
+        for candidate in candidates:
+            try:
+                downloaded = self._download_single(source=source, url=candidate.url, dest=dest, progress_cb=progress_cb, cancel=cancel)
+                self._last_success_by_source[source] = candidate.url
+                return downloaded
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+                continue
+
+        summary = self._failure_summary_for_source(source)
+        raise RuntimeError(
+            f"All mirrors failed for {source}. {last_error}\n{summary}\nSuggestions: Pick a different version, paste a custom URL, or use Starter dataset."
+        )
+
+    def _download_single(self, *, source: str, url: str, dest: Path, progress_cb: ProgressCb, cancel: Event) -> Path:
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(dest.suffix + ".part")
         received = tmp.stat().st_size if tmp.exists() else 0
@@ -186,25 +324,59 @@ class DownloadManager:
         if received:
             headers["Range"] = f"bytes={received}-"
         req = Request(url, headers=headers)
-        with urlopen(req, timeout=30) as resp, tmp.open("ab") as out:  # noqa: S310
-            total = _safe_int(resp.headers.get("Content-Length"))
-            if total and received and resp.status == 206:
-                total += received
-            while True:
-                if cancel.is_set():
-                    break
-                chunk = resp.read(1024 * 256)
-                if not chunk:
-                    break
-                self._guard_daily_limit(len(chunk))
-                out.write(chunk)
-                received += len(chunk)
-                progress_cb({"stage": "downloading", "url": url, "downloaded_bytes": received, "download_total_bytes": total})
-                self._throttle(len(chunk))
+        try:
+            with urlopen(req, timeout=30) as resp, tmp.open("ab") as out:  # noqa: S310
+                total = _safe_int(resp.headers.get("Content-Length"))
+                content_type = str(resp.headers.get("Content-Type") or "")
+                if total and received and resp.status == 206:
+                    total += received
+                while True:
+                    if cancel.is_set():
+                        break
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    self._guard_daily_limit(len(chunk))
+                    out.write(chunk)
+                    received += len(chunk)
+                    progress_cb({
+                        "stage": "downloading",
+                        "source": source,
+                        "url": url,
+                        "downloaded_bytes": received,
+                        "download_total_bytes": total,
+                        "content_type": content_type,
+                    })
+                    self._throttle(len(chunk))
+        except HTTPError as exc:
+            excerpt = _read_error_excerpt(exc)
+            self._record_failure(
+                source=source,
+                url=url,
+                status=exc.code,
+                content_type=str(exc.headers.get("Content-Type") or "") if exc.headers else "",
+                excerpt=excerpt,
+                message=f"HTTP {exc.code}",
+            )
+            raise RuntimeError(f"Download failed ({exc.code}) from {url}") from exc
+        except URLError as exc:
+            self._record_failure(source=source, url=url, status=None, content_type="", excerpt="", message=str(exc.reason))
+            raise RuntimeError(f"Download failed from {url}: {exc.reason}") from exc
         if cancel.is_set():
             return dest
         shutil.move(tmp, dest)
         return dest
+
+    def _record_failure(self, *, source: str, url: str, status: int | None, content_type: str, excerpt: str, message: str) -> None:
+        self._failures.append(DownloadFailure(source=source, url=url, status=status, content_type=content_type, excerpt=excerpt, message=message))
+
+    def _failure_summary_for_source(self, source: str) -> str:
+        lines = []
+        for f in self._failures:
+            if f.source != source:
+                continue
+            lines.append(f"- {f.url} -> status={f.status} content_type={f.content_type!r} excerpt={f.excerpt[:200]!r}")
+        return "\n".join(lines) if lines else "No detailed diagnostics available."
 
     def _throttle(self, n_bytes: int) -> None:
         if not self.max_mbps or self.max_mbps <= 0:
@@ -232,11 +404,12 @@ class DownloadManager:
 
 
 class DatasetBootstrapService:
-    def __init__(self) -> None:
+    def __init__(self, source_settings: dict[str, Any] | None = None) -> None:
         self._root = app_data_dir() / "datasets"
         self._cache_root = self._root / "cache"
         self._root.mkdir(parents=True, exist_ok=True)
         self._cache_root.mkdir(parents=True, exist_ok=True)
+        self._source_settings = source_settings or {}
 
     def estimate(self, preset: str) -> dict[str, Any]:
         target = int(SIZE_PRESETS.get(preset, SIZE_PRESETS["big"])["target_bytes"])
@@ -271,7 +444,13 @@ class DatasetBootstrapService:
         state.setdefault("downloaded_bytes", 0)
         state.setdefault("cancelled", False)
 
-        manager = DownloadManager(self._cache_root, max_mbps=options.max_mbps, max_daily_bytes=options.max_daily_download_bytes)
+        manager = DownloadManager(
+            self._cache_root,
+            source_settings=self._source_settings,
+            max_mbps=options.max_mbps,
+            max_daily_bytes=options.max_daily_download_bytes,
+        )
+        provider_settings = self._provider_settings()
         providers: list[SourceProvider] = [WikipediaAbstractsProvider(), ArxivApiProvider(), GutenbergProvider(), VettedReposProvider()]
 
         shard_writer = _ShardWriter(target_dir / "shards", shard_size_bytes=options.shard_size_bytes)
@@ -291,47 +470,56 @@ class DatasetBootstrapService:
         for provider in providers:
             if cancel.is_set() or state["processed_bytes"] >= options.target_bytes:
                 break
-            for doc in provider.iter_documents(manager, _progress, cancel):
-                if cancel.is_set() or state["processed_bytes"] >= options.target_bytes:
-                    break
-                before_count += 1
-                text = _normalize_text(str(doc.get("text") or ""))
-                if not text:
-                    continue
-                if options.language_filter and str(doc.get("language") or "").lower() not in {options.language_filter.lower()}:
-                    continue
-                digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-                if digest in dedup_seen:
-                    continue
-                dedup_seen.add(digest)
-                rec = {
-                    "text": text,
-                    "language": doc.get("language") or "unknown",
-                    "source": doc.get("source") or "unknown",
-                    "source_version": doc.get("source_version") or "unknown",
-                    "source_url": doc.get("source_url") or "",
-                    "title": doc.get("title") or "",
-                    "sha256": digest,
-                }
-                written = shard_writer.write(rec)
-                state["processed_bytes"] = int(state.get("processed_bytes") or 0) + written
-                state["doc_count"] = int(state.get("doc_count") or 0) + 1
-                source = str(rec["source"])
-                lang = str(rec["language"])
-                source_counts[source] = source_counts.get(source, 0) + 1
-                lang_counts[lang] = lang_counts.get(lang, 0) + 1
-                state["cancelled"] = False
-                self._save_state(state_path, state)
-                progress_cb(
-                    {
-                        "stage": "processing",
-                        "processed_bytes": state["processed_bytes"],
-                        "doc_count": state["doc_count"],
-                        "target_bytes": options.target_bytes,
-                        "shards": shard_writer.shard_count,
-                        "dedup_percent": (1.0 - (len(dedup_seen) / max(before_count, 1))) * 100,
+            try:
+                p_settings = provider_settings.get(provider.source_name, {})
+                for doc in provider.iter_documents(manager, source_settings=p_settings, progress_cb=_progress, cancel=cancel):
+                    if cancel.is_set() or state["processed_bytes"] >= options.target_bytes:
+                        break
+                    before_count += 1
+                    text = _normalize_text(str(doc.get("text") or ""))
+                    if not text:
+                        continue
+                    if options.language_filter and str(doc.get("language") or "").lower() not in {options.language_filter.lower()}:
+                        continue
+                    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    if digest in dedup_seen:
+                        continue
+                    dedup_seen.add(digest)
+                    rec = {
+                        "text": text,
+                        "language": doc.get("language") or "unknown",
+                        "source": doc.get("source") or "unknown",
+                        "source_version": doc.get("source_version") or "unknown",
+                        "source_url": doc.get("source_url") or "",
+                        "title": doc.get("title") or "",
+                        "sha256": digest,
                     }
-                )
+                    written = shard_writer.write(rec)
+                    state["processed_bytes"] = int(state.get("processed_bytes") or 0) + written
+                    state["doc_count"] = int(state.get("doc_count") or 0) + 1
+                    source = str(rec["source"])
+                    lang = str(rec["language"])
+                    source_counts[source] = source_counts.get(source, 0) + 1
+                    lang_counts[lang] = lang_counts.get(lang, 0) + 1
+                    state["cancelled"] = False
+                    self._save_state(state_path, state)
+                    progress_cb(
+                        {
+                            "stage": "processing",
+                            "processed_bytes": state["processed_bytes"],
+                            "doc_count": state["doc_count"],
+                            "target_bytes": options.target_bytes,
+                            "shards": shard_writer.shard_count,
+                            "dedup_percent": (1.0 - (len(dedup_seen) / max(before_count, 1))) * 100,
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001
+                progress_cb({
+                    "stage": "provider_failed",
+                    "source": provider.source_name,
+                    "error": str(exc),
+                })
+                continue
 
         if cancel.is_set():
             state["cancelled"] = True
@@ -339,6 +527,12 @@ class DatasetBootstrapService:
             return {"dataset_dir": str(target_dir), "build_state": str(state_path), "cancelled": True}
 
         shards = shard_writer.close()
+        if not shards:
+            raise RuntimeError(
+                "Dataset bootstrap produced no documents. Diagnostics:\n"
+                + json.dumps(manager.diagnostics()[:8], indent=2)
+                + "\nSuggestions: Pick a different version, paste a custom URL, or use Starter dataset."
+            )
         manifest = {
             "schema_version": "animica.ena.dataset.v2",
             "dataset_name": options.name,
@@ -349,6 +543,7 @@ class DatasetBootstrapService:
                 {"source": p.source_name, "version": p.source_version, "cache_path": str((self._cache_root / p.source_name / p.source_version))}
                 for p in providers
             ],
+            "download_diagnostics": manager.diagnostics(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         manifest_path = target_dir / "manifest.json"
@@ -360,6 +555,7 @@ class DatasetBootstrapService:
             "language_counts": lang_counts,
             "source_counts": source_counts,
             "length_histogram": _length_histogram(shard_writer.lengths),
+            "download_diagnostics": manager.diagnostics(),
         }
         stats_path = target_dir / "stats.json"
         stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
@@ -373,7 +569,12 @@ class DatasetBootstrapService:
             "build_state": str(state_path),
             "manifest": manifest,
             "stats": stats,
+            "diagnostics": manager.diagnostics(),
         }
+
+    def _provider_settings(self) -> dict[str, Any]:
+        raw = self._source_settings.get("providers")
+        return dict(raw) if isinstance(raw, dict) else {}
 
     def _probe_bandwidth_mbps(self) -> float:
         host = "dumps.wikimedia.org"
@@ -506,3 +707,11 @@ def _safe_int(value: Any) -> int:
 
 def _safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-") or "dataset"
+
+
+def _read_error_excerpt(exc: HTTPError) -> str:
+    try:
+        raw = exc.read(200)
+    except Exception:
+        return ""
+    return raw.decode("utf-8", errors="replace")
