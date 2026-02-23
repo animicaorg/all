@@ -82,22 +82,30 @@ export class ExplorerService {
       )
       if (!raw) throw new HttpError(404, 'Block not found')
       const detail = normalizeBlockDetail(raw)
-      detail.txs.forEach((tx, index) => {
+      const rawTxs = Array.isArray((raw as any)?.txs)
+        ? (raw as any).txs
+        : Array.isArray((raw as any)?.transactions)
+          ? (raw as any).transactions
+          : []
+      rawTxs.forEach((rawTx: any, index: number) => {
         try {
-          const normalizedTxHash = normalizeTxHash(String(tx.hash))
+          const summary = normalizeTxSummary(rawTx)
+          const normalizedTxHash = normalizeTxHash(String(summary.hash))
           this.txLifecycle.upsertConfirmed({
             hash: normalizedTxHash,
             includedHeight: detail.height,
             includedBlockHash: String(detail.hash),
             includedIndex: index,
             timestamp: detail.time,
-            from: tx.from,
-            to: tx.to,
-            value: tx.value
+            from: summary.from,
+            to: summary.to,
+            value: summary.value,
+            fee: rawTx?.feePaid ?? rawTx?.fee,
+            rawTx
           })
-          log.debug({ txHash: tx.hash, normalizedHash: normalizedTxHash, insertResult: 'upserted' }, 'block ingestion tx upsert')
+          log.debug({ txHash: summary.hash, normalizedHash: normalizedTxHash, insertResult: 'upserted' }, 'block ingestion tx upsert')
         } catch (error) {
-          log.warn({ txHash: tx.hash, error }, 'block ingestion tx skipped due to invalid hash format')
+          log.warn({ txHash: rawTx?.hash, error }, 'block ingestion tx skipped due to invalid hash format')
         }
       })
       return detail
@@ -109,29 +117,67 @@ export class ExplorerService {
     const cacheKey = `tx:${normalizedHash}`
     return this.coalescer.run(cacheKey, async () => {
       log.debug({ normalizedHash, store: 'confirmed+pending' }, 'tx lookup start')
-      const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(normalizedHash)).catch(() => null)
-      const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(normalizedHash)).catch(() => null)
       const head = normalizeHead(await this.safeRpc(() => this.rpc.getHead()))
 
+      const storeRecord = this.txLifecycle.get(normalizedHash)
+      if (storeRecord?.status === 'confirmed') {
+        const enrichedRecord = await this.enrichConfirmedRecordIfMissing(storeRecord)
+        const confirmations = enrichedRecord.included_height ? Math.max(0, head.height - enrichedRecord.included_height + 1) : 0
+        log.debug({ normalizedHash, store: 'lifecycle-store-confirmed', result: 'hit' }, 'tx lookup result')
+        return {
+          hash: enrichedRecord.tx_hash,
+          tx_hash: enrichedRecord.tx_hash,
+          status: enrichedRecord.status,
+          blockHash: enrichedRecord.included_block_hash ?? undefined,
+          blockHeight: enrichedRecord.included_height ?? undefined,
+          included_height: enrichedRecord.included_height,
+          included_block_hash: enrichedRecord.included_block_hash,
+          confirmations,
+          timestamp: enrichedRecord.timestamp,
+          explorer_head_height: head.height,
+          from: enrichedRecord.from,
+          to: enrichedRecord.to,
+          value: enrichedRecord.value,
+          feePaid: enrichedRecord.fee,
+          fee: enrichedRecord.fee,
+          raw: enrichedRecord.rawTx ?? { hash: enrichedRecord.tx_hash },
+          receipt: enrichedRecord.rawReceipt
+        }
+      }
+
+      const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(normalizedHash)).catch(() => null)
+      const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(normalizedHash)).catch(() => null)
       if (tx || receipt) {
         const detail = normalizeTxDetail(tx ?? { hash: normalizedHash }, receipt)
         const includedHeight = detail.blockHeight ?? null
         const includedBlockHash = detail.blockHash ? String(detail.blockHash) : null
         const confirmations = includedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
-        this.txLifecycle.upsertConfirmed({
-          hash: normalizedHash,
-          includedHeight: includedHeight ?? head.height,
-          includedBlockHash: includedBlockHash ?? normalizedHash,
-          includedIndex: 0,
-          timestamp: includedHeight ? head.time : null,
-          from: detail.from,
-          to: detail.to,
-          value: detail.value,
-          fee: detail.feePaid,
-          rawTx: detail.raw,
-          rawReceipt: detail.receipt
-        })
-        log.debug({ normalizedHash, store: 'confirmed', result: 'hit' }, 'tx lookup result')
+
+        if (includedHeight) {
+          this.txLifecycle.upsertConfirmed({
+            hash: normalizedHash,
+            includedHeight,
+            includedBlockHash: includedBlockHash ?? normalizedHash,
+            includedIndex: 0,
+            timestamp: head.time,
+            from: detail.from,
+            to: detail.to,
+            value: detail.value,
+            fee: detail.feePaid,
+            rawTx: detail.raw,
+            rawReceipt: detail.receipt
+          })
+        } else {
+          this.txLifecycle.recordPending(normalizedHash, {
+            from: detail.from,
+            to: detail.to,
+            value: detail.value,
+            fee: detail.feePaid,
+            rawTx: detail.raw
+          })
+        }
+
+        log.debug({ normalizedHash, store: includedHeight ? 'confirmed-rpc' : 'pending-rpc', result: 'hit' }, 'tx lookup result')
         return {
           ...detail,
           tx_hash: normalizedHash,
@@ -139,7 +185,8 @@ export class ExplorerService {
           included_block_hash: includedBlockHash,
           confirmations,
           timestamp: includedHeight ? head.time : null,
-          explorer_head_height: head.height
+          explorer_head_height: head.height,
+          fee: detail.feePaid
         }
       }
 
@@ -153,11 +200,17 @@ export class ExplorerService {
       })
 
       if (normalizedPending.includes(normalizedHash)) {
-        const detail = normalizeTxDetail({ hash: normalizedHash, status: 'pending' }, null)
+        const pendingRecord = this.txLifecycle.get(normalizedHash)
+        const detail = normalizeTxDetail(pendingRecord?.rawTx ?? { hash: normalizedHash, status: 'pending' }, null)
         log.debug({ normalizedHash, store: 'mempool', result: 'hit' }, 'tx lookup result')
         return {
           ...detail,
           tx_hash: normalizedHash,
+          from: pendingRecord?.from ?? detail.from,
+          to: pendingRecord?.to ?? detail.to,
+          value: pendingRecord?.value ?? detail.value,
+          feePaid: pendingRecord?.fee ?? detail.feePaid,
+          fee: pendingRecord?.fee ?? detail.feePaid,
           included_height: null,
           included_block_hash: null,
           confirmations: 0,
@@ -166,25 +219,22 @@ export class ExplorerService {
         }
       }
 
-      const storeRecord = this.txLifecycle.get(normalizedHash)
-      if (storeRecord) {
-        const confirmations = storeRecord.included_height ? Math.max(0, head.height - storeRecord.included_height + 1) : 0
-        log.debug({ normalizedHash, store: 'lifecycle-store', result: 'hit' }, 'tx lookup result')
+      if (storeRecord?.status === 'pending') {
+        log.debug({ normalizedHash, store: 'lifecycle-store-pending', result: 'hit' }, 'tx lookup result')
         return {
           hash: storeRecord.tx_hash,
           tx_hash: storeRecord.tx_hash,
-          status: storeRecord.status,
-          blockHash: storeRecord.included_block_hash ?? undefined,
-          blockHeight: storeRecord.included_height ?? undefined,
-          included_height: storeRecord.included_height,
-          included_block_hash: storeRecord.included_block_hash,
-          confirmations,
-          timestamp: storeRecord.timestamp,
+          status: 'pending',
+          included_height: null,
+          included_block_hash: null,
+          confirmations: 0,
+          timestamp: null,
           explorer_head_height: head.height,
           from: storeRecord.from,
           to: storeRecord.to,
           value: storeRecord.value,
           feePaid: storeRecord.fee,
+          fee: storeRecord.fee,
           raw: storeRecord.rawTx ?? { hash: storeRecord.tx_hash },
           receipt: storeRecord.rawReceipt
         }
@@ -388,6 +438,56 @@ export class ExplorerService {
     })
   }
 
+
+  async backfillConfirmedTxsMissingFields(limitInput: number = 100): Promise<{ scanned: number; updated: number; remainingEstimate: number }> {
+    const limit = Math.max(1, Math.min(500, Number(limitInput) || 100))
+    const candidates = this.txLifecycle.getMissingConfirmedFields(limit)
+    let updated = 0
+
+    for (const record of candidates) {
+      const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(record.tx_hash)).catch(() => null)
+      const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(record.tx_hash)).catch(() => null)
+      const detail = normalizeTxDetail(tx ?? { hash: record.tx_hash }, receipt)
+      const patched = this.txLifecycle.patchConfirmedFields(record.tx_hash, {
+        from: detail.from,
+        to: detail.to,
+        value: detail.value,
+        fee: detail.feePaid,
+        rawTx: detail.raw,
+        rawReceipt: detail.receipt
+      })
+      if (patched && patched.from && patched.to && patched.value) {
+        updated += 1
+      }
+    }
+
+    const remainingEstimate = this.txLifecycle.countMissingConfirmedFields()
+    return { scanned: candidates.length, updated, remainingEstimate }
+  }
+
+  private async enrichConfirmedRecordIfMissing(record: import('./txLifecycle.js').TxLookupRecord): Promise<import('./txLifecycle.js').TxLookupRecord> {
+    if (record.from && record.to && record.value) {
+      return record
+    }
+
+    const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(record.tx_hash)).catch(() => null)
+    const receipt = await this.safeRpc(() => this.rpc.getTransactionReceipt(record.tx_hash)).catch(() => null)
+    const detail = normalizeTxDetail(tx ?? { hash: record.tx_hash }, receipt)
+    const patched = this.txLifecycle.patchConfirmedFields(record.tx_hash, {
+      from: detail.from,
+      to: detail.to,
+      value: detail.value,
+      fee: detail.feePaid,
+      rawTx: detail.raw,
+      rawReceipt: detail.receipt
+    })
+    if (patched) {
+      log.info({ txHash: record.tx_hash }, 'lazy backfill filled missing confirmed tx fields')
+      return patched
+    }
+    return record
+  }
+
   async getRichListSummary(): Promise<import('@animica/explorer2-shared').RichListSummary> {
     return this.coalescer.run('richlist:summary', async () => {
       // Try RPC method if available
@@ -469,7 +569,7 @@ export class ExplorerService {
         return normalizeBlockSummary(raw)
       })
     )
-    return blocks.filter((block): block is BlockSummary => block !== null)
+    return blocks.filter((block: BlockSummary | null): block is BlockSummary => block !== null)
   }
 
   private async findTxInRecentBlocks(headHeight: number, targetHash: string): Promise<{
