@@ -53,7 +53,14 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
     )
     svc = DaStatusService(cfg)
 
-    with patch("animica_studio.services.da_status_service.RpcClient") as mock_client_cls:
+    with patch("animica_studio.services.da_status_service.RpcClient") as mock_client_cls, patch.object(
+        svc,
+        "get_status",
+        side_effect=[
+            {"enabled": False, "da_methods": {"configure": "da.configure"}},
+            {"enabled": True, "dir": "/data/da", "da_methods": {"configure": "da.configure"}},
+        ],
+    ):
         cli = MagicMock()
         cli.registry.return_value = _mock_registry()
         cli.get_param_spec.return_value = [

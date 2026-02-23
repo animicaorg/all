@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import threading
 import time
 from difflib import get_close_matches
@@ -69,6 +70,8 @@ class RpcRegistry:
         self.payload = payload
         self.server_info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
         self.methods: dict[str, dict[str, Any]] = {}
+        self.exact_methods: set[str] = set()
+        self.normalized_methods: dict[str, list[str]] = {}
         methods_raw = payload.get("methods", [])
         if isinstance(methods_raw, list):
             for item in methods_raw:
@@ -92,13 +95,35 @@ class RpcRegistry:
                             }
                         )
                 self.methods[name] = {"name": name, "params": params}
+                self.exact_methods.add(name)
+                normalized = self.normalize(name)
+                self.normalized_methods.setdefault(normalized, []).append(name)
 
     @property
     def method_names(self) -> set[str]:
-        return set(self.methods.keys())
+        return set(self.exact_methods)
+
+    @staticmethod
+    def normalize(name: str) -> str:
+        lowered = name.lower().replace(".", "_")
+        return re.sub(r"_+", "_", lowered).strip("_")
+
+    @staticmethod
+    def _match_sort_key(name: str) -> tuple[int, str]:
+        # Prefer dotted variants first, then underscore; tie-break lexicographically.
+        return (0 if "." in name else 1, name)
 
     def has_method(self, name: str) -> bool:
-        return name in self.methods
+        return name in self.exact_methods
+
+    def has_any(self, prefix_candidates: list[str] | tuple[str, ...]) -> bool:
+        for prefix in prefix_candidates:
+            normalized_prefix = self.normalize(prefix)
+            needle = f"{normalized_prefix}_"
+            for method_name in self.normalized_methods:
+                if method_name.startswith(needle):
+                    return True
+        return False
 
     def normalize_legacy(self, name: str) -> str:
         if self.has_method(name):
@@ -114,10 +139,22 @@ class RpcRegistry:
             if self.has_method(candidate):
                 return candidate
         for candidate in candidates:
-            normalized = self.normalize_legacy(candidate)
-            if self.has_method(normalized):
-                return normalized
+            normalized = self.normalize(candidate)
+            matches = self.normalized_methods.get(normalized, [])
+            if matches:
+                return sorted(matches, key=self._match_sort_key)[0]
         return None
+
+    def dump_methods(self, prefix: str) -> list[str]:
+        normalized_prefix = self.normalize(prefix)
+        needle = f"{normalized_prefix}_"
+        found = {
+            method
+            for normalized, methods in self.normalized_methods.items()
+            if normalized.startswith(needle)
+            for method in methods
+        }
+        return sorted(found, key=self._match_sort_key)
 
     def closest_matches(self, name: str, limit: int = 5) -> list[str]:
         return get_close_matches(name, sorted(self.methods.keys()), n=limit, cutoff=0.35)

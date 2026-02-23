@@ -6,6 +6,7 @@ import logging
 import traceback
 
 from PySide6.QtWidgets import (
+    QApplication,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -41,6 +42,7 @@ class AicfPage(QWidget):
         self._claimable_amount: int = 0
         # Keep strong references so handles are not GC'd while in flight.
         self._active_handles: list[JobHandle] = []
+        self._jobs_diag_payload: dict = {}
         self._build_ui()
         self._refresh_da_readiness()
 
@@ -298,6 +300,12 @@ class AicfPage(QWidget):
         self._da_readiness_label = QLabel("DA readiness: unknown")
         layout.addWidget(self._da_readiness_label)
 
+        self._aicf_support_label = QLabel("AICF job listing: Unknown")
+        layout.addWidget(self._aicf_support_label)
+
+        self._da_status_label = QLabel("DA status: Unknown")
+        layout.addWidget(self._da_status_label)
+
         btn_row = QHBoxLayout()
         self._refresh_da_btn = QPushButton("🔄  Refresh DA readiness")
         self._refresh_da_btn.clicked.connect(self._refresh_da_readiness)
@@ -309,6 +317,9 @@ class AicfPage(QWidget):
         self._list_jobs_btn = QPushButton("📋  List Jobs")
         self._list_jobs_btn.clicked.connect(self._list_jobs)
         btn_row.addWidget(self._list_jobs_btn)
+        self._jobs_diag_btn = QPushButton("🧪  Diagnostics")
+        self._jobs_diag_btn.clicked.connect(self._copy_jobs_diagnostics)
+        btn_row.addWidget(self._jobs_diag_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -336,14 +347,24 @@ class AicfPage(QWidget):
         enabled = bool(result.get("enabled", False))
         self._enable_da_btn.setEnabled(True)
         methods = result.get("da_methods") if isinstance(result.get("da_methods"), dict) else {}
-        put_method = methods.get("put_blob")
-        get_method = methods.get("get_blob")
+        status_method = methods.get("status")
+        da_found = result.get("da_found_methods") if isinstance(result.get("da_found_methods"), list) else []
         self._rpc_label.setText(f"RPC: {result.get('rpc_url') or get_active_rpc_url(self._config)}")
         self._da_readiness_label.setText(
-            f"DA readiness: {'DA RPC available' if put_method else 'DA methods not exposed'} | "
-            f"put={put_method or 'missing'} get={get_method or 'missing'} | "
+            f"DA readiness: {'methods discovered' if da_found else 'no methods discovered'} | "
+            f"status={status_method or 'missing'} | "
             f"server={result.get('server_version', 'unknown')}"
         )
+        if not da_found:
+            self._da_status_label.setText("DA status: Unknown (no DA methods exposed)")
+        elif not status_method:
+            self._da_status_label.setText(
+                "DA status: Unknown (DA status method not exposed; cannot verify DA enabled)"
+            )
+        elif enabled:
+            self._da_status_label.setText("DA status: Enabled")
+        else:
+            self._da_status_label.setText("DA status: Disabled")
 
     def _list_jobs(self) -> None:
         try:
@@ -353,11 +374,9 @@ class AicfPage(QWidget):
             service = self._service
 
             def _task() -> dict:
-                da_status = self._da_status.get_status()
-                log.info("AICF preflight da_status=%s", da_status)
-                if not da_status.get("enabled"):
-                    return {"ok": False, "error": "DA disabled on node", "da_status": da_status}
-                return service.list_jobs()
+                out = service.list_jobs()
+                out["da_status"] = self._da_status.get_status()
+                return out
 
             handle = self._track(self._runner.run_callable(_task, timeout_s=20))
             log.info("AICF started job_id=%s (list_jobs)", handle.job_id)
@@ -372,20 +391,52 @@ class AicfPage(QWidget):
             self._list_jobs_btn.setEnabled(True)
             result = payload if isinstance(payload, dict) else {}
             if result.get("ok"):
+                self._aicf_support_label.setText("AICF job listing: Supported")
                 self._jobs_output.setPlainText(safe_json_dumps(result.get("data"), indent=2))
             else:
                 da_status = result.get("da_status") if isinstance(result.get("da_status"), dict) else None
-                if da_status and not da_status.get("enabled"):
-                    self._da_readiness_label.setText(
-                        f"DA readiness: DA methods not exposed | server={da_status.get('server_version', 'unknown')} | "
-                        f"last_error={da_status.get('last_error', '')}"
+                error_kind = result.get("error_kind")
+                if error_kind == "missing_aicf_list_jobs":
+                    self._aicf_support_label.setText("AICF job listing: Not supported")
+                    aicf_methods = result.get("aicf_methods") if isinstance(result.get("aicf_methods"), list) else []
+                    self._jobs_output.setPlainText(
+                        "This node does not expose an AICF job-listing RPC method.\n"
+                        f"Available AICF methods: {', '.join(aicf_methods) or 'none'}\n"
+                        "Job queue may run on AICF Services. Configure services_url in Settings and use remote job listing there."
                     )
-                    self._rpc_label.setText(f"RPC: {da_status.get('rpc_url', get_active_rpc_url(self._config))}")
-                    self._jobs_output.setPlainText("DA methods not exposed by this node.")
+                elif error_kind == "da_disabled":
+                    self._aicf_support_label.setText("AICF job listing: Supported")
+                    self._da_status_label.setText("DA status: Disabled")
+                    self._jobs_output.setPlainText("DA disabled on node (da.getStatus.enabled=false).")
+                elif da_status and not da_status.get("enabled") and da_status.get("da_methods", {}).get("status"):
+                    self._da_status_label.setText("DA status: Disabled")
+                    self._jobs_output.setPlainText("DA disabled on node (da.getStatus.enabled=false).")
+                elif da_status and da_status.get("da_methods", {}).get("status") is None and da_status.get("da_found_methods"):
+                    self._da_status_label.setText("DA status: Unknown")
+                    found = da_status.get("da_found_methods") if isinstance(da_status.get("da_found_methods"), list) else []
+                    self._jobs_output.setPlainText(
+                        "DA status method not exposed; cannot verify DA enabled. "
+                        f"Found DA methods: {', '.join(found)}"
+                    )
                 else:
                     err = format_rpc_error(result.get("error"))
                     log.warning("AICF error=%s (list_jobs)", err)
                     self._jobs_output.setPlainText(f"Error: {err}")
+            self._jobs_diag_payload = {
+                "rpc_url": (da_status or {}).get("rpc_url") or get_active_rpc_url(self._config),
+                "aicf_method_count": len(result.get("aicf_methods") or []),
+                "aicf_methods": result.get("aicf_methods") or [],
+                "da_method_count": len(result.get("da_methods") or (da_status or {}).get("da_found_methods") or []),
+                "da_methods": result.get("da_methods") or (da_status or {}).get("da_found_methods") or [],
+                "resolved_list_jobs_method": result.get("list_jobs_method"),
+                "last_rpc_error": result.get("rpc_error") or result.get("error"),
+            }
         except Exception:  # noqa: BLE001
             log.error("AICF _on_list_jobs_finished error:\n%s", traceback.format_exc())
             self._list_jobs_btn.setEnabled(True)
+
+    def _copy_jobs_diagnostics(self) -> None:
+        payload = self._jobs_diag_payload or {"note": "Run 'List Jobs' first to populate diagnostics."}
+        text = safe_json_dumps(payload, indent=2)
+        QApplication.clipboard().setText(text)
+        self._jobs_output.setPlainText(f"Diagnostics copied to clipboard.\n{text}")
