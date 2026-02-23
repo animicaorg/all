@@ -146,6 +146,8 @@ class Config:
     da_contribution: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": True,
+            "host_data_dir": "",
+            "node_data_dir": "/data/da",
             "data_dir": "",
             "mode": "quota",
             "limit_bytes": 50 * 1024**3,
@@ -261,6 +263,28 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
             wallet_settings_raw.get("explorer_base_url", "https://explorer.animica.org")
         ),
     }
+    da_contrib_raw = d.get("da_contribution") or {}
+    if not isinstance(da_contrib_raw, dict):
+        da_contrib_raw = {}
+    legacy_data_dir = str(da_contrib_raw.get("data_dir") or da_contrib_raw.get("directory") or "").strip()
+    host_data_dir = str(da_contrib_raw.get("host_data_dir") or legacy_data_dir).strip()
+    node_data_dir = str(da_contrib_raw.get("node_data_dir") or "/data/da").strip()
+    da_contribution = {
+        "enabled": True,
+        "host_data_dir": host_data_dir,
+        "node_data_dir": node_data_dir or "/data/da",
+        "data_dir": host_data_dir,
+        "mode": "quota",
+        "limit_bytes": 50 * 1024**3,
+        "rpc_url": "",
+        "contributor_id": "",
+        "auto_start": True,
+        **da_contrib_raw,
+    }
+    da_contribution["host_data_dir"] = str(da_contribution.get("host_data_dir") or legacy_data_dir or "")
+    da_contribution["node_data_dir"] = str(da_contribution.get("node_data_dir") or "/data/da")
+    da_contribution["data_dir"] = da_contribution["host_data_dir"]
+
     return Config(
         active_profile=str(d.get("active_profile", "Mainnet")),
         profiles=profiles,
@@ -280,16 +304,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         mining_defaults=d.get("mining_defaults") or {"miner_address": "", "threads": 1, "automine": False},
         aicf_defaults=d.get("aicf_defaults") or {"default_job_type": "ai", "default_budget": 100},
         da_defaults=d.get("da_defaults") or {"default_namespace": "", "chunk_size": 262144},
-        da_contribution={
-            "enabled": True,
-            "data_dir": "",
-            "mode": "quota",
-            "limit_bytes": 50 * 1024**3,
-            "rpc_url": "",
-            "contributor_id": "",
-            "auto_start": True,
-            **(d.get("da_contribution") or {}),
-        },
+        da_contribution=da_contribution,
         quantum_defaults=d.get("quantum_defaults") or {"default_shots": 1024, "default_qubits": 4},
         workspace_root=d.get("workspace_root") or None,
         repo_root=d.get("repo_root") or None,

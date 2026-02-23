@@ -401,3 +401,17 @@ def test_da_gc_no_params():
     with patch("rpc.methods.da._require_store", return_value=store):
         with pytest.raises(InvalidParams, match="target_bytes"):
             da_gc({})
+
+
+def test_da_get_default_dir():
+    from rpc.methods.da import da_get_default_dir
+
+    out = da_get_default_dir()
+    assert out["dir"] == "/data/da"
+
+
+def test_da_get_allowed_base_dirs():
+    from rpc.methods.da import da_get_allowed_base_dirs
+
+    out = da_get_allowed_base_dirs()
+    assert out["dirs"] == ["/data"]

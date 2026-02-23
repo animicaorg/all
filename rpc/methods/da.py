@@ -116,6 +116,20 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
         }
 
 
+
+
+@method("da.getDefaultDir", aliases=("da_getDefaultDir",), desc="Get default node-side DA directory")
+def da_get_default_dir(params=None, *_args, **_kwargs) -> dict:
+    _ = params
+    return {"dir": "/data/da"}
+
+
+@method("da.getAllowedBaseDirs", aliases=("da_getAllowedBaseDirs",), desc="Get allowed base directories for DA store")
+def da_get_allowed_base_dirs(params=None, *_args, **_kwargs) -> dict:
+    _ = params
+    return {"dirs": ["/data"]}
+
+
 @method("da.configure", aliases=("da_configure",), desc="Configure node-side DA store")
 def da_configure(params=None, **kwargs) -> dict:
     """
@@ -164,6 +178,11 @@ def da_configure(params=None, **kwargs) -> dict:
         root = os.path.abspath(da_dir) if da_dir else _default_da_dir()
         Path(root).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
+        msg = str(exc)
+        if "Read-only file system" in msg or "Errno 30" in msg:
+            raise rpc_errors.InvalidParams(
+                f"Cannot create DA directory: {exc}. Node runs in a container; use a writable path under /data (for example /data/da)."
+            )
         raise rpc_errors.InvalidParams(f"Cannot create DA directory: {exc}")
 
     if not os.access(root, os.W_OK):
@@ -464,6 +483,8 @@ def da_get_proof(*_args, **_kwargs):
 
 __all__ = [
     "da_status",
+    "da_get_default_dir",
+    "da_get_allowed_base_dirs",
     "da_configure",
     "da_put",
     "da_get",
