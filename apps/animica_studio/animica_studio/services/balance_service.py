@@ -1,107 +1,128 @@
-"""Balance service with RPC-first and explorer fallback behavior."""
-
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any, Callable
+
+import requests
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.profile_models import RpcProfile
-from animica_studio.models.wallet_models import BalanceSource, BalanceState, format_amount
-from animica_studio.services.error_format import format_rpc_error
-from animica_studio.services.explorer_client import ExplorerClient
-from animica_studio.services.rpc_client import RpcClient
+from animica_studio.services.explorer_style_rpc import _format_anm, _normalize_rpc_url, _parse_balance_value
 
 log = logging.getLogger(__name__)
 
 
-class BalanceService:
-    def __init__(self, *, rpc_ttl_s: float = 10.0, explorer_ttl_s: float = 20.0) -> None:
-        self._rpc_ttl_s = rpc_ttl_s
-        self._explorer_ttl_s = explorer_ttl_s
-        self._cache: dict[tuple[str, str, str], BalanceState] = {}
+@dataclass
+class BalanceResult:
+    ok: bool
+    amount_smallest: int | None
+    formatted: str | None
+    error_reason: str | None
+    source: str = "rpc"
 
-    def clear(self) -> None:
-        self._cache.clear()
 
-    def get_balance(self, address: str, profile: RpcProfile, decimals: int = 18, *, force_refresh: bool = False) -> BalanceState:
+class BalanceService(QObject):
+    balance_ready = Signal(str, object)
+    rpc_status_changed = Signal(bool, str)
+
+    def __init__(self, parent: QObject | None = None, *, cache_ttl_s: float = 20.0, max_concurrency: int = 4) -> None:
+        super().__init__(parent)
+        self._cache_ttl_s = cache_ttl_s
+        self._pool = ThreadPoolExecutor(max_workers=max(1, max_concurrency), thread_name_prefix="balance-rpc")
+        self._cache: dict[tuple[str, str], tuple[float, BalanceResult]] = {}
+        self._inflight: set[tuple[str, str]] = set()
+        self._lock = threading.Lock()
+
+    def shutdown(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def get_balance(
+        self,
+        address: str,
+        profile: RpcProfile,
+        *,
+        force_refresh: bool = False,
+        on_result: Callable[[BalanceResult], None] | None = None,
+    ) -> BalanceResult:
         rpc_url = profile.effective_rpc_url()
-        rpc_state = self._get_rpc_balance(address, rpc_url, decimals, force_refresh=force_refresh)
-        if rpc_state and rpc_state.error is None and rpc_state.formatted not in {"", "—"}:
-            return rpc_state
+        key = (rpc_url, address)
+        now = time.time()
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached and not force_refresh and (now - cached[0]) <= self._cache_ttl_s:
+                if on_result:
+                    QTimer.singleShot(0, lambda c=cached[1]: on_result(c))
+                return cached[1]
+            if key in self._inflight:
+                return BalanceResult(False, None, None, "Balance request in progress")
+            self._inflight.add(key)
 
-        explorer_url = (profile.explorer_base_url or "").strip().rstrip("/")
-        if explorer_url:
-            explorer_state = self._get_explorer_balance(address, explorer_url, decimals, force_refresh=force_refresh)
-            if explorer_state and explorer_state.error is None and explorer_state.formatted not in {"", "—"}:
-                return explorer_state
-            err = explorer_state.error if explorer_state else "Explorer request failed"
-            return BalanceState(address=address, formatted="—", error=err)
+        fut = self._pool.submit(self._fetch_balance_sync, address, rpc_url)
 
-        if rpc_state is not None:
-            return BalanceState(address=address, formatted="—", error=rpc_state.error or "RPC unavailable")
-        return BalanceState(address=address, formatted="—", error="RPC unavailable and explorer not configured")
+        def _done() -> None:
+            result: BalanceResult
+            try:
+                result = fut.result(timeout=0)
+            except Exception as exc:  # noqa: BLE001
+                result = BalanceResult(ok=False, amount_smallest=None, formatted=None, error_reason=f"RPC unreachable: {exc}")
+            with self._lock:
+                self._cache[key] = (time.time(), result)
+                self._inflight.discard(key)
+            self.balance_ready.emit(address, result)
+            self.rpc_status_changed.emit(result.ok, result.error_reason or "RPC Online")
+            if on_result:
+                on_result(result)
 
-    def _get_rpc_balance(self, address: str, rpc_url: str, decimals: int, *, force_refresh: bool) -> BalanceState | None:
-        key = ("rpc", rpc_url, address)
-        cached = self._cache.get(key)
-        if cached and not force_refresh and (time.time() - cached.updated_ts) <= self._rpc_ttl_s:
-            cached.is_stale = False
-            return cached
+        QTimer.singleShot(0, lambda: fut.add_done_callback(lambda _f: QTimer.singleShot(0, _done)))
+        return BalanceResult(False, None, None, "Unavailable: fetching")
+
+    def get_balances(self, addresses: list[str], profile: RpcProfile, *, force_refresh: bool = False) -> dict[str, BalanceResult]:
+        out: dict[str, BalanceResult] = {}
+        for addr in addresses:
+            out[addr] = self.get_balance(addr, profile, force_refresh=force_refresh)
+        return out
+
+    def _fetch_balance_sync(self, address: str, rpc_url: str) -> BalanceResult:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": int(time.time() * 1000),
+            "method": "state.getBalance",
+            "params": [address, "latest"],
+        }
         try:
-            with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=5.0, max_retries=1) as client:
-                raw = max(0, int(client.get_balance(address)))
-            state = BalanceState(
-                address=address,
-                balance_wei=raw,
-                formatted=format_amount(raw, decimals),
-                updated_ts=time.time(),
-                error=None,
-                source=BalanceSource.RPC,
-                is_stale=False,
-                tooltip="RPC balance",
+            response = requests.post(
+                _normalize_rpc_url(rpc_url),
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=(3.0, 8.0),
             )
-            self._cache[key] = state
-            return state
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+        except requests.Timeout:
+            return BalanceResult(False, None, None, "Timeout")
+        except requests.RequestException:
+            return BalanceResult(False, None, None, "RPC unreachable")
         except Exception as exc:  # noqa: BLE001
-            msg = format_rpc_error(exc)
-            if cached:
-                stale = BalanceState(
-                    address=address,
-                    balance_wei=max(0, int(cached.balance_wei)),
-                    formatted=cached.formatted,
-                    updated_ts=cached.updated_ts,
-                    error=msg,
-                    source=cached.source,
-                    is_stale=True,
-                    tooltip=f"Cached value due to RPC error: {msg}",
-                )
-                return stale
-            return BalanceState(address=address, formatted="—", error=msg, source=BalanceSource.RPC)
+            return BalanceResult(False, None, None, f"RPC unreachable: {exc}")
 
-    def _get_explorer_balance(self, address: str, explorer_url: str, decimals: int, *, force_refresh: bool) -> BalanceState | None:
-        key = ("explorer", explorer_url, address)
-        cached = self._cache.get(key)
-        if cached and not force_refresh and (time.time() - cached.updated_ts) <= self._explorer_ttl_s:
-            cached.is_stale = False
-            return cached
-        client = ExplorerClient(explorer_url)
+        if body.get("error"):
+            err = str(body.get("error"))
+            if "method" in err.lower() and "not" in err.lower():
+                return BalanceResult(False, None, None, "RPC method not supported by this node")
+            return BalanceResult(False, None, None, err)
+
+        result = body.get("result")
+        if isinstance(result, dict):
+            result = result.get("balance", "0x0")
         try:
-            state = client.get_balance(address, decimals=decimals)
-            state.updated_ts = time.time()
-            self._cache[key] = state
-            return state
+            raw = _parse_balance_value(result)
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            if cached:
-                stale = BalanceState(
-                    address=address,
-                    balance_wei=max(0, int(cached.balance_wei)),
-                    formatted=cached.formatted,
-                    updated_ts=cached.updated_ts,
-                    error=msg,
-                    source=BalanceSource.EXPLORER,
-                    is_stale=True,
-                    tooltip=f"Cached explorer value: {msg}",
-                )
-                return stale
-            return BalanceState(address=address, formatted="—", error=msg, source=BalanceSource.EXPLORER)
+            return BalanceResult(False, None, None, f"Invalid RPC response: {exc}")
+
+        formatted = f"{_format_anm(raw)} ANM"
+        log.debug("Balance RPC parity: addr=%s amount_smallest=%s formatted=%s", address, raw, formatted)
+        return BalanceResult(True, raw, formatted, None)
