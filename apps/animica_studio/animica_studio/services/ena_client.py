@@ -193,14 +193,8 @@ class EnaClient:
 
     def submit_training_job(self, bundle_ref: dict[str, Any]) -> dict[str, Any] | None:
         if self._profile.mode == EnaMode.NETWORK_RPC:
-            client = RpcClient(self._profile.rpc_url)
-            try:
-                method = client._pick_method("aicf.submitTraining", "aicf_submitTraining", "ena.submitTraining", "ena_submitTraining")  # noqa: SLF001
-                return client.call(method, [bundle_ref])
-            except Exception:
-                return None
-            finally:
-                client.close()
+            log.info("ENA training submission via node RPC disabled; use local CLI or remote services endpoint")
+            return None
         url = self._profile.endpoint.rstrip("/") + "/training/submit"
         try:
             return self._request_json("POST", url, bundle_ref)
