@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.models.training_models import TrainingConfig
+from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
 from animica_studio.storage.config import Config
 
@@ -41,6 +42,7 @@ class TrainPage(QWidget):
         super().__init__(parent)
         self._cfg = config
         self._svc = ENATrainingService(config, self)
+        self._dataset_manager = DatasetManager()
         self._active_run_id: str | None = None
         self._build()
         self._wire()
@@ -70,6 +72,16 @@ class TrainPage(QWidget):
         dataset_row = QHBoxLayout(); dataset_row.addWidget(self.dataset_path, 1); dataset_row.addWidget(pick_dataset)
 
         self.dataset_id = QLineEdit("")
+        self.dataset_mode = QComboBox(); self.dataset_mode.addItems(["auto", "custom"])
+        self.auto_docs = QSpinBox(); self.auto_docs.setRange(1, 200000); self.auto_docs.setValue(200)
+        self.auto_bytes = QSpinBox(); self.auto_bytes.setRange(1, 2_000_000_000); self.auto_bytes.setValue(2_000_000)
+        self.auto_langs = QLineEdit("en")
+        self.auto_topics = QLineEdit("machine learning")
+        auto_btn = QPushButton("Auto Dataset")
+        auto_btn.clicked.connect(self._auto_dataset)
+        custom_btn = QPushButton("Build Custom Dataset")
+        custom_btn.clicked.connect(self._custom_dataset)
+        dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addStretch(1)
         self.base_model = QLineEdit("")
         self.output_dir = QLineEdit("./ena-training-runs")
         pick_out = QPushButton("Browse")
@@ -104,10 +116,18 @@ class TrainPage(QWidget):
 
         self.submit_aicf = QCheckBox("Submit checkpoints/metrics to AICF")
         self.budget_anm = QLineEdit("10")
+        self.ena_submit_mode = QComboBox(); self.ena_submit_mode.addItems(["local", "remote"])
+        self.aicf_services_url = QLineEdit("")
 
         form.addRow("Run name", self.run_name)
         form.addRow("Dataset path", dataset_row)
         form.addRow("Dataset ID", self.dataset_id)
+        form.addRow("Dataset mode", self.dataset_mode)
+        form.addRow("Auto max docs", self.auto_docs)
+        form.addRow("Auto max bytes", self.auto_bytes)
+        form.addRow("Auto languages (csv)", self.auto_langs)
+        form.addRow("Auto topics (csv)", self.auto_topics)
+        form.addRow("Dataset tools", dataset_actions)
         form.addRow("Base model/checkpoint", self.base_model)
         form.addRow("Output dir", out_row)
         form.addRow("Iterations (primary)", self.iterations)
@@ -190,6 +210,33 @@ class TrainPage(QWidget):
             self.output_dir.setText(p)
             self._refresh_checkpoints()
 
+    def _auto_dataset(self) -> None:
+        try:
+            res = self._dataset_manager.build_auto_dataset(
+                name=self.run_name.text().strip() or "ena",
+                max_documents=self.auto_docs.value(),
+                max_bytes=self.auto_bytes.value(),
+                languages=[x.strip() for x in self.auto_langs.text().split(",") if x.strip()],
+                topics=[x.strip() for x in self.auto_topics.text().split(",") if x.strip()],
+            )
+            self.dataset_path.setText(res["manifest_path"])
+            self.dataset_id.setText(Path(res["dataset_dir"]).name)
+            self.console.append(f"[dataset] Auto dataset ready: {res['manifest_path']}")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Dataset", str(exc))
+
+    def _custom_dataset(self) -> None:
+        p, _ = QFileDialog.getOpenFileName(self, "Select dataset file", "", "Data (*.jsonl *.txt);;All files (*)")
+        if not p:
+            return
+        try:
+            res = self._dataset_manager.build_custom_dataset([p], name=self.run_name.text().strip() or "ena")
+            self.dataset_path.setText(res["manifest_path"])
+            self.dataset_id.setText(Path(res["dataset_dir"]).name)
+            self.console.append(f"[dataset] Custom dataset ready: {res['manifest_path']}")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Dataset", str(exc))
+
     def _apply_preset(self, name: str) -> None:
         p = self.PRESETS[name]
         self.iterations.setValue(int(p["iterations"]))
@@ -224,6 +271,8 @@ class TrainPage(QWidget):
             resume_checkpoint=(None if self.resume_ckpt.currentIndex() <= 0 else self.resume_ckpt.currentData(Qt.ItemDataRole.UserRole)),
             submit_to_aicf=self.submit_aicf.isChecked(),
             budget_anm=self.budget_anm.text().strip() or "10",
+            ena_submit_mode=self.ena_submit_mode.currentText(),
+            aicf_services_url=self.aicf_services_url.text().strip(),
         )
         if cfg.iterations and cfg.epochs:
             self._on_log("", "system", "Both iterations and epochs set; iterations takes precedence.")
@@ -371,4 +420,6 @@ class TrainPage(QWidget):
         self.lora_rank.setValue(int(cfg.lora_rank or 0))
         self.submit_aicf.setChecked(cfg.submit_to_aicf)
         self.budget_anm.setText(cfg.budget_anm)
+        self.ena_submit_mode.setCurrentText(cfg.ena_submit_mode or "local")
+        self.aicf_services_url.setText(cfg.aicf_services_url or "")
         self._refresh_checkpoints()

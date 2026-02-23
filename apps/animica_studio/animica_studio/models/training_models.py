@@ -33,6 +33,8 @@ class TrainingConfig:
     resume_checkpoint: str | None = None
     submit_to_aicf: bool = False
     budget_anm: str = "10"
+    ena_submit_mode: str = "local"
+    aicf_services_url: str = ""
 
     def effective_iterations(self) -> int | None:
         if self.iterations and int(self.iterations) > 0:

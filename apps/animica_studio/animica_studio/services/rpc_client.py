@@ -122,6 +122,13 @@ class RpcRegistry:
     def closest_matches(self, name: str, limit: int = 5) -> list[str]:
         return get_close_matches(name, sorted(self.methods.keys()), n=limit, cutoff=0.35)
 
+    def get_param_spec(self, method: str) -> list[dict[str, Any]]:
+        meta = self.methods.get(method) or {}
+        params = meta.get("params") if isinstance(meta, dict) else None
+        if not isinstance(params, list):
+            return []
+        return [p for p in params if isinstance(p, dict)]
+
 
 class RpcTransportError(Exception):
     """Raised when the HTTP request itself fails (network, timeout, etc.)."""
@@ -174,6 +181,9 @@ class RpcClient:
 
         self._req_id = 0
         self._lock = threading.Lock()
+        self._last_param_encoding_by_method: dict[str, str] = {}
+        self._last_request_excerpt: dict[str, Any] = {}
+        self._last_response_excerpt: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Low-level call
@@ -211,6 +221,7 @@ class RpcClient:
 
         body = safe_json_dumps(payload)
         last_exc: Exception | None = None
+        self._last_request_excerpt = {"method": method, "params": payload.get("params")}
 
         for attempt in range(self._max_retries):
             if attempt > 0:
@@ -253,6 +264,7 @@ class RpcClient:
 
             # Validate JSON-RPC 2.0 envelope
             rpc_response = self._parse_response(data, method)
+            self._last_response_excerpt = data if isinstance(data, dict) else {"raw": data}
             if rpc_response.error is not None:
                 raise RpcResponseError(rpc_response.error)
             return rpc_response.result
@@ -360,6 +372,62 @@ class RpcClient:
             raise RpcParseError(f"Unknown RPC operation {operation!r}")
         return self.resolve_method(candidates[0], candidates)
 
+    def get_param_spec(self, method: str) -> list[dict[str, Any]]:
+        try:
+            return self.registry().get_param_spec(method)
+        except Exception:
+            return []
+
+    def _build_params_from_schema(self, method: str, values: dict[str, Any] | None) -> tuple[list[Any] | dict[str, Any] | None, str]:
+        values = values or {}
+        spec = self.get_param_spec(method)
+        if not spec:
+            if values:
+                return values, "object"
+            return None, "none"
+        ordered: list[Any] = []
+        for p in spec:
+            name = p.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            if name in values:
+                ordered.append(values[name])
+            elif p.get("required"):
+                raise RpcParseError(f"Missing required param {name!r} for method {method}")
+        return ordered, "positional"
+
+    def call_with_schema(
+        self,
+        method: str,
+        values: dict[str, Any] | None = None,
+        *,
+        allow_object_fallback: bool = True,
+    ) -> Any:
+        params, encoding = self._build_params_from_schema(method, values)
+        try:
+            result = self.call(method, params)
+            self._last_param_encoding_by_method[method] = encoding
+            return result
+        except RpcResponseError as exc:
+            msg = (exc.rpc_error.message or "").lower()
+            if (
+                encoding == "object"
+                and allow_object_fallback
+                and exc.rpc_error.code == -32602
+                and "unexpected keyword argument" in msg
+            ):
+                # Retry with positional args using schema order.
+                spec = self.get_param_spec(method)
+                positional: list[Any] = []
+                for p in spec:
+                    name = p.get("name")
+                    if isinstance(name, str) and name in (values or {}):
+                        positional.append((values or {})[name])
+                result = self.call(method, positional)
+                self._last_param_encoding_by_method[method] = "positional(retry)"
+                return result
+            raise
+
     def call_operation(
         self,
         operation: str,
@@ -396,6 +464,9 @@ class RpcClient:
             "discover_info": registry.server_info,
             "method_count": len(registry.method_names),
             "methods": methods,
+            "param_encoding": dict(self._last_param_encoding_by_method),
+            "last_request_excerpt": self._last_request_excerpt,
+            "last_response_excerpt": self._last_response_excerpt,
         }
 
     def get_head(self) -> Head:

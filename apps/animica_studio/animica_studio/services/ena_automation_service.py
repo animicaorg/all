@@ -29,9 +29,12 @@ class EnaService:
             self.aicf = type('StubAicf', (), {'submit_job': lambda *_a, **_k: {'ok': False, 'error': 'aicf unavailable'}})()
         try:
             from animica_studio.services.da_client import DaClient
+            from animica_studio.services.da_status_service import DaStatusService
             self.da = DaClient(config.get_active_profile().node.rpc_local_url)
+            self.da_status = DaStatusService(config)
         except Exception:
             self.da = type('StubDa', (), {'upload_bytes': lambda *_a, **_k: {'ok': False, 'error': 'da unavailable'}})()
+            self.da_status = type('StubDaStatus', (), {'get_status': lambda *_a, **_k: {'enabled': False, 'allow_remote_put': False}, 'enable_da': lambda *_a, **_k: {'ok': False}})()
         self.fees = FeeRoutingService()
 
     def detect_capabilities(self) -> dict[str, Any]:
@@ -162,12 +165,20 @@ class EnaService:
                 commit = f"dev-{checkpoint_sha[:16]}"
                 step_cache["commitment"] = commit
                 return {"commitment": commit, "mode": "local-only"}
+            status = self.da_status.get_status()
+            if not status.get("enabled"):
+                enabled_try = self.da_status.enable_da(dir_path=str((self.config.get_active_profile().node.rpc_local_url or '/data/da')), limit_bytes=10 * 1024 * 1024 * 1024)
+                status = enabled_try.get("status", status)
+                if not status.get("enabled"):
+                    raise RuntimeError(f"Node did not enable DA: {status}")
+            if status.get("allow_remote_put") is False:
+                raise RuntimeError("DA is enabled but allow_remote_put=false on node.")
             out = self.da.upload_bytes(data)
             commit = out.get("blob_id")
             if not commit:
                 raise RuntimeError(out.get("error", "DA unavailable"))
             step_cache["commitment"] = commit
-            return {"commitment": commit, "mode": "network"}
+            return {"commitment": commit, "mode": "network", "da_status": status}
 
         def _register(step):
             payload = {"checkpoint_sha": checkpoint_sha, "commitment": step_cache.get("commitment")}
