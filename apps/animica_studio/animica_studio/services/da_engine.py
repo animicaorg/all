@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -15,6 +14,7 @@ from urllib.parse import urlparse
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.services.da_client import DaClient
+from animica_studio.services.da_dir_usage_service import DaDirUsageService
 from animica_studio.services.workers import WorkerThread
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,8 @@ class DaMetrics:
     limit_bytes: int = 0
     used_bytes: int = 0
     remaining_bytes: int = 0
+    disk_used_bytes: int = 0
+    disk_total_bytes: int = 0
     queued_files: int = 0
     uploaded_blobs: int = 0
     success_count: int = 0
@@ -91,6 +93,7 @@ class DaContributionEngine(QObject):
         self._timer.setInterval(4000)
         self._timer.timeout.connect(self._tick)
         self._busy_worker: WorkerThread | None = None
+        self._dir_usage = DaDirUsageService(cache_ttl_seconds=5.0, scan_time_budget_seconds=2.5)
         self._known_uploaded: set[str] = set()
         self._last_uploaded_bytes = 0
         self._autostart_attempted = False
@@ -286,15 +289,16 @@ class DaContributionEngine(QObject):
 
     def _update_local_metrics(self) -> None:
         try:
-            p = Path(self.config.host_data_dir).expanduser()
-            if not p.exists():
-                raise FileNotFoundError(f"Directory does not exist: {p}")
-            used = sum(f.stat().st_size for f in p.glob("**/*") if f.is_file() and not f.name.startswith("."))
-            self.metrics.used_bytes = int(used)
+            snap = self._dir_usage.get_snapshot(self.config.host_data_dir)
+            used = int(snap.used_bytes)
+            self.metrics.used_bytes = used
+            self.metrics.disk_used_bytes = int(snap.disk_used_bytes)
+            self.metrics.disk_total_bytes = int(snap.disk_total_bytes)
             if self.config.mode == "quota":
                 self.metrics.remaining_bytes = max(int(self.config.limit_bytes - used), 0)
             else:
-                self.metrics.remaining_bytes = int(shutil.disk_usage(p).free)
+                self.metrics.remaining_bytes = 0
+            self.metrics.last_error = snap.warning
             self.metricsUpdated.emit(self.metrics)
         except Exception as exc:
             self._set_error(str(exc))
@@ -319,12 +323,14 @@ class DaContributionEngine(QObject):
             res = self.client().upload_bytes(data)
             self._known_uploaded.add(str(f))
             uploaded.append({"file": str(f), "blob_id": res["blob_id"], "size": len(data)})
-        disk = shutil.disk_usage(p)
+        snap = self._dir_usage.get_snapshot(str(p))
         return {
             "queued": len(queued),
             "uploaded": uploaded,
-            "used": disk.used,
-            "free": disk.free,
+            "da_used": int(snap.used_bytes),
+            "disk_used": int(snap.disk_used_bytes),
+            "disk_total": int(snap.disk_total_bytes),
+            "scan_warning": snap.warning,
             "status": self.client().status(),
         }
 
@@ -340,11 +346,16 @@ class DaContributionEngine(QObject):
             self.metrics.upload_rate_bps = float(bytes_up)
             for item in uploaded:
                 self.logLine.emit("stdout", f"Uploaded {item['file']} -> {item['blob_id']}")
-        self.metrics.used_bytes = int(out.get("used", 0))
+        self.metrics.used_bytes = int(out.get("da_used", 0))
+        self.metrics.disk_used_bytes = int(out.get("disk_used", 0))
+        self.metrics.disk_total_bytes = int(out.get("disk_total", 0))
         if self.config.mode == "quota":
             self.metrics.remaining_bytes = max(int(self.config.limit_bytes - self.metrics.used_bytes), 0)
         else:
-            self.metrics.remaining_bytes = int(out.get("free", 0))
+            self.metrics.remaining_bytes = 0
+        scan_warning = str(out.get("scan_warning", "") or "")
+        if scan_warning:
+            self.metrics.last_error = scan_warning
         status = out.get("status") or {}
         if isinstance(status, dict) and status.get("last_error"):
             self.metrics.last_error = str(status.get("last_error"))
