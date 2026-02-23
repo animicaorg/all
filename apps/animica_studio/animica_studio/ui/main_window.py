@@ -23,6 +23,7 @@ from animica_studio.models.profile_models import RpcProfile
 from animica_studio.services.profile_service import ProfileService
 from animica_studio.services.ena_automation_service import EnaService
 from animica_studio.services.ena_store import EnaStore
+from animica_studio.services.ena_contribution_engine import EnaContributionConfig, EnaContributionEngine
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.storage.config import Config
 from animica_studio.ui.components.primitives import Toast
@@ -65,6 +66,15 @@ class MainWindow(QMainWindow):
         self._safe_mode = safe_mode
         self._theme_manager = ThemeManager(config)
         self._ena_service = EnaService(config, EnaStore())
+        contrib_cfg = (config.ena.get('ena_contrib') if isinstance(config.ena, dict) else {}) or {}
+        self._ena_contrib_engine = EnaContributionEngine(EnaContributionConfig(
+            enabled=bool(contrib_cfg.get('enabled', False)),
+            intensity=str(contrib_cfg.get('intensity') or 'medium'),
+            mode=str(contrib_cfg.get('mode') or 'services'),
+            services_url=str(contrib_cfg.get('services_url') or ''),
+            auto_start=bool(contrib_cfg.get('auto_start', False)),
+            rpc_url=config.get_active_profile().node.rpc_local_url,
+        ))
         self._icons = IconProvider()
         self._nav_entries: list[_NavEntry] = []
         self._last_rpc_success_ts = 0.0
@@ -87,6 +97,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._clamp_to_screen)
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._trigger_health_check)
+        QTimer.singleShot(0, self._ena_contrib_engine.start_if_configured)
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -135,7 +146,7 @@ class MainWindow(QMainWindow):
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
             _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
             _NavEntry("IDE", "✎", self._build_ide_placeholder),
-            _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service)),
+            _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service, contrib_engine=self._ena_contrib_engine)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
