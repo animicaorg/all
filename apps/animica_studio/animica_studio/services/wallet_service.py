@@ -570,7 +570,8 @@ class WalletService:
 
         try:
             with RpcClient(rpc_url) as c:
-                result = c.call("tx_getTransactionReceipt", [ptx.tx_hash])
+                receipt_method = c.resolve_operation_method("GET_TX_RECEIPT")
+                result = c.call(receipt_method, [ptx.tx_hash])
             if result and isinstance(result, dict):
                 status_raw = result.get("status", result.get("success"))
                 if status_raw is True or status_raw == 1 or status_raw == "0x1":
@@ -578,6 +579,8 @@ class WalletService:
                 elif status_raw is False or status_raw == 0 or status_raw == "0x0":
                     ptx.status = "FAILED"
                     ptx.error = safe_str(result.get("error") or "Transaction reverted")
+                elif result.get("blockNumber") is not None:
+                    ptx.status = "CONFIRMED"
                 ptx.updated_ts = time.time()
                 self._save_pending_tx(ptx)
         except Exception as exc:  # noqa: BLE001
