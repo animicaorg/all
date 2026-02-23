@@ -64,3 +64,16 @@ def test_ena_error_stringified() -> None:
     text = str(err)
     payload = json.loads(text)
     assert payload["message"] == "y"
+
+
+def test_network_rpc_training_submission_disabled(monkeypatch) -> None:
+    from animica_studio.services.ena_client import EnaClient
+
+    profile = EnaProfile(mode=EnaMode.NETWORK_RPC, rpc_url="http://127.0.0.1:8545/rpc")
+    client = EnaClient(profile)
+
+    def _unexpected(*_args, **_kwargs):
+        raise AssertionError("RpcClient should not be used for ENA training submission in network RPC mode")
+
+    monkeypatch.setattr("animica_studio.services.ena_client.RpcClient", _unexpected)
+    assert client.submit_training_job({"bundle": "x"}) is None
