@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -73,6 +74,8 @@ class DaContributionEngine(QObject):
 
     def __init__(self, config: DaEngineConfig) -> None:
         super().__init__()
+        self._path_warning = ""
+        config = self._normalize_data_dir(config)
         self.config = config
         self.state = DaEngineState.DISABLED if not config.enabled else DaEngineState.CONFIGURED
         self.metrics = DaMetrics(directory=config.data_dir, limit_bytes=config.limit_bytes)
@@ -83,10 +86,62 @@ class DaContributionEngine(QObject):
         self._known_uploaded: set[str] = set()
         self._last_uploaded_bytes = 0
 
+    @staticmethod
+    def _is_writable_dir(path: Path) -> tuple[bool, str]:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            test = path / ".write_test"
+            test.write_text("ok", encoding="utf-8")
+            test.unlink(missing_ok=True)
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+
+    def _normalize_data_dir(self, cfg: DaEngineConfig) -> DaEngineConfig:
+        """Ensure configured DA dir is writable; fall back safely when needed."""
+        preferred = (cfg.data_dir or "").strip()
+        candidates: list[Path] = []
+        if preferred:
+            candidates.append(Path(preferred).expanduser())
+        else:
+            candidates.append(Path(os.path.expanduser("~/animica-da")))
+
+        # If home paths are read-only in a container/sandbox, fall back to tmp.
+        tmp_fallback = Path(tempfile.gettempdir()) / f"animica-da-{os.getuid()}"
+        if tmp_fallback not in candidates:
+            candidates.append(tmp_fallback)
+
+        last_error = ""
+        selected: Path | None = None
+        for candidate in candidates:
+            ok, detail = self._is_writable_dir(candidate)
+            if ok:
+                selected = candidate.resolve()
+                if preferred and selected != Path(preferred).expanduser().resolve():
+                    self._path_warning = (
+                        f"Configured DA directory is not writable ({preferred}). "
+                        f"Using fallback: {selected}"
+                    )
+                return DaEngineConfig(
+                    enabled=cfg.enabled,
+                    data_dir=str(selected),
+                    mode=cfg.mode,
+                    limit_bytes=cfg.limit_bytes,
+                    rpc_url=cfg.rpc_url,
+                    contributor_id=cfg.contributor_id,
+                    auto_start=cfg.auto_start,
+                )
+            last_error = detail
+
+        # Keep original path for better diagnostics if everything fails.
+        self._path_warning = f"No writable DA directory found: {last_error}"
+        return cfg
+
     def client(self) -> DaClient:
         return DaClient(self.config.rpc_url)
 
     def apply_config(self, config: DaEngineConfig) -> tuple[bool, str]:
+        config = self._normalize_data_dir(config)
         ok, detail = self.validate_config(config)
         if not ok:
             self._set_error(detail)
@@ -98,6 +153,8 @@ class DaContributionEngine(QObject):
         self.stateChanged.emit(self.state.value)
         self.healthChanged.emit(True, "Configured")
         self.logLine.emit("system", f"Applied DA config dir={config.data_dir} limit={config.limit_bytes}")
+        if self._path_warning:
+            self.logLine.emit("warn", self._path_warning)
         return True, "ok"
 
     def validate_config(self, cfg: DaEngineConfig) -> tuple[bool, str]:
@@ -109,10 +166,9 @@ class DaContributionEngine(QObject):
         if cfg.limit_bytes < 1024**3:
             return False, "Limit must be at least 1 GiB"
         try:
-            p.mkdir(parents=True, exist_ok=True)
-            test = p / ".write_test"
-            test.write_text("ok", encoding="utf-8")
-            test.unlink(missing_ok=True)
+            writable, detail = self._is_writable_dir(p)
+            if not writable:
+                raise OSError(detail)
         except Exception as exc:
             return False, f"Data directory not writable: {exc}"
         try:
@@ -123,6 +179,11 @@ class DaContributionEngine(QObject):
 
     def start(self) -> None:
         if self.state == DaEngineState.RUNNING:
+            return
+        if not self.config.enabled:
+            self.state = DaEngineState.DISABLED
+            self.stateChanged.emit(self.state.value)
+            self.healthChanged.emit(True, "Disabled")
             return
         self.state = DaEngineState.STARTING
         self.stateChanged.emit(self.state.value)
@@ -140,6 +201,8 @@ class DaContributionEngine(QObject):
             self.stateChanged.emit(self.state.value)
             self.healthChanged.emit(True, "Running")
             self.logLine.emit("system", "DA contribution engine running")
+            if self._path_warning:
+                self.logLine.emit("warn", self._path_warning)
             self._tick()
         except Exception as exc:
             self._set_error(str(exc))
