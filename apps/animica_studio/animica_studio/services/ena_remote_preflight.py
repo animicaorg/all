@@ -2,88 +2,93 @@ from __future__ import annotations
 
 import socket
 from dataclasses import dataclass, field
-from typing import Any
-from urllib.parse import urlparse, urljoin
+from typing import Any, Literal
+from urllib.parse import urljoin, urlparse
 
 import requests
 
+PreflightErrorKind = Literal["DNS", "HTTP", "TIMEOUT", "INVALID_URL", ""]
+
 
 @dataclass
-class RemotePreflightResult:
+class PreflightResult:
     ok: bool
     endpoint: str
-    host: str
-    port: int
     resolved_ips: list[str] = field(default_factory=list)
-    health_url: str = ""
     http_status: int | None = None
-    http_excerpt: str = ""
-    error: str = ""
+    error_kind: PreflightErrorKind = ""
+    message: str = ""
+    checked_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "endpoint": self.endpoint,
-            "host": self.host,
-            "port": self.port,
             "resolved_ips": list(self.resolved_ips),
-            "health_url": self.health_url,
             "http_status": self.http_status,
-            "http_excerpt": self.http_excerpt,
-            "error": self.error,
+            "error_kind": self.error_kind,
+            "message": self.message,
+            "checked_url": self.checked_url,
         }
 
 
-def _hostname_and_port(parsed: Any) -> tuple[str, int]:
-    if not parsed.hostname:
-        raise ValueError("services_url must include a hostname")
-    port = parsed.port
-    if port is None:
-        port = 443 if parsed.scheme == "https" else 80
-    return parsed.hostname, int(port)
+class ServicesPreflight:
+    @staticmethod
+    def check(url: str, *, connect_timeout_s: float = 3.0, total_timeout_s: float = 5.0) -> PreflightResult:
+        endpoint = (url or "").strip()
+        parsed = urlparse(endpoint)
+        if not endpoint or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return PreflightResult(
+                ok=False,
+                endpoint=endpoint,
+                error_kind="INVALID_URL",
+                message="services_url must be a valid http(s) URL with a hostname.",
+            )
 
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        host = parsed.hostname
+        result = PreflightResult(ok=False, endpoint=endpoint)
 
-def run_remote_preflight(services_url: str, *, connect_timeout_s: float = 3.0, total_timeout_s: float = 5.0) -> RemotePreflightResult:
-    endpoint = (services_url or "").strip()
-    if not endpoint:
-        raise ValueError("Remote training requires a services_url. Switch to Local mode or set a valid URL.")
+        default_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(connect_timeout_s)
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            result.resolved_ips = sorted({info[4][0] for info in infos if info and info[4]})
+        except socket.timeout:
+            result.error_kind = "TIMEOUT"
+            result.message = f"DNS resolution timed out for '{host}'."
+            return result
+        except OSError as exc:
+            result.error_kind = "DNS"
+            result.message = f"DNS resolution failed for '{host}': {exc}"
+            return result
+        finally:
+            socket.setdefaulttimeout(default_timeout)
 
-    parsed = urlparse(endpoint)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("services_url must use http:// or https://")
-    host, port = _hostname_and_port(parsed)
+        base = endpoint.rstrip("/") + "/"
+        for candidate in [urljoin(base, "health"), endpoint]:
+            try:
+                resp = requests.get(candidate, timeout=(connect_timeout_s, total_timeout_s), allow_redirects=True)
+                result.checked_url = candidate
+                result.http_status = int(resp.status_code)
+                if resp.status_code < 500:
+                    result.ok = True
+                    result.error_kind = ""
+                    result.message = f"Remote services reachable at {candidate} (HTTP {resp.status_code})."
+                    return result
+                result.error_kind = "HTTP"
+                result.message = f"HTTP {resp.status_code} returned by {candidate}."
+            except requests.Timeout:
+                result.checked_url = candidate
+                result.error_kind = "TIMEOUT"
+                result.message = f"HTTP timeout while contacting {candidate}."
+            except requests.RequestException as exc:
+                result.checked_url = candidate
+                result.error_kind = "HTTP"
+                result.message = f"HTTP request failed for {candidate}: {exc}"
 
-    result = RemotePreflightResult(ok=False, endpoint=endpoint, host=host, port=port)
-
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        ips = sorted({info[4][0] for info in infos if info and info[4]})
-        result.resolved_ips = ips
-    except OSError as exc:
-        result.error = f"DNS resolution failed for '{host}': {exc}"
         return result
 
-    health_candidates = [
-        urljoin(endpoint.rstrip("/") + "/", "health"),
-        urljoin(endpoint.rstrip("/") + "/", "v1/health"),
-        endpoint,
-    ]
 
-    for url in health_candidates:
-        try:
-            response = requests.get(url, timeout=(connect_timeout_s, total_timeout_s), allow_redirects=True)
-        except requests.RequestException as exc:
-            result.health_url = url
-            result.error = f"HTTP check failed for {url}: {exc}"
-            continue
-
-        result.health_url = url
-        result.http_status = int(response.status_code)
-        result.http_excerpt = (response.text or "")[:300]
-        if 200 <= response.status_code <= 499:
-            result.ok = True
-            result.error = ""
-            return result
-        result.error = f"HTTP status {response.status_code} from {url}"
-
-    return result
+def run_remote_preflight(services_url: str, *, connect_timeout_s: float = 3.0, total_timeout_s: float = 5.0) -> PreflightResult:
+    return ServicesPreflight.check(services_url, connect_timeout_s=connect_timeout_s, total_timeout_s=total_timeout_s)

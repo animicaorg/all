@@ -5,7 +5,6 @@ import hashlib
 import json
 import logging
 import os
-import socket
 import threading
 import time
 import uuid
@@ -13,9 +12,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
+from animica_studio.services.ena_remote_preflight import ServicesPreflight
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.services.rpc_client import RpcClient
@@ -52,7 +51,7 @@ class EnaContributionMetrics:
 class EnaContributionConfig:
     enabled: bool = False
     intensity: str = "medium"
-    mode: str = "services"  # rpc/services
+    mode: str = "local"  # local/rpc/remote
     services_url: str = ""
     auto_start: bool = False
     rpc_url: str = ""
@@ -181,26 +180,15 @@ class EnaContributionEngine(QObject):
         self._backoff_s = min(self._backoff_s * 2, self._max_backoff_s)
 
     def _preflight_check(self) -> tuple[bool, str]:
-        mode = (self.config.mode or "services").strip().lower()
-        if mode == "services":
+        mode = (self.config.mode or "local").strip().lower()
+        if mode == "local":
+            return True, "Local backend enabled (no remote job submission)."
+        if mode == "remote":
             raw = (self.config.services_url or "").strip()
-            if not raw:
-                return False, "Services URL is not configured. Set ena_contrib.services_url in ENA Contribute settings."
-            parsed = urlparse(raw)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                return False, "Services URL must start with http:// or https:// and include a host."
-            host = parsed.hostname or ""
-            try:
-                socket.getaddrinfo(host, parsed.port)
-            except OSError as exc:
-                return False, f"Cannot resolve services host '{host}': {exc}"
-            try:
-                r = requests.get(raw.rstrip("/") + "/v1/models", timeout=5)
-                if r.status_code >= 500:
-                    return False, f"Services health check failed: HTTP {r.status_code}"
-            except requests.RequestException as exc:
-                return False, f"Cannot reach services URL: {exc}"
-            return True, "Services reachable"
+            preflight = ServicesPreflight.check(raw)
+            if not preflight.ok:
+                return False, f"Remote ENA services unreachable (DNS/HTTP). {preflight.message}"
+            return True, f"Remote reachable: {preflight.checked_url}"
         if mode == "rpc":
             if not self.config.rpc_url:
                 return False, "RPC URL is not configured for RPC mode."
@@ -251,7 +239,10 @@ class EnaContributionEngine(QObject):
             return {"ok": True, "status": "worked"}
 
     def _acquire_job(self) -> dict[str, Any] | None:
-        mode = (self.config.mode or "services").lower()
+        mode = (self.config.mode or "local").lower()
+        if mode == "local":
+            self.logLine.emit("system", "[system] ENA backend=local")
+            return {"ok": True, "credits": 0.0}
         if mode == "rpc":
             c = RpcClient(self.config.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
             try:
@@ -269,6 +260,9 @@ class EnaContributionEngine(QObject):
                 return None
             finally:
                 c.close()
+        if mode != "remote":
+            self.logLine.emit("system", "[system] ENA backend=local")
+            return {"job_id": f"local-{int(time.time())}", "local": True}
         url = self.config.services_url.rstrip("/") + "/v1/aicf/jobs/available"
         params = {"worker_id": self._worker_id()}
         r = requests.get(url, params=params, timeout=12)
@@ -322,7 +316,10 @@ class EnaContributionEngine(QObject):
             da_check = self._check_da_status()
             if not da_check[0]:
                 return {"ok": False, "error": da_check[1]}
-        mode = (self.config.mode or "services").lower()
+        mode = (self.config.mode or "local").lower()
+        if mode == "local":
+            self.logLine.emit("system", "[system] ENA backend=local")
+            return {"ok": True, "credits": 0.0}
         if mode == "rpc":
             c = RpcClient(self.config.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
             try:

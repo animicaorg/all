@@ -179,11 +179,15 @@ class Config:
             "mode": "local_daemon",
             "endpoint": "http://127.0.0.1:8765",
             "aicf_services_url": "",
+            "job_backend": "local",
+            "services_url": "",
+            "remote_api_key": "",
+            "auto_fallback": True,
             "ena_submit_mode": "local",
             "ena_contrib": {
                 "enabled": False,
                 "intensity": "medium",
-                "mode": "services",
+                "mode": "local",
                 "services_url": "",
                 "auto_start": False,
             },
@@ -310,6 +314,19 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         aicf_raw["services_url"] = str(ena_raw.get("aicf_services_url") or "")
     if "api_key" not in aicf_raw:
         aicf_raw["api_key"] = ""
+    if "job_backend" not in ena_raw:
+        # Migration rule: legacy services URL alone does not opt users into remote.
+        ena_raw["job_backend"] = "local"
+    if "services_url" not in ena_raw:
+        ena_raw["services_url"] = str(aicf_raw.get("services_url") or ena_raw.get("aicf_services_url") or "")
+    if "remote_api_key" not in ena_raw:
+        ena_raw["remote_api_key"] = str(aicf_raw.get("api_key") or "")
+    if "auto_fallback" not in ena_raw:
+        ena_raw["auto_fallback"] = True
+
+    ena_contrib_raw = dict(ena_raw.get("ena_contrib") or {})
+    if "mode" not in ena_contrib_raw:
+        ena_contrib_raw["mode"] = "local"
 
     return Config(
         active_profile=str(d.get("active_profile", "Mainnet")),
@@ -343,11 +360,15 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
             "mode": "local_daemon",
             "endpoint": "http://127.0.0.1:8765",
             "aicf_services_url": "",
+            "job_backend": "local",
+            "services_url": "",
+            "remote_api_key": "",
+            "auto_fallback": True,
             "ena_submit_mode": "local",
             "ena_contrib": {
                 "enabled": False,
                 "intensity": "medium",
-                "mode": "services",
+                "mode": "local",
                 "services_url": "",
                 "auto_start": False,
             },
@@ -363,6 +384,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
             **ena_raw,
             "training": {**training_raw, **((ena_raw.get("training") or {}))},
             "aicf": {**aicf_raw, **((ena_raw.get("aicf") or {}))},
+            "ena_contrib": {**ena_contrib_raw, **((ena_raw.get("ena_contrib") or {}))},
         },
     )
 
