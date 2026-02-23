@@ -59,7 +59,7 @@ class EnaHubPage(QWidget):
         self._tabs.addTab(self._build_overview(), "Overview")
         self._tabs.addTab(ContributePage(self._service), "Contribute")
         self._tabs.addTab(CheckpointsPage(self._service), "Checkpoints")
-        self._tabs.addTab(TrainPage(self._service), "Train")
+        self._tabs.addTab(TrainPage(config), "Train")
         self._tabs.addTab(PublishPage(self._service), "Publish")
         self._tabs.addTab(InferPage(self._service), "Infer")
 

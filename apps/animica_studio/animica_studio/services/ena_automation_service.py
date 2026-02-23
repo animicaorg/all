@@ -21,7 +21,7 @@ class EnaService:
         self.store = store or EnaStore()
         self.runner = StepRunner(self.store)
         self.artifacts = ArtifactService()
-        self.training = TrainingService()
+        self.training = TrainingService(config)
         try:
             from animica_studio.services.aicf_service import AicfService
             self.aicf = AicfService(config)
@@ -140,28 +140,11 @@ class EnaService:
         return {"run": run, "active": run.result.get("Index checkpoint")}
 
     def train_local(self, checkpoint_id: str, dataset_id: str, preset: str = "quick", stop_requested: bool = False) -> dict[str, Any]:
-        weak_machine = preset == "long"
-        recommendation = "Machine may be weak for long CPU run. Consider evaluation-only mode." if weak_machine else ""
-        step_cache: dict[str, Any] = {}
-
-        def _prepare(step):
-            step.copy_command = f"animica ena train --preset {preset}"
-            return {"checkpoint": checkpoint_id, "dataset": dataset_id, "recommendation": recommendation}
-
-        def _train(step):
-            out = self.training.run_training(checkpoint_id, dataset_id, preset=preset, dev_mode=True, should_stop=lambda: stop_requested)
-            step_cache["train"] = out
-            return out
-
-        def _save(step):
-            payload = step_cache["train"]
-            path = self.training.save_checkpoint(Path(self.store.path).parent / "checkpoints", payload["checkpoint_hash"][:12], payload)
-            row = {"id": payload["checkpoint_hash"][:12], "sha256": payload["checkpoint_hash"], "path": str(path), "origin": "local-training", "tab": "experimental"}
-            self.store.append("checkpoints", row, dedupe_key="sha256")
-            return row
-
-        run = self.runner.run("train", [("Prepare training", _prepare), ("Run training", _train), ("Save checkpoint", _save)])
-        return {"run": run, "recommendation": recommendation}
+        recommendation = "Use the Train tab for full configurable ENA training runs."
+        return {
+            "run": self.runner.run("train", [("Prepare training", lambda step: {"checkpoint": checkpoint_id, "dataset": dataset_id, "preset": preset})]),
+            "recommendation": recommendation,
+        }
 
     def publish_checkpoint(self, checkpoint_sha: str, dev_mode: bool = False) -> dict[str, Any]:
         existing = [c for c in self.store.get("checkpoints", []) if c.get("sha256") == checkpoint_sha and c.get("commitment")]
