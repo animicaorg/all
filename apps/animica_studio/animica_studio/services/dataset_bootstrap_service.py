@@ -149,7 +149,7 @@ class VettedReposProvider(SourceProvider):
 
     def __init__(self, repos: list[str] | None = None) -> None:
         self._repos = repos or [
-            "https://raw.githubusercontent.com/animicaorg/all/refs/heads/main/README.md",
+            "https://raw.githubusercontent.com/animicaorg/all/main/README.md",
         ]
 
     def iter_documents(self, manager: "DownloadManager", progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
