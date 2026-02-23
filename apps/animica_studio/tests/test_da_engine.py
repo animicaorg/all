@@ -35,7 +35,8 @@ def _engine(tmp_path: Path, *, enabled: bool = True, auto_start: bool = True) ->
     cfg = DaEngineConfig(
         enabled=enabled,
         auto_start=auto_start,
-        data_dir=str(tmp_path),
+        host_data_dir=str(tmp_path),
+        node_data_dir="/data/da",
         mode="quota",
         limit_bytes=2 * 1024**3,
         rpc_url="http://127.0.0.1:8545/rpc",
@@ -48,7 +49,7 @@ def _engine(tmp_path: Path, *, enabled: bool = True, auto_start: bool = True) ->
 
 def test_validate_config_limit(tmp_path: Path):
     e = _engine(tmp_path)
-    ok, msg = e.validate_config(DaEngineConfig(enabled=True, data_dir=str(tmp_path), mode="quota", limit_bytes=0, rpc_url="http://x"))
+    ok, msg = e.validate_config(DaEngineConfig(enabled=True, host_data_dir=str(tmp_path), node_data_dir="/data/da", mode="quota", limit_bytes=0, rpc_url="http://x"))
     assert not ok
     assert "greater than 0" in msg
 
@@ -98,3 +99,19 @@ def test_remaining_bytes_uses_quota_limit(tmp_path: Path):
     out = {"queued": 0, "uploaded": [], "used": 0, "free": 100, "status": {}}
     e._on_cycle(out)
     assert e.metrics.remaining_bytes == e.config.limit_bytes
+
+
+def test_start_configures_with_node_dir(tmp_path: Path):
+    e = _engine(tmp_path)
+    fake = e.client()
+    e.start()
+    cfg_calls = [c for c in fake.calls if c[0] == "configure"]
+    assert cfg_calls
+    assert cfg_calls[0][1]["dir"] == "/data/da"
+
+
+def test_rejects_node_dir_outside_data(tmp_path: Path):
+    e = _engine(tmp_path)
+    ok, msg = e.validate_config(DaEngineConfig(enabled=True, host_data_dir=str(tmp_path), node_data_dir="/home/employee/da", mode="quota", limit_bytes=1024, rpc_url="http://x"))
+    assert not ok
+    assert "under /data" in msg

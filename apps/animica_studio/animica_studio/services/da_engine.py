@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import time
 from datetime import datetime, timezone
@@ -43,7 +44,8 @@ class DaEngineState(str, Enum):
 
 @dataclass
 class DaMetrics:
-    directory: str = ""
+    host_directory: str = ""
+    node_directory: str = ""
     limit_bytes: int = 0
     used_bytes: int = 0
     remaining_bytes: int = 0
@@ -59,7 +61,8 @@ class DaMetrics:
 @dataclass
 class DaEngineConfig:
     enabled: bool = False
-    data_dir: str = ""
+    host_data_dir: str = ""
+    node_data_dir: str = ""
     mode: str = "quota"
     limit_bytes: int = 50 * 1024**3
     rpc_url: str = ""
@@ -76,10 +79,14 @@ class DaContributionEngine(QObject):
     def __init__(self, config: DaEngineConfig) -> None:
         super().__init__()
         self._path_warning = ""
-        config = self._normalize_data_dir(config)
+        config = self._normalize_data_dirs(config)
         self.config = config
         self.state = DaEngineState.DISABLED if not config.enabled else DaEngineState.CONFIGURED
-        self.metrics = DaMetrics(directory=config.data_dir, limit_bytes=config.limit_bytes)
+        self.metrics = DaMetrics(
+            host_directory=config.host_data_dir,
+            node_directory=config.node_data_dir,
+            limit_bytes=config.limit_bytes,
+        )
         self._timer = QTimer(self)
         self._timer.setInterval(4000)
         self._timer.timeout.connect(self._tick)
@@ -102,12 +109,32 @@ class DaContributionEngine(QObject):
         except Exception as exc:
             return False, str(exc)
 
-    def _normalize_data_dir(self, cfg: DaEngineConfig) -> DaEngineConfig:
-        """Normalize DA config paths, but never silently switch to a fallback directory."""
-        selected = Path((cfg.data_dir or "").strip() or os.path.expanduser("~/animica-da")).expanduser()
+    @staticmethod
+    def _derive_node_dir(host_dir: Path) -> str:
+        compose = Path.home() / "animica" / "ops" / "docker" / "docker-compose.mainnet.yml"
+        try:
+            if compose.exists():
+                text = compose.read_text(encoding="utf-8")
+                if re.search(r"\n\s*-\s*[^\n:]+:/data\b", text):
+                    return "/data/da"
+        except Exception:
+            pass
+        try:
+            parts = host_dir.expanduser().parts
+        except Exception:
+            return "/data/da"
+        if "chain-" in "".join(parts):
+            return "/data/da"
+        return "/data/da"
+
+    def _normalize_data_dirs(self, cfg: DaEngineConfig) -> DaEngineConfig:
+        """Normalize host/node DA paths, preserving backwards-compatible behavior."""
+        host_selected = Path((cfg.host_data_dir or "").strip() or os.path.expanduser("~/animica-da")).expanduser()
+        node_selected = (cfg.node_data_dir or "").strip() or self._derive_node_dir(host_selected)
         return DaEngineConfig(
             enabled=cfg.enabled,
-            data_dir=str(selected),
+            host_data_dir=str(host_selected),
+            node_data_dir=node_selected,
             mode=cfg.mode,
             limit_bytes=cfg.limit_bytes,
             rpc_url=cfg.rpc_url,
@@ -140,18 +167,22 @@ class DaContributionEngine(QObject):
 
     def config_validation_details(self, cfg: DaEngineConfig) -> tuple[bool, list[str]]:
         reasons: list[str] = []
-        if not cfg.data_dir:
-            reasons.append("Data directory is required")
+        if not cfg.host_data_dir:
+            reasons.append("Host directory is required")
+        if not cfg.node_data_dir:
+            reasons.append("Node directory is required")
+        elif not cfg.node_data_dir.startswith("/data"):
+            reasons.append("Node directory must be under /data for dockerized nodes")
         if cfg.limit_bytes <= 0:
             reasons.append("Limit must be greater than 0")
         rpc_err = self._validate_rpc_url(cfg.rpc_url)
         if rpc_err:
             reasons.append(rpc_err)
-        p = Path(cfg.data_dir).expanduser()
-        if cfg.data_dir:
+        p = Path(cfg.host_data_dir).expanduser()
+        if cfg.host_data_dir:
             writable, detail = self._is_writable_dir(p)
             if not writable:
-                reasons.append(f"Data directory not writable: {detail}")
+                reasons.append(f"Host directory not writable: {detail}")
         return (len(reasons) == 0), reasons
 
     def ensure_enabled_if_autostart(self) -> bool:
@@ -177,13 +208,14 @@ class DaContributionEngine(QObject):
             self.start()
 
     def apply_config(self, config: DaEngineConfig) -> tuple[bool, str]:
-        config = self._normalize_data_dir(config)
+        config = self._normalize_data_dirs(config)
         ok, detail = self.validate_config(config)
         if not ok:
             self._set_error(detail)
             return False, detail
         self.config = config
-        self.metrics.directory = config.data_dir
+        self.metrics.host_directory = config.host_data_dir
+        self.metrics.node_directory = config.node_data_dir
         self.metrics.limit_bytes = config.limit_bytes
         self.metrics.last_error = ""
         if config.enabled:
@@ -192,7 +224,10 @@ class DaContributionEngine(QObject):
         else:
             self._transition_to(DaEngineState.DISABLED, "apply (toggle off)")
             self.healthChanged.emit(True, "Disabled (toggle off)")
-        self.logLine.emit("system", f"Applied DA config dir={config.data_dir} limit={config.limit_bytes}")
+        self.logLine.emit(
+            "system",
+            f"Applied DA config host_dir={config.host_data_dir} node_dir={config.node_data_dir} limit={config.limit_bytes}",
+        )
         if self._path_warning:
             self.logLine.emit("warn", self._path_warning)
         self._update_local_metrics()
@@ -222,7 +257,7 @@ class DaContributionEngine(QObject):
             self.client().configure(
                 {
                     "enabled": True,
-                    "dir": self.config.data_dir,
+                    "dir": self.config.node_data_dir,
                     "max_bytes": self.config.limit_bytes,
                     "on_full": "evict" if self.config.mode == "quota" else "reject",
                 }
@@ -251,7 +286,7 @@ class DaContributionEngine(QObject):
 
     def _update_local_metrics(self) -> None:
         try:
-            p = Path(self.config.data_dir).expanduser()
+            p = Path(self.config.host_data_dir).expanduser()
             if not p.exists():
                 raise FileNotFoundError(f"Directory does not exist: {p}")
             used = sum(f.stat().st_size for f in p.glob("**/*") if f.is_file() and not f.name.startswith("."))
@@ -273,7 +308,7 @@ class DaContributionEngine(QObject):
         self._busy_worker.start()
 
     def _run_cycle(self) -> dict[str, Any]:
-        p = Path(self.config.data_dir)
+        p = Path(self.config.host_data_dir)
         if not p.exists() or not os.access(p, os.R_OK):
             raise RuntimeError(f"Contribution directory unreadable: {p}")
         files = [f for f in p.glob("**/*") if f.is_file() and not f.name.startswith(".")]
