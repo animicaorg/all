@@ -15,10 +15,12 @@ def test_da_status_service_reads_enabled_status() -> None:
 
     with patch("animica_studio.services.da_status_service.RpcClient") as mock_client_cls:
         cli = MagicMock()
-        cli.call.side_effect = [
-            {"enabled": True, "dir": "/data/da", "on_full": "evict", "max_bytes": 123},
-            "animica-node/1.2.3",
-        ]
+        registry = MagicMock()
+        registry.resolve_any.side_effect = ["da.putBlob", "da.getBlob", "da.configure", "da.getStatus"]
+        registry.dump_methods.return_value = ["da.getStatus", "da.putBlob"]
+        cli.registry.return_value = registry
+        cli.call_with_schema.return_value = {"enabled": True, "dir": "/data/da", "on_full": "evict", "max_bytes": 123}
+        cli.call.side_effect = ["animica-node/1.2.3"]
         mock_client_cls.return_value = cli
         out = svc.get_status()
 
@@ -35,18 +37,25 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
     )
     svc = DaStatusService(cfg)
 
-    with patch("animica_studio.services.da_status_service.RpcClient") as mock_client_cls:
+    with patch("animica_studio.services.da_status_service.RpcClient") as mock_client_cls, patch.object(
+        svc,
+        "get_status",
+        side_effect=[
+            {"enabled": False, "da_methods": {"configure": "da.configure"}},
+            {"enabled": True, "dir": "/data/da", "da_methods": {"configure": "da.configure"}},
+        ],
+    ):
         cli = MagicMock()
-        cli.call.side_effect = [
-            {"enabled": True},
-            {"enabled": True, "dir": "/data/da", "on_full": "evict", "max_bytes": 50 * 1024**3},
-            "animica-node/1.2.3",
-        ]
+        registry = MagicMock()
+        registry.resolve_any.return_value = "da.configure"
+        cli.registry.return_value = registry
+        cli.get_param_spec.return_value = [{"name": "enabled"}, {"name": "dir"}, {"name": "max_bytes"}, {"name": "on_full"}]
+        cli.call_with_schema.return_value = {"ok": True}
         mock_client_cls.return_value = cli
         out = svc.enable_da("/data/da", 50 * 1024**3)
 
     assert out["ok"] is True
-    configure_args = cli.call.call_args_list[0].args
+    configure_args = cli.call_with_schema.call_args_list[0].args
     assert configure_args[0] == "da.configure"
-    assert configure_args[1][0]["enabled"] is True
-    assert configure_args[1][0]["dir"] == "/data/da"
+    assert configure_args[1]["enabled"] is True
+    assert configure_args[1]["dir"] == "/data/da"
