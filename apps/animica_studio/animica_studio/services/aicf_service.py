@@ -111,6 +111,7 @@ class AicfService:
 
         resolved: dict[str, str | None] = {
             "claim": "aicf.claim",
+            "build_claim_tx": "aicf.buildClaimTx",
             "claimable": "aicf.getClaimable",
             "credits": "aicf.creditsByAddress",
             "list_jobs": "aicf.listJobs",
@@ -121,11 +122,13 @@ class AicfService:
             known = self._extract_methods(client.discover())
             if known:
                 claim_m = self._pick_supported(("aicf_claim", "aicf.claim"), known)
+                build_claim_tx_m = self._pick_supported(("aicf_buildClaimTx", "aicf.buildClaimTx"), known)
                 claimable_m = self._pick_supported(("aicf_getClaimable", "aicf.getClaimable"), known)
                 credits_m = self._pick_supported(self._CREDITS_METHODS, known)
                 list_jobs = self._pick_supported(("aicf_listJobs", "aicf.listJobs", "aicf_jobs", "aicf_getJobs"), known)
                 submit_job = self._pick_supported(("aicf_submitJob", "aicf.submitJob"), known)
                 resolved["claim"] = claim_m
+                resolved["build_claim_tx"] = build_claim_tx_m
                 resolved["claimable"] = claimable_m
                 resolved["credits"] = credits_m
                 resolved["list_jobs"] = list_jobs
@@ -154,6 +157,8 @@ class AicfService:
             "rpc_discover": discover_diag,
             "resolved_methods": methods,
             "last_request_payload": self._last_request_payload or {},
+            "param_encoding": discover_diag.get("param_encoding", {}),
+            "last_response_excerpt": discover_diag.get("last_response_excerpt", {}),
             "last_error": self._last_error,
         }
 
@@ -167,17 +172,12 @@ class AicfService:
             return int(value)
         return int(value)
 
-    def _call_rpc(self, client: RpcClient, method: str, params: list[Any] | dict[str, Any] | None) -> Any:
-        redacted = params
-        if isinstance(params, list):
-            redacted = [f"{str(p)[:8]}…" if isinstance(p, str) and len(p) > 12 else p for p in params]
-        elif isinstance(params, dict):
-            redacted = {
-                k: (f"{str(v)[:8]}…" if k == "address" and isinstance(v, str) and len(v) > 12 else v)
-                for k, v in params.items()
-            }
-        self._last_request_payload = {"method": method, "params": redacted}
-        return client.call(method, params)
+    def _call_rpc(self, client: RpcClient, method: str, values: dict[str, Any] | None = None) -> Any:
+        redacted = {}
+        for k, v in (values or {}).items():
+            redacted[k] = f"{str(v)[:8]}…" if k == "address" and isinstance(v, str) and len(v) > 12 else v
+        self._last_request_payload = {"method": method, "values": redacted}
+        return client.call_with_schema(method, values or {})
 
     # ------------------------------------------------------------------
     # Status
@@ -208,14 +208,17 @@ class AicfService:
             last_exc: Exception | None = None
             attempts = [
                 (methods.get("credits"), {"address": address}),
-                (methods.get("credits"), [address]),
+                (methods.get("credits"), {"addr": address}),
+                (methods.get("credits"), {"account": address}),
                 ("state_getAicfMinerCredits", [address]),
                 ("state.getAicfMinerCredits", [address]),
                 ("mining_getCredits", [address]),
                 ("mining.getCredits", [address]),
                 ("aicf_getMinerCredits", [address]),
                 ("aicf.getMinerCredits", [address]),
-                (methods.get("claimable"), self._build_claimable_params(address)),
+                (methods.get("claimable"), {"address": address}),
+                (methods.get("claimable"), {"addr": address}),
+                (methods.get("claimable"), {"account": address}),
             ]
             for method, params in attempts:
                 if not method:
@@ -250,7 +253,7 @@ class AicfService:
             methods = self._resolve_aicf_methods(client, url)
             method = methods.get("claimable")
             if method:
-                result = self._call_rpc(client, method, self._build_claimable_params(address))
+                result = self._call_rpc(client, method, {"address": address})
                 claimable = self._to_int_amount((result or {}).get("claimable", 0)) if isinstance(result, dict) else 0
                 return {"ok": True, "data": result, "claimable": claimable}
 
@@ -298,8 +301,18 @@ class AicfService:
             if int(claimable_info.get("claimable", 0)) <= 0:
                 return {"ok": False, "error": "No claimable credits available for this address."}
 
-            params = self._build_claim_params(address)
-            result = self._call_rpc(client, claim_method, params)
+            if claim_method:
+                result = self._call_rpc(client, claim_method, {"address": address})
+            else:
+                built = self._call_rpc(client, build_claim_tx_method, {"address": address})
+                raw_tx = None
+                if isinstance(built, dict):
+                    raw_tx = built.get("raw_tx") or built.get("rawTx") or built.get("tx")
+                if not isinstance(raw_tx, str) or not raw_tx:
+                    return {"ok": False, "error": "buildClaimTx succeeded but did not return raw tx bytes."}
+                send_method = client.resolve_operation_method("SEND_RAW_TX")
+                tx_hash = self._call_rpc(client, send_method, {"raw_tx": raw_tx, "raw": raw_tx, "tx": raw_tx})
+                result = {"tx_hash": tx_hash, "built": built}
             if isinstance(result, dict):
                 tx_hash = result.get("tx_hash") or result.get("hash")
                 refreshed_claimable = self.get_claimable(address, rpc_url)
@@ -356,7 +369,7 @@ class AicfService:
                 return {"ok": False, "error": "This node does not expose AICF RPC methods for jobs listing."}
             for rpc_params in ([params], params):
                 try:
-                    result = client.call(list_method, rpc_params)
+                    result = client.call_with_schema(list_method, params)
                     return {"ok": True, "data": result, "method": list_method}
                 except RpcResponseError as exc:
                     if exc.rpc_error.code in (-32601, -32602):
@@ -385,7 +398,7 @@ class AicfService:
             submit_method = methods.get("submit_job")
             if not submit_method:
                 return {"ok": False, "error": "This node does not expose AICF RPC methods for job submission."}
-            result = client.call(submit_method, [{"type": job_type, "payload": payload, "budget": str(budget)}])
+            result = client.call_with_schema(submit_method, {"type": job_type, "payload": payload, "budget": str(budget)})
             return {"ok": True, "data": result, "method": submit_method}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}

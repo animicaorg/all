@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from typing import Any
@@ -30,6 +29,8 @@ class DaClient:
             if hasattr(c, "resolve_method"):
                 try:
                     method = c.resolve_method(methods[0], list(methods))
+                    if params and isinstance(params[0], dict):
+                        return c.call_with_schema(method, params[0])
                     return c.call(method, params)
                 except Exception as exc:  # noqa: BLE001
                     if not self._is_method_unavailable_error(exc):
@@ -49,7 +50,7 @@ class DaClient:
             c.close()
 
     def upload_bytes(self, data: bytes, namespace: str | None = None) -> dict[str, Any]:
-        payload: dict[str, Any] = {"data": base64.b64encode(data).decode("utf-8")}
+        payload: dict[str, Any] = {"data": "0x" + data.hex()}
         if namespace:
             payload["namespace"] = namespace
         result = self._call_multi(("da_putBlob", "da.putBlob"), [payload])
@@ -61,7 +62,10 @@ class DaClient:
     def get_blob(self, blob_id: str) -> bytes:
         out = self._call_multi(("da_getBlob", "da.getBlob"), [blob_id])
         if isinstance(out, dict) and "data" in out:
-            return base64.b64decode(out["data"])
+            data = out["data"]
+            if isinstance(data, str) and data.startswith("0x"):
+                return bytes.fromhex(data.removeprefix("0x"))
+            return str(data).encode("utf-8")
         if isinstance(out, str):
             try:
                 return bytes.fromhex(out.removeprefix("0x"))
@@ -72,7 +76,7 @@ class DaClient:
         raise RuntimeError("Unable to decode DA get blob response")
 
     def status(self) -> dict[str, Any]:
-        return self._call_multi(("da_getStatus", "da.getStatus", "da_status", "da.status"), [{}])
+        return self._call_multi(("da_getStatus", "da.getStatus", "da_status", "da.status"), [])
 
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._call_multi(("da.configure", "da_configure"), [params])
