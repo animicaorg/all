@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -33,6 +35,41 @@ from animica_studio.services.training_service import ENATrainingService
 from animica_studio.storage.config import Config, save_config
 
 
+class _BootstrapWorker(QThread):
+    progress = Signal(dict)
+    completed = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, manager: DatasetManager, *, name: str, size_preset: str, auto_start_training: bool) -> None:
+        super().__init__()
+        self._manager = manager
+        self._name = name
+        self._size_preset = size_preset
+        self._auto_start = auto_start_training
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def auto_start(self) -> bool:
+        return self._auto_start
+
+    def run(self) -> None:
+        try:
+            result = self._manager.bootstrap_large_dataset(
+                name=self._name,
+                size_preset=self._size_preset,
+                progress_cb=lambda p: self.progress.emit(p),
+                cancel_event=self._cancel,
+            )
+            self.completed.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
+
+
 class TrainPage(QWidget):
     PRESETS = {
         "Fast test": {"iterations": 200, "batch_size": 2, "learning_rate": 5e-5},
@@ -46,14 +83,14 @@ class TrainPage(QWidget):
         self._cfg = config
         self._svc = ENATrainingService(config, self)
         self._dataset_manager = DatasetManager()
-        self._evolution = DatasetEvolutionEngine()
-        self._last_plan: dict | None = None
+        self._bootstrap_worker: _BootstrapWorker | None = None
         self._active_run_id: str | None = None
         self._mode_migration_warning = self._svc.ensure_training_mode_migration()
         self._build()
         self._wire()
         self._restore_last()
         self._refresh_runs()
+        self._maybe_prompt_bootstrap()
         if self._mode_migration_warning:
             self._on_log("", "system", self._mode_migration_warning)
 
@@ -87,18 +124,22 @@ class TrainPage(QWidget):
         self.auto_topics = QLineEdit("machine learning")
         auto_btn = QPushButton("Auto Dataset")
         auto_btn.clicked.connect(self._auto_dataset)
+        self.bootstrap_btn = QPushButton("Bootstrap Big Dataset")
+        self.bootstrap_btn.clicked.connect(self._bootstrap_dataset)
+        self.cancel_bootstrap_btn = QPushButton("Cancel Bootstrap")
+        self.cancel_bootstrap_btn.setEnabled(False)
+        self.cancel_bootstrap_btn.clicked.connect(self._cancel_bootstrap)
         custom_btn = QPushButton("Build Custom Dataset")
         custom_btn.clicked.connect(self._custom_dataset)
-        dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addStretch(1)
-        self.smart_defaults = QCheckBox("Smart defaults (always on)")
-        self.smart_defaults.setChecked(True)
-        self.auto_config_btn = QPushButton("Auto-Configure")
-        self.auto_config_btn.clicked.connect(self._auto_configure)
-        self.quality_slider = QSlider(Qt.Orientation.Horizontal)
-        self.quality_slider.setRange(0, 3)
-        self.quality_slider.setValue(1)
-        self.quality_label = QLabel("Balanced")
-
+        dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(self.bootstrap_btn); dataset_actions.addWidget(self.cancel_bootstrap_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addStretch(1)
+        self.target_size = QComboBox(); self.target_size.addItems(["Starter", "Big", "Huge"]); self.target_size.setCurrentText("Big")
+        self.target_size.currentTextChanged.connect(self._refresh_bootstrap_estimate)
+        self.auto_start_after_dataset = QCheckBox("Auto-start training after dataset ready")
+        self.upload_shards_to_da = QCheckBox("Upload shards to DA")
+        self.upload_shards_to_da.setChecked(bool(self._cfg.ena.get("allow_remote_put", False)))
+        self.upload_shards_to_da.setEnabled(bool(self._cfg.ena.get("allow_remote_put", False)))
+        self.bootstrap_estimate = QLabel("")
+        self.bootstrap_progress = QLabel("Bootstrap idle")
         self.base_model = QLineEdit("")
         self.output_dir = QLineEdit("./ena-training-runs")
         pick_out = QPushButton("Browse")
@@ -162,6 +203,11 @@ class TrainPage(QWidget):
         form.addRow("Auto max bytes", self.auto_bytes)
         form.addRow("Auto languages (csv)", self.auto_langs)
         form.addRow("Auto topics (csv)", self.auto_topics)
+        form.addRow("Target size", self.target_size)
+        form.addRow("Bootstrap estimate", self.bootstrap_estimate)
+        form.addRow("Bootstrap progress", self.bootstrap_progress)
+        form.addRow("", self.auto_start_after_dataset)
+        form.addRow("", self.upload_shards_to_da)
         form.addRow("Dataset tools", dataset_actions)
         form.addRow("Base model/checkpoint", self.base_model)
         form.addRow("Output dir", out_row)
@@ -242,6 +288,7 @@ class TrainPage(QWidget):
         self.console = QTextEdit(); self.console.setReadOnly(True)
         self.console.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         root.addWidget(self.console, 1)
+        self._refresh_bootstrap_estimate()
 
     def _wire(self) -> None:
         self.start_btn.clicked.connect(self._start)
@@ -259,6 +306,25 @@ class TrainPage(QWidget):
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
         self._svc.status_changed.connect(self._on_status)
+
+
+    def _maybe_prompt_bootstrap(self) -> None:
+        if self.dataset_path.text().strip():
+            return
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Bootstrap Big Dataset")
+        msg.setText("No ENA dataset found. Bootstrap Big Dataset now?")
+        starter_btn = msg.addButton("Starter", QMessageBox.ButtonRole.ActionRole)
+        big_btn = msg.addButton("Big (recommended)", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == starter_btn:
+            self.target_size.setCurrentText("Starter")
+            self._bootstrap_dataset()
+        elif clicked == big_btn:
+            self.target_size.setCurrentText("Big")
+            self._bootstrap_dataset()
 
     def _pick_dataset(self) -> None:
         p, _ = QFileDialog.getOpenFileName(self, "Dataset")
@@ -297,6 +363,89 @@ class TrainPage(QWidget):
             self.console.append(f"[dataset] Custom dataset ready: {res['manifest_path']}")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Dataset", str(exc))
+
+    def _target_key(self) -> str:
+        return (self.target_size.currentText() or "Big").strip().lower()
+
+    def _refresh_bootstrap_estimate(self) -> None:
+        est = self._dataset_manager.estimate_bootstrap(self._target_key())
+        disk_gb = est["disk_needed_bytes"] / 1024**3
+        dl_gb = est["download_bytes"] / 1024**3
+        eta = est.get("eta_hours_range") or [0, 0]
+        self.bootstrap_estimate.setText(
+            f"Disk ~{disk_gb:.1f} GB | Download ~{dl_gb:.1f} GB | ETA ~{eta[0]}-{eta[1]} h @ {est['bandwidth_mbps']:.1f} Mbps"
+        )
+
+    def _bootstrap_dataset(self) -> None:
+        preset = self._target_key()
+        est = self._dataset_manager.estimate_bootstrap(preset)
+        free = shutil.disk_usage(str(Path.home())).free
+        if preset == "huge":
+            msg = (
+                "Huge dataset selected (200+ GB target).\n\n"
+                f"Estimated disk headroom needed: {est['disk_needed_bytes'] / 1024**3:.1f} GB\n"
+                f"Available free disk: {free / 1024**3:.1f} GB\n\n"
+                "Continue?"
+            )
+            if QMessageBox.question(self, "Confirm huge bootstrap", msg) != QMessageBox.StandardButton.Yes:
+                return
+        if free < est["disk_needed_bytes"]:
+            QMessageBox.warning(self, "Dataset", "Insufficient disk for selected target. Try Starter.")
+            return
+        if self._bootstrap_worker and self._bootstrap_worker.isRunning():
+            return
+        self.bootstrap_btn.setEnabled(False)
+        self.cancel_bootstrap_btn.setEnabled(True)
+        self.bootstrap_progress.setText("Bootstrapping dataset...")
+        self._bootstrap_worker = _BootstrapWorker(
+            self._dataset_manager,
+            name=self.run_name.text().strip() or "ena",
+            size_preset=preset,
+            auto_start_training=self.auto_start_after_dataset.isChecked(),
+        )
+        self._bootstrap_worker.progress.connect(self._on_bootstrap_progress)
+        self._bootstrap_worker.completed.connect(self._on_bootstrap_completed)
+        self._bootstrap_worker.failed.connect(self._on_bootstrap_failed)
+        self._bootstrap_worker.start()
+
+    def _cancel_bootstrap(self) -> None:
+        if self._bootstrap_worker and self._bootstrap_worker.isRunning():
+            self._bootstrap_worker.cancel()
+            self.bootstrap_progress.setText("Cancelling bootstrap; partial data preserved for resume...")
+
+    def _on_bootstrap_progress(self, payload: dict) -> None:
+        stage = payload.get("stage", "working")
+        processed = int(payload.get("processed_bytes") or 0)
+        target = int(payload.get("target_bytes") or 1)
+        shards = int(payload.get("shards") or 0)
+        dedup = float(payload.get("dedup_percent") or 0.0)
+        pct = max(0, min(100, int(processed * 100 / max(1, target))))
+        self.progress.setValue(pct)
+        self.bootstrap_progress.setText(
+            f"{stage}: {processed / 1024**3:.2f} / {target / 1024**3:.2f} GB, shards={shards}, dedup={dedup:.1f}%"
+        )
+
+    def _on_bootstrap_completed(self, result: dict) -> None:
+        self.bootstrap_btn.setEnabled(True)
+        self.cancel_bootstrap_btn.setEnabled(False)
+        if result.get("cancelled"):
+            self.bootstrap_progress.setText("Bootstrap cancelled. Resume anytime using the same target size.")
+            self.console.append(f"[dataset] Bootstrap cancelled, state at {result.get('build_state')}")
+            return
+        self.dataset_path.setText(result.get("manifest_path") or "")
+        self.dataset_id.setText(Path(result.get("dataset_dir") or "").name)
+        self.bootstrap_progress.setText("Bootstrap completed.")
+        self.console.append(f"[dataset] Bootstrap dataset ready: {result.get('manifest_path')}")
+        if self.upload_shards_to_da.isChecked():
+            self.console.append("[dataset] Upload shards to DA requested (upload workflow pending integration).")
+        if self._bootstrap_worker and self._bootstrap_worker.auto_start:
+            self._start()
+
+    def _on_bootstrap_failed(self, err: str) -> None:
+        self.bootstrap_btn.setEnabled(True)
+        self.cancel_bootstrap_btn.setEnabled(False)
+        self.bootstrap_progress.setText("Bootstrap failed.")
+        QMessageBox.warning(self, "Dataset bootstrap", err)
 
     def _apply_preset(self, name: str) -> None:
         p = self.PRESETS[name]
