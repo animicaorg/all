@@ -53,7 +53,8 @@ class DaPage(QWidget):
         self._da_engine = DaContributionEngine(
             DaEngineConfig(
                 enabled=bool(contrib_cfg.get("enabled", False)),
-                data_dir=str(contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or os.path.expanduser("~/animica-da")),
+                host_data_dir=str(contrib_cfg.get("host_data_dir") or contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or os.path.expanduser("~/animica-da")),
+                node_data_dir=str(contrib_cfg.get("node_data_dir") or "/data/da"),
                 mode=str(contrib_cfg.get("mode") or contrib_cfg.get("reserve_mode") or "quota"),
                 limit_bytes=int(contrib_cfg.get("limit_bytes") or int(contrib_cfg.get("max_gb", 50)) * 1024**3),
                 rpc_url=str(contrib_cfg.get("rpc_url") or profile.node.rpc_local_url),
@@ -305,16 +306,20 @@ class DaPage(QWidget):
         form.addRow("", self._contrib_enable_cb)
 
         dir_row = QHBoxLayout()
-        self._contrib_dir_edit = QLineEdit()
-        self._contrib_dir_edit.setPlaceholderText(os.path.expanduser("~/animica-da"))
-        dir_row.addWidget(self._contrib_dir_edit, stretch=1)
+        self._contrib_host_dir_edit = QLineEdit()
+        self._contrib_host_dir_edit.setPlaceholderText(os.path.expanduser("~/.animica/chain-1/da"))
+        dir_row.addWidget(self._contrib_host_dir_edit, stretch=1)
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._on_contrib_browse_dir)
         dir_row.addWidget(browse_btn)
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._on_contrib_open_folder)
         dir_row.addWidget(open_btn)
-        form.addRow("Directory:", dir_row)
+        form.addRow("Host directory:", dir_row)
+
+        self._contrib_node_dir_edit = QLineEdit()
+        self._contrib_node_dir_edit.setPlaceholderText("/data/da")
+        form.addRow("Node directory:", self._contrib_node_dir_edit)
 
         self._contrib_max_gb_spin = QSpinBox(); self._contrib_max_gb_spin.setRange(1, 20000); self._contrib_max_gb_spin.setValue(50); self._contrib_max_gb_spin.setSuffix(" GiB")
         form.addRow("Limit:", self._contrib_max_gb_spin)
@@ -344,6 +349,12 @@ class DaPage(QWidget):
         btn_row.addWidget(self._contrib_start_btn)
         btn_row.addWidget(self._contrib_stop_btn)
         btn_row.addWidget(self._contrib_refresh_btn)
+        self._contrib_recommend_btn = QPushButton("Use recommended paths")
+        self._contrib_recommend_btn.clicked.connect(self._on_use_recommended_paths)
+        btn_row.addWidget(self._contrib_recommend_btn)
+        self._contrib_fix_retry_btn = QPushButton("Fix & Retry Start")
+        self._contrib_fix_retry_btn.clicked.connect(self._on_fix_and_retry_start)
+        btn_row.addWidget(self._contrib_fix_retry_btn)
         self._contrib_diag_btn = QPushButton("Copy diagnostics")
         self._contrib_diag_btn.clicked.connect(self._copy_contrib_diagnostics)
         btn_row.addWidget(self._contrib_diag_btn)
@@ -416,8 +427,9 @@ class DaPage(QWidget):
         """Populate contribution controls from saved config."""
         cfg = self._config.da_contribution
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
-        saved_dir = cfg.get("data_dir") or cfg.get("directory", "") or ""
-        self._contrib_dir_edit.setText(saved_dir)
+        saved_dir = cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
+        self._contrib_host_dir_edit.setText(saved_dir)
+        self._contrib_node_dir_edit.setText(str(cfg.get("node_data_dir") or "/data/da"))
         self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
         mode = cfg.get("mode") or cfg.get("reserve_mode", "quota")
         idx = self._contrib_reserve_combo.findData(mode)
@@ -441,10 +453,10 @@ class DaPage(QWidget):
     def _on_contrib_browse_dir(self) -> None:
         try:
             path = QFileDialog.getExistingDirectory(
-                self, "Select Contribution Directory", self._contrib_dir_edit.text() or str(os.path.expanduser("~"))
+                self, "Select Contribution Directory", self._contrib_host_dir_edit.text() or str(os.path.expanduser("~"))
             )
             if path:
-                self._contrib_dir_edit.setText(path)
+                self._contrib_host_dir_edit.setText(path)
         except Exception as exc:  # noqa: BLE001
             log.exception("Browse dir failed: %s", exc)
 
@@ -452,7 +464,7 @@ class DaPage(QWidget):
         try:
             import subprocess  # noqa: PLC0415
             import sys as _sys  # noqa: PLC0415
-            path = self._contrib_dir_edit.text().strip() or os.path.expanduser("~/animica-da")
+            path = self._contrib_host_dir_edit.text().strip() or os.path.expanduser("~/animica-da")
             if not os.path.isdir(path):
                 self._contrib_error_label.setText(f"Directory does not exist: {path}")
                 return
@@ -489,7 +501,9 @@ class DaPage(QWidget):
         self._config.da_contribution.update(
             {
                 "enabled": self._da_engine.config.enabled,
-                "data_dir": self._da_engine.config.data_dir,
+                "host_data_dir": self._da_engine.config.host_data_dir,
+                "node_data_dir": self._da_engine.config.node_data_dir,
+                "data_dir": self._da_engine.config.host_data_dir,
                 "mode": self._da_engine.config.mode,
                 "limit_bytes": self._da_engine.config.limit_bytes,
                 "rpc_url": self._da_engine.config.rpc_url,
@@ -499,10 +513,34 @@ class DaPage(QWidget):
         save_config(self._config)
 
 
+    def _recommended_host_dir(self) -> str:
+        active_id = getattr(self._config, "active_profile_id", None)
+        chain_id = 1
+        node_datadir = None
+        for raw in list(getattr(self._config, "rpc_profiles", []) or []):
+            if raw.get("id") == active_id:
+                chain_id = int(raw.get("chain_id_expected") or 1)
+                node_datadir = raw.get("node_datadir")
+                break
+        if node_datadir:
+            return os.path.join(str(node_datadir), "da")
+        return os.path.expanduser(f"~/.animica/chain-{chain_id}/da")
+
+    def _on_use_recommended_paths(self) -> None:
+        self._contrib_host_dir_edit.setText(self._recommended_host_dir())
+        self._contrib_node_dir_edit.setText("/data/da")
+        self._contrib_console.append_info("Applied recommended DA host/node paths")
+
+    def _on_fix_and_retry_start(self) -> None:
+        self._on_use_recommended_paths()
+        self._on_contrib_start()
+
+
     def _on_contrib_apply(self) -> None:
         try:
             self._contrib_apply_btn.setEnabled(False)
-            directory = self._contrib_dir_edit.text().strip() or default_da_dir()
+            directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
+            node_directory = self._contrib_node_dir_edit.text().strip() or "/data/da"
             max_gb = self._contrib_max_gb_spin.value(); max_bytes = max_gb * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
             auto_start = self._contrib_autostart_cb.isChecked()
@@ -510,11 +548,11 @@ class DaPage(QWidget):
             if not self._enable_toggle_touched and auto_start:
                 enabled = True
                 self._contrib_enable_cb.setChecked(True)
-            engine_cfg = DaEngineConfig(enabled=enabled, data_dir=directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start)
+            engine_cfg = DaEngineConfig(enabled=enabled, host_data_dir=directory, node_data_dir=node_directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start)
             ok, msg = self._da_engine.apply_config(engine_cfg)
             if not ok:
                 self._contrib_error_label.setText(msg)
-                if "Data directory not writable" in msg:
+                if "Host directory not writable" in msg:
                     self._prompt_directory_permission_fix(directory)
                 self._contrib_apply_btn.setEnabled(True)
                 return
@@ -533,12 +571,14 @@ class DaPage(QWidget):
     def _on_contrib_start(self) -> None:
         try:
             self._contrib_start_btn.setEnabled(False)
-            directory = self._contrib_dir_edit.text().strip() or default_da_dir()
+            directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
+            node_directory = self._contrib_node_dir_edit.text().strip() or "/data/da"
             max_bytes = self._contrib_max_gb_spin.value() * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
             engine_cfg = DaEngineConfig(
                 enabled=True,
-                data_dir=directory,
+                host_data_dir=directory,
+                node_data_dir=self._contrib_node_dir_edit.text().strip() or "/data/da",
                 mode=str(reserve_mode),
                 limit_bytes=max_bytes,
                 rpc_url=self._contrib_rpc_url.text().strip(),
@@ -600,6 +640,9 @@ class DaPage(QWidget):
             if detail:
                 self._contrib_console.append_info(detail)
             self._contrib_error_label.setText("")
+            return
+        if "errno 30" in detail.lower() or "/home" in detail.lower():
+            self._contrib_error_label.setText(detail + "\nNode runs in a container; /home is not writable there. Click 'Use recommended paths'.")
             return
         self._contrib_error_label.setText(detail)
 
