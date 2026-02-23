@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt, Signal, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,36 +23,12 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.models.profile_models import RpcProfile
-from animica_studio.models.wallet_models import is_valid_address, shorten_address
+from animica_studio.models.wallet_models import shorten_address
 from animica_studio.services.balance_service import BalanceResult, BalanceService
 from animica_studio.services.wallet_repository import WalletRecord, WalletRepository
 from animica_studio.storage.config import Config, load_config
 
 log = logging.getLogger(__name__)
-
-
-class _CreateWalletDialog(QDialog):
-    """Kept minimal for compatibility + validation tests."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Create Wallet")
-        layout = QVBoxLayout(self)
-        self._label_edit = QLineEdit()
-        self._label_edit.textChanged.connect(self._update_create_button_state)
-        layout.addWidget(self._label_edit)
-        self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self._create_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self._create_btn.setText("Create")
-        self._buttons.rejected.connect(self.reject)
-        self._buttons.accepted.connect(self.accept)
-        layout.addWidget(self._buttons)
-        self._update_create_button_state()
-
-    def _update_create_button_state(self) -> None:
-        text = self._label_edit.text().strip()
-        valid = bool(text) and all(c.isalnum() or c in " _-" for c in text)
-        self._create_btn.setEnabled(valid)
 
 
 @dataclass
@@ -63,13 +38,85 @@ class _WalletUiState:
     reason: str = "Not fetched yet"
 
 
-class WalletPageController(QWidget):
-    wallets_loaded = Signal(list)
+class _WalletRowWidget(QFrame):
+    send_clicked = Signal(str)
+
+    def __init__(self, row: _WalletUiState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._row = row
+        self.setObjectName("walletRow")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        avatar = QLabel("●")
+        avatar.setStyleSheet(f"color: {self._avatar_color(row.wallet.address)}; font-size: 16px;")
+        layout.addWidget(avatar)
+
+        mid = QVBoxLayout()
+        mid.setSpacing(3)
+        label = QLabel(row.wallet.label)
+        label.setStyleSheet("font-weight: 700; font-size: 14px;")
+        mid.addWidget(label)
+
+        meta = QHBoxLayout()
+        addr = QLabel(shorten_address(row.wallet.address))
+        addr.setStyleSheet("font-family: 'JetBrains Mono', 'Consolas', monospace; color: #93a0ad;")
+        meta.addWidget(addr)
+
+        scheme = QLabel(self._scheme_label(row.wallet.sig_scheme))
+        scheme.setObjectName("schemeBadge")
+        meta.addWidget(scheme)
+        meta.addStretch(1)
+        mid.addLayout(meta)
+        layout.addLayout(mid, 1)
+
+        right = QVBoxLayout()
+        right.setSpacing(3)
+        bal = QLabel(row.balance_text)
+        bal.setStyleSheet("font-size: 16px; font-weight: 700;")
+        if row.balance_text == "Unavailable":
+            bal.setToolTip(row.reason)
+        right.addWidget(bal, alignment=Qt.AlignmentFlag.AlignRight)
+
+        action_row = QHBoxLayout()
+        copy_btn = QToolButton()
+        copy_btn.setText("Copy")
+        copy_btn.clicked.connect(self._copy_address)
+        action_row.addWidget(copy_btn)
+        send_btn = QToolButton()
+        send_btn.setText("Send")
+        send_btn.clicked.connect(lambda: self.send_clicked.emit(self._row.wallet.address))
+        action_row.addWidget(send_btn)
+        right.addLayout(action_row)
+        layout.addLayout(right)
+
+    @staticmethod
+    def _scheme_label(sig_scheme: str | None) -> str:
+        scheme = (sig_scheme or "unknown").lower()
+        if "dilith" in scheme:
+            return "Dilithium3"
+        if "sphincs" in scheme:
+            return "SPHINCS+ 128s"
+        return sig_scheme or "Unknown"
+
+    @staticmethod
+    def _avatar_color(address: str) -> str:
+        digest = hashlib.sha256(address.encode("utf-8")).hexdigest()
+        hue = int(digest[:2], 16)
+        color = QColor()
+        color.setHsv(hue, 160, 220)
+        return color.name()
+
+    def _copy_address(self) -> None:
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        QApplication.clipboard().setText(self._row.wallet.address)
 
 
 class WalletPage(QWidget):
     open_settings_requested = Signal()
-    run_in_console_requested = Signal(str)
+    send_requested = Signal(str)
 
     def __init__(self, config: Config | None = None, parent: QWidget | None = None, *, safe_mode: bool = False) -> None:
         super().__init__(parent)
@@ -97,74 +144,136 @@ class WalletPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        top = QHBoxLayout()
-        top.addWidget(QLabel("💳 Wallets"))
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        header = QHBoxLayout()
+        title_wrap = QVBoxLayout()
+        title = QLabel("Wallet")
+        title.setStyleSheet("font-size: 28px; font-weight: 700;")
+        subtitle = QLabel("Manage local wallets, balances, and quick actions.")
+        subtitle.setStyleSheet("color: #8f99a5;")
+        title_wrap.addWidget(title)
+        title_wrap.addWidget(subtitle)
+        header.addLayout(title_wrap)
+        header.addStretch(1)
+
         self._status_chip = QLabel("RPC Unknown")
-        top.addWidget(self._status_chip)
-        top.addStretch()
-        self._refresh_wallets_btn = QPushButton("Refresh wallets")
+        self._status_chip.setObjectName("statusChip")
+        header.addWidget(self._status_chip)
+
+        self._refresh_wallets_btn = QPushButton("Refresh")
         self._refresh_wallets_btn.clicked.connect(self.refresh_wallets)
-        top.addWidget(self._refresh_wallets_btn)
-        self._refresh_all_btn = QPushButton("Refresh all balances")
+        header.addWidget(self._refresh_wallets_btn)
+
+        self._refresh_all_btn = QPushButton("Refresh Balances")
         self._refresh_all_btn.clicked.connect(lambda: self.refresh_all_balances(force=True))
-        top.addWidget(self._refresh_all_btn)
-        root.addLayout(top)
+        header.addWidget(self._refresh_all_btn)
+
+        self._create_wallet_btn = QPushButton("Create Wallet")
+        self._create_wallet_btn.clicked.connect(self._on_create_wallet)
+        header.addWidget(self._create_wallet_btn)
+        root.addLayout(header)
 
         split = QSplitter(Qt.Orientation.Horizontal)
+        split.setHandleWidth(1)
         root.addWidget(split, 1)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        left_layout.setSpacing(8)
+
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search label or address")
+        self._search.setPlaceholderText("Search by label or address")
         self._search.textChanged.connect(self._render_wallet_list)
         left_layout.addWidget(self._search)
+
         self._list = QListWidget()
+        self._list.setObjectName("walletList")
         self._list.currentRowChanged.connect(self._on_selected)
         left_layout.addWidget(self._list, 1)
         split.addWidget(left)
 
         right = QWidget()
         r = QVBoxLayout(right)
-        self._empty = QLabel("")
-        self._empty.setWordWrap(True)
-        r.addWidget(self._empty)
+        r.setContentsMargins(8, 0, 0, 0)
+        r.setSpacing(12)
+
         self._detail_label = QLabel("No wallet selected")
-        self._detail_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._detail_label.setStyleSheet("font-size: 22px; font-weight: 700;")
         r.addWidget(self._detail_label)
+
+        addr_row = QHBoxLayout()
+        self._detail_address = QLabel("Select an account")
+        self._detail_address.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._detail_address.setStyleSheet("font-family: 'JetBrains Mono', 'Consolas', monospace; color: #9aa6b2;")
+        addr_row.addWidget(self._detail_address, 1)
+        copy_btn = QPushButton("Copy")
+        copy_btn.clicked.connect(self._copy_selected)
+        addr_row.addWidget(copy_btn)
+        r.addLayout(addr_row)
+
         self._balance_big = QLabel("Unavailable")
-        self._balance_big.setStyleSheet("font-size: 24px; font-weight: 600;")
+        self._balance_big.setStyleSheet("font-size: 34px; font-weight: 700;")
         r.addWidget(self._balance_big)
+
         self._reason = QLabel("Select an account")
+        self._reason.setStyleSheet("color: #9aa6b2;")
         r.addWidget(self._reason)
-        row = QHBoxLayout()
-        self._retry_one = QPushButton("Refresh balance")
-        self._retry_one.clicked.connect(self._refresh_selected_balance)
-        row.addWidget(self._retry_one)
-        self._explorer_btn = QPushButton("View on Explorer")
-        self._explorer_btn.clicked.connect(self._open_explorer)
-        row.addWidget(self._explorer_btn)
+
+        btns = QHBoxLayout()
         self._send_btn = QPushButton("Send")
         self._send_btn.clicked.connect(self._send_selected)
-        row.addWidget(self._send_btn)
-        r.addLayout(row)
-        split.addWidget(right)
-        split.setSizes([430, 530])
+        btns.addWidget(self._send_btn)
 
-    def on_profile_changed(self, profile: RpcProfile) -> None:  # called by main window
+        self._retry_one = QPushButton("Refresh")
+        self._retry_one.clicked.connect(self._refresh_selected_balance)
+        btns.addWidget(self._retry_one)
+
+        self._explorer_btn = QPushButton("View on Explorer")
+        self._explorer_btn.clicked.connect(self._open_explorer)
+        btns.addWidget(self._explorer_btn)
+        btns.addStretch(1)
+        r.addLayout(btns)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("color: #2d3742;")
+        r.addWidget(separator)
+
+        activity_title = QLabel("Recent Activity")
+        activity_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        r.addWidget(activity_title)
+        self._activity_placeholder = QLabel("No recent activity available for this wallet yet.")
+        self._activity_placeholder.setStyleSheet("color: #8f99a5;")
+        self._activity_placeholder.setWordWrap(True)
+        r.addWidget(self._activity_placeholder)
+        r.addStretch(1)
+
+        split.addWidget(right)
+        split.setSizes([500, 620])
+
+        self.setStyleSheet(
+            """
+            #walletList { border: 1px solid #2a333e; border-radius: 12px; background: #11161e; }
+            #walletRow { border: 1px solid #2a333e; border-radius: 10px; background: #151c25; }
+            #walletRow:hover { background: #1b2330; border-color: #3a4553; }
+            #schemeBadge { background: #243042; color: #d4def0; border-radius: 9px; padding: 2px 8px; font-size: 11px; }
+            #statusChip { background: #202a35; border: 1px solid #334255; border-radius: 10px; padding: 4px 10px; font-weight: 600; }
+            """
+        )
+
+    def on_profile_changed(self, profile: RpcProfile) -> None:
         _ = profile
         self.refresh_all_balances(force=True)
 
     def refresh_wallets(self) -> None:
         wallets = self._repository.load_wallets()
         self._wallet_rows = [_WalletUiState(w) for w in wallets]
-        if self._repository.last_error and not wallets:
-            self._empty.setText(f"Wallet file invalid. {self._repository.last_error}")
-        elif not wallets:
-            self._empty.setText("No wallets found")
-        else:
-            self._empty.setText("")
         self._render_wallet_list()
+        if self._wallet_rows and not self._selected_address:
+            self._selected_address = self._wallet_rows[0].wallet.address
         self._staged_balance_fetch()
 
     def _render_wallet_list(self) -> None:
@@ -174,19 +283,22 @@ class WalletPage(QWidget):
             row for row in self._wallet_rows if not needle or needle in row.wallet.label.lower() or needle in row.wallet.address.lower()
         ]
         for row in filtered:
-            scheme = (row.wallet.sig_scheme or "unknown").lower()
-            if "dilith" in scheme:
-                scheme_label = "Dilithium3"
-            elif "sphincs" in scheme:
-                scheme_label = "SPHINCS+ 128s"
-            else:
-                scheme_label = row.wallet.sig_scheme or "Unknown"
-            text = f"{row.wallet.label}\n{shorten_address(row.wallet.address)}   {scheme_label}\n{row.balance_text}"
-            item = QListWidgetItem(text)
-            if row.reason:
-                item.setToolTip(row.reason)
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, row.wallet.address)
             self._list.addItem(item)
+            widget = _WalletRowWidget(row)
+            widget.send_clicked.connect(self.send_requested.emit)
+            item.setSizeHint(widget.sizeHint())
+            self._list.setItemWidget(item, widget)
+            if row.reason:
+                item.setToolTip(row.reason)
+
+        if self._selected_address:
+            for idx in range(self._list.count()):
+                item = self._list.item(idx)
+                if str(item.data(Qt.ItemDataRole.UserRole)) == self._selected_address:
+                    self._list.setCurrentRow(idx)
+                    break
 
     def _on_selected(self, index: int) -> None:
         if index < 0:
@@ -199,33 +311,35 @@ class WalletPage(QWidget):
         row = next((r for r in self._wallet_rows if r.wallet.address == addr), None)
         if not row:
             return
-        self._detail_label.setText(row.wallet.address)
+        self._detail_label.setText(row.wallet.label)
+        self._detail_address.setText(row.wallet.address)
         self._balance_big.setText(row.balance_text)
         self._reason.setText(row.reason if row.balance_text == "Unavailable" else "")
 
-    def _active_profile(self) -> RpcProfile:
+    def _active_profile(self):
         return self._config.get_active_profile()
 
     def _staged_balance_fetch(self) -> None:
         if not self._wallet_rows:
+            self._reason.setText("No wallets found. Create one to begin.")
             return
         profile = self._active_profile()
         selected = self._selected_address or self._wallet_rows[0].wallet.address
         self._balance_service.get_balance(selected, profile, force_refresh=False)
         top = [w.wallet.address for w in self._wallet_rows[:5] if w.wallet.address != selected]
-        for addr in top:
-            QTimer.singleShot(120, lambda a=addr: self._balance_service.get_balance(a, profile, force_refresh=False))
-        self._refresh_tail_timer.start(500)
+        for i, addr in enumerate(top):
+            QTimer.singleShot(140 * i, lambda a=addr: self._balance_service.get_balance(a, profile, force_refresh=False))
+        self._refresh_tail_timer.start(650)
 
     def _fetch_remaining(self) -> None:
         profile = self._active_profile()
         for idx, row in enumerate(self._wallet_rows[5:], start=0):
-            QTimer.singleShot(180 * idx, lambda a=row.wallet.address: self._balance_service.get_balance(a, profile, force_refresh=False))
+            QTimer.singleShot(200 * idx, lambda a=row.wallet.address: self._balance_service.get_balance(a, profile, force_refresh=False))
 
     def refresh_all_balances(self, *, force: bool) -> None:
         profile = self._active_profile()
         for idx, row in enumerate(self._wallet_rows):
-            QTimer.singleShot(100 * idx, lambda a=row.wallet.address: self._balance_service.get_balance(a, profile, force_refresh=force))
+            QTimer.singleShot(120 * idx, lambda a=row.wallet.address: self._balance_service.get_balance(a, profile, force_refresh=force))
 
     def _refresh_selected_balance(self) -> None:
         if not self._selected_address:
@@ -255,15 +369,25 @@ class WalletPage(QWidget):
         if not self._selected_address:
             return
         profile = self._active_profile()
-        base = (profile.explorer_base_url or "").strip().rstrip("/")
+        base = str(getattr(profile, "explorer_base_url", "")).strip().rstrip("/")
         if not base:
             QMessageBox.information(self, "Explorer", "Explorer URL not configured")
             return
         QDesktopServices.openUrl(QUrl(f"{base}/address/{self._selected_address}"))
 
+    def _copy_selected(self) -> None:
+        if not self._selected_address:
+            return
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        QApplication.clipboard().setText(self._selected_address)
+
     def _send_selected(self) -> None:
         if self._selected_address:
-            self.run_in_console_requested.emit(f"tx send --from {self._selected_address}")
+            self.send_requested.emit(self._selected_address)
+
+    def _on_create_wallet(self) -> None:
+        QMessageBox.information(self, "Create Wallet", "Use the Animica CLI: animica wallet create")
 
     def hideEvent(self, event) -> None:  # noqa: ANN001
         self._refresh_tail_timer.stop()

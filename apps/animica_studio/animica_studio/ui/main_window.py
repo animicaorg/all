@@ -37,6 +37,7 @@ from animica_studio.ui.pages.node import NodePage
 from animica_studio.ui.pages.quantum_page import QuantumPage
 from animica_studio.ui.pages.settings import SettingsPage
 from animica_studio.ui.pages.wallet_page import WalletPage
+from animica_studio.ui.pages.tx_send_page import TxSendPage
 from animica_studio.ui.shell.command_palette import CommandPalette
 from animica_studio.ui.shell.header import HeaderBar
 from animica_studio.ui.shell.icon_provider import IconProvider
@@ -119,12 +120,14 @@ class MainWindow(QMainWindow):
 
         self._wallet_page = WalletPage(config=self._config, safe_mode=self._safe_mode)
         self._wallet_page.open_settings_requested.connect(self._open_settings_from_wallet)
-        self._wallet_page.run_in_console_requested.connect(self._open_console_with_command)
+        self._wallet_page.send_requested.connect(self._open_tx_send_for_wallet)
+        self._tx_send_page = TxSendPage(config=self._config)
         self._dashboard_page = DashboardPage(config=self._config, profile_service=self._profile_service)
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
         self._nav_entries = [
             _NavEntry("Dashboard", "◈", lambda: self._dashboard_page),
             _NavEntry("Wallet", "◉", lambda: self._wallet_page),
+            _NavEntry("TX Send", "➤", lambda: self._tx_send_page),
             _NavEntry("Node", "◍", lambda: NodePage(config=self._config)),
             _NavEntry("Mining", "◎", lambda: MiningPage(config=self._config)),
             _NavEntry("AICF", "◇", lambda: AicfPage(config=self._config)),
@@ -204,6 +207,13 @@ class MainWindow(QMainWindow):
         console_widget = self._stack.widget(console_index)
         if isinstance(console_widget, ConsolePage):
             console_widget.run_command(command, auto_run=True)
+
+    def _open_tx_send_for_wallet(self, address: str) -> None:
+        tx_index = next((i for i, e in enumerate(self._nav_entries) if e.label == "TX Send"), None)
+        if tx_index is None:
+            return
+        self._tx_send_page.set_from_wallet(address)
+        self._navigate(tx_index)
 
     def _ensure_lazy_pages(self, index: int) -> None:
         if self._ide_index is None or index != self._ide_index or self._ide_page is not None:
