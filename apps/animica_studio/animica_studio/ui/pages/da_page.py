@@ -379,7 +379,10 @@ class DaPage(QWidget):
         status_form.addRow("Used:", self._contrib_used_label)
 
         self._contrib_free_label = QLabel("—")
-        status_form.addRow("Free on drive:", self._contrib_free_label)
+        status_form.addRow("Remaining:", self._contrib_free_label)
+
+        self._contrib_disk_label = QLabel("—")
+        status_form.addRow("Disk used:", self._contrib_disk_label)
 
         self._contrib_chunks_label = QLabel("—")
         status_form.addRow("Stored chunks:", self._contrib_chunks_label)
@@ -652,7 +655,16 @@ class DaPage(QWidget):
         used = int(metrics.used_bytes)
         self._contrib_usage_bar.setValue(min(int((used * 100) / limit), 100))
         self._contrib_used_label.setText(f"{used / 1024**3:.2f} GiB / {limit / 1024**3:.2f} GiB")
-        self._contrib_free_label.setText(f"{int(metrics.remaining_bytes) / 1024**3:.2f} GiB")
+        if (getattr(self._da_engine.config, "mode", "quota") or "quota") == "quota":
+            self._contrib_free_label.setText(f"{int(metrics.remaining_bytes) / 1024**3:.2f} GiB")
+        else:
+            self._contrib_free_label.setText("Unlimited")
+        disk_used = int(getattr(metrics, "disk_used_bytes", 0))
+        disk_total = int(getattr(metrics, "disk_total_bytes", 0))
+        if disk_total > 0:
+            self._contrib_disk_label.setText(f"{disk_used / 1024**3:.2f} GiB of {disk_total / 1024**3:.2f} GiB")
+        else:
+            self._contrib_disk_label.setText("—")
         self._contrib_chunks_label.setText(str(metrics.queued_files))
         self._contrib_served_label.setText(str(metrics.uploaded_blobs))
         if metrics.last_error:

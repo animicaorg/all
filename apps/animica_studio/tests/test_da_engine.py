@@ -96,7 +96,7 @@ def test_start_enables_when_disabled(tmp_path: Path):
 
 def test_remaining_bytes_uses_quota_limit(tmp_path: Path):
     e = _engine(tmp_path)
-    out = {"queued": 0, "uploaded": [], "used": 0, "free": 100, "status": {}}
+    out = {"queued": 0, "uploaded": [], "da_used": 0, "disk_used": 10, "disk_total": 100, "scan_warning": "", "status": {}}
     e._on_cycle(out)
     assert e.metrics.remaining_bytes == e.config.limit_bytes
 
