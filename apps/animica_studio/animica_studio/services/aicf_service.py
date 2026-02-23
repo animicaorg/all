@@ -50,7 +50,12 @@ class AicfService:
     _METHOD_CACHE_LOCK = threading.Lock()
     _METHOD_CACHE_BY_URL: dict[str, dict[str, str | None]] = {}
 
-    _CREDITS_METHODS = ("aicf.creditsByAddress", "aicf.credits_by_address", "aicf_creditsByAddress")
+    _CREDITS_METHODS = (
+        "aicf_creditsByAddress",
+        "aicf.creditsByAddress",
+        "aicf_credits_by_address",
+        "aicf.credits_by_address",
+    )
 
     def _rpc_url(self, override: str | None = None) -> str:
         raw = override or get_active_rpc_url(self._config) or self._config.get_active_profile().node.rpc_local_url
@@ -107,18 +112,24 @@ class AicfService:
         resolved: dict[str, str | None] = {
             "claim": "aicf.claim",
             "claimable": "aicf.getClaimable",
-            "credits": self._CREDITS_METHODS[0],
+            "credits": "aicf.creditsByAddress",
+            "list_jobs": "aicf.listJobs",
+            "submit_job": "aicf.submitJob",
         }
 
         try:
             known = self._extract_methods(client.discover())
             if known:
-                claim_m = self._pick_supported(("aicf.claim",), known)
-                claimable_m = self._pick_supported(("aicf.getClaimable",), known)
+                claim_m = self._pick_supported(("aicf_claim", "aicf.claim"), known)
+                claimable_m = self._pick_supported(("aicf_getClaimable", "aicf.getClaimable"), known)
                 credits_m = self._pick_supported(self._CREDITS_METHODS, known)
+                list_jobs = self._pick_supported(("aicf_listJobs", "aicf.listJobs", "aicf_jobs", "aicf_getJobs"), known)
+                submit_job = self._pick_supported(("aicf_submitJob", "aicf.submitJob"), known)
                 resolved["claim"] = claim_m
                 resolved["claimable"] = claimable_m
                 resolved["credits"] = credits_m
+                resolved["list_jobs"] = list_jobs
+                resolved["submit_job"] = submit_job
         except Exception:  # noqa: BLE001
             pass
 
@@ -130,8 +141,17 @@ class AicfService:
         url = self._rpc_url(rpc_url)
         with self._METHOD_CACHE_LOCK:
             methods = dict(self._METHOD_CACHE_BY_URL.get(url, {}))
+        client = self._client(url)
+        discover_diag: dict[str, Any]
+        try:
+            discover_diag = client.rpc_diagnostics()
+        except Exception as exc:  # noqa: BLE001
+            discover_diag = {"error": str(exc), "rpc_url": url, "methods": []}
+        finally:
+            client.close()
         return {
             "rpc_url": url,
+            "rpc_discover": discover_diag,
             "resolved_methods": methods,
             "last_request_payload": self._last_request_payload or {},
             "last_error": self._last_error,
@@ -167,7 +187,8 @@ class AicfService:
         """Return AICF global summary from RPC."""
         client = self._client(rpc_url)
         try:
-            result = client.call("state.getAicfSummary")
+            method = client.resolve_method("state_getAicfSummary", ["state_getAicfSummary", "state.getAicfSummary"])
+            result = client.call(method)
             return {"ok": True, "data": result}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
@@ -188,8 +209,11 @@ class AicfService:
             attempts = [
                 (methods.get("credits"), {"address": address}),
                 (methods.get("credits"), [address]),
+                ("state_getAicfMinerCredits", [address]),
                 ("state.getAicfMinerCredits", [address]),
+                ("mining_getCredits", [address]),
                 ("mining.getCredits", [address]),
+                ("aicf_getMinerCredits", [address]),
                 ("aicf.getMinerCredits", [address]),
                 (methods.get("claimable"), self._build_claimable_params(address)),
             ]
@@ -293,7 +317,7 @@ class AicfService:
             return {"ok": True, "data": result, "amount_ignored": amount is not None}
         except RpcResponseError as exc:
             if exc.rpc_error.code == -32601:
-                suggestion = self._resolve_method_from_error(("aicf.claim",), exc)
+                suggestion = self._resolve_method_from_error(("aicf_claim", "aicf.claim"), exc)
                 if suggestion:
                     methods = self._resolve_aicf_methods(client, url)
                     methods["claim"] = suggestion
@@ -326,15 +350,14 @@ class AicfService:
                 params["status"] = status_filter
             log.info("AICF list_jobs rpc_url=%s payload=%s", self._rpc_url(rpc_url), params)
             last_exc: Exception | None = None
-            for method, rpc_params in (
-                ("aicf.listJobs", [params]),
-                ("aicf_listJobs", [params]),
-                ("aicf.listJobs", params),
-                ("aicf_listJobs", params),
-            ):
+            methods = self._resolve_aicf_methods(client, self._rpc_url(rpc_url))
+            list_method = methods.get("list_jobs")
+            if not list_method:
+                return {"ok": False, "error": "This node does not expose AICF RPC methods for jobs listing."}
+            for rpc_params in ([params], params):
                 try:
-                    result = client.call(method, rpc_params)
-                    return {"ok": True, "data": result}
+                    result = client.call(list_method, rpc_params)
+                    return {"ok": True, "data": result, "method": list_method}
                 except RpcResponseError as exc:
                     if exc.rpc_error.code in (-32601, -32602):
                         last_exc = exc
@@ -358,8 +381,12 @@ class AicfService:
         """Submit an AICF job."""
         client = self._client(rpc_url)
         try:
-            result = client.call("aicf.submitJob", [{"type": job_type, "payload": payload, "budget": str(budget)}])
-            return {"ok": True, "data": result}
+            methods = self._resolve_aicf_methods(client, self._rpc_url(rpc_url))
+            submit_method = methods.get("submit_job")
+            if not submit_method:
+                return {"ok": False, "error": "This node does not expose AICF RPC methods for job submission."}
+            result = client.call(submit_method, [{"type": job_type, "payload": payload, "budget": str(budget)}])
+            return {"ok": True, "data": result, "method": submit_method}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         finally:
@@ -393,7 +420,8 @@ class AicfService:
         """Return ENA call-fee routing visibility."""
         client = self._client(rpc_url)
         try:
-            result = client.call("aicf.getCallFeeRouting")
+            method = client.resolve_method("aicf_getCallFeeRouting", ["aicf_getCallFeeRouting", "aicf.getCallFeeRouting"])
+            result = client.call(method)
             return {"ok": True, "data": result}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
