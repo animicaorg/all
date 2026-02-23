@@ -1,26 +1,374 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+import json
+from pathlib import Path
 
-from animica_studio.services.ena_automation_service import EnaService
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QProgressBar,
+    QSpinBox,
+    QDoubleSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from animica_studio.models.training_models import TrainingConfig
+from animica_studio.services.training_service import ENATrainingService
+from animica_studio.storage.config import Config
 
 
 class TrainPage(QWidget):
-    def __init__(self, service: EnaService, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Train Locally (CPU)")
-        self.service = service
-        root = QVBoxLayout(self)
-        self.preset = QComboBox(); self.preset.addItems(["quick", "medium", "long"])
-        root.addWidget(QLabel("Budget preset")); root.addWidget(self.preset)
-        run_btn = QPushButton("Start training")
-        run_btn.clicked.connect(self._run)
-        root.addWidget(run_btn)
-        self.out = QTextEdit(); self.out.setReadOnly(True); root.addWidget(self.out)
+    PRESETS = {
+        "Fast test": {"iterations": 200, "batch_size": 2, "learning_rate": 5e-5},
+        "Medium": {"iterations": 10_000, "batch_size": 4, "learning_rate": 2e-5},
+        "Crank": {"iterations": 100_000, "batch_size": 8, "learning_rate": 1e-5},
+        "Overnight": {"iterations": 1_000_000, "batch_size": 8, "learning_rate": 1e-5},
+    }
 
-    def _run(self) -> None:
-        checkpoints = self.service.list_checkpoints()
-        cid = checkpoints[-1]["id"] if checkpoints else "base-stable"
-        out = self.service.train_local(cid, "public-shards", preset=self.preset.currentText())
-        run = out["run"]
-        self.out.setPlainText("\n".join(f"{s.name}: {s.status}" for s in run.steps) + f"\n{out.get('recommendation', '')}")
+    def __init__(self, config: Config, parent=None) -> None:
+        super().__init__(parent)
+        self._cfg = config
+        self._svc = ENATrainingService(config, self)
+        self._active_run_id: str | None = None
+        self._build()
+        self._wire()
+        self._restore_last()
+        self._refresh_runs()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.addWidget(QLabel("ENA Training"))
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Crank presets:"))
+        for name in self.PRESETS:
+            btn = QPushButton(name)
+            btn.clicked.connect(lambda _=False, n=name: self._apply_preset(n))
+            preset_row.addWidget(btn)
+        preset_row.addStretch(1)
+        root.addLayout(preset_row)
+
+        form_box = QGroupBox("Training Configuration")
+        form = QFormLayout(form_box)
+
+        self.run_name = QLineEdit("ena-train")
+        self.dataset_path = QLineEdit("")
+        pick_dataset = QPushButton("Browse")
+        pick_dataset.clicked.connect(self._pick_dataset)
+        dataset_row = QHBoxLayout(); dataset_row.addWidget(self.dataset_path, 1); dataset_row.addWidget(pick_dataset)
+
+        self.dataset_id = QLineEdit("")
+        self.base_model = QLineEdit("")
+        self.output_dir = QLineEdit("./ena-training-runs")
+        pick_out = QPushButton("Browse")
+        pick_out.clicked.connect(self._pick_output)
+        out_row = QHBoxLayout(); out_row.addWidget(self.output_dir, 1); out_row.addWidget(pick_out)
+
+        self.iterations = QSpinBox(); self.iterations.setRange(0, 1_000_000_000); self.iterations.setValue(10000)
+        self.epochs = QDoubleSpinBox(); self.epochs.setRange(0, 100000); self.epochs.setDecimals(2); self.epochs.setValue(0)
+        self.batch_size = QSpinBox(); self.batch_size.setRange(1, 32768); self.batch_size.setValue(4)
+        self.learning_rate = QDoubleSpinBox(); self.learning_rate.setDecimals(8); self.learning_rate.setRange(0.00000001, 10.0); self.learning_rate.setValue(0.00002)
+        self.optimizer = QComboBox(); self.optimizer.addItems(["adamw", "adam", "sgd"])
+
+        self.eval_interval = QSpinBox(); self.eval_interval.setRange(1, 10_000_000); self.eval_interval.setValue(100)
+        self.ckpt_interval = QSpinBox(); self.ckpt_interval.setRange(1, 10_000_000); self.ckpt_interval.setValue(500)
+        self.max_runtime = QSpinBox(); self.max_runtime.setRange(0, 100_000); self.max_runtime.setValue(0)
+        self.early_stop = QSpinBox(); self.early_stop.setRange(0, 10_000); self.early_stop.setValue(0)
+
+        self.device = QComboBox(); self.device.addItems(["auto", "cpu", "cuda"])
+        self.gpu_id = QSpinBox(); self.gpu_id.setRange(-1, 64); self.gpu_id.setValue(-1)
+        self.workers = QSpinBox(); self.workers.setRange(0, 256); self.workers.setValue(0)
+        self.threads = QSpinBox(); self.threads.setRange(0, 256); self.threads.setValue(0)
+
+        self.grad_accum = QSpinBox(); self.grad_accum.setRange(0, 1024); self.grad_accum.setValue(0)
+        self.seed = QSpinBox(); self.seed.setRange(0, 2_147_483_647); self.seed.setValue(0)
+        self.precision = QComboBox(); self.precision.addItems(["fp32", "fp16", "bf16"])
+
+        self.lora_enabled = QCheckBox("Enable LoRA")
+        self.lora_rank = QSpinBox(); self.lora_rank.setRange(0, 2048); self.lora_rank.setValue(0)
+        self.resume_ckpt = QComboBox(); self.resume_ckpt.addItem("(none)")
+        self.refresh_ckpt_btn = QPushButton("Refresh checkpoints")
+        self.refresh_ckpt_btn.clicked.connect(self._refresh_checkpoints)
+
+        self.submit_aicf = QCheckBox("Submit checkpoints/metrics to AICF")
+        self.budget_anm = QLineEdit("10")
+
+        form.addRow("Run name", self.run_name)
+        form.addRow("Dataset path", dataset_row)
+        form.addRow("Dataset ID", self.dataset_id)
+        form.addRow("Base model/checkpoint", self.base_model)
+        form.addRow("Output dir", out_row)
+        form.addRow("Iterations (primary)", self.iterations)
+        form.addRow("Epochs (optional)", self.epochs)
+        form.addRow("Batch size", self.batch_size)
+        form.addRow("Learning rate", self.learning_rate)
+        form.addRow("Optimizer", self.optimizer)
+        form.addRow("Eval interval (steps)", self.eval_interval)
+        form.addRow("Checkpoint interval (steps)", self.ckpt_interval)
+        form.addRow("Max runtime (minutes)", self.max_runtime)
+        form.addRow("Early stop patience", self.early_stop)
+        form.addRow("Device", self.device)
+        form.addRow("GPU id (-1 auto)", self.gpu_id)
+        form.addRow("Workers (0 auto)", self.workers)
+        form.addRow("Threads (0 auto)", self.threads)
+        form.addRow("Grad accumulation", self.grad_accum)
+        form.addRow("Seed", self.seed)
+        form.addRow("Precision", self.precision)
+        form.addRow(self.lora_enabled)
+        form.addRow("LoRA rank", self.lora_rank)
+        resume_row = QHBoxLayout(); resume_row.addWidget(self.resume_ckpt, 1); resume_row.addWidget(self.refresh_ckpt_btn)
+        form.addRow("Resume from checkpoint", resume_row)
+        form.addRow(self.submit_aicf)
+        form.addRow("Budget (ANM)", self.budget_anm)
+
+        root.addWidget(form_box)
+
+        ctl = QHBoxLayout()
+        self.start_btn = QPushButton("Start Training")
+        self.stop_btn = QPushButton("Stop")
+        self.resume_btn = QPushButton("Resume Watch")
+        self.stop_btn.setEnabled(False)
+        ctl.addWidget(self.start_btn); ctl.addWidget(self.stop_btn); ctl.addWidget(self.resume_btn)
+        ctl.addStretch(1)
+        root.addLayout(ctl)
+
+        stats = QGridLayout()
+        self.status_lbl = QLabel("idle")
+        self.step_lbl = QLabel("step: -")
+        self.loss_lbl = QLabel("loss: -")
+        self.sps_lbl = QLabel("steps/sec: -")
+        self.eval_lbl = QLabel("eval: -")
+        stats.addWidget(self.status_lbl, 0, 0)
+        stats.addWidget(self.step_lbl, 0, 1)
+        stats.addWidget(self.loss_lbl, 1, 0)
+        stats.addWidget(self.sps_lbl, 1, 1)
+        stats.addWidget(self.eval_lbl, 2, 0, 1, 2)
+        root.addLayout(stats)
+
+        self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0)
+        root.addWidget(self.progress)
+
+        self.runs_combo = QComboBox()
+        load_run_btn = QPushButton("Load run")
+        load_run_btn.clicked.connect(self._load_selected_run)
+        run_row = QHBoxLayout(); run_row.addWidget(QLabel("Run history:")); run_row.addWidget(self.runs_combo, 1); run_row.addWidget(load_run_btn)
+        root.addLayout(run_row)
+
+        self.console = QTextEdit(); self.console.setReadOnly(True)
+        self.console.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        root.addWidget(self.console, 1)
+
+    def _wire(self) -> None:
+        self.start_btn.clicked.connect(self._start)
+        self.stop_btn.clicked.connect(self._stop)
+        self.resume_btn.clicked.connect(self._resume_watch)
+
+        self._svc.log_line.connect(self._on_log)
+        self._svc.metrics_updated.connect(self._on_metrics)
+        self._svc.status_changed.connect(self._on_status)
+
+    def _pick_dataset(self) -> None:
+        p, _ = QFileDialog.getOpenFileName(self, "Dataset")
+        if p:
+            self.dataset_path.setText(p)
+
+    def _pick_output(self) -> None:
+        p = QFileDialog.getExistingDirectory(self, "Output directory")
+        if p:
+            self.output_dir.setText(p)
+            self._refresh_checkpoints()
+
+    def _apply_preset(self, name: str) -> None:
+        p = self.PRESETS[name]
+        self.iterations.setValue(int(p["iterations"]))
+        self.batch_size.setValue(int(p["batch_size"]))
+        self.learning_rate.setValue(float(p["learning_rate"]))
+
+    def _read_config(self) -> TrainingConfig:
+        cfg = TrainingConfig(
+            run_name=self.run_name.text().strip() or "ena-train",
+            iterations=self.iterations.value() or None,
+            epochs=self.epochs.value() if self.epochs.value() > 0 else None,
+            batch_size=self.batch_size.value(),
+            learning_rate=self.learning_rate.value(),
+            optimizer=self.optimizer.currentText(),
+            dataset_path=self.dataset_path.text().strip(),
+            dataset_id=self.dataset_id.text().strip() or None,
+            base_model=self.base_model.text().strip(),
+            output_dir=self.output_dir.text().strip() or "./ena-training-runs",
+            eval_interval_steps=self.eval_interval.value(),
+            checkpoint_interval_steps=self.ckpt_interval.value(),
+            max_runtime_minutes=self.max_runtime.value() or None,
+            early_stop_patience=self.early_stop.value() or None,
+            device=self.device.currentText(),
+            gpu_id=(None if self.gpu_id.value() < 0 else self.gpu_id.value()),
+            num_workers=self.workers.value() or None,
+            threads=self.threads.value() or None,
+            gradient_accumulation_steps=self.grad_accum.value() or None,
+            seed=self.seed.value() or None,
+            precision=self.precision.currentText(),
+            lora_enabled=self.lora_enabled.isChecked(),
+            lora_rank=self.lora_rank.value() or None,
+            resume_checkpoint=(None if self.resume_ckpt.currentIndex() <= 0 else self.resume_ckpt.currentData(Qt.ItemDataRole.UserRole)),
+            submit_to_aicf=self.submit_aicf.isChecked(),
+            budget_anm=self.budget_anm.text().strip() or "10",
+        )
+        if cfg.iterations and cfg.epochs:
+            self._on_log("", "system", "Both iterations and epochs set; iterations takes precedence.")
+        if cfg.iterations and cfg.iterations >= 100_000_000:
+            self._on_log("", "system", "Warning: extremely high iteration count configured.")
+        return cfg
+
+    def _start(self) -> None:
+        try:
+            cfg = self._read_config()
+            self._check_output_conflict(cfg)
+            run_id = self._svc.start_training(cfg)
+            self._active_run_id = run_id
+            self.console.clear()
+            self._on_log(run_id, "system", f"Started run {run_id}")
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self._refresh_runs()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Training", str(exc))
+
+    def _check_output_conflict(self, cfg: TrainingConfig) -> None:
+        out = Path(cfg.output_dir).expanduser()
+        out.mkdir(parents=True, exist_ok=True)
+        existing = [p for p in out.iterdir()]
+        if not existing:
+            return
+        choice = QMessageBox.question(
+            self,
+            "Output directory not empty",
+            "Output directory contains files. Continue (resume) with current directory?\n"
+            "Choose No to create a new timestamped run directory.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        if choice == QMessageBox.StandardButton.Cancel:
+            raise RuntimeError("Cancelled by user")
+        if choice == QMessageBox.StandardButton.No:
+            cfg.output_dir = str(out / f"run-{int(__import__('time').time())}")
+
+    def _stop(self) -> None:
+        if not self._active_run_id:
+            return
+        self._svc.stop_training(self._active_run_id)
+        self.stop_btn.setEnabled(False)
+        self.start_btn.setEnabled(True)
+
+    def _resume_watch(self) -> None:
+        run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
+        if not run_id:
+            return
+        try:
+            self._svc.resume_training(str(run_id))
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.information(self, "Resume", str(exc))
+
+    def _on_log(self, run_id: str, tag: str, text: str) -> None:
+        show_id = run_id or (self._active_run_id or "-")
+        self.console.append(f"[{tag}] ({show_id}) {text}")
+
+    def _on_metrics(self, run_id: str, metrics: dict) -> None:
+        if self._active_run_id and run_id != self._active_run_id:
+            return
+        step = metrics.get("current_step")
+        loss = metrics.get("loss")
+        sps = metrics.get("steps_per_sec")
+        eval_metrics = metrics.get("eval_metrics") or {}
+        pct = metrics.get("progress_percent")
+        total = metrics.get("total_steps")
+
+        if step is not None:
+            self.step_lbl.setText(f"step: {step}{'/' + str(total) if total else ''}")
+        if loss is not None:
+            self.loss_lbl.setText(f"loss: {loss:.6f}")
+        if sps is not None:
+            self.sps_lbl.setText(f"steps/sec: {sps:.3f}")
+        if eval_metrics:
+            self.eval_lbl.setText("eval: " + ", ".join(f"{k}={v:.4f}" for k, v in eval_metrics.items()))
+        if pct is not None:
+            self.progress.setValue(max(0, min(100, int(pct))))
+        elif total and step is not None and total > 0:
+            self.progress.setValue(int(step * 100 / total))
+
+    def _on_status(self, run_id: str, status: str) -> None:
+        if self._active_run_id and run_id != self._active_run_id:
+            return
+        self.status_lbl.setText(status)
+        if status in {"completed", "failed", "stopped"}:
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self._refresh_runs()
+
+    def _refresh_runs(self) -> None:
+        self.runs_combo.clear()
+        for run in self._svc.list_runs():
+            text = f"{run.run_id} [{run.status}]"
+            self.runs_combo.addItem(text, run.run_id)
+
+    def _load_selected_run(self) -> None:
+        run_id = self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
+        if not run_id:
+            return
+        run = self._svc.status(str(run_id))
+        if not run:
+            return
+        self._active_run_id = run.run_id
+        self.status_lbl.setText(run.status)
+        self.console.setPlainText(json.dumps(run.config, indent=2))
+        if run.last_metrics:
+            self._on_metrics(run.run_id, run.last_metrics)
+
+    def _refresh_checkpoints(self) -> None:
+        self.resume_ckpt.clear()
+        self.resume_ckpt.addItem("(none)")
+        out = Path(self.output_dir.text().strip() or "./ena-training-runs").expanduser()
+        if not out.exists():
+            return
+        for p in sorted(out.rglob("*.ckpt*")):
+            self.resume_ckpt.addItem(str(p.name), str(p))
+
+    def _restore_last(self) -> None:
+        cfg = self._svc.last_config()
+        self.run_name.setText(cfg.run_name)
+        self.dataset_path.setText(cfg.dataset_path)
+        self.dataset_id.setText(cfg.dataset_id or "")
+        self.base_model.setText(cfg.base_model)
+        self.output_dir.setText(cfg.output_dir)
+        self.iterations.setValue(int(cfg.iterations or 0))
+        self.epochs.setValue(float(cfg.epochs or 0))
+        self.batch_size.setValue(cfg.batch_size)
+        self.learning_rate.setValue(cfg.learning_rate)
+        self.optimizer.setCurrentText(cfg.optimizer)
+        self.eval_interval.setValue(cfg.eval_interval_steps)
+        self.ckpt_interval.setValue(cfg.checkpoint_interval_steps)
+        self.max_runtime.setValue(int(cfg.max_runtime_minutes or 0))
+        self.early_stop.setValue(int(cfg.early_stop_patience or 0))
+        self.device.setCurrentText(cfg.device)
+        self.gpu_id.setValue(cfg.gpu_id if cfg.gpu_id is not None else -1)
+        self.workers.setValue(int(cfg.num_workers or 0))
+        self.threads.setValue(int(cfg.threads or 0))
+        self.grad_accum.setValue(int(cfg.gradient_accumulation_steps or 0))
+        self.seed.setValue(int(cfg.seed or 0))
+        self.precision.setCurrentText(cfg.precision)
+        self.lora_enabled.setChecked(cfg.lora_enabled)
+        self.lora_rank.setValue(int(cfg.lora_rank or 0))
+        self.submit_aicf.setChecked(cfg.submit_to_aicf)
+        self.budget_anm.setText(cfg.budget_anm)
+        self._refresh_checkpoints()

@@ -10,6 +10,7 @@ from animica_studio.storage.config import Config
 class EnaDashboardPage(QWidget):
     def __init__(self, config: Config, service: EnaService | None = None, parent=None) -> None:
         super().__init__(parent)
+        self._config = config
         self.service = service or EnaService(config, EnaStore())
         self._status = QLabel()
         root = QVBoxLayout(self)
@@ -44,7 +45,7 @@ class EnaDashboardPage(QWidget):
     def _open_train(self) -> None:
         from animica_studio.ui.pages.train_page import TrainPage
 
-        TrainPage(self.service, self).show()
+        TrainPage(self._config, self).show()
 
     def _open_publish(self) -> None:
         from animica_studio.ui.pages.publish_page import PublishPage
