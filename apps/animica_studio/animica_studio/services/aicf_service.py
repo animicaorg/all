@@ -19,6 +19,7 @@ from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.cli_runner import CliRunner
 from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
+from animica_studio.services.profile_helpers import get_active_rpc_url
 from animica_studio.services.rpc_client import RpcClient, RpcResponseError
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
@@ -52,7 +53,7 @@ class AicfService:
     _CREDITS_METHODS = ("aicf.creditsByAddress", "aicf.credits_by_address", "aicf_creditsByAddress")
 
     def _rpc_url(self, override: str | None = None) -> str:
-        raw = override or self._config.get_active_profile().node.rpc_local_url
+        raw = override or get_active_rpc_url(self._config) or self._config.get_active_profile().node.rpc_local_url
         return _ensure_rpc_path(raw)
 
     def _client(self, override: str | None = None) -> RpcClient:
@@ -323,11 +324,13 @@ class AicfService:
             params: dict = {"limit": limit, "offset": offset}
             if status_filter:
                 params["status"] = status_filter
+            log.info("AICF list_jobs rpc_url=%s payload=%s", self._rpc_url(rpc_url), params)
             last_exc: Exception | None = None
             for method, rpc_params in (
                 ("aicf.listJobs", [params]),
-                ("da.list", [params]),
-                ("da.list", params),
+                ("aicf_listJobs", [params]),
+                ("aicf.listJobs", params),
+                ("aicf_listJobs", params),
             ):
                 try:
                     result = client.call(method, rpc_params)
