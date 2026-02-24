@@ -1,0 +1,14 @@
+{
+  "id": "role_based_access",
+  "name": "Role-Based Access Control",
+  "category": "Security Patterns",
+  "description": "RBAC module — grant/revoke named roles to addresses. Use role guards in any method.",
+  "tags": ["security", "rbac", "roles", "access-control", "permissions"],
+  "language": "python",
+  "default_filename": "rbac.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "AccessControl", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

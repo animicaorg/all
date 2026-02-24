@@ -1,0 +1,60 @@
+"""{{NAME}} — Vesting wallet contract.
+
+Releases {{TOTAL_SUPPLY}} {{SYMBOL}} linearly to {{BENEFICIARY}}
+after a cliff of {{CLIFF_BLOCKS}} blocks over {{DURATION_BLOCKS}} blocks.
+"""
+
+STORAGE_SCHEMA = {
+    "beneficiary": "address",
+    "total": "int",
+    "released": "int",
+    "start_block": "int",
+    "cliff_blocks": "int",
+    "duration_blocks": "int",
+    "token_symbol": "str",
+}
+
+
+def init(ctx):
+    """Deploy vesting schedule."""
+    ctx.storage["beneficiary"] = "{{BENEFICIARY}}"
+    ctx.storage["total"] = int("{{TOTAL_SUPPLY}}")
+    ctx.storage["released"] = 0
+    ctx.storage["start_block"] = ctx.block_height
+    ctx.storage["cliff_blocks"] = int("{{CLIFF_BLOCKS}}")
+    ctx.storage["duration_blocks"] = int("{{DURATION_BLOCKS}}")
+    ctx.storage["token_symbol"] = "{{SYMBOL}}"
+
+
+def vested(ctx, block_height: int) -> int:
+    """Compute total vested amount at given block_height."""
+    start = ctx.storage.get("start_block", 0)
+    cliff = ctx.storage.get("cliff_blocks", 0)
+    duration = ctx.storage.get("duration_blocks", 1)
+    total = ctx.storage.get("total", 0)
+
+    elapsed = block_height - start
+    if elapsed < cliff:
+        return 0
+    if elapsed >= duration:
+        return total
+    return (total * elapsed) // duration
+
+
+def releasable(ctx) -> int:
+    """Return how many tokens can be released right now."""
+    total_vested = vested(ctx, ctx.block_height)
+    already_released = ctx.storage.get("released", 0)
+    return max(0, total_vested - already_released)
+
+
+def release(ctx) -> int:
+    """Release vested tokens to the beneficiary."""
+    if ctx.caller != ctx.storage.get("beneficiary"):
+        raise PermissionError("only beneficiary can release")
+    amount = releasable(ctx)
+    if amount <= 0:
+        raise RuntimeError("no tokens releasable yet")
+    ctx.storage["released"] = ctx.storage.get("released", 0) + amount
+    ctx.emit("TokensReleased", {"amount": amount})
+    return amount
