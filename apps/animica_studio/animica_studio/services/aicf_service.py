@@ -221,8 +221,8 @@ class AicfService:
         client = self._client(rpc_url)
         try:
             # Ordered list of methods to try; positional calls avoid schema discovery overhead.
-            candidate_methods = [
-                *self._CREDITS_METHODS,
+            # _CREDITS_METHODS takes priority; remaining candidates are supplemental aliases.
+            _extra = [
                 "state_getAicfMinerCredits",
                 "state.getAicfMinerCredits",
                 "mining_getCredits",
@@ -232,6 +232,12 @@ class AicfService:
                 "aicf.getClaimable",
                 "aicf_getClaimable",
             ]
+            seen: set[str] = set()
+            candidate_methods: list[str] = []
+            for m in (*self._CREDITS_METHODS, *_extra):
+                if m not in seen:
+                    seen.add(m)
+                    candidate_methods.append(m)
             # Pre-cache all candidates so call() won't trigger implicit discover calls.
             for _m in candidate_methods:
                 client.precache_method(_m)
@@ -410,8 +416,13 @@ class AicfService:
                     # Fall back to hard-coded default (no second discover call).
                     resolved_method = self._LIST_JOBS_METHODS[0]
 
-            # Build ordered candidate list: resolved method first, then remaining defaults.
-            candidates: list[str] = [resolved_method] + [m for m in self._LIST_JOBS_METHODS if m != resolved_method]
+            # Build deduplicated ordered candidate list: resolved method first, then remaining defaults.
+            _seen_c: set[str] = set()
+            candidates: list[str] = []
+            for _m in (resolved_method, *self._LIST_JOBS_METHODS):
+                if _m not in _seen_c:
+                    _seen_c.add(_m)
+                    candidates.append(_m)
             positional: list = [limit, offset]
             if status_filter:
                 positional.append(status_filter)
