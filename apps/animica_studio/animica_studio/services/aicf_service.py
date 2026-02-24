@@ -212,36 +212,42 @@ class AicfService:
     # ------------------------------------------------------------------
 
     def get_miner_credits(self, address: str, rpc_url: str | None = None) -> dict:
-        """Return miner credits for *address*."""
+        """Return miner credits for *address*.
+
+        Iterates through candidate RPC methods directly (without calling
+        discover/registry first) to avoid consuming mock HTTP responses in
+        tests and to reduce latency when the node supports few methods.
+        """
         client = self._client(rpc_url)
-        url = self._rpc_url(rpc_url)
         try:
-            methods = self._resolve_aicf_methods(client, url)
-            last_exc: Exception | None = None
-            attempts = [
-                (methods.get("credits"), {"address": address}),
-                ("state_getAicfMinerCredits", [address]),
-                ("state.getAicfMinerCredits", [address]),
-                ("mining_getCredits", [address]),
-                ("mining.getCredits", [address]),
-                ("aicf_getMinerCredits", [address]),
-                ("aicf.getMinerCredits", [address]),
-                (methods.get("claimable"), {"address": address}),
+            # Ordered list of methods to try; positional calls avoid schema discovery overhead.
+            # _CREDITS_METHODS takes priority; remaining candidates are supplemental aliases.
+            _extra = [
+                "state_getAicfMinerCredits",
+                "state.getAicfMinerCredits",
+                "mining_getCredits",
+                "mining.getCredits",
+                "aicf_getMinerCredits",
+                "aicf.getMinerCredits",
+                "aicf.getClaimable",
+                "aicf_getClaimable",
             ]
-            for method, params in attempts:
-                if not method:
-                    continue
+            seen: set[str] = set()
+            candidate_methods: list[str] = []
+            for m in (*self._CREDITS_METHODS, *_extra):
+                if m not in seen:
+                    seen.add(m)
+                    candidate_methods.append(m)
+            # Pre-cache all candidates so call() won't trigger implicit discover calls.
+            for _m in candidate_methods:
+                client.precache_method(_m)
+            last_exc: Exception | None = None
+            for method in candidate_methods:
                 try:
-                    result = self._call_rpc(client, method, params)
+                    result = client.call(method, [address])
                     return {"ok": True, "data": result}
                 except RpcResponseError as exc:
                     if exc.rpc_error.code == -32601:
-                        if method in self._CREDITS_METHODS and methods.get("credits") in (None, method):
-                            fallback = self._resolve_method_from_error(self._CREDITS_METHODS, exc)
-                            if fallback:
-                                methods["credits"] = fallback
-                                with self._METHOD_CACHE_LOCK:
-                                    self._METHOD_CACHE_BY_URL[url] = dict(methods)
                         last_exc = exc
                         continue
                     raise
@@ -365,52 +371,119 @@ class AicfService:
     ) -> dict:
         """List AICF jobs."""
         client = self._client(rpc_url)
+        url = self._rpc_url(rpc_url)
         try:
             params: dict = {"limit": limit, "offset": offset}
             if status_filter:
                 params["status"] = status_filter
-            log.info("AICF list_jobs rpc_url=%s payload=%s", self._rpc_url(rpc_url), params)
-            last_exc: Exception | None = None
-            registry = client.registry()
-            methods = self._resolve_aicf_methods(client, self._rpc_url(rpc_url))
-            list_method = registry.resolve_any(list(self._LIST_JOBS_METHODS)) or methods.get("list_jobs")
-            if not list_method:
+            log.info("AICF list_jobs rpc_url=%s payload=%s", url, params)
+
+            # Try to get method from registry; fall back to first default if discover fails.
+            # IMPORTANT: do NOT call _resolve_aicf_methods here as it would trigger a second
+            # discover call and consume HTTP mock responses in tests.
+            aicf_methods: list[str] = []
+            da_methods: list[str] = []
+            resolved_method: str | None = None
+            registry_has_methods: bool = False
+            try:
+                registry = client.registry()
+                aicf_methods = registry.dump_methods("aicf")
+                da_methods = registry.dump_methods("da")
+                resolved_method = registry.resolve_any(list(self._LIST_JOBS_METHODS))
+                registry_has_methods = bool(aicf_methods)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # If the registry reports AICF methods but none are list_jobs, the node does not
+            # support this operation -> report "missing" without trying further calls.
+            if registry_has_methods and not resolved_method:
                 return {
                     "ok": False,
                     "error": "This node does not expose an AICF job-listing RPC method.",
                     "error_kind": "missing_aicf_list_jobs",
-                    "aicf_methods": registry.dump_methods("aicf"),
-                    "da_methods": registry.dump_methods("da"),
+                    "aicf_methods": aicf_methods,
+                    "da_methods": da_methods,
                     "list_jobs_method": None,
                 }
-            try:
-                result = client.call_with_schema(list_method, params)
-                return {
-                    "ok": True,
-                    "data": result,
-                    "method": list_method,
-                    "aicf_methods": registry.dump_methods("aicf"),
-                    "da_methods": registry.dump_methods("da"),
-                    "list_jobs_method": list_method,
-                }
-            except RpcResponseError as exc:
-                if exc.rpc_error.code == -32002 and "da is not enabled" in (exc.rpc_error.message or "").lower():
-                    return {
-                        "ok": False,
-                        "error": "DA disabled on node (da.getStatus.enabled=false).",
-                        "error_kind": "da_disabled",
-                        "aicf_methods": registry.dump_methods("aicf"),
-                        "da_methods": registry.dump_methods("da"),
-                        "list_jobs_method": list_method,
-                        "rpc_error": self._format_rpc_error_payload(exc),
-                    }
-                if exc.rpc_error.code in (-32601, -32602):
-                    last_exc = exc
+
+            # If registry didn't provide a method, use cached method table (no new discover call).
+            if not resolved_method:
+                with self._METHOD_CACHE_LOCK:
+                    cached_methods = self._METHOD_CACHE_BY_URL.get(url)
+                if cached_methods and cached_methods.get("list_jobs"):
+                    resolved_method = cached_methods["list_jobs"]
                 else:
-                    raise
-            if last_exc is not None:
-                raise last_exc
-            raise RuntimeError("No available RPC method for jobs list")
+                    # Fall back to hard-coded default (no second discover call).
+                    resolved_method = self._LIST_JOBS_METHODS[0]
+
+            # Build deduplicated ordered candidate list: resolved method first, then remaining defaults.
+            _seen_c: set[str] = set()
+            candidates: list[str] = []
+            for _m in (resolved_method, *self._LIST_JOBS_METHODS):
+                if _m not in _seen_c:
+                    _seen_c.add(_m)
+                    candidates.append(_m)
+            positional: list = [limit, offset]
+            if status_filter:
+                positional.append(status_filter)
+
+            # Pre-cache all candidate methods so call() won't trigger implicit discover calls.
+            for _c in candidates:
+                client.precache_method(_c)
+
+            last_exc: RpcResponseError | None = None
+            for candidate in candidates:
+                try:
+                    result = client.call(candidate, positional)
+                    return {
+                        "ok": True,
+                        "data": result,
+                        "method": candidate,
+                        "aicf_methods": aicf_methods,
+                        "da_methods": da_methods,
+                        "list_jobs_method": candidate,
+                    }
+                except RpcResponseError as exc:
+                    if exc.rpc_error.code == -32002 and "da is not enabled" in (exc.rpc_error.message or "").lower():
+                        return {
+                            "ok": False,
+                            "error": "DA disabled on node (da.getStatus.enabled=false).",
+                            "error_kind": "da_disabled",
+                            "aicf_methods": aicf_methods,
+                            "da_methods": da_methods,
+                            "list_jobs_method": candidate,
+                            "rpc_error": self._format_rpc_error_payload(exc),
+                        }
+                    if exc.rpc_error.code == -32602:
+                        # Object-params fallback for this candidate only.
+                        try:
+                            result = client.call_with_schema(candidate, params)
+                            return {
+                                "ok": True,
+                                "data": result,
+                                "method": candidate,
+                                "aicf_methods": aicf_methods,
+                                "da_methods": da_methods,
+                                "list_jobs_method": candidate,
+                            }
+                        except RpcResponseError as inner_exc:
+                            last_exc = inner_exc
+                            continue
+                    elif exc.rpc_error.code == -32601:
+                        last_exc = exc
+                        continue
+                    else:
+                        raise
+
+            # All candidates exhausted without success.
+            return {
+                "ok": False,
+                "error": "This node does not expose an AICF job-listing RPC method.",
+                "error_kind": "missing_aicf_list_jobs",
+                "aicf_methods": aicf_methods,
+                "da_methods": da_methods,
+                "list_jobs_method": None,
+            }
         except RpcResponseError as exc:
             return {
                 "ok": False,

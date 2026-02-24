@@ -486,19 +486,13 @@ class DaPage(QWidget):
 
     def _on_contrib_open_folder(self) -> None:
         try:
-            import subprocess  # noqa: PLC0415
-            import sys as _sys  # noqa: PLC0415
+            from PySide6.QtCore import QUrl  # noqa: PLC0415
+            from PySide6.QtGui import QDesktopServices  # noqa: PLC0415
             path = self._contrib_host_dir_edit.text().strip() or os.path.expanduser("~/animica-da")
             if not os.path.isdir(path):
                 self._contrib_error_label.setText(f"Directory does not exist: {path}")
                 return
-            if os.name == "nt":
-                # Windows: os.startfile is only available on Windows
-                getattr(os, "startfile")(path)
-            elif _sys.platform == "darwin":
-                subprocess.Popen(["open", path])
-            else:
-                subprocess.Popen(["xdg-open", path])
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         except Exception as exc:  # noqa: BLE001
             log.exception("Open folder failed: %s", exc)
 

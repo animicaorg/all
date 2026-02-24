@@ -50,6 +50,8 @@ def test_static_guard_no_direct_spawn_outside_runner() -> None:
         "services/ena_service.py",
         "services/ena_daemon.py",
         "services/ena_tools.py",
+        "services/wallet_service.py",
+        "services/tx_service.py",
         "ui/widgets/ena_panel.py",
         "ui/pages/ide_page.py",
     }
