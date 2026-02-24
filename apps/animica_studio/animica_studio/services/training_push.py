@@ -97,7 +97,8 @@ class TrainingPushService:
                 tx_blob = client.call(register, [payload])
             else:
                 tx_blob = "0x"
-            tx_hash = client.call_operation("SEND_RAW_TX", [tx_blob])
+            send_raw_tx = self._pick(methods, "tx_sendRawTransaction", "tx.sendRawTransaction", "tx_submitRawTransaction") or "tx_sendRawTransaction"
+            tx_hash = client.call(send_raw_tx, [tx_blob])
             return {"tx_hash": tx_hash, "register_method": register or "none", "payload": payload}
         finally:
             client.close()
@@ -127,7 +128,8 @@ class TrainingPushService:
 
     def _try_da_put(self, client: RpcClient, payload: dict[str, Any]) -> str:
         try:
-            out = client.call_operation("DA_PUT_BLOB", [payload])
+            method = "da_putBlob"
+            out = client.call(method, [payload])
             return str(out)
         except Exception:
             return "local://export-only"

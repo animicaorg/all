@@ -233,6 +233,17 @@ class RpcClient:
     # Low-level call
     # ------------------------------------------------------------------
 
+    def precache_method(self, method: str) -> None:
+        """Pre-populate ``_resolved_methods`` so that :meth:`call` skips discovery.
+
+        Use this when the method name is known and a discover call should not
+        be made (e.g. in retry loops where each iteration must not consume an
+        extra HTTP mock response).
+        """
+        cache_key = RpcRegistry.normalize(method)
+        if cache_key not in self._resolved_methods:
+            self._resolved_methods[cache_key] = method
+
     def call(
         self,
         method: str,
@@ -257,7 +268,8 @@ class RpcClient:
         else:
             cache_key = RpcRegistry.normalize(method)
             resolved_method = self._resolved_methods.get(cache_key, method)
-            if resolved_method == method:
+            if cache_key not in self._resolved_methods:
+                # Not pre-cached: attempt registry-based normalization.
                 try:
                     registry = self.registry()
                     if not registry.has_method(method):
