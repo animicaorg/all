@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from animica_studio.services.error_format import safe_str
-from animica_studio.services.job_runner import run_cli_blocking
+from animica_studio.services.job_runner import resolve_animica_cli_program_and_env, run_cli_blocking
 from animica_studio.storage.config import Config
 
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
@@ -81,7 +83,7 @@ class TxService:
         chain_id: int,
     ) -> TxServiceResult:
         start = time.time()
-        cmd = [
+        sub_args = [
             "tx",
             "send",
             "--from",
@@ -95,9 +97,22 @@ class TxService:
             "--chain-id",
             str(chain_id),
         ]
+        cmd = sub_args  # kept for result reporting
 
         try:
-            res = run_cli_blocking(cmd, timeout_s=self._timeout_s, config=self._config)
+            program, base_args, env = resolve_animica_cli_program_and_env(self._config)
+            argv = [program, *base_args, *sub_args]
+            merged_env = dict(os.environ)
+            merged_env.update(env)
+            res = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_s,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=merged_env,
+            )
         except TimeoutError as exc:
             return TxServiceResult(ok=False, error=f"Send timed out after {self._timeout_s}s", details=safe_str(exc), command=cmd)
         except Exception as exc:  # noqa: BLE001

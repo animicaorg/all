@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import json
+import subprocess
 import time
 import uuid
 import os
@@ -32,7 +33,7 @@ from animica_studio.models.wallet_models import (
 from animica_studio.services.cli_capabilities import get_cli_ops
 from animica_studio.services.cli_ops import CliOperation
 from animica_studio.services.error_format import format_rpc_error, safe_str
-from animica_studio.services.job_runner import JobHandle, JobRunner, run_cli_blocking
+from animica_studio.services.job_runner import JobHandle, JobRunner, resolve_animica_cli_program_and_env, run_cli_blocking
 from animica_studio.services.signer_service import SignerService, SigningNotAvailableError
 from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.explorer_style_rpc import ExplorerStyleRpcClient
@@ -294,32 +295,73 @@ class WalletService:
         self._balances[address] = state
 
     def fetch_balance(self, address: str, rpc_url: str, profile: RpcProfile | None = None) -> BalanceState:
-        """Fetch balance for a single *address* using Explorer2-parity RPC calls."""
-        effective_profile = profile or RpcProfile.make_default_remote()
-        effective_rpc_url = rpc_url or effective_profile.effective_rpc_url()
-        result = self._balance_rpc_client.get_balance(address, effective_rpc_url)
-        state = BalanceState(
-            address=address,
-            balance_wei=result.raw_nanm,
-            formatted=result.formatted_anm,
-            updated_ts=result.updated_ts or time.time(),
-            error=result.error,
-            source=None if result.error else BalanceSource.RPC,
-            is_stale=result.from_cache,
-            tooltip=result.tooltip,
-        )
-        # Explorer2 parity helper log line for quick manual verification.
-        explorer2_expected = result.raw_nanm
-        diff = result.raw_nanm - explorer2_expected
-        log.info(
-            "Balance parity: addr=%s studio=%s explorer2=%s diff=%s",
-            address,
-            result.raw_nanm,
-            explorer2_expected,
-            diff,
-        )
-        self._balances[address] = state
-        return state
+        """Fetch balance for a single *address*.
+
+        Strategy:
+        1. Try ``animica wallet show <address>`` CLI and parse balance from output.
+        2. On CLI failure, fall back to RPC ``get_balance`` call.
+        3. On both failures, return an error state with balance_wei=0.
+        """
+        # -- CLI attempt --------------------------------------------------
+        try:
+            program, base_args, env = resolve_animica_cli_program_and_env(self._config)
+            cmd = [program, *base_args, "wallet", "show", address]
+            merged_env = dict(os.environ)
+            merged_env.update(env)
+            cli_result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=merged_env,
+            )
+            if cli_result.returncode == 0:
+                raw_wei, formatted = self._parse_wallet_show_balance(cli_result.stdout or cli_result.stderr)
+                state = BalanceState(
+                    address=address,
+                    balance_wei=raw_wei,
+                    formatted=formatted,
+                    updated_ts=time.time(),
+                    error=None,
+                    source=BalanceSource.CLI,
+                )
+                self._balances[address] = state
+                return state
+            # CLI returned non-zero — fall through to RPC
+            log.debug("WalletService: wallet show returned code=%s; trying RPC fallback", cli_result.returncode)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("WalletService: wallet show CLI error: %s; trying RPC fallback", exc)
+
+        # -- RPC fallback --------------------------------------------------
+        from animica_studio.services.rpc_client import RpcClient  # noqa: PLC0415
+        effective_rpc_url = rpc_url or (profile or RpcProfile.make_default_remote()).effective_rpc_url()
+        try:
+            with RpcClient(effective_rpc_url) as c:
+                raw_wei = c.get_balance(address)
+            formatted = format_amount(raw_wei, self._decimals())
+            state = BalanceState(
+                address=address,
+                balance_wei=raw_wei,
+                formatted=formatted,
+                updated_ts=time.time(),
+                error=None,
+                source=BalanceSource.RPC,
+            )
+            self._balances[address] = state
+            return state
+        except Exception as exc:  # noqa: BLE001
+            err_msg = safe_str(exc)
+            log.debug("WalletService: RPC balance fallback failed for %s: %s", address, err_msg)
+            state = BalanceState(
+                address=address,
+                balance_wei=0,
+                formatted="Unavailable",
+                error=err_msg,
+            )
+            self._balances[address] = state
+            return state
 
     def _parse_wallet_show_balance(self, output: str) -> tuple[int, str]:
         """Extract raw + formatted balance from ``animica wallet show`` output."""
@@ -390,46 +432,32 @@ class WalletService:
         cancel: CancelToken | None = None,
         profile: RpcProfile | None = None,
     ) -> dict[str, BalanceState]:
-        """Fetch balances for all accounts concurrently.
+        """Fetch balances for all accounts.
 
-        Parameters
-        ----------
-        rpc_url:
-            The RPC endpoint URL.
-        cancel:
-            Optional cancellation token.  If cancelled mid-flight, returns
-            whatever partial results have been collected.
+        Each account is fetched via :meth:`fetch_balance` so errors for one
+        account do not propagate to others.
 
         Returns a mapping of ``address → BalanceState``.
         """
         accounts = self.list_accounts()
         results: dict[str, BalanceState] = {}
 
-        if not accounts:
-            return results
-
-        effective_profile = profile or RpcProfile.make_default_remote()
-        effective_rpc_url = rpc_url or effective_profile.effective_rpc_url()
-        balance_map = self._balance_rpc_client.get_balances([acc.address for acc in accounts], effective_rpc_url)
         for acc in accounts:
             if cancel and cancel.is_cancelled:
                 log.debug("WalletService: refresh_all_balances cancelled")
                 break
-            result = balance_map.get(acc.address)
-            if result is None:
-                results[acc.address] = BalanceState(address=acc.address, formatted="—", error="RPC error: missing response")
-                continue
-            state = BalanceState(
-                address=acc.address,
-                balance_wei=result.raw_nanm,
-                formatted=result.formatted_anm,
-                updated_ts=result.updated_ts or time.time(),
-                error=result.error,
-                source=None if result.error else BalanceSource.RPC,
-                is_stale=result.from_cache,
-                tooltip=result.tooltip,
-            )
-            self._balances[acc.address] = state
+            try:
+                state = self.fetch_balance(acc.address, rpc_url, profile)
+            except Exception as exc:  # noqa: BLE001
+                err_msg = safe_str(exc)
+                log.warning("WalletService: balance fetch failed for %s: %s", acc.address, err_msg)
+                state = BalanceState(
+                    address=acc.address,
+                    balance_wei=0,
+                    formatted="Unavailable",
+                    error=err_msg,
+                )
+                self._balances[acc.address] = state
             results[acc.address] = state
 
         return results
@@ -505,7 +533,8 @@ class WalletService:
         try:
             # Keep the send invocation aligned with the expected wallet UX flow:
             # clicking "Send" should fire the same CLI command users run manually.
-            cmd = [
+            program, base_args, env = resolve_animica_cli_program_and_env(self._config)
+            sub_args = [
                 "tx",
                 "send",
                 "--from",
@@ -515,7 +544,18 @@ class WalletService:
                 "--value",
                 amount_arg,
             ]
-            result = run_cli_blocking(cmd, timeout_s=20, config=self._config)
+            argv = [program, *base_args, *sub_args]
+            merged_env = dict(os.environ)
+            merged_env.update(env)
+            result = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=merged_env,
+            )
             if result.returncode != 0:
                 details = (result.stderr or result.stdout or "Unknown CLI error").strip()
                 raise RuntimeError(details)
