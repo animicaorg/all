@@ -1,0 +1,14 @@
+{
+  "id": "payment_splitter",
+  "name": "Payment Splitter",
+  "category": "Utility / Infra",
+  "description": "Split incoming payments deterministically among multiple payees with configurable shares.",
+  "tags": ["utility", "payment", "split", "shares", "revenue"],
+  "language": "python",
+  "default_filename": "payment_splitter.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "PaymentSplitter", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

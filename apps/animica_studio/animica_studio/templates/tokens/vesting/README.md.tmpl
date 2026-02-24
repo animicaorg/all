@@ -1,0 +1,34 @@
+# {{NAME}} — Vesting Wallet
+
+A vesting contract that releases tokens linearly to a beneficiary after a cliff period.
+
+## Parameters
+
+| Parameter | Description |
+|---|---|
+| `NAME` | Contract display name |
+| `SYMBOL` | Token symbol |
+| `TOTAL_SUPPLY` | Total tokens to vest |
+| `BENEFICIARY` | Beneficiary address |
+| `CLIFF_BLOCKS` | Cliff in blocks before any release |
+| `DURATION_BLOCKS` | Total vesting duration in blocks |
+
+## How it works
+
+- After `cliff_blocks` from deploy, tokens start vesting linearly.
+- After `duration_blocks`, all tokens are fully vested.
+- The beneficiary calls `release()` to claim available tokens.
+- `releasable()` shows how much is currently available.
+
+## Deploy
+
+```bash
+python -m vm_py.cli.compile --manifest manifest.json --out build/
+python -m omni_sdk.cli.deploy --manifest manifest.json --rpc <RPC_URL>
+```
+
+## Simulate
+
+```bash
+python -m vm_py.cli.run --manifest manifest.json --call releasable
+```
