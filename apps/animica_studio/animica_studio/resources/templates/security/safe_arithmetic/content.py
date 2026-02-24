@@ -23,7 +23,10 @@ UINT256_MAX = (1 << 256) - 1
 INT64_MIN = -(1 << 63)
 INT64_MAX =  (1 << 63) - 1
 
-# One unit of fixed-point (1e6 == 6 decimal places)
+# One unit of fixed-point.  Adjust FIXED_POINT_SCALE to change precision:
+#   1_000_000  → 6 decimal places  (e.g. 1.500000 stored as 1_500_000)
+#   1_000      → 3 decimal places
+#   10**18     → 18 decimal places (wei-style)
 FIXED_POINT_SCALE = 1_000_000
 
 

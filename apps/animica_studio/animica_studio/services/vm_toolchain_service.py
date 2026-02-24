@@ -61,7 +61,7 @@ _BANNED_IMPORTS: frozenset[str] = frozenset(
         "multiprocessing",
         "asyncio",
         "subprocess",
-        "hashlib",  # allowed below, listed here for custom review
+        "hashlib",  # listed for awareness; not in ALWAYS_BANNED (deterministic hashing is allowed)
         "uuid",
         "secrets",
     }
@@ -822,7 +822,12 @@ class VmToolchainService:
         return None
 
     @staticmethod
-    def _find_entry_file(root: Path) -> Path | None:
+    def find_entry_file(root: Path) -> Path | None:
+        """Return the primary contract entry file within *root*.
+
+        Checks for ``contract.py``, ``main.py``, ``index.py`` in order;
+        falls back to the first ``*.py`` file found.
+        """
         for name in ("contract.py", "main.py", "index.py"):
             p = root / name
             if p.exists():
@@ -831,6 +836,9 @@ class VmToolchainService:
         for p in sorted(root.glob("*.py")):
             return p
         return None
+
+    # Keep private alias for internal use during transition
+    _find_entry_file = find_entry_file  # type: ignore[assignment]
 
     @staticmethod
     def _parse_cli_diagnostics(output: str, default_file: str) -> list[DiagnosticEntry]:
