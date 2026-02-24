@@ -164,6 +164,7 @@ class Account:
 class BalanceSource(str, Enum):
     RPC = "rpc"
     EXPLORER = "explorer"
+    CLI = "cli"
 
 @dataclass
 class BalanceState:

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-import platform
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,17 +82,8 @@ class DaDirUsageService:
         return snap
 
     def _try_du_fast_path(self, path: Path) -> int | None:
-        if shutil.which("du") is None:
-            return None
-        system = platform.system().lower()
-        cmd = ["du", "-sb", str(path)] if system == "linux" else ["du", "-sk", str(path)]
-        try:
-            out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=5)
-            first = (out.stdout or "").strip().split()[0]
-            base = int(first)
-            return base if system == "linux" else base * 1024
-        except Exception:
-            return None
+        # Fast path disabled: rely on pure-Python scandir to avoid direct subprocess usage.
+        return None
 
     def _scan_with_scandir(self, root: Path, budget_seconds: float) -> tuple[int, str, bool]:
         total = 0
