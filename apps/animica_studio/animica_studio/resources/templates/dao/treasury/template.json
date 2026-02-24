@@ -1,0 +1,15 @@
+{
+  "id": "treasury",
+  "name": "Treasury with Approvals",
+  "category": "DAO / Governance",
+  "description": "DAO treasury contract — funds held on-chain, released only by multi-approver consensus.",
+  "tags": ["dao", "treasury", "multisig", "approvals", "funds"],
+  "language": "python",
+  "default_filename": "treasury.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "Treasury", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true},
+    {"key": "REQUIRED_APPROVALS", "label": "Required Approvals", "default": "2", "required": false, "validation_regex": "^[1-9][0-9]*$"}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

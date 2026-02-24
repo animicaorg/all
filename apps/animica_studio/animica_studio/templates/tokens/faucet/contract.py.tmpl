@@ -1,0 +1,64 @@
+"""{{NAME}} ({{SYMBOL}}) — Devnet faucet token.
+
+Anyone can claim {{DRIP_AMOUNT}} {{SYMBOL}} every {{COOLDOWN_BLOCKS}} blocks.
+Owner can top up the faucet or change the drip amount.
+
+WARNING: Intended for devnet/testing only — not suitable for mainnet.
+"""
+
+STORAGE_SCHEMA = {
+    "owner": "address",
+    "balances": "map(address, int)",
+    "last_claim": "map(address, int)",  # address -> block_height of last claim
+    "faucet_reserve": "int",
+    "drip_amount": "int",
+    "cooldown_blocks": "int",
+    "symbol": "str",
+    "total_minted": "int",
+}
+
+
+def init(ctx):
+    ctx.storage["owner"] = ctx.caller
+    ctx.storage["balances"] = {}
+    ctx.storage["last_claim"] = {}
+    ctx.storage["drip_amount"] = int("{{DRIP_AMOUNT}}")
+    ctx.storage["cooldown_blocks"] = int("{{COOLDOWN_BLOCKS}}")
+    ctx.storage["symbol"] = "{{SYMBOL}}"
+    reserve = int("{{TOTAL_SUPPLY}}")
+    ctx.storage["faucet_reserve"] = reserve
+    ctx.storage["total_minted"] = 0
+
+
+def claim(ctx) -> int:
+    """Claim drip_amount tokens from the faucet."""
+    last = (ctx.storage.get("last_claim") or {}).get(ctx.caller, 0)
+    cooldown = ctx.storage.get("cooldown_blocks", 1)
+    if ctx.block_height - last < cooldown:
+        next_block = last + cooldown
+        raise RuntimeError(f"cooldown not elapsed; claimable at block {next_block}")
+    drip = ctx.storage.get("drip_amount", 0)
+    reserve = ctx.storage.get("faucet_reserve", 0)
+    if reserve < drip:
+        raise RuntimeError("faucet reserve depleted")
+    balances = ctx.storage.get("balances") or {}
+    balances[ctx.caller] = balances.get(ctx.caller, 0) + drip
+    ctx.storage["balances"] = balances
+    ctx.storage["faucet_reserve"] = reserve - drip
+    ctx.storage["total_minted"] = ctx.storage.get("total_minted", 0) + drip
+    last_claim = ctx.storage.get("last_claim") or {}
+    last_claim[ctx.caller] = ctx.block_height
+    ctx.storage["last_claim"] = last_claim
+    ctx.emit("Claimed", {"to": ctx.caller, "amount": drip})
+    return drip
+
+
+def balance(ctx, addr: str) -> int:
+    balances = ctx.storage.get("balances") or {}
+    return balances.get(addr, 0)
+
+
+def next_claim_block(ctx, addr: str) -> int:
+    last = (ctx.storage.get("last_claim") or {}).get(addr, 0)
+    cooldown = ctx.storage.get("cooldown_blocks", 1)
+    return last + cooldown

@@ -1,0 +1,15 @@
+{
+  "id": "proposal_registry",
+  "name": "Proposal Registry (DAO)",
+  "category": "DAO / Governance",
+  "description": "On-chain governance proposal registry. Create proposals, vote yes/no, and execute when quorum is met.",
+  "tags": ["dao", "governance", "proposal", "voting"],
+  "language": "python",
+  "default_filename": "proposal_registry.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "ProposalRegistry", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true},
+    {"key": "QUORUM_PCT", "label": "Quorum Percentage (1-100)", "default": "51", "required": false, "validation_regex": "^([1-9][0-9]?|100)$"}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

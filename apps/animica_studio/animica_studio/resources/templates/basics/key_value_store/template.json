@@ -1,0 +1,14 @@
+{
+  "id": "key_value_store",
+  "name": "Key-Value Store",
+  "category": "Basics",
+  "description": "On-chain key-value store with get/set/delete. Demonstrates persistent storage patterns.",
+  "tags": ["basics", "storage", "key-value", "crud"],
+  "language": "python",
+  "default_filename": "key_value_store.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "KeyValueStore", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true, "validation_regex": ".{2,64}"}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

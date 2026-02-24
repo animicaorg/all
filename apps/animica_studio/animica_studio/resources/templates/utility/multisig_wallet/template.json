@@ -1,0 +1,15 @@
+{
+  "id": "multisig_wallet",
+  "name": "Multi-Sig Wallet Skeleton",
+  "category": "Utility / Infra",
+  "description": "M-of-N multi-signature wallet. N owners must approve a transaction before it can be executed.",
+  "tags": ["utility", "multisig", "wallet", "security", "m-of-n"],
+  "language": "python",
+  "default_filename": "multisig_wallet.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "MultiSigWallet", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true},
+    {"key": "REQUIRED_SIGS", "label": "Required Signatures (M)", "default": "2", "required": false, "validation_regex": "^[1-9][0-9]*$"}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

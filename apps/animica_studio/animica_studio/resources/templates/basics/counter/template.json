@@ -1,0 +1,15 @@
+{
+  "id": "counter",
+  "name": "Counter Contract",
+  "category": "Basics",
+  "description": "Deterministic counter with increment, decrement, and reset. Classic 'Hello World' of stateful contracts.",
+  "tags": ["basics", "state", "counter", "starter"],
+  "language": "python",
+  "default_filename": "counter.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "Counter", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$", "help_text": "PascalCase contract name."},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true, "validation_regex": ".{2,64}", "help_text": "Author name."},
+    {"key": "INITIAL_VALUE", "label": "Initial Counter Value", "default": "0", "required": false, "validation_regex": "^-?[0-9]+$", "help_text": "Starting integer value for the counter."}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

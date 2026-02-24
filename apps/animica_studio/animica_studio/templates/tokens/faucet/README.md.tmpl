@@ -1,0 +1,22 @@
+# {{NAME}} ({{SYMBOL}}) — Devnet Faucet Token
+
+A faucet token for testing. Anyone can claim tokens every `{{COOLDOWN_BLOCKS}}` blocks.
+
+> ⚠️ Intended for devnet/testing only.
+
+## Parameters
+
+| Parameter | Description |
+|---|---|
+| `NAME` | Token name |
+| `SYMBOL` | Token symbol |
+| `TOTAL_SUPPLY` | Faucet reserve supply |
+| `DRIP_AMOUNT` | Tokens per claim |
+| `COOLDOWN_BLOCKS` | Blocks to wait between claims |
+
+## Usage
+
+1. Deploy the contract
+2. Call `claim()` to receive tokens
+3. Call `balance(your_address)` to check your balance
+4. Call `next_claim_block(your_address)` to see when you can claim again
