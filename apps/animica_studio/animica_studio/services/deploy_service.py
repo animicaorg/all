@@ -215,7 +215,7 @@ class DeployService:
 
         # Step 2: Compile
         project_root = Path(request.project_path).resolve()
-        entry = self._vm._find_entry_file(project_root)  # noqa: SLF001
+        entry = self._vm.find_entry_file(project_root)
         if entry is None:
             return DeployResult(success=False, error="No contract entry file found")
 
