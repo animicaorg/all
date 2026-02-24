@@ -91,6 +91,35 @@ class TokenTemplateService:
                     TokenTemplateParam("OWNER", "Owner Address", default="owner"),
                 ),
             ),
+            "vesting": TokenTemplateDef(
+                id="vesting",
+                name="Vesting Wallet",
+                description="Linear vesting wallet — releases tokens to a beneficiary over a cliff+vesting schedule.",
+                folder="vesting",
+                main_file="contract.py",
+                params=(
+                    TokenTemplateParam("NAME", "Name", default="VestingWallet"),
+                    TokenTemplateParam("SYMBOL", "Symbol", default="VEST"),
+                    TokenTemplateParam("TOTAL_SUPPLY", "Total Tokens to Vest", default="1000000"),
+                    TokenTemplateParam("BENEFICIARY", "Beneficiary Address", default="beneficiary"),
+                    TokenTemplateParam("CLIFF_BLOCKS", "Cliff (blocks)", default="1000"),
+                    TokenTemplateParam("DURATION_BLOCKS", "Vesting Duration (blocks)", default="10000"),
+                ),
+            ),
+            "faucet": TokenTemplateDef(
+                id="faucet",
+                name="Faucet Token (Devnet)",
+                description="Devnet faucet — anyone can claim a drip amount per cooldown window. Not for mainnet.",
+                folder="faucet",
+                main_file="contract.py",
+                params=(
+                    TokenTemplateParam("NAME", "Name", default="Faucet Token"),
+                    TokenTemplateParam("SYMBOL", "Symbol", default="FAUCET"),
+                    TokenTemplateParam("TOTAL_SUPPLY", "Faucet Reserve", default="10000000"),
+                    TokenTemplateParam("DRIP_AMOUNT", "Drip Amount per Claim", default="100"),
+                    TokenTemplateParam("COOLDOWN_BLOCKS", "Cooldown (blocks)", default="10"),
+                ),
+            ),
         }
 
     def list_templates(self) -> list[TokenTemplateDef]:
@@ -172,9 +201,20 @@ class TokenTemplateService:
                 raise ValueError("Soulbound must be true or false")
             values["SOULBOUND"] = "true" if norm == "true" else "false"
 
-        for key in ("NAME", "OWNER"):
+        for key in ("NAME", "OWNER", "BENEFICIARY"):
             if key in values:
                 values[key] = self._sanitize_text(values[key])
+
+        for key in ("CLIFF_BLOCKS", "DURATION_BLOCKS", "DRIP_AMOUNT", "COOLDOWN_BLOCKS"):
+            val = values.get(key)
+            if val:
+                try:
+                    iv = int(val)
+                except ValueError:
+                    raise ValueError(f"{key} must be an integer")
+                if iv < 0:
+                    raise ValueError(f"{key} must be >= 0")
+
         return values
 
     def _sanitize_text(self, text: str) -> str:

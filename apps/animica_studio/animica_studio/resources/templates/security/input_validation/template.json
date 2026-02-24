@@ -1,0 +1,14 @@
+{
+  "id": "input_validation",
+  "name": "Input Validation Examples",
+  "category": "Security Patterns",
+  "description": "Comprehensive input validation patterns for VM contracts — range checks, address validation, string length limits, and safe type coercion.",
+  "tags": ["security", "validation", "input", "safety", "checks"],
+  "language": "python",
+  "default_filename": "input_validation.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "ValidatedContract", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

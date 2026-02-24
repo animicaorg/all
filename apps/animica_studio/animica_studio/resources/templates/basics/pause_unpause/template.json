@@ -1,0 +1,14 @@
+{
+  "id": "pause_unpause",
+  "name": "Pause / Unpause Pattern",
+  "category": "Basics",
+  "description": "Emergency pause/unpause mechanism for contract operations. Owner can halt all user-facing actions.",
+  "tags": ["basics", "pause", "emergency", "safety"],
+  "language": "python",
+  "default_filename": "pausable.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "Pausable", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

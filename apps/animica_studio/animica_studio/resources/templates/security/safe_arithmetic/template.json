@@ -1,0 +1,14 @@
+{
+  "id": "safe_arithmetic",
+  "name": "Safe Arithmetic / Bounds Checks",
+  "category": "Security Patterns",
+  "description": "Safe integer arithmetic helpers — overflow/underflow detection, safe division, fixed-point math for VM contracts.",
+  "tags": ["security", "arithmetic", "overflow", "safe-math", "fixed-point"],
+  "language": "python",
+  "default_filename": "safe_arithmetic.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "SafeMathExample", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

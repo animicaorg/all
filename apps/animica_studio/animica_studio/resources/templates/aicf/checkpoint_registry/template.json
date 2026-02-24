@@ -1,0 +1,14 @@
+{
+  "id": "checkpoint_registry",
+  "name": "Checkpoint Registry (AICF/ENA)",
+  "category": "AICF / ENA",
+  "description": "On-chain checkpoint registry for ENA model training runs. Links checkpoint IDs to DA URIs and model metadata.",
+  "tags": ["aicf", "ena", "checkpoint", "model", "training"],
+  "language": "python",
+  "default_filename": "checkpoint_registry.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "CheckpointRegistry", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ownership",
+  "name": "Ownership / Admin Actions",
+  "category": "Basics",
+  "description": "Ownable pattern — single owner with transfer and renounce. Use as a base for admin-gated contracts.",
+  "tags": ["basics", "ownership", "admin", "access-control"],
+  "language": "python",
+  "default_filename": "ownership.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "Ownable", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}

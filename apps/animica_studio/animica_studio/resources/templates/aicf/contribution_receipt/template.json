@@ -1,0 +1,14 @@
+{
+  "id": "contribution_receipt",
+  "name": "Contribution Receipt (AICF)",
+  "category": "AICF / ENA",
+  "description": "On-chain receipt registry for AICF compute contributions. Records proof hashes, contributor addresses, and settled amounts.",
+  "tags": ["aicf", "ena", "contribution", "receipt", "compute"],
+  "language": "python",
+  "default_filename": "contribution_receipt.py",
+  "placeholders": [
+    {"key": "CONTRACT_NAME", "label": "Contract Name", "default": "ContributionReceipt", "required": true, "validation_regex": "^[A-Za-z][A-Za-z0-9_]{1,40}$"},
+    {"key": "AUTHOR", "label": "Author", "default": "Animica Developer", "required": true}
+  ],
+  "post_create_actions": ["open_file", "set_cursor_marker"]
+}
