@@ -20,6 +20,10 @@ from animica_studio.util.paths import app_data_dir
 class FullAutoState(str, Enum):
     DISABLED = "disabled"
     STARTING = "starting"
+    BOOTSTRAPPING = "bootstrapping"
+    CONFIGURING_DA = "configuring_da"
+    CREATING_POINTER = "creating_pointer"
+    PUBLISHING_FIRST = "publishing_first"
     TRAINING = "training"
     EVALUATING = "evaluating"
     PUBLISHING = "publishing"
@@ -45,6 +49,8 @@ class FullAutoConfig:
     require_da_uploads: bool = False
     auto_fallback_on_remote_put_block: bool = True
     max_daily_training_minutes: int = 24 * 60
+    train_locally_when_da_disabled: bool = False
+    channel_pointer_commitment: str = ""
 
 
 @dataclass
@@ -108,6 +114,7 @@ class EnaFullAutoEngine(QObject):
         self._last_metrics = TrainingMetrics()
         self._storage = app_data_dir() / "ena_models"
         self._storage.mkdir(parents=True, exist_ok=True)
+        self._manual_action = ""
 
     def apply_config(self, cfg: FullAutoConfig, rpc_url: str) -> None:
         self.config = cfg
@@ -121,9 +128,6 @@ class EnaFullAutoEngine(QObject):
     def start(self) -> None:
         if not self.config.enabled:
             self._transition(FullAutoState.DISABLED, "Enable FULL AUTO first")
-            return
-        if not is_valid_address(self.config.payout_address):
-            self._transition(FullAutoState.ERROR, "Invalid payout address")
             return
         self._stop_requested = False
         self._paused = False
@@ -158,8 +162,14 @@ class EnaFullAutoEngine(QObject):
             "config": asdict(self.config),
             "last_metrics": asdict(self._last_metrics),
             "last_upload_step": self._last_upload_step,
+            "manual_action": self._manual_action,
         }
         return json.dumps(payload, indent=2)
+
+    def request_bootstrap_action(self, action: str) -> None:
+        self._manual_action = action.strip().lower()
+        if self.config.enabled and not self._paused and not self._stop_requested:
+            self._schedule(0)
 
     def _schedule(self, sec: int) -> None:
         self._timer.start(max(0, sec) * 1000)
@@ -178,7 +188,9 @@ class EnaFullAutoEngine(QObject):
             "last_sync_time": self._last_sync_time,
             "started_at": self._started_at,
             "storage": str(self._storage),
+            "manual_action": self._manual_action,
         }
+        self._manual_action = ""
         self._worker = WorkerThread(run_full_auto_cycle, work)
         self._worker.worker.result.connect(self._on_cycle)
         self._worker.worker.error.connect(self._on_cycle_error)
@@ -214,6 +226,8 @@ class EnaFullAutoEngine(QObject):
             self.progressUpdated.emit({"kind": "upload", **payload["upload"]})
         if "sync" in payload:
             self.progressUpdated.emit({"kind": "sync", **payload["sync"]})
+        if "bootstrap" in payload:
+            self.progressUpdated.emit({"kind": "bootstrap", **payload["bootstrap"]})
         if self.state == FullAutoState.ERROR:
             self._schedule(self._backoff_s)
             self._backoff_s = min(60, self._backoff_s * 2)
@@ -263,6 +277,25 @@ def _resolve_balance(out: Any) -> int:
 
 
 def run_full_auto_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(ctx.get("cfg") or {})
+    channel = str(cfg.get("model_channel") or "ena-main").strip() or "ena-main"
+    storage = Path(str(ctx.get("storage")))
+    channel_dir = storage / channel
+    run_root = storage / "runs" / channel
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    run_root.mkdir(parents=True, exist_ok=True)
+    pointer_path = channel_dir / "latest_pointer.json"
+    has_pointer = bool(_read_json(pointer_path))
+    manual_action = str(ctx.get("manual_action") or "").strip().lower()
+
+    if manual_action in {"configure_da", "publish_first", "create_pointer"}:
+        return _bootstrap_cycle(ctx, has_pointer)
+    if not has_pointer and channel:
+        return _bootstrap_cycle(ctx, has_pointer)
+    return _normal_cycle(ctx)
+
+
+def _normal_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(ctx.get("cfg") or {})
     logs: list[tuple[str, str]] = []
     storage = Path(str(ctx.get("storage")))
@@ -315,6 +348,21 @@ def run_full_auto_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
         out["state"] = upload.get("state", out["state"])
         out["detail"] = upload.get("detail", out["detail"])
         out["model_version"] = upload.get("model_version", out["model_version"])
+        if upload.get("ok"):
+            pointer = _create_channel_pointer(ctx, upload)
+            out["logs"].extend(pointer.get("logs", []))
+            if not pointer.get("ok"):
+                out["state"] = pointer.get("state", "error")
+                out["detail"] = pointer.get("detail", "CREATING_POINTER_FAILED")
+            else:
+                out["bootstrap"] = {
+                    "da_configured": True,
+                    "first_checkpoint_published": True,
+                    "channel_pointer_created": True,
+                    "local_only_training": False,
+                    "diagnostics": "normal publish pointer refresh",
+                    "pointer_commitment": str(pointer.get("pointer_commitment") or ""),
+                }
 
     due_sync_mins = int(cfg.get("sync_every_minutes") or 30)
     last_sync = float(ctx.get("last_sync_time") or 0)
@@ -331,91 +379,260 @@ def run_full_auto_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, loss: float) -> dict[str, Any]:
+def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
+    cfg = dict(ctx.get("cfg") or {})
+    logs: list[tuple[str, str]] = []
+    channel = str(cfg.get("model_channel") or "ena-main").strip() or "ena-main"
+    storage = Path(str(ctx.get("storage")))
+    run_root = storage / "runs" / channel
+    channel_dir = storage / channel
+    run_root.mkdir(parents=True, exist_ok=True)
+    channel_dir.mkdir(parents=True, exist_ok=True)
+
+    steps = int(ctx.get("steps") or 0)
+    out: dict[str, Any] = {
+        "state": "bootstrapping",
+        "detail": "BOOTSTRAPPING",
+        "logs": logs,
+        "steps": steps,
+        "last_upload_step": int(ctx.get("last_upload_step") or 0),
+        "last_upload_time": float(ctx.get("last_upload_time") or 0),
+        "last_sync_time": float(ctx.get("last_sync_time") or 0),
+        "model_version": f"step-{steps}" if steps else "-",
+        "bootstrap": {
+            "da_configured": False,
+            "first_checkpoint_published": False,
+            "channel_pointer_created": has_pointer,
+            "local_only_training": False,
+            "diagnostics": "",
+            "pointer_commitment": str(cfg.get("channel_pointer_commitment") or ""),
+        },
+    }
+    logs.append(("system", "Bootstrapping ENA channel: no remote pointer found; initializing…"))
+
+    if not is_valid_address(str(cfg.get("payout_address") or "")):
+        logs.append(("warning", "Payout address invalid; earnings tracker disabled, bootstrap continues."))
+
+    da = _ensure_da_ready(ctx)
+    out["logs"].extend(da.get("logs", []))
+    out["bootstrap"]["da_configured"] = bool(da.get("ok"))
+    out["bootstrap"]["diagnostics"] = str(da.get("diagnostics") or "")
+    if not da.get("ok"):
+        if bool(cfg.get("train_locally_when_da_disabled", False)):
+            out["state"] = "training"
+            out["detail"] = "LOCAL_ONLY_DA_DISABLED"
+            out["bootstrap"]["local_only_training"] = True
+            out["logs"].append(("warning", "Local-only training (no network publish). Configure DA to bootstrap network sync."))
+            return out
+        out["state"] = "error"
+        out["detail"] = "DA_NOT_CONFIGURED: click Configure DA Now"
+        out["logs"].append(("error", "DA not configured; click Configure DA Now"))
+        return out
+
+    checkpoint = _pick_best_checkpoint(run_root)
+    if checkpoint is None:
+        chunk_steps = _chunk_steps_for_intensity(str(cfg.get("intensity") or "medium"))
+        steps += chunk_steps
+        loss = round(max(0.0001, 5.0 / (steps + 100)), 6)
+        checkpoint = run_root / f"step-{steps}.ckpt.json"
+        checkpoint.write_text(json.dumps({"step": steps, "loss": loss, "created_at": _now_iso()}, indent=2), encoding="utf-8")
+        out["steps"] = steps
+        out["logs"].append(("info", f"bootstrap generated first checkpoint step={steps} loss={loss}"))
+
+    publish = _publish_checkpoint(ctx, checkpoint, int(_read_json(checkpoint).get("step") or steps), float(_read_json(checkpoint).get("loss") or 0.0), for_bootstrap=True)
+    out["logs"].extend(publish.get("logs", []))
+    out["upload"] = publish.get("upload", {})
+    out["bootstrap"]["first_checkpoint_published"] = bool(publish.get("ok"))
+    out["last_upload_step"] = publish.get("last_upload_step", out["last_upload_step"])
+    out["last_upload_time"] = publish.get("last_upload_time", out["last_upload_time"])
+    if not publish.get("ok"):
+        out["state"] = publish.get("state", "error")
+        out["detail"] = publish.get("detail", "PUBLISHING_FIRST_FAILED")
+        return out
+
+    pointer = _create_channel_pointer(ctx, publish)
+    out["logs"].extend(pointer.get("logs", []))
+    out["bootstrap"]["channel_pointer_created"] = bool(pointer.get("ok"))
+    out["bootstrap"]["pointer_commitment"] = str(pointer.get("pointer_commitment") or "")
+    if not pointer.get("ok"):
+        out["state"] = pointer.get("state", "error")
+        out["detail"] = pointer.get("detail", "CREATING_POINTER_FAILED")
+        return out
+
+    out["state"] = "training"
+    out["detail"] = "BOOTSTRAP_COMPLETE"
+    out["last_sync_time"] = time.time()
+    out["model_version"] = str(publish.get("model_version") or out["model_version"])
+    out["logs"].append(("system", "Bootstrap complete; entering normal train → publish → sync loop."))
+    return out
+
+
+def _rpc_call_with_backoff(client: RpcClient, method: str, payload: Any, retries: int = 3) -> Any:
+    delay = 0.5
+    for attempt in range(retries):
+        try:
+            return client.call_with_schema(method, payload)
+        except Exception:
+            if attempt >= retries - 1:
+                raise
+            time.sleep(delay)
+            delay = min(4.0, delay * 2)
+    raise RuntimeError("rpc backoff exhausted")
+
+
+def _is_allowed_dir(candidate: str, allowed_base_dirs: list[str]) -> bool:
+    if not candidate:
+        return False
+    if not allowed_base_dirs:
+        return True
+    c = candidate.rstrip("/")
+    return any(c == str(base).rstrip("/") or c.startswith(f"{str(base).rstrip('/')}/") for base in allowed_base_dirs if str(base).strip())
+
+
+def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
+    rpc_url = str(ctx.get("rpc_url") or "")
+    logs: list[tuple[str, str]] = []
+    diagnostics = ""
+    try:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=12.0, max_retries=1) as c:
+            reg = c.registry()
+            status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
+            configure_method = reg.resolve_any(["da.configure", "da_configure"])
+            default_dir_method = reg.resolve_any(["da.getDefaultDir", "da_getDefaultDir"])
+            allowed_dirs_method = reg.resolve_any(["da.getAllowedBaseDirs", "da_getAllowedBaseDirs"])
+            if not status_method:
+                return {"ok": False, "logs": [("error", "DA status RPC unavailable")], "diagnostics": "missing da.getStatus"}
+            status = _rpc_call_with_backoff(c, status_method, {})
+            if not isinstance(status, dict):
+                status = {}
+            enabled = bool(status.get("enabled", False))
+            ok = bool(status.get("ok", enabled and bool(status.get("writable", False))))
+            writable = bool(status.get("writable", False))
+            reason = str(status.get("reason") or "")
+            if enabled and (ok or writable):
+                return {"ok": True, "logs": logs, "status": status, "diagnostics": "already-configured"}
+
+            if not configure_method:
+                return {"ok": False, "logs": [("error", "DA not configured and da.configure unavailable")], "diagnostics": "missing da.configure"}
+            logs.append(("system", "DA not configured; auto-configuring local node storage."))
+
+            default_dir = "/data/da"
+            if default_dir_method:
+                out = _rpc_call_with_backoff(c, default_dir_method, {})
+                if isinstance(out, str) and out.strip():
+                    default_dir = out.strip()
+                elif isinstance(out, dict):
+                    default_dir = str(out.get("dir") or out.get("path") or default_dir)
+            allowed: list[str] = []
+            if allowed_dirs_method:
+                out = _rpc_call_with_backoff(c, allowed_dirs_method, {})
+                if isinstance(out, list):
+                    allowed = [str(v) for v in out]
+                elif isinstance(out, dict):
+                    vals = out.get("dirs") if isinstance(out.get("dirs"), list) else out.get("allowed")
+                    if isinstance(vals, list):
+                        allowed = [str(v) for v in vals]
+            dir_path = default_dir if _is_allowed_dir(default_dir, allowed) else (allowed[0] if allowed else "/data/da")
+            payload = {"enabled": True, "dir": dir_path, "max_bytes": 50 * 1024 * 1024 * 1024, "limit_bytes": 50 * 1024 * 1024 * 1024}
+            _rpc_call_with_backoff(c, configure_method, payload)
+            verify = _rpc_call_with_backoff(c, status_method, {})
+            if not isinstance(verify, dict):
+                verify = {}
+            v_enabled = bool(verify.get("enabled", False))
+            v_ok = bool(verify.get("ok", False))
+            v_writable = bool(verify.get("writable", False))
+            if not v_enabled or not (v_ok or v_writable):
+                reason = str(verify.get("reason") or verify.get("policy_blocked_reason") or reason or "configure_failed")
+                return {"ok": False, "logs": logs + [("error", f"DA configuration verify failed ({reason})")], "diagnostics": reason}
+            logs.append(("info", f"DA configured successfully at {dir_path}"))
+            return {"ok": True, "logs": logs, "status": verify, "diagnostics": f"configured:{dir_path}"}
+    except Exception as exc:  # noqa: BLE001
+        diagnostics = str(exc)
+        return {"ok": False, "logs": logs + [("error", f"DA configure failed: {exc}")], "diagnostics": diagnostics}
+
+
+def _pick_best_checkpoint(run_root: Path) -> Path | None:
+    checkpoints = list(run_root.glob("step-*.ckpt.json"))
+    if not checkpoints:
+        return None
+    def _key(path: Path) -> tuple[int, float]:
+        data = _read_json(path)
+        return int(data.get("step") or 0), -float(data.get("loss") or 999999)
+    checkpoints.sort(key=_key)
+    return checkpoints[-1]
+
+
+def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], data: bytes, logs: list[tuple[str, str]], status: dict[str, Any] | None = None) -> str:
+    ns = str(cfg.get("da_namespace") or "0")
+    put_method = reg.resolve_any(["da.putBlob", "da_putBlob"])
+    has_method = reg.resolve_any(["da.has", "da_has"])
+    status = status or {}
+    allow_remote = bool(status.get("allow_remote_put", True))
+    if allow_remote:
+        out = _rpc_call_with_backoff(client, put_method, {"data": base64.b64encode(data).decode("ascii"), "namespace": ns})
+        commitment = str(out.get("commitment") if isinstance(out, dict) else out)
+        if has_method:
+            has = _rpc_call_with_backoff(client, has_method, commitment)
+            if not bool(has):
+                raise RuntimeError("DA has(commitment) verification failed")
+        return commitment
+
+    configured_dir = str(status.get("dir") or status.get("configured_dir") or "")
+    if configured_dir:
+        ingest_dir = Path(configured_dir) / "studio_local_ingest"
+        ingest_dir.mkdir(parents=True, exist_ok=True)
+        blob_path = ingest_dir / f"{hashlib.sha256(data).hexdigest()}.blob"
+        blob_path.write_bytes(data)
+        logs.append(("warning", f"allow_remote_put=false; attempted local ingest fallback at {blob_path}"))
+    raise RuntimeError("DA policy blocks remote put; enable allow_remote_put or provide node-side ingest")
+
+
+def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, loss: float, for_bootstrap: bool = False) -> dict[str, Any]:
     cfg = dict(ctx.get("cfg") or {})
     rpc_url = str(ctx.get("rpc_url") or "")
     logs: list[tuple[str, str]] = []
-    status_ok = True
-    allow_remote = True
-    status_reason = ""
-    try:
-        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1) as c:
-            reg = c.registry()
-            m = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
-            if m:
-                st = c.call_with_schema(m, {})
-                if isinstance(st, dict):
-                    allow_remote = bool(st.get("allow_remote_put", True))
-                    enabled = bool(st.get("enabled", True))
-                    status_ok = enabled and bool(st.get("ok", True))
-                    status_reason = str(st.get("reason") or st.get("policy_blocked_reason") or "")
-    except Exception as exc:  # noqa: BLE001
-        logs.append(("warning", f"DA status unavailable: {exc}"))
-    if not status_ok:
-        reason = status_reason or "not_configured"
-        return {
-            "state": "idle",
-            "detail": "DA_NOT_CONFIGURED",
-            "logs": logs + [("warning", f"DA not configured on node ({reason}); checkpoint kept local until configured.")],
-            "upload": {"pending_da_upload": True, "reason": reason},
-        }
-    if not allow_remote:
-        if bool(cfg.get("require_da_uploads", False)) and not bool(cfg.get("auto_fallback_on_remote_put_block", True)):
-            return {"state": "error", "detail": "Publish blocked: allow_remote_put=false", "logs": logs + [("error", "DA policy blocks RPC upload; enable allow_remote_put or configure local ingest")]} 
-        logs.append(("warning", "Publish blocked (allow_remote_put=false); keeping local-only mode."))
-        return {"state": "training", "detail": "TRAINING", "logs": logs}
-
-    manifest = {
-        "model_id": str(cfg.get("model_channel") or "ena-main"),
-        "step": step,
-        "loss": loss,
-        "created_at": _now_iso(),
-        "trainer_version": "studio-full-auto-v1",
-        "chunks": [],
-    }
-    content = checkpoint_path.read_bytes()
-    chunk_size = 256 * 1024
-    commits: list[str] = []
     try:
         with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1) as c:
             reg = c.registry()
-            put_method = reg.resolve_any(["da.putBlob", "da_putBlob"])
-            if not put_method:
-                raise RuntimeError("da.putBlob method unavailable")
-            ns = str(cfg.get("da_namespace") or "0")
+            status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
+            status = _rpc_call_with_backoff(c, status_method, {}) if status_method else {}
+            if not isinstance(status, dict):
+                status = {}
+            enabled = bool(status.get("enabled", True))
+            writable = bool(status.get("writable", True))
+            ok = bool(status.get("ok", enabled and writable))
+            if not enabled or not (ok or writable):
+                reason = str(status.get("reason") or "not_configured")
+                return {"ok": False, "state": "configuring_da" if for_bootstrap else "idle", "detail": "DA_NOT_CONFIGURED", "logs": logs + [("warning", f"DA not configured on node ({reason}); checkpoint kept local until configured.")]}
+
+            manifest = {
+                "model_id": str(cfg.get("model_channel") or "ena-main"),
+                "step": step,
+                "loss": loss,
+                "created_at": _now_iso(),
+                "trainer_version": "studio-full-auto-v1",
+                "chunks": [],
+                "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+            }
+            content = checkpoint_path.read_bytes()
+            chunk_size = 256 * 1024
+            commits: list[str] = []
             total = max(1, (len(content) + chunk_size - 1) // chunk_size)
             for idx in range(total):
                 chunk = content[idx * chunk_size : (idx + 1) * chunk_size]
-                payload = {"data": base64.b64encode(chunk).decode("ascii"), "namespace": ns}
-                out = c.call_with_schema(put_method, payload)
-                commitment = str(out.get("commitment") if isinstance(out, dict) else out)
+                commitment = _put_blob_with_strategy(c, reg, cfg, chunk, logs, status)
                 manifest["chunks"].append({"idx": idx, "sha256": hashlib.sha256(chunk).hexdigest(), "commitment": commitment})
                 commits.append(commitment)
             manifest_bytes = json.dumps(manifest, sort_keys=True).encode("utf-8")
-            manifest_out = c.call_with_schema(put_method, {"data": base64.b64encode(manifest_bytes).decode("ascii"), "namespace": ns})
-            manifest_commitment = str(manifest_out.get("commitment") if isinstance(manifest_out, dict) else manifest_out)
-            pointer = {
-                "channel": manifest["model_id"],
-                "latest_manifest": manifest_commitment,
-                "step": step,
-                "loss": loss,
-                "updated_at": _now_iso(),
-            }
-            pointer_out = c.call_with_schema(put_method, {"data": base64.b64encode(json.dumps(pointer).encode("utf-8")).decode("ascii"), "namespace": ns})
-            pointer_commitment = str(pointer_out.get("commitment") if isinstance(pointer_out, dict) else pointer_out)
-            get_method = reg.resolve_any(["da.getBlob", "da_getBlob"])
-            if get_method:
-                _ = c.call_with_schema(get_method, {"commitment": pointer_commitment})
+            manifest_commitment = _put_blob_with_strategy(c, reg, cfg, manifest_bytes, logs, status)
     except Exception as exc:  # noqa: BLE001
-        return {"state": "error", "detail": f"UPLOAD_FAILED: {exc}", "logs": logs + [("error", str(exc))]}
+        return {"ok": False, "state": "error", "detail": f"UPLOAD_FAILED: {exc}", "logs": logs + [("error", str(exc))]}
 
-    channel_dir = Path(str(ctx.get("storage"))) / str(cfg.get("model_channel") or "ena-main")
-    channel_dir.mkdir(parents=True, exist_ok=True)
-    (channel_dir / "latest_pointer.json").write_text(json.dumps(pointer, indent=2), encoding="utf-8")
-    logs.append(("info", f"uploaded manifest={manifest_commitment} pointer={pointer_commitment}"))
+    logs.append(("info", f"uploaded manifest={manifest_commitment} step={step}"))
     return {
-        "state": "publishing",
-        "detail": "UPLOADING_TO_DA",
+        "ok": True,
+        "state": "publishing_first" if for_bootstrap else "publishing",
+        "detail": "PUBLISHING_FIRST" if for_bootstrap else "UPLOADING_TO_DA",
         "logs": logs,
         "last_upload_step": step,
         "last_upload_time": time.time(),
@@ -426,7 +643,59 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
             "latest_commitment": manifest_commitment,
             "last_upload_time": time.time(),
         },
+        "manifest_commitment": manifest_commitment,
+        "step": step,
+        "loss": loss,
+        "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
     }
+
+
+def _create_channel_pointer(ctx: dict[str, Any], publish: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(ctx.get("cfg") or {})
+    channel = str(cfg.get("model_channel") or "ena-main")
+    storage = Path(str(ctx.get("storage")))
+    channel_dir = storage / channel
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    pointer = {
+        "channel": channel,
+        "latest": {
+            "commitment": str(publish.get("manifest_commitment") or ""),
+            "step": int(publish.get("step") or 0),
+            "sha256": str(publish.get("checkpoint_sha256") or ""),
+            "ts": _now_iso(),
+        },
+        "history": [],
+        "schema_version": 1,
+        "latest_manifest": str(publish.get("manifest_commitment") or ""),
+        "step": int(publish.get("step") or 0),
+        "loss": float(publish.get("loss") or 0.0),
+        "updated_at": _now_iso(),
+    }
+    logs: list[tuple[str, str]] = []
+    rpc_url = str(ctx.get("rpc_url") or "")
+    try:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1) as c:
+            reg = c.registry()
+            status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
+            status = _rpc_call_with_backoff(c, status_method, {}) if status_method else {}
+            if not isinstance(status, dict):
+                status = {}
+            pointer_commitment = _put_blob_with_strategy(c, reg, cfg, json.dumps(pointer).encode("utf-8"), logs, status)
+            get_method = reg.resolve_any(["da.getBlob", "da_getBlob"])
+            if get_method:
+                blob = _rpc_call_with_backoff(c, get_method, {"commitment": pointer_commitment})
+                raw = blob.get("data") if isinstance(blob, dict) else None
+                if isinstance(raw, str):
+                    decoded = json.loads(base64.b64decode(raw).decode("utf-8"))
+                    if str(decoded.get("channel") or "") != channel:
+                        raise RuntimeError("pointer verification failed")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "state": "error", "detail": f"CREATE_POINTER_FAILED: {exc}", "logs": logs + [("error", str(exc))]}
+
+    (channel_dir / "latest_pointer.json").write_text(json.dumps(pointer, indent=2), encoding="utf-8")
+    (channel_dir / "bootstrap_state.json").write_text(json.dumps({"channel_pointer_commitment": pointer_commitment, "updated_at": _now_iso()}, indent=2), encoding="utf-8")
+    logs.append(("info", f"created channel pointer commitment={pointer_commitment}"))
+    return {"ok": True, "pointer_commitment": pointer_commitment, "logs": logs}
 
 
 def _sync_checkpoint(ctx: dict[str, Any], channel: str) -> dict[str, Any]:
@@ -437,8 +706,11 @@ def _sync_checkpoint(ctx: dict[str, Any], channel: str) -> dict[str, Any]:
     pointer_path = channel_dir / "latest_pointer.json"
     pointer = _read_json(pointer_path)
     if not pointer:
-        logs.append(("info", "No remote pointer found yet; waiting for first publish."))
-        return {"logs": logs, "state": "training", "detail": "TRAINING"}
+        logs.append(("system", "No remote pointer found; initiating bootstrap publish path."))
+        if bool(cfg.get("train_locally_when_da_disabled", False)):
+            logs.append(("warning", "Local-only training (no network publish). Configure DA to bootstrap network sync."))
+            return {"logs": logs, "state": "training", "detail": "LOCAL_ONLY_DA_DISABLED"}
+        return {"logs": logs, "state": "bootstrapping", "detail": "BOOTSTRAPPING"}
 
     version = str(pointer.get("latest_manifest") or "")
     target_dir = channel_dir / (version or "local")
@@ -455,7 +727,6 @@ def _sync_checkpoint(ctx: dict[str, Any], channel: str) -> dict[str, Any]:
         logs.append(("info", "sync skipped: current model is newer/equal"))
         return {"logs": logs, "state": "training", "detail": "TRAINING"}
 
-    # Try to fetch manifest if possible; fallback to pointer only.
     try:
         with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=15.0, max_retries=1) as c:
             reg = c.registry()
