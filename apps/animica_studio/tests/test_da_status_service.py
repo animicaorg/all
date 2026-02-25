@@ -89,5 +89,8 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
     assert out["ok"] is True
     configure_call = cli.call.call_args_list[0]
     assert configure_call.args[0] == "da_configure"
-    assert configure_call.args[1]["enabled"] is True
-    assert configure_call.args[1]["dir"] == "/data/da"
+    payload = configure_call.args[1]
+    assert payload["enabled"] is True
+    assert payload["dir"] == "/data/da"
+    assert out["param_encoding"] == "object"
+    assert "curl_configure" in out

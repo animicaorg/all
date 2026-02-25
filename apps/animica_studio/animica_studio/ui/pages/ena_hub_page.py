@@ -40,6 +40,14 @@ from animica_studio.services.wallet_repository import WalletRepository
 from animica_studio.storage.config import save_config
 
 
+
+
+def _coerce_da_namespace(raw: object) -> int:
+    try:
+        value = int(str(raw).strip() or "0")
+    except Exception:
+        value = 0
+    return max(0, value)
 class EnaHubPage(QWidget):
     """Single consolidated ENA page with tabbed sections.
 
@@ -301,7 +309,7 @@ class EnaFullAutoPanel(QGroupBox):
                 "sync_every_minutes": int(self._sync_minutes.value()),
                 "selection_rule": self._rule.currentData(),
                 "keep_last_k": int(self._keep_last_k.value()),
-                "da_namespace": self._namespace.text().strip() or "0",
+                "da_namespace": _coerce_da_namespace(self._namespace.text()),
                 "model_channel": self._channel.text().strip() or "ena-main",
                 "require_da_uploads": self._require_upload.isChecked(),
                 "auto_fallback_on_remote_put_block": self._auto_fallback.isChecked(),
@@ -311,6 +319,7 @@ class EnaFullAutoPanel(QGroupBox):
         )
         ena["full_auto"] = full
         self._config.ena = ena
+        self._logs.appendPlainText(f"[system] Coerced Full Auto config: da_namespace={full.get('da_namespace')}")
         return full
 
     def _load_settings(self) -> None:
@@ -322,7 +331,7 @@ class EnaFullAutoPanel(QGroupBox):
         self._sync_minutes.setValue(int(full.get("sync_every_minutes") or 30))
         self._set_combo(self._rule, str(full.get("selection_rule") or "latest"))
         self._channel.setText(str(full.get("model_channel") or "ena-main"))
-        self._namespace.setText(str(full.get("da_namespace") or "0"))
+        self._namespace.setText(str(_coerce_da_namespace(full.get("da_namespace"))))
         self._require_upload.setChecked(bool(full.get("require_da_uploads", False)))
         self._auto_fallback.setChecked(bool(full.get("auto_fallback_on_remote_put_block", True)))
         self._keep_last_k.setValue(int(full.get("keep_last_k") or 5))
