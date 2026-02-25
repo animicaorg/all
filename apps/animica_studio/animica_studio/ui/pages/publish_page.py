@@ -20,17 +20,16 @@ class PublishPage(QWidget):
         root.addWidget(b)
 
         actions = QHBoxLayout()
-        self.enable_remote_btn = QPushButton("Enable allow_remote_put and retry")
-        self.enable_remote_btn.clicked.connect(self._enable_remote_put)
-        self.enable_remote_btn.setEnabled(False)
-        actions.addWidget(self.enable_remote_btn)
+        self.configure_da_btn = QPushButton("Configure DA Now")
+        self.configure_da_btn.clicked.connect(self._configure_da_now)
+        actions.addWidget(self.configure_da_btn)
 
-        self.allow_remote_toggle = QCheckBox("Allow DA uploads from RPC (allow_remote_put)")
+        self.allow_remote_toggle = QCheckBox("Allow uploads (allow_remote_put)")
         self.allow_remote_toggle.setChecked(False)
         self.allow_remote_toggle.setToolTip("Enable only on local/dev nodes you control.")
         actions.addWidget(self.allow_remote_toggle)
 
-        self.local_upload_btn = QPushButton("Retry local ingest")
+        self.local_upload_btn = QPushButton("Retry Push to DA")
         self.local_upload_btn.clicked.connect(self._retry_local_ingest)
         self.local_upload_btn.setEnabled(False)
         actions.addWidget(self.local_upload_btn)
@@ -53,7 +52,6 @@ class PublishPage(QWidget):
             return
         out = self.service.publish_checkpoint(cps[-1]["sha256"], dev_mode=self.dev.isChecked())
         self._last_diag = {}
-        self.enable_remote_btn.setEnabled(False)
         self.copy_diag_btn.setEnabled(False)
         self.local_upload_btn.setEnabled(False)
 
@@ -65,42 +63,43 @@ class PublishPage(QWidget):
                 details = step.error_details or run.result.get(step.name, {}) or {}
                 self._last_diag = details.get("diagnostics") or {}
                 actions = details.get("actions") or []
-                can_enable = any(a.get("id") == "enable_remote_put" for a in actions if isinstance(a, dict))
-                self.enable_remote_btn.setEnabled(bool(can_enable))
                 self.copy_diag_btn.setEnabled(bool(self._last_diag))
                 self.local_upload_btn.setEnabled(
-                    any(a.get("id") == "local_upload" for a in actions if isinstance(a, dict))
+                    any(a.get("id") in {"local_upload", "enable_remote_put"} for a in actions if isinstance(a, dict))
                     or bool((self._last_diag or {}).get("local_node"))
                 )
+                if details.get("error_code") == "DA_NOT_CONFIGURED":
+                    self.out.setPlainText("DA not configured on node. Configure DA Now, then Retry Push to DA.\n\n" + str(out))
+                    return
         self.out.setPlainText(str(out))
 
-    def _enable_remote_put(self) -> None:
-        if not self.allow_remote_toggle.isChecked():
-            self.out.append("\nToggle 'Allow DA uploads from RPC (allow_remote_put)' first.")
+    def _configure_da_now(self) -> None:
+        status = self.service.da_status.get_status()
+        limit = int(status.get("effective_limit") or 10 * 1024 * 1024 * 1024)
+        dir_path = str(status.get("default_dir") or status.get("configured_dir") or status.get("raw", {}).get("dir") or "/data/da")
+        res = self.service.da_status.enable_da(dir_path=dir_path, limit_bytes=limit)
+        if not res.get("ok"):
+            status_after = res.get("status") if isinstance(res.get("status"), dict) else {}
+            reason = status_after.get("reason") or status_after.get("policy_blocked_reason") or res.get("error")
+            self.out.append(f"\nDA configure failed: {reason}")
             return
 
-        status = self.service.da_status.get_status()
-        if not status.get("can_configure_allow_remote_put"):
-            self.out.append("\nNode ignored request; policy cannot be changed via RPC.")
-            return
-        dir_path = status.get("configured_dir") or status.get("raw", {}).get("dir") or "/data/da"
-        limit = int(status.get("effective_limit") or 10 * 1024 * 1024 * 1024)
-        res = self.service.da_status.enable_da(dir_path=dir_path, limit_bytes=limit)
-        if res.get("ok"):
-            status_obj = self.service.da.status() if hasattr(self.service.da, "status") else {}
-            if isinstance(status_obj, dict) and status_obj.get("allow_remote_put") is not True:
+        if self.allow_remote_toggle.isChecked() and status.get("can_configure_allow_remote_put"):
+            try:
                 self.service.da.configure({"allow_remote_put": True})
-            status_after = self.service.da_status.get_status()
-            if status_after.get("allow_remote_put") is True:
-                self.out.append("\nallow_remote_put enabled; retrying Push to DA…")
-                self._run()
-            else:
-                self.out.append("\nNode ignored request; policy cannot be changed via RPC.")
+            except Exception:
+                pass
+
+        status_after = self.service.da_status.get_status()
+        if status_after.get("enabled") and (status_after.get("writable", True) or status_after.get("ok")):
+            self.out.append("\nDA configured successfully. You can now Retry Push to DA.")
+            self.local_upload_btn.setEnabled(True)
         else:
-            self.out.append("\nFailed to enable allow_remote_put: " + str(res.get("error") or res))
+            reason = status_after.get("reason") or status_after.get("policy_blocked_reason") or "unknown"
+            self.out.append(f"\nDA configuration did not become writable: {reason}")
 
     def _retry_local_ingest(self) -> None:
-        self.out.append("\nRetrying local ingest…")
+        self.out.append("\nRetrying Push to DA…")
         self._run()
 
     def _copy_diagnostics(self) -> None:

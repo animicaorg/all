@@ -35,6 +35,8 @@ class DaStatusService:
             put_method = registry.resolve_any(["da_putBlob", "da.putBlob"])
             get_method = registry.resolve_any(["da_getBlob", "da.getBlob"])
             configure_method = registry.resolve_any(["da_configure", "da.configure"])
+            default_dir_method = registry.resolve_any(["da.getDefaultDir", "da_getDefaultDir"])
+            allowed_dirs_method = registry.resolve_any(["da.getAllowedBaseDirs", "da_getAllowedBaseDirs"])
             if not isinstance(configure_method, str) or not configure_method:
                 configure_method = None
             configure_param_spec = client.get_param_spec(configure_method) if configure_method else []
@@ -49,10 +51,41 @@ class DaStatusService:
                         raise
             enabled = bool((payload or {}).get("enabled", False))
             allow_remote_put = bool((payload or {}).get("allow_remote_put", True))
+            writable = bool((payload or {}).get("writable", False))
+            status_ok = bool((payload or {}).get("ok", enabled and writable))
+            reason = str((payload or {}).get("reason") or "")
+            policy_blocked_reason = str((payload or {}).get("policy_blocked_reason") or "")
+            default_dir = ""
+            allowed_base_dirs: list[str] = []
+            if default_dir_method:
+                try:
+                    out = client.call_with_schema(default_dir_method, {})
+                    if isinstance(out, str):
+                        default_dir = out
+                    elif isinstance(out, dict):
+                        default_dir = str(out.get("dir") or out.get("path") or "")
+                except Exception:
+                    default_dir = ""
+            if allowed_dirs_method:
+                try:
+                    out = client.call_with_schema(allowed_dirs_method, {})
+                    if isinstance(out, list):
+                        allowed_base_dirs = [str(v) for v in out if isinstance(v, (str, bytes))]
+                    elif isinstance(out, dict):
+                        vals = out.get("dirs") if isinstance(out.get("dirs"), list) else out.get("allowed")
+                        if isinstance(vals, list):
+                            allowed_base_dirs = [str(v) for v in vals if isinstance(v, (str, bytes))]
+                except Exception:
+                    allowed_base_dirs = []
             return {
-                "ok": enabled and bool(put_method),
+                "ok": status_ok and bool(put_method),
                 "enabled": enabled,
+                "writable": writable,
+                "reason": reason,
+                "policy_blocked_reason": policy_blocked_reason,
                 "configured_dir": str((payload or {}).get("dir") or ""),
+                "default_dir": default_dir,
+                "allowed_base_dirs": allowed_base_dirs,
                 "effective_mode": str((payload or {}).get("on_full") or (payload or {}).get("eviction_policy") or ""),
                 "effective_limit": int((payload or {}).get("max_bytes") or 0),
                 "server_version": self.get_server_version(rpc_url),
@@ -66,6 +99,8 @@ class DaStatusService:
                     "get_blob": get_method,
                     "configure": configure_method,
                     "status": status_method,
+                    "default_dir": default_dir_method,
+                    "allowed_base_dirs": allowed_dirs_method,
                 },
                 "configure_param_spec": configure_param_spec,
                 "can_configure_allow_remote_put": any(p.get("name") == "allow_remote_put" for p in configure_param_spec if isinstance(p, dict)),
@@ -74,6 +109,7 @@ class DaStatusService:
             return {
                 "ok": False,
                 "enabled": False,
+                "reason": "rpc_error",
                 "configured_dir": "",
                 "effective_mode": "",
                 "effective_limit": 0,
@@ -83,6 +119,21 @@ class DaStatusService:
             }
         finally:
             client.close()
+
+    @staticmethod
+    def _is_dir_allowed(dir_path: str, allowed_base_dirs: list[str]) -> bool:
+        if not dir_path:
+            return False
+        if not allowed_base_dirs:
+            return True
+        norm = dir_path.rstrip("/")
+        for base in allowed_base_dirs:
+            b = str(base).rstrip("/")
+            if not b:
+                continue
+            if norm == b or norm.startswith(f"{b}/"):
+                return True
+        return False
 
     def get_server_version(self, rpc_url: str | None = None) -> str:
         client = self._client(rpc_url)
@@ -105,7 +156,7 @@ class DaStatusService:
         client = self._client(rpc_url)
         try:
             before = self.get_status(rpc_url)
-            if before.get("enabled"):
+            if before.get("enabled") and before.get("ok"):
                 return {"ok": True, "response": {"noop": True}, "status": before, "method": before.get("da_methods", {}).get("configure")}
 
             registry = client.registry()
@@ -114,33 +165,52 @@ class DaStatusService:
                 return {"ok": False, "error": "DA configure method not exposed by node.", "status": before}
 
             spec = client.get_param_spec(configure_method)
+            status_raw = before.get("raw") if isinstance(before.get("raw"), dict) else {}
+            default_dir = str(before.get("default_dir") or "")
+            allowed_base_dirs = before.get("allowed_base_dirs") if isinstance(before.get("allowed_base_dirs"), list) else []
+            candidate_dir = str(dir_path or status_raw.get("dir") or default_dir or "/data/da")
+            if not self._is_dir_allowed(candidate_dir, allowed_base_dirs):
+                if default_dir and self._is_dir_allowed(default_dir, allowed_base_dirs):
+                    candidate_dir = default_dir
+                elif allowed_base_dirs:
+                    candidate_dir = str(allowed_base_dirs[0])
+
             payload: dict[str, Any] = {}
             for p in spec:
                 name = p.get("name")
                 if name == "enabled":
                     payload["enabled"] = True
                 elif name == "dir":
-                    payload["dir"] = dir_path
+                    payload["dir"] = candidate_dir
                 elif name in {"max_bytes", "limit_bytes"}:
                     payload[name] = int(limit_bytes)
                 elif name in {"on_full", "mode"}:
                     payload[name] = "evict" if mode == "quota" else "reject"
+                elif name == "quota":
+                    payload[name] = mode
+                elif name == "allow_remote_put":
+                    payload[name] = bool(status_raw.get("allow_remote_put", False))
                 elif p.get("required"):
                     return {"ok": False, "error": f"Unsupported required DA configure param: {name}", "status": before}
             if not payload:
                 payload = {"enabled": True}
+            payload.setdefault("enabled", True)
 
             response = client.call_with_schema(configure_method, payload)
             check = self.get_status(rpc_url)
             if not check.get("enabled"):
+                reason = check.get("reason") or check.get("policy_blocked_reason") or "unknown"
                 return {
                     "ok": False,
-                    "error": "Node did not enable DA",
+                    "error": f"Node did not enable DA ({reason})",
                     "response": response,
                     "status": check,
                     "method": configure_method,
                 }
-            return {"ok": True, "response": response, "status": check, "method": configure_method}
+            if check.get("ok") is not True and check.get("writable") is False:
+                reason = check.get("policy_blocked_reason") or check.get("reason") or "not_writable"
+                return {"ok": False, "error": f"DA enabled but not writable ({reason})", "response": response, "status": check, "method": configure_method}
+            return {"ok": True, "response": response, "status": check, "method": configure_method, "payload": payload}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "status": self.get_status(rpc_url)}
         finally:
