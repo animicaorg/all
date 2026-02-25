@@ -84,7 +84,9 @@ class RpcRegistry:
                     continue
                 params: list[dict[str, Any]] = []
                 params_raw = item.get("params", [])
+                param_structure = "unknown"
                 if isinstance(params_raw, list):
+                    param_structure = "positional"
                     for p in params_raw:
                         if not isinstance(p, dict):
                             continue
@@ -96,8 +98,24 @@ class RpcRegistry:
                                 "schema_type": schema.get("type"),
                             }
                         )
+                elif isinstance(params_raw, dict):
+                    param_structure = "object"
+                    schema = params_raw.get("schema") if isinstance(params_raw.get("schema"), dict) else {}
+                    params.append(
+                        {
+                            "name": params_raw.get("name") or "params",
+                            "required": bool(params_raw.get("required", False)),
+                            "schema_type": schema.get("type") or "object",
+                        }
+                    )
                 result_schema = item.get("result") if isinstance(item.get("result"), dict) else None
-                self.methods[name] = {"name": name, "params": params, "result": result_schema}
+                self.methods[name] = {
+                    "name": name,
+                    "params": params,
+                    "param_structure": param_structure,
+                    "result": result_schema,
+                    "raw": item,
+                }
                 self.exact_methods.add(name)
                 normalized = self.normalize(name)
                 self.normalized_methods.setdefault(normalized, []).append(name)
@@ -166,11 +184,24 @@ class RpcRegistry:
         return get_close_matches(name, sorted(self.methods.keys()), n=limit, cutoff=0.35)
 
     def get_param_spec(self, method: str) -> list[dict[str, Any]]:
-        meta = self.methods.get(method) or {}
+        meta = self.methods.get(method)
+        if meta is None:
+            resolved = self.resolve_any([method])
+            if resolved:
+                meta = self.methods.get(resolved)
+        meta = meta or {}
         params = meta.get("params") if isinstance(meta, dict) else None
         if not isinstance(params, list):
             return []
         return [p for p in params if isinstance(p, dict)]
+
+    def get_method_meta(self, method: str) -> dict[str, Any]:
+        meta = self.methods.get(method)
+        if meta is None:
+            resolved = self.resolve_any([method])
+            if resolved:
+                meta = self.methods.get(resolved)
+        return dict(meta or {})
 
 
 class RpcTransportError(Exception):
@@ -382,8 +413,11 @@ class RpcClient:
         if cached == "object":
             return params, "object"
         spec = self.get_param_spec(method)
-        if spec:
+        meta = self.registry().get_method_meta(method) if method else {}
+        param_structure = str(meta.get("param_structure") or "unknown")
+        if spec and param_structure == "positional":
             return self._params_from_dict(method, params), "positional"
+        # Unknown/empty schema must not block object-params calls (e.g. da.configure).
         return params, "object"
 
     def _parse_response(self, data: Any, method: str) -> RpcResponse[Any]:
@@ -509,7 +543,9 @@ class RpcClient:
     def _build_params_from_schema(self, method: str, values: dict[str, Any] | None) -> tuple[list[Any] | dict[str, Any] | None, str]:
         values = values or {}
         spec = self.get_param_spec(method)
-        if not spec:
+        meta = self.registry().get_method_meta(method)
+        param_structure = str(meta.get("param_structure") or "unknown")
+        if not spec or param_structure != "positional":
             if values:
                 return values, "object"
             return None, "none"
