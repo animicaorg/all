@@ -265,6 +265,8 @@ class IdePage(QWidget):
             get_workspace=lambda: self._svc.workspace,
             get_current_file_text=self._get_current_file_and_text,
             get_selection_text=self._get_selection_text,
+            get_cursor_position=self._get_cursor_position,
+            get_open_tabs=self._get_open_tabs,
             ena_config=self._cfg.ena,
             parent=self,
         )
@@ -283,6 +285,17 @@ class IdePage(QWidget):
         if self._plain_editor is not None:
             return self._plain_editor.textCursor().selectedText()
         return ""
+
+
+    def _get_cursor_position(self) -> tuple[int, int]:
+        info = self._current_tab_info()
+        if info is None:
+            return 1, 1
+        cursor = info.editor.textCursor()
+        return cursor.blockNumber() + 1, cursor.positionInBlock() + 1
+
+    def _get_open_tabs(self) -> list[str]:
+        return [info.rel_path for info in self._open_tabs.values()]
 
     def _build_status_bar(self) -> QWidget:
         bar = QWidget()
