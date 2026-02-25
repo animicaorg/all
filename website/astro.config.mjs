@@ -25,6 +25,27 @@ const aliases = {
   '@components': resolve(projectRoot, 'src/components'),
 };
 
+const sanitizeMalformedUriPlugin = {
+  name: 'sanitize-malformed-uri',
+  enforce: 'pre',
+  configureServer(server) {
+    server.middlewares.use((req, _res, next) => {
+      if (typeof req.url !== 'string') {
+        next();
+        return;
+      }
+
+      try {
+        decodeURI(req.url);
+      } catch {
+        req.url = req.url.replace(/%(?![0-9A-Fa-f]{2})/g, '%25');
+      }
+
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   site: SITE_URL,
   // Enable HTML compression in production
@@ -60,6 +81,7 @@ export default defineConfig({
   },
 
   vite: {
+    plugins: [sanitizeMalformedUriPlugin],
     // Useful aliases for cleaner imports (optional)
     resolve: {
       alias: aliases,
