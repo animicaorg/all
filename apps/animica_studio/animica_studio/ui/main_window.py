@@ -24,6 +24,7 @@ from animica_studio.services.profile_service import ProfileService
 from animica_studio.services.ena_automation_service import EnaService
 from animica_studio.services.ena_store import EnaStore
 from animica_studio.services.ena_contribution_engine import EnaContributionConfig, EnaContributionEngine
+from animica_studio.services.ena_full_auto_engine import EnaFullAutoEngine
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.storage.config import Config
 from animica_studio.ui.components.primitives import Toast
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
             auto_start=bool(contrib_cfg.get('auto_start', False)),
             rpc_url=config.get_active_profile().node.rpc_local_url,
         ))
+        self._ena_full_auto_engine = EnaFullAutoEngine(config.get_active_profile().node.rpc_local_url, self)
         self._icons = IconProvider()
         self._nav_entries: list[_NavEntry] = []
         self._last_rpc_success_ts = 0.0
@@ -146,7 +148,7 @@ class MainWindow(QMainWindow):
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
             _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
             _NavEntry("IDE", "✎", self._build_ide_placeholder),
-            _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service, contrib_engine=self._ena_contrib_engine)),
+            _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service, contrib_engine=self._ena_contrib_engine, full_auto_engine=self._ena_full_auto_engine)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
