@@ -53,7 +53,8 @@ def test_da_status_basic():
     from rpc.methods.da import da_status
 
     store = _make_store_mock(enabled=True)
-    with patch("rpc.methods.da._get_store", return_value=store):
+    with patch("rpc.methods.da._get_store", return_value=store), \
+         patch("rpc.methods.da.os.access", return_value=True):
         result = da_status()
 
     assert result["enabled"] is True
@@ -86,19 +87,18 @@ def test_da_status_exception_returns_error_dict():
 # ---------------------------------------------------------------------------
 
 
-def test_da_configure_basic(tmp_path):
-    from rpc.methods.da import da_configure, da_status
+def test_da_configure_basic(tmp_path, monkeypatch):
+    from rpc.methods.da import da_configure
 
-    store = _make_store_mock(enabled=False)
-    store.update_config.return_value = MagicMock()
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
 
-    with patch("da.node_store.get_store", return_value=store), \
-         patch("da.node_store.invalidate_store"), \
-         patch("rpc.methods.da._get_store", return_value=store):
-        result = da_configure({"enabled": True, "dir": str(tmp_path), "max_bytes": 1000})
-
-    store.update_config.assert_called_once()
+    target = tmp_path / "basic-da"
+    result = da_configure({"enabled": True, "dir": str(target), "max_bytes": 1000})
     assert isinstance(result, dict)
+    assert result["enabled"] is True
+    assert result["ok"] is True
 
 
 def test_da_configure_invalid_on_full():
@@ -415,3 +415,60 @@ def test_da_get_allowed_base_dirs():
 
     out = da_get_allowed_base_dirs()
     assert out["dirs"] == ["/data"]
+
+
+def test_da_configure_accepts_object_and_enables_with_status(tmp_path, monkeypatch):
+    from da.node_store import invalidate_store
+    from rpc.methods.da import da_configure, da_status
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    target = tmp_path / "da"
+    before = da_status({"dir": str(target)})
+    assert before["ok"] is False
+    assert before["enabled"] is False
+
+    out = da_configure({"enabled": True, "dir": str(target), "max_bytes": 1024 * 1024})
+    assert out["enabled"] is True
+    assert out["ok"] is True
+    assert out["writable"] is True
+
+    after = da_status({"dir": str(target)})
+    assert after["ok"] is True
+    assert after["enabled"] is True
+    assert after["writable"] is True
+
+    # emulate restart: clear cached stores and read persisted config/status again
+    invalidate_store(str(target))
+    restarted = da_status()
+    assert restarted["ok"] is True
+    assert restarted["enabled"] is True
+
+
+def test_da_configure_accepts_positional_params(tmp_path, monkeypatch):
+    from rpc.methods.da import da_configure
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    target = tmp_path / "da-pos"
+    out = da_configure([True, str(target), 2048])
+    assert out["enabled"] is True
+    assert out["ok"] is True
+
+
+def test_da_configure_enabled_requires_dir_and_max_bytes(tmp_path, monkeypatch):
+    from rpc.methods.da import da_configure
+    from rpc.errors import InvalidParams
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+
+    with pytest.raises(InvalidParams, match="dir"):
+        da_configure({"enabled": True, "max_bytes": 1000})
+
+    with pytest.raises(InvalidParams, match="max_bytes"):
+        da_configure({"enabled": True, "dir": str(tmp_path / "da")})

@@ -44,7 +44,7 @@ class FullAutoConfig:
     sync_every_minutes: int = 30
     selection_rule: str = "latest"
     keep_last_k: int = 5
-    da_namespace: str = "0"
+    da_namespace: int = 0
     model_channel: str = "ena-main"
     require_da_uploads: bool = False
     auto_fallback_on_remote_put_block: bool = True
@@ -425,8 +425,8 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
             out["logs"].append(("warning", "Local-only training (no network publish). Configure DA to bootstrap network sync."))
             return out
         out["state"] = "error"
-        out["detail"] = "DA_NOT_CONFIGURED: click Configure DA Now"
-        out["logs"].append(("error", "DA not configured; click Configure DA Now"))
+        out["detail"] = "DA not configured (reason=not_configured); attempting auto-configure failed"
+        out["logs"].append(("error", "Node refused to configure DA; see diagnostics for exact RPC payload/response."))
         return out
 
     checkpoint = _pick_best_checkpoint(run_root)
@@ -514,7 +514,7 @@ def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
 
             if not configure_method:
                 return {"ok": False, "logs": [("error", "DA not configured and da.configure unavailable")], "diagnostics": "missing da.configure"}
-            logs.append(("system", "DA not configured; auto-configuring local node storage."))
+            logs.append(("system", "DA not configured (reason=not_configured); attempting auto-configure…"))
 
             default_dir = "/data/da"
             if default_dir_method:
@@ -543,12 +543,12 @@ def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
             v_writable = bool(verify.get("writable", False))
             if not v_enabled or not (v_ok or v_writable):
                 reason = str(verify.get("reason") or verify.get("policy_blocked_reason") or reason or "configure_failed")
-                return {"ok": False, "logs": logs + [("error", f"DA configuration verify failed ({reason})")], "diagnostics": reason}
+                return {"ok": False, "logs": logs + [("error", f"Node refused to configure DA ({reason})")], "diagnostics": f"Node refused to configure DA ({reason})"}
             logs.append(("info", f"DA configured successfully at {dir_path}"))
             return {"ok": True, "logs": logs, "status": verify, "diagnostics": f"configured:{dir_path}"}
     except Exception as exc:  # noqa: BLE001
         diagnostics = str(exc)
-        return {"ok": False, "logs": logs + [("error", f"DA configure failed: {exc}")], "diagnostics": diagnostics}
+        return {"ok": False, "logs": logs + [("error", f"Node refused to configure DA ({exc})")], "diagnostics": diagnostics}
 
 
 def _pick_best_checkpoint(run_root: Path) -> Path | None:
@@ -563,7 +563,7 @@ def _pick_best_checkpoint(run_root: Path) -> Path | None:
 
 
 def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], data: bytes, logs: list[tuple[str, str]], status: dict[str, Any] | None = None) -> str:
-    ns = str(cfg.get("da_namespace") or "0")
+    ns = int(cfg.get("da_namespace") or 0)
     put_method = reg.resolve_any(["da.putBlob", "da_putBlob"])
     has_method = reg.resolve_any(["da.has", "da_has"])
     status = status or {}

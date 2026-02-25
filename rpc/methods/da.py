@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from pathlib import Path
@@ -34,6 +35,62 @@ def _default_da_dir() -> str:
     return os.path.join(base, f"chain-{chain_id}", "da")
 
 
+def _global_da_config_path() -> str:
+    return os.path.join(_default_da_dir(), "da_config.json")
+
+
+def _load_persisted_da_config() -> dict[str, Any]:
+    path = _global_da_config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+            return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _persist_da_config(cfg: dict[str, Any]) -> None:
+    path = _global_da_config_path()
+    Path(os.path.dirname(path)).mkdir(parents=True, exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _resolve_store_dir(da_dir: Optional[str] = None) -> str:
+    if da_dir:
+        return os.path.abspath(da_dir)
+    persisted = _load_persisted_da_config()
+    persisted_dir = persisted.get("dir") if isinstance(persisted, dict) else None
+    if isinstance(persisted_dir, str) and persisted_dir.strip():
+        return os.path.abspath(persisted_dir)
+    return _default_da_dir()
+
+
+def _allowed_base_dirs() -> list[str]:
+    raw = os.getenv("ANIMICA_DA_ALLOWED_BASE_DIRS", "/data")
+    out: list[str] = []
+    for entry in raw.split(":"):
+        cleaned = entry.strip()
+        if cleaned:
+            out.append(os.path.abspath(cleaned))
+    return out or ["/data"]
+
+
+def _is_allowed_dir(candidate: str, allowed_dirs: list[str]) -> bool:
+    normalized = os.path.abspath(candidate)
+    for base in allowed_dirs:
+        b = os.path.abspath(str(base))
+        if normalized == b or normalized.startswith(f"{b}{os.sep}"):
+            return True
+    return False
+
+
 def _get_store(da_dir: Optional[str] = None):
     """Return (or lazily create) the NodeDAStore for the configured directory."""
     try:
@@ -42,7 +99,7 @@ def _get_store(da_dir: Optional[str] = None):
         raise rpc_errors.TemporarilyUnavailable(
             f"DA node store not available: {exc}"
         )
-    root = da_dir or _default_da_dir()
+    root = _resolve_store_dir(da_dir)
     return get_store(root)
 
 
@@ -96,7 +153,12 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
     }
     """
     try:
-        store = _get_store()
+        requested_dir = None
+        if isinstance(params, dict):
+            requested_dir = params.get("dir")
+        elif isinstance(params, (list, tuple)) and params:
+            requested_dir = params[0]
+        store = _get_store(requested_dir)
         cfg = store.config
         stats = store.stats()
         enabled = bool(cfg.enabled)
@@ -174,7 +236,7 @@ def da_get_default_dir(params=None, *_args, **_kwargs) -> dict:
 @method("da.getAllowedBaseDirs", aliases=("da_getAllowedBaseDirs",), desc="Get allowed base directories for DA store")
 def da_get_allowed_base_dirs(params=None, *_args, **_kwargs) -> dict:
     _ = params
-    return {"dirs": ["/data"]}
+    return {"dirs": _allowed_base_dirs()}
 
 
 @method("da.configure", aliases=("da_configure",), desc="Configure node-side DA store")
@@ -199,11 +261,16 @@ def da_configure(params=None, **kwargs) -> dict:
     elif isinstance(params, (list, tuple)) and params:
         if isinstance(params[0], dict):
             kwargs.update(params[0])
+        else:
+            ordered = ["enabled", "dir", "max_bytes", "on_full", "allow_remote_put"]
+            for idx, value in enumerate(params):
+                if idx < len(ordered):
+                    kwargs.setdefault(ordered[idx], value)
 
     # Validate
     enabled = kwargs.get("enabled")
     da_dir = kwargs.get("dir")
-    max_bytes = kwargs.get("max_bytes")
+    max_bytes = kwargs.get("max_bytes", kwargs.get("limit_bytes"))
     eviction_policy = kwargs.get("eviction_policy", "lru")
     on_full = kwargs.get("on_full", "evict")
     allow_remote_get = kwargs.get("allow_remote_get")
@@ -220,20 +287,52 @@ def da_configure(params=None, **kwargs) -> dict:
     if max_bytes is not None and int(max_bytes) < 0:
         raise rpc_errors.InvalidParams("max_bytes must be >= 0")
 
+    if enabled is None:
+        raise rpc_errors.InvalidParams(
+            "Missing required parameter: enabled",
+            data={"reason": "missing_enabled", "error_code": "DA_CONFIG_MISSING_REQUIRED"},
+        )
+    if bool(enabled):
+        if not isinstance(da_dir, str) or not da_dir.strip():
+            raise rpc_errors.InvalidParams(
+                "Missing required parameter: dir",
+                data={"reason": "missing_dir", "error_code": "DA_CONFIG_MISSING_REQUIRED"},
+            )
+        if max_bytes is None:
+            raise rpc_errors.InvalidParams(
+                "Missing required parameter: max_bytes",
+                data={"reason": "missing_max_bytes", "error_code": "DA_CONFIG_MISSING_REQUIRED"},
+            )
+
     # Resolve directory
     try:
         root = os.path.abspath(da_dir) if da_dir else _default_da_dir()
+        allowed_dirs = _allowed_base_dirs()
+        if not _is_allowed_dir(root, allowed_dirs):
+            raise rpc_errors.InvalidParams(
+                f"DA directory must be under one of: {allowed_dirs}",
+                data={"reason": "invalid_dir", "error_code": "DA_CONFIG_DIR_NOT_ALLOWED", "dir": root, "allowed_base_dirs": allowed_dirs},
+            )
         Path(root).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
+        if isinstance(exc, rpc_errors.RpcError):
+            raise
         msg = str(exc)
         if "Read-only file system" in msg or "Errno 30" in msg:
             raise rpc_errors.InvalidParams(
-                f"Cannot create DA directory: {exc}. Node runs in a container; use a writable path under /data (for example /data/da)."
+                f"Cannot create DA directory: {exc}. Node runs in a container; use a writable path under /data (for example /data/da).",
+                data={"reason": "dir_create_failed", "error_code": "DA_CONFIG_DIR_CREATE_FAILED", "dir": root},
             )
-        raise rpc_errors.InvalidParams(f"Cannot create DA directory: {exc}")
+        raise rpc_errors.InvalidParams(
+            f"Cannot create DA directory: {exc}",
+            data={"reason": "dir_create_failed", "error_code": "DA_CONFIG_DIR_CREATE_FAILED", "dir": root},
+        )
 
     if not os.access(root, os.W_OK):
-        raise rpc_errors.InvalidParams(f"DA directory is not writable: {root}")
+        raise rpc_errors.InvalidParams(
+            f"DA directory is not writable: {root}",
+            data={"reason": "not_writable", "error_code": "DA_CONFIG_DIR_NOT_WRITABLE", "dir": root},
+        )
 
     try:
         from da.node_store import get_store, invalidate_store
@@ -258,10 +357,33 @@ def da_configure(params=None, **kwargs) -> dict:
     if allow_remote_put is not None:
         update_kwargs["allow_remote_put"] = bool(allow_remote_put)
 
-    store.update_config(**update_kwargs)
+    try:
+        store.update_config(**update_kwargs)
+    except Exception as exc:
+        raise rpc_errors.InternalError(
+            f"Failed to persist DA config: {exc}",
+            data={"reason": "persist_failed", "error_code": "DA_CONFIG_PERSIST_FAILED", "dir": root},
+        )
+
+    persisted_payload = {
+        "enabled": bool(store.config.enabled),
+        "dir": root,
+        "max_bytes": int(store.config.max_bytes),
+        "allow_remote_get": bool(store.config.allow_remote_get),
+        "allow_remote_put": bool(store.config.allow_remote_put),
+        "eviction_policy": str(store.config.eviction_policy),
+        "on_full": str(store.config.on_full),
+    }
+    try:
+        _persist_da_config(persisted_payload)
+    except Exception as exc:
+        raise rpc_errors.InternalError(
+            f"Failed to persist DA runtime config: {exc}",
+            data={"reason": "persist_runtime_failed", "error_code": "DA_CONFIG_PERSIST_FAILED", "dir": root},
+        )
 
     # Get current status after update
-    status = da_status()
+    status = da_status({"dir": root})
 
     # Build requested vs effective comparison
     cfg_after = store.config
@@ -303,6 +425,16 @@ def da_configure(params=None, **kwargs) -> dict:
         warnings.append(
             "requested allow_remote_put=true but policy disallows it; "
             "check node policy configuration"
+        )
+
+    if bool(enabled) and (not status.get("enabled") or not status.get("writable")):
+        raise rpc_errors.InternalError(
+            "Failed to enable DA after configuration",
+            data={
+                "reason": str(status.get("reason") or status.get("policy_blocked_reason") or "enable_failed"),
+                "error_code": "DA_ENABLE_FAILED",
+                "status": status,
+            },
         )
 
     status["requested"] = requested
