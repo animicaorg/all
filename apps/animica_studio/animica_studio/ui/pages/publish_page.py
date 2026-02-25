@@ -43,6 +43,11 @@ class PublishPage(QWidget):
         self.copy_diag_btn.clicked.connect(self._copy_diagnostics)
         self.copy_diag_btn.setEnabled(False)
         actions.addWidget(self.copy_diag_btn)
+
+        self.run_curl_btn = QPushButton("Run this curl")
+        self.run_curl_btn.clicked.connect(self._show_curl_commands)
+        self.run_curl_btn.setEnabled(False)
+        actions.addWidget(self.run_curl_btn)
         root.addLayout(actions)
 
         self._last_diag: dict = {}
@@ -60,6 +65,7 @@ class PublishPage(QWidget):
         self.copy_diag_btn.setEnabled(False)
         self.local_upload_btn.setEnabled(False)
         self.retry_register_btn.setEnabled(False)
+        self.run_curl_btn.setEnabled(False)
 
         run = out.get("run")
         if run and getattr(run, "status", "") in {"failed", "partial"}:
@@ -92,7 +98,21 @@ class PublishPage(QWidget):
         if not res.get("ok"):
             status_after = res.get("status") if isinstance(res.get("status"), dict) else {}
             reason = status_after.get("reason") or status_after.get("policy_blocked_reason") or res.get("error")
-            self.out.append(f"\nDA configure failed: {reason}")
+            self._last_diag = {
+                "error": res.get("error"),
+                "request_payload": res.get("request_payload"),
+                "response": res.get("response"),
+                "status": status_after,
+                "curl_configure": res.get("curl_configure"),
+                "curl_get_status": res.get("curl_get_status"),
+            }
+            self.copy_diag_btn.setEnabled(True)
+            self.run_curl_btn.setEnabled(bool(res.get("curl_configure") or res.get("curl_get_status")))
+            self.out.append("\nNode refused to configure DA")
+            self.out.append("Request payload: " + json.dumps(res.get("request_payload"), indent=2, sort_keys=True))
+            self.out.append("Response: " + json.dumps(res.get("response"), indent=2, sort_keys=True))
+            self.out.append("Verify status: " + json.dumps(status_after, indent=2, sort_keys=True))
+            self.out.append(f"Reason: {reason}")
             return
 
         if self.allow_remote_toggle.isChecked() and status.get("can_configure_allow_remote_put"):
@@ -102,12 +122,25 @@ class PublishPage(QWidget):
                 pass
 
         status_after = self.service.da_status.get_status()
-        if status_after.get("enabled") and (status_after.get("writable", True) or status_after.get("ok")):
+        self._last_diag = {
+            "request_payload": res.get("request_payload") or res.get("payload"),
+            "response": res.get("response"),
+            "status": status_after,
+            "curl_configure": res.get("curl_configure"),
+            "curl_get_status": res.get("curl_get_status") or status_after.get("curl_get_status"),
+        }
+        self.copy_diag_btn.setEnabled(True)
+        self.run_curl_btn.setEnabled(bool(self._last_diag.get("curl_configure") or self._last_diag.get("curl_get_status")))
+        if status_after.get("enabled") and status_after.get("ok"):
             self.out.append("\nDA configured successfully. You can now Retry Push to DA.")
             self.local_upload_btn.setEnabled(True)
         else:
-            reason = status_after.get("reason") or status_after.get("policy_blocked_reason") or "unknown"
-            self.out.append(f"\nDA configuration did not become writable: {reason}")
+            reason = status_after.get("reason") or status_after.get("policy_blocked_reason") or res.get("error")
+            self.out.append("\nNode refused to configure DA")
+            self.out.append("Request payload: " + json.dumps(self._last_diag.get("request_payload"), indent=2, sort_keys=True))
+            self.out.append("Response: " + json.dumps(self._last_diag.get("response"), indent=2, sort_keys=True))
+            self.out.append("Verify status: " + json.dumps(status_after, indent=2, sort_keys=True))
+            self.out.append(f"Reason: {reason}")
 
     def _retry_local_ingest(self) -> None:
         self.out.append("\nRetrying Push to DA…")
@@ -118,6 +151,16 @@ class PublishPage(QWidget):
             return
         text = json.dumps(self._last_diag, indent=2, sort_keys=True)
         self.out.append("\nDiagnostics copied to output:\n" + text)
+
+    def _show_curl_commands(self) -> None:
+        if not self._last_diag:
+            return
+        cfg = self._last_diag.get("curl_configure")
+        st = self._last_diag.get("curl_get_status")
+        if cfg:
+            self.out.append("\nRun this curl (configure):\n" + str(cfg))
+        if st:
+            self.out.append("\nRun this curl (status):\n" + str(st))
 
     def _retry_register(self) -> None:
         self.out.append("\nRetrying AICF register…")
