@@ -337,6 +337,7 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
     logs: list[tuple[str, str]] = []
     status_ok = True
     allow_remote = True
+    status_reason = ""
     try:
         with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1) as c:
             reg = c.registry()
@@ -346,11 +347,18 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
                 if isinstance(st, dict):
                     allow_remote = bool(st.get("allow_remote_put", True))
                     enabled = bool(st.get("enabled", True))
-                    status_ok = enabled
+                    status_ok = enabled and bool(st.get("ok", True))
+                    status_reason = str(st.get("reason") or st.get("policy_blocked_reason") or "")
     except Exception as exc:  # noqa: BLE001
         logs.append(("warning", f"DA status unavailable: {exc}"))
     if not status_ok:
-        return {"state": "idle", "detail": "IDLE", "logs": logs + [("warning", "DA disabled; local training continues.")]} 
+        reason = status_reason or "not_configured"
+        return {
+            "state": "idle",
+            "detail": "DA_NOT_CONFIGURED",
+            "logs": logs + [("warning", f"DA not configured on node ({reason}); checkpoint kept local until configured.")],
+            "upload": {"pending_da_upload": True, "reason": reason},
+        }
     if not allow_remote:
         if bool(cfg.get("require_da_uploads", False)) and not bool(cfg.get("auto_fallback_on_remote_put_block", True)):
             return {"state": "error", "detail": "Publish blocked: allow_remote_put=false", "logs": logs + [("error", "DA policy blocks RPC upload; enable allow_remote_put or configure local ingest")]} 
@@ -395,6 +403,9 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
             }
             pointer_out = c.call_with_schema(put_method, {"data": base64.b64encode(json.dumps(pointer).encode("utf-8")).decode("ascii"), "namespace": ns})
             pointer_commitment = str(pointer_out.get("commitment") if isinstance(pointer_out, dict) else pointer_out)
+            get_method = reg.resolve_any(["da.getBlob", "da_getBlob"])
+            if get_method:
+                _ = c.call_with_schema(get_method, {"commitment": pointer_commitment})
     except Exception as exc:  # noqa: BLE001
         return {"state": "error", "detail": f"UPLOAD_FAILED: {exc}", "logs": logs + [("error", str(exc))]}
 
