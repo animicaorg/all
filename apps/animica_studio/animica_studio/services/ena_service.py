@@ -5,14 +5,19 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import hashlib
+import importlib.util
 import json
 import logging
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Any
 
 import requests
+from PySide6.QtCore import QObject, Signal
 
+from animica_studio.services.ena_inference_service import EnaInferenceService, GenerationConfig
+from animica_studio.services.ena_model_repository import EnaModelRepository, ModelEntry
 from animica_studio.services.ide_service import _safe_path
 
 log = logging.getLogger(__name__)
@@ -63,9 +68,7 @@ class LocalEnaProvider(EnaProvider):
         return {"chat": True, "code_actions": True, "diff": True, "tools": True}
 
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> EnaResponse:
-        prompt = messages[-1]["content"] if messages else ""
-        file_name = context.get("current_file") or "current file"
-        return EnaResponse(text=f"ENA(local): I can help with '{prompt}' for {file_name}.")
+        return EnaResponse(text="", error="Legacy local chat provider is disabled. Use EnaIdeAssistantProvider.")
 
     def propose_edits(self, goal: str, files: dict[str, str], selection: str, context: dict[str, Any]) -> EnaEditProposal:
         if not files:
@@ -126,6 +129,106 @@ class RemoteEnaProvider(EnaProvider):
             except Exception as exc:  # noqa: BLE001
                 err = str(exc)
         return EnaResponse(text="", error=err)
+
+
+class EnaIdeAssistantProvider(QObject):
+    chunk = Signal(str)
+    finished = Signal(bool, dict)
+    error = Signal(str, str)
+
+    def __init__(self, ena_config: dict[str, Any], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._ena_config = ena_config
+        self._repo = EnaModelRepository()
+        self._inference = EnaInferenceService(self)
+        self._active_handle: str | None = None
+        self._active_parts: list[str] = []
+        self._model_cache: list[ModelEntry] = []
+        self._inference.chunk.connect(self._on_chunk)
+        self._inference.finished.connect(self._on_finished)
+        self._inference.error.connect(self.error.emit)
+
+    def selected_model_path(self) -> str:
+        ide_cfg = self._ide_cfg()
+        return str(ide_cfg.get("model_path") or "").strip()
+
+    def set_selected_model_path(self, model_path: str) -> None:
+        ide_cfg = self._ide_cfg()
+        ide_cfg["model_path"] = model_path
+        self._ena_config["ide_assistant"] = ide_cfg
+
+    def available_status(self) -> tuple[bool, str]:
+        model_path = self.selected_model_path()
+        if not model_path:
+            return False, "No model selected"
+        p = Path(model_path).expanduser()
+        if not p.exists() or not p.is_file():
+            return False, "Missing checkpoint"
+        if not _local_inference_backend_ready():
+            return False, "Inference backend missing"
+        return True, "ready"
+
+    def list_models(self) -> list[ModelEntry]:
+        self._model_cache = self._repo.list_models()
+        return self._model_cache
+
+    def start(self, prompt: str, history: list[dict[str, str]], generation_cfg: GenerationConfig) -> bool:
+        available, _reason = self.available_status()
+        if not available:
+            return False
+        model = self._resolve_model()
+        if model is None:
+            self.error.emit("Missing model", "No readable local model checkpoint is configured.")
+            return False
+        self._active_parts = []
+        self._active_handle = self._inference.start(prompt, history, model, generation_cfg)
+        return True
+
+    def cancel(self) -> None:
+        if self._active_handle:
+            self._inference.cancel(self._active_handle)
+            self._active_handle = None
+
+    def _resolve_model(self) -> ModelEntry | None:
+        selected = self.selected_model_path()
+        if not selected:
+            return None
+        for entry in self._model_cache or self._repo.list_models():
+            if Path(entry.checkpoint_path).resolve() == Path(selected).expanduser().resolve():
+                return entry
+        p = Path(selected).expanduser()
+        if p.exists() and p.is_file():
+            return ModelEntry(name=p.stem, checkpoint_path=str(p.resolve()), created_at=p.stat().st_mtime)
+        return None
+
+    def _ide_cfg(self) -> dict[str, Any]:
+        raw = self._ena_config.get("ide_assistant")
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    def _on_chunk(self, text: str) -> None:
+        self._active_parts.append(text)
+        self.chunk.emit(text)
+
+    def _on_finished(self, ok: bool, stats: dict[str, Any]) -> None:
+        assembled = "".join(self._active_parts).strip()
+        self._active_handle = None
+        out = dict(stats)
+        if assembled and not out.get("text"):
+            out["text"] = assembled
+        self.finished.emit(ok, out)
+
+
+def _local_inference_backend_ready() -> bool:
+    if importlib.util.find_spec("ena.inference") is not None:
+        return True
+    exe = shutil.which("ena")
+    if not exe:
+        return False
+    try:
+        probe = subprocess.run([exe, "infer", "--help"], capture_output=True, text=True, timeout=2, check=False)
+        return probe.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 class WorkspaceIndexService:
