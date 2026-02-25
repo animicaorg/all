@@ -31,14 +31,14 @@ class DaClient:
             return code == -32601 or "method not found" in msg or "not available" in msg
         return isinstance(exc, RpcTransportError)
 
-    def _call_multi(self, methods: tuple[str, ...], params: list[Any]) -> Any:
+    def _call_multi(self, methods: tuple[str, ...], params: list[Any] | dict[str, Any]) -> Any:
         c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
         failures: list[str] = []
         try:
             if hasattr(c, "resolve_method"):
                 try:
                     method = c.resolve_method(methods[0], list(methods))
-                    if params and isinstance(params[0], dict):
+                    if isinstance(params, list) and params and isinstance(params[0], dict):
                         return c.call_with_schema(method, params[0])
                     return c.call(method, params)
                 except Exception as exc:  # noqa: BLE001
@@ -154,7 +154,7 @@ class DaClient:
         return self._call_multi(("da_getStatus", "da.getStatus", "da_status", "da.status"), [])
 
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
-        return self._call_multi(("da.configure", "da_configure"), [params])
+        return self._call_multi(("da.configure", "da_configure"), params)
 
     def has_blob(self, blob_id: str) -> bool:
         out = self._call_multi(("da.has", "da_has"), [blob_id])

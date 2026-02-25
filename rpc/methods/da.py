@@ -255,17 +255,25 @@ def da_configure(params=None, **kwargs) -> dict:
 
     Returns the resulting da.status dict.
     """
-    # Normalise params: accept positional list, dict, or kwargs
+    # Normalise params: accept object params, legacy [object], or legacy positional list.
+    received_keys: list[str] = []
     if isinstance(params, dict):
         kwargs.update(params)
+        received_keys = sorted(str(k) for k in params.keys())
     elif isinstance(params, (list, tuple)) and params:
         if isinstance(params[0], dict):
             kwargs.update(params[0])
+            received_keys = sorted(str(k) for k in params[0].keys())
         else:
             ordered = ["enabled", "dir", "max_bytes", "on_full", "allow_remote_put"]
             for idx, value in enumerate(params):
                 if idx < len(ordered):
                     kwargs.setdefault(ordered[idx], value)
+            received_keys = [ordered[idx] for idx in range(min(len(params), len(ordered)))]
+    else:
+        received_keys = sorted(str(k) for k in kwargs.keys()) if kwargs else []
+
+    _log.debug("da.configure parse params_type=%s received_keys=%s kwargs_keys=%s", type(params).__name__, received_keys, sorted(kwargs.keys()))
 
     # Validate
     enabled = kwargs.get("enabled")
@@ -290,7 +298,12 @@ def da_configure(params=None, **kwargs) -> dict:
     if enabled is None:
         raise rpc_errors.InvalidParams(
             "Missing required parameter: enabled",
-            data={"reason": "missing_enabled", "error_code": "DA_CONFIG_MISSING_REQUIRED"},
+            data={
+                "reason": "missing_enabled",
+                "error_code": "DA_CONFIG_MISSING_REQUIRED",
+                "received_keys": received_keys,
+                "parsed_keys": sorted(str(k) for k in kwargs.keys()),
+            },
         )
     if bool(enabled):
         if not isinstance(da_dir, str) or not da_dir.strip():

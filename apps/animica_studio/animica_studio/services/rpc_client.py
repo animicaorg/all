@@ -84,9 +84,16 @@ class RpcRegistry:
                     continue
                 params: list[dict[str, Any]] = []
                 params_raw = item.get("params", [])
+                declared_structure = str(item.get("paramStructure") or "").strip().lower()
                 param_structure = "unknown"
-                if isinstance(params_raw, list):
+                if declared_structure in {"by-name", "object", "named"}:
+                    param_structure = "object"
+                elif declared_structure in {"by-position", "positional", "array"}:
                     param_structure = "positional"
+
+                if isinstance(params_raw, list):
+                    if param_structure == "unknown":
+                        param_structure = "positional"
                     for p in params_raw:
                         if not isinstance(p, dict):
                             continue

@@ -8,6 +8,7 @@ from animica_studio.services.rpc_client import RpcError, RpcResponseError
 
 def test_da_configure_falls_back_to_alias_when_primary_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
+    payloads: list[object] = []
 
     class FakeRpcClient:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -15,6 +16,7 @@ def test_da_configure_falls_back_to_alias_when_primary_missing(monkeypatch: pyte
 
         def call(self, method: str, params):
             calls.append(method)
+            payloads.append(params)
             if method == "da.configure":
                 raise RpcResponseError(RpcError(code=-32601, message="Method not found"))
             if method == "da_configure":
@@ -31,6 +33,7 @@ def test_da_configure_falls_back_to_alias_when_primary_missing(monkeypatch: pyte
 
     assert out["ok"] is True
     assert calls == ["da.configure", "da_configure"]
+    assert payloads == [{"enabled": True}, {"enabled": True}]
 
 
 def test_da_configure_does_not_swallow_non_availability_errors(monkeypatch: pytest.MonkeyPatch) -> None:
