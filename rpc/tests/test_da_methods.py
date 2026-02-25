@@ -26,7 +26,7 @@ def _make_store_mock(enabled=True, **overrides):
     cfg.enabled = enabled
     cfg.max_bytes = 10 * 1024 ** 3
     cfg.allow_remote_get = True
-    cfg.allow_remote_put = False
+    cfg.allow_remote_put = True  # default True so put tests pass; set to False to test policy
     cfg.eviction_policy = "lru"
     cfg.on_full = "evict"
 

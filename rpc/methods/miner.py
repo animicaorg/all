@@ -5898,7 +5898,23 @@ def mining_get_template_status() -> dict[str, Any]:
     try:
         # Check mining gate
         allowed, reason = _mining_gate(allow_offline_mining=False, allow_unsynced=False)
-        
+
+        # Check min_block_spacing and compute retry hint
+        retry_after_ms: int | None = None
+        if allowed:
+            min_spacing_s = _min_block_spacing_s()
+            if min_spacing_s > 0:
+                head_ts = _head_timestamp_seconds()
+                if head_ts is not None:
+                    import time as _time
+                    now = _time.time()
+                    earliest = head_ts + min_spacing_s
+                    if now < earliest:
+                        wait_s = max(0.0, earliest - now)
+                        retry_after_ms = int(wait_s * 1000) + 50  # +50ms buffer
+                        allowed = False
+                        reason = "min_block_spacing"
+
         # Get head info
         head_snap = _current_head_snapshot()
         head_height = head_snap.get("height", 0)
@@ -5939,6 +5955,7 @@ def mining_get_template_status() -> dict[str, Any]:
         return {
             "can_mine": allowed,
             "reason": reason,
+            "retry_after_ms": retry_after_ms,
             "sync_phase": sync_phase,
             "head": {
                 "height": int(head_height) if head_height is not None else 0,
@@ -5954,6 +5971,7 @@ def mining_get_template_status() -> dict[str, Any]:
         return {
             "can_mine": False,
             "reason": f"error: {e}",
+            "retry_after_ms": None,
             "sync_phase": None,
             "head": {"height": 0, "hash": None, "has_state_root": False},
             "mempool": {"size": 0},

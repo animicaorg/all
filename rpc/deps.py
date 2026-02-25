@@ -564,7 +564,11 @@ def _maybe_bootstrap_genesis(
     CRITICAL: This function must NOT open a second connection to the DB that's
     already open in bundle.kv. Instead, it should use the existing KV instance
     to avoid conflicts and ensure state consistency.
+
+    Set ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP=1 to skip entirely (test-only).
     """
+    if _bool_env("ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP", False):
+        return
     try:
         head_mod = _import("core.chain.head")
         need_boot = True
@@ -995,7 +999,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     params = _params_from_spec(cfg_view.chain_id)
     identity = None
     chain_identity = None
+    _skip_genesis = _bool_env("ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP", False)
     try:
+        if _skip_genesis:
+            raise RuntimeError("genesis check skipped (ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP=1)")
         from core.genesis.loader import compute_genesis_identity
         from core.genesis.loader import compute_chain_identity
         from core.network_params import enforce_pinned_genesis
@@ -1028,13 +1035,17 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 chain_identity.protocol_version,
             )
     except Exception:
-        log.exception(
-            "Failed to compute genesis identity (network=%s chain_id=%s genesis_path=%s)",
-            network,
-            cfg_view.chain_id,
-            cfg_view.genesis_path,
+        if not _skip_genesis:
+            log.exception(
+                "Failed to compute genesis identity (network=%s chain_id=%s genesis_path=%s)",
+                network,
+                cfg_view.chain_id,
+                cfg_view.genesis_path,
+            )
+            raise
+        log.debug(
+            "Genesis identity check skipped (ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP=1)"
         )
-        raise
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
 
