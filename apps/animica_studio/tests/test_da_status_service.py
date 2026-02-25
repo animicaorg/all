@@ -13,6 +13,7 @@ def _mock_registry() -> MagicMock:
         return candidates[0] if candidates else None
 
     reg.resolve_any.side_effect = _resolve_any
+    reg.get_method_meta.return_value = {}
     return reg
 
 
@@ -34,6 +35,7 @@ def test_da_status_service_reads_enabled_status() -> None:
             "max_bytes": 123,
             "allow_remote_put": False,
             "version": "1.0.0",
+            "writable": True,
         }
         cli.call.return_value = "animica-node/1.2.3"
         mock_client_cls.return_value = cli
@@ -57,8 +59,8 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
         svc,
         "get_status",
         side_effect=[
-            {"enabled": False, "da_methods": {"configure": "da.configure"}},
-            {"enabled": True, "dir": "/data/da", "da_methods": {"configure": "da.configure"}},
+            {"enabled": False, "da_methods": {"configure": "da.configure"}, "raw": {}, "default_dir": "/data/da", "allowed_base_dirs": ["/data"]},
+            {"enabled": True, "ok": True, "writable": True, "dir": "/data/da", "da_methods": {"configure": "da.configure"}},
         ],
     ):
         cli = MagicMock()
@@ -85,7 +87,7 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
         out = svc.enable_da("/data/da", 50 * 1024**3)
 
     assert out["ok"] is True
-    configure_call = cli.call_with_schema.call_args_list[0]
+    configure_call = cli.call.call_args_list[0]
     assert configure_call.args[0] == "da_configure"
     assert configure_call.args[1]["enabled"] is True
     assert configure_call.args[1]["dir"] == "/data/da"

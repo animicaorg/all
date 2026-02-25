@@ -42,6 +42,6 @@ def test_publish_page_shows_actionable_retry_on_da_policy_failure(tmp_path: Path
     page = PublishPage(svc)
     page._run()
 
-    assert page.enable_remote_btn.isEnabled()
-    assert page.copy_diag_btn.isEnabled()
-    assert "Retry 'Push to DA'" in page.out.toPlainText() or "Retry Push to DA" in page.out.toPlainText()
+    assert page.local_upload_btn.isEnabled()
+    assert not page.retry_register_btn.isEnabled()
+    assert "Configure DA Now" in page.out.toPlainText() or "DA" in page.out.toPlainText()
