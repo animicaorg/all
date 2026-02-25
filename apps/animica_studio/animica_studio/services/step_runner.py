@@ -70,9 +70,18 @@ class StepRunner:
             self._save(run)
             try:
                 payload = func(step) or {}
-                step.progress = 100
-                step.status = "completed"
-                step.logs.append(f"[{_now()}] completed")
+                payload_status = payload.get("step_status") if isinstance(payload, dict) else None
+                if payload_status in {"completed", "warning", "pending"}:
+                    step.status = str(payload_status)
+                else:
+                    step.status = "completed"
+                if step.status == "completed":
+                    step.progress = 100
+                elif step.status == "warning":
+                    step.progress = max(step.progress, 90)
+                elif step.status == "pending":
+                    step.progress = max(step.progress, 80)
+                step.logs.append(f"[{_now()}] {step.status}")
                 if payload:
                     run.result[name] = payload
             except Exception as exc:  # noqa: BLE001
@@ -96,7 +105,13 @@ class StepRunner:
                 return run
             run.updated_at = _now()
             self._save(run)
-        run.status = "completed"
+        statuses = {s.status for s in run.steps}
+        if "failed" in statuses:
+            run.status = "failed"
+        elif "warning" in statuses or "pending" in statuses:
+            run.status = "partial"
+        else:
+            run.status = "completed"
         run.updated_at = _now()
         self._save(run)
         return run

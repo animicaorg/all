@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from animica_studio.util.paths import app_data_dir
+
 log = logging.getLogger(__name__)
 
 
@@ -301,6 +303,55 @@ class EnaService:
             "verified": verified,
             "payload": pointer_payload,
         }
+    def _pending_upload_queue_path(self) -> Path:
+        return app_data_dir() / "pending_da_uploads.json"
+
+    def _load_pending_uploads(self) -> list[dict[str, Any]]:
+        path = self._pending_upload_queue_path()
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [x for x in data if isinstance(x, dict)]
+        except Exception:
+            return []
+        return []
+
+    def _save_pending_uploads(self, rows: list[dict[str, Any]]) -> None:
+        path = self._pending_upload_queue_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _enqueue_pending_upload(self, checkpoint_sha: str) -> dict[str, Any]:
+        rows = self._load_pending_uploads()
+        existing = next((r for r in rows if r.get("sha256") == checkpoint_sha and not r.get("uploaded")), None)
+        if existing:
+            return existing
+        row = {
+            "checkpoint_id": checkpoint_sha[:12],
+            "sha256": checkpoint_sha,
+            "local_path": "",
+            "channel": "ena-main",
+            "namespace": 0,
+            "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            "uploaded": False,
+        }
+        rows.append(row)
+        self._save_pending_uploads(rows)
+        return row
+
+    def _mark_pending_uploaded(self, checkpoint_sha: str, commitment: str) -> None:
+        rows = self._load_pending_uploads()
+        changed = False
+        for r in rows:
+            if r.get("sha256") == checkpoint_sha:
+                r["uploaded"] = True
+                r["commitment"] = commitment
+                changed = True
+        if changed:
+            self._save_pending_uploads(rows)
+
 
     def publish_checkpoint(self, checkpoint_sha: str, dev_mode: bool = False) -> dict[str, Any]:
         step_cache: dict[str, Any] = {}
@@ -315,21 +366,31 @@ class EnaService:
 
         def _validate(step):
             step.copy_command = f"animica ena publish --checkpoint {checkpoint_sha[:12]}"
-            return {"valid": True, "checkpoint_sha": checkpoint_sha}
+            return {"valid": True, "checkpoint_sha": checkpoint_sha, "step_status": "completed"}
 
         def _push(step):
             data = checkpoint_sha.encode("utf-8")
+            local_commitment = f"local-{checkpoint_sha[:16]}"
             if dev_mode:
-                commit = f"dev-{checkpoint_sha[:16]}"
-                step_cache["commitment"] = commit
+                step_cache["da_pending"] = True
+                self._enqueue_pending_upload(checkpoint_sha)
                 self._set_checkpoint_publish_state(
                     checkpoint_sha,
                     local_artifact_prepared=True,
                     da_uploaded=False,
                     da_pending_reason="dev_mode_local_only",
-                    commitment=commit,
                 )
-                return {"commitment": commit, "mode": "local-only", "pending_da_upload": True}
+                return {
+                    "local_commitment": local_commitment,
+                    "mode": "local-only",
+                    "pending_da_upload": True,
+                    "step_status": "warning",
+                    "state": "PREPARED_LOCALLY",
+                    "actions": [
+                        {"id": "configure_da", "label": "Configure DA Now"},
+                        {"id": "retry_da_upload", "label": "Retry DA Upload"},
+                    ],
+                }
 
             status = self.da_status.get_status()
             diagnostics = self._build_da_diagnostics(status)
@@ -339,30 +400,33 @@ class EnaService:
 
             if not da_enabled:
                 reason = str(status.get("reason") or status.get("policy_blocked_reason") or "not_configured")
+                self._enqueue_pending_upload(checkpoint_sha)
                 self._set_checkpoint_publish_state(
                     checkpoint_sha,
                     local_artifact_prepared=True,
                     da_uploaded=False,
                     da_pending_reason=reason,
                 )
-                recs = ["Configure DA on the node, then click 'Retry Push to DA'."]
-                msg = "DA not configured on node" if not_configured else f"DA unavailable on node ({reason})"
-                raise DaPolicyError(
-                    message=f"{msg}; checkpoint prepared locally. Configure DA to upload.",
-                    code="DA_NOT_CONFIGURED" if not_configured else "DA_DISABLED",
-                    da_enabled=False,
-                    allow_remote_put=bool(status.get("allow_remote_put")),
-                    da_dir=diagnostics["da_dir"],
-                    rpc_url=diagnostics["rpc_url"],
-                    can_enable_remote_put=supports_toggle,
-                    diagnostics=diagnostics | {"status": status},
-                    recommendations=recs,
-                )
+                step_cache["da_pending"] = True
+                return {
+                    "local_commitment": local_commitment,
+                    "mode": "local-only",
+                    "pending_da_upload": True,
+                    "reason": reason,
+                    "diagnostics": diagnostics | {"status": status},
+                    "step_status": "warning",
+                    "state": "PREPARED_LOCALLY",
+                    "actions": [
+                        {"id": "configure_da", "label": "Configure DA Now"},
+                        {"id": "retry_da_upload", "label": "Retry DA Upload"},
+                    ],
+                }
 
             existing_commitment = str((cp_row or {}).get("commitment") or "")
             if existing_commitment and self._verify_da_presence(existing_commitment):
                 step.logs.append("Checkpoint already present in DA; reusing commitment.")
                 step_cache["commitment"] = existing_commitment
+                self._mark_pending_uploaded(checkpoint_sha, existing_commitment)
                 self._set_checkpoint_publish_state(
                     checkpoint_sha,
                     local_artifact_prepared=True,
@@ -379,33 +443,11 @@ class EnaService:
                     "da_status": status,
                     "diagnostics": diagnostics,
                     "remote_pointer": pointer,
+                    "step_status": "completed",
+                    "state": "UPLOADED_TO_DA",
                 }
 
-            strategy = "rpc_put"
-            if status.get("allow_remote_put") is False:
-                if diagnostics["local_node"]:
-                    strategy = "local_ingest"
-                    self._set_checkpoint_publish_state(
-                        checkpoint_sha,
-                        local_artifact_prepared=True,
-                        da_uploaded=False,
-                        da_pending_reason="allow_remote_put_false",
-                    )
-                    recs = [
-                        "Remote DA uploads are disabled for this node.",
-                        "Enable allow_remote_put or configure local ingest and retry Push to DA.",
-                    ]
-                    raise DaPolicyError(
-                        message="DA not configured for RPC uploads; checkpoint prepared locally. Configure DA to upload.",
-                        code="DA_REMOTE_PUT_BLOCKED",
-                        da_enabled=True,
-                        allow_remote_put=False,
-                        da_dir=diagnostics["da_dir"],
-                        rpc_url=diagnostics["rpc_url"],
-                        can_enable_remote_put=supports_toggle,
-                        diagnostics=diagnostics,
-                        recommendations=recs,
-                    )
+            if status.get("allow_remote_put") is False and not diagnostics.get("local_node"):
                 recs = [
                     "Remote DA uploads are disabled on this node.",
                     "You must enable allow_remote_put on the node operator side.",
@@ -422,6 +464,7 @@ class EnaService:
                     recommendations=recs,
                 )
 
+            strategy = "rpc_put"
             step.logs.append("Uploading to DA…")
             step.progress = 60
             out = self.da.upload_bytes(data)
@@ -436,13 +479,8 @@ class EnaService:
                 raise RuntimeError(f"DA verification failed for blob {commit}")
 
             pointer = self._update_remote_pointer(commit, checkpoint_sha)
-            log.info(
-                "ENA publish DA push strategy=%s commitment=%s verified=%s",
-                strategy,
-                commit,
-                verified,
-            )
             step_cache["commitment"] = commit
+            self._mark_pending_uploaded(checkpoint_sha, commit)
             self._set_checkpoint_publish_state(
                 checkpoint_sha,
                 local_artifact_prepared=True,
@@ -458,23 +496,46 @@ class EnaService:
                 "da_status": status,
                 "diagnostics": diagnostics,
                 "remote_pointer": pointer,
+                "step_status": "completed",
+                "state": "UPLOADED_TO_DA",
             }
 
         def _register(step):
-            payload = {"checkpoint_sha": checkpoint_sha, "commitment": step_cache.get("commitment")}
+            commitment = step_cache.get("commitment")
+            if not commitment:
+                return {
+                    "ok": False,
+                    "pending": True,
+                    "reason": "Awaiting DA upload commitment before register.",
+                    "step_status": "pending",
+                    "actions": [{"id": "retry_register", "label": "Retry AICF Register"}],
+                }
+            payload = {"checkpoint_sha": checkpoint_sha, "commitment": commitment}
             res = self.aicf.submit_job("ena_checkpoint_publish", payload, 10)
             ok = bool(res.get("ok", False))
             self._set_checkpoint_publish_state(
                 checkpoint_sha,
                 local_artifact_prepared=True,
                 aicf_registered=ok,
+                commitment=commitment,
             )
-            return {"job": res.get("data", {}).get("job_id", "local-reg"), "ok": ok}
+            if not ok:
+                err = str(res.get("error") or res.get("message") or "AICF registration failed")
+                return {
+                    "job": res.get("data", {}).get("job_id", "local-reg"),
+                    "ok": False,
+                    "error": err,
+                    "rpc_method": "aicf.submitJob",
+                    "rpc_params": payload,
+                    "step_status": "warning",
+                    "actions": [{"id": "retry_register", "label": "Retry AICF Register"}],
+                }
+            return {"job": res.get("data", {}).get("job_id", "local-reg"), "ok": True, "step_status": "completed"}
 
         run = self.runner.run("publish", [("Validate checkpoint", _validate), ("Push to DA", _push), ("Register in AICF", _register)])
         if run.status == "failed":
             return {"ok": False, "run": run}
-        return {"ok": True, "run": run}
+        return {"ok": run.status == "completed", "run": run}
 
     def infer(self, prompt: str, network_mode: bool = False, token_estimate: int = 100) -> dict[str, Any]:
         fees = self.fees.estimate(token_estimate)

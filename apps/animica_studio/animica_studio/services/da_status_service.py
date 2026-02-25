@@ -103,6 +103,8 @@ class DaStatusService:
                     "allowed_base_dirs": allowed_dirs_method,
                 },
                 "configure_param_spec": configure_param_spec,
+                "configure_param_structure": ((getattr(registry, "get_method_meta", lambda *_a, **_k: {})(configure_method).get("param_structure")) if configure_method else "unknown"),
+                "configure_method_raw": ((getattr(registry, "get_method_meta", lambda *_a, **_k: {})(configure_method).get("raw")) if configure_method and not configure_param_spec else None),
                 "can_configure_allow_remote_put": any(p.get("name") == "allow_remote_put" for p in configure_param_spec if isinstance(p, dict)),
             }
         except Exception as exc:  # noqa: BLE001
@@ -156,7 +158,7 @@ class DaStatusService:
         client = self._client(rpc_url)
         try:
             before = self.get_status(rpc_url)
-            if before.get("enabled") and before.get("ok"):
+            if before.get("enabled") and (before.get("ok") or before.get("writable")):
                 return {"ok": True, "response": {"noop": True}, "status": before, "method": before.get("da_methods", {}).get("configure")}
 
             registry = client.registry()
@@ -175,42 +177,77 @@ class DaStatusService:
                 elif allowed_base_dirs:
                     candidate_dir = str(allowed_base_dirs[0])
 
-            payload: dict[str, Any] = {}
-            for p in spec:
-                name = p.get("name")
-                if name == "enabled":
-                    payload["enabled"] = True
-                elif name == "dir":
-                    payload["dir"] = candidate_dir
-                elif name in {"max_bytes", "limit_bytes"}:
-                    payload[name] = int(limit_bytes)
-                elif name in {"on_full", "mode"}:
-                    payload[name] = "evict" if mode == "quota" else "reject"
-                elif name == "quota":
-                    payload[name] = mode
-                elif name == "allow_remote_put":
-                    payload[name] = bool(status_raw.get("allow_remote_put", False))
-                elif p.get("required"):
-                    return {"ok": False, "error": f"Unsupported required DA configure param: {name}", "status": before}
-            if not payload:
-                payload = {"enabled": True}
-            payload.setdefault("enabled", True)
+            values: dict[str, Any] = {
+                "enabled": True,
+                "dir": candidate_dir,
+                "max_bytes": int(limit_bytes),
+                "on_full": "evict" if mode == "quota" else "reject",
+                "mode": "evict" if mode == "quota" else "reject",
+            }
+            if isinstance(status_raw, dict) and "allow_remote_put" in status_raw:
+                values["allow_remote_put"] = bool(status_raw.get("allow_remote_put"))
 
-            response = client.call_with_schema(configure_method, payload)
+            attempts: list[tuple[str, Any]] = []
+            if spec:
+                ordered: list[Any] = []
+                for p in spec:
+                    name = p.get("name") if isinstance(p, dict) else None
+                    if isinstance(name, str) and name in values:
+                        ordered.append(values[name])
+                attempts.append(("object", values))
+                if ordered:
+                    attempts.append(("positional", ordered))
+            else:
+                attempts.append(("object", values))
+
+            response = None
+            used_encoding = "object"
+            last_error = ""
+            for encoding, payload in attempts:
+                try:
+                    if encoding == "object":
+                        response = client.call(configure_method, payload)
+                    else:
+                        response = client.call(configure_method, payload)
+                    used_encoding = encoding
+                    last_error = ""
+                    break
+                except RpcResponseError as exc:
+                    last_error = str(exc)
+                    msg = (exc.rpc_error.message or "").lower()
+                    if exc.rpc_error.code == -32602 and ("missing" in msg or "unexpected keyword" in msg):
+                        continue
+                    raise
+
             check = self.get_status(rpc_url)
             if not check.get("enabled"):
-                reason = check.get("reason") or check.get("policy_blocked_reason") or "unknown"
+                reason = check.get("reason") or check.get("policy_blocked_reason") or last_error or "unknown"
                 return {
                     "ok": False,
                     "error": f"Node did not enable DA ({reason})",
                     "response": response,
                     "status": check,
                     "method": configure_method,
+                    "param_encoding": used_encoding,
                 }
-            if check.get("ok") is not True and check.get("writable") is False:
-                reason = check.get("policy_blocked_reason") or check.get("reason") or "not_writable"
-                return {"ok": False, "error": f"DA enabled but not writable ({reason})", "response": response, "status": check, "method": configure_method}
-            return {"ok": True, "response": response, "status": check, "method": configure_method, "payload": payload}
+            if check.get("ok") is not True and check.get("writable", True) is not True:
+                reason = check.get("policy_blocked_reason") or check.get("reason") or last_error or "not_writable"
+                return {
+                    "ok": False,
+                    "error": f"DA enabled but not writable ({reason})",
+                    "response": response,
+                    "status": check,
+                    "method": configure_method,
+                    "param_encoding": used_encoding,
+                }
+            return {
+                "ok": True,
+                "response": response,
+                "status": check,
+                "method": configure_method,
+                "payload": values,
+                "param_encoding": used_encoding,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "status": self.get_status(rpc_url)}
         finally:
