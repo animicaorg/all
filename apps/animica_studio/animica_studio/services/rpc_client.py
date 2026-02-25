@@ -292,7 +292,13 @@ class RpcClient:
 
         body = safe_json_dumps(payload)
         last_exc: Exception | None = None
-        self._last_request_excerpt = {"method": resolved_method, "param_type": param_type, "params": payload.get("params")}
+        request_params = payload.get("params")
+        self._last_request_excerpt = {
+            "method": resolved_method,
+            "param_type": param_type,
+            "params": request_params,
+            "params_len": len(request_params) if isinstance(request_params, (list, dict)) else 0,
+        }
 
         for attempt in range(self._max_retries):
             if attempt > 0:
