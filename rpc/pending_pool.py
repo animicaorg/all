@@ -36,7 +36,7 @@ from core.types.tx import \
 from core.utils.hash import sha3_256, sha3_256_hex
 # PQ primitives (address & signature verification)
 from pq.py.address import decode_address as pq_decode_address
-from pq.py.address import encode_address as pq_encode_address
+from pq.py.address import address_from_pubkey as pq_encode_address  # encode_address was renamed
 from pq.py import verify as pq_verify
 from rpc import deps
 
