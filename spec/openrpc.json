@@ -380,6 +380,1196 @@
           "$ref": "#/components/schemas/SubmitWorkResult"
         }
       }
+    },
+    {
+      "name": "chain.getChainId",
+      "summary": "Return numeric chain id (dot-notation alias for chain_getChainId).",
+      "result": {
+        "name": "chainId",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "examples": [
+        {
+          "name": "get_chain_id",
+          "params": [],
+          "result": {
+            "name": "result",
+            "value": 1
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "chain"
+        }
+      ]
+    },
+    {
+      "name": "chain.getHead",
+      "summary": "Return current canonical head (dot-notation alias for chain_getHead).",
+      "result": {
+        "name": "head",
+        "schema": {
+          "$ref": "#/components/schemas/Head"
+        }
+      },
+      "examples": [
+        {
+          "name": "get_head",
+          "params": [],
+          "result": {
+            "name": "result",
+            "value": {
+              "height": 100,
+              "number": 100,
+              "hash": "0xabcd...1234",
+              "chainId": 1
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "chain"
+        }
+      ]
+    },
+    {
+      "name": "tx.getTransactionByHash",
+      "summary": "Return a transaction by its hash. Accepts object or positional params.",
+      "params": [
+        {
+          "name": "txHash",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Hash"
+          },
+          "description": "Transaction hash (0x-prefixed hex, 32 bytes)"
+        }
+      ],
+      "result": {
+        "name": "transaction",
+        "schema": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "hash": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "nonce": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "confirmed",
+                    "failed",
+                    "dropped"
+                  ]
+                },
+                "blockHeight": {
+                  "type": "integer"
+                },
+                "blockHash": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "paramStructure": "by-name",
+      "examples": [
+        {
+          "name": "get_tx_by_hash",
+          "params": [
+            {
+              "name": "txHash",
+              "value": "0xabcd...1234"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "hash": "0xabcd...1234",
+              "from": "anim1abc...xyz",
+              "to": "anim1def...uvw",
+              "value": "1000000000",
+              "nonce": 0,
+              "status": "pending"
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "tx"
+        }
+      ]
+    },
+    {
+      "name": "tx.getTransactionReceipt",
+      "summary": "Return the transaction receipt for a confirmed tx. Returns null for pending/unknown.",
+      "params": [
+        {
+          "name": "txHash",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Hash"
+          },
+          "description": "Transaction hash (0x-prefixed hex, 32 bytes)"
+        }
+      ],
+      "result": {
+        "name": "receipt",
+        "schema": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "transactionHash": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "confirmed",
+                    "failed",
+                    "reverted"
+                  ]
+                },
+                "blockHeight": {
+                  "type": "integer"
+                },
+                "blockHash": {
+                  "type": "string"
+                },
+                "txIndex": {
+                  "type": "integer"
+                },
+                "confirmations": {
+                  "type": "integer"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "gasUsed": {
+                  "type": "integer"
+                },
+                "logs": {
+                  "type": "array"
+                },
+                "contractAddress": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "paramStructure": "by-name",
+      "examples": [
+        {
+          "name": "get_receipt",
+          "params": [
+            {
+              "name": "txHash",
+              "value": "0xabcd...1234"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "transactionHash": "0xabcd...1234",
+              "status": "confirmed",
+              "blockHeight": 42,
+              "blockHash": "0xef01...5678",
+              "txIndex": 0,
+              "confirmations": 3,
+              "from": "anim1abc...xyz",
+              "to": "anim1def...uvw",
+              "value": "1000000000",
+              "gasUsed": 21000,
+              "logs": []
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "tx"
+        }
+      ]
+    },
+    {
+      "name": "tx.getStatus",
+      "summary": "Return the status of a transaction (pending/confirmed/failed/dropped/unknown).",
+      "params": [
+        {
+          "name": "txHash",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Hash"
+          }
+        }
+      ],
+      "result": {
+        "name": "txStatus",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "pending",
+                "confirmed",
+                "failed",
+                "dropped"
+              ]
+            },
+            "confirmations": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "blockHeight": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "receiptAvailable": {
+              "type": "boolean"
+            },
+            "txAvailable": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "tags": [
+        {
+          "name": "tx"
+        }
+      ]
+    },
+    {
+      "name": "da.configure",
+      "summary": "Configure or reconfigure the node-side DA store.",
+      "params": [
+        {
+          "name": "params",
+          "required": false,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "allow_remote_put": {
+                "type": "boolean"
+              },
+              "allow_remote_get": {
+                "type": "boolean"
+              },
+              "on_full": {
+                "type": "string",
+                "enum": [
+                  "evict",
+                  "reject"
+                ]
+              },
+              "eviction_policy": {
+                "type": "string",
+                "enum": [
+                  "lru"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "daConfig",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "requested": {
+              "type": "object"
+            },
+            "effective": {
+              "type": "object"
+            },
+            "policy": {
+              "type": "object"
+            },
+            "overrides_applied": {
+              "type": "array"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "examples": [
+        {
+          "name": "enable_da",
+          "params": [
+            {
+              "name": "params",
+              "value": {
+                "enabled": true,
+                "dir": "/data/da",
+                "allow_remote_put": true
+              }
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "ok": true,
+              "enabled": true,
+              "requested": {
+                "enabled": true,
+                "dir": "/data/da",
+                "allow_remote_put": true
+              },
+              "effective": {
+                "enabled": true,
+                "dir": "/data/da",
+                "allow_remote_put": true
+              },
+              "policy": {
+                "allow_remote_put": true,
+                "allow_remote_get": true
+              },
+              "warnings": []
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
+      "name": "da.status",
+      "summary": "Get node-side DA layer status. Returns structured diagnostics including policy info.",
+      "params": [],
+      "result": {
+        "name": "daStatus",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "writable": {
+              "type": "boolean"
+            },
+            "dir": {
+              "type": "string"
+            },
+            "effective_dir": {
+              "type": "string"
+            },
+            "max_bytes": {
+              "type": "integer"
+            },
+            "used_bytes_da": {
+              "type": "integer"
+            },
+            "used_bytes": {
+              "type": "integer"
+            },
+            "free_bytes_fs": {
+              "type": "integer"
+            },
+            "blob_count": {
+              "type": "integer"
+            },
+            "allow_remote_put": {
+              "type": "boolean"
+            },
+            "allow_remote_get": {
+              "type": "boolean"
+            },
+            "policy_blocked_reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "name": "da_status_disabled",
+          "params": [],
+          "result": {
+            "name": "result",
+            "value": {
+              "ok": false,
+              "reason": "not_configured",
+              "enabled": false,
+              "writable": false,
+              "dir": "/data/da",
+              "max_bytes": 0,
+              "used_bytes_da": 0,
+              "allow_remote_put": false,
+              "allow_remote_get": false
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
+      "name": "da.putBlob",
+      "summary": "Upload a blob to the node DA store. Requires allow_remote_put=true.",
+      "params": [
+        {
+          "name": "bytes",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "description": "Base64-encoded blob data"
+          },
+          "description": "Base64 or 0x-hex encoded blob bytes"
+        },
+        {
+          "name": "namespace",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "description": "Optional blob namespace/category tag"
+        },
+        {
+          "name": "metadata",
+          "required": false,
+          "schema": {
+            "type": "object"
+          },
+          "description": "Optional metadata (content_type, owner, tags)"
+        }
+      ],
+      "result": {
+        "name": "blobResult",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "blob_id": {
+              "type": "string"
+            },
+            "size_bytes": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "errors": [
+        {
+          "code": -32003,
+          "message": "DA remote blob upload is blocked by policy (allow_remote_put=false)",
+          "data": {
+            "category": "POLICY_BLOCKED",
+            "feature": "da.remote_put",
+            "allow_remote_put": false
+          }
+        }
+      ],
+      "examples": [
+        {
+          "name": "put_blob",
+          "params": [
+            {
+              "name": "bytes",
+              "value": "SGVsbG8gV29ybGQ="
+            },
+            {
+              "name": "namespace",
+              "value": "studio/checkpoint"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "blob_id": "0xabcd...",
+              "size_bytes": 11
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
+      "name": "aicf.creditsByAddress",
+      "summary": "Get AICF credits for an address. Accepts object or positional params.",
+      "params": [
+        {
+          "name": "address",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "Animica bech32 address (anim1...)"
+        }
+      ],
+      "result": {
+        "name": "credits",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "credits": {
+              "type": "integer"
+            },
+            "available": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "examples": [
+        {
+          "name": "credits_by_address_object",
+          "description": "Object param form (Studio uses this)",
+          "params": [
+            {
+              "name": "address",
+              "value": "anim1abc...xyz"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "address": "anim1abc...xyz",
+              "credits": 1000,
+              "available": 950
+            }
+          }
+        },
+        {
+          "name": "credits_by_address_positional",
+          "description": "Positional param form",
+          "params": [
+            {
+              "name": "0",
+              "value": "anim1abc...xyz"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "address": "anim1abc...xyz",
+              "credits": 1000,
+              "available": 950
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "aicf"
+        }
+      ]
+    },
+    {
+      "name": "aicf.getClaimable",
+      "summary": "Get claimable AICF credits for an address.",
+      "params": [
+        {
+          "name": "address",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "claimable",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "claimable_credits": {
+              "type": "integer"
+            },
+            "epochs": {
+              "type": "array"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "tags": [
+        {
+          "name": "aicf"
+        }
+      ]
+    },
+    {
+      "name": "aicf.claim",
+      "summary": "Claim AICF credits for an address.",
+      "params": [
+        {
+          "name": "address",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "signature",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "claimResult",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "tx_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claimed": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "tags": [
+        {
+          "name": "aicf"
+        }
+      ]
+    },
+    {
+      "name": "aicf.status",
+      "summary": "Get AICF system status and availability.",
+      "params": [],
+      "result": {
+        "name": "aicfStatus",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "tags": [
+        {
+          "name": "aicf"
+        }
+      ]
+    },
+    {
+      "name": "state.getBalance",
+      "summary": "Get confirmed balance for an address. Returns stable schema with unit info.",
+      "params": [
+        {
+          "name": "address",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "Animica bech32 address (anim1...)"
+        }
+      ],
+      "result": {
+        "name": "balanceResult",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "exists": {
+              "type": "boolean"
+            },
+            "confirmed_balance": {
+              "type": "string",
+              "description": "Balance in nANM (smallest unit)"
+            },
+            "pending_incoming": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pending_outgoing": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "spendable_balance": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "nANM"
+              ]
+            },
+            "display_decimals": {
+              "type": "integer",
+              "enum": [
+                9
+              ]
+            },
+            "as_of_head_height": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "as_of_head_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "examples": [
+        {
+          "name": "get_balance_with_funds",
+          "params": [
+            {
+              "name": "address",
+              "value": "anim1abc...xyz"
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "address": "anim1abc...xyz",
+              "exists": true,
+              "confirmed_balance": "5000000000",
+              "unit": "nANM",
+              "display_decimals": 9,
+              "as_of_head_height": 42
+            }
+          }
+        },
+        {
+          "name": "get_balance_zero",
+          "description": "Zero balance (address exists but no funds)",
+          "params": [
+            {
+              "name": "address",
+              "value": "anim1newaddress..."
+            }
+          ],
+          "result": {
+            "name": "result",
+            "value": {
+              "address": "anim1newaddress...",
+              "exists": true,
+              "confirmed_balance": "0",
+              "unit": "nANM",
+              "display_decimals": 9
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "state"
+        }
+      ]
+    },
+    {
+      "name": "node.health",
+      "summary": "Lightweight health check suitable for polling. Returns quickly without expensive scans.",
+      "params": [],
+      "result": {
+        "name": "health",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "rpc_ready": {
+              "type": "boolean"
+            },
+            "chain_ready": {
+              "type": "boolean"
+            },
+            "syncing": {
+              "type": "boolean"
+            },
+            "head_height": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "head_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "peers_connected": {
+              "type": "integer"
+            },
+            "mempool_size": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "uptime_seconds": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            },
+            "chain_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "network_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "recommended_poll_ms": {
+              "type": "integer"
+            },
+            "server_time": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "name": "healthy_node",
+          "params": [],
+          "result": {
+            "name": "result",
+            "value": {
+              "ok": true,
+              "rpc_ready": true,
+              "chain_ready": true,
+              "syncing": false,
+              "head_height": 100,
+              "head_hash": "0xabcd...",
+              "peers_connected": 4,
+              "mempool_size": 2,
+              "uptime_seconds": 3600,
+              "version": "1.0.0",
+              "chain_id": 1,
+              "network_name": "mainnet",
+              "recommended_poll_ms": 5000,
+              "server_time": 1700000000000
+            }
+          }
+        }
+      ],
+      "tags": [
+        {
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "name": "node.capabilities",
+      "summary": "Return Studio-facing feature flags, DA policy, AICF availability, and readiness info.",
+      "params": [],
+      "result": {
+        "name": "capabilities",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "chain_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "supports": {
+              "type": "object",
+              "properties": {
+                "da": {
+                  "type": "boolean"
+                },
+                "aicf": {
+                  "type": "boolean"
+                },
+                "tx_receipts": {
+                  "type": "boolean"
+                },
+                "tx_status": {
+                  "type": "boolean"
+                },
+                "ws_subscriptions": {
+                  "type": "boolean"
+                },
+                "address_balance_query": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "da": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "allow_remote_put": {
+                  "type": "boolean"
+                },
+                "allow_remote_get": {
+                  "type": "boolean"
+                },
+                "effective_dir": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "policy_reason_if_disabled": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "aicf": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "methods": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "readiness": {
+              "type": "object",
+              "properties": {
+                "stage": {
+                  "type": "string"
+                },
+                "not_ready_reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "polling_guidance": {
+              "type": "object",
+              "properties": {
+                "tx_receipt_poll_ms": {
+                  "type": "integer"
+                },
+                "tx_status_poll_ms": {
+                  "type": "integer"
+                },
+                "da_status_poll_ms": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "tags": [
+        {
+          "name": "node"
+        }
+      ]
     }
   ],
   "components": {
