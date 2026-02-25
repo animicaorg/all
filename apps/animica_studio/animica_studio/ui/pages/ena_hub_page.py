@@ -206,9 +206,10 @@ class EnaFullAutoPanel(QGroupBox):
         self._require_upload = QCheckBox("Require DA uploads enabled")
         self._auto_fallback = QCheckBox("Auto-fallback when allow_remote_put=false")
         self._auto_fallback.setChecked(True)
+        self._train_local_only = QCheckBox("Train locally even if DA disabled")
         self._keep_last_k = QSpinBox(); self._keep_last_k.setRange(1, 100); self._keep_last_k.setValue(5)
         self._max_daily_min = QSpinBox(); self._max_daily_min.setRange(1, 24 * 60); self._max_daily_min.setValue(24 * 60)
-        for w in [self._upload_steps, self._upload_minutes, self._sync_minutes, self._rule, self._channel, self._namespace, self._require_upload, self._auto_fallback, self._keep_last_k, self._max_daily_min]:
+        for w in [self._upload_steps, self._upload_minutes, self._sync_minutes, self._rule, self._channel, self._namespace, self._require_upload, self._auto_fallback, self._train_local_only, self._keep_last_k, self._max_daily_min]:
             if hasattr(w, 'valueChanged'):
                 w.valueChanged.connect(self._save_settings)
             if hasattr(w, 'currentIndexChanged'):
@@ -230,6 +231,7 @@ class EnaFullAutoPanel(QGroupBox):
         form.addRow("Max daily training minutes:", self._max_daily_min)
         form.addRow("", self._require_upload)
         form.addRow("", self._auto_fallback)
+        form.addRow("", self._train_local_only)
         root.addLayout(form)
 
         self._progress = QLabel("steps=0 loss=- sps=-")
@@ -238,6 +240,25 @@ class EnaFullAutoPanel(QGroupBox):
         self._sync_progress = QLabel("Sync: idle")
         root.addWidget(self._upload_progress)
         root.addWidget(self._sync_progress)
+
+        bootstrap_box = QGroupBox("Bootstrap status")
+        bootstrap_layout = QVBoxLayout(bootstrap_box)
+        self._bootstrap_status = QLabel("DA configured ❌ | First checkpoint published ❌ | Channel pointer created ❌")
+        self._bootstrap_hint = QLabel("")
+        bootstrap_layout.addWidget(self._bootstrap_status)
+        bootstrap_layout.addWidget(self._bootstrap_hint)
+        bootstrap_actions = QHBoxLayout()
+        cfg_da_btn = QPushButton("Configure DA now")
+        cfg_da_btn.clicked.connect(lambda: self._engine.request_bootstrap_action("configure_da"))
+        pub_btn = QPushButton("Publish first checkpoint now")
+        pub_btn.clicked.connect(lambda: self._engine.request_bootstrap_action("publish_first"))
+        ptr_btn = QPushButton("Create pointer now")
+        ptr_btn.clicked.connect(lambda: self._engine.request_bootstrap_action("create_pointer"))
+        copy_diag_boot = QPushButton("Copy diagnostics")
+        copy_diag_boot.clicked.connect(self._copy_diag)
+        bootstrap_actions.addWidget(cfg_da_btn); bootstrap_actions.addWidget(pub_btn); bootstrap_actions.addWidget(ptr_btn); bootstrap_actions.addWidget(copy_diag_boot)
+        bootstrap_layout.addLayout(bootstrap_actions)
+        root.addWidget(bootstrap_box)
 
         earn_box = QGroupBox("Earnings")
         earn_layout = QVBoxLayout(earn_box)
@@ -285,6 +306,7 @@ class EnaFullAutoPanel(QGroupBox):
                 "require_da_uploads": self._require_upload.isChecked(),
                 "auto_fallback_on_remote_put_block": self._auto_fallback.isChecked(),
                 "max_daily_training_minutes": int(self._max_daily_min.value()),
+                "train_locally_when_da_disabled": self._train_local_only.isChecked(),
             }
         )
         ena["full_auto"] = full
@@ -305,6 +327,7 @@ class EnaFullAutoPanel(QGroupBox):
         self._auto_fallback.setChecked(bool(full.get("auto_fallback_on_remote_put_block", True)))
         self._keep_last_k.setValue(int(full.get("keep_last_k") or 5))
         self._max_daily_min.setValue(int(full.get("max_daily_training_minutes") or 24 * 60))
+        self._train_local_only.setChecked(bool(full.get("train_locally_when_da_disabled", False)))
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
         idx = combo.findData(value)
@@ -326,7 +349,7 @@ class EnaFullAutoPanel(QGroupBox):
         )
 
     def _toggle_start_stop(self) -> None:
-        if self._engine.state in {FullAutoState.TRAINING, FullAutoState.STARTING, FullAutoState.PUBLISHING, FullAutoState.SYNCING}:
+        if self._engine.state in {FullAutoState.TRAINING, FullAutoState.STARTING, FullAutoState.PUBLISHING, FullAutoState.SYNCING, FullAutoState.BOOTSTRAPPING, FullAutoState.CONFIGURING_DA, FullAutoState.PUBLISHING_FIRST, FullAutoState.CREATING_POINTER}:
             self._engine.stop()
             self._earnings.stop()
             self._toggle.setText("FULL AUTO (Train + Publish + Sync)")
@@ -360,6 +383,21 @@ class EnaFullAutoPanel(QGroupBox):
             self._sync_progress.setText(
                 f"Sync: version={payload.get('current_version')} progress={payload.get('bytes_done')}/{payload.get('bytes_total')}"
             )
+        elif kind == "bootstrap":
+            da = "✅" if payload.get("da_configured") else "❌"
+            pub = "✅" if payload.get("first_checkpoint_published") else "❌"
+            ptr = "✅" if payload.get("channel_pointer_created") else "❌"
+            self._bootstrap_status.setText(f"DA configured {da} | First checkpoint published {pub} | Channel pointer created {ptr}")
+            if payload.get("local_only_training"):
+                self._bootstrap_hint.setText("Local-only training (no network publish). Configure DA to bootstrap network sync.")
+            else:
+                self._bootstrap_hint.setText(str(payload.get("diagnostics") or ""))
+            pointer_commitment = str(payload.get("pointer_commitment") or "").strip()
+            if pointer_commitment:
+                ena = dict(self._config.ena or {})
+                ena["channel_pointer_commitment"] = pointer_commitment
+                self._config.ena = ena
+                save_config(self._config)
 
     def _on_log(self, kind: str, text: str) -> None:
         self._logs.appendPlainText(f"[{kind}] {text}")
