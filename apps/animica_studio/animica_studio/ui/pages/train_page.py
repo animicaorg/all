@@ -36,6 +36,16 @@ from animica_studio.services.training_service import ENATrainingService
 from animica_studio.storage.config import Config, save_config
 
 
+class NullEvolutionEngine:
+    enabled = False
+
+    def preview_next_plan(self, *_args, **_kwargs) -> dict | None:
+        return None
+
+    def apply_plan(self, *_args, **_kwargs) -> dict:
+        raise RuntimeError("Dataset evolution is disabled.")
+
+
 class _BootstrapWorker(QThread):
     progress = Signal(dict)
     completed = Signal(dict)
@@ -84,16 +94,52 @@ class TrainPage(QWidget):
         self._cfg = config
         self._svc = ENATrainingService(config, self)
         self._dataset_manager = DatasetManager()
-        self._bootstrap_worker: _BootstrapWorker | None = None
-        self._active_run_id: str | None = None
+        self._init_state()
         self._mode_migration_warning = self._svc.ensure_training_mode_migration()
         self._build()
         self._wire()
         self._restore_last()
         self._refresh_runs()
+        self._sync_ui_state()
+        self._validate_critical_state()
         self._maybe_prompt_bootstrap()
         if self._mode_migration_warning:
             self._on_log("", "system", self._mode_migration_warning)
+
+    def _init_state(self) -> None:
+        self._bootstrap_worker: _BootstrapWorker | None = None
+        self._active_run_id: str | None = None
+        self._run_in_progress = False
+        self._last_plan: dict | None = None
+        self._last_plan_id: str | None = None
+        self._plan_approved = False
+        self._pending_actions: dict[str, str] = {}
+        self._evolution_enabled = False
+        self._evolution: DatasetEvolutionEngine | NullEvolutionEngine = self._build_evolution_engine()
+
+    def _build_evolution_engine(self) -> DatasetEvolutionEngine | NullEvolutionEngine:
+        ena_cfg = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
+        enabled = bool(ena_cfg.get("enable_dataset_evolution", True))
+        self._evolution_enabled = enabled
+        if not enabled:
+            return NullEvolutionEngine()
+        return DatasetEvolutionEngine()
+
+    def _validate_critical_state(self) -> None:
+        required_attrs = [
+            "_bootstrap_worker",
+            "_active_run_id",
+            "_run_in_progress",
+            "_last_plan",
+            "_last_plan_id",
+            "_plan_approved",
+            "_pending_actions",
+            "_evolution_enabled",
+            "_evolution",
+        ]
+        missing = [name for name in required_attrs if not hasattr(self, name)]
+        if missing:
+            raise RuntimeError(f"TrainPage missing required state attributes: {', '.join(missing)}")
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -334,6 +380,8 @@ class TrainPage(QWidget):
         self.preview_plan_btn.clicked.connect(self._preview_next_dataset_plan)
         self.approve_plan_btn.clicked.connect(self._approve_plan)
         self.run_cycle_btn.clicked.connect(self._run_improvement_cycle)
+        self.continuous_improvement.toggled.connect(lambda _checked: self._sync_ui_state())
+        self.dataset_path.textChanged.connect(lambda _text: self._sync_ui_state())
 
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
@@ -383,6 +431,7 @@ class TrainPage(QWidget):
             self.dataset_path.setText(res["manifest_path"])
             self.dataset_id.setText(Path(res["dataset_dir"]).name)
             self.console.append(f"[dataset] Auto dataset ready: {res['manifest_path']}")
+            self._sync_ui_state()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Dataset", str(exc))
 
@@ -395,6 +444,7 @@ class TrainPage(QWidget):
             self.dataset_path.setText(res["manifest_path"])
             self.dataset_id.setText(Path(res["dataset_dir"]).name)
             self.console.append(f"[dataset] Custom dataset ready: {res['manifest_path']}")
+            self._sync_ui_state()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Dataset", str(exc))
 
@@ -441,11 +491,13 @@ class TrainPage(QWidget):
         self._bootstrap_worker.completed.connect(self._on_bootstrap_completed)
         self._bootstrap_worker.failed.connect(self._on_bootstrap_failed)
         self._bootstrap_worker.start()
+        self._sync_ui_state()
 
     def _cancel_bootstrap(self) -> None:
         if self._bootstrap_worker and self._bootstrap_worker.isRunning():
             self._bootstrap_worker.cancel()
             self.bootstrap_progress.setText("Cancelling bootstrap; partial data preserved for resume...")
+        self._sync_ui_state()
 
     def _on_bootstrap_progress(self, payload: dict) -> None:
         stage = payload.get("stage", "working")
@@ -477,6 +529,7 @@ class TrainPage(QWidget):
             self.console.append("[dataset] Upload shards to DA requested (upload workflow pending integration).")
         if self._bootstrap_worker and self._bootstrap_worker.auto_start:
             self._start()
+        self._sync_ui_state()
 
     def _on_bootstrap_failed(self, err: str) -> None:
         self.bootstrap_btn.setEnabled(True)
@@ -484,6 +537,7 @@ class TrainPage(QWidget):
         self.bootstrap_progress.setText("Bootstrap failed.")
         self.console.append(f"[dataset] Bootstrap failed: {err}")
         QMessageBox.warning(self, "Dataset bootstrap", f"{err}\n\nSuggestions:\n- Pick a different version\n- Paste a custom URL\n- Use Starter dataset")
+        self._sync_ui_state()
 
     def _dataset_sources(self) -> dict:
         ena = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
@@ -613,6 +667,7 @@ class TrainPage(QWidget):
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
             self._refresh_runs()
+            self._sync_ui_state()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Training", str(exc))
 
@@ -641,6 +696,7 @@ class TrainPage(QWidget):
         self._svc.stop_training(self._active_run_id)
         self.stop_btn.setEnabled(False)
         self.start_btn.setEnabled(True)
+        self._sync_ui_state()
 
     def _resume_watch(self) -> None:
         run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
@@ -686,6 +742,7 @@ class TrainPage(QWidget):
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             self._refresh_runs()
+            self._sync_ui_state()
 
     def _switch_to_local(self) -> None:
         self.training_mode.setCurrentText("local")
@@ -716,6 +773,7 @@ class TrainPage(QWidget):
         self.console.setPlainText(json.dumps(run.config, indent=2))
         if run.last_metrics:
             self._on_metrics(run.run_id, run.last_metrics)
+        self._sync_ui_state()
 
     def _refresh_checkpoints(self) -> None:
         self.resume_ckpt.clear()
@@ -778,6 +836,10 @@ class TrainPage(QWidget):
         )
 
     def _preview_next_dataset_plan(self) -> None:
+        if not self._evolution_enabled:
+            QMessageBox.information(self, "Continuous Improvement", "Dataset evolution is disabled.")
+            self._sync_ui_state()
+            return
         try:
             run_id = self._active_run_id or self.runs_combo.currentData(Qt.ItemDataRole.UserRole)
             report = None
@@ -787,31 +849,80 @@ class TrainPage(QWidget):
                 if rp.exists():
                     report = json.loads(rp.read_text(encoding="utf-8"))
             self._last_plan = self._evolution.preview_next_plan(report, self._evolution_quotas(), self._quality_level())
+            self._plan_approved = False
+            self._last_plan_id = self._last_plan.get("plan_id") if isinstance(self._last_plan, dict) else None
+            if not self._last_plan:
+                QMessageBox.information(self, "Continuous Improvement", "No plan could be generated.")
+                return
             self.recommended.append("\nNext Dataset Plan:\n" + json.dumps(self._last_plan, indent=2))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Continuous Improvement", str(exc))
+        finally:
+            self._sync_ui_state()
 
     def _approve_plan(self) -> None:
-        if not self._last_plan:
-            QMessageBox.information(self, "Continuous Improvement", "Preview a plan first.")
+        if self._last_plan is None:
+            QMessageBox.information(self, "Continuous Improvement", "No plan to approve. Generate a plan first.")
             return
+        self._plan_approved = True
+        self._pending_actions["approved_plan_id"] = str(self._last_plan_id or "")
         self._on_log("", "system", "Plan approved for dataset evolution.")
+        self._sync_ui_state()
 
     def _run_improvement_cycle(self) -> None:
-        if not self.continuous_improvement.isChecked():
-            QMessageBox.information(self, "Continuous Improvement", "Enable continuous improvement first.")
+        if self._run_in_progress:
+            QMessageBox.information(self, "Continuous Improvement", "Run already in progress.")
             return
-        if not self._last_plan:
-            self._preview_next_dataset_plan()
-        if not self._last_plan:
+        if self._last_plan is None:
+            QMessageBox.information(self, "Continuous Improvement", "No plan available. Generate a plan first.")
             return
+        if not self._plan_approved:
+            QMessageBox.information(self, "Continuous Improvement", "Approve the plan first.")
+            return
+        if not self._evolution_enabled:
+            QMessageBox.information(self, "Continuous Improvement", "Dataset evolution is disabled.")
+            self._sync_ui_state()
+            return
+
+        self._run_in_progress = True
+        self._sync_ui_state()
         try:
             ds = self._evolution.apply_plan(self._last_plan, self._evolution_quotas(), self.run_name.text().strip() or "ena")
             self.dataset_path.setText(ds["manifest_path"])
             self.dataset_id.setText(ds.get("dataset_id") or "")
+            self._plan_approved = False
+            self._last_plan = None
+            self._last_plan_id = None
             self._on_log("", "system", f"Built evolved dataset {self.dataset_id.text()} and updated configuration.")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Continuous Improvement", str(exc))
+        finally:
+            self._run_in_progress = False
+            self._sync_ui_state()
+
+    def _sync_ui_state(self) -> None:
+        has_plan = self._last_plan is not None
+        has_dataset = bool(self.dataset_path.text().strip())
+        evolution_enabled = bool(self._evolution_enabled)
+        busy = bool(self._run_in_progress or (self._bootstrap_worker and self._bootstrap_worker.isRunning()))
+
+        self.preview_plan_btn.setEnabled(evolution_enabled and has_dataset and not busy)
+        self.approve_plan_btn.setEnabled(evolution_enabled and has_plan and not self._plan_approved and not busy)
+        self.run_cycle_btn.setEnabled(
+            evolution_enabled and has_plan and self._plan_approved and self.continuous_improvement.isChecked() and not busy
+        )
+
+        for widget in (
+            self.continuous_improvement,
+            self.max_dataset_disk,
+            self.max_daily_download,
+            self.max_daily_train,
+            self.retain_versions,
+            self.preview_plan_btn,
+            self.approve_plan_btn,
+            self.run_cycle_btn,
+        ):
+            widget.setVisible(evolution_enabled)
 
     def _restore_last(self) -> None:
         cfg = self._svc.last_config()
