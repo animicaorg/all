@@ -35,7 +35,8 @@ class LocalTrainer:
         emit_log: Callable[[str], None],
         emit_metrics: Callable[[dict[str, Any]], None],
     ) -> dict[str, Any]:
-        total_steps = max(1, int(cfg.effective_iterations() or 1))
+        requested_total_steps = max(1, int(cfg.effective_iterations() or 1))
+        total_steps = requested_total_steps
         ckpt_interval = max(1, int(cfg.checkpoint_interval_steps or 100))
         eval_interval = max(1, int(cfg.eval_interval_steps or 100))
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ class LocalTrainer:
         metrics_path = run_dir / "metrics.jsonl"
         last_ckpt: str | None = None
         t0 = time.time()
-        emit_log(f"[local] trainer started steps={total_steps} output={run_dir}")
+        emit_log(f"[local] trainer starting total_steps={total_steps} output={run_dir}")
 
         for step in range(1, total_steps + 1):
             # Small sleep to keep UI responsive and simulate real work.
@@ -193,6 +194,7 @@ class ENATrainingService(QObject):
 
         if mode == "local":
             self.log_line.emit(run_id, "system", "[system] ENA backend=local")
+            self.log_line.emit(run_id, "system", f"[system] requested_total_steps={config.effective_iterations()}")
             self._start_local_training(run_id, config, plan_path)
         else:
             self.log_line.emit(run_id, "system", f"[system] ENA backend=remote url={config.services_url}")
@@ -241,8 +243,9 @@ class ENATrainingService(QObject):
             str(plan_path.parent),
             "--json",
         ]
-        if cfg.iterations:
-            args.extend(["--iterations", str(cfg.iterations)])
+        requested_steps = cfg.effective_iterations()
+        if requested_steps:
+            args.extend(["--iterations", str(requested_steps)])
         elif cfg.epochs:
             args.extend(["--epochs", str(cfg.epochs)])
         if cfg.budget_anm:
@@ -366,8 +369,10 @@ class ENATrainingService(QObject):
             raise RuntimeError(f"CLI missing remote train commands: {', '.join(sorted(missing))}")
 
     def _validate_config(self, cfg: TrainingConfig) -> None:
-        if not cfg.iterations and not cfg.epochs:
-            raise ValueError("Set iterations or epochs.")
+        if not cfg.effective_iterations() and not cfg.epochs:
+            raise ValueError("Set total_steps (iterations) or epochs.")
+        if cfg.total_steps is not None and int(cfg.total_steps) < 1:
+            raise ValueError("total_steps must be >= 1")
         if cfg.iterations is not None and int(cfg.iterations) < 1:
             raise ValueError("iterations must be >= 1")
         if cfg.batch_size < 1:
@@ -404,7 +409,8 @@ class ENATrainingService(QObject):
             "lora_rank": cfg.lora_rank,
             "max_runtime_minutes": cfg.max_runtime_minutes,
             "early_stop_patience": cfg.early_stop_patience,
-            "iterations": cfg.iterations,
+            "total_steps": cfg.effective_iterations(),
+            "iterations": cfg.effective_iterations(),
             "epochs": cfg.epochs,
             "warmup_steps": cfg.warmup_steps,
             "auto_tune_warmup_steps": cfg.auto_tune_warmup_steps,

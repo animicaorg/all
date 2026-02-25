@@ -5,7 +5,7 @@ from pathlib import Path
 
 from animica_studio.models.training_models import TrainingConfig
 from animica_studio.services.ena_remote_preflight import ServicesPreflight
-from animica_studio.services.ena_training_service import ENATrainingService
+from animica_studio.services.ena_training_service import ENATrainingService, LocalTrainer
 from animica_studio.storage.config import Config
 
 
@@ -14,6 +14,7 @@ def test_training_config_roundtrip() -> None:
     out = TrainingConfig.from_dict(cfg.to_dict())
     assert out.run_name == "x"
     assert out.iterations == 100000
+    assert out.total_steps == 100000
     assert out.learning_rate == 1e-5
 
 
@@ -21,6 +22,19 @@ def test_training_mode_default_is_local() -> None:
     cfg = TrainingConfig.from_dict({})
     assert cfg.training_mode == "local"
 
+
+
+
+def test_local_trainer_honors_requested_total_steps_large(tmp_path: Path) -> None:
+    cfg = TrainingConfig(output_dir=str(tmp_path), total_steps=1000, iterations=1000)
+    summary = LocalTrainer.run(cfg, tmp_path / "run-a", emit_log=lambda _x: None, emit_metrics=lambda _m: None)
+    assert summary["total_steps"] == 1000
+
+
+def test_local_trainer_honors_requested_total_steps_small(tmp_path: Path) -> None:
+    cfg = TrainingConfig(output_dir=str(tmp_path), total_steps=10, iterations=10)
+    summary = LocalTrainer.run(cfg, tmp_path / "run-b", emit_log=lambda _x: None, emit_metrics=lambda _m: None)
+    assert summary["total_steps"] == 10
 
 def test_progress_parser_extracts_metrics() -> None:
     current = {"total_steps": 1000}
