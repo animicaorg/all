@@ -369,6 +369,47 @@ def test_aicf_service_claim_credits_success() -> None:
     assert result["data"]["claimed"] == 100
 
 
+
+
+def test_aicf_service_get_claimable_uses_openrpc_positional_params_for_dev_node() -> None:
+    from animica_studio.storage.config import Config
+    from animica_studio.services.aicf_service import AicfService
+
+    cfg = Config()
+    svc = AicfService(cfg)
+
+    discover_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "info": {"version": "0.1.0-dev"},
+            "methods": [
+                {
+                    "name": "aicf.getClaimable",
+                    "params": [{"name": "address", "required": True, "schema": {"type": "string"}}],
+                }
+            ],
+        },
+    }
+    claimable_resp = {"jsonrpc": "2.0", "id": 2, "result": {"claimable": "0x2a"}}
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.side_effect = [_make_mock_response(discover_resp), _make_mock_response(claimable_resp)]
+        result = svc.get_claimable("anim1devaddress")
+
+    assert result["ok"] is True
+    assert result["claimable"] == 42
+
+    payload = mock_post.call_args_list[-1].kwargs["data"]
+    assert '"method": "aicf.getClaimable"' in payload
+    assert '"params": ["anim1devaddress"]' in payload
+    assert '"params": {}' not in payload
+
+    diag = svc.get_diagnostics()
+    assert diag["param_encoding"]["aicf.getClaimable"] == "positional"
+    assert diag["last_request_excerpt"]["method"] == "aicf.getClaimable"
+    assert diag["last_request_excerpt"]["params_len"] == 1
+
 def test_aicf_service_prefers_active_rpc_profile_url() -> None:
     from animica_studio.storage.config import Config
     from animica_studio.services.aicf_service import AicfService

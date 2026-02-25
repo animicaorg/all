@@ -21,7 +21,7 @@ from animica_studio.services.cli_runner import CliRunner
 from animica_studio.services.ena_remote_preflight import ServicesPreflight
 from animica_studio.services.job_runner import resolve_animica_cli_program_and_env
 from animica_studio.services.profile_helpers import get_active_rpc_url
-from animica_studio.services.rpc_client import RpcClient, RpcResponseError
+from animica_studio.services.rpc_client import RpcClient, RpcParseError, RpcResponseError
 from animica_studio.storage.config import Config
 from animica_studio.util.cancel import CancelToken
 
@@ -170,6 +170,7 @@ class AicfService:
             "resolved_methods": methods,
             "last_request_payload": self._last_request_payload or {},
             "param_encoding": discover_diag.get("param_encoding", {}),
+            "last_request_excerpt": discover_diag.get("last_request_excerpt", {}) or (self._last_request_payload or {}),
             "last_response_excerpt": discover_diag.get("last_response_excerpt", {}),
             "last_error": self._last_error,
         }
@@ -190,6 +191,37 @@ class AicfService:
             redacted[k] = f"{str(v)[:8]}…" if k == "address" and isinstance(v, str) and len(v) > 12 else v
         self._last_request_payload = {"method": method, "values": redacted}
         return client.call_with_schema(method, values or {})
+
+    def _build_method_params_from_openrpc(self, client: RpcClient, method: str, values: dict[str, Any]) -> tuple[Any, str]:
+        """Build params from OpenRPC using ordered params list.
+
+        Falls back to object encoding only when the method has no OpenRPC params[]
+        metadata in ``rpc.discover``.
+        """
+        spec = client.get_param_spec(method)
+        if not spec:
+            registry = client.registry()
+            aliases = registry.normalized_methods.get(registry.normalize(method), [])
+            for alias in aliases:
+                spec = client.get_param_spec(alias)
+                if spec:
+                    break
+        if not spec:
+            return values, "object"
+        positional: list[Any] = []
+        for p in spec:
+            name = p.get("name")
+            if isinstance(name, str) and name in values:
+                positional.append(values[name])
+            elif p.get("required"):
+                raise RpcParseError(f"Missing required param {name!r} for method {method}")
+        return positional, "positional"
+
+    def _is_claimable_param_error(self, exc: RpcResponseError) -> bool:
+        msg = (exc.rpc_error.message or "").lower()
+        if exc.rpc_error.code != -32602:
+            return False
+        return "missing required params" in msg or "unexpected keyword argument" in msg
 
     # ------------------------------------------------------------------
     # Status
@@ -267,7 +299,23 @@ class AicfService:
             methods = self._resolve_aicf_methods(client, url)
             method = methods.get("claimable")
             if method:
-                result = self._call_rpc(client, method, {"address": address})
+                params, encoding = self._build_method_params_from_openrpc(client, method, {"address": address})
+                self._last_request_payload = {
+                    "method": method,
+                    "values": {"address": f"{address[:8]}…" if len(address) > 12 else address},
+                    "param_encoding": encoding,
+                    "params_len": len(params) if isinstance(params, list) else (len(params) if isinstance(params, dict) else 0),
+                }
+                try:
+                    result = client.call(method, params)
+                except RpcResponseError as exc:
+                    if self._is_claimable_param_error(exc) and not isinstance(params, list):
+                        retry_params = [address]
+                        self._last_request_payload["param_encoding"] = "positional(retry)"
+                        self._last_request_payload["params_len"] = len(retry_params)
+                        result = client.call(method, retry_params)
+                    else:
+                        raise
                 claimable = self._to_int_amount((result or {}).get("claimable", 0)) if isinstance(result, dict) else 0
                 return {"ok": True, "data": result, "claimable": claimable}
 
