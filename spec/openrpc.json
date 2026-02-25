@@ -702,41 +702,60 @@
       "summary": "Configure or reconfigure the node-side DA store.",
       "params": [
         {
-          "name": "params",
+          "name": "enabled",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "dir",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "max_bytes",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        {
+          "name": "allow_remote_put",
           "required": false,
           "schema": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "dir": {
-                "type": "string"
-              },
-              "max_bytes": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "allow_remote_put": {
-                "type": "boolean"
-              },
-              "allow_remote_get": {
-                "type": "boolean"
-              },
-              "on_full": {
-                "type": "string",
-                "enum": [
-                  "evict",
-                  "reject"
-                ]
-              },
-              "eviction_policy": {
-                "type": "string",
-                "enum": [
-                  "lru"
-                ]
-              }
-            }
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "allow_remote_get",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "on_full",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "evict",
+              "reject"
+            ]
+          }
+        },
+        {
+          "name": "eviction_policy",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "lru"
+            ]
           }
         }
       ],
@@ -778,12 +797,20 @@
           "name": "enable_da",
           "params": [
             {
-              "name": "params",
-              "value": {
-                "enabled": true,
-                "dir": "/data/da",
-                "allow_remote_put": true
-              }
+              "name": "enabled",
+              "value": true
+            },
+            {
+              "name": "dir",
+              "value": "/data/da"
+            },
+            {
+              "name": "max_bytes",
+              "value": 10737418240
+            },
+            {
+              "name": "allow_remote_put",
+              "value": true
             }
           ],
           "result": {
@@ -794,11 +821,13 @@
               "requested": {
                 "enabled": true,
                 "dir": "/data/da",
+                "max_bytes": 10737418240,
                 "allow_remote_put": true
               },
               "effective": {
                 "enabled": true,
                 "dir": "/data/da",
+                "max_bytes": 10737418240,
                 "allow_remote_put": true
               },
               "policy": {

@@ -472,3 +472,33 @@ def test_da_configure_enabled_requires_dir_and_max_bytes(tmp_path, monkeypatch):
 
     with pytest.raises(InvalidParams, match="max_bytes"):
         da_configure({"enabled": True, "dir": str(tmp_path / "da")})
+
+
+def test_da_configure_accepts_single_object_in_positional_list(tmp_path, monkeypatch):
+    from rpc.methods.da import da_configure
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    target = tmp_path / "da-pos-object"
+    out = da_configure([{"enabled": True, "dir": str(target), "max_bytes": 4096}])
+    assert out["enabled"] is True
+    assert out["ok"] is True
+
+
+def test_da_configure_missing_enabled_returns_received_keys(tmp_path, monkeypatch):
+    from rpc.methods.da import da_configure
+    from rpc.errors import InvalidParams
+
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    with pytest.raises(InvalidParams) as excinfo:
+        da_configure({"dir": str(tmp_path / "da"), "max_bytes": 1234})
+
+    err = excinfo.value
+    assert err.data.get("reason") == "missing_enabled"
+    assert "dir" in err.data.get("received_keys", [])
+    assert "max_bytes" in err.data.get("received_keys", [])
