@@ -29,10 +29,15 @@ class PublishPage(QWidget):
         self.allow_remote_toggle.setToolTip("Enable only on local/dev nodes you control.")
         actions.addWidget(self.allow_remote_toggle)
 
-        self.local_upload_btn = QPushButton("Retry Push to DA")
+        self.local_upload_btn = QPushButton("Retry DA Upload")
         self.local_upload_btn.clicked.connect(self._retry_local_ingest)
         self.local_upload_btn.setEnabled(False)
         actions.addWidget(self.local_upload_btn)
+
+        self.retry_register_btn = QPushButton("Retry AICF Register")
+        self.retry_register_btn.clicked.connect(self._retry_register)
+        self.retry_register_btn.setEnabled(False)
+        actions.addWidget(self.retry_register_btn)
 
         self.copy_diag_btn = QPushButton("Copy diagnostics")
         self.copy_diag_btn.clicked.connect(self._copy_diagnostics)
@@ -54,9 +59,10 @@ class PublishPage(QWidget):
         self._last_diag = {}
         self.copy_diag_btn.setEnabled(False)
         self.local_upload_btn.setEnabled(False)
+        self.retry_register_btn.setEnabled(False)
 
         run = out.get("run")
-        if run and getattr(run, "status", "") == "failed":
+        if run and getattr(run, "status", "") in {"failed", "partial"}:
             failed_steps = [s for s in run.steps if s.status == "failed"]
             if failed_steps:
                 step = failed_steps[0]
@@ -69,8 +75,13 @@ class PublishPage(QWidget):
                     or bool((self._last_diag or {}).get("local_node"))
                 )
                 if details.get("error_code") == "DA_NOT_CONFIGURED":
-                    self.out.setPlainText("DA not configured on node. Configure DA Now, then Retry Push to DA.\n\n" + str(out))
+                    self.out.setPlainText("Publish prepared locally (DA upload pending). Configure DA Now, then Retry DA Upload.\n\n" + str(out))
                     return
+            if getattr(run, "status", "") == "partial":
+                self.out.setPlainText("Publish prepared locally (DA upload pending) or register pending.\n\n" + str(out))
+                self.local_upload_btn.setEnabled(True)
+                self.retry_register_btn.setEnabled(True)
+                return
         self.out.setPlainText(str(out))
 
     def _configure_da_now(self) -> None:
@@ -107,3 +118,7 @@ class PublishPage(QWidget):
             return
         text = json.dumps(self._last_diag, indent=2, sort_keys=True)
         self.out.append("\nDiagnostics copied to output:\n" + text)
+
+    def _retry_register(self) -> None:
+        self.out.append("\nRetrying AICF register…")
+        self._run()
