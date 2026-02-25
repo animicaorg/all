@@ -507,9 +507,13 @@ class P2PDeps:
         if resolved_genesis_path:
             genesis_path = resolved_genesis_path
 
-        # Ensure genesis finalized (idempotent)
+        # Ensure genesis finalized (idempotent).
+        # Skip when ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP=1 (test-only).
+        import os as _os
+        _skip_genesis = _os.environ.get("ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP", "").strip() in ("1", "true", "yes")
         try:
-            c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
+            if not _skip_genesis:
+                c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
         except Exception as exc:
             from core.errors import GenesisError, GenesisMismatchError
 

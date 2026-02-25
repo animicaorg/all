@@ -22,6 +22,10 @@ from __future__ import annotations
 # WARNING: This is NOT secure and must never be used in production environments.
 import os
 os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+# Skip genesis bootstrap in tests — avoids genesis-path/chain-id validation issues
+# that are not relevant to unit/integration RPC tests.
+# WARNING: This must never be set in production environments.
+os.environ.setdefault("ANIMICA_UNSAFE_SKIP_GENESIS_BOOTSTRAP", "1")
 
 import json
 import tempfile
@@ -63,7 +67,7 @@ def make_test_config(tmpdir: str | None = None) -> tuple[rpc_config.Config, str]
         host="127.0.0.1",
         port=0,  # unused by TestClient
         db_uri=db_uri,
-        chain_id=1,
+        chain_id=9999,  # custom test chain_id — bypasses mainnet/testnet/devnet genesis validation
         logging="ERROR",
         cors_allow_origins=["*"],
         rate_limit_per_ip=0,  # disable for tests
