@@ -40,7 +40,7 @@ class DaPolicyError(RuntimeError):
     def to_step_payload(self) -> dict[str, Any]:
         actions = []
         if self.can_enable_remote_put:
-            actions.append({"id": "enable_remote_put", "label": "Enable allow_remote_put and retry"})
+            actions.append({"id": "enable_remote_put", "label": "Configure DA Now"})
         if bool((self.diagnostics or {}).get("local_node")):
             actions.append({"id": "local_upload", "label": "Retry local ingest"})
         actions.append({"id": "copy_diagnostics", "label": "Copy diagnostics"})
@@ -223,7 +223,7 @@ class EnaService:
 
         def _index(step):
             d = step_cache["download"]
-            row = {"id": d["sha256"][:12], "sha256": d["sha256"], "path": d["path"], "origin": "local", "tab": "latest"}
+            row = {"id": d["sha256"][:12], "sha256": d["sha256"], "path": d["path"], "origin": "local", "tab": "latest", "local_artifact_prepared": True, "da_uploaded": False, "aicf_registered": False}
             self.store.append("checkpoints", row, dedupe_key="sha256")
             return row
 
@@ -237,49 +237,168 @@ class EnaService:
             "recommendation": recommendation,
         }
 
+    def _get_checkpoint_row(self, checkpoint_sha: str) -> dict[str, Any] | None:
+        for row in self.store.get("checkpoints", []):
+            if row.get("sha256") == checkpoint_sha:
+                return row
+        return None
+
+    def _set_checkpoint_publish_state(
+        self,
+        checkpoint_sha: str,
+        *,
+        local_artifact_prepared: bool | None = None,
+        da_uploaded: bool | None = None,
+        aicf_registered: bool | None = None,
+        commitment: str | None = None,
+        da_pending_reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        cps = list(self.store.get("checkpoints", []))
+        updated: dict[str, Any] | None = None
+        for cp in cps:
+            if cp.get("sha256") != checkpoint_sha:
+                continue
+            if local_artifact_prepared is not None:
+                cp["local_artifact_prepared"] = bool(local_artifact_prepared)
+            if da_uploaded is not None:
+                cp["da_uploaded"] = bool(da_uploaded)
+            if aicf_registered is not None:
+                cp["aicf_registered"] = bool(aicf_registered)
+            if commitment:
+                cp["commitment"] = commitment
+            if da_pending_reason is not None:
+                cp["da_pending_reason"] = da_pending_reason
+            updated = cp
+            break
+        if updated is not None:
+            self.store.set("checkpoints", cps)
+        return updated
+
+    def _verify_da_presence(self, commitment: str) -> bool:
+        if not commitment:
+            return False
+        try:
+            return bool(self.da.has_blob(commitment))
+        except Exception:
+            try:
+                _ = self.da.get_blob(commitment)
+                return True
+            except Exception:
+                return False
+
+    def _update_remote_pointer(self, commitment: str, checkpoint_sha: str) -> dict[str, Any]:
+        pointer_payload = {
+            "channel": "ena-main",
+            "latest": commitment,
+            "checkpoint_sha": checkpoint_sha,
+        }
+        put_out = self.da.upload_json(pointer_payload)
+        pointer_commitment = str(put_out.get("blob_id") or "")
+        verified = self._verify_da_presence(pointer_commitment)
+        return {
+            "pointer_name": "ena-main/latest",
+            "pointer_commitment": pointer_commitment,
+            "verified": verified,
+            "payload": pointer_payload,
+        }
+
     def publish_checkpoint(self, checkpoint_sha: str, dev_mode: bool = False) -> dict[str, Any]:
-        existing = [c for c in self.store.get("checkpoints", []) if c.get("sha256") == checkpoint_sha and c.get("commitment")]
-        if existing:
-            return {"ok": False, "error": "Duplicate publish prevented", "existing": existing[0]}
         step_cache: dict[str, Any] = {}
+        cp_row = self._get_checkpoint_row(checkpoint_sha)
+        if cp_row:
+            self._set_checkpoint_publish_state(
+                checkpoint_sha,
+                local_artifact_prepared=True,
+                da_uploaded=bool(cp_row.get("da_uploaded")),
+                aicf_registered=bool(cp_row.get("aicf_registered")),
+            )
 
         def _validate(step):
             step.copy_command = f"animica ena publish --checkpoint {checkpoint_sha[:12]}"
-            return {"valid": True}
+            return {"valid": True, "checkpoint_sha": checkpoint_sha}
 
         def _push(step):
             data = checkpoint_sha.encode("utf-8")
             if dev_mode:
                 commit = f"dev-{checkpoint_sha[:16]}"
                 step_cache["commitment"] = commit
-                return {"commitment": commit, "mode": "local-only"}
+                self._set_checkpoint_publish_state(
+                    checkpoint_sha,
+                    local_artifact_prepared=True,
+                    da_uploaded=False,
+                    da_pending_reason="dev_mode_local_only",
+                    commitment=commit,
+                )
+                return {"commitment": commit, "mode": "local-only", "pending_da_upload": True}
+
             status = self.da_status.get_status()
-            if not status.get("enabled"):
-                enabled_try = self.da_status.enable_da(dir_path=str((self.config.get_active_profile().node.rpc_local_url or '/data/da')), limit_bytes=10 * 1024 * 1024 * 1024)
-                status = enabled_try.get("status", status)
-                if not status.get("enabled"):
-                    raise RuntimeError(f"Node did not enable DA: {status}")
-
-            step.logs.append("Preparing checkpoint bytes…")
-            step.progress = 25
-
             diagnostics = self._build_da_diagnostics(status)
             supports_toggle = self._supports_allow_remote_put(status)
+            not_configured = (status.get("ok") is False and status.get("reason") == "not_configured")
+            da_enabled = bool(status.get("enabled")) and bool(status.get("ok", True))
+
+            if not da_enabled:
+                reason = str(status.get("reason") or status.get("policy_blocked_reason") or "not_configured")
+                self._set_checkpoint_publish_state(
+                    checkpoint_sha,
+                    local_artifact_prepared=True,
+                    da_uploaded=False,
+                    da_pending_reason=reason,
+                )
+                recs = ["Configure DA on the node, then click 'Retry Push to DA'."]
+                msg = "DA not configured on node" if not_configured else f"DA unavailable on node ({reason})"
+                raise DaPolicyError(
+                    message=f"{msg}; checkpoint prepared locally. Configure DA to upload.",
+                    code="DA_NOT_CONFIGURED" if not_configured else "DA_DISABLED",
+                    da_enabled=False,
+                    allow_remote_put=bool(status.get("allow_remote_put")),
+                    da_dir=diagnostics["da_dir"],
+                    rpc_url=diagnostics["rpc_url"],
+                    can_enable_remote_put=supports_toggle,
+                    diagnostics=diagnostics | {"status": status},
+                    recommendations=recs,
+                )
+
+            existing_commitment = str((cp_row or {}).get("commitment") or "")
+            if existing_commitment and self._verify_da_presence(existing_commitment):
+                step.logs.append("Checkpoint already present in DA; reusing commitment.")
+                step_cache["commitment"] = existing_commitment
+                self._set_checkpoint_publish_state(
+                    checkpoint_sha,
+                    local_artifact_prepared=True,
+                    da_uploaded=True,
+                    commitment=existing_commitment,
+                    da_pending_reason="",
+                )
+                pointer = self._update_remote_pointer(existing_commitment, checkpoint_sha)
+                return {
+                    "commitment": existing_commitment,
+                    "mode": "network",
+                    "idempotent_reuse": True,
+                    "verification": {"verified": True},
+                    "da_status": status,
+                    "diagnostics": diagnostics,
+                    "remote_pointer": pointer,
+                }
 
             strategy = "rpc_put"
             if status.get("allow_remote_put") is False:
                 if diagnostics["local_node"]:
                     strategy = "local_ingest"
-                    step.logs.append("[system] Using local DA ingest (remote puts disabled)")
-                else:
+                    self._set_checkpoint_publish_state(
+                        checkpoint_sha,
+                        local_artifact_prepared=True,
+                        da_uploaded=False,
+                        da_pending_reason="allow_remote_put_false",
+                    )
                     recs = [
-                        "Remote DA uploads are disabled on this node.",
-                        "You must enable allow_remote_put on the node operator side.",
+                        "Remote DA uploads are disabled for this node.",
+                        "Enable allow_remote_put or configure local ingest and retry Push to DA.",
                     ]
                     raise DaPolicyError(
-                        message="Remote DA uploads are disabled on this node. You must enable allow_remote_put on the node operator side.",
+                        message="DA not configured for RPC uploads; checkpoint prepared locally. Configure DA to upload.",
                         code="DA_REMOTE_PUT_BLOCKED",
-                        da_enabled=bool(status.get("enabled")),
+                        da_enabled=True,
                         allow_remote_put=False,
                         da_dir=diagnostics["da_dir"],
                         rpc_url=diagnostics["rpc_url"],
@@ -287,26 +406,36 @@ class EnaService:
                         diagnostics=diagnostics,
                         recommendations=recs,
                     )
+                recs = [
+                    "Remote DA uploads are disabled on this node.",
+                    "You must enable allow_remote_put on the node operator side.",
+                ]
+                raise DaPolicyError(
+                    message="Remote DA uploads are disabled on this node. You must enable allow_remote_put on the node operator side.",
+                    code="DA_REMOTE_PUT_BLOCKED",
+                    da_enabled=True,
+                    allow_remote_put=False,
+                    da_dir=diagnostics["da_dir"],
+                    rpc_url=diagnostics["rpc_url"],
+                    can_enable_remote_put=supports_toggle,
+                    diagnostics=diagnostics,
+                    recommendations=recs,
+                )
 
             step.logs.append("Uploading to DA…")
             step.progress = 60
             out = self.da.upload_bytes(data)
-            commit = out.get("blob_id")
+            commit = str(out.get("blob_id") or "")
             if not commit:
                 raise RuntimeError(out.get("error", "DA unavailable"))
 
             step.logs.append("Verifying blob…")
             step.progress = 90
-            verified = self.da.has_blob(commit)
-            if not verified:
-                try:
-                    _ = self.da.get_blob(commit)
-                    verified = True
-                except Exception:
-                    verified = False
+            verified = self._verify_da_presence(commit)
             if not verified:
                 raise RuntimeError(f"DA verification failed for blob {commit}")
 
+            pointer = self._update_remote_pointer(commit, checkpoint_sha)
             log.info(
                 "ENA publish DA push strategy=%s commitment=%s verified=%s",
                 strategy,
@@ -314,6 +443,13 @@ class EnaService:
                 verified,
             )
             step_cache["commitment"] = commit
+            self._set_checkpoint_publish_state(
+                checkpoint_sha,
+                local_artifact_prepared=True,
+                da_uploaded=True,
+                commitment=commit,
+                da_pending_reason="",
+            )
             return {
                 "commitment": commit,
                 "mode": "network" if strategy == "rpc_put" else "local-ingest",
@@ -321,19 +457,23 @@ class EnaService:
                 "verification": {"verified": verified},
                 "da_status": status,
                 "diagnostics": diagnostics,
+                "remote_pointer": pointer,
             }
 
         def _register(step):
             payload = {"checkpoint_sha": checkpoint_sha, "commitment": step_cache.get("commitment")}
             res = self.aicf.submit_job("ena_checkpoint_publish", payload, 10)
-            return {"job": res.get("data", {}).get("job_id", "local-reg")}
+            ok = bool(res.get("ok", False))
+            self._set_checkpoint_publish_state(
+                checkpoint_sha,
+                local_artifact_prepared=True,
+                aicf_registered=ok,
+            )
+            return {"job": res.get("data", {}).get("job_id", "local-reg"), "ok": ok}
 
         run = self.runner.run("publish", [("Validate checkpoint", _validate), ("Push to DA", _push), ("Register in AICF", _register)])
-        cps = list(self.store.get("checkpoints", []))
-        for cp in cps:
-            if cp.get("sha256") == checkpoint_sha:
-                cp["commitment"] = run.result.get("Push to DA", {}).get("commitment")
-        self.store.set("checkpoints", cps)
+        if run.status == "failed":
+            return {"ok": False, "run": run}
         return {"ok": True, "run": run}
 
     def infer(self, prompt: str, network_mode: bool = False, token_estimate: int = 100) -> dict[str, Any]:
