@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import time
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -15,6 +16,9 @@ from animica_studio.models.wallet_models import is_valid_address
 from animica_studio.services.rpc_client import RpcClient
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.paths import app_data_dir
+
+
+log = logging.getLogger(__name__)
 
 
 class FullAutoState(str, Enum):
@@ -418,11 +422,12 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     out["bootstrap"]["da_configured"] = bool(da.get("ok"))
     out["bootstrap"]["diagnostics"] = str(da.get("diagnostics") or "")
     if not da.get("ok"):
-        if bool(cfg.get("train_locally_when_da_disabled", False)):
+        local_fallback_allowed = bool(cfg.get("train_locally_when_da_disabled", False)) or not bool(cfg.get("require_da_uploads", False))
+        if local_fallback_allowed:
             out["state"] = "training"
             out["detail"] = "LOCAL_ONLY_DA_DISABLED"
             out["bootstrap"]["local_only_training"] = True
-            out["logs"].append(("warning", "Local-only training (no network publish). Configure DA to bootstrap network sync."))
+            out["logs"].append(("warning", "Local-only training (no network publish). Configure DA to bootstrap network sync; auto-configure will retry with backoff."))
             return out
         out["state"] = "error"
         out["detail"] = "DA not configured (reason=not_configured); attempting auto-configure failed"
@@ -489,6 +494,17 @@ def _is_allowed_dir(candidate: str, allowed_base_dirs: list[str]) -> bool:
     return any(c == str(base).rstrip("/") or c.startswith(f"{str(base).rstrip('/')}/") for base in allowed_base_dirs if str(base).strip())
 
 
+def _build_da_configure_params(status: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    configured_dir = str(status.get("dir") or status.get("configured_dir") or "").strip()
+    default_dir = str(defaults.get("default_dir") or "/data/da").strip() or "/data/da"
+    allowed_dirs = defaults.get("allowed_base_dirs") if isinstance(defaults.get("allowed_base_dirs"), list) else []
+    chosen_dir = configured_dir or default_dir
+    if not _is_allowed_dir(chosen_dir, [str(v) for v in allowed_dirs]):
+        chosen_dir = str(allowed_dirs[0]) if allowed_dirs else default_dir
+    limit = int(defaults.get("max_bytes") or 50 * 1024 * 1024 * 1024)
+    return {"enabled": True, "dir": chosen_dir, "max_bytes": limit}
+
+
 def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
     rpc_url = str(ctx.get("rpc_url") or "")
     logs: list[tuple[str, str]] = []
@@ -532,10 +548,20 @@ def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
                     vals = out.get("dirs") if isinstance(out.get("dirs"), list) else out.get("allowed")
                     if isinstance(vals, list):
                         allowed = [str(v) for v in vals]
-            dir_path = default_dir if _is_allowed_dir(default_dir, allowed) else (allowed[0] if allowed else "/data/da")
-            payload = {"enabled": True, "dir": dir_path, "max_bytes": 50 * 1024 * 1024 * 1024, "limit_bytes": 50 * 1024 * 1024 * 1024}
+            defaults = {
+                "default_dir": default_dir,
+                "allowed_base_dirs": allowed,
+                "max_bytes": 50 * 1024 * 1024 * 1024,
+            }
+            payload = _build_da_configure_params(status, defaults)
+            payload_json = json.dumps(payload, sort_keys=True)
+            logs.append(("debug", f"da.configure payload = {payload_json}"))
+            log.debug("da.configure payload = %s", payload_json)
             _rpc_call_with_backoff(c, configure_method, payload)
             verify = _rpc_call_with_backoff(c, status_method, {})
+            verify_json = json.dumps(verify if isinstance(verify, dict) else {"raw": verify}, sort_keys=True)
+            logs.append(("debug", f"da.getStatus after configure = {verify_json}"))
+            log.debug("da.getStatus after configure = %s", verify_json)
             if not isinstance(verify, dict):
                 verify = {}
             v_enabled = bool(verify.get("enabled", False))
@@ -543,9 +569,14 @@ def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
             v_writable = bool(verify.get("writable", False))
             if not v_enabled or not (v_ok or v_writable):
                 reason = str(verify.get("reason") or verify.get("policy_blocked_reason") or reason or "configure_failed")
-                return {"ok": False, "logs": logs + [("error", f"Node refused to configure DA ({reason})")], "diagnostics": f"Node refused to configure DA ({reason})"}
-            logs.append(("info", f"DA configured successfully at {dir_path}"))
-            return {"ok": True, "logs": logs, "status": verify, "diagnostics": f"configured:{dir_path}"}
+                return {
+                    "ok": False,
+                    "logs": logs + [("error", f"node did not enable DA ({reason})")],
+                    "diagnostics": f"node did not enable DA ({reason}) status={verify_json}",
+                    "status": verify,
+                }
+            logs.append(("info", f"DA configured successfully at {payload.get('dir')}"))
+            return {"ok": True, "logs": logs, "status": verify, "diagnostics": f"configured:{payload.get('dir')}"}
     except Exception as exc:  # noqa: BLE001
         diagnostics = str(exc)
         return {"ok": False, "logs": logs + [("error", f"Node refused to configure DA ({exc})")], "diagnostics": diagnostics}
