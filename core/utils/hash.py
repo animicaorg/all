@@ -72,6 +72,11 @@ def sha3_256(data: BytesLike) -> bytes:
     return hashlib.sha3_256(_b(data)).digest()
 
 
+def sha3_256_hex(data: BytesLike) -> str:
+    """SHA3-256 digest as lowercase hex string."""
+    return hashlib.sha3_256(_b(data)).hexdigest()
+
+
 def sha3_512(data: BytesLike) -> bytes:
     """SHA3-512 digest."""
     return hashlib.sha3_512(_b(data)).digest()
@@ -252,6 +257,7 @@ def merkle_verify(
 
 __all__ = [
     "sha3_256",
+    "sha3_256_hex",
     "sha3_512",
     "blake3",
     "keccak256",

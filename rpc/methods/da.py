@@ -57,6 +57,23 @@ def _require_store():
     return store
 
 
+def _require_remote_put_allowed(store) -> None:
+    """Raise a structured POLICY_BLOCKED error if allow_remote_put=false."""
+    if not store.config.allow_remote_put:
+        raise rpc_errors.AccessDenied(
+            "DA remote blob upload is blocked by policy (allow_remote_put=false). "
+            "To enable: da.configure with allow_remote_put=true (or use local upload path).",
+            category="POLICY_BLOCKED",
+            feature="da.remote_put",
+            allow_remote_put=False,
+            effective_dir=store.root_dir,
+            remediation=(
+                "Set allow_remote_put=true via da.configure, "
+                "or upload blobs locally via the node's file-system API."
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # RPC methods
 # ---------------------------------------------------------------------------
@@ -70,9 +87,11 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
 
     Returns a stable schema compatible with Studio/Explorer integration:
     {
-      enabled, dir, max_bytes, used_bytes, free_bytes_fs,
-      blob_count, last_error, peer_serving,
-      allow_remote_get, allow_remote_put,
+      ok, reason, enabled, writable, dir, effective_dir,
+      max_bytes, used_bytes_da, used_bytes, free_bytes_fs,
+      blob_count, last_error, last_error_code,
+      peer_serving, allow_remote_get, allow_remote_put,
+      policy_blocked_reason, eviction_policy, on_full,
       version
     }
     """
@@ -80,17 +99,39 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
         store = _get_store()
         cfg = store.config
         stats = store.stats()
+        enabled = bool(cfg.enabled)
+        # Check writeability
+        writable = False
+        if enabled:
+            try:
+                writable = os.access(store.root_dir, os.W_OK)
+            except Exception:
+                writable = False
+        policy_blocked_reason = None
+        if not enabled:
+            policy_blocked_reason = "DA store is disabled"
+        elif not cfg.allow_remote_put:
+            policy_blocked_reason = "allow_remote_put=false: remote blob uploads are blocked by policy"
+        ok = enabled and writable
+        reason = None if ok else ("not_configured" if not enabled else "not_writable")
         return {
-            "enabled": cfg.enabled,
+            "ok": ok,
+            "reason": reason,
+            "enabled": enabled,
+            "writable": writable,
             "dir": store.root_dir,
+            "effective_dir": store.root_dir,
             "max_bytes": cfg.max_bytes,
-            "used_bytes": stats["used_bytes"],
-            "free_bytes_fs": stats["free_bytes_fs"],
-            "blob_count": stats["blob_count"],
+            "used_bytes_da": stats.get("used_bytes", 0),
+            "used_bytes": stats.get("used_bytes", 0),  # backward compat alias
+            "free_bytes_fs": stats.get("free_bytes_fs", 0),
+            "blob_count": stats.get("blob_count", 0),
             "last_error": None,
+            "last_error_code": None,
             "peer_serving": cfg.allow_remote_get,
             "allow_remote_get": cfg.allow_remote_get,
             "allow_remote_put": cfg.allow_remote_put,
+            "policy_blocked_reason": policy_blocked_reason,
             "eviction_policy": cfg.eviction_policy,
             "on_full": cfg.on_full,
             "version": _DA_VERSION,
@@ -100,21 +141,27 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
     except Exception as exc:
         _log.warning("da.status failed: %s", exc)
         return {
+            "ok": False,
+            "reason": "not_supported",
             "enabled": False,
+            "writable": False,
             "dir": _default_da_dir(),
+            "effective_dir": _default_da_dir(),
             "max_bytes": 0,
+            "used_bytes_da": 0,
             "used_bytes": 0,
             "free_bytes_fs": 0,
             "blob_count": 0,
             "last_error": str(exc),
+            "last_error_code": type(exc).__name__,
             "peer_serving": False,
             "allow_remote_get": False,
             "allow_remote_put": False,
+            "policy_blocked_reason": None,
             "eviction_policy": "lru",
             "on_full": "evict",
             "version": _DA_VERSION,
         }
-
 
 
 
@@ -213,8 +260,62 @@ def da_configure(params=None, **kwargs) -> dict:
 
     store.update_config(**update_kwargs)
 
-    # Return current status
-    return da_status()
+    # Get current status after update
+    status = da_status()
+
+    # Build requested vs effective comparison
+    cfg_after = store.config
+    requested: Dict[str, Any] = {}
+    if enabled is not None:
+        requested["enabled"] = bool(enabled)
+    if da_dir is not None:
+        requested["dir"] = da_dir
+    if max_bytes is not None:
+        requested["max_bytes"] = int(max_bytes)
+    if eviction_policy:
+        requested["eviction_policy"] = eviction_policy
+    if on_full:
+        requested["on_full"] = on_full
+    if allow_remote_get is not None:
+        requested["allow_remote_get"] = bool(allow_remote_get)
+    if allow_remote_put is not None:
+        requested["allow_remote_put"] = bool(allow_remote_put)
+
+    effective: Dict[str, Any] = {
+        "enabled": cfg_after.enabled,
+        "dir": root,
+        "max_bytes": cfg_after.max_bytes,
+        "eviction_policy": cfg_after.eviction_policy,
+        "on_full": cfg_after.on_full,
+        "allow_remote_get": cfg_after.allow_remote_get,
+        "allow_remote_put": cfg_after.allow_remote_put,
+    }
+
+    # Check for overrides/warnings
+    warnings: List[str] = []
+    overrides_applied: List[str] = []
+    if enabled is True and not cfg_after.enabled:
+        warnings.append(
+            "requested enabled=true but effective enabled=false: "
+            "store may require a valid dir and write access"
+        )
+    if allow_remote_put is True and not cfg_after.allow_remote_put:
+        warnings.append(
+            "requested allow_remote_put=true but policy disallows it; "
+            "check node policy configuration"
+        )
+
+    status["requested"] = requested
+    status["effective"] = effective
+    status["policy"] = {
+        "allow_remote_put": cfg_after.allow_remote_put,
+        "allow_remote_get": cfg_after.allow_remote_get,
+        "on_full": cfg_after.on_full,
+        "eviction_policy": cfg_after.eviction_policy,
+    }
+    status["overrides_applied"] = overrides_applied
+    status["warnings"] = warnings
+    return status
 
 
 @method("da.put", aliases=("da_put", "da.putBlob", "da_putBlob"),
@@ -277,6 +378,7 @@ def da_put(params=None, **kwargs) -> dict:
 
     try:
         store = _require_store()
+        _require_remote_put_allowed(store)
         blob_id, size_bytes = store.put(
             blob_bytes,
             content_type=content_type,
