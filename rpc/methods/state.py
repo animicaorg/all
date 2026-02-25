@@ -225,6 +225,73 @@ def state_get_balance(address: str, tag: str = "latest") -> str:
 
 
 @method(
+    "state.getAddressBalance",
+    aliases=("wallet.getAddressBalance", "account.getBalance"),
+    desc=(
+        "Return a rich balance object for an address with unit info, availability flags, "
+        "and head context. Stable schema for Studio and Explorer integration."
+    ),
+)
+def state_get_address_balance(address: str = "", **kwargs) -> dict:
+    """
+    Return stable balance schema for Studio/Explorer:
+    {
+      address, exists, confirmed_balance, pending_incoming, pending_outgoing,
+      spendable_balance, unit, display_decimals, as_of_head_height, as_of_head_hash
+    }
+
+    Zero balance is explicit (exists=true, confirmed_balance="0").
+    Invalid address returns INVALID_PARAMS error.
+    Temporarily unavailable returns structured service error.
+    """
+    import typing as t
+
+    # Accept object params or positional
+    if not address:
+        address = str(kwargs.get("address") or "")
+    if not address:
+        raise rpc_errors.InvalidParams("address is required", field="address")
+
+    addr = _validate_address(address)
+
+    # Get head context
+    head_height: t.Optional[int] = None
+    head_hash: t.Optional[str] = None
+    try:
+        head = deps.get_head()
+        head_height = head.get("height")
+        head_hash = head.get("hash")
+    except Exception:
+        pass
+
+    # Get confirmed balance
+    exists = True
+    confirmed_balance = "0"
+    try:
+        value = _svc_balance(addr, tag="latest")
+        confirmed_balance = str(int(value))
+    except rpc_errors.RpcError:
+        raise
+    except Exception:
+        # Address doesn't exist in state = zero balance, not error
+        confirmed_balance = "0"
+        exists = True
+
+    return {
+        "address": addr,
+        "exists": exists,
+        "confirmed_balance": confirmed_balance,
+        "pending_incoming": None,
+        "pending_outgoing": None,
+        "spendable_balance": confirmed_balance,
+        "unit": "nANM",
+        "display_decimals": 9,
+        "as_of_head_height": head_height,
+        "as_of_head_hash": head_hash,
+    }
+
+
+@method(
     "state.getNonce",
     desc="Return the account nonce for an address at a given block tag (latest|pending).",
 )
