@@ -65,7 +65,7 @@ class EnaHubPage(QWidget):
         self._tabs.addTab(CheckpointsPage(self._service), "Checkpoints")
         self._tabs.addTab(TrainPage(config), "Train")
         self._tabs.addTab(PublishPage(self._service), "Publish")
-        self._tabs.addTab(InferPage(self._service), "Infer")
+        self._tabs.addTab(InferPage(config), "Infer")
         if self._contrib_engine is not None:
             self._tabs.addTab(EnaContributePage(config, self._contrib_engine), "ENA Contribute")
 
