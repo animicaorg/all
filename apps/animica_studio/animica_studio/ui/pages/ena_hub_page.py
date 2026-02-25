@@ -36,6 +36,7 @@ from animica_studio.ui.pages.train_page import TrainPage
 from animica_studio.services.ena_contribution_engine import EnaContributionEngine
 from animica_studio.services.ena_earnings_service import EnaEarningsService
 from animica_studio.services.ena_full_auto_engine import EnaFullAutoEngine, FullAutoConfig, FullAutoState
+from animica_studio.models.wallet_models import is_valid_address
 from animica_studio.services.wallet_repository import WalletRepository
 from animica_studio.storage.config import save_config
 
@@ -299,10 +300,16 @@ class EnaFullAutoPanel(QGroupBox):
     def _cfg(self) -> dict:
         ena = dict(self._config.ena or {})
         full = dict(ena.get("full_auto") or {})
+        entered_payout = self._addr.text().strip()
+        previous_payout = str(full.get("payout_address") or "").strip()
+        payout_for_config = entered_payout
+        if entered_payout and not is_valid_address(entered_payout) and is_valid_address(previous_payout):
+            payout_for_config = previous_payout
+            self._logs.appendPlainText("[warning] Payout address validation failed; keeping previous payout address and disabling earnings updates for invalid input.")
         full.update(
             {
                 "enabled": True,
-                "payout_address": self._addr.text().strip(),
+                "payout_address": payout_for_config,
                 "intensity": self._intensity.currentData(),
                 "upload_every_steps": int(self._upload_steps.value()),
                 "upload_every_minutes": int(self._upload_minutes.value()),
@@ -352,9 +359,14 @@ class EnaFullAutoPanel(QGroupBox):
         full = self._cfg()
         save_config(self._config)
         self._engine.apply_config(FullAutoConfig(**full), self._config.get_active_profile().node.rpc_local_url)
+        entered = self._addr.text().strip()
+        earnings_address = str(full.get("payout_address") or "")
+        if entered and not is_valid_address(entered):
+            earnings_address = ""
+            self._logs.appendPlainText("[warning] Earnings tracker disabled: entered payout address is invalid.")
         self._earnings.configure(
             rpc_url=self._config.get_active_profile().node.rpc_local_url,
-            address=str(full.get("payout_address") or ""),
+            address=earnings_address,
         )
 
     def _toggle_start_stop(self) -> None:
