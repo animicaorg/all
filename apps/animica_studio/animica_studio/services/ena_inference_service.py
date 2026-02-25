@@ -21,6 +21,7 @@ class GenerationConfig:
     context_tokens: int = 2048
     device: str = "auto"
     threads: int = 0
+    use_conversation_context: bool = True
 
 
 class _InferenceWorker(QThread):
@@ -28,25 +29,53 @@ class _InferenceWorker(QThread):
     completed = Signal(dict)
     failed = Signal(str, str)
 
-    def __init__(self, prompt: str, model: ModelEntry, cfg: GenerationConfig, cancel_event: threading.Event) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        history: list[dict[str, str]],
+        model: ModelEntry,
+        cfg: GenerationConfig,
+        cancel_event: threading.Event,
+    ) -> None:
         super().__init__()
         self._prompt = prompt
+        self._history = history
         self._model = model
         self._cfg = cfg
         self._cancel = cancel_event
+
+    def _compose_prompt(self) -> str:
+        sections: list[str] = []
+        if self._cfg.system_prompt.strip():
+            sections.append(f"System: {self._cfg.system_prompt.strip()}")
+        if self._cfg.use_conversation_context:
+            for turn in self._history:
+                user = str(turn.get("user") or "").strip()
+                assistant = str(turn.get("assistant") or "").strip()
+                if user:
+                    sections.append(f"User: {user}")
+                if assistant:
+                    sections.append(f"ENA: {assistant}")
+        sections.append(f"User: {self._prompt.strip()}")
+        sections.append("ENA:")
+        return "\n".join(sections).strip()
 
     def run(self) -> None:
         try:
             from ena.inference import create_inference_engine
 
+            if self._cancel.is_set():
+                self.completed.emit({"cancelled": True})
+                return
+
             engine = create_inference_engine(self._model.checkpoint_path, self._model.name)
-            joined = f"{self._cfg.system_prompt}\n\n{self._prompt}".strip()
+            joined = self._compose_prompt()
             result = engine.infer(joined, max_tokens=self._cfg.max_new_tokens, temperature=self._cfg.temperature)
             text = str(result.get("answer") or "")
             assembled = ""
             for token in text.split(" "):
                 if self._cancel.is_set():
-                    self.completed.emit({"cancelled": True})
+                    self.completed.emit({"cancelled": True, "text": assembled.strip()})
                     return
                 piece = token + " "
                 assembled += piece
@@ -67,10 +96,16 @@ class EnaInferenceService(QObject):
         super().__init__(parent)
         self._workers: dict[str, tuple[_InferenceWorker, threading.Event]] = {}
 
-    def start(self, prompt: str, model_entry: ModelEntry, generation_config: GenerationConfig) -> str:
+    def start(
+        self,
+        prompt: str,
+        history: list[dict[str, str]],
+        model_entry: ModelEntry,
+        generation_config: GenerationConfig,
+    ) -> str:
         handle = f"infer-{uuid.uuid4().hex[:12]}"
         cancel_event = threading.Event()
-        worker = _InferenceWorker(prompt, model_entry, generation_config, cancel_event)
+        worker = _InferenceWorker(prompt, history, model_entry, generation_config, cancel_event)
         worker.chunk.connect(self.chunk.emit)
         worker.completed.connect(lambda stats, h=handle: self._on_done(h, stats))
         worker.failed.connect(lambda msg, details, h=handle: self._on_error(h, msg, details))
