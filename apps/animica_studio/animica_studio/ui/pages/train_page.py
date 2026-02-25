@@ -586,6 +586,7 @@ class TrainPage(QWidget):
     def _read_config(self) -> TrainingConfig:
         cfg = TrainingConfig(
             run_name=self.run_name.text().strip() or "ena-train",
+            total_steps=self.iterations.value() or None,
             iterations=self.iterations.value() or None,
             epochs=self.epochs.value() if self.epochs.value() > 0 else None,
             batch_size=self.batch_size.value(),
@@ -617,9 +618,9 @@ class TrainPage(QWidget):
             quality_level=self._quality_level(),
             smart_defaults=self.smart_defaults.isChecked(),
         )
-        if cfg.iterations and cfg.epochs:
-            self._on_log("", "system", "Both iterations and epochs set; iterations takes precedence.")
-        if cfg.iterations and cfg.iterations >= 100_000_000:
+        if cfg.effective_iterations() and cfg.epochs:
+            self._on_log("", "system", "Both iterations and epochs set; iterations/total_steps takes precedence.")
+        if cfg.effective_iterations() and cfg.effective_iterations() >= 100_000_000:
             self._on_log("", "system", "Warning: extremely high iteration count configured.")
         return cfg
 
@@ -779,7 +780,7 @@ class TrainPage(QWidget):
         self.recommended.setPlainText(
             "\n".join(
                 [
-                    f"iterations={cfg.iterations} batch={cfg.batch_size} grad_accum={cfg.gradient_accumulation_steps}",
+                    f"total_steps={cfg.effective_iterations()} batch={cfg.batch_size} grad_accum={cfg.gradient_accumulation_steps}",
                     f"lr={cfg.learning_rate:.2e} optimizer={cfg.optimizer} warmup={cfg.warmup_steps}",
                     f"eval every {cfg.eval_interval_steps} steps, checkpoint every {cfg.checkpoint_interval_steps} steps",
                     f"device={cfg.device} threads={cfg.threads} precision={cfg.precision}",
@@ -790,7 +791,7 @@ class TrainPage(QWidget):
         )
 
     def _apply_training_config(self, cfg: TrainingConfig) -> None:
-        self.iterations.setValue(int(cfg.iterations or 0))
+        self.iterations.setValue(int(cfg.effective_iterations() or 0))
         self.batch_size.setValue(int(cfg.batch_size))
         self.grad_accum.setValue(int(cfg.gradient_accumulation_steps or 0))
         self.learning_rate.setValue(float(cfg.learning_rate))
@@ -906,7 +907,7 @@ class TrainPage(QWidget):
         self.dataset_id.setText(cfg.dataset_id or "")
         self.base_model.setText(cfg.base_model)
         self.output_dir.setText(cfg.output_dir)
-        self.iterations.setValue(int(cfg.iterations or 0))
+        self.iterations.setValue(int(cfg.effective_iterations() or 0))
         self.epochs.setValue(float(cfg.epochs or 0))
         self.batch_size.setValue(cfg.batch_size)
         self.learning_rate.setValue(cfg.learning_rate)

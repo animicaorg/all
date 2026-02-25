@@ -79,6 +79,7 @@ class EnaAutoConfigurator:
             risk = "high"
 
         cfg = TrainingConfig.from_dict(config_in.to_dict())
+        cfg.total_steps = total_steps
         cfg.iterations = total_steps
         cfg.epochs = None
         cfg.batch_size = batch

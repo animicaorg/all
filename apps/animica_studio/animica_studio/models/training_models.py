@@ -8,6 +8,7 @@ from typing import Any
 @dataclass
 class TrainingConfig:
     run_name: str = "ena-train"
+    total_steps: int | None = None
     iterations: int | None = 10000
     epochs: float | int | None = None
     batch_size: int = 4
@@ -48,12 +49,19 @@ class TrainingConfig:
     dataset_version_id: str | None = None
 
     def effective_iterations(self) -> int | None:
+        if self.total_steps and int(self.total_steps) > 0:
+            return int(self.total_steps)
         if self.iterations and int(self.iterations) > 0:
             return int(self.iterations)
         return None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        steps = self.effective_iterations()
+        if steps:
+            out["total_steps"] = steps
+            out["iterations"] = steps
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TrainingConfig":
@@ -65,6 +73,10 @@ class TrainingConfig:
             data = {**data, "training_mode": data.get("ena_submit_mode")}
         if "aicf_services_url" in data and "services_url" not in data:
             data = {**data, "services_url": data.get("aicf_services_url")}
+        if "total_steps" not in data and "iterations" in data:
+            data = {**data, "total_steps": data.get("iterations")}
+        if "iterations" not in data and "total_steps" in data:
+            data = {**data, "iterations": data.get("total_steps")}
         merged.update(data)
         return cls(**merged)
 
