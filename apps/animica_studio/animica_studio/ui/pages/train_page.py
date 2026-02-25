@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import threading
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -33,7 +32,9 @@ from animica_studio.models.training_models import TrainingConfig
 from animica_studio.services.dataset_evolution_engine import DatasetEvolutionEngine, EvolutionQuotas
 from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
+from animica_studio.services.dataset_bootstrap_runtime import bootstrap_runtime
 from animica_studio.storage.config import Config, save_config
+from animica_studio.ui.widgets.bootstrap_progress_widget import BootstrapProgressWidget
 
 
 class NullEvolutionEngine:
@@ -44,39 +45,6 @@ class NullEvolutionEngine:
 
     def apply_plan(self, *_args, **_kwargs) -> dict:
         raise RuntimeError("Dataset evolution is disabled.")
-
-
-class _BootstrapWorker(QThread):
-    progress = Signal(dict)
-    completed = Signal(dict)
-    failed = Signal(str)
-
-    def __init__(self, manager: DatasetManager, *, name: str, size_preset: str, auto_start_training: bool) -> None:
-        super().__init__()
-        self._manager = manager
-        self._name = name
-        self._size_preset = size_preset
-        self._auto_start = auto_start_training
-        self._cancel = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancel.set()
-
-    @property
-    def auto_start(self) -> bool:
-        return self._auto_start
-
-    def run(self) -> None:
-        try:
-            result = self._manager.bootstrap_large_dataset(
-                name=self._name,
-                size_preset=self._size_preset,
-                progress_cb=lambda p: self.progress.emit(p),
-                cancel_event=self._cancel,
-            )
-            self.completed.emit(result)
-        except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
 
 
 
@@ -107,7 +75,8 @@ class TrainPage(QWidget):
             self._on_log("", "system", self._mode_migration_warning)
 
     def _init_state(self) -> None:
-        self._bootstrap_worker: _BootstrapWorker | None = None
+        self._bootstrap_runtime = bootstrap_runtime()
+        self._bootstrap_panel: BootstrapProgressWidget | None = None
         self._active_run_id: str | None = None
         self._run_in_progress = False
         self._last_plan: dict | None = None
@@ -127,7 +96,8 @@ class TrainPage(QWidget):
 
     def _validate_critical_state(self) -> None:
         required_attrs = [
-            "_bootstrap_worker",
+            "_bootstrap_runtime",
+            "_bootstrap_panel",
             "_active_run_id",
             "_run_in_progress",
             "_last_plan",
@@ -178,7 +148,9 @@ class TrainPage(QWidget):
         self.cancel_bootstrap_btn.clicked.connect(self._cancel_bootstrap)
         custom_btn = QPushButton("Build Custom Dataset")
         custom_btn.clicked.connect(self._custom_dataset)
-        dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(self.bootstrap_btn); dataset_actions.addWidget(self.cancel_bootstrap_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addStretch(1)
+        self.show_bootstrap_progress_btn = QPushButton("Show Bootstrap Progress")
+        self.show_bootstrap_progress_btn.clicked.connect(self._show_bootstrap_progress)
+        dataset_actions = QHBoxLayout(); dataset_actions.addWidget(auto_btn); dataset_actions.addWidget(self.bootstrap_btn); dataset_actions.addWidget(self.cancel_bootstrap_btn); dataset_actions.addWidget(custom_btn); dataset_actions.addWidget(self.show_bootstrap_progress_btn); dataset_actions.addStretch(1)
         self.target_size = QComboBox(); self.target_size.addItems(["Starter", "Big", "Huge"]); self.target_size.setCurrentText("Big")
         self.target_size.currentTextChanged.connect(self._refresh_bootstrap_estimate)
         self.auto_start_after_dataset = QCheckBox("Auto-start training after dataset ready")
@@ -386,7 +358,10 @@ class TrainPage(QWidget):
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
         self._svc.status_changed.connect(self._on_status)
-
+        self._bootstrap_runtime.stateChanged.connect(self._on_bootstrap_state_changed)
+        self._bootstrap_runtime.progressUpdated.connect(self._on_bootstrap_runtime_progress)
+        self._bootstrap_runtime.logLine.connect(self._on_bootstrap_runtime_log)
+        self._bootstrap_runtime.finished.connect(self._on_bootstrap_runtime_finished)
 
     def _maybe_prompt_bootstrap(self) -> None:
         if os.getenv("ANIMICA_STUDIO_SAFE_MODE", "").strip() == "1":
@@ -460,83 +435,82 @@ class TrainPage(QWidget):
             f"Disk ~{disk_gb:.1f} GB | Download ~{dl_gb:.1f} GB | ETA ~{eta[0]}-{eta[1]} h @ {est['bandwidth_mbps']:.1f} Mbps"
         )
 
+    def _show_bootstrap_progress(self) -> None:
+        if self._bootstrap_panel is None:
+            panel = BootstrapProgressWidget(self)
+            panel.pauseRequested.connect(self._bootstrap_runtime.pause)
+            panel.resumeRequested.connect(lambda: self._bootstrap_runtime.resume(name=self.run_name.text().strip() or "ena"))
+            panel.cancelRequested.connect(self._cancel_bootstrap)
+            panel.retryRequested.connect(lambda: self._bootstrap_runtime.retry(name=self.run_name.text().strip() or "ena", size_preset=self._target_key()))
+            panel.copyDiagnosticsRequested.connect(self._copy_bootstrap_diagnostics)
+            self._bootstrap_panel = panel
+        run = self._bootstrap_runtime.active_run
+        if run:
+            self._bootstrap_panel.update_state(run.state)
+            self._bootstrap_panel.set_output_dir(run.output_dir)
+            for line in run.log_lines[-200:]:
+                self._bootstrap_panel.append_log(str(line.get("kind", "system")), str(line.get("text", "")))
+        self._bootstrap_panel.show()
+        self._bootstrap_panel.raise_()
+
     def _bootstrap_dataset(self) -> None:
         preset = self._target_key()
         est = self._dataset_manager.estimate_bootstrap(preset)
         free = shutil.disk_usage(str(Path.home())).free
-        if preset == "huge":
-            msg = (
-                "Huge dataset selected (200+ GB target).\n\n"
-                f"Estimated disk headroom needed: {est['disk_needed_bytes'] / 1024**3:.1f} GB\n"
-                f"Available free disk: {free / 1024**3:.1f} GB\n\n"
-                "Continue?"
-            )
-            if QMessageBox.question(self, "Confirm huge bootstrap", msg) != QMessageBox.StandardButton.Yes:
-                return
         if free < est["disk_needed_bytes"]:
             QMessageBox.warning(self, "Dataset", "Insufficient disk for selected target. Try Starter.")
-            return
-        if self._bootstrap_worker and self._bootstrap_worker.isRunning():
             return
         self.bootstrap_btn.setEnabled(False)
         self.cancel_bootstrap_btn.setEnabled(True)
         self.bootstrap_progress.setText("Bootstrapping dataset...")
-        self._bootstrap_worker = _BootstrapWorker(
-            self._dataset_manager,
-            name=self.run_name.text().strip() or "ena",
-            size_preset=preset,
-            auto_start_training=self.auto_start_after_dataset.isChecked(),
-        )
-        self._bootstrap_worker.progress.connect(self._on_bootstrap_progress)
-        self._bootstrap_worker.completed.connect(self._on_bootstrap_completed)
-        self._bootstrap_worker.failed.connect(self._on_bootstrap_failed)
-        self._bootstrap_worker.start()
+        run = self._bootstrap_runtime.start(name=self.run_name.text().strip() or "ena", size_preset=preset)
+        if self._bootstrap_panel:
+            self._bootstrap_panel.set_output_dir(run.output_dir)
+        self._show_bootstrap_progress()
         self._sync_ui_state()
 
     def _cancel_bootstrap(self) -> None:
-        if self._bootstrap_worker and self._bootstrap_worker.isRunning():
-            self._bootstrap_worker.cancel()
-            self.bootstrap_progress.setText("Cancelling bootstrap; partial data preserved for resume...")
+        self._bootstrap_runtime.cancel()
+        self.bootstrap_progress.setText("Cancelling bootstrap; partial data preserved for resume...")
         self._sync_ui_state()
 
-    def _on_bootstrap_progress(self, payload: dict) -> None:
-        stage = payload.get("stage", "working")
+    def _on_bootstrap_state_changed(self, state: str) -> None:
+        self.bootstrap_progress.setText(f"Bootstrap: {state}")
+        if self._bootstrap_panel:
+            self._bootstrap_panel.update_state(state)
+
+    def _on_bootstrap_runtime_progress(self, payload: dict) -> None:
         processed = int(payload.get("processed_bytes") or 0)
         target = int(payload.get("target_bytes") or 1)
-        shards = int(payload.get("shards") or 0)
-        dedup = float(payload.get("dedup_percent") or 0.0)
         pct = max(0, min(100, int(processed * 100 / max(1, target))))
         self.progress.setValue(pct)
-        self.bootstrap_progress.setText(
-            f"{stage}: {processed / 1024**3:.2f} / {target / 1024**3:.2f} GB, shards={shards}, dedup={dedup:.1f}%"
-        )
+        if self._bootstrap_panel:
+            run = self._bootstrap_runtime.active_run
+            self._bootstrap_panel.update_metrics(
+                bytes_downloaded=int(payload.get("downloaded_bytes") or (run.bytes_downloaded if run else 0)),
+                bytes_total=payload.get("download_total_bytes") or (run.bytes_total if run else None),
+                bytes_processed=processed,
+                target_bytes=target,
+                shards=int(payload.get("shards") or (run.shards_count if run else 0)),
+                output_bytes=processed,
+            )
 
-    def _on_bootstrap_completed(self, result: dict) -> None:
+    def _on_bootstrap_runtime_log(self, kind: str, text: str) -> None:
+        if self._bootstrap_panel:
+            self._bootstrap_panel.append_log(kind, text)
+
+    def _on_bootstrap_runtime_finished(self, ok: bool, result: dict) -> None:
         self.bootstrap_btn.setEnabled(True)
         self.cancel_bootstrap_btn.setEnabled(False)
+        if not ok:
+            QMessageBox.warning(self, "Dataset bootstrap", str(result.get("error") or "Bootstrap failed"))
+            return
         if result.get("cancelled"):
-            self.bootstrap_progress.setText("Bootstrap cancelled. Resume anytime using the same target size.")
-            self.console.append(f"[dataset] Bootstrap cancelled, state at {result.get('build_state')}")
             return
         self.dataset_path.setText(result.get("manifest_path") or "")
         self.dataset_id.setText(Path(result.get("dataset_dir") or "").name)
-        self.bootstrap_progress.setText("Bootstrap completed.")
-        self.console.append(f"[dataset] Bootstrap dataset ready: {result.get('manifest_path')}")
-        diagnostics = result.get("diagnostics")
-        if diagnostics:
-            self.console.append(f"[dataset] Diagnostics: {json.dumps(diagnostics[:3], ensure_ascii=False)}")
-        if self.upload_shards_to_da.isChecked():
-            self.console.append("[dataset] Upload shards to DA requested (upload workflow pending integration).")
-        if self._bootstrap_worker and self._bootstrap_worker.auto_start:
+        if self.auto_start_after_dataset.isChecked():
             self._start()
-        self._sync_ui_state()
-
-    def _on_bootstrap_failed(self, err: str) -> None:
-        self.bootstrap_btn.setEnabled(True)
-        self.cancel_bootstrap_btn.setEnabled(False)
-        self.bootstrap_progress.setText("Bootstrap failed.")
-        self.console.append(f"[dataset] Bootstrap failed: {err}")
-        QMessageBox.warning(self, "Dataset bootstrap", f"{err}\n\nSuggestions:\n- Pick a different version\n- Paste a custom URL\n- Use Starter dataset")
         self._sync_ui_state()
 
     def _dataset_sources(self) -> dict:
@@ -577,9 +551,10 @@ class TrainPage(QWidget):
         self.console.append("[dataset] Saved source overrides.")
 
     def _copy_bootstrap_diagnostics(self) -> None:
-        text = self.console.toPlainText()
+        text = self._bootstrap_runtime.diagnostics_text()
         QGuiApplication.clipboard().setText(text)
-        self.console.append("[dataset] Copied diagnostics to clipboard.")
+        if self._bootstrap_panel:
+            self._bootstrap_panel.append_log("system", "Diagnostics copied to clipboard.")
 
     def _apply_preset(self, name: str) -> None:
         p = self.PRESETS[name]
@@ -904,7 +879,7 @@ class TrainPage(QWidget):
         has_plan = self._last_plan is not None
         has_dataset = bool(self.dataset_path.text().strip())
         evolution_enabled = bool(self._evolution_enabled)
-        busy = bool(self._run_in_progress or (self._bootstrap_worker and self._bootstrap_worker.isRunning()))
+        busy = bool(self._run_in_progress)
 
         self.preview_plan_btn.setEnabled(evolution_enabled and has_dataset and not busy)
         self.approve_plan_btn.setEnabled(evolution_enabled and has_plan and not self._plan_approved and not busy)

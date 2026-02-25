@@ -55,7 +55,7 @@ class EnaDashboardPage(QWidget):
     def _open_infer(self) -> None:
         from animica_studio.ui.pages.infer_page import InferPage
 
-        InferPage(self.service, self).show()
+        InferPage(self._config, self).show()
 
     def _run_auto(self) -> None:
         out = self.service.run_auto_mode(__import__("pathlib").Path.cwd())
