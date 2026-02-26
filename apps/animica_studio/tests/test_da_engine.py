@@ -235,3 +235,8 @@ def test_accepts_node_dir_as_subdir_of_allowed_base(tmp_path: Path):
     )
     assert ok, msg
 
+def test_start_throttle_with_infinite_retry_does_not_raise(tmp_path: Path):
+    e = _engine(tmp_path)
+    e._next_retry_allowed_at = float("inf")
+    e.start()
+    assert e.state != DaEngineState.RUNNING
