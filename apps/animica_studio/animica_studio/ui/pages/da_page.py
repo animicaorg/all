@@ -60,7 +60,7 @@ class DaPage(QWidget):
         self._da_engine = DaContributionEngine(
             DaEngineConfig(
                 enabled=bool(contrib_cfg.get("enabled", False)),
-                host_data_dir=str(contrib_cfg.get("studio_contrib_dir") or contrib_cfg.get("host_data_dir") or contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or str(default_da_contrib_dir())),
+                host_data_dir=str(contrib_cfg.get("studio_dir") or contrib_cfg.get("studio_contrib_dir") or contrib_cfg.get("host_data_dir") or contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or str(default_da_contrib_dir())),
                 node_data_dir=str(contrib_cfg.get("node_da_dir") or contrib_cfg.get("node_data_dir") or "/data/da"),
                 mode=str(contrib_cfg.get("mode") or contrib_cfg.get("reserve_mode") or "quota"),
                 limit_bytes=int(contrib_cfg.get("limit_bytes") or int(contrib_cfg.get("max_gb", 50)) * 1024**3),
@@ -378,7 +378,7 @@ class DaPage(QWidget):
         btn_row.addWidget(self._contrib_start_btn)
         btn_row.addWidget(self._contrib_stop_btn)
         btn_row.addWidget(self._contrib_refresh_btn)
-        self._contrib_recommend_btn = QPushButton("Use node default dir")
+        self._contrib_recommend_btn = QPushButton("Use node default DA dir (node path)")
         self._contrib_recommend_btn.clicked.connect(self._on_use_recommended_paths)
         btn_row.addWidget(self._contrib_recommend_btn)
         self._contrib_retest_mapping_btn = QPushButton("Re-test mount mapping")
@@ -489,7 +489,7 @@ class DaPage(QWidget):
         """Populate contribution controls from saved config."""
         cfg = self._config.da_contribution
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
-        saved_dir = cfg.get("studio_contrib_dir") or cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
+        saved_dir = cfg.get("studio_dir") or cfg.get("studio_contrib_dir") or cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
         self._contrib_host_dir_edit.setText(saved_dir)
         self._contrib_node_dir_edit.setText(str(cfg.get("node_da_dir") or cfg.get("node_data_dir") or ""))
         self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
@@ -579,6 +579,7 @@ class DaPage(QWidget):
         self._config.da_contribution.update(
             {
                 "enabled": self._da_engine.config.enabled,
+                "studio_dir": self._da_engine.config.host_data_dir,
                 "studio_contrib_dir": self._da_engine.config.host_data_dir,
                 "node_da_dir": self._da_engine.config.node_data_dir,
                 "host_data_dir": self._da_engine.config.host_data_dir,
@@ -709,15 +710,8 @@ class DaPage(QWidget):
     def _on_use_recommended_paths(self) -> None:
         if self._default_node_dir:
             self._contrib_node_dir_edit.setText(self._default_node_dir)
-            node_data_root = NodePathMapper.infer_node_data_root(self._default_node_dir)
-            mapper = NodePathMapper(self._host_chain_dir())
-            mapped_host_dir = mapper.map_host_path(self._default_node_dir, node_data_root)
-            current_host_dir = self._contrib_host_dir_edit.text().strip()
-            if mapped_host_dir and (not current_host_dir or current_host_dir == "/data" or current_host_dir.startswith("/data/")):
-                self._contrib_host_dir_edit.setText(mapped_host_dir)
-                self._contrib_console.append_info(f"Mapped studio dir to host path: {mapped_host_dir}")
             if self._last_logged_default_dir != self._default_node_dir:
-                self._contrib_console.append_info(f"Using node default dir: {self._default_node_dir}")
+                self._contrib_console.append_info(f"Using node default DA dir (node path): {self._default_node_dir}")
                 self._last_logged_default_dir = self._default_node_dir
             return
         self._refresh_da_recommendations(force_probe=False)

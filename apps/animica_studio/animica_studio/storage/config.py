@@ -151,6 +151,7 @@ class Config:
     da_contribution: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": True,
+            "studio_dir": str(default_da_contrib_dir()),
             "studio_contrib_dir": str(default_da_contrib_dir()),
             "node_da_dir": "/data/da",
             "host_data_dir": str(default_da_contrib_dir()),
@@ -306,7 +307,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         da_contrib_raw = {}
     legacy_data_dir = str(da_contrib_raw.get("data_dir") or da_contrib_raw.get("directory") or "").strip()
     default_studio_contrib_dir = str(default_da_contrib_dir())
-    candidate_studio_dir = str(da_contrib_raw.get("studio_contrib_dir") or da_contrib_raw.get("host_data_dir") or legacy_data_dir).strip()
+    candidate_studio_dir = str(da_contrib_raw.get("studio_contrib_dir") or da_contrib_raw.get("host_data_dir") or da_contrib_raw.get("studio_dir") or legacy_data_dir).strip()
     if candidate_studio_dir == "/data" or candidate_studio_dir.startswith("/data/"):
         candidate_studio_dir = default_studio_contrib_dir
     studio_contrib_dir = candidate_studio_dir or default_studio_contrib_dir
@@ -316,6 +317,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     node_da_dir = _normalize_node_da_dir(raw_node_da_dir or "/data/da")
     da_contribution = {
         "enabled": True,
+        "studio_dir": studio_contrib_dir,
         "studio_contrib_dir": studio_contrib_dir,
         "node_da_dir": node_da_dir,
         "host_data_dir": studio_contrib_dir,
@@ -331,9 +333,10 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         "auto_start": True,
         **da_contrib_raw,
     }
-    da_contribution["studio_contrib_dir"] = str(da_contribution.get("studio_contrib_dir") or da_contribution.get("host_data_dir") or legacy_data_dir or default_studio_contrib_dir)
+    da_contribution["studio_contrib_dir"] = str(da_contribution.get("studio_contrib_dir") or da_contribution.get("host_data_dir") or da_contribution.get("studio_dir") or legacy_data_dir or default_studio_contrib_dir)
     if da_contribution["studio_contrib_dir"] == "/data" or da_contribution["studio_contrib_dir"].startswith("/data/"):
         da_contribution["studio_contrib_dir"] = default_studio_contrib_dir
+    da_contribution["studio_dir"] = da_contribution["studio_contrib_dir"]
     da_contribution["node_da_dir"] = _normalize_node_da_dir(da_contribution.get("node_da_dir") or da_contribution.get("node_data_dir") or "/data/da")
     da_contribution["host_data_dir"] = da_contribution["studio_contrib_dir"]
     da_contribution["node_data_dir"] = da_contribution["node_da_dir"]
