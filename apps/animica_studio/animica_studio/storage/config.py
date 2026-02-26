@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
 import sys
 import uuid
@@ -283,11 +282,8 @@ def _profile_from_dict(d: dict[str, Any]) -> Profile:
 
 
 def _normalize_node_da_dir(raw_dir: str) -> str:
-    """Normalize legacy node DA directories to writable defaults."""
-    candidate = str(raw_dir or "").strip() or "/data/da"
-    if re.fullmatch(r"/data/chain-\d+/da", candidate):
-        return "/data/da"
-    return candidate
+    """Normalize node DA directory while preserving node-provided paths."""
+    return str(raw_dir or "").strip() or "/data/da"
 
 
 def _config_from_dict(d: dict[str, Any]) -> Config:
@@ -314,7 +310,10 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     if candidate_studio_dir == "/data" or candidate_studio_dir.startswith("/data/"):
         candidate_studio_dir = default_studio_contrib_dir
     studio_contrib_dir = candidate_studio_dir or default_studio_contrib_dir
-    node_da_dir = _normalize_node_da_dir(da_contrib_raw.get("node_da_dir") or da_contrib_raw.get("node_data_dir") or "/data/da")
+    raw_node_da_dir = str(da_contrib_raw.get("node_da_dir") or da_contrib_raw.get("node_data_dir") or "").strip()
+    if not raw_node_da_dir and legacy_data_dir.startswith("/data/"):
+        raw_node_da_dir = legacy_data_dir
+    node_da_dir = _normalize_node_da_dir(raw_node_da_dir or "/data/da")
     da_contribution = {
         "enabled": True,
         "studio_contrib_dir": studio_contrib_dir,

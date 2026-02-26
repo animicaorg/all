@@ -169,7 +169,7 @@ def test_rejects_studio_contrib_dir_under_node_data(tmp_path: Path):
         )
     )
     assert not ok
-    assert "Studio contribution dir must be a host path" in msg
+    assert "Studio needs a host path" in msg
 
 
 def test_normalize_uses_default_studio_contrib_dir_when_missing(tmp_path: Path):
@@ -183,3 +183,19 @@ def test_normalize_uses_default_studio_contrib_dir_when_missing(tmp_path: Path):
     )
     e = DaContributionEngine(cfg)
     assert e.config.host_data_dir == str(default_da_contrib_dir())
+
+
+def test_rejects_node_path_with_clean_ui_error(tmp_path: Path):
+    e = _engine(tmp_path)
+    ok, msg = e.validate_config(
+        DaEngineConfig(
+            enabled=True,
+            host_data_dir="/data/chain-1/da",
+            node_data_dir="/data/chain-1/da",
+            mode="quota",
+            limit_bytes=1024,
+            rpc_url="http://x",
+        )
+    )
+    assert not ok
+    assert "Studio needs a host path" in msg
