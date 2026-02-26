@@ -219,6 +219,7 @@ class Config:
                     "vetted_repos": {"mirrors": []},
                 },
             },
+            "bootstrap_cache_mode": "local_first",
         }
     )
 
