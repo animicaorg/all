@@ -142,7 +142,10 @@ class DatasetBootstrapRuntime(QObject):
         stage = str(payload.get("stage") or "").upper()
         state_map = {
             "DOWNLOADING": "DOWNLOADING",
+            "EXTRACTING": "EXTRACTING",
             "PROCESSING": "PROCESSING",
+            "SHARDING": "SHARDING",
+            "DONE": "DONE",
             "PROVIDER_FAILED": "ERROR",
             "CACHED": "DOWNLOADING",
         }
@@ -150,6 +153,8 @@ class DatasetBootstrapRuntime(QObject):
         run.bytes_downloaded = max(run.bytes_downloaded, int(payload.get("downloaded_bytes") or 0))
         if payload.get("download_total_bytes"):
             run.bytes_total = int(payload.get("download_total_bytes") or 0)
+        if payload.get("target_bytes"):
+            run.docs_total = int(payload.get("target_bytes") or 0)
         run.bytes_processed = int(payload.get("processed_bytes") or run.bytes_processed)
         run.docs_processed = int(payload.get("doc_count") or run.docs_processed)
         run.shards_count = int(payload.get("shards") or run.shards_count)

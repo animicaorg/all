@@ -8,9 +8,12 @@ import os
 import re
 import shutil
 import socket
+import tarfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable, Iterable
@@ -230,38 +233,156 @@ class GutenbergProvider(SourceProvider):
 class VettedReposProvider(SourceProvider):
     source_name = "vetted_repos"
     source_version = "v1"
+    _include_exts = {
+        ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".md", ".txt", ".toml", ".yaml", ".yml", ".json", ".go", ".cpp", ".c", ".h", ".hpp", ".sh", ".sol", ".java", ".kt", ".swift", ".sql", ".html", ".css", ".xml", ".ini", ".cfg", ".conf",
+    }
+    _exclude_globs = [
+        "**/.git/**", "**/.venv/**", "**/venv/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**", "**/__pycache__/**", "**/.next/**", "**/.cache/**",
+    ]
 
-    def __init__(self, repos: list[str] | None = None) -> None:
-        self._repos = repos or [
-            "https://raw.githubusercontent.com/animicaorg/all/main/README.md",
-            "https://raw.githubusercontent.com/animicaorg/all/master/README.md",
-        ]
+    def __init__(self, repos: list[dict[str, str]] | None = None) -> None:
+        self._repos = repos or [{"owner": "animicaorg", "repo": "all", "ref": "main"}]
+
+    def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
+        return self.source_version, []
 
     def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        cache = self.cache_dir(manager.cache_root)
-        overrides = source_settings.get("mirrors") if isinstance(source_settings, dict) else None
-        repo_urls = list(overrides) if isinstance(overrides, list) and overrides else list(self._repos)
-        for idx, url in enumerate(repo_urls):
+        repos = self._parse_repos(source_settings)
+        max_file_size = int(source_settings.get("max_file_size_bytes") or (3 * 1024 * 1024))
+        include_globs = source_settings.get("include_patterns") if isinstance(source_settings.get("include_patterns"), list) else []
+        exclude_globs = source_settings.get("exclude_patterns") if isinstance(source_settings.get("exclude_patterns"), list) else []
+        for repo in repos:
             if cancel.is_set():
                 return
-            candidates = [ProviderUrlCandidate(name=f"repo-{idx}", url=str(url))]
-            path = manager.download_with_mirrors(
-                source=self.source_name,
-                candidates=candidates,
-                dest=cache / f"repo-{idx:03d}.txt",
+            owner = repo.get("owner", "")
+            name = repo.get("repo", "")
+            if not owner or not name:
+                continue
+            refs = [repo.get("ref", "").strip()] if repo.get("ref") else []
+            refs.extend(["main", "master"])
+            refs = [r for i, r in enumerate(refs) if r and r not in refs[:i]]
+            cache = manager.cache_root / "github" / owner / name
+            tarball_path: Path | None = None
+            used_ref = ""
+            for ref in refs:
+                try:
+                    tarball_path = manager.download_with_mirrors(
+                        source=self.source_name,
+                        candidates=[ProviderUrlCandidate(name=f"{owner}-{name}-{ref}", url=f"https://codeload.github.com/{owner}/{name}/tar.gz/{ref}")],
+                        dest=cache / f"{ref}.tar.gz",
+                        progress_cb=progress_cb,
+                        cancel=cancel,
+                    )
+                    used_ref = ref
+                    break
+                except Exception:
+                    continue
+            if tarball_path is None:
+                continue
+            progress_cb({"stage": "extracting", "source": self.source_name, "repo": f"{owner}/{name}", "ref": used_ref})
+            yield from self._iter_repo_docs(
+                tarball_path,
+                owner=owner,
+                repo=name,
+                ref=used_ref,
+                max_file_size=max_file_size,
+                include_globs=[str(p) for p in include_globs],
+                exclude_globs=[str(p) for p in exclude_globs],
                 progress_cb=progress_cb,
                 cancel=cancel,
             )
-            txt = _normalize_text(path.read_text(encoding="utf-8", errors="ignore"))
-            if txt:
+
+    def _parse_repos(self, source_settings: dict[str, Any]) -> list[dict[str, str]]:
+        raw = source_settings.get("repos") if isinstance(source_settings, dict) else None
+        repos: list[dict[str, str]] = []
+        if isinstance(raw, list) and raw:
+            for item in raw:
+                if isinstance(item, dict):
+                    repos.append({
+                        "owner": str(item.get("owner") or "").strip(),
+                        "repo": str(item.get("repo") or "").strip(),
+                        "ref": str(item.get("ref") or "").strip(),
+                    })
+                elif isinstance(item, str):
+                    repos.append(self._repo_from_text(item))
+        return [r for r in (repos or list(self._repos)) if r.get("owner") and r.get("repo")]
+
+    def _repo_from_text(self, item: str) -> dict[str, str]:
+        text = item.strip().replace("https://github.com/", "")
+        text = text.removeprefix("github.com/")
+        if text.endswith(".git"):
+            text = text[:-4]
+        parts = [p for p in text.split("/") if p]
+        if len(parts) < 2:
+            return {"owner": "", "repo": "", "ref": ""}
+        return {"owner": parts[0], "repo": parts[1], "ref": ""}
+
+    def _iter_repo_docs(
+        self,
+        tarball_path: Path,
+        *,
+        owner: str,
+        repo: str,
+        ref: str,
+        max_file_size: int,
+        include_globs: list[str],
+        exclude_globs: list[str],
+        progress_cb: ProgressCb,
+        cancel: Event,
+    ) -> Iterator[dict[str, Any]]:
+        extracted = 0
+        excludes = self._exclude_globs + exclude_globs
+        with tarfile.open(tarball_path, "r:gz") as tf:
+            for member in tf.getmembers():
+                if cancel.is_set():
+                    return
+                if not member.isfile() or member.size <= 0 or member.size > max_file_size:
+                    continue
+                repo_path = "/".join(Path(member.name).parts[1:]) if len(Path(member.name).parts) > 1 else member.name
+                if self._skip_file(repo_path, include_globs, excludes):
+                    continue
+                fh = tf.extractfile(member)
+                if fh is None:
+                    continue
+                raw = fh.read(max_file_size + 1)
+                if len(raw) > max_file_size or _looks_binary(raw):
+                    continue
+                text = _normalize_text(raw.decode("utf-8", errors="ignore"))
+                if not text:
+                    continue
+                extracted += member.size
+                progress_cb({
+                    "stage": "processing",
+                    "source": self.source_name,
+                    "repo": f"{owner}/{repo}",
+                    "ref": ref,
+                    "path": repo_path,
+                    "extracted_bytes": extracted,
+                })
                 yield {
-                    "text": txt,
-                    "title": Path(url).name,
+                    "text": text,
+                    "title": repo_path,
                     "language": "en",
                     "source": self.source_name,
-                    "source_version": self.source_version,
-                    "source_url": str(url),
+                    "source_version": f"{owner}/{repo}@{ref}",
+                    "source_url": f"https://github.com/{owner}/{repo}/blob/{ref}/{repo_path}",
+                    "repo": f"{owner}/{repo}",
+                    "ref": ref,
+                    "path": repo_path,
+                    "size": member.size,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
                 }
+
+    def _skip_file(self, path: str, include_globs: list[str], exclude_globs: list[str]) -> bool:
+        normalized = path.replace("\\", "/")
+        ext = Path(normalized.lower()).suffix
+        if include_globs and not any(fnmatch(normalized, p) for p in include_globs):
+            return True
+        if any(fnmatch(normalized, p) for p in exclude_globs):
+            return True
+        if ext in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".mp3", ".mp4", ".mov", ".pdf", ".zip", ".gz", ".7z", ".exe", ".dll", ".so", ".bin", ".woff", ".woff2", ".ttf"}:
+            return True
+        return ext not in self._include_exts
 
 
 class DownloadManager:
@@ -344,6 +465,7 @@ class DownloadManager:
                         "source": source,
                         "url": url,
                         "downloaded_bytes": received,
+                        "download_delta_bytes": len(chunk),
                         "download_total_bytes": total,
                         "content_type": content_type,
                     })
@@ -442,6 +564,7 @@ class DatasetBootstrapService:
         state.setdefault("processed_bytes", 0)
         state.setdefault("doc_count", 0)
         state.setdefault("downloaded_bytes", 0)
+        state.setdefault("extracted_bytes", 0)
         state.setdefault("cancelled", False)
 
         manager = DownloadManager(
@@ -460,11 +583,14 @@ class DatasetBootstrapService:
         before_count = 0
 
         def _progress(p: dict[str, Any]) -> None:
-            if p.get("downloaded_bytes"):
-                state["downloaded_bytes"] = max(int(state.get("downloaded_bytes") or 0), int(p["downloaded_bytes"]))
+            if p.get("download_delta_bytes"):
+                state["downloaded_bytes"] = int(state.get("downloaded_bytes") or 0) + int(p.get("download_delta_bytes") or 0)
+            if p.get("extracted_bytes"):
+                state["extracted_bytes"] = max(int(state.get("extracted_bytes") or 0), int(p.get("extracted_bytes") or 0))
             p["processed_bytes"] = state.get("processed_bytes", 0)
             p["doc_count"] = state.get("doc_count", 0)
             p["target_bytes"] = options.target_bytes
+            p["percent"] = min(100.0, float(state.get("processed_bytes", 0)) * 100.0 / max(1, options.target_bytes))
             progress_cb(p)
 
         for provider in providers:
@@ -493,9 +619,13 @@ class DatasetBootstrapService:
                         "source_url": doc.get("source_url") or "",
                         "title": doc.get("title") or "",
                         "sha256": digest,
+                        "repo": doc.get("repo") or "",
+                        "ref": doc.get("ref") or "",
+                        "path": doc.get("path") or "",
+                        "size": int(doc.get("size") or len(text.encode("utf-8"))),
                     }
-                    written = shard_writer.write(rec)
-                    state["processed_bytes"] = int(state.get("processed_bytes") or 0) + written
+                    shard_writer.write(rec)
+                    state["processed_bytes"] = int(state.get("processed_bytes") or 0) + len(text.encode("utf-8"))
                     state["doc_count"] = int(state.get("doc_count") or 0) + 1
                     source = str(rec["source"])
                     lang = str(rec["language"])
@@ -505,7 +635,7 @@ class DatasetBootstrapService:
                     self._save_state(state_path, state)
                     progress_cb(
                         {
-                            "stage": "processing",
+                            "stage": "sharding",
                             "processed_bytes": state["processed_bytes"],
                             "doc_count": state["doc_count"],
                             "target_bytes": options.target_bytes,
@@ -533,9 +663,24 @@ class DatasetBootstrapService:
                 + json.dumps(manager.diagnostics()[:8], indent=2)
                 + "\nSuggestions: Pick a different version, paste a custom URL, or use Starter dataset."
             )
+        exhausted_before_target = int(state["processed_bytes"]) < int(options.target_bytes)
+        progress_cb(
+            {
+                "stage": "done",
+                "processed_bytes": int(state["processed_bytes"]),
+                "downloaded_bytes": int(state.get("downloaded_bytes") or 0),
+                "doc_count": int(state["doc_count"]),
+                "shards": len(shards),
+                "target_bytes": int(options.target_bytes),
+                "percent": 100.0,
+                "sources_exhausted": exhausted_before_target,
+            }
+        )
+
         manifest = {
             "schema_version": "animica.ena.dataset.v2",
             "dataset_name": options.name,
+            "target_bytes": int(options.target_bytes),
             "total_bytes": int(state["processed_bytes"]),
             "doc_count": int(state["doc_count"]),
             "shards": shards,
@@ -544,6 +689,9 @@ class DatasetBootstrapService:
                 for p in providers
             ],
             "download_diagnostics": manager.diagnostics(),
+            "downloaded_bytes": int(state.get("downloaded_bytes") or 0),
+            "extracted_bytes": int(state.get("extracted_bytes") or 0),
+            "sources_exhausted_before_target": exhausted_before_target,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         manifest_path = target_dir / "manifest.json"
@@ -715,3 +863,13 @@ def _read_error_excerpt(exc: HTTPError) -> str:
     except Exception:
         return ""
     return raw.decode("utf-8", errors="replace")
+
+
+def _looks_binary(raw: bytes) -> bool:
+    if not raw:
+        return False
+    if b"\x00" in raw:
+        return True
+    sample = raw[:1024]
+    non_text = sum(1 for b in sample if b < 9 or (13 < b < 32))
+    return non_text / max(1, len(sample)) > 0.25
