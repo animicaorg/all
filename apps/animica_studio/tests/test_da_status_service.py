@@ -94,3 +94,19 @@ def test_da_status_service_enable_calls_da_configure_with_enabled_true() -> None
     assert payload["dir"] == "/data/da"
     assert out["param_encoding"] == "object"
     assert "curl_configure" in out
+
+def test_resolve_candidate_dir_uses_allowed_base_dirs_without_hardcoded_data() -> None:
+    cfg = Config(
+        active_profile_id="p1",
+        rpc_profiles=[{"id": "p1", "rpc_url": "http://127.0.0.1:8545/rpc"}],
+    )
+    svc = DaStatusService(cfg)
+    out = svc._resolve_candidate_dir(
+        {
+            "default_dir": "",
+            "allowed_base_dirs": ["/var/lib/animica"],
+            "raw": {"effective_dir": ""},
+        },
+        requested_dir="",
+    )
+    assert out == "/var/lib/animica/da"
