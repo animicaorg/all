@@ -603,7 +603,10 @@ class DaPage(QWidget):
                 node_datadir = raw.get("node_datadir")
                 break
         if node_datadir:
-            return os.path.join(str(node_datadir), "da")
+            expanded = str(Path(str(node_datadir)).expanduser())
+            # Never mirror container-only /data paths onto the Studio host path.
+            if not (expanded == "/data" or expanded.startswith("/data/")):
+                return os.path.join(expanded, "da")
         return os.path.expanduser(f"~/.animica/chain-{chain_id}/da")
 
     def _host_chain_dir(self) -> str:
@@ -706,6 +709,13 @@ class DaPage(QWidget):
     def _on_use_recommended_paths(self) -> None:
         if self._default_node_dir:
             self._contrib_node_dir_edit.setText(self._default_node_dir)
+            node_data_root = NodePathMapper.infer_node_data_root(self._default_node_dir)
+            mapper = NodePathMapper(self._host_chain_dir())
+            mapped_host_dir = mapper.map_host_path(self._default_node_dir, node_data_root)
+            current_host_dir = self._contrib_host_dir_edit.text().strip()
+            if mapped_host_dir and (not current_host_dir or current_host_dir == "/data" or current_host_dir.startswith("/data/")):
+                self._contrib_host_dir_edit.setText(mapped_host_dir)
+                self._contrib_console.append_info(f"Mapped studio dir to host path: {mapped_host_dir}")
             if self._last_logged_default_dir != self._default_node_dir:
                 self._contrib_console.append_info(f"Using node default dir: {self._default_node_dir}")
                 self._last_logged_default_dir = self._default_node_dir
