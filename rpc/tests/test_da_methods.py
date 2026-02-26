@@ -254,7 +254,7 @@ def test_da_ingest_local_reads_file_and_ingests(tmp_path):
 
 def test_da_ingest_local_rejects_path_outside_ingest_dir(tmp_path):
     from rpc.methods.da import da_ingest_local
-    from rpc.errors import AccessDenied
+    from rpc.errors import RpcError
 
     ingest_dir = tmp_path / "chain-1" / "da_ingest"
     outside = tmp_path / "other" / "x.blob"
@@ -266,8 +266,9 @@ def test_da_ingest_local_rejects_path_outside_ingest_dir(tmp_path):
 
     with patch("rpc.methods.da._require_store", return_value=store), \
          patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
-        with pytest.raises(AccessDenied):
+        with pytest.raises(RpcError) as exc:
             da_ingest_local({"path": str(outside), "namespace": 0})
+    assert exc.value.code == -32005
 
 
 def test_da_ingest_local_not_found_has_diagnostics(tmp_path):
@@ -603,3 +604,27 @@ def test_da_configure_missing_enabled_returns_received_keys(tmp_path, monkeypatc
     assert err.data.get("reason") == "missing_enabled"
     assert "dir" in err.data.get("received_keys", [])
     assert "max_bytes" in err.data.get("received_keys", [])
+
+
+def test_da_ingest_local_remote_permission_denied(tmp_path, monkeypatch):
+    from rpc.methods.da import da_ingest_local
+    from rpc.errors import RpcError
+
+    ingest_dir = tmp_path / "chain-1" / "da_ingest"
+    pending = ingest_dir / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    blob = pending / "x.blob"
+    blob.write_bytes(b"x")
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+
+    monkeypatch.setattr("rpc.methods.da._is_local_rpc_request", lambda: False)
+    monkeypatch.setattr("rpc.methods.da._ingest_local_guard_enabled", lambda: True)
+
+    with patch("rpc.methods.da._require_store", return_value=store), \
+         patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
+        with pytest.raises(RpcError) as exc:
+            da_ingest_local({"path": str(blob), "namespace": 0})
+
+    assert exc.value.code == -32006

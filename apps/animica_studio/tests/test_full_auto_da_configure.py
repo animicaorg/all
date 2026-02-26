@@ -105,3 +105,68 @@ def test_bootstrap_da_retryable_marks_payload(monkeypatch, tmp_path) -> None:
     )
     assert out["state"] == "error"
     assert out.get("bootstrap_retryable") is True
+
+
+def test_bootstrap_publish_path_missing_falls_back_when_not_required(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "animica_studio.services.ena_full_auto_engine._ensure_da_ready",
+        lambda _ctx: {"ok": True, "logs": [], "diagnostics": "ok"},
+    )
+    monkeypatch.setattr(
+        "animica_studio.services.ena_full_auto_engine._publish_checkpoint",
+        lambda *_a, **_k: {"ok": False, "state": "error", "detail": "DA_UPLOAD_PATH_UNAVAILABLE: Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.", "logs": []},
+    )
+    out = _bootstrap_cycle(
+        {
+            "cfg": {
+                "model_channel": "ena-main",
+                "train_locally_when_da_disabled": True,
+                "require_da_uploads": True,
+                "payout_address": "",
+            },
+            "storage": str(tmp_path),
+            "steps": 0,
+            "last_upload_step": 0,
+            "last_upload_time": 0,
+            "last_sync_time": 0,
+        },
+        has_pointer=False,
+    )
+    assert out["state"] == "training"
+    assert out["detail"] == "LOCAL_ONLY_DA_UPLOAD_UNAVAILABLE"
+
+
+def test_bootstrap_publish_single_flight_until_manual_retry(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "animica_studio.services.ena_full_auto_engine._ensure_da_ready",
+        lambda _ctx: {"ok": True, "logs": [], "diagnostics": "ok"},
+    )
+    calls = {"n": 0}
+    def _fake_publish(*_a, **_k):
+        calls["n"] += 1
+        return {"ok": False, "state": "error", "detail": "DA_UPLOAD_PATH_UNAVAILABLE: Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.", "logs": []}
+
+    monkeypatch.setattr("animica_studio.services.ena_full_auto_engine._publish_checkpoint", _fake_publish)
+
+    ctx = {
+        "cfg": {
+            "model_channel": "ena-main",
+            "train_locally_when_da_disabled": False,
+            "require_da_uploads": True,
+            "payout_address": "",
+        },
+        "storage": str(tmp_path),
+        "steps": 0,
+        "last_upload_step": 0,
+        "last_upload_time": 0,
+        "last_sync_time": 0,
+        "bootstrap_publish_attempted": True,
+    }
+    out = _bootstrap_cycle(ctx, has_pointer=False)
+    assert out["state"] == "idle"
+    assert calls["n"] == 0
+
+    ctx["manual_action"] = "retry"
+    out2 = _bootstrap_cycle(ctx, has_pointer=False)
+    assert calls["n"] == 1
+    assert out2.get("bootstrap_publish_attempted") is True
