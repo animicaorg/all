@@ -33,6 +33,8 @@ from animica_studio.services.dataset_evolution_engine import DatasetEvolutionEng
 from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
 from animica_studio.services.dataset_bootstrap_runtime import bootstrap_runtime
+from animica_studio.services.ena_mm_full_auto_engine import EnaMMFullAutoConfig, EnaMultimodalFullAutoEngine
+from animica_studio.util.paths import app_data_dir
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.widgets.bootstrap_progress_widget import BootstrapProgressWidget
 from animica_studio.util.threading_guard import assert_ui_thread
@@ -304,6 +306,39 @@ class TrainPage(QWidget):
 
         root.addWidget(form_box)
 
+        mm_box = QGroupBox("Multimodal Training (ENA-MM)")
+        mm_form = QFormLayout(mm_box)
+        self.mm_enable_text = QCheckBox("Enable text")
+        self.mm_enable_text.setChecked(True)
+        self.mm_enable_image = QCheckBox("Enable image")
+        self.mm_enable_image.setChecked(True)
+        self.mm_enable_video = QCheckBox("Enable video")
+        self.mm_text_dataset = QLineEdit("")
+        self.mm_image_dataset = QLineEdit("")
+        self.mm_video_dataset = QLineEdit("")
+        self.mm_ratio = QLineEdit("70/20/10")
+        self.mm_device = QComboBox(); self.mm_device.addItems(["cpu", "cuda"])
+        self.mm_steps = QSpinBox(); self.mm_steps.setRange(10, 1_000_000); self.mm_steps.setValue(100)
+        self.mm_ckpt = QSpinBox(); self.mm_ckpt.setRange(10, 100_000); self.mm_ckpt.setValue(50)
+        self.mm_eval = QSpinBox(); self.mm_eval.setRange(10, 100_000); self.mm_eval.setValue(50)
+        self.mm_full_auto_btn = QPushButton("FULL AUTO (MM)")
+        self.mm_status = QLabel("dataset: idle | training: idle | publish/sync: idle")
+        mm_form.addRow("", self.mm_enable_text)
+        mm_form.addRow("", self.mm_enable_image)
+        mm_form.addRow("", self.mm_enable_video)
+        mm_form.addRow("Text dataset (optional)", self.mm_text_dataset)
+        mm_form.addRow("Image dataset (custom folder)", self.mm_image_dataset)
+        mm_form.addRow("Video dataset (custom folder)", self.mm_video_dataset)
+        mm_form.addRow("Mixed ratio (t/i/v)", self.mm_ratio)
+        mm_form.addRow("Device", self.mm_device)
+        mm_form.addRow("Steps (authoritative)", self.mm_steps)
+        mm_form.addRow("Checkpoint cadence", self.mm_ckpt)
+        mm_form.addRow("Eval cadence", self.mm_eval)
+        mm_form.addRow("", self.mm_full_auto_btn)
+        mm_form.addRow("Progress", self.mm_status)
+        root.addWidget(mm_box)
+
+
         ctl = QHBoxLayout()
         self.start_btn = QPushButton("Start training (local)")
         self.stop_btn = QPushButton("Stop")
@@ -357,6 +392,7 @@ class TrainPage(QWidget):
         self.run_cycle_btn.clicked.connect(self._run_improvement_cycle)
         self.continuous_improvement.toggled.connect(lambda _checked: self._sync_ui_state())
         self.dataset_path.textChanged.connect(lambda _text: self._sync_ui_state())
+        self.mm_full_auto_btn.clicked.connect(self._start_mm_full_auto)
 
         self._svc.log_line.connect(self._on_log)
         self._svc.metrics_updated.connect(self._on_metrics)
@@ -371,6 +407,36 @@ class TrainPage(QWidget):
             return True
         QTimer.singleShot(0, lambda: fn(*args))
         return False
+
+
+    def _start_mm_full_auto(self) -> None:
+        if not hasattr(self, "_mm_engine"):
+            self._mm_engine = EnaMultimodalFullAutoEngine(self._cfg.get_active_profile().node.rpc_local_url, str(app_data_dir() / "ena_mm"), self)
+            self._mm_engine.stateChanged.connect(lambda state, detail: self.mm_status.setText(f"state={state} | {detail}"))
+            self._mm_engine.logLine.connect(lambda kind, line: self._on_log("", kind, line))
+        raw_ratio = (self.mm_ratio.text().strip() or "70/20/10").split("/")
+        try:
+            r_text, r_image, r_video = [max(0, int(x)) for x in raw_ratio[:3]]
+        except Exception:
+            QMessageBox.warning(self, "ENA-MM", "Ratio must be like 70/20/10")
+            return
+        cfg = EnaMMFullAutoConfig(
+            enabled=True,
+            enable_text=self.mm_enable_text.isChecked(),
+            enable_image=self.mm_enable_image.isChecked(),
+            enable_video=self.mm_enable_video.isChecked(),
+            text_dataset=self.mm_text_dataset.text().strip(),
+            image_dataset=self.mm_image_dataset.text().strip(),
+            video_dataset=self.mm_video_dataset.text().strip(),
+            ratio_text=r_text,
+            ratio_image=r_image,
+            ratio_video=r_video,
+            device=self.mm_device.currentText(),
+            steps_per_cycle=self.mm_steps.value(),
+        )
+        self._mm_engine.apply_config(cfg)
+        self._mm_engine.start()
+        self.mm_status.setText("FULL AUTO (MM) started")
 
     def _maybe_prompt_bootstrap(self) -> None:
         if not assert_ui_thread():

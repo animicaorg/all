@@ -12,6 +12,8 @@ class ModelEntry:
     created_at: float
     training_run_id: str | None = None
     quality_metrics: dict[str, Any] | None = None
+    modality_flags: dict[str, bool] | None = None
+    package_dir: str | None = None
 
 
 class EnaModelRepository:
@@ -21,7 +23,7 @@ class EnaModelRepository:
     def list_models(self) -> list[ModelEntry]:
         out: list[ModelEntry] = []
         seen: set[str] = set()
-        patterns = ["**/*.ckpt", "**/*.ckpt.json", "**/*.pt", "**/*.bin", "**/*.safetensors"]
+        patterns = ["**/*.ckpt", "**/*.ckpt.json", "**/*.pt", "**/*.bin", "**/*.safetensors", "**/package_manifest.json"]
         for root in self._roots:
             if not root.exists():
                 continue
@@ -35,6 +37,8 @@ class EnaModelRepository:
                     seen.add(rp)
                     report = p.parent / "run_report.json"
                     metrics: dict[str, Any] | None = None
+                    modality_flags: dict[str, bool] | None = None
+                    package_dir: str | None = None
                     if report.exists():
                         try:
                             import json
@@ -42,13 +46,27 @@ class EnaModelRepository:
                             metrics = json.loads(report.read_text(encoding="utf-8"))
                         except Exception:
                             metrics = None
+                    if p.name == "package_manifest.json":
+                        try:
+                            import json
+
+                            package = json.loads(p.read_text(encoding="utf-8"))
+                            if isinstance(package.get("modality_flags"), dict):
+                                modality_flags = package["modality_flags"]
+                            if isinstance(package.get("metadata"), dict) and metrics is None:
+                                metrics = package["metadata"]
+                            package_dir = str(p.parent)
+                        except Exception:
+                            pass
                     out.append(
                         ModelEntry(
-                            name=p.stem,
+                            name=(p.parent.name if p.name == "package_manifest.json" else p.stem),
                             checkpoint_path=rp,
                             created_at=p.stat().st_mtime,
                             training_run_id=p.parent.name,
                             quality_metrics=metrics,
+                            modality_flags=modality_flags,
+                            package_dir=package_dir,
                         )
                     )
         return sorted(out, key=lambda m: m.created_at, reverse=True)

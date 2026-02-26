@@ -112,3 +112,32 @@ Each flow run can generate a JSON debug bundle containing:
 
 - TODO: `![ENA dashboard](./images/studio-ena-dashboard.png)`
 - TODO: `![Contribute flow](./images/studio-ena-contribute.png)`
+
+## ENA-MM Multimodal (Text + Image + Video)
+
+Studio now supports a **single selectable ENA-MM checkpoint package** with shared backbone + modality heads.
+
+### Full Auto (MM)
+
+Use **Training → Multimodal Training (ENA-MM) → FULL AUTO (MM)**:
+1. Builds datasets per enabled modality.
+2. Trains mixed batches with ratio text:image:video.
+3. Evaluates and checkpoints.
+4. Publishes checkpoint package blobs + package manifest to DA.
+5. Syncs latest package locally for inference tabs.
+
+### Dataset policy and provenance
+- Text can be auto-generated from curated local prompts (Wikipedia/arXiv style summaries).
+- Image/video default to user-provided folders with required `captions.txt`.
+- No random web scraping is performed.
+- Provenance is written to a multimodal manifest.
+
+### Hardware
+- **CPU**: text + small image generation supported; video should be considered tiny/demo only.
+- **GPU (recommended)**: full text/image/video flows.
+
+### One model package
+Each ENA-MM package includes:
+- package manifest
+- blobs for checkpoint/report/tokenizer/config
+- modality flags (`text/image/video`) so Studio can expose Chat/Image/Video tabs from one entry.
