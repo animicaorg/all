@@ -4,8 +4,9 @@ from pathlib import Path
 
 
 NODE_PATH_UI_ERROR = (
-    "This is a node path. Choose a host path for Studio dir "
-    "(e.g. ~/.animica/da_contrib)."
+    "Studio needs a host path for contributions. "
+    "Choose a host path for Studio dir "
+    "(e.g. ~/.animica/da_contrib) — not a node-only path like /data/."
 )
 
 
