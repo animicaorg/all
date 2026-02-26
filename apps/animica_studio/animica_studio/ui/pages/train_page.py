@@ -34,6 +34,7 @@ from animica_studio.services.dataset_manager import DatasetManager
 from animica_studio.services.training_service import ENATrainingService
 from animica_studio.services.dataset_bootstrap_runtime import bootstrap_runtime
 from animica_studio.services.ena_mm_full_auto_engine import EnaMMFullAutoConfig, EnaMultimodalFullAutoEngine
+from animica_studio.services.capabilities import has_torch
 from animica_studio.util.paths import app_data_dir
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.widgets.bootstrap_progress_widget import BootstrapProgressWidget
@@ -716,6 +717,9 @@ class TrainPage(QWidget):
     def _start(self) -> None:
         try:
             cfg = self._read_config()
+            if not has_torch():
+                QMessageBox.information(self, "Training", "PyTorch not installed; training unavailable. Install: pip install torch")
+                return
             if cfg.smart_defaults:
                 cfg = self._svc.build_auto_recommendation(cfg, cfg.quality_level)
                 self._render_recommendation(cfg)
