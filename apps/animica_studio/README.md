@@ -242,3 +242,20 @@ From ENA page:
 - If ping fails repeatedly, ENA client opens a short circuit-breaker cooldown.
 - If DA methods are unavailable, upload falls back to `local://export-only` URI.
 - All ENA/network errors are JSON-stringified to avoid `[object Object]` messages.
+
+## ENA ML local pipeline
+
+A new local PyTorch pipeline is available in `animica_studio/ena_ml` for dataset bootstrap, Transformer training, and inference.
+
+```bash
+cd apps/animica_studio
+pytest tests/test_ena_ml_pipeline.py
+```
+
+Key modules:
+- `ena_ml/dataset/build.py` + `manifest.py` (shard + provenance manifest)
+- `ena_ml/model/transformer.py` (decoder-only LM)
+- `ena_ml/train/trainer.py` (exact-step trainer with JSONL metrics and checkpoints)
+- `ena_ml/infer/generate.py` + `chat.py` (prompt assembly and generation)
+
+For DA node-side ingest workflows, use `services/da_ingest.py`; it resolves node ingest paths and avoids writing directly to `/data` on host environments.
