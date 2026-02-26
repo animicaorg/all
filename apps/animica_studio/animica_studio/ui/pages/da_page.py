@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
 
 from animica_studio.services.da_client import DaUploadError
 from animica_studio.services.da_engine import DaContributionEngine, DaEngineConfig, DaEngineState
+from animica_studio.services.da_status_service import DaStatusService
+from animica_studio.services.node_path_mapper import NodePathMapper
 from animica_studio.services.da_service import DaService
 from animica_studio.services.error_format import format_rpc_error, safe_json_dumps
 from animica_studio.services.rpc_client import RpcClient
@@ -50,6 +53,7 @@ class DaPage(QWidget):
         from animica_studio.storage.config import load_config  # noqa: PLC0415
         self._config = config or load_config()
         self._service = DaService(self._config)
+        self._da_status = DaStatusService(self._config)
         profile = self._config.get_active_profile()
         contrib_cfg = self._config.da_contribution
         self._da_engine = DaContributionEngine(
@@ -68,6 +72,10 @@ class DaPage(QWidget):
         self._active_workers: list[WorkerThread] = []
         self._recent_worker_errors: list[str] = []
         self._enable_toggle_touched = False
+        self._mount_error = ""
+        self._docker_mount_snippet = ""
+        self._allowed_base_dirs: list[str] = []
+        self._default_node_dir = ""
         self._build_ui()
         self._load_contribution_settings()
         self._da_engine.stateChanged.connect(self._on_engine_state)
@@ -320,8 +328,13 @@ class DaPage(QWidget):
         form.addRow("Host directory:", dir_row)
 
         self._contrib_node_dir_edit = QLineEdit()
-        self._contrib_node_dir_edit.setPlaceholderText("/data/da")
-        form.addRow("Node directory:", self._contrib_node_dir_edit)
+        self._contrib_node_dir_edit.setPlaceholderText("Node DA dir from da.getDefaultDir")
+        form.addRow("Node DA directory:", self._contrib_node_dir_edit)
+
+        self._contrib_local_ingest_host_dir = QLineEdit()
+        self._contrib_local_ingest_host_dir.setReadOnly(True)
+        self._contrib_local_ingest_host_dir.setPlaceholderText("Only used for local ingest")
+        form.addRow("Host DA directory (local ingest):", self._contrib_local_ingest_host_dir)
 
         self._contrib_max_gb_spin = QSpinBox(); self._contrib_max_gb_spin.setRange(1, 20000); self._contrib_max_gb_spin.setValue(50); self._contrib_max_gb_spin.setSuffix(" GiB")
         form.addRow("Limit:", self._contrib_max_gb_spin)
@@ -351,9 +364,15 @@ class DaPage(QWidget):
         btn_row.addWidget(self._contrib_start_btn)
         btn_row.addWidget(self._contrib_stop_btn)
         btn_row.addWidget(self._contrib_refresh_btn)
-        self._contrib_recommend_btn = QPushButton("Use recommended paths")
+        self._contrib_recommend_btn = QPushButton("Use node default dir")
         self._contrib_recommend_btn.clicked.connect(self._on_use_recommended_paths)
         btn_row.addWidget(self._contrib_recommend_btn)
+        self._contrib_retest_mapping_btn = QPushButton("Re-test mount mapping")
+        self._contrib_retest_mapping_btn.clicked.connect(self._refresh_da_recommendations)
+        btn_row.addWidget(self._contrib_retest_mapping_btn)
+        self._contrib_copy_mount_btn = QPushButton("Copy docker mount snippet")
+        self._contrib_copy_mount_btn.clicked.connect(self._copy_docker_mount_snippet)
+        btn_row.addWidget(self._contrib_copy_mount_btn)
         self._contrib_fix_retry_btn = QPushButton("Fix & Retry Start")
         self._contrib_fix_retry_btn.clicked.connect(self._on_fix_and_retry_start)
         btn_row.addWidget(self._contrib_fix_retry_btn)
@@ -448,7 +467,7 @@ class DaPage(QWidget):
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
         saved_dir = cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
         self._contrib_host_dir_edit.setText(saved_dir)
-        self._contrib_node_dir_edit.setText(str(cfg.get("node_data_dir") or "/data/da"))
+        self._contrib_node_dir_edit.setText(str(cfg.get("node_data_dir") or ""))
         self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
         mode = cfg.get("mode") or cfg.get("reserve_mode", "quota")
         idx = self._contrib_reserve_combo.findData(mode)
@@ -473,6 +492,7 @@ class DaPage(QWidget):
         self._enable_toggle_touched = False
         self._on_engine_state(self._da_engine.state.value)
         self._on_engine_metrics(self._da_engine.metrics)
+        self._refresh_da_recommendations()
 
     def _on_contrib_browse_dir(self) -> None:
         try:
@@ -545,21 +565,94 @@ class DaPage(QWidget):
             return os.path.join(str(node_datadir), "da")
         return os.path.expanduser(f"~/.animica/chain-{chain_id}/da")
 
+    def _host_chain_dir(self) -> str:
+        active_id = getattr(self._config, "active_profile_id", None)
+        for raw in list(getattr(self._config, "rpc_profiles", []) or []):
+            if raw.get("id") == active_id:
+                node_datadir = str(raw.get("node_datadir") or "").strip()
+                if node_datadir:
+                    return node_datadir
+                chain_id = int(raw.get("chain_id_expected") or 1)
+                return os.path.expanduser(f"~/.animica/chain-{chain_id}")
+        return os.path.expanduser("~/.animica/chain-1")
+
+    def _refresh_da_recommendations(self) -> None:
+        try:
+            status = self._da_status.get_status(self._contrib_rpc_url.text().strip() or None)
+            self._allowed_base_dirs = [str(v) for v in list(status.get("allowed_base_dirs") or []) if str(v).strip()]
+            self._default_node_dir = str(status.get("default_dir") or "").strip()
+            effective_dir = str(status.get("effective_dir") or status.get("configured_dir") or "").strip()
+            node_data_root = NodePathMapper.infer_node_data_root(self._default_node_dir, effective_dir)
+
+            if self._default_node_dir:
+                recommendation = self._default_node_dir
+            elif self._allowed_base_dirs:
+                recommendation = f"{self._allowed_base_dirs[0].rstrip('/')}/da"
+            else:
+                recommendation = "/data/da"
+                self._contrib_console.append_warn("Could not discover allowed base dirs from node; using /data/da fallback.")
+            self._contrib_node_dir_edit.setPlaceholderText(recommendation)
+
+            if not self._contrib_node_dir_edit.text().strip():
+                self._contrib_node_dir_edit.setText(recommendation)
+
+            local_ingest_enabled = bool((status.get("raw") or {}).get("local_ingest_enabled", True))
+            allow_remote_put = bool(status.get("allow_remote_put", True))
+            show_local = (not allow_remote_put) and local_ingest_enabled
+            self._contrib_local_ingest_host_dir.setVisible(show_local)
+
+            mapper = NodePathMapper(self._host_chain_dir())
+            host_data_root = mapper.host_data_root()
+            node_ingest_dir = str((status.get("raw") or {}).get("ingest_dir") or f"{node_data_root.rstrip('/')}/da_ingest")
+            host_ingest_dir = mapper.map_host_path(node_ingest_dir, node_data_root)
+            self._contrib_local_ingest_host_dir.setText(host_ingest_dir)
+            self._mount_error = ""
+            self._docker_mount_snippet = ""
+            if show_local and host_ingest_dir:
+                pending_host = str(Path(host_ingest_dir) / "pending")
+                pending_node = str(Path(node_ingest_dir) / "pending")
+                with RpcClient(status.get("rpc_url") or self._contrib_rpc_url.text().strip()) as client:
+                    ok, detail = mapper.probe_visibility(client, pending_node, pending_host)
+                if not ok:
+                    self._mount_error = (
+                        f"Docker mount missing: host {host_data_root} is not mounted to node {node_data_root}. "
+                        "Local ingest cannot work until mount is fixed."
+                    )
+                    self._docker_mount_snippet = f"volumes:\n  - {host_data_root}:{node_data_root}"
+                    self._contrib_error_label.setText(self._mount_error)
+                    self._contrib_enable_cb.setChecked(False)
+                    self._contrib_console.append_error(detail)
+        except Exception as exc:  # noqa: BLE001
+            self._contrib_console.append_warn(f"Failed to refresh DA recommendations: {exc}")
+
     def _on_use_recommended_paths(self) -> None:
-        self._contrib_host_dir_edit.setText(self._recommended_host_dir())
-        self._contrib_node_dir_edit.setText("/data/da")
-        self._contrib_console.append_info("Applied recommended DA host/node paths")
+        if self._default_node_dir:
+            self._contrib_node_dir_edit.setText(self._default_node_dir)
+            self._contrib_console.append_info(f"Using node default dir: {self._default_node_dir}")
+            return
+        self._refresh_da_recommendations()
+
+    def _copy_docker_mount_snippet(self) -> None:
+        snippet = self._docker_mount_snippet.strip()
+        if not snippet:
+            self._contrib_console.append_warn("Docker mount snippet unavailable until a mount probe fails.")
+            return
+        QGuiApplication.clipboard().setText(snippet)
+        self._contrib_console.append_info("Copied docker mount snippet.")
 
     def _on_fix_and_retry_start(self) -> None:
-        self._on_use_recommended_paths()
+        self._refresh_da_recommendations()
         self._on_contrib_start()
 
 
     def _on_contrib_apply(self) -> None:
         try:
             self._contrib_apply_btn.setEnabled(False)
+            if self._mount_error and self._contrib_local_ingest_host_dir.isVisible():
+                self._contrib_error_label.setText(self._mount_error)
+                return
             directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
-            node_directory = self._contrib_node_dir_edit.text().strip() or "/data/da"
+            node_directory = self._contrib_node_dir_edit.text().strip() or self._default_node_dir or self._contrib_node_dir_edit.placeholderText() or "/data/da"
             max_gb = self._contrib_max_gb_spin.value(); max_bytes = max_gb * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
             auto_start = self._contrib_autostart_cb.isChecked()
@@ -567,7 +660,7 @@ class DaPage(QWidget):
             if not self._enable_toggle_touched and auto_start:
                 enabled = True
                 self._contrib_enable_cb.setChecked(True)
-            engine_cfg = DaEngineConfig(enabled=enabled, host_data_dir=directory, node_data_dir=node_directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start)
+            engine_cfg = DaEngineConfig(enabled=enabled, host_data_dir=directory, node_data_dir=node_directory, mode=str(reserve_mode), limit_bytes=max_bytes, rpc_url=self._contrib_rpc_url.text().strip(), auto_start=auto_start, allowed_base_dirs=None if self._mount_error else self._allowed_base_dirs)
             ok, msg = self._da_engine.apply_config(engine_cfg)
             if not ok:
                 self._contrib_error_label.setText(msg)
@@ -590,18 +683,22 @@ class DaPage(QWidget):
     def _on_contrib_start(self) -> None:
         try:
             self._contrib_start_btn.setEnabled(False)
+            if self._mount_error and self._contrib_local_ingest_host_dir.isVisible():
+                self._contrib_error_label.setText(self._mount_error)
+                return
             directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
-            node_directory = self._contrib_node_dir_edit.text().strip() or "/data/da"
+            node_directory = self._contrib_node_dir_edit.text().strip() or self._default_node_dir or self._contrib_node_dir_edit.placeholderText() or "/data/da"
             max_bytes = self._contrib_max_gb_spin.value() * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
             engine_cfg = DaEngineConfig(
                 enabled=True,
                 host_data_dir=directory,
-                node_data_dir=self._contrib_node_dir_edit.text().strip() or "/data/da",
+                node_data_dir=node_directory,
                 mode=str(reserve_mode),
                 limit_bytes=max_bytes,
                 rpc_url=self._contrib_rpc_url.text().strip(),
                 auto_start=self._contrib_autostart_cb.isChecked(),
+                allowed_base_dirs=None if self._mount_error else self._allowed_base_dirs,
             )
             ok, msg = self._da_engine.apply_config(engine_cfg)
             if not ok:
@@ -661,7 +758,7 @@ class DaPage(QWidget):
             self._contrib_error_label.setText("")
             return
         if "errno 30" in detail.lower() or "/home" in detail.lower():
-            self._contrib_error_label.setText(detail + "\nNode runs in a container; /home is not writable there. Click 'Use recommended paths'.")
+            self._contrib_error_label.setText(detail + "\nNode runs in a container; /home is not writable there. Click 'Use node default dir'.")
             return
         self._contrib_error_label.setText(detail)
 

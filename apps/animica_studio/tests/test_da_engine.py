@@ -110,8 +110,18 @@ def test_start_configures_with_node_dir(tmp_path: Path):
     assert cfg_calls[0][1]["dir"] == "/data/da"
 
 
-def test_rejects_node_dir_outside_data(tmp_path: Path):
+def test_rejects_node_dir_outside_allowed_base_dirs(tmp_path: Path):
     e = _engine(tmp_path)
-    ok, msg = e.validate_config(DaEngineConfig(enabled=True, host_data_dir=str(tmp_path), node_data_dir="/home/employee/da", mode="quota", limit_bytes=1024, rpc_url="http://x"))
+    ok, msg = e.validate_config(
+        DaEngineConfig(
+            enabled=True,
+            host_data_dir=str(tmp_path),
+            node_data_dir="/home/employee/da",
+            mode="quota",
+            limit_bytes=1024,
+            rpc_url="http://x",
+            allowed_base_dirs=["/data", "/var/lib/animica"],
+        )
+    )
     assert not ok
-    assert "under /data" in msg
+    assert "allowed base dirs" in msg
