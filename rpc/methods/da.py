@@ -209,25 +209,43 @@ def _assert_safe_ingest_path(path: str, ingest_dir: str) -> str:
     return candidate
 
 
-def _is_local_rpc_request() -> bool:
-    return _authorize_local_ingest_request()["allowed"]
+def _is_local_rpc_request(rpc_ctx: Any = None) -> bool:
+    return _authorize_local_ingest_request(rpc_ctx)["allowed"]
 
 
-def _remote_rpc_ip() -> str | None:
+def _remote_rpc_ip(rpc_ctx: Any = None) -> str | None:
+    """Extract the remote peer IP from the per-request RPC context.
+
+    Accepts an explicit ``rpc_ctx`` (a ``rpc.jsonrpc.Context`` with a
+    ``client`` tuple) so that method handlers can forward the actual HTTP
+    client info.  Falls back to ``deps.get_ctx()`` for backwards-compat
+    with code that does not forward the context (older call sites / tests).
+    """
+    # Prefer the explicitly-provided per-request context (jsonrpc.Context).
+    contexts_to_try = []
+    if rpc_ctx is not None:
+        contexts_to_try.append(rpc_ctx)
     try:
-        ctx = deps.get_ctx()
-        client = getattr(ctx, "client", None)
-        host = None
-        if isinstance(client, tuple) and client:
-            host = client[0]
-        elif client is not None:
-            host = getattr(client, "host", None)
-        if not host:
-            return None
-        return str(ipaddress.ip_address(str(host)))
+        contexts_to_try.append(deps.get_ctx())
     except Exception:
-        # Direct in-process method calls (tests/internal) have no request context.
-        return "127.0.0.1"
+        pass
+
+    for ctx in contexts_to_try:
+        try:
+            client = getattr(ctx, "client", None)
+            host = None
+            if isinstance(client, tuple) and client:
+                host = client[0]
+            elif client is not None:
+                host = getattr(client, "host", None)
+            if not host:
+                continue
+            return str(ipaddress.ip_address(str(host)))
+        except Exception:
+            continue
+
+    # Direct in-process method calls (tests/internal) have no request context.
+    return "127.0.0.1"
 
 
 def _rpc_bound_localhost_only() -> bool:
@@ -247,21 +265,30 @@ def _allowed_local_rpc_nets() -> list[str]:
     return allowed
 
 
-def _valid_ingest_token() -> bool:
+def _valid_ingest_token(rpc_ctx: Any = None) -> bool:
     token = (os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()
     if not token:
         return False
+    contexts_to_try = []
+    if rpc_ctx is not None:
+        contexts_to_try.append(rpc_ctx)
     try:
-        ctx = deps.get_ctx()
-        headers = getattr(ctx, "headers", {}) or {}
-        provided = str(headers.get("x-animica-ingest-token") or "").strip()
-        return bool(provided) and provided == token
+        contexts_to_try.append(deps.get_ctx())
     except Exception:
-        return False
+        pass
+    for ctx in contexts_to_try:
+        try:
+            headers = getattr(ctx, "headers", {}) or {}
+            provided = str(headers.get("x-animica-ingest-token") or "").strip()
+            if provided and provided == token:
+                return True
+        except Exception:
+            continue
+    return False
 
 
-def _authorize_local_ingest_request() -> dict[str, Any]:
-    remote_ip = _remote_rpc_ip()
+def _authorize_local_ingest_request(rpc_ctx: Any = None) -> dict[str, Any]:
+    remote_ip = _remote_rpc_ip(rpc_ctx)
     allowed_cidrs = _allowed_local_rpc_nets()
     ip_allowed = False
     if remote_ip:
@@ -270,7 +297,7 @@ def _authorize_local_ingest_request() -> dict[str, Any]:
             ip_allowed = any(remote in ipaddress.ip_network(cidr, strict=False) for cidr in allowed_cidrs)
         except Exception:
             ip_allowed = False
-    token_allowed = _valid_ingest_token()
+    token_allowed = _valid_ingest_token(rpc_ctx)
     return {
         "allowed": bool(ip_allowed or token_allowed),
         "remote_ip": remote_ip or "unknown",
@@ -786,7 +813,7 @@ def da_get_host_mount_hints(params=None, **kwargs) -> dict:
 
 
 @method("da.ingestLocal", aliases=("da_ingestLocal",), desc="Ingest a local blob file from the node ingest directory")
-def da_ingest_local(params=None, **kwargs) -> dict:
+def da_ingest_local(params=None, ctx=None, **kwargs) -> dict:
     if isinstance(params, dict):
         kwargs.update(params)
     elif isinstance(params, (list, tuple)) and params:
@@ -801,7 +828,7 @@ def da_ingest_local(params=None, **kwargs) -> dict:
     if not isinstance(path, str) or not path.strip():
         raise rpc_errors.InvalidParams("Missing required parameter: path")
 
-    auth = _authorize_local_ingest_request()
+    auth = _authorize_local_ingest_request(ctx)
     if _ingest_local_guard_enabled() and not auth["allowed"]:
         raise rpc_errors.RpcError(
             -32006,
@@ -869,11 +896,14 @@ def da_ingest_local(params=None, **kwargs) -> dict:
 
 
 @method("da.getCallerInfo", aliases=("da_getCallerInfo", "node.whoAmI", "node_whoAmI"), desc="Return caller network identity as seen by node")
-def da_get_caller_info(params=None, **kwargs) -> dict:
+def da_get_caller_info(params=None, ctx=None, **kwargs) -> dict:
     _ = params, kwargs
-    auth = _authorize_local_ingest_request()
+    auth = _authorize_local_ingest_request(ctx)
     return {
         "remote_ip": auth["remote_ip"],
+        "is_loopback": auth["remote_ip"] not in ("unknown", "") and _is_local_rpc_request(ctx),
+        "transport": "http",
+        "rpc_bind": os.getenv("ANIMICA_RPC_HOST", "127.0.0.1"),
         "allowed_local_rpc_nets": auth["allowed_nets"],
         "rpc_bound_localhost_only": _rpc_bound_localhost_only(),
         "token_configured": auth["token_configured"],
