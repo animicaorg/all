@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.services.da_client import DaClient
 from animica_studio.services.da_dir_usage_service import DaDirUsageService
+from animica_studio.services.da_path_guard import NODE_PATH_UI_ERROR, assert_host_writable_path
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.paths import default_da_contrib_dir
 
@@ -110,16 +111,17 @@ class DaContributionEngine(QObject):
     @staticmethod
     def _is_writable_dir(path: Path) -> tuple[bool, str]:
         raw = str(path).strip()
-        if raw == "/data" or raw.startswith("/data/"):
-            log.warning("Refusing to create node path on host: %s", raw)
-            return False, "Refusing to create node path on host: " + raw
         try:
+            guarded = assert_host_writable_path(raw)
+            path = guarded
             path.mkdir(parents=True, exist_ok=True)
             test = path / ".write_test"
             test.write_text("ok", encoding="utf-8")
             test.unlink(missing_ok=True)
             return True, ""
         except Exception as exc:
+            if str(exc) == NODE_PATH_UI_ERROR:
+                return False, NODE_PATH_UI_ERROR
             return False, str(exc)
 
     @staticmethod
@@ -191,7 +193,7 @@ class DaContributionEngine(QObject):
             reasons.append("Studio contribution dir is required")
         elif self._is_node_path(cfg.host_data_dir):
             reasons.append(
-                "Studio contribution dir must be a host path (e.g., ~/.animica/da_contrib), not node path /data"
+                NODE_PATH_UI_ERROR
             )
         if not cfg.node_data_dir:
             reasons.append("Node directory is required")
