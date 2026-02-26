@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from animica_studio.services.da_client import DaClient, DaUploadError
+from animica_studio.services.da_client import DaClient
 from animica_studio.services.rpc_client import RpcError, RpcResponseError
 
 
@@ -68,36 +68,35 @@ def _make_registry(meta_by_method: dict[str, dict], info: dict | None = None):
     return FakeRegistry()
 
 
-def test_upload_json_uses_discover_schema_and_positional_params(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: dict[str, object] = {}
+def test_da_put_blob_builder_returns_exactly_two_positional_args() -> None:
+    params = DaClient._build_da_put_blob_params(7, "0x616263")
+    assert isinstance(params, list)
+    assert params == [7, "0x616263"]
+    assert len(params) == 2
+
+
+def test_da_dot_put_blob_builder_returns_object_with_bytes() -> None:
+    params = DaClient._build_da_dot_put_blob_params(b"abc", "studio/checkpoint", {"content_type": "text/plain"})
+    assert isinstance(params, dict)
+    assert "bytes" in params
+    assert params["bytes"] == "YWJj"
+    assert params["namespace"] == "studio/checkpoint"
+
+
+def test_upload_blob_uses_da_put_blob_positional_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[str, object]] = []
 
     class FakeRpcClient:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
         def registry(self):
-            return _make_registry(
-                {
-                    "da.putBlob": {
-                        "param_structure": "positional",
-                        "params": [{"name": "namespace"}, {"name": "data"}],
-                        "raw": {
-                            "name": "da.putBlob",
-                            "params": [
-                                {"name": "namespace", "required": True, "schema": {"type": "integer"}},
-                                {"name": "data", "required": True, "schema": {"type": "string"}},
-                            ],
-                        },
-                    }
-                }
-            )
-
-        def resolve_method(self, _requested: str, _candidates):
-            return "da.putBlob"
+            return _make_registry({"da.putBlob": {}, "da_putBlob": {}, "da.status": {}})
 
         def call(self, method: str, params):
-            called["method"] = method
-            called["params"] = params
+            called.append((method, params))
+            if method == "da.status":
+                return {"enabled": True, "allow_remote_put": False}
             return "0xblob"
 
         def close(self) -> None:
@@ -106,17 +105,17 @@ def test_upload_json_uses_discover_schema_and_positional_params(monkeypatch: pyt
     monkeypatch.setattr("animica_studio.services.da_client.RpcClient", FakeRpcClient)
 
     client = DaClient("http://127.0.0.1:8545")
-    out = client.upload_json({"hello": "world"}, namespace=0)
+    out = client.upload_blob(namespace=0, raw_bytes=b"abc", content_type=None, tags=None)
 
     assert out["blob_id"] == "0xblob"
-    assert called["method"] == "da.putBlob"
-    params = called["params"]
+    assert called[1][0] == "da_putBlob"
+    params = called[1][1]
     assert isinstance(params, list)
     assert params[0] == 0
-    assert isinstance(params[1], str) and str(params[1]).startswith("0x")
+    assert params[1] == "0x616263"
 
 
-def test_upload_bytes_retries_with_object_encoding_on_too_many_positional(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upload_blob_uses_ingest_local_when_remote_put_disallowed(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
     calls: list[tuple[str, object]] = []
 
     class FakeRpcClient:
@@ -124,29 +123,14 @@ def test_upload_bytes_retries_with_object_encoding_on_too_many_positional(monkey
             pass
 
         def registry(self):
-            return _make_registry(
-                {
-                    "da.putBlob": {
-                        "param_structure": "positional",
-                        "params": [{"name": "namespace"}, {"name": "data"}],
-                        "raw": {
-                            "name": "da.putBlob",
-                            "params": [
-                                {"name": "namespace", "required": True, "schema": {"type": "integer"}},
-                                {"name": "data", "required": True, "schema": {"type": "string"}},
-                            ],
-                        },
-                    }
-                }
-            )
-
-        def resolve_method(self, _requested: str, _candidates):
-            return "da.putBlob"
+            return _make_registry({"da.putBlob": {}, "da.getStatus": {}, "da.ingestLocal": {}, "da.getIngestDir": {}})
 
         def call(self, method: str, params):
             calls.append((method, params))
-            if len(calls) == 1:
-                raise RpcResponseError(RpcError(code=-32602, message="too many positional arguments"))
+            if method == "da.getStatus":
+                return {"enabled": True, "allow_remote_put": False}
+            if method == "da.getIngestDir":
+                return {"dir": str(tmp_path)}
             return "0xblob"
 
         def close(self) -> None:
@@ -155,52 +139,9 @@ def test_upload_bytes_retries_with_object_encoding_on_too_many_positional(monkey
     monkeypatch.setattr("animica_studio.services.da_client.RpcClient", FakeRpcClient)
 
     client = DaClient("http://127.0.0.1:8545")
-    out = client.upload_bytes(b"abc", namespace=7)
+    out = client.upload_blob(namespace=7, raw_bytes=b"abc", content_type=None, tags=None)
     assert out["blob_id"] == "0xblob"
-    assert len(calls) == 2
-    assert isinstance(calls[0][1], list)
-    assert isinstance(calls[1][1], dict)
-    assert calls[1][1] == {"namespace": 7, "data": "0x616263"}
-
-
-def test_upload_bytes_raises_upload_error_with_diagnostics_on_invalid_params(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeRpcClient:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def registry(self):
-            return _make_registry(
-                {
-                    "da_putBlob": {
-                        "param_structure": "positional",
-                        "params": [{"name": "namespace"}, {"name": "data"}],
-                        "raw": {
-                            "name": "da_putBlob",
-                            "params": [
-                                {"name": "namespace", "required": True, "schema": {"type": "integer"}},
-                                {"name": "data", "required": True, "schema": {"type": "string"}},
-                            ],
-                        },
-                    }
-                },
-                info={"version": "v-test"},
-            )
-
-        def resolve_method(self, _requested: str, _candidates):
-            return "da_putBlob"
-
-        def call(self, _method: str, _params):
-            raise RpcResponseError(RpcError(code=-32602, message="invalid params"))
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr("animica_studio.services.da_client.RpcClient", FakeRpcClient)
-
-    client = DaClient("http://127.0.0.1:8545")
-    with pytest.raises(DaUploadError) as exc:
-        client.upload_bytes(b"abc", namespace=0)
-    assert exc.value.diagnostics["resolved_method"] == "da_putBlob"
-    assert exc.value.diagnostics["param_spec"] == ["namespace", "data"]
-    assert exc.value.diagnostics["chosen_encoding"] == "positional"
-    assert exc.value.diagnostics["server_version"] == "v-test"
+    assert [c[0] for c in calls] == ["da.getStatus", "da.getIngestDir", "da.ingestLocal"]
+    assert isinstance(calls[-1][1], dict)
+    assert calls[-1][1]["namespace"] == 7
+    assert str(calls[-1][1]["path"]).startswith(str(tmp_path))
