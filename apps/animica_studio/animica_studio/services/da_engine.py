@@ -151,6 +151,8 @@ class DaContributionEngine(QObject):
     def _normalize_data_dirs(self, cfg: DaEngineConfig) -> DaEngineConfig:
         """Normalize host/node DA paths, preserving backwards-compatible behavior."""
         host_selected = Path((cfg.host_data_dir or "").strip() or str(default_da_contrib_dir())).expanduser()
+        if self._is_node_path(str(host_selected)):
+            host_selected = Path(default_da_contrib_dir()).expanduser()
         node_selected = (cfg.node_data_dir or "").strip() or self._derive_node_dir(host_selected)
         return DaEngineConfig(
             enabled=cfg.enabled,
@@ -369,6 +371,8 @@ class DaContributionEngine(QObject):
         self._busy_worker.start()
 
     def _run_cycle(self) -> dict[str, Any]:
+        if self._is_node_path(self.config.host_data_dir):
+            raise RuntimeError(NODE_PATH_UI_ERROR)
         p = Path(self.config.host_data_dir)
         if not p.exists() or not os.access(p, os.R_OK):
             raise RuntimeError(f"Contribution directory unreadable: {p}")

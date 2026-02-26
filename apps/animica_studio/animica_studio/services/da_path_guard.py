@@ -4,8 +4,8 @@ from pathlib import Path
 
 
 NODE_PATH_UI_ERROR = (
-    "This is a node path (/data/...). Studio needs a host path for local files. "
-    "Use ~/.animica/da_contrib."
+    "This is a node path. Choose a host path for Studio dir "
+    "(e.g. ~/.animica/da_contrib)."
 )
 
 
@@ -30,4 +30,3 @@ def assert_host_writable_path(path: str, extra_node_paths: set[str] | None = Non
     if is_node_path(raw, extra_node_paths=extra_node_paths):
         raise ValueError(NODE_PATH_UI_ERROR)
     return Path(raw).expanduser()
-
