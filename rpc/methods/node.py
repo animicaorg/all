@@ -342,7 +342,7 @@ def node_capabilities() -> dict[str, t.Any]:
         "aicf.creditsByAddress", "aicf.credits_by_address", "aicf_creditsByAddress",
         "aicf.getClaimable", "aicf.claim", "aicf.buildClaimTx",
         "tx.getTransactionByHash", "tx.getTransactionReceipt", "tx.getStatus",
-        "da.configure", "da.put", "da.putBlob", "da.getBlob",
+        "da.configure", "da.put", "da.putBlob", "da.getBlob", "da.getIngestDir", "da.ingestLocal",
         "state.getBalance", "state.getNonce", "state.getAccount",
     ]
     positional_supported = [
@@ -390,4 +390,3 @@ def node_capabilities() -> dict[str, t.Any]:
             "da_status_poll_ms": 5000,
         },
     }
-

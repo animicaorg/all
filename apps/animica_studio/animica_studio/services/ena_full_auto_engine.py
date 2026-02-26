@@ -32,6 +32,7 @@ class FullAutoState(str, Enum):
     TRAINING = "training"
     EVALUATING = "evaluating"
     PUBLISHING = "publishing"
+    WAITING_FOR_INGEST = "waiting_for_ingest"
     SYNCING = "syncing"
     CLAIMING = "claiming"
     IDLE = "idle"
@@ -681,19 +682,47 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
                 raise RuntimeError("DA has(commitment) verification failed")
         return commitment
 
-    configured_dir = str(status.get("effective_dir") or status.get("dir") or status.get("configured_dir") or "")
-    mapper = NodeToHostPathMapper(_host_chain_dir_from_cfg(cfg))
-    host_da_dir = mapper.map_node_da_dir(configured_dir)
-    if host_da_dir is None:
-        raise RuntimeError("Cannot map node DA dir to host path; enable allow_remote_put or configure docker volume mapping.")
-    host_ingest_dir = host_da_dir / "studio_local_ingest"
-    host_ingest_dir.mkdir(parents=True, exist_ok=True)
-    if not os.access(host_ingest_dir, os.W_OK):
-        raise RuntimeError(f"Resolved host ingest directory is not writable: {host_ingest_dir}")
-    blob_path = host_ingest_dir / f"{hashlib.sha256(data).hexdigest()}.blob"
-    blob_path.write_bytes(data)
-    logs.append(("warning", f"allow_remote_put=false; local ingest staged at {blob_path}"))
-    raise RuntimeError("DA policy blocks remote put; enable allow_remote_put or provide node-side ingest")
+    ingest_dir_method = reg.resolve_any(["da.getIngestDir", "da_getIngestDir"])
+    ingest_method = reg.resolve_any(["da.ingestLocal", "da_ingestLocal"])
+    has_method = reg.resolve_any(["da.has", "da_has"])
+    if not ingest_dir_method or not ingest_method:
+        raise RuntimeError("DA policy blocks remote put and node does not expose local ingest RPC")
+
+    ingest_info = _rpc_call_with_backoff(client, ingest_dir_method, {})
+    if not isinstance(ingest_info, dict):
+        raise RuntimeError("da.getIngestDir returned invalid response")
+    node_pending_dir = str(ingest_info.get("pending_dir") or os.path.join(str(ingest_info.get("dir") or ""), "pending"))
+    if not node_pending_dir.strip():
+        raise RuntimeError("da.getIngestDir did not return pending directory")
+
+    host_pending_dir = Path(node_pending_dir)
+    if node_pending_dir.startswith("/data/"):
+        host_pending_dir = Path(os.path.expanduser("~/.animica") + node_pending_dir.removeprefix("/data"))
+    host_pending_dir.mkdir(parents=True, exist_ok=True)
+    if not os.access(host_pending_dir, os.W_OK):
+        raise RuntimeError(f"Resolved host ingest directory is not writable: {host_pending_dir}")
+
+    blob_name = f"{hashlib.sha256(data).hexdigest()}.blob"
+    host_blob_path = host_pending_dir / blob_name
+    node_blob_path = os.path.join(node_pending_dir, blob_name)
+    host_blob_path.write_bytes(data)
+    logs.append(("info", f"allow_remote_put=false; staged blob for local ingest at {host_blob_path}"))
+
+    out = _rpc_call_with_backoff(client, ingest_method, {"path": node_blob_path, "namespace": ns})
+    commitment = str(out.get("blob_id") if isinstance(out, dict) else out)
+    if not commitment:
+        raise RuntimeError("da.ingestLocal did not return commitment")
+
+    delay = 2.0
+    for attempt in range(5):
+        has = _rpc_call_with_backoff(client, has_method, commitment)
+        exists = bool(has.get("exists") if isinstance(has, dict) else has)
+        if exists:
+            return commitment
+        logs.append(("info", f"Ingest pending… waiting {delay:.1f}s before verify retry ({attempt+1}/5)."))
+        time.sleep(delay)
+        delay = min(30.0, delay * 1.8)
+    raise RuntimeError(f"WAITING_FOR_INGEST: commitment {commitment} not visible after retries")
 
 
 def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, loss: float, for_bootstrap: bool = False) -> dict[str, Any]:
@@ -735,6 +764,14 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
             manifest_bytes = json.dumps(manifest, sort_keys=True).encode("utf-8")
             manifest_commitment = _put_blob_with_strategy(c, reg, cfg, manifest_bytes, logs, status)
     except Exception as exc:  # noqa: BLE001
+        err = str(exc)
+        if "WAITING_FOR_INGEST" in err:
+            return {
+                "ok": False,
+                "state": "waiting_for_ingest",
+                "detail": "WAITING_FOR_INGEST",
+                "logs": logs + [("warning", "Ingest pending… verify will retry with backoff.")],
+            }
         return {"ok": False, "state": "error", "detail": f"UPLOAD_FAILED: {exc}", "logs": logs + [("error", str(exc))]}
 
     logs.append(("info", f"uploaded manifest={manifest_commitment} step={step}"))
