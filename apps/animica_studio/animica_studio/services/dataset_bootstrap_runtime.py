@@ -146,6 +146,7 @@ class DatasetBootstrapRuntime(QObject):
             "PROCESSING": "PROCESSING",
             "SHARDING": "SHARDING",
             "DONE": "DONE",
+            "DONE_EXHAUSTED": "DONE_EXHAUSTED",
             "PROVIDER_FAILED": "ERROR",
             "CACHED": "DOWNLOADING",
         }
@@ -180,12 +181,12 @@ class DatasetBootstrapRuntime(QObject):
         elif result.get("cancelled"):
             run.state = "CANCELED"
         else:
-            run.state = "DONE"
+            run.state = str(result.get("state") or "DONE")
         run.updated_at = time()
         run.diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {"entries": result.get("diagnostics", [])}
         self._append_log(run, "system", f"finished: state={run.state}")
         self._emit_state(run.state)
-        self.finished.emit(run.state == "DONE", result)
+        self.finished.emit(run.state in {"DONE", "DONE_EXHAUSTED"}, result)
         self._persist()
 
     def _on_failed(self, err: str) -> None:
