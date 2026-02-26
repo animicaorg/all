@@ -55,7 +55,7 @@ class DaStatusService:
         default_dir = str(before.get("default_dir") or "")
         allowed_base_dirs = before.get("allowed_base_dirs") if isinstance(before.get("allowed_base_dirs"), list) else []
         effective_dir = str(status_raw.get("effective_dir") or status_raw.get("dir") or "")
-        candidate_dir = str(requested_dir or effective_dir or default_dir or "/data/da")
+        candidate_dir = str(requested_dir or effective_dir or default_dir or "")
         if self._is_dir_allowed(candidate_dir, allowed_base_dirs):
             return candidate_dir
         if effective_dir and self._is_dir_allowed(effective_dir, allowed_base_dirs):
@@ -63,8 +63,8 @@ class DaStatusService:
         if default_dir and self._is_dir_allowed(default_dir, allowed_base_dirs):
             return default_dir
         if allowed_base_dirs:
-            return str(allowed_base_dirs[0])
-        return "/data/da"
+            return f"{str(allowed_base_dirs[0]).rstrip('/')}/da"
+        return default_dir or effective_dir or requested_dir or ""
 
     def get_status(self, rpc_url: str | None = None) -> dict[str, Any]:
         client = self._client(rpc_url)
