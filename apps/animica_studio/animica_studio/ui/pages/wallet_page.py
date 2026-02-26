@@ -27,6 +27,7 @@ from animica_studio.models.wallet_models import shorten_address
 from animica_studio.services.balance_service import BalanceResult, BalanceService
 from animica_studio.services.wallet_repository import WalletRecord, WalletRepository
 from animica_studio.storage.config import Config, load_config
+from animica_studio.util.threading_guard import assert_ui_thread
 
 log = logging.getLogger(__name__)
 
@@ -140,7 +141,8 @@ class WalletPage(QWidget):
         self._build_ui()
         self._balance_service.balance_ready.connect(self._on_balance_ready)
         self._balance_service.rpc_status_changed.connect(self._on_rpc_status)
-        QTimer.singleShot(0, self.refresh_wallets)
+        self._startup_refresh_scheduled = False
+        self._refresh_in_flight = False
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -264,17 +266,29 @@ class WalletPage(QWidget):
             """
         )
 
+
+    def _ensure_ui_thread(self, fn, *args) -> bool:
+        if assert_ui_thread():
+            return True
+        QTimer.singleShot(0, lambda: fn(*args))
+        return False
     def on_profile_changed(self, profile: RpcProfile) -> None:
         _ = profile
         self.refresh_all_balances(force=True)
 
     def refresh_wallets(self) -> None:
+        if not self._ensure_ui_thread(self.refresh_wallets):
+            return
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
         wallets = self._repository.load_wallets()
         self._wallet_rows = [_WalletUiState(w) for w in wallets]
         self._render_wallet_list()
         if self._wallet_rows and not self._selected_address:
             self._selected_address = self._wallet_rows[0].wallet.address
         self._staged_balance_fetch()
+        self._refresh_in_flight = False
 
     def _render_wallet_list(self) -> None:
         needle = self._search.text().strip().lower()
@@ -301,6 +315,8 @@ class WalletPage(QWidget):
                     break
 
     def _on_selected(self, index: int) -> None:
+        if not self._ensure_ui_thread(self._on_selected, index):
+            return
         if index < 0:
             return
         item = self._list.item(index)
@@ -347,6 +363,8 @@ class WalletPage(QWidget):
         self._balance_service.get_balance(self._selected_address, self._active_profile(), force_refresh=True)
 
     def _on_balance_ready(self, address: str, result: BalanceResult) -> None:
+        if not self._ensure_ui_thread(self._on_balance_ready, address, result):
+            return
         for row in self._wallet_rows:
             if row.wallet.address != address:
                 continue
@@ -362,6 +380,8 @@ class WalletPage(QWidget):
             self._on_selected(self._list.currentRow())
 
     def _on_rpc_status(self, ok: bool, reason: str) -> None:
+        if not self._ensure_ui_thread(self._on_rpc_status, ok, reason):
+            return
         self._status_chip.setText("RPC Online" if ok else "RPC Offline")
         self._status_chip.setToolTip(reason)
 
@@ -388,6 +408,13 @@ class WalletPage(QWidget):
 
     def _on_create_wallet(self) -> None:
         QMessageBox.information(self, "Create Wallet", "Use the Animica CLI: animica wallet create")
+
+
+    def showEvent(self, event) -> None:  # noqa: ANN001
+        super().showEvent(event)
+        if not self._startup_refresh_scheduled:
+            self._startup_refresh_scheduled = True
+            QTimer.singleShot(0, self.refresh_wallets)
 
     def hideEvent(self, event) -> None:  # noqa: ANN001
         self._refresh_tail_timer.stop()

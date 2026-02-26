@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -35,6 +35,7 @@ from animica_studio.services.training_service import ENATrainingService
 from animica_studio.services.dataset_bootstrap_runtime import bootstrap_runtime
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.widgets.bootstrap_progress_widget import BootstrapProgressWidget
+from animica_studio.util.threading_guard import assert_ui_thread
 
 
 class NullEvolutionEngine:
@@ -70,7 +71,7 @@ class TrainPage(QWidget):
         self._refresh_runs()
         self._sync_ui_state()
         self._validate_critical_state()
-        self._maybe_prompt_bootstrap()
+        QTimer.singleShot(0, self._maybe_prompt_bootstrap)
         if self._mode_migration_warning:
             self._on_log("", "system", self._mode_migration_warning)
 
@@ -85,6 +86,7 @@ class TrainPage(QWidget):
         self._pending_actions: dict[str, str] = {}
         self._evolution_enabled = False
         self._evolution: DatasetEvolutionEngine | NullEvolutionEngine = self._build_evolution_engine()
+        self._bootstrap_prompted = False
 
     def _build_evolution_engine(self) -> DatasetEvolutionEngine | NullEvolutionEngine:
         ena_cfg = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
@@ -106,6 +108,7 @@ class TrainPage(QWidget):
             "_pending_actions",
             "_evolution_enabled",
             "_evolution",
+            "_bootstrap_prompted",
         ]
         missing = [name for name in required_attrs if not hasattr(self, name)]
         if missing:
@@ -363,7 +366,19 @@ class TrainPage(QWidget):
         self._bootstrap_runtime.logLine.connect(self._on_bootstrap_runtime_log)
         self._bootstrap_runtime.finished.connect(self._on_bootstrap_runtime_finished)
 
+    def _ensure_ui_thread(self, fn, *args) -> bool:
+        if assert_ui_thread():
+            return True
+        QTimer.singleShot(0, lambda: fn(*args))
+        return False
+
     def _maybe_prompt_bootstrap(self) -> None:
+        if not assert_ui_thread():
+            QTimer.singleShot(0, self._maybe_prompt_bootstrap)
+            return
+        if self._bootstrap_prompted:
+            return
+        self._bootstrap_prompted = True
         if os.getenv("ANIMICA_STUDIO_SAFE_MODE", "").strip() == "1":
             return
         if self.dataset_path.text().strip():
@@ -475,11 +490,15 @@ class TrainPage(QWidget):
         self._sync_ui_state()
 
     def _on_bootstrap_state_changed(self, state: str) -> None:
+        if not self._ensure_ui_thread(self._on_bootstrap_state_changed, state):
+            return
         self.bootstrap_progress.setText(f"Bootstrap: {state}")
         if self._bootstrap_panel:
             self._bootstrap_panel.update_state(state)
 
     def _on_bootstrap_runtime_progress(self, payload: dict) -> None:
+        if not self._ensure_ui_thread(self._on_bootstrap_runtime_progress, payload):
+            return
         processed = int(payload.get("processed_bytes") or 0)
         target = int(payload.get("target_bytes") or 1)
         pct = max(0, min(100, int(processed * 100 / max(1, target))))
@@ -496,10 +515,14 @@ class TrainPage(QWidget):
             )
 
     def _on_bootstrap_runtime_log(self, kind: str, text: str) -> None:
+        if not self._ensure_ui_thread(self._on_bootstrap_runtime_log, kind, text):
+            return
         if self._bootstrap_panel:
             self._bootstrap_panel.append_log(kind, text)
 
     def _on_bootstrap_runtime_finished(self, ok: bool, result: dict) -> None:
+        if not self._ensure_ui_thread(self._on_bootstrap_runtime_finished, ok, result):
+            return
         self.bootstrap_btn.setEnabled(True)
         self.cancel_bootstrap_btn.setEnabled(False)
         if not ok:
@@ -684,10 +707,14 @@ class TrainPage(QWidget):
             QMessageBox.information(self, "Resume", str(exc))
 
     def _on_log(self, run_id: str, tag: str, text: str) -> None:
+        if not self._ensure_ui_thread(self._on_log, run_id, tag, text):
+            return
         show_id = run_id or (self._active_run_id or "-")
         self.console.append(f"[{tag}] ({show_id}) {text}")
 
     def _on_metrics(self, run_id: str, metrics: dict) -> None:
+        if not self._ensure_ui_thread(self._on_metrics, run_id, metrics):
+            return
         if self._active_run_id and run_id != self._active_run_id:
             return
         step = metrics.get("current_step")
@@ -711,6 +738,8 @@ class TrainPage(QWidget):
             self.progress.setValue(int(step * 100 / total))
 
     def _on_status(self, run_id: str, status: str) -> None:
+        if not self._ensure_ui_thread(self._on_status, run_id, status):
+            return
         if self._active_run_id and run_id != self._active_run_id:
             return
         self.status_lbl.setText(status)
