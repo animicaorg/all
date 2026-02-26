@@ -82,7 +82,7 @@ def test_duplicate_publish_allows_retry_and_reuses_if_present(tmp_path: Path, mo
     svc.store.set("checkpoints", [{"id": "x", "sha256": "dup", "commitment": "c1"}])
     monkeypatch.setattr(type(svc.da), "has_blob", lambda *_a, **_k: True, raising=False)
     monkeypatch.setattr(svc.da_status, "get_status", lambda *_a, **_k: {"enabled": True, "ok": True, "allow_remote_put": True, "configured_dir": "/data/da", "rpc_url": "http://127.0.0.1:8545/rpc", "raw": {}})
-    monkeypatch.setattr(type(svc.da), "upload_json", lambda *_a, **_k: {"blob_id": "ptr-1"}, raising=False)
+    monkeypatch.setattr(type(svc.da), "upload_bytes", lambda *_a, **_k: {"blob_id": "ptr-1"}, raising=False)
     out = svc.publish_checkpoint("dup")
     assert out["run"].result["Push to DA"]["idempotent_reuse"] is True
 
@@ -159,9 +159,8 @@ def test_publish_remote_put_disabled_uses_local_ingest_on_local_node(tmp_path: P
         svc.da_status,
         "get_status",
         lambda *_a, **_k: {
-            "enabled": False,
-            "ok": False,
-            "reason": "not_configured",
+            "enabled": True,
+            "ok": True,
             "allow_remote_put": False,
             "configured_dir": "/data/chain-1/da",
             "rpc_url": "http://127.0.0.1:8545/rpc",
@@ -169,10 +168,15 @@ def test_publish_remote_put_disabled_uses_local_ingest_on_local_node(tmp_path: P
             "configure_param_spec": [{"name": "allow_remote_put", "required": False}],
         },
     )
+    monkeypatch.setattr(type(svc.da), "get_ingest_dir", lambda *_a, **_k: {"dir": "/data/chain-1/da_ingest", "pending_dir": "/data/chain-1/da_ingest/pending"}, raising=False)
+    monkeypatch.setattr(type(svc.da), "ingest_local", lambda *_a, **_k: {"blob_id": "blob-local"}, raising=False)
+    monkeypatch.setattr(type(svc.da), "wait_for_blob", lambda *_a, **_k: True, raising=False)
+    monkeypatch.setattr(type(svc.da), "has_blob", lambda *_a, **_k: True, raising=False)
+    monkeypatch.setattr(type(svc.aicf), "submit_job", lambda *_a, **_k: {"ok": True, "data": {"job_id": "job-local"}}, raising=False)
 
     out = svc.publish_checkpoint("cafebabe", dev_mode=False)
-    assert out["run"].status == "partial"
-    assert out["run"].result["Push to DA"]["pending_da_upload"] is True
+    assert out["run"].status == "completed"
+    assert out["run"].result["Push to DA"]["push_strategy"] == "local_ingest"
 
 
 def test_publish_remote_put_disabled_remote_node_actionable_error(tmp_path: Path, monkeypatch) -> None:

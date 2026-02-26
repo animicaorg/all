@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 from animica_studio.services.rpc_client import RpcClient, RpcParseError, RpcResponseError, RpcTransportError
@@ -161,3 +162,21 @@ class DaClient:
         if isinstance(out, dict):
             return bool(out.get("exists"))
         return bool(out)
+
+    def get_ingest_dir(self) -> dict[str, Any]:
+        out = self._call_multi(("da.getIngestDir", "da_getIngestDir"), [])
+        return out if isinstance(out, dict) else {"dir": str(out or "")}
+
+    def ingest_local(self, node_path: str, namespace: int | str | None = None) -> dict[str, Any]:
+        ns = self._parse_namespace(namespace)
+        return self._call_multi(("da.ingestLocal", "da_ingestLocal"), {"path": node_path, "namespace": ns})
+
+    def wait_for_blob(self, blob_id: str, *, timeout_s: float = 30.0, interval_s: float = 2.0) -> bool:
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        wait = max(interval_s, 0.1)
+        while time.monotonic() <= deadline:
+            if self.has_blob(blob_id):
+                return True
+            time.sleep(wait)
+            wait = min(wait * 1.7, 5.0)
+        return self.has_blob(blob_id)

@@ -116,9 +116,9 @@ class TestShortenAddress:
 class TestIsValidAddress:
     def test_valid(self):
         from animica_studio.models.wallet_models import is_valid_address
+        from core.utils.bytes import bech32m_encode
 
-        # bech32m charset excludes b, i, o, 1 — use only valid chars
-        assert is_valid_address("anim1acdefghjklmnpqrstuvwxyz0234")
+        assert is_valid_address(bech32m_encode("anim", b"\x01" * 32))
 
     def test_too_short(self):
         from animica_studio.models.wallet_models import is_valid_address
@@ -135,6 +135,11 @@ class TestIsValidAddress:
 
         # bech32m is lowercase
         assert not is_valid_address("ANIM1ABCDEFGHIJKLMNO")
+
+    def test_bad_checksum_invalid(self):
+        from animica_studio.models.wallet_models import is_valid_address
+
+        assert not is_valid_address("anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
 
 
 class TestAccountDataclass:
@@ -1054,4 +1059,3 @@ class TestWalletCreateIncludesLabel:
         assert "My Wallet" in args
         assert clean_label == "My Wallet"
         assert scheme == "dilithium3"
-

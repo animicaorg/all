@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,8 @@ _log = logging.getLogger("animica.rpc.da")
 
 _DA_VERSION = "1.0.0"
 _MAX_PUT_BYTES = 32 * 1024 * 1024  # 32 MiB
+_INGEST_RATE_LIMIT_SECONDS = 0.2
+_last_ingest_at: dict[str, float] = {}
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -144,6 +147,60 @@ def _require_remote_put_allowed(store) -> None:
                 "or upload blobs locally via the node's file-system API."
             ),
         )
+
+
+def _default_ingest_dir(store_root: str) -> str:
+    chain_root = os.path.dirname(os.path.abspath(store_root))
+    return os.path.join(chain_root, "da_ingest")
+
+
+def _resolve_ingest_dir(store) -> str:
+    cfg_path = os.path.join(store.root_dir, "config.json")
+    configured = None
+    try:
+        if os.path.exists(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+                if isinstance(raw, dict):
+                    configured = raw.get("ingest_dir")
+    except Exception:
+        configured = None
+
+    ingest_dir = str(configured).strip() if isinstance(configured, str) else ""
+    if not ingest_dir:
+        ingest_dir = _default_ingest_dir(store.root_dir)
+    return os.path.abspath(ingest_dir)
+
+
+def _assert_safe_ingest_path(path: str, ingest_dir: str) -> str:
+    candidate = os.path.abspath(path)
+    if not (candidate == ingest_dir or candidate.startswith(f"{ingest_dir}{os.sep}")):
+        raise rpc_errors.AccessDenied(
+            "ingest path must be under configured ingest directory",
+            category="POLICY_BLOCKED",
+            feature="da.local_ingest",
+            ingest_dir=ingest_dir,
+            path=candidate,
+        )
+    if os.path.islink(candidate):
+        raise rpc_errors.AccessDenied(
+            "symlink paths are not allowed for local ingest",
+            category="POLICY_BLOCKED",
+            feature="da.local_ingest",
+            path=candidate,
+        )
+    return candidate
+
+
+def _enforce_ingest_rate_limit(ingest_dir: str) -> None:
+    now = time.monotonic()
+    last = _last_ingest_at.get(ingest_dir, 0.0)
+    if now - last < _INGEST_RATE_LIMIT_SECONDS:
+        raise rpc_errors.TooManyRequests(
+            "Local ingest rate limit exceeded",
+            retry_after=max(_INGEST_RATE_LIMIT_SECONDS - (now - last), 0.0),
+        )
+    _last_ingest_at[ingest_dir] = now
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +612,78 @@ def da_put(params=None, **kwargs) -> dict:
     return {"blob_id": blob_id, "size_bytes": size_bytes}
 
 
+@method("da.getIngestDir", aliases=("da_getIngestDir",), desc="Get node local ingest directory for DA blobs")
+def da_get_ingest_dir(params=None, **kwargs) -> dict:
+    _ = params, kwargs
+    store = _require_store()
+    ingest_dir = _resolve_ingest_dir(store)
+    Path(ingest_dir).mkdir(parents=True, exist_ok=True)
+    return {
+        "dir": ingest_dir,
+        "pending_dir": os.path.join(ingest_dir, "pending"),
+        "ingested_dir": os.path.join(ingest_dir, "ingested"),
+    }
+
+
+@method("da.ingestLocal", aliases=("da_ingestLocal",), desc="Ingest a local blob file from the node ingest directory")
+def da_ingest_local(params=None, **kwargs) -> dict:
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        if isinstance(params[0], dict):
+            kwargs.update(params[0])
+        else:
+            kwargs["path"] = params[0]
+            if len(params) > 1:
+                kwargs["namespace"] = params[1]
+
+    path = kwargs.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise rpc_errors.InvalidParams("Missing required parameter: path")
+
+    store = _require_store()
+    ingest_dir = _resolve_ingest_dir(store)
+    _enforce_ingest_rate_limit(ingest_dir)
+    safe_path = _assert_safe_ingest_path(path.strip(), ingest_dir)
+    if not os.path.isfile(safe_path):
+        raise rpc_errors.NotFound(f"ingest file not found: {safe_path}")
+
+    try:
+        with open(safe_path, "rb") as fh:
+            blob_bytes = fh.read()
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"Unable to read ingest file: {exc}")
+
+    if len(blob_bytes) > _MAX_PUT_BYTES:
+        raise rpc_errors.InvalidParams(
+            f"Blob too large: {len(blob_bytes)} > {_MAX_PUT_BYTES}"
+        )
+
+    metadata: dict[str, Any] = {
+        "ingested_from": safe_path,
+        "namespace": int(kwargs.get("namespace", 0) or 0),
+        "ingested_via": "da.ingestLocal",
+    }
+    blob_id, size_bytes = store.put(blob_bytes, metadata=metadata)
+
+    ingested_dir = os.path.join(ingest_dir, "ingested")
+    Path(ingested_dir).mkdir(parents=True, exist_ok=True)
+    moved_to = ""
+    try:
+        moved_to = os.path.join(ingested_dir, os.path.basename(safe_path))
+        os.replace(safe_path, moved_to)
+    except Exception:
+        moved_to = ""
+
+    return {
+        "blob_id": blob_id,
+        "size_bytes": size_bytes,
+        "ingested": True,
+        "source_path": safe_path,
+        "moved_to": moved_to,
+    }
+
+
 @method("da.get", aliases=("da_get", "da.getBlob", "da_getBlob"),
         desc="Retrieve a blob by id from the node DA store")
 def da_get(params=None, **kwargs) -> dict:
@@ -749,6 +878,8 @@ __all__ = [
     "da_get_allowed_base_dirs",
     "da_configure",
     "da_put",
+    "da_get_ingest_dir",
+    "da_ingest_local",
     "da_get",
     "da_has",
     "da_list",
