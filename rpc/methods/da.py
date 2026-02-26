@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rpc import errors as rpc_errors
+from rpc import deps
 from rpc.methods import method
 
 _log = logging.getLogger("animica.rpc.da")
@@ -183,21 +185,48 @@ def _resolve_data_root(store) -> str:
 def _assert_safe_ingest_path(path: str, ingest_dir: str) -> str:
     candidate = os.path.abspath(path)
     if not (candidate == ingest_dir or candidate.startswith(f"{ingest_dir}{os.sep}")):
-        raise rpc_errors.AccessDenied(
+        raise rpc_errors.RpcError(
+            -32005,
             "ingest path must be under configured ingest directory",
-            category="POLICY_BLOCKED",
-            feature="da.local_ingest",
-            ingest_dir=ingest_dir,
-            path=candidate,
+            {
+                "category": "INVALID_PATH",
+                "feature": "da.local_ingest",
+                "ingest_dir": ingest_dir,
+                "path": candidate,
+            },
         )
     if os.path.islink(candidate):
-        raise rpc_errors.AccessDenied(
+        raise rpc_errors.RpcError(
+            -32005,
             "symlink paths are not allowed for local ingest",
-            category="POLICY_BLOCKED",
-            feature="da.local_ingest",
-            path=candidate,
+            {
+                "category": "INVALID_PATH",
+                "feature": "da.local_ingest",
+                "path": candidate,
+            },
         )
     return candidate
+
+
+def _is_local_rpc_request() -> bool:
+    try:
+        ctx = deps.get_ctx()
+        client = getattr(ctx, "client", None)
+        host = None
+        if isinstance(client, tuple) and client:
+            host = client[0]
+        elif client is not None:
+            host = getattr(client, "host", None)
+        if not host:
+            return False
+        return bool(ipaddress.ip_address(str(host)).is_loopback)
+    except Exception:
+        # Direct in-process method calls (tests/internal) have no request context.
+        return True
+
+
+def _ingest_local_guard_enabled() -> bool:
+    return _bool_env("ANIMICA_DA_INGEST_LOCAL_ONLY", True)
 
 
 def _enforce_ingest_rate_limit(ingest_dir: str) -> None:
@@ -704,6 +733,13 @@ def da_ingest_local(params=None, **kwargs) -> dict:
     if not isinstance(path, str) or not path.strip():
         raise rpc_errors.InvalidParams("Missing required parameter: path")
 
+    if _ingest_local_guard_enabled() and not _is_local_rpc_request():
+        raise rpc_errors.RpcError(
+            -32006,
+            "permission denied: da.ingestLocal is restricted to local RPC callers",
+            {"feature": "da.local_ingest", "local_only": True},
+        )
+
     store = _require_store()
     ingest_dir = _resolve_ingest_dir(store)
     _enforce_ingest_rate_limit(ingest_dir)
@@ -720,6 +756,8 @@ def da_ingest_local(params=None, **kwargs) -> dict:
     try:
         with open(safe_path, "rb") as fh:
             blob_bytes = fh.read()
+    except PermissionError as exc:
+        raise rpc_errors.RpcError(-32006, f"permission denied reading ingest file: {exc}") from exc
     except Exception as exc:
         raise rpc_errors.InternalError(f"Unable to read ingest file: {exc}")
 

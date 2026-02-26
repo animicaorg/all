@@ -1024,6 +1024,137 @@
       ]
     },
     {
+      "name": "da.getIngestDir",
+      "summary": "Get node local ingest directory for DA blobs.",
+      "params": [],
+      "result": {
+        "name": "ingestDir",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "type": "string"
+            },
+            "pending_dir": {
+              "type": "string"
+            },
+            "ingested_dir": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
+      "name": "da.statPath",
+      "summary": "Check if a node-local path exists.",
+      "params": [
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "pathStat",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "exists": {
+              "type": "boolean"
+            },
+            "is_file": {
+              "type": "boolean"
+            },
+            "is_dir": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
+      "name": "da.ingestLocal",
+      "summary": "Ingest a local blob file from node ingest directory when remote put is blocked.",
+      "params": [
+        {
+          "name": "namespace",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "ingestResult",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "blob_id": {
+              "type": "string"
+            },
+            "size_bytes": {
+              "type": "integer"
+            },
+            "ingested": {
+              "type": "boolean"
+            },
+            "source_path": {
+              "type": "string"
+            },
+            "moved_to": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "paramStructure": "by-name",
+      "errors": [
+        {
+          "code": -32004,
+          "message": "file not found"
+        },
+        {
+          "code": -32005,
+          "message": "invalid path"
+        },
+        {
+          "code": -32006,
+          "message": "permission denied"
+        }
+      ],
+      "tags": [
+        {
+          "name": "da"
+        }
+      ]
+    },
+    {
       "name": "aicf.creditsByAddress",
       "summary": "Get AICF credits for an address. Accepts object or positional params.",
       "params": [
