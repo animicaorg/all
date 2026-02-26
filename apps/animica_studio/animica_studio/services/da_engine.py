@@ -70,6 +70,7 @@ class DaEngineConfig:
     rpc_url: str = ""
     contributor_id: str = ""
     auto_start: bool = True
+    allowed_base_dirs: list[str] | None = None
 
 
 class DaContributionEngine(QObject):
@@ -143,6 +144,7 @@ class DaContributionEngine(QObject):
             rpc_url=cfg.rpc_url,
             contributor_id=cfg.contributor_id,
             auto_start=cfg.auto_start,
+            allowed_base_dirs=cfg.allowed_base_dirs,
         )
 
     def client(self) -> DaClient:
@@ -174,8 +176,15 @@ class DaContributionEngine(QObject):
             reasons.append("Host directory is required")
         if not cfg.node_data_dir:
             reasons.append("Node directory is required")
-        elif not cfg.node_data_dir.startswith("/data"):
-            reasons.append("Node directory must be under /data for dockerized nodes")
+        else:
+            allowed_base_dirs = [str(v).rstrip("/") for v in list(cfg.allowed_base_dirs or []) if str(v).strip()]
+            if allowed_base_dirs:
+                node_dir = cfg.node_data_dir.rstrip("/")
+                if not any(node_dir == base or node_dir.startswith(f"{base}/") for base in allowed_base_dirs):
+                    reasons.append(
+                        "Selected node dir must be under one of the node's allowed base dirs: "
+                        + ", ".join(allowed_base_dirs)
+                    )
         if cfg.limit_bytes <= 0:
             reasons.append("Limit must be greater than 0")
         rpc_err = self._validate_rpc_url(cfg.rpc_url)
