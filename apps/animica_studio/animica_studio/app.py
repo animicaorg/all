@@ -72,7 +72,19 @@ def _create_app() -> QApplication:
 
 
 def main() -> None:
-    """Bootstrap and run the Animica Studio application."""
+    """Bootstrap and run the Animica Studio application.
+
+    Supports a ``doctor`` subcommand::
+
+        animica-studio doctor [--json] [--rpc-url URL] [--verbose]
+    """
+    # Handle non-GUI subcommands before touching Qt.
+    _argv = sys.argv[1:]
+    if _argv and _argv[0] == "doctor":
+        from animica_studio.doctor import doctor_main  # noqa: PLC0415
+
+        sys.exit(doctor_main(_argv[1:]))
+
     # Logging must be set up before anything else
     setup_logging(logs_dir(), app_version=__version__)
 
