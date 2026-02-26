@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 import time
@@ -9,6 +10,7 @@ import time
 log = logging.getLogger(__name__)
 
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QMessageBox,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.services.ena_automation_service import EnaService
+from animica_studio.services.bootstrap_info_manager import BootstrapInfoManager, BootstrapInfo
 from animica_studio.services.ena_store import EnaStore
 from animica_studio.storage.config import Config
 from animica_studio.ui.pages.checkpoints_page import CheckpointsPage
@@ -49,6 +53,8 @@ def _coerce_da_namespace(raw: object) -> int:
     except Exception:
         value = 0
     return max(0, value)
+
+
 class EnaHubPage(QWidget):
     """Single consolidated ENA page with tabbed sections.
 
@@ -78,6 +84,8 @@ class EnaHubPage(QWidget):
         self._full_auto_engine = full_auto_engine
         self._cap_label = QLabel("Checking capabilities...")
         self._status_label = QLabel()
+        self._bootstrap_manager = BootstrapInfoManager(config)
+        self._bootstrap_info: BootstrapInfo | None = None
 
         self._tabs = QTabWidget(self)
         layout = QVBoxLayout(self)
@@ -120,8 +128,62 @@ class EnaHubPage(QWidget):
         auto_btn.clicked.connect(self._run_auto)
         root.addWidget(auto_btn)
         root.addWidget(self._status_label)
+        root.addWidget(self._build_bootstrap_cache_card())
         root.addStretch(1)
         return w
+
+    def _build_bootstrap_cache_card(self) -> QWidget:
+        card = QGroupBox("Bootstrap Cache")
+        layout = QVBoxLayout(card)
+        self._bootstrap_source_label = QLabel("Source: -")
+        self._bootstrap_commitment_label = QLabel("Bootstrap version: -")
+        self._bootstrap_updated_label = QLabel("Last updated: -")
+        layout.addWidget(self._bootstrap_source_label)
+        layout.addWidget(self._bootstrap_commitment_label)
+        layout.addWidget(self._bootstrap_updated_label)
+        actions = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(lambda: self._refresh_bootstrap_info(force=True))
+        actions.addWidget(refresh_btn)
+        copy_btn = QPushButton("Copy diagnostics")
+        copy_btn.clicked.connect(self._copy_bootstrap_diagnostics)
+        actions.addWidget(copy_btn)
+        publish_btn = QPushButton("Publish to DA")
+        publish_btn.clicked.connect(self._publish_bootstrap_to_da)
+        actions.addWidget(publish_btn)
+        layout.addLayout(actions)
+        self._refresh_bootstrap_info(force=False)
+        return card
+
+    def _refresh_bootstrap_info(self, *, force: bool) -> None:
+        try:
+            info = self._bootstrap_manager.load(force_refresh=force)
+            self._bootstrap_info = info
+            commitment = str(info.version_commitment or (info.diagnostics or {}).get("payload_commitment") or "")
+            self._bootstrap_source_label.setText(f"Source: {info.source}")
+            self._bootstrap_commitment_label.setText(f"Bootstrap version: {(commitment[:14] + '…') if commitment else '-'}")
+            self._bootstrap_updated_label.setText(f"Last updated: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info.fetched_at))}")
+        except Exception as exc:  # noqa: BLE001
+            self._bootstrap_source_label.setText("Source: error")
+            self._bootstrap_commitment_label.setText("Bootstrap version: -")
+            self._bootstrap_updated_label.setText(f"Last updated: error ({exc})")
+
+    def _copy_bootstrap_diagnostics(self) -> None:
+        diag = self._bootstrap_manager.diagnostics()
+        if self._bootstrap_info is not None:
+            diag["cache_key"] = self._bootstrap_info.key
+        text = json.dumps(diag, indent=2, sort_keys=True)
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        self._status_label.setText("Bootstrap diagnostics copied to clipboard")
+
+    def _publish_bootstrap_to_da(self) -> None:
+        try:
+            result = self._bootstrap_manager.publish_to_da()
+            self._status_label.setText(f"Bootstrap published: {str(result.get('payload_commitment') or '')[:14]}…")
+            self._refresh_bootstrap_info(force=True)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Bootstrap Publish Failed", str(exc))
 
     def _refresh_capabilities(self) -> None:
         try:
