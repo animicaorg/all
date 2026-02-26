@@ -208,6 +208,29 @@ def test_da_get_ingest_dir_defaults_under_chain_root(tmp_path):
     assert result["pending_dir"].endswith("chain-1/da_ingest/pending")
 
 
+def test_da_get_data_root(tmp_path):
+    from rpc.methods.da import da_get_data_root
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+
+    with patch("rpc.methods.da._require_store", return_value=store):
+        result = da_get_data_root({})
+
+    assert result["node_chain_dir"].endswith("chain-1/da")
+    assert result["data_root"].endswith(str(tmp_path))
+
+
+def test_da_stat_path(tmp_path):
+    from rpc.methods.da import da_stat_path
+
+    blob = tmp_path / "x.blob"
+    blob.write_bytes(b"ok")
+    out = da_stat_path({"path": str(blob)})
+    assert out["exists"] is True
+    assert out["is_file"] is True
+
+
 def test_da_ingest_local_reads_file_and_ingests(tmp_path):
     from rpc.methods.da import da_ingest_local
 
@@ -245,6 +268,28 @@ def test_da_ingest_local_rejects_path_outside_ingest_dir(tmp_path):
          patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
         with pytest.raises(AccessDenied):
             da_ingest_local({"path": str(outside), "namespace": 0})
+
+
+def test_da_ingest_local_not_found_has_diagnostics(tmp_path):
+    from rpc.methods.da import da_ingest_local
+    from rpc.errors import NotFound
+
+    ingest_dir = tmp_path / "chain-1" / "da_ingest"
+    (ingest_dir / "pending").mkdir(parents=True, exist_ok=True)
+    (ingest_dir / "pending" / "other.blob").write_bytes(b"x")
+    missing = ingest_dir / "pending" / "missing.blob"
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+
+    with patch("rpc.methods.da._require_store", return_value=store), \
+         patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
+        with pytest.raises(NotFound) as exc:
+            da_ingest_local({"path": str(missing), "namespace": 0})
+
+    msg = str(exc.value)
+    assert "ingest file not found" in msg
+    assert "pending_examples" in msg
 
 
 # ---------------------------------------------------------------------------

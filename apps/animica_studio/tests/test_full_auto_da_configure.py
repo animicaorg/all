@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from animica_studio.services.ena_full_auto_engine import (
+    NodePathMapper,
     NodeToHostPathMapper,
     _bootstrap_cycle,
     _build_da_configure_params,
@@ -73,6 +74,12 @@ def test_path_classifier_and_node_to_host_mapping() -> None:
 def test_node_to_host_mapping_requires_host_chain_dir() -> None:
     mapper = NodeToHostPathMapper(None)
     assert mapper.map_node_da_dir('/data/chain-1/da') is None
+
+
+def test_node_path_mapper_maps_ingest_dir_from_chain_mapping() -> None:
+    mapper = NodePathMapper('/home/employee/.animica/chain-1')
+    out = mapper.map_ingest_dir('/data/da_ingest', '/data/chain-1/da', '/data')
+    assert str(out) == '/home/employee/.animica/da_ingest'
 
 
 def test_bootstrap_da_retryable_marks_payload(monkeypatch, tmp_path) -> None:
