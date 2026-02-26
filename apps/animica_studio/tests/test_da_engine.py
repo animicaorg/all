@@ -199,3 +199,39 @@ def test_rejects_node_path_with_clean_ui_error(tmp_path: Path):
     )
     assert not ok
     assert "Choose a host path for Studio dir" in msg
+
+
+def test_rejects_node_dir_equal_to_allowed_base(tmp_path: Path):
+    """node_data_dir must not be the exact allowed base dir root."""
+    e = _engine(tmp_path)
+    ok, msg = e.validate_config(
+        DaEngineConfig(
+            enabled=True,
+            host_data_dir=str(tmp_path),
+            node_data_dir="/data",
+            mode="quota",
+            limit_bytes=1024,
+            rpc_url="http://x",
+            allowed_base_dirs=["/data"],
+        )
+    )
+    assert not ok
+    assert "cannot be the base directory root" in msg
+
+
+def test_accepts_node_dir_as_subdir_of_allowed_base(tmp_path: Path):
+    """node_data_dir = /data/chain-1/da should be accepted when /data is the allowed base."""
+    e = _engine(tmp_path)
+    ok, msg = e.validate_config(
+        DaEngineConfig(
+            enabled=True,
+            host_data_dir=str(tmp_path),
+            node_data_dir="/data/chain-1/da",
+            mode="quota",
+            limit_bytes=1024,
+            rpc_url="http://x",
+            allowed_base_dirs=["/data"],
+        )
+    )
+    assert ok, msg
+
