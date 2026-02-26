@@ -23,6 +23,7 @@ from animica_studio.services.wallet_store import WalletStore
 from animica_studio.services.cli_runner import CliRunner
 from animica_studio.services.workers import run_in_threadpool
 from animica_studio.util.qt import ui_thread_only
+from animica_studio.util.threading_guard import assert_ui_thread
 from animica_studio.ui.components.primitives import (
     Badge,
     Card,
@@ -52,10 +53,17 @@ class DashboardPage(QWidget):
         self._net_worker = None
         self._health_job = None
         self._last_health_payload: dict[str, Any] = {}
+        self._balance_refresh_in_flight = False
         self._build_ui()
 
         # Deferred init — run after the window is shown
         QTimer.singleShot(0, self._post_show_init)
+
+    def _ensure_ui_thread(self, fn, *args) -> bool:
+        if assert_ui_thread():
+            return True
+        QTimer.singleShot(0, lambda: fn(*args))
+        return False
 
     # ------------------------------------------------------------------
     # UI build
@@ -305,15 +313,22 @@ class DashboardPage(QWidget):
 
     def refresh_balance(self, *, force: bool = False) -> None:
         """Fetch total balance across all wallets from Explorer."""
+        if not self._ensure_ui_thread(lambda: self.refresh_balance(force=force)):
+            return
+        if self._balance_refresh_in_flight:
+            return
+        self._balance_refresh_in_flight = True
         profile = self._active_profile()
         if profile is None:
             self._balance_label.setText("—")
             self._balance_meta.setText("No profile configured")
+            self._balance_refresh_in_flight = False
             return
 
         if not (profile.explorer_base_url or "").strip():
             self._balance_label.setText("—")
             self._balance_meta.setText("Explorer not configured")
+            self._balance_refresh_in_flight = False
             return
 
         wallets_path = Path.home() / ".animica" / "wallets.json"
@@ -323,12 +338,16 @@ class DashboardPage(QWidget):
         if not addresses:
             self._balance_label.setText("0 ANM")
             self._balance_meta.setText("No wallets loaded")
+            self._balance_refresh_in_flight = False
             return
 
         self._balance_label.setText("…")
         self._balance_meta.setText(f"Fetching {len(addresses)} wallet(s)…")
 
         def _on_total(total: TotalBalanceResult) -> None:
+            if not self._ensure_ui_thread(_on_total, total):
+                return
+            self._balance_refresh_in_flight = False
             if total.error_count > 0 and total.ok_count == 0:
                 self._balance_label.setText("—")
                 err = total.errors[0] if total.errors else "Explorer unreachable"

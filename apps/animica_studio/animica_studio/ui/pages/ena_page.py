@@ -8,9 +8,10 @@ from __future__ import annotations
 # - models/: profile/rpc/diagnostics dataclasses
 
 import json
+import logging
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,6 +35,9 @@ from animica_studio.services.ena_daemon import EnaDaemonManager
 from animica_studio.services.ena_tools import ToolPolicy
 from animica_studio.services.training_push import TrainingPushService
 from animica_studio.storage.config import Config, save_config
+from animica_studio.util.threading_guard import assert_ui_thread
+
+log = logging.getLogger(__name__)
 
 
 class _ChatWorker(QThread):
@@ -126,6 +130,13 @@ class EnaPage(QWidget):
         root.addLayout(push_row)
         root.addWidget(self._progress)
 
+
+    def _ensure_ui_thread(self, fn, *args) -> bool:
+        if assert_ui_thread():
+            return True
+        QTimer.singleShot(0, lambda: fn(*args))
+        return False
+
     def _profile(self) -> EnaProfile:
         return EnaProfile(
             mode=EnaMode(self._mode.currentText()),
@@ -136,9 +147,15 @@ class EnaPage(QWidget):
         )
 
     def _append(self, text: str) -> None:
+
+        if not self._ensure_ui_thread(self._append, text):
+            return
         self._chat.append(text)
 
     def _on_start_local(self) -> None:
+
+        if not self._ensure_ui_thread(self._on_start_local):
+            return
         try:
             st = self._daemon.start()
             self._status.setText(f"running:{st.pid}")
@@ -146,6 +163,9 @@ class EnaPage(QWidget):
             QMessageBox.warning(self, "ENA", str(exc))
 
     def _on_ping(self) -> None:
+
+        if not self._ensure_ui_thread(self._on_ping):
+            return
         try:
             resp = EnaClient(self._profile()).ping()
             self._status.setText("ok" if resp.get("ok") else "unavailable")
@@ -155,6 +175,9 @@ class EnaPage(QWidget):
             self._append(f"[ping:error] {exc}")
 
     def _run_chat(self, as_agent: bool) -> None:
+
+        if not self._ensure_ui_thread(self._run_chat, as_agent):
+            return
         prompt = self._prompt.toPlainText().strip()
         if not prompt:
             return
@@ -164,9 +187,13 @@ class EnaPage(QWidget):
         self._worker = _ChatWorker(agent, self._session, prompt, as_agent, self._ctx_diff.isChecked())
         self._worker.event.connect(self._on_event)
         self._worker.failed.connect(lambda err: self._append(f"[error] {err}"))
+        log.info("Starting ENA chat worker thread name=%s", self._worker.objectName() or "<unnamed>")
         self._worker.start()
 
     def _on_event(self, event: dict) -> None:
+
+        if not self._ensure_ui_thread(self._on_event, event):
+            return
         if event.get("type") == "token":
             self._append(event.get("text", ""))
         else:
@@ -179,11 +206,17 @@ class EnaPage(QWidget):
         Path(path).write_text(json.dumps(self._session.messages, indent=2), encoding="utf-8")
 
     def _pick_files(self) -> None:
+
+        if not self._ensure_ui_thread(self._pick_files):
+            return
         files, _ = QFileDialog.getOpenFileNames(self, "Training files")
         if files:
             self._bundle_files.setText(";".join(files))
 
     def _push_bundle(self) -> None:
+
+        if not self._ensure_ui_thread(self._push_bundle):
+            return
         files = [Path(x) for x in self._bundle_files.text().split(";") if x]
         if not files:
             QMessageBox.information(self, "Push Training", "Select files first")

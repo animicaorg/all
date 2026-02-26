@@ -40,15 +40,10 @@ except ImportError:
         def disconnect(self, *args: object) -> None: ...
 
 from animica_studio.storage.config import Config, discover_repo_root, load_config, save_config
+from animica_studio.util.threading_guard import assert_ui_thread
 
 log = logging.getLogger(__name__)
 
-
-def assert_ui_thread() -> bool:
-    app = QApplication.instance() if QApplication else None
-    if app is None or QThread is None:
-        return True
-    return QThread.currentThread() == app.thread()
 
 
 class JobHandle(QObject):
@@ -258,6 +253,7 @@ class JobRunner(QObject):
         thread_id = int(QThread.currentThreadId()) if QThread else -1
         log.info("JobRunner.run_cli called on thread=%s id=%s (must be main)", thread_name or "<unnamed>", thread_id)
         if not assert_ui_thread():
+            log.error("run_cli invoked off UI thread; rescheduling on UI thread")
             self._run_cli_requested.emit({
                 "job_id": job_id,
                 "handle": handle,
