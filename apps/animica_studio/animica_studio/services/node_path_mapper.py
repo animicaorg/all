@@ -45,6 +45,9 @@ class NodePathMapper:
         if not stat_method:
             return False, "Node does not expose da.statPath required for mount probe"
         host_pending = Path(host_pending_dir).expanduser()
+        host_pending_raw = str(host_pending)
+        if host_pending_raw == "/data" or host_pending_raw.startswith("/data/"):
+            return False, "Refusing to create node path on host: " + host_pending_raw
         host_pending.mkdir(parents=True, exist_ok=True)
         probe_name = ".studio_probe"
         host_probe = host_pending / probe_name

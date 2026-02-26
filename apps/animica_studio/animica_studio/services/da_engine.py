@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from animica_studio.services.da_client import DaClient
 from animica_studio.services.da_dir_usage_service import DaDirUsageService
 from animica_studio.services.workers import WorkerThread
+from animica_studio.util.paths import default_da_contrib_dir
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,10 @@ class DaContributionEngine(QObject):
 
     @staticmethod
     def _is_writable_dir(path: Path) -> tuple[bool, str]:
+        raw = str(path).strip()
+        if raw == "/data" or raw.startswith("/data/"):
+            log.warning("Refusing to create node path on host: %s", raw)
+            return False, "Refusing to create node path on host: " + raw
         try:
             path.mkdir(parents=True, exist_ok=True)
             test = path / ".write_test"
@@ -135,9 +140,15 @@ class DaContributionEngine(QObject):
             return "/data/da"
         return "/data/da"
 
+
+    @staticmethod
+    def _is_node_path(path: str) -> bool:
+        cleaned = str(path or "").strip()
+        return cleaned == "/data" or cleaned.startswith("/data/")
+
     def _normalize_data_dirs(self, cfg: DaEngineConfig) -> DaEngineConfig:
         """Normalize host/node DA paths, preserving backwards-compatible behavior."""
-        host_selected = Path((cfg.host_data_dir or "").strip() or os.path.expanduser("~/animica-da")).expanduser()
+        host_selected = Path((cfg.host_data_dir or "").strip() or str(default_da_contrib_dir())).expanduser()
         node_selected = (cfg.node_data_dir or "").strip() or self._derive_node_dir(host_selected)
         return DaEngineConfig(
             enabled=cfg.enabled,
@@ -177,7 +188,11 @@ class DaContributionEngine(QObject):
     def config_validation_details(self, cfg: DaEngineConfig) -> tuple[bool, list[str]]:
         reasons: list[str] = []
         if not cfg.host_data_dir:
-            reasons.append("Host directory is required")
+            reasons.append("Studio contribution dir is required")
+        elif self._is_node_path(cfg.host_data_dir):
+            reasons.append(
+                "Studio contribution dir must be a host path (e.g., ~/.animica/da_contrib), not node path /data"
+            )
         if not cfg.node_data_dir:
             reasons.append("Node directory is required")
         else:

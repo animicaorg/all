@@ -38,6 +38,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from animica_studio.util.paths import default_da_contrib_dir
+
 log = logging.getLogger(__name__)
 
 # Feature flag: preview mode (no node backend required)
@@ -371,6 +373,8 @@ def _validate_config(directory: str, max_bytes: int) -> None:
         raise ValueError("Contribution directory must not be empty.")
 
     path = Path(directory).expanduser().resolve()
+    if str(path) == "/data" or str(path).startswith("/data/"):
+        raise ValueError("Studio contribution dir must be a host path (e.g., ~/.animica/da_contrib), not node path /data")
 
     if path.exists() and not path.is_dir():
         raise ValueError(f"Path exists but is not a directory: {path}")
@@ -402,4 +406,4 @@ def _validate_config(directory: str, max_bytes: int) -> None:
 
 def default_da_dir() -> str:
     """Return the default contribution directory path (not created)."""
-    return str(Path.home() / ".animica" / "da_store")
+    return str(default_da_contrib_dir())
