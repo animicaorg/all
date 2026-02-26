@@ -385,7 +385,7 @@ def test_config_migrates_legacy_data_dir_under_data(tmp_path):
         cfg = load_config()
 
     assert cfg.da_contribution["studio_contrib_dir"] == str(default_da_contrib_dir())
-    assert cfg.da_contribution["node_da_dir"] == "/data/chain-1/da"
+    assert cfg.da_contribution["node_da_dir"] == "/data/da"
 
 
 def test_validate_config_rejects_node_data_path():
