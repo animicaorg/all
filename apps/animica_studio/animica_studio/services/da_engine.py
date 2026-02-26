@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import time
@@ -306,7 +307,10 @@ class DaContributionEngine(QObject):
             return
         now = time.time()
         if now < self._next_retry_allowed_at:
-            wait = int(self._next_retry_allowed_at - now)
+            if math.isfinite(self._next_retry_allowed_at):
+                wait = int(self._next_retry_allowed_at - now)
+            else:
+                wait = "requires_user_action"
             self.logLine.emit("warn", f"Start throttled; next retry allowed in {wait}s.")
             return
         self._start_in_progress = True
