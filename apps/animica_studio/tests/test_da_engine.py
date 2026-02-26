@@ -125,3 +125,31 @@ def test_rejects_node_dir_outside_allowed_base_dirs(tmp_path: Path):
     )
     assert not ok
     assert "allowed base dirs" in msg
+
+
+def test_apply_config_unchanged_noop(tmp_path: Path):
+    e = _engine(tmp_path)
+    ok, msg = e.apply_config(e.config)
+    assert ok is True
+    assert msg == "unchanged"
+
+
+def test_start_only_configures_on_da_setting_change(tmp_path: Path):
+    e = _engine(tmp_path)
+    fake = e.client()
+    e.start()
+    first_cfg_calls = [c for c in fake.calls if c[0] == "configure"]
+    assert len(first_cfg_calls) == 1
+    e.stop()
+    e.start()
+    second_cfg_calls = [c for c in fake.calls if c[0] == "configure"]
+    assert len(second_cfg_calls) == 1
+
+
+def test_start_ignores_reentry_while_in_progress(tmp_path: Path):
+    e = _engine(tmp_path)
+    fake = e.client()
+    e._start_in_progress = True
+    e.start()
+    cfg_calls = [c for c in fake.calls if c[0] == "configure"]
+    assert not cfg_calls
