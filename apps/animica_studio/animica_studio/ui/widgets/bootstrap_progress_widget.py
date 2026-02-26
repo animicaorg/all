@@ -32,12 +32,16 @@ class BootstrapProgressWidget(QDialog):
         self.state_lbl = QLabel("IDLE")
         self.download = QProgressBar(); self.download.setRange(0, 100)
         self.processing = QProgressBar(); self.processing.setRange(0, 100)
+        self.repo_lbl = QLabel("Repo: -")
         self.shards_lbl = QLabel("Shards: 0 | Output: 0 B")
+        self.notice_lbl = QLabel("")
         root.addWidget(QLabel("State"))
         root.addWidget(self.state_lbl)
         root.addWidget(QLabel("Download progress")); root.addWidget(self.download)
         root.addWidget(QLabel("Processing progress")); root.addWidget(self.processing)
+        root.addWidget(self.repo_lbl)
         root.addWidget(self.shards_lbl)
+        root.addWidget(self.notice_lbl)
 
         self.logs = QPlainTextEdit(); self.logs.setReadOnly(True)
         root.addWidget(self.logs, 1)
@@ -66,7 +70,7 @@ class BootstrapProgressWidget(QDialog):
     def update_state(self, state: str) -> None:
         self.state_lbl.setText(state)
 
-    def update_metrics(self, *, bytes_downloaded: int, bytes_total: int | None, bytes_processed: int, target_bytes: int | None, shards: int, output_bytes: int) -> None:
+    def update_metrics(self, *, bytes_downloaded: int, bytes_total: int | None, bytes_processed: int, target_bytes: int | None, shards: int, output_bytes: int, repo: str = "", ref: str = "", sources_exhausted: bool = False) -> None:
         if bytes_total:
             self.download.setValue(max(0, min(100, int(bytes_downloaded * 100 / max(1, bytes_total)))))
             self.download.setFormat(f"{bytes_downloaded} / {bytes_total} bytes")
@@ -75,7 +79,12 @@ class BootstrapProgressWidget(QDialog):
             self.download.setFormat(f"{bytes_downloaded} bytes")
         if target_bytes:
             self.processing.setValue(max(0, min(100, int(bytes_processed * 100 / max(1, target_bytes)))))
+        self.repo_lbl.setText(f"Repo: {repo}@{ref}" if repo else "Repo: -")
         self.shards_lbl.setText(f"Shards: {shards} | Output: {output_bytes} B")
+        if sources_exhausted and target_bytes:
+            self.notice_lbl.setText(f"Sources exhausted: only {bytes_processed} bytes processed; target {target_bytes}.")
+        else:
+            self.notice_lbl.setText("")
 
     def append_log(self, kind: str, text: str) -> None:
         self.logs.appendPlainText(f"[{kind}] {text}")
