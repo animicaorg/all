@@ -344,13 +344,16 @@ def test_config_da_contribution_round_trip(tmp_path):
     with patch.object(cfg_mod, "config_file", return_value=test_path):
         cfg = Config()
         cfg.da_contribution["enabled"] = True
-        cfg.da_contribution["directory"] = "/custom/da"
+        cfg.da_contribution["studio_contrib_dir"] = "/custom/da"
+        cfg.da_contribution["node_da_dir"] = "/data/da"
         cfg.da_contribution["max_gb"] = 100
         save_config(cfg)
 
         cfg2 = load_config()
         assert cfg2.da_contribution["enabled"] is True
-        assert cfg2.da_contribution["directory"] == "/custom/da"
+        assert cfg2.da_contribution["studio_contrib_dir"] == "/custom/da"
+        assert cfg2.da_contribution["host_data_dir"] == "/custom/da"
+        assert cfg2.da_contribution["node_da_dir"] == "/data/da"
         assert cfg2.da_contribution["max_gb"] == 100
 
 
@@ -367,3 +370,25 @@ def test_config_da_contribution_defaults_on_missing_key(tmp_path):
         cfg = load_config()
     assert isinstance(cfg.da_contribution, dict)
     assert cfg.da_contribution["enabled"] is True
+
+
+def test_config_migrates_legacy_data_dir_under_data(tmp_path):
+    import json
+    from animica_studio.storage.config import load_config
+    import animica_studio.storage.config as cfg_mod
+    from animica_studio.util.paths import default_da_contrib_dir
+    from unittest.mock import patch
+
+    test_path = tmp_path / "config.json"
+    test_path.write_text(json.dumps({"da_contribution": {"data_dir": "/data/chain-1/da", "node_data_dir": "/data/chain-1/da"}}), encoding="utf-8")
+    with patch.object(cfg_mod, "config_file", return_value=test_path):
+        cfg = load_config()
+
+    assert cfg.da_contribution["studio_contrib_dir"] == str(default_da_contrib_dir())
+    assert cfg.da_contribution["node_da_dir"] == "/data/chain-1/da"
+
+
+def test_validate_config_rejects_node_data_path():
+    from animica_studio.services.da_contribution_service import _validate_config
+    with pytest.raises(ValueError, match="Studio contribution dir must be a host path"):
+        _validate_config("/data/da", 2 * 1024 ** 3)

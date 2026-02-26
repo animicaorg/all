@@ -41,6 +41,7 @@ from animica_studio.util.qt import ui_thread_only
 from animica_studio.storage.config import Config, save_config
 from animica_studio.ui.widgets.stream_console import StreamConsole
 from animica_studio.util.cancel import CancelToken
+from animica_studio.util.paths import default_da_contrib_dir
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ class DaPage(QWidget):
         self._da_engine = DaContributionEngine(
             DaEngineConfig(
                 enabled=bool(contrib_cfg.get("enabled", False)),
-                host_data_dir=str(contrib_cfg.get("host_data_dir") or contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or os.path.expanduser("~/animica-da")),
-                node_data_dir=str(contrib_cfg.get("node_data_dir") or "/data/da"),
+                host_data_dir=str(contrib_cfg.get("studio_contrib_dir") or contrib_cfg.get("host_data_dir") or contrib_cfg.get("data_dir") or contrib_cfg.get("directory") or str(default_da_contrib_dir())),
+                node_data_dir=str(contrib_cfg.get("node_da_dir") or contrib_cfg.get("node_data_dir") or "/data/da"),
                 mode=str(contrib_cfg.get("mode") or contrib_cfg.get("reserve_mode") or "quota"),
                 limit_bytes=int(contrib_cfg.get("limit_bytes") or int(contrib_cfg.get("max_gb", 50)) * 1024**3),
                 rpc_url=str(contrib_cfg.get("rpc_url") or profile.node.rpc_local_url),
@@ -325,7 +326,7 @@ class DaPage(QWidget):
 
         dir_row = QHBoxLayout()
         self._contrib_host_dir_edit = QLineEdit()
-        self._contrib_host_dir_edit.setPlaceholderText(os.path.expanduser("~/.animica/chain-1/da"))
+        self._contrib_host_dir_edit.setPlaceholderText(str(default_da_contrib_dir()))
         dir_row.addWidget(self._contrib_host_dir_edit, stretch=1)
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._on_contrib_browse_dir)
@@ -333,7 +334,7 @@ class DaPage(QWidget):
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._on_contrib_open_folder)
         dir_row.addWidget(open_btn)
-        form.addRow("Host directory:", dir_row)
+        form.addRow("Studio contribution dir:", dir_row)
 
         self._contrib_node_dir_edit = QLineEdit()
         self._contrib_node_dir_edit.setPlaceholderText("Node DA dir from da.getDefaultDir")
@@ -483,9 +484,9 @@ class DaPage(QWidget):
         """Populate contribution controls from saved config."""
         cfg = self._config.da_contribution
         self._contrib_enable_cb.setChecked(bool(cfg.get("enabled", False)))
-        saved_dir = cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
+        saved_dir = cfg.get("studio_contrib_dir") or cfg.get("host_data_dir") or cfg.get("data_dir") or cfg.get("directory", "") or ""
         self._contrib_host_dir_edit.setText(saved_dir)
-        self._contrib_node_dir_edit.setText(str(cfg.get("node_data_dir") or ""))
+        self._contrib_node_dir_edit.setText(str(cfg.get("node_da_dir") or cfg.get("node_data_dir") or ""))
         self._contrib_max_gb_spin.setValue(int((int(cfg.get("limit_bytes") or int(cfg.get("max_gb", 50)) * 1024**3) / 1024**3)))
         mode = cfg.get("mode") or cfg.get("reserve_mode", "quota")
         idx = self._contrib_reserve_combo.findData(mode)
@@ -541,7 +542,7 @@ class DaPage(QWidget):
         try:
             from PySide6.QtCore import QUrl  # noqa: PLC0415
             from PySide6.QtGui import QDesktopServices  # noqa: PLC0415
-            path = self._contrib_host_dir_edit.text().strip() or os.path.expanduser("~/animica-da")
+            path = self._contrib_host_dir_edit.text().strip() or str(default_da_contrib_dir())
             if not os.path.isdir(path):
                 self._contrib_error_label.setText(f"Directory does not exist: {path}")
                 return
@@ -573,6 +574,8 @@ class DaPage(QWidget):
         self._config.da_contribution.update(
             {
                 "enabled": self._da_engine.config.enabled,
+                "studio_contrib_dir": self._da_engine.config.host_data_dir,
+                "node_da_dir": self._da_engine.config.node_data_dir,
                 "host_data_dir": self._da_engine.config.host_data_dir,
                 "node_data_dir": self._da_engine.config.node_data_dir,
                 "data_dir": self._da_engine.config.host_data_dir,
@@ -731,7 +734,7 @@ class DaPage(QWidget):
             if self._mount_error and self._contrib_local_ingest_host_dir.isVisible():
                 self._contrib_error_label.setText(self._mount_error)
                 return
-            directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
+            directory = self._contrib_host_dir_edit.text().strip() or str(default_da_contrib_dir())
             node_directory = self._contrib_node_dir_edit.text().strip() or self._default_node_dir or self._contrib_node_dir_edit.placeholderText() or "/data/da"
             max_gb = self._contrib_max_gb_spin.value(); max_bytes = max_gb * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
@@ -770,7 +773,7 @@ class DaPage(QWidget):
             if self._mount_error and self._contrib_local_ingest_host_dir.isVisible():
                 self._contrib_error_label.setText(self._mount_error)
                 return
-            directory = self._contrib_host_dir_edit.text().strip() or default_da_dir()
+            directory = self._contrib_host_dir_edit.text().strip() or str(default_da_contrib_dir())
             node_directory = self._contrib_node_dir_edit.text().strip() or self._default_node_dir or self._contrib_node_dir_edit.placeholderText() or "/data/da"
             max_bytes = self._contrib_max_gb_spin.value() * 1024 ** 3
             reserve_mode = self._contrib_reserve_combo.currentData() or "quota"
