@@ -25,6 +25,8 @@ networks:
     driver: bridge
 
 volumes:
+  mainnet_node_data:
+    name: animica_mainnet_chain_1_data
   mainnet_services_data:
     name: animica_mainnet_services_data
 
@@ -47,8 +49,10 @@ services:
         required: false
     volumes:
       - ../..:/app:ro
-      # Bind host ~/.animica into /data so DA local-ingest path mapping works.
-      - ${ANIMICA_DATA_DIR:-${HOME}/.animica}:/data
+      # Use a Docker named volume by default to avoid host filesystem permission issues.
+      # To bind a host path instead, set ANIMICA_DATA_MOUNT_SOURCE=/absolute/path/on/host
+      # (for example: ${HOME}/.animica).
+      - ${ANIMICA_DATA_MOUNT_SOURCE:-animica_mainnet_chain_1_data}:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
