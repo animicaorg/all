@@ -204,10 +204,16 @@ class DaContributionEngine(QObject):
         if not cfg.node_data_dir:
             reasons.append("Node directory is required")
         else:
-            allowed_base_dirs = [str(v).rstrip("/") for v in list(cfg.allowed_base_dirs or []) if str(v).strip()]
-            if allowed_base_dirs:
-                node_dir = cfg.node_data_dir.rstrip("/")
-                if not any(node_dir == base or node_dir.startswith(f"{base}/") for base in allowed_base_dirs):
+            allowed_base_dirs = [os.path.abspath(str(v)) for v in list(cfg.allowed_base_dirs or []) if str(v).strip()]
+            node_dir = os.path.abspath(cfg.node_data_dir)
+            # Reject the exact base dir root (e.g. /data) — must be a subdir
+            if allowed_base_dirs and any(node_dir == base for base in allowed_base_dirs):
+                reasons.append(
+                    "Node DA dir cannot be the base directory root; "
+                    "use a subdirectory such as /data/chain-<id>/da"
+                )
+            elif allowed_base_dirs:
+                if not any(node_dir.startswith(f"{base}{os.sep}") for base in allowed_base_dirs):
                     reasons.append(
                         "Selected node dir must be under one of the node's allowed base dirs: "
                         + ", ".join(allowed_base_dirs)

@@ -501,10 +501,24 @@ def da_configure(params=None, **kwargs) -> dict:
                 f"DA directory must be under one of: {allowed_dirs}",
                 data={"reason": "invalid_dir", "error_code": "DA_CONFIG_DIR_NOT_ALLOWED", "dir": root, "allowed_base_dirs": allowed_dirs},
             )
+        # Reject the exact base dir root (e.g. /data) — require a subdirectory.
+        # allowed_dirs entries are already normalized by _allowed_base_dirs(), so direct compare is safe.
+        for base in allowed_dirs:
+            if root == base:
+                raise rpc_errors.InvalidParams(
+                    f"Node DA dir cannot be the base directory root {root!r}; "
+                    f"use a subdirectory such as {root}/chain-<id>/da",
+                    data={"reason": "dir_must_be_subdir", "error_code": "DA_CONFIG_DIR_ROOT", "dir": root},
+                )
         Path(root).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
         if isinstance(exc, rpc_errors.RpcError):
             raise
+        if isinstance(exc, PermissionError):
+            raise rpc_errors.DaConfigPermDenied(
+                path=root,
+                error_code="DA_CONFIG_PERMISSION_DENIED",
+            )
         msg = str(exc)
         if "Read-only file system" in msg or "Errno 30" in msg:
             raise rpc_errors.InvalidParams(
@@ -517,11 +531,10 @@ def da_configure(params=None, **kwargs) -> dict:
         )
 
     if not os.access(root, os.W_OK):
-        raise rpc_errors.InvalidParams(
-            f"DA directory is not writable: {root}",
-            data={"reason": "not_writable", "error_code": "DA_CONFIG_DIR_NOT_WRITABLE", "dir": root},
+        raise rpc_errors.DaConfigPermDenied(
+            path=root,
+            error_code="DA_CONFIG_PERMISSION_DENIED",
         )
-
     try:
         from da.node_store import get_store, invalidate_store
     except ImportError as exc:
