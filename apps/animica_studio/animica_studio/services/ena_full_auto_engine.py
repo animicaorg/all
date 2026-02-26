@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -26,6 +27,7 @@ class FullAutoState(str, Enum):
     DISABLED = "disabled"
     STARTING = "starting"
     BOOTSTRAPPING = "bootstrapping"
+    BOOTSTRAP_BLOCKED = "bootstrap_blocked"
     CONFIGURING_DA = "configuring_da"
     CREATING_POINTER = "creating_pointer"
     PUBLISHING_FIRST = "publishing_first"
@@ -120,6 +122,12 @@ class EnaFullAutoEngine(QObject):
         self._bootstrap_retry_delays = [60, 300]
         self._bootstrap_failures = 0
         self._bootstrap_publish_attempted = False
+        self._bootstrap_blocked_reason = ""
+        self._bootstrap_blocked_retry_at = 0.0
+        self._bootstrap_blocked_retry_interval_s = 10 * 60
+        self._da_status_poll_interval_s = 90
+        self._da_status_next_poll_at = 0.0
+        self._last_da_capability_signature = ""
         self._last_metrics = TrainingMetrics()
         self._storage = app_data_dir() / "ena_models"
         self._storage.mkdir(parents=True, exist_ok=True)
@@ -142,6 +150,10 @@ class EnaFullAutoEngine(QObject):
         self._paused = False
         self._bootstrap_failures = 0
         self._bootstrap_publish_attempted = False
+        self._bootstrap_blocked_reason = ""
+        self._bootstrap_blocked_retry_at = 0.0
+        self._da_status_next_poll_at = 0.0
+        self._last_da_capability_signature = ""
         self._started_at = self._started_at or time.time()
         self._transition(FullAutoState.STARTING, "initializing")
         self._schedule(0)
@@ -193,6 +205,13 @@ class EnaFullAutoEngine(QObject):
             return
         if self._worker and self._worker.isRunning():
             return
+        manual_action = self._manual_action.strip().lower()
+        if self.state == FullAutoState.BOOTSTRAP_BLOCKED and manual_action != "retry":
+            if self._can_retry_blocked_bootstrap():
+                pass
+            else:
+                self._schedule_next_blocked_wake()
+                return
         work = {
             "cfg": asdict(self.config),
             "rpc_url": self._rpc_url,
@@ -204,6 +223,7 @@ class EnaFullAutoEngine(QObject):
             "storage": str(self._storage),
             "manual_action": self._manual_action,
             "bootstrap_publish_attempted": self._bootstrap_publish_attempted,
+            "current_state": self.state.value,
         }
         self._manual_action = ""
         self._worker = WorkerThread(run_full_auto_cycle, work)
@@ -233,6 +253,8 @@ class EnaFullAutoEngine(QObject):
         self.snapshot.last_sync_time = self._last_sync_time
         if bool(payload.get("bootstrap_publish_attempted", False)):
             self._bootstrap_publish_attempted = True
+        if payload.get("bootstrap_blocked_reason"):
+            self._bootstrap_blocked_reason = str(payload.get("bootstrap_blocked_reason") or "")
         state = payload.get("state", "idle")
         detail = payload.get("detail", "")
         self._transition(FullAutoState(state), detail)
@@ -245,6 +267,12 @@ class EnaFullAutoEngine(QObject):
             self.progressUpdated.emit({"kind": "sync", **payload["sync"]})
         if "bootstrap" in payload:
             self.progressUpdated.emit({"kind": "bootstrap", **payload["bootstrap"]})
+        if self.state == FullAutoState.BOOTSTRAP_BLOCKED:
+            now = time.time()
+            self._bootstrap_blocked_retry_at = now + self._bootstrap_blocked_retry_interval_s
+            self._da_status_next_poll_at = now + self._da_status_poll_interval_s
+            self._schedule_next_blocked_wake()
+            return
         if self.state == FullAutoState.ERROR:
             if bool(payload.get("bootstrap_retryable", False)):
                 if self._bootstrap_failures >= len(self._bootstrap_retry_delays):
@@ -267,12 +295,58 @@ class EnaFullAutoEngine(QObject):
             self._schedule(1)
 
     def _transition(self, state: FullAutoState, detail: str) -> None:
+        if self.state == state and self.snapshot.step == detail:
+            return
         self.state = state
         self.snapshot.mode = state.value.upper()
         self.snapshot.step = detail
         if state == FullAutoState.ERROR:
             self.snapshot.last_error = detail
         self.stateChanged.emit(state.value.upper(), detail)
+
+    def _can_retry_blocked_bootstrap(self) -> bool:
+        now = time.time()
+        if now >= self._bootstrap_blocked_retry_at:
+            self.logLine.emit("warning", "Blocked bootstrap backoff elapsed; retrying bootstrap.")
+            return True
+        if now >= self._da_status_next_poll_at:
+            current = self._poll_da_capability_signature()
+            self._da_status_next_poll_at = now + self._da_status_poll_interval_s
+            if current and current != self._last_da_capability_signature:
+                self._last_da_capability_signature = current
+                self.logLine.emit("system", "Detected DA capability change; retrying blocked bootstrap.")
+                return True
+        return False
+
+    def _schedule_next_blocked_wake(self) -> None:
+        now = time.time()
+        wake_at = min(
+            t
+            for t in [self._bootstrap_blocked_retry_at or now + self._bootstrap_blocked_retry_interval_s, self._da_status_next_poll_at or now + self._da_status_poll_interval_s]
+            if t > now
+        )
+        self._schedule(max(1, int(wake_at - now)))
+
+    def _poll_da_capability_signature(self) -> str:
+        try:
+            with RpcClient(self._rpc_url, connect_timeout=2.0, read_timeout=4.0, max_retries=0) as client:
+                reg = client.registry()
+                method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
+                if not method:
+                    return ""
+                out = client.call_with_schema(method, {})
+                if not isinstance(out, dict):
+                    return ""
+                keys = {
+                    "enabled": bool(out.get("enabled", False)),
+                    "ok": bool(out.get("ok", False)),
+                    "writable": bool(out.get("writable", False)),
+                    "allow_remote_put": bool(out.get("allow_remote_put", False)),
+                    "effective_dir": str(out.get("effective_dir") or ""),
+                }
+                return json.dumps(keys, sort_keys=True)
+        except Exception:
+            return ""
 
 
 def _chunk_steps_for_intensity(name: str) -> int:
@@ -415,6 +489,7 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     logs: list[tuple[str, str]] = []
     channel = str(cfg.get("model_channel") or "ena-main").strip() or "ena-main"
     manual_action = str(ctx.get("manual_action") or "").strip().lower()
+    current_state = str(ctx.get("current_state") or "")
     storage = Path(str(ctx.get("storage")))
     run_root = storage / "runs" / channel
     channel_dir = storage / channel
@@ -441,7 +516,8 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
             "pointer_commitment": str(cfg.get("channel_pointer_commitment") or ""),
         },
     }
-    logs.append(("system", "Bootstrapping ENA channel: no remote pointer found; initializing…"))
+    if current_state != FullAutoState.BOOTSTRAPPING.value:
+        logs.append(("system", "Bootstrapping ENA channel: no remote pointer found; initializing…"))
 
     if not is_valid_address(str(cfg.get("payout_address") or "")):
         logs.append(("warning", "Payout address invalid; earnings tracker disabled, bootstrap continues."))
@@ -498,6 +574,19 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
                 out["bootstrap"]["local_only_training"] = True
                 out["logs"].append(("warning", "Network publish unavailable; waiting for node capability"))
                 return out
+        blocked = _build_bootstrap_blocked_payload(cfg, detail)
+        if blocked:
+            out["state"] = "bootstrap_blocked"
+            out["detail"] = "MOUNT_MAPPING_MISSING"
+            out["bootstrap_blocked_reason"] = "MOUNT_MAPPING_MISSING"
+            out["bootstrap"].update({
+                "blocked": True,
+                "blocked_reason": "MOUNT_MAPPING_MISSING",
+                "blocked_info": blocked,
+                "diagnostics": blocked.get("problem", ""),
+            })
+            out["logs"] = out["logs"] + [("error", blocked.get("problem", "Node cannot see ingest directory"))]
+            return out
         out["state"] = publish.get("state", "error")
         out["detail"] = detail
         return out
@@ -517,6 +606,38 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     out["model_version"] = str(publish.get("model_version") or out["model_version"])
     out["logs"].append(("system", "Bootstrap complete; entering normal train → publish → sync loop."))
     return out
+
+
+def _build_bootstrap_blocked_payload(cfg: dict[str, Any], detail: str) -> dict[str, Any] | None:
+    if "Node cannot see host ingest directory" not in detail and "Local ingest path mapping broken" not in detail:
+        return None
+    host_match = re.search(r"host path\s+([^,;]+)", detail)
+    node_match = re.search(r"node expected\s+([^,;]+)", detail)
+    host_path = str(host_match.group(1).strip() if host_match else "~/.animica")
+    node_path = str(node_match.group(1).strip() if node_match else "/data")
+    compose_path = str(cfg.get("docker_compose_path") or "ops/docker/docker-compose.mainnet.yml")
+    volume_snippet = "volumes:\n  - /home/employee/.animica:/data"
+    command_snippet = "\n".join(
+        [
+            "docker ps",
+            "docker exec -it <node-container> sh -lc 'ls -la /data && ls -la /data/da_ingest/pending'",
+            "docker compose -f <compose-file> down",
+            "docker compose -f <compose-file> up -d",
+        ]
+    )
+    return {
+        "problem": "Node cannot see ingest directory",
+        "host_path": host_path,
+        "node_path": node_path,
+        "compose_path": compose_path,
+        "volume_snippet": volume_snippet,
+        "command_snippet": command_snippet,
+        "alternatives": [
+            "Enable allow_remote_put via da.configure (dev-only).",
+            "Run node on host with DA dir under ~/.animica (not /data).",
+            "Configure node data root to a user-writable host path.",
+        ],
+    }
 
 
 def _rpc_call_with_backoff(client: RpcClient, method: str, payload: Any, retries: int = 3) -> Any:
