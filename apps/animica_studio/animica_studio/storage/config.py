@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from animica_studio.util.paths import config_file, app_data_dir, default_chain_data_dir
+from animica_studio.util.paths import config_file, app_data_dir, default_chain_data_dir, default_da_contrib_dir
 
 log = logging.getLogger(__name__)
 
@@ -151,10 +151,12 @@ class Config:
     da_contribution: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": True,
-            "host_data_dir": "",
+            "studio_contrib_dir": str(default_da_contrib_dir()),
+            "node_da_dir": "/data/da",
+            "host_data_dir": str(default_da_contrib_dir()),
             "node_data_dir": "/data/da",
-            "data_dir": "",
-            "directory": "",
+            "data_dir": str(default_da_contrib_dir()),
+            "directory": str(default_da_contrib_dir()),
             "mode": "quota",
             "reserve_mode": "quota",
             "limit_bytes": 50 * 1024**3,
@@ -298,14 +300,20 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     if not isinstance(da_contrib_raw, dict):
         da_contrib_raw = {}
     legacy_data_dir = str(da_contrib_raw.get("data_dir") or da_contrib_raw.get("directory") or "").strip()
-    host_data_dir = str(da_contrib_raw.get("host_data_dir") or legacy_data_dir).strip()
-    node_data_dir = str(da_contrib_raw.get("node_data_dir") or "/data/da").strip()
+    default_studio_contrib_dir = str(default_da_contrib_dir())
+    candidate_studio_dir = str(da_contrib_raw.get("studio_contrib_dir") or da_contrib_raw.get("host_data_dir") or legacy_data_dir).strip()
+    if candidate_studio_dir == "/data" or candidate_studio_dir.startswith("/data/"):
+        candidate_studio_dir = default_studio_contrib_dir
+    studio_contrib_dir = candidate_studio_dir or default_studio_contrib_dir
+    node_da_dir = str(da_contrib_raw.get("node_da_dir") or da_contrib_raw.get("node_data_dir") or "/data/da").strip() or "/data/da"
     da_contribution = {
         "enabled": True,
-        "host_data_dir": host_data_dir,
-        "node_data_dir": node_data_dir or "/data/da",
-        "data_dir": host_data_dir,
-        "directory": host_data_dir,
+        "studio_contrib_dir": studio_contrib_dir,
+        "node_da_dir": node_da_dir,
+        "host_data_dir": studio_contrib_dir,
+        "node_data_dir": node_da_dir,
+        "data_dir": studio_contrib_dir,
+        "directory": studio_contrib_dir,
         "mode": "quota",
         "reserve_mode": "quota",
         "limit_bytes": 50 * 1024**3,
@@ -315,9 +323,14 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         "auto_start": True,
         **da_contrib_raw,
     }
-    da_contribution["host_data_dir"] = str(da_contribution.get("host_data_dir") or legacy_data_dir or "")
-    da_contribution["node_data_dir"] = str(da_contribution.get("node_data_dir") or "/data/da")
-    da_contribution["data_dir"] = da_contribution["host_data_dir"]
+    da_contribution["studio_contrib_dir"] = str(da_contribution.get("studio_contrib_dir") or da_contribution.get("host_data_dir") or legacy_data_dir or default_studio_contrib_dir)
+    if da_contribution["studio_contrib_dir"] == "/data" or da_contribution["studio_contrib_dir"].startswith("/data/"):
+        da_contribution["studio_contrib_dir"] = default_studio_contrib_dir
+    da_contribution["node_da_dir"] = str(da_contribution.get("node_da_dir") or da_contribution.get("node_data_dir") or "/data/da")
+    da_contribution["host_data_dir"] = da_contribution["studio_contrib_dir"]
+    da_contribution["node_data_dir"] = da_contribution["node_da_dir"]
+    da_contribution["data_dir"] = da_contribution["studio_contrib_dir"]
+    da_contribution["directory"] = da_contribution["studio_contrib_dir"]
 
     ena_raw = d.get("ena") or {}
     if not isinstance(ena_raw, dict):
