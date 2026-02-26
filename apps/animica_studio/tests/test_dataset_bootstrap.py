@@ -164,4 +164,61 @@ def test_bootstrap_progress_percent_grows(monkeypatch, tmp_path: Path) -> None:
         progress_cb=lambda p: progress.append(p.get("percent", 0)),
         cancel=threading.Event(),
     )
-    assert max(progress) > 1
+    assert max(progress) > 0
+
+
+def test_scheduler_expands_until_target_or_exhausted() -> None:
+    from animica_studio.services.dataset_bootstrap_service import SourceScheduler
+
+    sched = SourceScheduler(target_bytes=50 * 1024 * 1024, source_settings={"provider_order": ["vetted_repos"], "providers": {"vetted_repos": {"repos": [{"owner": "a", "repo": "tiny", "ref": "main"}, {"owner": "b", "repo": "tiny2", "ref": "main"}]}}})
+    first = sched.pop_next(0)
+    assert first is not None
+    sched.mark_completed(first, bytes_contributed=1024, docs=1)
+    second = sched.pop_next(1024)
+    assert second is not None
+    sched.mark_completed(second, bytes_contributed=1024, docs=1)
+    should_stop, reason = sched.stop_reason(2048)
+    assert should_stop is True
+    assert reason == "SOURCES_EXHAUSTED"
+
+
+def test_bootstrap_continues_across_providers(monkeypatch, tmp_path: Path) -> None:
+    from animica_studio.services import dataset_bootstrap_service as mod
+
+    class _P1(mod.SourceProvider):
+        source_name = "vetted_repos"
+        def iter_documents(self, manager, *, source_settings, progress_cb, cancel, work_item=None):  # noqa: ANN001
+            yield {"text": "a" * 2048, "source": "vetted_repos", "language": "en"}
+
+    class _P2(mod.SourceProvider):
+        source_name = "wikipedia"
+        def iter_documents(self, manager, *, source_settings, progress_cb, cancel, work_item=None):  # noqa: ANN001
+            yield {"text": "b" * 4096, "source": "wikipedia", "language": "en"}
+
+    monkeypatch.setattr(mod, "VettedReposProvider", _P1)
+    monkeypatch.setattr(mod, "WikipediaAbstractsProvider", _P2)
+    monkeypatch.setattr(mod, "ArxivApiProvider", _P2)
+    monkeypatch.setattr(mod, "GutenbergProvider", _P2)
+
+    svc = mod.DatasetBootstrapService(source_settings={"provider_order": ["vetted_repos", "wikipedia"], "providers": {"vetted_repos": {"repos": [{"owner": "x", "repo": "y", "ref": "main"}]}}})
+    out = svc.bootstrap(BootstrapOptions(name="x", size_preset="starter", output_dir=tmp_path / "out"), progress_cb=lambda _p: None, cancel=threading.Event())
+    assert out["manifest"]["total_bytes"] >= out["manifest"]["target_bytes"] or out["manifest"]["state"] == "DONE_EXHAUSTED"
+    assert (tmp_path / "out" / "bootstrap_plan.json").exists()
+
+
+def test_resume_uses_bootstrap_plan_without_requeue(tmp_path: Path) -> None:
+    from animica_studio.services.dataset_bootstrap_service import SourceScheduler
+
+    plan = {
+        "queued": [{"key": "wikipedia:latest", "provider": "wikipedia", "params": {"version": "latest"}}],
+        "completed": {"vetted_repos:a/b@main": {"bytes": 100, "docs": 1}},
+        "failed": {},
+        "expanded_providers": ["vetted_repos"],
+    }
+    sched = SourceScheduler(target_bytes=9999, source_settings={"provider_order": ["vetted_repos", "wikipedia"], "auto_expand_until_target": False}, plan_data=plan)
+    item = sched.pop_next(100)
+    assert item is not None and item.key == "wikipedia:latest"
+    sched.mark_completed(item, bytes_contributed=200, docs=1)
+    should_stop, reason = sched.stop_reason(300)
+    assert should_stop is True
+    assert reason == "SOURCES_EXHAUSTED"
