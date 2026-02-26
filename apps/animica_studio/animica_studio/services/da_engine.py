@@ -42,6 +42,7 @@ class DaEngineState(str, Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     ERROR = "error"
+    ERROR_CONFIGURATION = "error_configuration"  # deterministic config error; requires user action
 
 
 @dataclass
@@ -107,6 +108,9 @@ class DaContributionEngine(QObject):
         self._last_applied_limit_bytes = 0
         self._last_applied_mode = ""
         self._start_in_progress = False
+        # Backoff state: delay schedule is [0s, 10s, 30s, 120s] (last value caps)
+        self._backoff_delays = [0, 10, 30, 120]
+        self._next_retry_allowed_at: float = 0.0
 
     @staticmethod
     def _is_writable_dir(path: Path) -> tuple[bool, str]:
@@ -291,6 +295,14 @@ class DaContributionEngine(QObject):
     def start(self) -> None:
         if self.state == DaEngineState.RUNNING or self._start_in_progress:
             return
+        if self.state == DaEngineState.ERROR_CONFIGURATION:
+            self.logLine.emit("warn", "Start blocked: configuration error requires user action before retry.")
+            return
+        now = time.time()
+        if now < self._next_retry_allowed_at:
+            wait = int(self._next_retry_allowed_at - now)
+            self.logLine.emit("warn", f"Start throttled; next retry allowed in {wait}s.")
+            return
         self._start_in_progress = True
         self._start_attempts += 1
         self.logLine.emit("system", f"DA start requested (attempt={self._start_attempts})")
@@ -334,7 +346,7 @@ class DaContributionEngine(QObject):
             self._start_in_progress = False
 
     def stop(self) -> None:
-        if self.state not in {DaEngineState.RUNNING, DaEngineState.STARTING, DaEngineState.ERROR}:
+        if self.state not in {DaEngineState.RUNNING, DaEngineState.STARTING, DaEngineState.ERROR, DaEngineState.ERROR_CONFIGURATION}:
             return
         self._transition_to(DaEngineState.STOPPING, "stop")
         self._timer.stop()
@@ -343,8 +355,17 @@ class DaContributionEngine(QObject):
             self._busy_worker.wait(1000)
         self._transition_to(DaEngineState.CONFIGURED, "stop complete")
         self._start_in_progress = False
+        self._next_retry_allowed_at = 0.0
         self.healthChanged.emit(True, "Stopped")
         self.logLine.emit("system", "DA contribution engine stopped")
+
+    def clear_error_configuration(self) -> None:
+        """Reset ERROR_CONFIGURATION state so the user can retry after fixing the config."""
+        if self.state == DaEngineState.ERROR_CONFIGURATION:
+            self._next_retry_allowed_at = 0.0
+            self._transition_to(DaEngineState.CONFIGURED, "error_configuration cleared by user")
+            self.metrics.last_error = ""
+            self.healthChanged.emit(True, "Configuration error cleared")
 
     def _update_local_metrics(self) -> None:
         try:
@@ -427,12 +448,31 @@ class DaContributionEngine(QObject):
         self.metricsUpdated.emit(self.metrics)
 
     def _set_error(self, detail: str) -> None:
-        self._transition_to(DaEngineState.ERROR, "error")
+        is_perm_error = (
+            "errno 13" in detail.lower()
+            or "permission denied" in detail.lower()
+            or NODE_PATH_UI_ERROR in detail
+        )
+        if is_perm_error:
+            self._transition_to(DaEngineState.ERROR_CONFIGURATION, "permission error")
+            self._next_retry_allowed_at = float("inf")  # require user action
+        else:
+            self._transition_to(DaEngineState.ERROR, "error")
+            # Schedule backoff: pick delay based on attempt count (capped at last entry)
+            attempt = max(self._start_attempts, 1)
+            backoff_index = min(attempt - 1, len(self._backoff_delays) - 1)
+            delay = self._backoff_delays[backoff_index]
+            self._next_retry_allowed_at = time.time() + delay
         self.metrics.last_error = detail
         self.healthChanged.emit(False, detail)
         self.logLine.emit("error", detail)
 
     def diagnostics(self) -> dict[str, Any]:
+        now = time.time()
+        if self._next_retry_allowed_at == float("inf"):
+            next_retry = "requires_user_action"
+        else:
+            next_retry = max(0.0, self._next_retry_allowed_at - now)
         return {
             "state": self.state.value,
             "config": self.config.__dict__,
@@ -441,4 +481,5 @@ class DaContributionEngine(QObject):
             "config_validation_reasons": self._config_validation_reasons,
             "last_state_transition_ts": self._last_state_transition_ts,
             "start_attempts": self._start_attempts,
+            "next_retry_in_seconds": next_retry,
         }

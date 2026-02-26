@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -334,6 +335,10 @@ class DaPage(QWidget):
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._on_contrib_open_folder)
         dir_row.addWidget(open_btn)
+        test_write_btn = QPushButton("Test write")
+        test_write_btn.setToolTip("Create a temporary file in Studio dir to verify write access.")
+        test_write_btn.clicked.connect(self._on_test_studio_dir_write)
+        dir_row.addWidget(test_write_btn)
         form.addRow("Studio dir:", dir_row)
 
         self._contrib_node_dir_edit = QLineEdit()
@@ -555,8 +560,24 @@ class DaPage(QWidget):
         except Exception as exc:  # noqa: BLE001
             log.exception("Open folder failed: %s", exc)
 
+    def _on_test_studio_dir_write(self) -> None:
+        """Test that the Studio contribution dir is writable by creating a temp file."""
+        directory = self._contrib_host_dir_edit.text().strip() or str(default_da_contrib_dir())
+        try:
+            p = Path(directory).expanduser()
+            p.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=p, prefix=".write_test_", delete=True):
+                pass
+            self._contrib_error_label.setText("")
+            self._contrib_console.append_info(f"Write test passed: {directory} is writable.")
+        except Exception as exc:  # noqa: BLE001
+            msg = f"Write test FAILED for {directory}: {exc}"
+            self._contrib_error_label.setText(msg)
+            self._contrib_console.append_error(msg)
+            if "errno 13" in str(exc).lower() or "permission denied" in str(exc).lower():
+                self._prompt_directory_permission_fix(directory)
 
-    def _prompt_directory_permission_fix(self, directory: str) -> None:
+
         command = f"sudo chmod -R a+rwx '{directory}'"
         text = (
             "The configured DA directory is not writable.\n\n"
@@ -733,6 +754,7 @@ class DaPage(QWidget):
             self._contrib_console.append_warn(f"Failed to open docs: {exc}")
 
     def _on_fix_and_retry_start(self) -> None:
+        self._da_engine.clear_error_configuration()
         self._refresh_da_recommendations(force_probe=True)
         self._on_contrib_start()
 
@@ -842,10 +864,15 @@ class DaPage(QWidget):
             DaEngineState.RUNNING.value: "Running",
             DaEngineState.STOPPING.value: "Stopping",
             DaEngineState.ERROR.value: "Error",
+            DaEngineState.ERROR_CONFIGURATION.value: "Configuration error (action required)",
         }
         self._contrib_health_label.setText(mapping.get(state, state))
         if state == DaEngineState.DISABLED.value and self._contrib_autostart_cb.isChecked():
             self._contrib_error_label.setText("Disabled while auto-start is enabled. Click Start to fix now.")
+        if state == DaEngineState.ERROR_CONFIGURATION.value:
+            self._contrib_error_label.setText(
+                "Studio dir is not writable. Fix the Studio contribution dir, then click 'Fix & Retry Start'."
+            )
 
     @ui_thread_only(log)
     def _on_engine_health(self, healthy: bool, detail: str) -> None:
@@ -853,6 +880,11 @@ class DaPage(QWidget):
             if detail:
                 self._contrib_console.append_info(detail)
             self._contrib_error_label.setText("")
+            return
+        if "errno 13" in detail.lower() or "permission denied" in detail.lower():
+            self._contrib_error_label.setText(
+                detail + "\nStudio dir is not writable. Use the 'Test write' button or change Studio dir, then click 'Fix & Retry Start'."
+            )
             return
         if "errno 30" in detail.lower() or "/home" in detail.lower():
             self._contrib_error_label.setText(detail + "\nNode runs in a container; /home is not writable there. Click 'Use node default dir'.")
