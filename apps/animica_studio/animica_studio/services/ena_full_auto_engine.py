@@ -549,6 +549,62 @@ class NodeToHostPathMapper:
         return host_base / rel
 
 
+class NodePathMapper:
+    def __init__(self, host_chain_dir: str | None) -> None:
+        self._host_chain_dir = str(host_chain_dir or "").strip()
+
+    def map_ingest_dir(self, node_ingest_dir: str, node_chain_dir: str, node_data_root: str) -> Path:
+        node_ingest = Path(str(node_ingest_dir or "").strip())
+        node_chain = Path(str(node_chain_dir or "").strip())
+        if not node_ingest.is_absolute() or not node_chain.is_absolute():
+            raise RuntimeError("Node reported non-absolute DA paths; cannot map ingest directory")
+        if not self._host_chain_dir:
+            raise RuntimeError("Node ingest mapping unavailable: Studio host chain dir is not configured")
+
+        host_chain_root = Path(self._host_chain_dir).expanduser().resolve()
+        node_chain_root = node_chain.parent
+        if not str(node_data_root or "").strip():
+            raise RuntimeError("Node ingest mapping unavailable: node data root is empty")
+        node_data = Path(str(node_data_root).strip())
+        try:
+            _ = node_chain_root.relative_to(node_data)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Node ingest mapping unavailable: node chain root {node_chain_root} is not under node data root {node_data}"
+            ) from exc
+
+        host_data_root = host_chain_root.parent
+        try:
+            ingest_rel = node_ingest.relative_to(node_data)
+        except Exception as exc:
+            raise RuntimeError(f"Node ingest dir {node_ingest} is not under node data root {node_data}") from exc
+        return host_data_root / ingest_rel
+
+    def probe_visibility(self, client: RpcClient, reg: Any, host_pending_dir: Path, node_pending_dir: str) -> tuple[bool, str]:
+        stat_method = reg.resolve_any(["da.statPath", "da_statPath"])
+        if not stat_method:
+            return False, "Node does not expose da.statPath required for ingest path probe"
+        probe_name = ".studio_probe"
+        host_probe = host_pending_dir / probe_name
+        node_probe = os.path.join(node_pending_dir, probe_name)
+        host_probe.write_bytes(b"studio-probe")
+        try:
+            out = _rpc_call_with_backoff(client, stat_method, {"path": node_probe})
+            exists = bool(out.get("exists", False)) if isinstance(out, dict) else bool(out)
+            if exists:
+                return True, ""
+            return False, (
+                "Node cannot see host ingest directory. "
+                "Fix Docker volume mounts so host ~/.animica is mounted to node /data. "
+                f"I wrote to host path {host_probe}, node expected {node_probe}; mapping missing."
+            )
+        finally:
+            try:
+                host_probe.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def _host_chain_dir_from_cfg(cfg: dict[str, Any]) -> str | None:
     direct = str(cfg.get("host_chain_dir") or "").strip()
     if direct:
@@ -683,32 +739,56 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
         return commitment
 
     ingest_dir_method = reg.resolve_any(["da.getIngestDir", "da_getIngestDir"])
+    data_root_method = reg.resolve_any(["da.getDataRoot", "da_getDataRoot"])
     ingest_method = reg.resolve_any(["da.ingestLocal", "da_ingestLocal"])
     has_method = reg.resolve_any(["da.has", "da_has"])
-    if not ingest_dir_method or not ingest_method:
+    if not ingest_dir_method or not ingest_method or not data_root_method:
         raise RuntimeError("DA policy blocks remote put and node does not expose local ingest RPC")
 
     ingest_info = _rpc_call_with_backoff(client, ingest_dir_method, {})
+    data_root_info = _rpc_call_with_backoff(client, data_root_method, {})
     if not isinstance(ingest_info, dict):
         raise RuntimeError("da.getIngestDir returned invalid response")
+    if not isinstance(data_root_info, dict):
+        raise RuntimeError("da.getDataRoot returned invalid response")
     node_pending_dir = str(ingest_info.get("pending_dir") or os.path.join(str(ingest_info.get("dir") or ""), "pending"))
     if not node_pending_dir.strip():
         raise RuntimeError("da.getIngestDir did not return pending directory")
+    node_ingest_dir = str(ingest_info.get("dir") or "").strip()
+    node_chain_dir = str((status or {}).get("effective_dir") or "").strip()
+    node_data_root = str(data_root_info.get("data_root") or "").strip()
+    if not node_ingest_dir:
+        raise RuntimeError("da.getIngestDir did not return ingest directory")
+    if not node_chain_dir:
+        raise RuntimeError("da.getStatus did not return effective_dir for node/host path mapping")
 
-    host_pending_dir = Path(node_pending_dir)
-    if node_pending_dir.startswith("/data/"):
-        host_pending_dir = Path(os.path.expanduser("~/.animica") + node_pending_dir.removeprefix("/data"))
+    mapper = NodePathMapper(_host_chain_dir_from_cfg(cfg))
+    host_ingest_dir = mapper.map_ingest_dir(node_ingest_dir, node_chain_dir, node_data_root)
+    host_pending_dir = host_ingest_dir / "pending"
     host_pending_dir.mkdir(parents=True, exist_ok=True)
     if not os.access(host_pending_dir, os.W_OK):
         raise RuntimeError(f"Resolved host ingest directory is not writable: {host_pending_dir}")
+
+    probe_ok, probe_error = mapper.probe_visibility(client, reg, host_pending_dir, node_pending_dir)
+    if not probe_ok:
+        raise RuntimeError(probe_error)
 
     blob_name = f"{hashlib.sha256(data).hexdigest()}.blob"
     host_blob_path = host_pending_dir / blob_name
     node_blob_path = os.path.join(node_pending_dir, blob_name)
     host_blob_path.write_bytes(data)
-    logs.append(("info", f"allow_remote_put=false; staged blob for local ingest at {host_blob_path}"))
+    logs.append(("info", f"allow_remote_put=false; staged blob for local ingest at host={host_blob_path} node={node_blob_path}"))
 
-    out = _rpc_call_with_backoff(client, ingest_method, {"path": node_blob_path, "namespace": ns})
+    try:
+        out = _rpc_call_with_backoff(client, ingest_method, {"path": node_blob_path, "namespace": ns})
+    except Exception as exc:
+        msg = str(exc)
+        if "-32004" in msg or "ingest file not found" in msg:
+            raise RuntimeError(
+                "Local ingest path mapping broken. Configure docker mount: host ~/.animica -> node /data. "
+                f"I wrote to host path {host_blob_path}, node expected {node_blob_path}. Raw node error: {msg}"
+            ) from exc
+        raise
     commitment = str(out.get("blob_id") if isinstance(out, dict) else out)
     if not commitment:
         raise RuntimeError("da.ingestLocal did not return commitment")
