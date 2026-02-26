@@ -195,6 +195,58 @@ def test_da_put_too_large():
             da_put({"bytes": large_b64})
 
 
+def test_da_get_ingest_dir_defaults_under_chain_root(tmp_path):
+    from rpc.methods.da import da_get_ingest_dir
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+
+    with patch("rpc.methods.da._require_store", return_value=store):
+        result = da_get_ingest_dir({})
+
+    assert result["dir"].endswith("chain-1/da_ingest")
+    assert result["pending_dir"].endswith("chain-1/da_ingest/pending")
+
+
+def test_da_ingest_local_reads_file_and_ingests(tmp_path):
+    from rpc.methods.da import da_ingest_local
+
+    ingest_dir = tmp_path / "chain-1" / "da_ingest"
+    pending = ingest_dir / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    blob = pending / "abc.blob"
+    blob.write_bytes(b"hello")
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+    store.put.return_value = ("c" * 64, 5)
+
+    with patch("rpc.methods.da._require_store", return_value=store), \
+         patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
+        result = da_ingest_local({"path": str(blob), "namespace": 0})
+
+    assert result["blob_id"] == "c" * 64
+    assert result["ingested"] is True
+
+
+def test_da_ingest_local_rejects_path_outside_ingest_dir(tmp_path):
+    from rpc.methods.da import da_ingest_local
+    from rpc.errors import AccessDenied
+
+    ingest_dir = tmp_path / "chain-1" / "da_ingest"
+    outside = tmp_path / "other" / "x.blob"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_bytes(b"x")
+
+    store = _make_store_mock()
+    store.root_dir = str(tmp_path / "chain-1" / "da")
+
+    with patch("rpc.methods.da._require_store", return_value=store), \
+         patch("rpc.methods.da._resolve_ingest_dir", return_value=str(ingest_dir)):
+        with pytest.raises(AccessDenied):
+            da_ingest_local({"path": str(outside), "namespace": 0})
+
+
 # ---------------------------------------------------------------------------
 # da.get
 # ---------------------------------------------------------------------------
