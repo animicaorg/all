@@ -25,6 +25,7 @@ _DA_VERSION = "1.0.0"
 _MAX_PUT_BYTES = 32 * 1024 * 1024  # 32 MiB
 _INGEST_RATE_LIMIT_SECONDS = 0.2
 _last_ingest_at: dict[str, float] = {}
+_DOCKER_BRIDGE_CIDR = "172.16.0.0/12"
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -209,6 +210,10 @@ def _assert_safe_ingest_path(path: str, ingest_dir: str) -> str:
 
 
 def _is_local_rpc_request() -> bool:
+    return _authorize_local_ingest_request()["allowed"]
+
+
+def _remote_rpc_ip() -> str | None:
     try:
         ctx = deps.get_ctx()
         client = getattr(ctx, "client", None)
@@ -218,11 +223,61 @@ def _is_local_rpc_request() -> bool:
         elif client is not None:
             host = getattr(client, "host", None)
         if not host:
-            return False
-        return bool(ipaddress.ip_address(str(host)).is_loopback)
+            return None
+        return str(ipaddress.ip_address(str(host)))
     except Exception:
         # Direct in-process method calls (tests/internal) have no request context.
-        return True
+        return "127.0.0.1"
+
+
+def _rpc_bound_localhost_only() -> bool:
+    host = (os.getenv("ANIMICA_RPC_HOST", "127.0.0.1") or "").strip().lower()
+    return host in {"", "127.0.0.1", "localhost", "::1"}
+
+
+def _allowed_local_rpc_nets() -> list[str]:
+    raw = (os.getenv("ANIMICA_ALLOWED_LOCAL_RPC_NETS") or "").strip()
+    if raw:
+        return [entry.strip() for entry in raw.split(",") if entry.strip()]
+    allowed = ["127.0.0.1/32", "::1/128"]
+    docker_explicit = _bool_env("ANIMICA_DA_ALLOW_DOCKER_BRIDGE", False)
+    if _is_container_runtime() or docker_explicit:
+        if _rpc_bound_localhost_only() or _bool_env("ANIMICA_DA_ALLOW_DOCKER_BRIDGE_UNSAFE", False):
+            allowed.append(_DOCKER_BRIDGE_CIDR)
+    return allowed
+
+
+def _valid_ingest_token() -> bool:
+    token = (os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()
+    if not token:
+        return False
+    try:
+        ctx = deps.get_ctx()
+        headers = getattr(ctx, "headers", {}) or {}
+        provided = str(headers.get("x-animica-ingest-token") or "").strip()
+        return bool(provided) and provided == token
+    except Exception:
+        return False
+
+
+def _authorize_local_ingest_request() -> dict[str, Any]:
+    remote_ip = _remote_rpc_ip()
+    allowed_cidrs = _allowed_local_rpc_nets()
+    ip_allowed = False
+    if remote_ip:
+        try:
+            remote = ipaddress.ip_address(remote_ip)
+            ip_allowed = any(remote in ipaddress.ip_network(cidr, strict=False) for cidr in allowed_cidrs)
+        except Exception:
+            ip_allowed = False
+    token_allowed = _valid_ingest_token()
+    return {
+        "allowed": bool(ip_allowed or token_allowed),
+        "remote_ip": remote_ip or "unknown",
+        "allowed_nets": allowed_cidrs,
+        "token_configured": bool((os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()),
+        "token_valid": token_allowed,
+    }
 
 
 def _ingest_local_guard_enabled() -> bool:
@@ -733,11 +788,18 @@ def da_ingest_local(params=None, **kwargs) -> dict:
     if not isinstance(path, str) or not path.strip():
         raise rpc_errors.InvalidParams("Missing required parameter: path")
 
-    if _ingest_local_guard_enabled() and not _is_local_rpc_request():
+    auth = _authorize_local_ingest_request()
+    if _ingest_local_guard_enabled() and not auth["allowed"]:
         raise rpc_errors.RpcError(
             -32006,
             "permission denied: da.ingestLocal is restricted to local RPC callers",
-            {"feature": "da.local_ingest", "local_only": True},
+            {
+                "feature": "da.local_ingest",
+                "local_only": True,
+                "remote_ip": auth["remote_ip"],
+                "allowed": auth["allowed_nets"],
+                "token_configured": auth["token_configured"],
+            },
         )
 
     store = _require_store()
@@ -790,6 +852,19 @@ def da_ingest_local(params=None, **kwargs) -> dict:
         "moved_to": moved_to,
     }
 
+
+
+
+@method("da.getCallerInfo", aliases=("da_getCallerInfo", "node.whoAmI", "node_whoAmI"), desc="Return caller network identity as seen by node")
+def da_get_caller_info(params=None, **kwargs) -> dict:
+    _ = params, kwargs
+    auth = _authorize_local_ingest_request()
+    return {
+        "remote_ip": auth["remote_ip"],
+        "allowed_local_rpc_nets": auth["allowed_nets"],
+        "rpc_bound_localhost_only": _rpc_bound_localhost_only(),
+        "token_configured": auth["token_configured"],
+    }
 
 @method("da.get", aliases=("da_get", "da.getBlob", "da_getBlob"),
         desc="Retrieve a blob by id from the node DA store")
@@ -987,6 +1062,7 @@ __all__ = [
     "da_put",
     "da_get_ingest_dir",
     "da_ingest_local",
+    "da_get_caller_info",
     "da_get",
     "da_has",
     "da_list",
