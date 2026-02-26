@@ -14,7 +14,8 @@
 #
 # Notes:
 # - Uses mainnet chain ID (1)
-# - Isolated volumes: mainnet_node_data, mainnet_services_data
+# - Host bind mount for node data: ~/.animica -> /data
+# - Isolated volume for services data: mainnet_services_data
 # - Genesis: /app/core/genesis/mainnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
 # -------------------------------------------------------------------
@@ -25,8 +26,6 @@ networks:
     driver: bridge
 
 volumes:
-  mainnet_node_data:
-    name: animica_mainnet_chain_1_data
   mainnet_services_data:
     name: animica_mainnet_services_data
 
@@ -40,6 +39,7 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
     working_dir: /app
+    user: "${ANIMICA_UID:-${UID:-1000}}:${ANIMICA_GID:-${GID:-1000}}"
     read_only: true
     tmpfs:
       - /tmp
@@ -49,10 +49,8 @@ services:
         required: false
     volumes:
       - ../..:/app:ro
-      # Use a Docker named volume by default to avoid host filesystem permission issues.
-      # To bind a host path instead, set ANIMICA_DATA_MOUNT_SOURCE=/absolute/path/on/host
-      # (for example: ${HOME}/.animica).
-      - ${ANIMICA_DATA_MOUNT_SOURCE:-animica_mainnet_chain_1_data}:/data
+      # Bind host ~/.animica by default (override with ANIMICA_DATA_MOUNT_SOURCE).
+      - ${ANIMICA_DATA_MOUNT_SOURCE:-${HOME}/.animica}:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
