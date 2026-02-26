@@ -619,7 +619,13 @@ def test_da_ingest_local_remote_permission_denied(tmp_path, monkeypatch):
     store = _make_store_mock()
     store.root_dir = str(tmp_path / "chain-1" / "da")
 
-    monkeypatch.setattr("rpc.methods.da._is_local_rpc_request", lambda: False)
+    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda: {
+        "allowed": False,
+        "remote_ip": "172.17.0.1",
+        "allowed_nets": ["127.0.0.1/32", "::1/128", "172.16.0.0/12"],
+        "token_configured": False,
+        "token_valid": False,
+    })
     monkeypatch.setattr("rpc.methods.da._ingest_local_guard_enabled", lambda: True)
 
     with patch("rpc.methods.da._require_store", return_value=store), \
@@ -628,3 +634,32 @@ def test_da_ingest_local_remote_permission_denied(tmp_path, monkeypatch):
             da_ingest_local({"path": str(blob), "namespace": 0})
 
     assert exc.value.code == -32006
+    assert exc.value.data.get("remote_ip") == "172.17.0.1"
+    assert "172.16.0.0/12" in exc.value.data.get("allowed", [])
+
+
+def test_allowed_local_rpc_nets_docker_localhost_only(monkeypatch):
+    from rpc.methods.da import _allowed_local_rpc_nets
+
+    monkeypatch.delenv("ANIMICA_ALLOWED_LOCAL_RPC_NETS", raising=False)
+    monkeypatch.setenv("ANIMICA_RPC_HOST", "127.0.0.1")
+    monkeypatch.setattr("rpc.methods.da._is_container_runtime", lambda: True)
+    nets = _allowed_local_rpc_nets()
+    assert "127.0.0.1/32" in nets
+    assert "::1/128" in nets
+    assert "172.16.0.0/12" in nets
+
+
+def test_da_get_caller_info(monkeypatch):
+    from rpc.methods.da import da_get_caller_info
+
+    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda: {
+        "allowed": True,
+        "remote_ip": "172.17.0.1",
+        "allowed_nets": ["127.0.0.1/32", "::1/128", "172.16.0.0/12"],
+        "token_configured": False,
+        "token_valid": False,
+    })
+    out = da_get_caller_info({})
+    assert out["remote_ip"] == "172.17.0.1"
+    assert "172.16.0.0/12" in out["allowed_local_rpc_nets"]

@@ -484,7 +484,7 @@ class EnaFullAutoPanel(QGroupBox):
         ls = time.strftime("%H:%M:%S", time.localtime(snap.last_sync_time)) if snap.last_sync_time else "-"
         self._times.setText(f"Last upload: {lu} | Last sync: {ls}")
         self._doing.setText(f"What it's doing now: {detail}")
-        self._blocked_box.setVisible(state == "BOOTSTRAP_BLOCKED")
+        self._blocked_box.setVisible(state in {"BOOTSTRAP_BLOCKED", "BOOTSTRAP_BLOCKED_LOCAL_ONLY"})
 
     def _on_progress(self, payload: dict) -> None:
         kind = payload.get("kind")
@@ -518,13 +518,19 @@ class EnaFullAutoPanel(QGroupBox):
             blocked_info = payload.get("blocked_info") if isinstance(payload.get("blocked_info"), dict) else None
             if blocked_info:
                 self._blocked_problem.setText(f"Problem: {blocked_info.get('problem')}")
-                self._blocked_host.setText(f"What Studio wrote: {blocked_info.get('host_path')}")
-                self._blocked_node.setText(f"What node expected: {blocked_info.get('node_path')}")
-                self._blocked_compose.setText(f"Compose file path: {blocked_info.get('compose_path')}")
-                self._blocked_fix.setPlainText(str(blocked_info.get("volume_snippet") or ""))
-                self._blocked_commands.setPlainText(str(blocked_info.get("command_snippet") or ""))
+                host_path = blocked_info.get('host_path') or blocked_info.get('remote_ip') or '-'
+                node_path = blocked_info.get('node_path') or ', '.join(str(v) for v in blocked_info.get('allowed', [])) or '-'
+                self._blocked_host.setText(f"What Studio wrote: {host_path}")
+                self._blocked_node.setText(f"What node expected: {node_path}")
+                self._blocked_compose.setText(f"Compose file path: {blocked_info.get('compose_path') or '-'}")
+                self._blocked_fix.setPlainText(str(blocked_info.get("volume_snippet") or blocked_info.get("recommendation") or ""))
+                self._blocked_commands.setPlainText(str(blocked_info.get("command_snippet") or "Retry after updating node policy"))
                 alternatives = blocked_info.get("alternatives") if isinstance(blocked_info.get("alternatives"), list) else []
-                self._blocked_alts.setText("Alternatives:\n- " + "\n- ".join(str(v) for v in alternatives))
+                if alternatives:
+                    self._blocked_alts.setText("Alternatives:\n- " + "\n- ".join(str(v) for v in alternatives))
+                else:
+                    self._blocked_alts.setText("")
+
 
     def _open_blocked_compose(self) -> None:
         text = self._blocked_compose.text().replace("Compose file path:", "").strip()

@@ -29,6 +29,7 @@ class FullAutoState(str, Enum):
     STARTING = "starting"
     BOOTSTRAPPING = "bootstrapping"
     BOOTSTRAP_BLOCKED = "bootstrap_blocked"
+    BOOTSTRAP_BLOCKED_LOCAL_ONLY = "bootstrap_blocked_local_only"
     CONFIGURING_DA = "configuring_da"
     CREATING_POINTER = "creating_pointer"
     PUBLISHING_FIRST = "publishing_first"
@@ -207,7 +208,7 @@ class EnaFullAutoEngine(QObject):
         if self._worker and self._worker.isRunning():
             return
         manual_action = self._manual_action.strip().lower()
-        if self.state == FullAutoState.BOOTSTRAP_BLOCKED and manual_action != "retry":
+        if self.state in {FullAutoState.BOOTSTRAP_BLOCKED, FullAutoState.BOOTSTRAP_BLOCKED_LOCAL_ONLY} and manual_action != "retry":
             if self._can_retry_blocked_bootstrap():
                 pass
             else:
@@ -268,7 +269,7 @@ class EnaFullAutoEngine(QObject):
             self.progressUpdated.emit({"kind": "sync", **payload["sync"]})
         if "bootstrap" in payload:
             self.progressUpdated.emit({"kind": "bootstrap", **payload["bootstrap"]})
-        if self.state == FullAutoState.BOOTSTRAP_BLOCKED:
+        if self.state in {FullAutoState.BOOTSTRAP_BLOCKED, FullAutoState.BOOTSTRAP_BLOCKED_LOCAL_ONLY}:
             now = time.time()
             self._bootstrap_blocked_retry_at = now + self._bootstrap_blocked_retry_interval_s
             self._da_status_next_poll_at = now + self._da_status_poll_interval_s
@@ -575,6 +576,19 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
                 out["bootstrap"]["local_only_training"] = True
                 out["logs"].append(("warning", "Network publish unavailable; waiting for node capability"))
                 return out
+        local_only_blocked = _build_local_only_blocked_payload(cfg, detail, str(ctx.get("rpc_url") or ""))
+        if local_only_blocked:
+            out["state"] = "bootstrap_blocked_local_only"
+            out["detail"] = "BOOTSTRAP_BLOCKED_LOCAL_ONLY"
+            out["bootstrap_blocked_reason"] = "BOOTSTRAP_BLOCKED_LOCAL_ONLY"
+            out["bootstrap"].update({
+                "blocked": True,
+                "blocked_reason": "BOOTSTRAP_BLOCKED_LOCAL_ONLY",
+                "blocked_info": local_only_blocked,
+                "diagnostics": local_only_blocked.get("problem", ""),
+            })
+            out["logs"] = out["logs"] + [("error", f"Local-only ingest denied for remote_ip={local_only_blocked.get('remote_ip')}")]
+            return out
         blocked = _build_bootstrap_blocked_payload(cfg, detail)
         if blocked:
             out["state"] = "bootstrap_blocked"
@@ -607,6 +621,37 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     out["model_version"] = str(publish.get("model_version") or out["model_version"])
     out["logs"].append(("system", "Bootstrap complete; entering normal train → publish → sync loop."))
     return out
+
+
+def _build_local_only_blocked_payload(cfg: dict[str, Any], detail: str, rpc_url: str) -> dict[str, Any] | None:
+    lowered = detail.lower()
+    if "-32006" not in detail and "local rpc callers" not in lowered:
+        return None
+    remote_ip = "unknown"
+    allowed = []
+    m = re.search(r'remote_ip[\'"]?\s*[:=]\s*[\'"]([^\'"\s,}]+)', detail)
+    if m:
+        remote_ip = m.group(1)
+    m2 = re.search(r'allowed[\'"]?\s*[:=]\s*\[([^\]]+)\]', detail)
+    if m2:
+        allowed = [x.strip(" '\"") for x in m2.group(1).split(",") if x.strip()]
+    try:
+        with RpcClient(rpc_url, connect_timeout=2.0, read_timeout=5.0, max_retries=0) as c:
+            reg = c.registry()
+            who = reg.resolve_any(["da.getCallerInfo", "da_getCallerInfo", "node.whoAmI", "node_whoAmI"])
+            if who:
+                out = _rpc_call_with_backoff(c, who, {})
+                if isinstance(out, dict):
+                    remote_ip = str(out.get("remote_ip") or remote_ip)
+                    allowed = [str(v) for v in (out.get("allowed_local_rpc_nets") or allowed)]
+    except Exception:
+        pass
+    return {
+        "problem": "Node denied da.ingestLocal because caller is not in local RPC allowlist.",
+        "remote_ip": remote_ip,
+        "allowed": allowed,
+        "recommendation": "Allowlist Docker bridge net (e.g. 172.16.0.0/12), set ANIMICA_DA_INGEST_TOKEN + X-Animica-Ingest-Token, and keep RPC bound to localhost.",
+    }
 
 
 def _build_bootstrap_blocked_payload(cfg: dict[str, Any], detail: str) -> dict[str, Any] | None:
@@ -896,7 +941,7 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
     status = status or {}
     allow_remote = bool(status.get("allow_remote_put", True))
     if allow_remote:
-        out = _rpc_call_with_backoff(client, put_method, {"data": base64.b64encode(data).decode("ascii"), "namespace": ns})
+        out = _rpc_call_with_backoff(client, put_method, {"bytes": base64.b64encode(data).decode("ascii"), "namespace": str(ns), "metadata": {"source": "studio.full_auto"}})
         commitment = str(out.get("commitment") if isinstance(out, dict) else out)
         if has_method:
             has = _rpc_call_with_backoff(client, has_method, commitment)
