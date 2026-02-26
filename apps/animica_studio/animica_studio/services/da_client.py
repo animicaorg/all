@@ -154,6 +154,12 @@ class DaClient:
     def status(self) -> dict[str, Any]:
         return self._call_multi(("da_getStatus", "da.getStatus", "da_status", "da.status"), [])
 
+    def getStatus(self) -> dict[str, Any]:
+        return self.status()
+
+    def get_status(self) -> dict[str, Any]:
+        return self.status()
+
     def configure(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._call_multi(("da.configure", "da_configure"), params)
 
