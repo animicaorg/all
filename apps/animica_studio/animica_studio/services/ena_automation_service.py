@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -112,6 +113,15 @@ class EnaService:
         if da_dir.startswith("/data/"):
             return os.path.expanduser("~/.animica") + da_dir.removeprefix("/data")
         return da_dir
+
+    @staticmethod
+    def _map_node_path_to_host(path: str) -> str:
+        cleaned = str(path or "").strip()
+        if cleaned.startswith("/data/chain-"):
+            return os.path.expanduser("~/.animica") + cleaned.removeprefix("/data")
+        if cleaned.startswith("/data/"):
+            return os.path.expanduser("~/.animica") + cleaned.removeprefix("/data")
+        return cleaned
 
     def _build_da_diagnostics(self, status: dict[str, Any]) -> dict[str, Any]:
         da_dir = str(status.get("configured_dir") or status.get("raw", {}).get("dir") or "")
@@ -294,7 +304,8 @@ class EnaService:
             "latest": commitment,
             "checkpoint_sha": checkpoint_sha,
         }
-        put_out = self.da.upload_json(pointer_payload)
+        pointer_bytes = json.dumps(pointer_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        put_out = self._push_da_bytes(pointer_bytes, checkpoint_sha=f"{checkpoint_sha}-pointer")
         pointer_commitment = str(put_out.get("blob_id") or "")
         verified = self._verify_da_presence(pointer_commitment)
         return {
@@ -303,6 +314,49 @@ class EnaService:
             "verified": verified,
             "payload": pointer_payload,
         }
+
+    def _push_da_bytes(self, data: bytes, *, checkpoint_sha: str) -> dict[str, Any]:
+        status = self.da_status.get_status()
+        diagnostics = self._build_da_diagnostics(status)
+        local_node = bool(diagnostics.get("local_node"))
+        if status.get("allow_remote_put") is not False:
+            return self.da.upload_bytes(data)
+        if not local_node:
+            raise DaPolicyError(
+                message="Remote DA uploads are disabled on this node. You must enable allow_remote_put on the node operator side.",
+                code="DA_REMOTE_PUT_BLOCKED",
+                da_enabled=True,
+                allow_remote_put=False,
+                da_dir=diagnostics["da_dir"],
+                rpc_url=diagnostics["rpc_url"],
+                can_enable_remote_put=self._supports_allow_remote_put(status),
+                diagnostics=diagnostics,
+                recommendations=[
+                    "Remote DA uploads are disabled on this node.",
+                    "You must enable allow_remote_put on the node operator side.",
+                ],
+            )
+
+        ingest = self.da.get_ingest_dir()
+        node_ingest_dir = str(ingest.get("dir") or "")
+        if not node_ingest_dir:
+            raise RuntimeError("Node did not return da.getIngestDir.dir")
+        node_pending_dir = str(ingest.get("pending_dir") or os.path.join(node_ingest_dir, "pending"))
+        host_pending_dir = Path(self._map_node_path_to_host(node_pending_dir))
+        host_pending_dir.mkdir(parents=True, exist_ok=True)
+
+        sha = __import__("hashlib").sha256(data).hexdigest()
+        host_blob_path = host_pending_dir / f"{sha}.blob"
+        host_blob_path.write_bytes(data)
+        node_blob_path = os.path.join(node_pending_dir, f"{sha}.blob")
+
+        ingest_out = self.da.ingest_local(node_blob_path, namespace=0)
+        blob_id = str( ingest_out.get("blob_id") or "")
+        if not blob_id:
+            raise RuntimeError("da.ingestLocal did not return blob_id")
+        if not self.da.wait_for_blob(blob_id, timeout_s=30.0, interval_s=2.0):
+            raise RuntimeError(f"WAITING_FOR_INGEST: blob not yet visible after ingest {blob_id}")
+        return {"blob_id": blob_id, "local_ingest": True, "ingest": ingest_out}
     def _pending_upload_queue_path(self) -> Path:
         return app_data_dir() / "pending_da_uploads.json"
 
@@ -464,10 +518,10 @@ class EnaService:
                     recommendations=recs,
                 )
 
-            strategy = "rpc_put"
+            strategy = "local_ingest" if status.get("allow_remote_put") is False and diagnostics.get("local_node") else "rpc_put"
             step.logs.append("Uploading to DA…")
             step.progress = 60
-            out = self.da.upload_bytes(data)
+            out = self._push_da_bytes(data, checkpoint_sha=checkpoint_sha)
             commit = str(out.get("blob_id") or "")
             if not commit:
                 raise RuntimeError(out.get("error", "DA unavailable"))

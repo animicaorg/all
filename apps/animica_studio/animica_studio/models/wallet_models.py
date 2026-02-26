@@ -20,7 +20,15 @@ _BECH32M_RE = re.compile(r"^anim1[ac-hj-np-z02-9]{10,}$")
 
 def is_valid_address(addr: str) -> bool:
     """Return True if *addr* is a plausible Animica bech32m address."""
-    return bool(_BECH32M_RE.match(addr))
+    if not isinstance(addr, str) or not _BECH32M_RE.match(addr):
+        return False
+    try:
+        from core.utils.bytes import bech32m_decode
+
+        hrp, payload = bech32m_decode(addr)
+        return hrp == "anim" and len(payload) > 0
+    except Exception:
+        return False
 
 
 def shorten_address(addr: str, head: int = 8, tail: int = 6) -> str:
