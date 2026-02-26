@@ -22,6 +22,9 @@ class BootstrapProgressWidget(QDialog):
     cancelRequested = Signal()
     retryRequested = Signal()
     copyDiagnosticsRequested = Signal()
+    addSourcesRequested = Signal()
+    continueRequested = Signal()
+    exportPlanRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -32,7 +35,10 @@ class BootstrapProgressWidget(QDialog):
         self.state_lbl = QLabel("IDLE")
         self.download = QProgressBar(); self.download.setRange(0, 100)
         self.processing = QProgressBar(); self.processing.setRange(0, 100)
-        self.repo_lbl = QLabel("Repo: -")
+        self.repo_lbl = QLabel("Active source: -")
+        self.target_lbl = QLabel("Target progress: 0 / 0")
+        self.queue_lbl = QLabel("Queue: 0 work items remaining")
+        self.stop_reason_lbl = QLabel("Stop reason: -")
         self.shards_lbl = QLabel("Shards: 0 | Output: 0 B")
         self.notice_lbl = QLabel("")
         root.addWidget(QLabel("State"))
@@ -40,6 +46,9 @@ class BootstrapProgressWidget(QDialog):
         root.addWidget(QLabel("Download progress")); root.addWidget(self.download)
         root.addWidget(QLabel("Processing progress")); root.addWidget(self.processing)
         root.addWidget(self.repo_lbl)
+        root.addWidget(self.target_lbl)
+        root.addWidget(self.queue_lbl)
+        root.addWidget(self.stop_reason_lbl)
         root.addWidget(self.shards_lbl)
         root.addWidget(self.notice_lbl)
 
@@ -52,8 +61,11 @@ class BootstrapProgressWidget(QDialog):
         self.cancel_btn = QPushButton("Cancel")
         self.retry_btn = QPushButton("Retry")
         self.copy_btn = QPushButton("Copy diagnostics")
+        self.add_sources_btn = QPushButton("Add sources / expand allowlist")
+        self.continue_btn = QPushButton("Continue anyway")
+        self.export_plan_btn = QPushButton("Export plan diagnostics")
         self.open_dir_btn = QPushButton("Open output folder")
-        for b in [self.pause_btn, self.resume_btn, self.cancel_btn, self.retry_btn, self.copy_btn, self.open_dir_btn]:
+        for b in [self.pause_btn, self.resume_btn, self.cancel_btn, self.retry_btn, self.copy_btn, self.add_sources_btn, self.continue_btn, self.export_plan_btn, self.open_dir_btn]:
             row.addWidget(b)
         row.addStretch(1)
         root.addLayout(row)
@@ -63,6 +75,9 @@ class BootstrapProgressWidget(QDialog):
         self.cancel_btn.clicked.connect(self.cancelRequested.emit)
         self.retry_btn.clicked.connect(self.retryRequested.emit)
         self.copy_btn.clicked.connect(self.copyDiagnosticsRequested.emit)
+        self.add_sources_btn.clicked.connect(self.addSourcesRequested.emit)
+        self.continue_btn.clicked.connect(self.continueRequested.emit)
+        self.export_plan_btn.clicked.connect(self.exportPlanRequested.emit)
         self.open_dir_btn.clicked.connect(self._open_output)
 
         self._output_dir = ""
@@ -70,7 +85,7 @@ class BootstrapProgressWidget(QDialog):
     def update_state(self, state: str) -> None:
         self.state_lbl.setText(state)
 
-    def update_metrics(self, *, bytes_downloaded: int, bytes_total: int | None, bytes_processed: int, target_bytes: int | None, shards: int, output_bytes: int, repo: str = "", ref: str = "", sources_exhausted: bool = False) -> None:
+    def update_metrics(self, *, bytes_downloaded: int, bytes_total: int | None, bytes_processed: int, target_bytes: int | None, shards: int, output_bytes: int, repo: str = "", ref: str = "", sources_exhausted: bool = False, queue_remaining: int = 0, stop_reason: str = "") -> None:
         if bytes_total:
             self.download.setValue(max(0, min(100, int(bytes_downloaded * 100 / max(1, bytes_total)))))
             self.download.setFormat(f"{bytes_downloaded} / {bytes_total} bytes")
@@ -79,7 +94,10 @@ class BootstrapProgressWidget(QDialog):
             self.download.setFormat(f"{bytes_downloaded} bytes")
         if target_bytes:
             self.processing.setValue(max(0, min(100, int(bytes_processed * 100 / max(1, target_bytes)))))
-        self.repo_lbl.setText(f"Repo: {repo}@{ref}" if repo else "Repo: -")
+        self.repo_lbl.setText(f"Active source: {repo}@{ref}" if repo else "Active source: -")
+        self.target_lbl.setText(f"Target progress: {bytes_processed} / {target_bytes or 0}")
+        self.queue_lbl.setText(f"Queue: {max(0, int(queue_remaining))} work items remaining")
+        self.stop_reason_lbl.setText(f"Stop reason: {stop_reason or '-'}")
         self.shards_lbl.setText(f"Shards: {shards} | Output: {output_bytes} B")
         if sources_exhausted and target_bytes:
             self.notice_lbl.setText(f"Sources exhausted: only {bytes_processed} bytes processed; target {target_bytes}.")

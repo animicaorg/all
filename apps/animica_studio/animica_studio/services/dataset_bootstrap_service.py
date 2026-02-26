@@ -66,6 +66,123 @@ class DownloadFailure:
     message: str
 
 
+@dataclass(slots=True)
+class WorkItem:
+    key: str
+    provider: str
+    params: dict[str, Any]
+
+
+class SourceScheduler:
+    def __init__(
+        self,
+        *,
+        target_bytes: int,
+        source_settings: dict[str, Any],
+        plan_data: dict[str, Any] | None = None,
+    ) -> None:
+        self.target_bytes = int(target_bytes)
+        self.source_settings = source_settings
+        self.providers_enabled = list((source_settings.get("provider_order") or ["vetted_repos", "wikipedia", "arxiv", "gutenberg"]))
+        self.auto_expand = bool(source_settings.get("auto_expand_until_target", True))
+        self._queued: list[WorkItem] = []
+        self._completed: dict[str, dict[str, Any]] = {}
+        self._failed: dict[str, str] = {}
+        if plan_data:
+            self._queued = [WorkItem(**item) for item in plan_data.get("queued", []) if isinstance(item, dict)]
+            self._completed = dict(plan_data.get("completed", {})) if isinstance(plan_data.get("completed"), dict) else {}
+            self._failed = dict(plan_data.get("failed", {})) if isinstance(plan_data.get("failed"), dict) else {}
+        self._expanded = set(plan_data.get("expanded_providers", [])) if isinstance(plan_data, dict) else set()
+
+    def ensure_queue(self, processed_bytes: int) -> None:
+        if int(processed_bytes) >= self.target_bytes:
+            return
+        if self._queued or not self.auto_expand:
+            return
+        for provider in self.providers_enabled:
+            if provider in self._expanded:
+                continue
+            items = self._expand_provider(provider)
+            self._expanded.add(provider)
+            for item in items:
+                if item.key in self._completed or item.key in self._failed:
+                    continue
+                if not any(q.key == item.key for q in self._queued):
+                    self._queued.append(item)
+            if self._queued:
+                return
+
+    def pop_next(self, processed_bytes: int) -> WorkItem | None:
+        self.ensure_queue(processed_bytes)
+        if not self._queued:
+            return None
+        return self._queued.pop(0)
+
+    def mark_completed(self, item: WorkItem, *, bytes_contributed: int, docs: int) -> None:
+        self._completed[item.key] = {
+            "provider": item.provider,
+            "params": item.params,
+            "bytes": int(bytes_contributed),
+            "docs": int(docs),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def mark_failed(self, item: WorkItem, reason: str) -> None:
+        self._failed[item.key] = reason
+
+    def stop_reason(self, processed_bytes: int) -> tuple[bool, str]:
+        if int(processed_bytes) >= self.target_bytes:
+            return True, "TARGET_MET"
+        self.ensure_queue(processed_bytes)
+        if self._queued:
+            return False, "CONTINUE"
+        return True, "SOURCES_EXHAUSTED"
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "queued": [{"key": item.key, "provider": item.provider, "params": item.params} for item in self._queued],
+            "completed": self._completed,
+            "failed": self._failed,
+            "expanded_providers": sorted(self._expanded),
+            "providers_enabled": self.providers_enabled,
+            "target_bytes": self.target_bytes,
+            "auto_expand": self.auto_expand,
+        }
+
+    def _expand_provider(self, provider: str) -> list[WorkItem]:
+        providers_cfg = self.source_settings.get("providers") if isinstance(self.source_settings.get("providers"), dict) else {}
+        cfg = providers_cfg.get(provider, {}) if isinstance(providers_cfg, dict) else {}
+        if provider == "vetted_repos":
+            repos = cfg.get("repos") if isinstance(cfg, dict) and isinstance(cfg.get("repos"), list) else []
+            defaults = [
+                {"owner": "animicaorg", "repo": "all", "ref": "main"},
+                {"owner": "python", "repo": "cpython", "ref": "main"},
+                {"owner": "pallets", "repo": "flask", "ref": "main"},
+            ]
+            items = repos or defaults
+            out = []
+            for repo in items:
+                owner = str(repo.get("owner") or "").strip()
+                name = str(repo.get("repo") or "").strip()
+                ref = str(repo.get("ref") or "main").strip() or "main"
+                if not owner or not name:
+                    continue
+                key = f"vetted_repos:{owner}/{name}@{ref}"
+                out.append(WorkItem(key=key, provider=provider, params={"repos": [{"owner": owner, "repo": name, "ref": ref}]}))
+            return out
+        if provider == "wikipedia":
+            versions = cfg.get("versions") if isinstance(cfg, dict) and isinstance(cfg.get("versions"), list) else []
+            if not versions:
+                versions = [cfg.get("version") or "latest", "20240501", "20240101"]
+            return [WorkItem(key=f"wikipedia:{v}", provider=provider, params={"version": str(v)}) for v in versions]
+        if provider == "arxiv":
+            starts = cfg.get("starts") if isinstance(cfg, dict) and isinstance(cfg.get("starts"), list) else [0, 1000, 2000, 3000, 4000, 5000]
+            return [WorkItem(key=f"arxiv:{int(s)}", provider=provider, params={"shard_start": int(s), "shard_size": 1000}) for s in starts]
+        if provider == "gutenberg" and bool(cfg.get("enabled", True)):
+            return [WorkItem(key="gutenberg:catalog", provider=provider, params={})]
+        return []
+
+
 class SourceProvider:
     source_name: str = "base"
     source_version: str = "v1"
@@ -85,6 +202,7 @@ class SourceProvider:
         source_settings: dict[str, Any],
         progress_cb: ProgressCb,
         cancel: Event,
+        work_item: WorkItem | None = None,
     ) -> Iterable[dict[str, Any]]:
         return []
 
@@ -107,8 +225,11 @@ class WikipediaAbstractsProvider(SourceProvider):
         candidates = [ProviderUrlCandidate(name=f"mirror-{idx+1}", url=f"{base}/{url_path}") for idx, base in enumerate(base_urls)]
         return f"enwiki-{version}-abstract.xml.gz", candidates
 
-    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        version, candidates = self.resolve_latest(source_settings)
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event, work_item: WorkItem | None = None) -> Iterable[dict[str, Any]]:
+        merged = dict(source_settings)
+        if work_item:
+            merged.update(work_item.params)
+        version, candidates = self.resolve_latest(merged)
         cache = self.cache_dir(manager.cache_root)
         dump_path = manager.download_with_mirrors(
             source=self.source_name,
@@ -156,16 +277,21 @@ class ArxivApiProvider(SourceProvider):
             base_urls.insert(0, base_override)
         return f"api-snapshot-{version}", [ProviderUrlCandidate(name=f"mirror-{i+1}", url=u) for i, u in enumerate(base_urls)]
 
-    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        version, bases = self.resolve_latest(source_settings)
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event, work_item: WorkItem | None = None) -> Iterable[dict[str, Any]]:
+        merged = dict(source_settings)
+        if work_item:
+            merged.update(work_item.params)
+        version, bases = self.resolve_latest(merged)
         cache = self.cache_dir(manager.cache_root)
-        for start in range(0, 4000, 1000):
+        shard_size = int(merged.get("shard_size") or 1000)
+        starts = [int(merged.get("shard_start"))] if merged.get("shard_start") is not None else list(range(0, 6000, shard_size))
+        for start in starts:
             if cancel.is_set():
                 return
             candidates = [
                 ProviderUrlCandidate(
                     name=f"{base.name}-batch-{start}",
-                    url=f"{base.url}?search_query=cat:cs.LG+OR+cat:cs.AI&start={start}&max_results=1000",
+                    url=f"{base.url}?search_query=cat:cs.LG+OR+cat:cs.AI&start={start}&max_results={shard_size}",
                 )
                 for base in bases
             ]
@@ -203,8 +329,11 @@ class GutenbergProvider(SourceProvider):
             return self.source_version, [ProviderUrlCandidate(name="override", url=f"{custom}/cache/epub/feeds/rdf-files.tar.bz2")]
         return self.source_version, [ProviderUrlCandidate(name="primary", url=self._CATALOG)]
 
-    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        version, candidates = self.resolve_latest(source_settings)
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event, work_item: WorkItem | None = None) -> Iterable[dict[str, Any]]:
+        merged = dict(source_settings)
+        if work_item:
+            merged.update(work_item.params)
+        version, candidates = self.resolve_latest(merged)
         cache = self.cache_dir(manager.cache_root)
         manager.download_with_mirrors(
             source=self.source_name,
@@ -246,11 +375,14 @@ class VettedReposProvider(SourceProvider):
     def resolve_latest(self, overrides: dict[str, Any] | None = None) -> tuple[str, list[ProviderUrlCandidate]]:
         return self.source_version, []
 
-    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event) -> Iterable[dict[str, Any]]:
-        repos = self._parse_repos(source_settings)
-        max_file_size = int(source_settings.get("max_file_size_bytes") or (3 * 1024 * 1024))
-        include_globs = source_settings.get("include_patterns") if isinstance(source_settings.get("include_patterns"), list) else []
-        exclude_globs = source_settings.get("exclude_patterns") if isinstance(source_settings.get("exclude_patterns"), list) else []
+    def iter_documents(self, manager: "DownloadManager", *, source_settings: dict[str, Any], progress_cb: ProgressCb, cancel: Event, work_item: WorkItem | None = None) -> Iterable[dict[str, Any]]:
+        merged = dict(source_settings)
+        if work_item:
+            merged.update(work_item.params)
+        repos = self._parse_repos(merged)
+        max_file_size = int(merged.get("max_file_size_bytes") or (3 * 1024 * 1024))
+        include_globs = merged.get("include_patterns") if isinstance(merged.get("include_patterns"), list) else []
+        exclude_globs = merged.get("exclude_patterns") if isinstance(merged.get("exclude_patterns"), list) else []
         for repo in repos:
             if cancel.is_set():
                 return
@@ -559,6 +691,7 @@ class DatasetBootstrapService:
         target_dir = (options.output_dir or self._root / f"bootstrap-{_safe_name(options.name)}").expanduser()
         target_dir.mkdir(parents=True, exist_ok=True)
         state_path = target_dir / "build_state.json"
+        plan_path = target_dir / "bootstrap_plan.json"
         state = self._load_state(state_path)
         state.setdefault("target_bytes", options.target_bytes)
         state.setdefault("processed_bytes", 0)
@@ -574,13 +707,34 @@ class DatasetBootstrapService:
             max_daily_bytes=options.max_daily_download_bytes,
         )
         provider_settings = self._provider_settings()
-        providers: list[SourceProvider] = [WikipediaAbstractsProvider(), ArxivApiProvider(), GutenbergProvider(), VettedReposProvider()]
+        providers: dict[str, SourceProvider] = {
+            "vetted_repos": VettedReposProvider(),
+            "wikipedia": WikipediaAbstractsProvider(),
+            "arxiv": ArxivApiProvider(),
+            "gutenberg": GutenbergProvider(),
+        }
+
+        prior_plan = self._load_state(plan_path)
+        scheduler = SourceScheduler(
+            target_bytes=options.target_bytes,
+            source_settings=self._source_settings,
+            plan_data=prior_plan,
+        )
 
         shard_writer = _ShardWriter(target_dir / "shards", shard_size_bytes=options.shard_size_bytes)
         dedup_seen: set[str] = set()
         lang_counts: dict[str, int] = {}
         source_counts: dict[str, int] = {}
         before_count = 0
+
+        def _persist_plan() -> None:
+            payload = scheduler.diagnostics()
+            payload["processed_bytes"] = int(state.get("processed_bytes") or 0)
+            payload["downloaded_bytes"] = int(state.get("downloaded_bytes") or 0)
+            payload["doc_count"] = int(state.get("doc_count") or 0)
+            payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+            payload["target_bytes"] = int(options.target_bytes)
+            plan_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         def _progress(p: dict[str, Any]) -> None:
             if p.get("download_delta_bytes"):
@@ -590,15 +744,32 @@ class DatasetBootstrapService:
             p["processed_bytes"] = state.get("processed_bytes", 0)
             p["doc_count"] = state.get("doc_count", 0)
             p["target_bytes"] = options.target_bytes
+            p["queue_remaining"] = len(scheduler.diagnostics().get("queued", []))
             p["percent"] = min(100.0, float(state.get("processed_bytes", 0)) * 100.0 / max(1, options.target_bytes))
             progress_cb(p)
 
-        for provider in providers:
-            if cancel.is_set() or state["processed_bytes"] >= options.target_bytes:
-                break
+        stop_reason = "CONTINUE"
+        exhausted_info: list[dict[str, str]] = []
+        while not cancel.is_set() and int(state.get("processed_bytes") or 0) < int(options.target_bytes):
+            item = scheduler.pop_next(int(state.get("processed_bytes") or 0))
+            if item is None:
+                should_stop, reason = scheduler.stop_reason(int(state.get("processed_bytes") or 0))
+                stop_reason = reason
+                if should_stop:
+                    break
+                continue
+            provider = providers.get(item.provider)
+            if provider is None:
+                scheduler.mark_failed(item, "provider_missing")
+                exhausted_info.append({"provider": item.provider, "reason": "provider_missing"})
+                _persist_plan()
+                continue
+            _progress({"stage": "work_item_started", "active_source": f"{item.provider}:{item.key}", "work_item": item.key, "provider": item.provider})
+            item_docs = 0
+            item_bytes = 0
             try:
                 p_settings = provider_settings.get(provider.source_name, {})
-                for doc in provider.iter_documents(manager, source_settings=p_settings, progress_cb=_progress, cancel=cancel):
+                for doc in provider.iter_documents(manager, source_settings=p_settings, progress_cb=_progress, cancel=cancel, work_item=item):
                     if cancel.is_set() or state["processed_bytes"] >= options.target_bytes:
                         break
                     before_count += 1
@@ -625,14 +796,18 @@ class DatasetBootstrapService:
                         "size": int(doc.get("size") or len(text.encode("utf-8"))),
                     }
                     shard_writer.write(rec)
-                    state["processed_bytes"] = int(state.get("processed_bytes") or 0) + len(text.encode("utf-8"))
+                    real_bytes = len(text.encode("utf-8"))
+                    state["processed_bytes"] = int(state.get("processed_bytes") or 0) + real_bytes
                     state["doc_count"] = int(state.get("doc_count") or 0) + 1
+                    item_docs += 1
+                    item_bytes += real_bytes
                     source = str(rec["source"])
                     lang = str(rec["language"])
                     source_counts[source] = source_counts.get(source, 0) + 1
                     lang_counts[lang] = lang_counts.get(lang, 0) + 1
                     state["cancelled"] = False
                     self._save_state(state_path, state)
+                    _persist_plan()
                     progress_cb(
                         {
                             "stage": "sharding",
@@ -641,20 +816,28 @@ class DatasetBootstrapService:
                             "target_bytes": options.target_bytes,
                             "shards": shard_writer.shard_count,
                             "dedup_percent": (1.0 - (len(dedup_seen) / max(before_count, 1))) * 100,
+                            "queue_remaining": len(scheduler.diagnostics().get("queued", [])),
+                            "active_source": f"{item.provider}:{item.key}",
                         }
                     )
+                scheduler.mark_completed(item, bytes_contributed=item_bytes, docs=item_docs)
             except Exception as exc:  # noqa: BLE001
+                scheduler.mark_failed(item, str(exc))
+                exhausted_info.append({"provider": provider.source_name, "reason": str(exc)})
                 progress_cb({
                     "stage": "provider_failed",
                     "source": provider.source_name,
                     "error": str(exc),
+                    "work_item": item.key,
                 })
-                continue
+            finally:
+                _persist_plan()
 
         if cancel.is_set():
             state["cancelled"] = True
             self._save_state(state_path, state)
-            return {"dataset_dir": str(target_dir), "build_state": str(state_path), "cancelled": True}
+            _persist_plan()
+            return {"dataset_dir": str(target_dir), "build_state": str(state_path), "cancelled": True, "bootstrap_plan": str(plan_path)}
 
         shards = shard_writer.close()
         if not shards:
@@ -663,17 +846,24 @@ class DatasetBootstrapService:
                 + json.dumps(manager.diagnostics()[:8], indent=2)
                 + "\nSuggestions: Pick a different version, paste a custom URL, or use Starter dataset."
             )
-        exhausted_before_target = int(state["processed_bytes"]) < int(options.target_bytes)
+
+        done_state = "DONE" if int(state["processed_bytes"]) >= int(options.target_bytes) else "DONE_EXHAUSTED"
+        if done_state == "DONE_EXHAUSTED" and stop_reason == "CONTINUE":
+            stop_reason = "SOURCES_EXHAUSTED"
         progress_cb(
             {
                 "stage": "done",
+                "done_state": done_state,
                 "processed_bytes": int(state["processed_bytes"]),
                 "downloaded_bytes": int(state.get("downloaded_bytes") or 0),
                 "doc_count": int(state["doc_count"]),
                 "shards": len(shards),
                 "target_bytes": int(options.target_bytes),
-                "percent": 100.0,
-                "sources_exhausted": exhausted_before_target,
+                "percent": min(100.0, float(int(state["processed_bytes"])) * 100.0 / max(1, int(options.target_bytes))),
+                "sources_exhausted": done_state == "DONE_EXHAUSTED",
+                "stop_reason": stop_reason,
+                "queue_remaining": len(scheduler.diagnostics().get("queued", [])),
+                "providers_exhausted": exhausted_info,
             }
         )
 
@@ -683,16 +873,20 @@ class DatasetBootstrapService:
             "target_bytes": int(options.target_bytes),
             "total_bytes": int(state["processed_bytes"]),
             "doc_count": int(state["doc_count"]),
+            "state": done_state,
+            "stop_reason": stop_reason,
+            "providers_exhausted": exhausted_info,
             "shards": shards,
             "provenance": [
                 {"source": p.source_name, "version": p.source_version, "cache_path": str((self._cache_root / p.source_name / p.source_version))}
-                for p in providers
+                for p in providers.values()
             ],
             "download_diagnostics": manager.diagnostics(),
             "downloaded_bytes": int(state.get("downloaded_bytes") or 0),
             "extracted_bytes": int(state.get("extracted_bytes") or 0),
-            "sources_exhausted_before_target": exhausted_before_target,
+            "sources_exhausted_before_target": done_state == "DONE_EXHAUSTED",
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "bootstrap_plan": str(plan_path),
         }
         manifest_path = target_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -708,16 +902,20 @@ class DatasetBootstrapService:
         stats_path = target_dir / "stats.json"
         stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
-        state.update({"completed": True, "cancelled": False, "manifest_path": str(manifest_path)})
+        state.update({"completed": done_state == "DONE", "cancelled": False, "manifest_path": str(manifest_path), "state": done_state})
         self._save_state(state_path, state)
+        _persist_plan()
         return {
             "dataset_dir": str(target_dir),
             "manifest_path": str(manifest_path),
             "stats_path": str(stats_path),
             "build_state": str(state_path),
+            "bootstrap_plan": str(plan_path),
             "manifest": manifest,
             "stats": stats,
             "diagnostics": manager.diagnostics(),
+            "state": done_state,
+            "stop_reason": stop_reason,
         }
 
     def _provider_settings(self) -> dict[str, Any]:

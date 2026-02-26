@@ -174,6 +174,8 @@ class TrainPage(QWidget):
         self.save_dataset_sources_btn.clicked.connect(self._save_dataset_source_settings)
         self.copy_bootstrap_diag_btn = QPushButton("Copy diagnostics")
         self.copy_bootstrap_diag_btn.clicked.connect(self._copy_bootstrap_diagnostics)
+        self.auto_expand_sources = QCheckBox("Auto-expand sources until target met")
+        self.auto_expand_sources.setChecked(bool(self._dataset_sources().get("auto_expand_until_target", True)))
         self.upload_shards_to_da = QCheckBox("Upload shards to DA")
         self.upload_shards_to_da.setChecked(bool(self._cfg.ena.get("allow_remote_put", False)))
         self.upload_shards_to_da.setEnabled(bool(self._cfg.ena.get("allow_remote_put", False)))
@@ -264,6 +266,7 @@ class TrainPage(QWidget):
         dataset_source_buttons = QHBoxLayout(); dataset_source_buttons.addWidget(self.save_dataset_sources_btn); dataset_source_buttons.addWidget(self.copy_bootstrap_diag_btn); dataset_source_buttons.addStretch(1)
         form.addRow("", dataset_source_buttons)
         form.addRow("Bootstrap estimate", self.bootstrap_estimate)
+        form.addRow("Bootstrap behavior", self.auto_expand_sources)
         form.addRow("Bootstrap progress", self.bootstrap_progress)
         form.addRow("", self.auto_start_after_dataset)
         form.addRow("", self.upload_shards_to_da)
@@ -533,6 +536,9 @@ class TrainPage(QWidget):
             panel.cancelRequested.connect(self._cancel_bootstrap)
             panel.retryRequested.connect(lambda: self._bootstrap_runtime.retry(name=self.run_name.text().strip() or "ena", size_preset=self._target_key()))
             panel.copyDiagnosticsRequested.connect(self._copy_bootstrap_diagnostics)
+            panel.addSourcesRequested.connect(self._open_dataset_source_controls)
+            panel.continueRequested.connect(lambda: self._bootstrap_runtime.resume(name=self.run_name.text().strip() or "ena"))
+            panel.exportPlanRequested.connect(self._export_bootstrap_plan_diagnostics)
             self._bootstrap_panel = panel
         run = self._bootstrap_runtime.active_run
         if run:
@@ -587,9 +593,11 @@ class TrainPage(QWidget):
                 target_bytes=target,
                 shards=int(payload.get("shards") or (run.shards_count if run else 0)),
                 output_bytes=processed,
-                repo=str(payload.get("repo") or ""),
-                ref=str(payload.get("ref") or ""),
+                repo=str(payload.get("repo") or payload.get("active_source") or ""),
+                ref=str(payload.get("ref") or payload.get("work_item") or ""),
                 sources_exhausted=bool(payload.get("sources_exhausted", False)),
+                queue_remaining=int(payload.get("queue_remaining") or 0),
+                stop_reason=str(payload.get("stop_reason") or ""),
             )
 
     def _on_bootstrap_runtime_log(self, kind: str, text: str) -> None:
@@ -610,7 +618,7 @@ class TrainPage(QWidget):
             return
         manifest = result.get("manifest", {}) if isinstance(result.get("manifest"), dict) else {}
         if manifest.get("sources_exhausted_before_target"):
-            QMessageBox.information(self, "Dataset bootstrap", f"Sources exhausted before target: processed {manifest.get('total_bytes', 0)} bytes; target {manifest.get('target_bytes', self._bootstrap_runtime.active_run.docs_total if self._bootstrap_runtime.active_run else 0)}.")
+            QMessageBox.information(self, "Dataset bootstrap", f"Target not met (DONE_EXHAUSTED): processed {manifest.get('total_bytes', 0)} bytes; target {manifest.get('target_bytes', self._bootstrap_runtime.active_run.docs_total if self._bootstrap_runtime.active_run else 0)}. Use Add sources / expand allowlist to continue.")
         self.dataset_path.setText(result.get("manifest_path") or "")
         self.dataset_id.setText(Path(result.get("dataset_dir") or "").name)
         if self.auto_start_after_dataset.isChecked():
@@ -650,6 +658,7 @@ class TrainPage(QWidget):
             ena = {}
         ena["dataset_sources"] = {
             "offline_mode": self.dataset_offline_mode.isChecked(),
+            "auto_expand_until_target": self.auto_expand_sources.isChecked(),
             "providers": {
                 "wikipedia": {
                     "base_url": self.dataset_source_wiki_base.text().strip(),
@@ -679,6 +688,26 @@ class TrainPage(QWidget):
         QGuiApplication.clipboard().setText(text)
         if self._bootstrap_panel:
             self._bootstrap_panel.append_log("system", "Diagnostics copied to clipboard.")
+
+
+    def _open_dataset_source_controls(self) -> None:
+        self._save_dataset_source_settings()
+        QMessageBox.information(self, "Bootstrap sources", "Source settings saved. Update vetted repos/providers and click Continue anyway.")
+
+    def _export_bootstrap_plan_diagnostics(self) -> None:
+        run = self._bootstrap_runtime.active_run
+        if run is None:
+            return
+        plan = Path(run.output_dir) / "bootstrap_plan.json"
+        if not plan.exists():
+            QMessageBox.information(self, "Bootstrap plan", "No bootstrap_plan.json found yet.")
+            return
+        out, _ = QFileDialog.getSaveFileName(self, "Export bootstrap plan diagnostics", str(plan.name), "JSON (*.json)")
+        if not out:
+            return
+        Path(out).write_text(plan.read_text(encoding="utf-8"), encoding="utf-8")
+        if self._bootstrap_panel:
+            self._bootstrap_panel.append_log("system", f"Exported bootstrap plan to {out}")
 
     def _apply_preset(self, name: str) -> None:
         p = self.PRESETS[name]
