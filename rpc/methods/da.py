@@ -172,6 +172,14 @@ def _resolve_ingest_dir(store) -> str:
     return os.path.abspath(ingest_dir)
 
 
+def _resolve_data_root(store) -> str:
+    ingest_dir = _resolve_ingest_dir(store)
+    chain_root = os.path.dirname(os.path.abspath(store.root_dir))
+    if chain_root.startswith("/data/") or chain_root == "/data":
+        return "/data"
+    return os.path.dirname(chain_root)
+
+
 def _assert_safe_ingest_path(path: str, ingest_dir: str) -> str:
     candidate = os.path.abspath(path)
     if not (candidate == ingest_dir or candidate.startswith(f"{ingest_dir}{os.sep}")):
@@ -201,6 +209,17 @@ def _enforce_ingest_rate_limit(ingest_dir: str) -> None:
             retry_after=max(_INGEST_RATE_LIMIT_SECONDS - (now - last), 0.0),
         )
     _last_ingest_at[ingest_dir] = now
+
+
+def _pending_debug_files(ingest_dir: str, limit: int = 5) -> list[str]:
+    pending_dir = os.path.join(ingest_dir, "pending")
+    if not os.path.isdir(pending_dir):
+        return []
+    try:
+        names = sorted(os.listdir(pending_dir))[:limit]
+    except Exception:
+        return []
+    return [os.path.join(pending_dir, name) for name in names]
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +644,50 @@ def da_get_ingest_dir(params=None, **kwargs) -> dict:
     }
 
 
+@method("da.getDataRoot", aliases=("da_getDataRoot",), desc="Get node filesystem data root used for DA path mapping")
+def da_get_data_root(params=None, **kwargs) -> dict:
+    _ = params, kwargs
+    store = _require_store()
+    return {
+        "data_root": _resolve_data_root(store),
+        "node_chain_dir": os.path.abspath(store.root_dir),
+    }
+
+
+@method("da.statPath", aliases=("da_statPath",), desc="Check if a node-local path exists")
+def da_stat_path(params=None, **kwargs) -> dict:
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params:
+        kwargs["path"] = params[0]
+
+    path = kwargs.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise rpc_errors.InvalidParams("Missing required parameter: path")
+
+    candidate = os.path.abspath(path.strip())
+    return {
+        "path": candidate,
+        "exists": os.path.exists(candidate),
+        "is_file": os.path.isfile(candidate),
+        "is_dir": os.path.isdir(candidate),
+    }
+
+
+@method("da.getHostMountHints", aliases=("da_getHostMountHints",), desc="Best-effort mount hints for containerized DA deployments")
+def da_get_host_mount_hints(params=None, **kwargs) -> dict:
+    _ = params, kwargs
+    store = _require_store()
+    chain_root = os.path.dirname(os.path.abspath(store.root_dir))
+    chain_subdir = os.path.basename(chain_root)
+    return {
+        "node_data_root": _resolve_data_root(store),
+        "chain_subdir": chain_subdir,
+        "expected_host_chain_dir": "<unknown>",
+        "notes": "If running docker, mount host ~/.animica to /data",
+    }
+
+
 @method("da.ingestLocal", aliases=("da_ingestLocal",), desc="Ingest a local blob file from the node ingest directory")
 def da_ingest_local(params=None, **kwargs) -> dict:
     if isinstance(params, dict):
@@ -646,7 +709,13 @@ def da_ingest_local(params=None, **kwargs) -> dict:
     _enforce_ingest_rate_limit(ingest_dir)
     safe_path = _assert_safe_ingest_path(path.strip(), ingest_dir)
     if not os.path.isfile(safe_path):
-        raise rpc_errors.NotFound(f"ingest file not found: {safe_path}")
+        raise rpc_errors.NotFound(
+            f"ingest file not found: {safe_path}",
+            ingest_dir=ingest_dir,
+            cwd=os.getcwd(),
+            ingest_dir_exists=os.path.isdir(ingest_dir),
+            pending_examples=_pending_debug_files(ingest_dir),
+        )
 
     try:
         with open(safe_path, "rb") as fh:
