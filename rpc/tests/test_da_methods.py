@@ -101,6 +101,41 @@ def test_da_configure_basic(tmp_path, monkeypatch):
     assert result["ok"] is True
 
 
+def test_da_configure_rejects_base_dir_root(tmp_path, monkeypatch):
+    """da.configure must reject dir == exact allowed base dir (e.g. /data root)."""
+    from rpc.methods.da import da_configure
+    from rpc.errors import InvalidParams
+
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    with pytest.raises(InvalidParams) as exc_info:
+        da_configure({"enabled": True, "dir": str(tmp_path), "max_bytes": 1000})
+
+    err = exc_info.value
+    assert err.data is not None
+    assert err.data.get("reason") == "dir_must_be_subdir"
+
+
+def test_da_configure_permission_denied_returns_structured_error(tmp_path, monkeypatch):
+    """da.configure must return DaConfigPermDenied (-32006) on PermissionError, not -32603."""
+    from rpc.methods.da import da_configure
+    from rpc.errors import DaConfigPermDenied
+    from unittest.mock import patch
+
+    subdir = tmp_path / "chain-1" / "da"
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", str(tmp_path))
+
+    with patch("rpc.methods.da.Path.mkdir", side_effect=PermissionError(13, "Permission denied")):
+        with pytest.raises(DaConfigPermDenied) as exc_info:
+            da_configure({"enabled": True, "dir": str(subdir), "max_bytes": 1000})
+
+    err = exc_info.value
+    assert err.code == -32006
+    assert err.data is not None
+    assert err.data.get("errno") == 13
+    assert "hint" in err.data
+
+
 def test_da_configure_invalid_on_full():
     from rpc.methods.da import da_configure
     from rpc.errors import InvalidParams
