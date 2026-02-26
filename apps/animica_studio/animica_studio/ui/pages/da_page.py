@@ -334,16 +334,21 @@ class DaPage(QWidget):
         open_btn = QPushButton("Open Folder")
         open_btn.clicked.connect(self._on_contrib_open_folder)
         dir_row.addWidget(open_btn)
-        form.addRow("Studio contribution dir:", dir_row)
+        form.addRow("Studio dir:", dir_row)
 
         self._contrib_node_dir_edit = QLineEdit()
         self._contrib_node_dir_edit.setPlaceholderText("Node DA dir from da.getDefaultDir")
-        form.addRow("Node DA directory:", self._contrib_node_dir_edit)
+        self._contrib_node_dir_edit.setReadOnly(True)
+        form.addRow("Node DA dir:", self._contrib_node_dir_edit)
+
+        self._contrib_node_dir_advanced_cb = QCheckBox("Advanced: edit node DA dir")
+        self._contrib_node_dir_advanced_cb.toggled.connect(lambda checked: self._contrib_node_dir_edit.setReadOnly(not checked))
+        form.addRow("", self._contrib_node_dir_advanced_cb)
 
         self._contrib_local_ingest_host_dir = QLineEdit()
         self._contrib_local_ingest_host_dir.setReadOnly(True)
         self._contrib_local_ingest_host_dir.setPlaceholderText("Only used for local ingest")
-        form.addRow("Host DA directory (local ingest):", self._contrib_local_ingest_host_dir)
+        form.addRow("Host ingest dir (mapped):", self._contrib_local_ingest_host_dir)
 
         self._contrib_max_gb_spin = QSpinBox(); self._contrib_max_gb_spin.setRange(1, 20000); self._contrib_max_gb_spin.setValue(50); self._contrib_max_gb_spin.setSuffix(" GiB")
         form.addRow("Limit:", self._contrib_max_gb_spin)

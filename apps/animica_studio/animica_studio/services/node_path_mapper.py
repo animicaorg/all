@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from animica_studio.services.da_path_guard import NODE_PATH_UI_ERROR, assert_host_writable_path
 from animica_studio.services.rpc_client import RpcClient
 
 
@@ -44,10 +45,12 @@ class NodePathMapper:
         stat_method = reg.resolve_any(["da.statPath", "da_statPath"])
         if not stat_method:
             return False, "Node does not expose da.statPath required for mount probe"
-        host_pending = Path(host_pending_dir).expanduser()
-        host_pending_raw = str(host_pending)
-        if host_pending_raw == "/data" or host_pending_raw.startswith("/data/"):
-            return False, "Refusing to create node path on host: " + host_pending_raw
+        try:
+            host_pending = assert_host_writable_path(host_pending_dir)
+        except ValueError as exc:
+            if str(exc) == NODE_PATH_UI_ERROR:
+                return False, NODE_PATH_UI_ERROR
+            return False, str(exc)
         host_pending.mkdir(parents=True, exist_ok=True)
         probe_name = ".studio_probe"
         host_probe = host_pending / probe_name

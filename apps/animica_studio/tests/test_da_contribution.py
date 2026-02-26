@@ -385,10 +385,10 @@ def test_config_migrates_legacy_data_dir_under_data(tmp_path):
         cfg = load_config()
 
     assert cfg.da_contribution["studio_contrib_dir"] == str(default_da_contrib_dir())
-    assert cfg.da_contribution["node_da_dir"] == "/data/da"
+    assert cfg.da_contribution["node_da_dir"] == "/data/chain-1/da"
 
 
 def test_validate_config_rejects_node_data_path():
     from animica_studio.services.da_contribution_service import _validate_config
-    with pytest.raises(ValueError, match="Studio contribution dir must be a host path"):
+    with pytest.raises(ValueError, match="Studio needs a host path"):
         _validate_config("/data/da", 2 * 1024 ** 3)

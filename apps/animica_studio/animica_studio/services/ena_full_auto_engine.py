@@ -15,6 +15,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.models.wallet_models import is_valid_address
+from animica_studio.services.da_path_guard import NODE_PATH_UI_ERROR, assert_host_writable_path
 from animica_studio.services.rpc_client import RpcClient
 from animica_studio.services.workers import WorkerThread
 from animica_studio.util.paths import app_data_dir
@@ -930,6 +931,12 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
     mapper = NodePathMapper(_host_chain_dir_from_cfg(cfg))
     host_ingest_dir = mapper.map_ingest_dir(node_ingest_dir, node_chain_dir, node_data_root)
     host_pending_dir = host_ingest_dir / "pending"
+    try:
+        host_pending_dir = assert_host_writable_path(str(host_pending_dir))
+    except ValueError as exc:
+        if str(exc) == NODE_PATH_UI_ERROR:
+            raise RuntimeError(NODE_PATH_UI_ERROR) from exc
+        raise
     host_pending_dir.mkdir(parents=True, exist_ok=True)
     if not os.access(host_pending_dir, os.W_OK):
         raise RuntimeError(f"Resolved host ingest directory is not writable: {host_pending_dir}")
