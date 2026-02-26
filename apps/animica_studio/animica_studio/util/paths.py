@@ -52,6 +52,11 @@ def default_chain_data_dir(chain_id: int) -> Path:
     return Path.home() / ".animica" / f"chain-{int(chain_id)}"
 
 
+def default_da_contrib_dir() -> Path:
+    """Return the default Studio-side DA contribution directory."""
+    return Path.home() / ".animica" / "da_contrib"
+
+
 def running_as_root() -> bool:
     """Return ``True`` when running as root on POSIX systems."""
     if os.name != "posix":

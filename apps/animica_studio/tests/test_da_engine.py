@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from PySide6.QtCore import QCoreApplication
 
 from animica_studio.services.da_engine import DaContributionEngine, DaEngineConfig, DaEngineState
+from animica_studio.util.paths import default_da_contrib_dir
 
 
 class _FakeClient:
@@ -153,3 +154,32 @@ def test_start_ignores_reentry_while_in_progress(tmp_path: Path):
     e.start()
     cfg_calls = [c for c in fake.calls if c[0] == "configure"]
     assert not cfg_calls
+
+
+def test_rejects_studio_contrib_dir_under_node_data(tmp_path: Path):
+    e = _engine(tmp_path)
+    ok, msg = e.validate_config(
+        DaEngineConfig(
+            enabled=True,
+            host_data_dir="/data/chain-1/da",
+            node_data_dir="/data/chain-1/da",
+            mode="quota",
+            limit_bytes=1024,
+            rpc_url="http://x",
+        )
+    )
+    assert not ok
+    assert "Studio contribution dir must be a host path" in msg
+
+
+def test_normalize_uses_default_studio_contrib_dir_when_missing(tmp_path: Path):
+    cfg = DaEngineConfig(
+        enabled=True,
+        host_data_dir="",
+        node_data_dir="/data/da",
+        mode="quota",
+        limit_bytes=1024,
+        rpc_url="http://x",
+    )
+    e = DaContributionEngine(cfg)
+    assert e.config.host_data_dir == str(default_da_contrib_dir())
