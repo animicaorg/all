@@ -403,18 +403,22 @@ def test_da_gc_no_params():
             da_gc({})
 
 
-def test_da_get_default_dir():
+def test_da_get_default_dir(tmp_path, monkeypatch):
     from rpc.methods.da import da_get_default_dir
 
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1")
     out = da_get_default_dir()
-    assert out["dir"] == "/data/da"
+    assert out["dir"] == str(tmp_path / "chain-1" / "da")
 
 
-def test_da_get_allowed_base_dirs():
+def test_da_get_allowed_base_dirs(tmp_path, monkeypatch):
     from rpc.methods.da import da_get_allowed_base_dirs
 
+    monkeypatch.setenv("ANIMICA_DA_ALLOWED_BASE_DIRS", "")
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
     out = da_get_allowed_base_dirs()
-    assert out["dirs"] == ["/data"]
+    assert out["dirs"] == [str(tmp_path)]
 
 
 def test_da_configure_accepts_object_and_enables_with_status(tmp_path, monkeypatch):

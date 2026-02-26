@@ -72,14 +72,29 @@ def _resolve_store_dir(da_dir: Optional[str] = None) -> str:
     return _default_da_dir()
 
 
+
+
+def _is_container_runtime() -> bool:
+    if os.path.exists('/.dockerenv'):
+        return True
+    return bool(os.getenv('KUBERNETES_SERVICE_HOST') or os.getenv('ANIMICA_CONTAINERIZED', '').strip().lower() in {'1','true','yes','on'})
+
+
+def _default_allowed_base_dir() -> str:
+    env_base = os.getenv('ANIMICA_DATA_DIR')
+    if env_base and env_base.strip():
+        return os.path.abspath(os.path.expanduser(env_base.strip()))
+    if _is_container_runtime():
+        return '/data'
+    return os.path.abspath(os.path.expanduser('~/.animica'))
 def _allowed_base_dirs() -> list[str]:
-    raw = os.getenv("ANIMICA_DA_ALLOWED_BASE_DIRS", "/data")
+    raw = os.getenv("ANIMICA_DA_ALLOWED_BASE_DIRS", _default_allowed_base_dir())
     out: list[str] = []
     for entry in raw.split(":"):
         cleaned = entry.strip()
         if cleaned:
             out.append(os.path.abspath(cleaned))
-    return out or ["/data"]
+    return out or [_default_allowed_base_dir()]
 
 
 def _is_allowed_dir(candidate: str, allowed_dirs: list[str]) -> bool:
@@ -230,7 +245,7 @@ def da_status(params=None, *_args, **_kwargs) -> dict:
 @method("da.getDefaultDir", aliases=("da_getDefaultDir",), desc="Get default node-side DA directory")
 def da_get_default_dir(params=None, *_args, **_kwargs) -> dict:
     _ = params
-    return {"dir": "/data/da"}
+    return {"dir": _default_da_dir()}
 
 
 @method("da.getAllowedBaseDirs", aliases=("da_getAllowedBaseDirs",), desc="Get allowed base directories for DA store")
