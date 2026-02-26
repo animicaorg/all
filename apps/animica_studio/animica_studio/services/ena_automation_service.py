@@ -342,7 +342,9 @@ class EnaService:
         if not node_ingest_dir:
             raise RuntimeError("Node did not return da.getIngestDir.dir")
         node_pending_dir = str(ingest.get("pending_dir") or os.path.join(node_ingest_dir, "pending"))
-        host_pending_dir = Path(self._map_node_path_to_host(node_pending_dir))
+        host_pending_dir = Path(self._map_node_path_to_host(node_pending_dir)).expanduser()
+        if str(host_pending_dir).startswith('/data/') or str(host_pending_dir) == '/data':
+            raise RuntimeError("Refusing to write to /data on host. Configure Studio writable dir (e.g. ~/.animica/da_contrib) and keep /data paths node-only.")
         host_pending_dir.mkdir(parents=True, exist_ok=True)
 
         sha = __import__("hashlib").sha256(data).hexdigest()
