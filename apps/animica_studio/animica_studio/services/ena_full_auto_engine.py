@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -115,6 +116,8 @@ class EnaFullAutoEngine(QObject):
         self._last_upload_time = 0.0
         self._last_sync_time = 0.0
         self._backoff_s = 2
+        self._bootstrap_retry_delays = [30, 60, 120]
+        self._bootstrap_failures = 0
         self._last_metrics = TrainingMetrics()
         self._storage = app_data_dir() / "ena_models"
         self._storage.mkdir(parents=True, exist_ok=True)
@@ -135,6 +138,7 @@ class EnaFullAutoEngine(QObject):
             return
         self._stop_requested = False
         self._paused = False
+        self._bootstrap_failures = 0
         self._started_at = self._started_at or time.time()
         self._transition(FullAutoState.STARTING, "initializing")
         self._schedule(0)
@@ -233,10 +237,21 @@ class EnaFullAutoEngine(QObject):
         if "bootstrap" in payload:
             self.progressUpdated.emit({"kind": "bootstrap", **payload["bootstrap"]})
         if self.state == FullAutoState.ERROR:
-            self._schedule(self._backoff_s)
-            self._backoff_s = min(60, self._backoff_s * 2)
+            if bool(payload.get("bootstrap_retryable", False)):
+                if self._bootstrap_failures >= len(self._bootstrap_retry_delays):
+                    self.logLine.emit("error", "Bootstrap retry limit reached. Use Copy diagnostics to inspect DA/path mapping details.")
+                    self._transition(FullAutoState.ERROR, "BOOTSTRAP_RETRY_EXHAUSTED (use Copy diagnostics)")
+                    return
+                delay = self._bootstrap_retry_delays[self._bootstrap_failures]
+                self._bootstrap_failures += 1
+                self.logLine.emit("warning", f"Bootstrap retry scheduled in {delay}s (attempt {self._bootstrap_failures}/{len(self._bootstrap_retry_delays)}).")
+                self._schedule(delay)
+            else:
+                self._schedule(self._backoff_s)
+                self._backoff_s = min(60, self._backoff_s * 2)
         else:
             self._backoff_s = 2
+            self._bootstrap_failures = 0
             self._schedule(1)
 
     def _transition(self, state: FullAutoState, detail: str) -> None:
@@ -422,6 +437,8 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     out["bootstrap"]["da_configured"] = bool(da.get("ok"))
     out["bootstrap"]["diagnostics"] = str(da.get("diagnostics") or "")
     if not da.get("ok"):
+        if bool(da.get("retryable", False)):
+            out["bootstrap_retryable"] = True
         local_fallback_allowed = bool(cfg.get("train_locally_when_da_disabled", False)) or not bool(cfg.get("require_da_uploads", False))
         if local_fallback_allowed:
             out["state"] = "training"
@@ -492,6 +509,52 @@ def _is_allowed_dir(candidate: str, allowed_base_dirs: list[str]) -> bool:
         return True
     c = candidate.rstrip("/")
     return any(c == str(base).rstrip("/") or c.startswith(f"{str(base).rstrip('/')}/") for base in allowed_base_dirs if str(base).strip())
+
+
+def is_node_path(path: str) -> bool:
+    p = str(path or "").strip()
+    return p.startswith("/data")
+
+
+def is_host_path(path: str) -> bool:
+    p = str(path or "").strip()
+    if not p:
+        return False
+    expanded = str(Path(p).expanduser())
+    return expanded.startswith("/home/") or expanded.startswith(str(Path.home()))
+
+
+class NodeToHostPathMapper:
+    """Maps node/container DA paths to host filesystem paths for local ingest only."""
+
+    def __init__(self, host_chain_dir: str | None) -> None:
+        self._host_chain_dir = str(host_chain_dir or "").strip()
+
+    def map_node_da_dir(self, node_path: str) -> Path | None:
+        raw = str(node_path or "").strip()
+        if not raw:
+            return None
+        if is_host_path(raw):
+            return Path(raw).expanduser()
+        if not is_node_path(raw):
+            return None
+        if not self._host_chain_dir:
+            return None
+        host_chain = Path(self._host_chain_dir).expanduser()
+        host_base = host_chain.parent
+        if str(host_base) == "/data":
+            return None
+        rel = Path(raw).relative_to("/data")
+        return host_base / rel
+
+
+def _host_chain_dir_from_cfg(cfg: dict[str, Any]) -> str | None:
+    direct = str(cfg.get("host_chain_dir") or "").strip()
+    if direct:
+        return direct
+    base = str(cfg.get("host_base_dir") or "").strip() or str(Path.home() / ".animica")
+    chain_id = str(cfg.get("chain_id") or "1").strip() or "1"
+    return str(Path(base).expanduser() / f"chain-{chain_id}")
 
 
 def _build_da_configure_params(status: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
@@ -579,6 +642,16 @@ def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
             return {"ok": True, "logs": logs, "status": verify, "diagnostics": f"configured:{payload.get('dir')}"}
     except Exception as exc:  # noqa: BLE001
         diagnostics = str(exc)
+        if isinstance(exc, PermissionError) or ("permission denied" in diagnostics.lower() and "/data" in diagnostics):
+            return {
+                "ok": False,
+                "logs": logs + [
+                    ("error", "Studio tried to use node path /data on host. Fixing path mapping and retrying bootstrap with backoff."),
+                ],
+                "diagnostics": diagnostics,
+                "error_category": "host_node_path_mismatch",
+                "retryable": True,
+            }
         return {"ok": False, "logs": logs + [("error", f"Node refused to configure DA ({exc})")], "diagnostics": diagnostics}
 
 
@@ -608,13 +681,18 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
                 raise RuntimeError("DA has(commitment) verification failed")
         return commitment
 
-    configured_dir = str(status.get("dir") or status.get("configured_dir") or "")
-    if configured_dir:
-        ingest_dir = Path(configured_dir) / "studio_local_ingest"
-        ingest_dir.mkdir(parents=True, exist_ok=True)
-        blob_path = ingest_dir / f"{hashlib.sha256(data).hexdigest()}.blob"
-        blob_path.write_bytes(data)
-        logs.append(("warning", f"allow_remote_put=false; attempted local ingest fallback at {blob_path}"))
+    configured_dir = str(status.get("effective_dir") or status.get("dir") or status.get("configured_dir") or "")
+    mapper = NodeToHostPathMapper(_host_chain_dir_from_cfg(cfg))
+    host_da_dir = mapper.map_node_da_dir(configured_dir)
+    if host_da_dir is None:
+        raise RuntimeError("Cannot map node DA dir to host path; enable allow_remote_put or configure docker volume mapping.")
+    host_ingest_dir = host_da_dir / "studio_local_ingest"
+    host_ingest_dir.mkdir(parents=True, exist_ok=True)
+    if not os.access(host_ingest_dir, os.W_OK):
+        raise RuntimeError(f"Resolved host ingest directory is not writable: {host_ingest_dir}")
+    blob_path = host_ingest_dir / f"{hashlib.sha256(data).hexdigest()}.blob"
+    blob_path.write_bytes(data)
+    logs.append(("warning", f"allow_remote_put=false; local ingest staged at {blob_path}"))
     raise RuntimeError("DA policy blocks remote put; enable allow_remote_put or provide node-side ingest")
 
 
