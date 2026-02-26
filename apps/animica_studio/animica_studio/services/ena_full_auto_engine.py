@@ -117,8 +117,9 @@ class EnaFullAutoEngine(QObject):
         self._last_upload_time = 0.0
         self._last_sync_time = 0.0
         self._backoff_s = 2
-        self._bootstrap_retry_delays = [30, 60, 120]
+        self._bootstrap_retry_delays = [60, 300]
         self._bootstrap_failures = 0
+        self._bootstrap_publish_attempted = False
         self._last_metrics = TrainingMetrics()
         self._storage = app_data_dir() / "ena_models"
         self._storage.mkdir(parents=True, exist_ok=True)
@@ -140,6 +141,7 @@ class EnaFullAutoEngine(QObject):
         self._stop_requested = False
         self._paused = False
         self._bootstrap_failures = 0
+        self._bootstrap_publish_attempted = False
         self._started_at = self._started_at or time.time()
         self._transition(FullAutoState.STARTING, "initializing")
         self._schedule(0)
@@ -172,11 +174,14 @@ class EnaFullAutoEngine(QObject):
             "last_metrics": asdict(self._last_metrics),
             "last_upload_step": self._last_upload_step,
             "manual_action": self._manual_action,
+            "bootstrap_publish_attempted": self._bootstrap_publish_attempted,
         }
         return json.dumps(payload, indent=2)
 
     def request_bootstrap_action(self, action: str) -> None:
         self._manual_action = action.strip().lower()
+        if self._manual_action in {"retry", "publish_first", "create_pointer"}:
+            self._bootstrap_publish_attempted = False
         if self.config.enabled and not self._paused and not self._stop_requested:
             self._schedule(0)
 
@@ -198,6 +203,7 @@ class EnaFullAutoEngine(QObject):
             "started_at": self._started_at,
             "storage": str(self._storage),
             "manual_action": self._manual_action,
+            "bootstrap_publish_attempted": self._bootstrap_publish_attempted,
         }
         self._manual_action = ""
         self._worker = WorkerThread(run_full_auto_cycle, work)
@@ -225,6 +231,8 @@ class EnaFullAutoEngine(QObject):
         self.snapshot.model_version = str(payload.get("model_version", self.snapshot.model_version))
         self.snapshot.last_upload_time = self._last_upload_time
         self.snapshot.last_sync_time = self._last_sync_time
+        if bool(payload.get("bootstrap_publish_attempted", False)):
+            self._bootstrap_publish_attempted = True
         state = payload.get("state", "idle")
         detail = payload.get("detail", "")
         self._transition(FullAutoState(state), detail)
@@ -248,6 +256,9 @@ class EnaFullAutoEngine(QObject):
                 self.logLine.emit("warning", f"Bootstrap retry scheduled in {delay}s (attempt {self._bootstrap_failures}/{len(self._bootstrap_retry_delays)}).")
                 self._schedule(delay)
             else:
+                if str(payload.get("detail") or "").startswith("DA_UPLOAD_PATH_UNAVAILABLE"):
+                    self.logLine.emit("error", "Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.")
+                    return
                 self._schedule(self._backoff_s)
                 self._backoff_s = min(60, self._backoff_s * 2)
         else:
@@ -299,6 +310,7 @@ def _resolve_balance(out: Any) -> int:
 def run_full_auto_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(ctx.get("cfg") or {})
     channel = str(cfg.get("model_channel") or "ena-main").strip() or "ena-main"
+    manual_action = str(ctx.get("manual_action") or "").strip().lower()
     storage = Path(str(ctx.get("storage")))
     channel_dir = storage / channel
     run_root = storage / "runs" / channel
@@ -306,7 +318,6 @@ def run_full_auto_cycle(ctx: dict[str, Any]) -> dict[str, Any]:
     run_root.mkdir(parents=True, exist_ok=True)
     pointer_path = channel_dir / "latest_pointer.json"
     has_pointer = bool(_read_json(pointer_path))
-    manual_action = str(ctx.get("manual_action") or "").strip().lower()
 
     if manual_action in {"configure_da", "publish_first", "create_pointer"}:
         return _bootstrap_cycle(ctx, has_pointer)
@@ -403,6 +414,7 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
     cfg = dict(ctx.get("cfg") or {})
     logs: list[tuple[str, str]] = []
     channel = str(cfg.get("model_channel") or "ena-main").strip() or "ena-main"
+    manual_action = str(ctx.get("manual_action") or "").strip().lower()
     storage = Path(str(ctx.get("storage")))
     run_root = storage / "runs" / channel
     channel_dir = storage / channel
@@ -419,6 +431,7 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
         "last_upload_time": float(ctx.get("last_upload_time") or 0),
         "last_sync_time": float(ctx.get("last_sync_time") or 0),
         "model_version": f"step-{steps}" if steps else "-",
+        "bootstrap_publish_attempted": bool(ctx.get("bootstrap_publish_attempted", False)),
         "bootstrap": {
             "da_configured": False,
             "first_checkpoint_published": False,
@@ -462,15 +475,31 @@ def _bootstrap_cycle(ctx: dict[str, Any], has_pointer: bool) -> dict[str, Any]:
         out["steps"] = steps
         out["logs"].append(("info", f"bootstrap generated first checkpoint step={steps} loss={loss}"))
 
+    if out.get("bootstrap_publish_attempted") and manual_action not in {"retry", "publish_first", "create_pointer"}:
+        out["state"] = "idle"
+        out["detail"] = "BOOTSTRAP_PUBLISH_WAITING_FOR_USER_RETRY"
+        out["logs"].append(("warning", "Bootstrap publish already attempted this startup. Click Retry to attempt again."))
+        return out
+
     publish = _publish_checkpoint(ctx, checkpoint, int(_read_json(checkpoint).get("step") or steps), float(_read_json(checkpoint).get("loss") or 0.0), for_bootstrap=True)
+    out["bootstrap_publish_attempted"] = True
     out["logs"].extend(publish.get("logs", []))
     out["upload"] = publish.get("upload", {})
     out["bootstrap"]["first_checkpoint_published"] = bool(publish.get("ok"))
     out["last_upload_step"] = publish.get("last_upload_step", out["last_upload_step"])
     out["last_upload_time"] = publish.get("last_upload_time", out["last_upload_time"])
     if not publish.get("ok"):
+        detail = str(publish.get("detail") or "PUBLISHING_FIRST_FAILED")
+        if detail.startswith("DA_UPLOAD_PATH_UNAVAILABLE"):
+            local_fallback_allowed = bool(cfg.get("train_locally_when_da_disabled", False)) or not bool(cfg.get("require_da_uploads", False))
+            if local_fallback_allowed:
+                out["state"] = "training"
+                out["detail"] = "LOCAL_ONLY_DA_UPLOAD_UNAVAILABLE"
+                out["bootstrap"]["local_only_training"] = True
+                out["logs"].append(("warning", "Network publish unavailable; waiting for node capability"))
+                return out
         out["state"] = publish.get("state", "error")
-        out["detail"] = publish.get("detail", "PUBLISHING_FIRST_FAILED")
+        out["detail"] = detail
         return out
 
     pointer = _create_channel_pointer(ctx, publish)
@@ -723,6 +752,21 @@ def _pick_best_checkpoint(run_root: Path) -> Path | None:
     return checkpoints[-1]
 
 
+
+
+def _detect_da_upload_path(reg: Any, status: dict[str, Any] | None) -> str | None:
+    st = status or {}
+    allow_remote = bool(st.get("allow_remote_put", True))
+    has_put = bool(reg.resolve_any(["da.putBlob", "da_putBlob"]))
+    if allow_remote and has_put:
+        return "rpc_put"
+    has_ingest = bool(reg.resolve_any(["da.ingestLocal", "da_ingestLocal"]))
+    has_ingest_dir = bool(reg.resolve_any(["da.getIngestDir", "da_getIngestDir"]))
+    has_data_root = bool(reg.resolve_any(["da.getDataRoot", "da_getDataRoot"]))
+    if has_ingest and has_ingest_dir and has_data_root:
+        return "local_ingest"
+    return None
+
 def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], data: bytes, logs: list[tuple[str, str]], status: dict[str, Any] | None = None) -> str:
     ns = int(cfg.get("da_namespace") or 0)
     put_method = reg.resolve_any(["da.putBlob", "da_putBlob"])
@@ -743,7 +787,7 @@ def _put_blob_with_strategy(client: RpcClient, reg: Any, cfg: dict[str, Any], da
     ingest_method = reg.resolve_any(["da.ingestLocal", "da_ingestLocal"])
     has_method = reg.resolve_any(["da.has", "da_has"])
     if not ingest_dir_method or not ingest_method or not data_root_method:
-        raise RuntimeError("DA policy blocks remote put and node does not expose local ingest RPC")
+        raise RuntimeError("DA_UPLOAD_PATH_UNAVAILABLE: Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.")
 
     ingest_info = _rpc_call_with_backoff(client, ingest_dir_method, {})
     data_root_info = _rpc_call_with_backoff(client, data_root_method, {})
@@ -822,6 +866,15 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
             if not enabled or not (ok or writable):
                 reason = str(status.get("reason") or "not_configured")
                 return {"ok": False, "state": "configuring_da" if for_bootstrap else "idle", "detail": "DA_NOT_CONFIGURED", "logs": logs + [("warning", f"DA not configured on node ({reason}); checkpoint kept local until configured.")]}
+
+            upload_path = _detect_da_upload_path(reg, status)
+            if upload_path is None:
+                return {
+                    "ok": False,
+                    "state": "error",
+                    "detail": "DA_UPLOAD_PATH_UNAVAILABLE: Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.",
+                    "logs": logs + [("error", "Node blocks remote put and does not provide local ingest. Update node to add da.ingestLocal or enable allow_remote_put for dev.")],
+                }
 
             manifest = {
                 "model_id": str(cfg.get("model_channel") or "ena-main"),
