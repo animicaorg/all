@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QGuiApplication, QDesktopServices
+from PySide6.QtCore import QUrl
 
 from animica_studio.services.ena_automation_service import EnaService
 from animica_studio.services.bootstrap_info_manager import BootstrapInfoManager, BootstrapInfo
@@ -330,6 +332,36 @@ class EnaFullAutoPanel(QGroupBox):
         copy_diag_boot.clicked.connect(self._copy_diag)
         bootstrap_actions.addWidget(cfg_da_btn); bootstrap_actions.addWidget(pub_btn); bootstrap_actions.addWidget(ptr_btn); bootstrap_actions.addWidget(copy_diag_boot)
         bootstrap_layout.addLayout(bootstrap_actions)
+
+        blocked_box = QGroupBox("Blocked")
+        blocked_layout = QVBoxLayout(blocked_box)
+        self._blocked_problem = QLabel("Problem: -")
+        self._blocked_host = QLabel("What Studio wrote: -")
+        self._blocked_node = QLabel("What node expected: -")
+        self._blocked_compose = QLabel("Compose file path: -")
+        self._blocked_fix = QPlainTextEdit()
+        self._blocked_fix.setReadOnly(True)
+        self._blocked_fix.setMaximumHeight(90)
+        self._blocked_commands = QPlainTextEdit()
+        self._blocked_commands.setReadOnly(True)
+        self._blocked_commands.setMaximumHeight(110)
+        self._blocked_alts = QLabel("")
+        for w in [self._blocked_problem, self._blocked_host, self._blocked_node, self._blocked_compose, self._blocked_fix, self._blocked_commands, self._blocked_alts]:
+            blocked_layout.addWidget(w)
+        blocked_actions = QHBoxLayout()
+        copy_fix_btn = QPushButton("Copy fix snippet")
+        copy_fix_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._blocked_fix.toPlainText()))
+        copy_cmd_btn = QPushButton("Copy command")
+        copy_cmd_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._blocked_commands.toPlainText()))
+        retry_btn = QPushButton("Retry")
+        retry_btn.clicked.connect(lambda: self._engine.request_bootstrap_action("retry"))
+        open_compose_btn = QPushButton("Open compose file path")
+        open_compose_btn.clicked.connect(self._open_blocked_compose)
+        blocked_actions.addWidget(copy_fix_btn); blocked_actions.addWidget(copy_cmd_btn); blocked_actions.addWidget(retry_btn); blocked_actions.addWidget(open_compose_btn)
+        blocked_layout.addLayout(blocked_actions)
+        blocked_box.setVisible(False)
+        self._blocked_box = blocked_box
+        root.addWidget(blocked_box)
         root.addWidget(bootstrap_box)
 
         earn_box = QGroupBox("Earnings")
@@ -452,6 +484,7 @@ class EnaFullAutoPanel(QGroupBox):
         ls = time.strftime("%H:%M:%S", time.localtime(snap.last_sync_time)) if snap.last_sync_time else "-"
         self._times.setText(f"Last upload: {lu} | Last sync: {ls}")
         self._doing.setText(f"What it's doing now: {detail}")
+        self._blocked_box.setVisible(state == "BOOTSTRAP_BLOCKED")
 
     def _on_progress(self, payload: dict) -> None:
         kind = payload.get("kind")
@@ -482,6 +515,24 @@ class EnaFullAutoPanel(QGroupBox):
                 ena["channel_pointer_commitment"] = pointer_commitment
                 self._config.ena = ena
                 save_config(self._config)
+            blocked_info = payload.get("blocked_info") if isinstance(payload.get("blocked_info"), dict) else None
+            if blocked_info:
+                self._blocked_problem.setText(f"Problem: {blocked_info.get('problem')}")
+                self._blocked_host.setText(f"What Studio wrote: {blocked_info.get('host_path')}")
+                self._blocked_node.setText(f"What node expected: {blocked_info.get('node_path')}")
+                self._blocked_compose.setText(f"Compose file path: {blocked_info.get('compose_path')}")
+                self._blocked_fix.setPlainText(str(blocked_info.get("volume_snippet") or ""))
+                self._blocked_commands.setPlainText(str(blocked_info.get("command_snippet") or ""))
+                alternatives = blocked_info.get("alternatives") if isinstance(blocked_info.get("alternatives"), list) else []
+                self._blocked_alts.setText("Alternatives:\n- " + "\n- ".join(str(v) for v in alternatives))
+
+    def _open_blocked_compose(self) -> None:
+        text = self._blocked_compose.text().replace("Compose file path:", "").strip()
+        if not text or text == "-":
+            return
+        path = pathlib.Path(text).expanduser()
+        if path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _on_log(self, kind: str, text: str) -> None:
         self._logs.appendPlainText(f"[{kind}] {text}")
