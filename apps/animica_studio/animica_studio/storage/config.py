@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -281,6 +282,14 @@ def _profile_from_dict(d: dict[str, Any]) -> Profile:
     )
 
 
+def _normalize_node_da_dir(raw_dir: str) -> str:
+    """Normalize legacy node DA directories to writable defaults."""
+    candidate = str(raw_dir or "").strip() or "/data/da"
+    if re.fullmatch(r"/data/chain-\d+/da", candidate):
+        return "/data/da"
+    return candidate
+
+
 def _config_from_dict(d: dict[str, Any]) -> Config:
     profiles_raw = d.get("profiles", [])
     profiles = [_profile_from_dict(p) for p in profiles_raw] if profiles_raw else [Profile()]
@@ -305,7 +314,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     if candidate_studio_dir == "/data" or candidate_studio_dir.startswith("/data/"):
         candidate_studio_dir = default_studio_contrib_dir
     studio_contrib_dir = candidate_studio_dir or default_studio_contrib_dir
-    node_da_dir = str(da_contrib_raw.get("node_da_dir") or da_contrib_raw.get("node_data_dir") or "/data/da").strip() or "/data/da"
+    node_da_dir = _normalize_node_da_dir(da_contrib_raw.get("node_da_dir") or da_contrib_raw.get("node_data_dir") or "/data/da")
     da_contribution = {
         "enabled": True,
         "studio_contrib_dir": studio_contrib_dir,
@@ -326,7 +335,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     da_contribution["studio_contrib_dir"] = str(da_contribution.get("studio_contrib_dir") or da_contribution.get("host_data_dir") or legacy_data_dir or default_studio_contrib_dir)
     if da_contribution["studio_contrib_dir"] == "/data" or da_contribution["studio_contrib_dir"].startswith("/data/"):
         da_contribution["studio_contrib_dir"] = default_studio_contrib_dir
-    da_contribution["node_da_dir"] = str(da_contribution.get("node_da_dir") or da_contribution.get("node_data_dir") or "/data/da")
+    da_contribution["node_da_dir"] = _normalize_node_da_dir(da_contribution.get("node_da_dir") or da_contribution.get("node_data_dir") or "/data/da")
     da_contribution["host_data_dir"] = da_contribution["studio_contrib_dir"]
     da_contribution["node_data_dir"] = da_contribution["node_da_dir"]
     da_contribution["data_dir"] = da_contribution["studio_contrib_dir"]
