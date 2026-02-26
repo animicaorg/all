@@ -617,11 +617,9 @@ class DaPage(QWidget):
 
     def _recommended_host_dir(self) -> str:
         active_id = getattr(self._config, "active_profile_id", None)
-        chain_id = 1
         node_datadir = None
         for raw in list(getattr(self._config, "rpc_profiles", []) or []):
             if raw.get("id") == active_id:
-                chain_id = int(raw.get("chain_id_expected") or 1)
                 node_datadir = raw.get("node_datadir")
                 break
         if node_datadir:
@@ -629,7 +627,7 @@ class DaPage(QWidget):
             # Never mirror container-only /data paths onto the Studio host path.
             if not (expanded == "/data" or expanded.startswith("/data/")):
                 return os.path.join(expanded, "da")
-        return os.path.expanduser(f"~/.animica/chain-{chain_id}/da")
+        return str(default_da_contrib_dir())
 
     def _host_chain_dir(self) -> str:
         active_id = getattr(self._config, "active_profile_id", None)
@@ -729,6 +727,9 @@ class DaPage(QWidget):
             self._contrib_console.append_warn(f"Failed to refresh DA recommendations: {exc}")
 
     def _on_use_recommended_paths(self) -> None:
+        host_dir = self._recommended_host_dir()
+        if not self._contrib_host_dir_edit.text().strip():
+            self._contrib_host_dir_edit.setText(host_dir)
         if self._default_node_dir:
             self._contrib_node_dir_edit.setText(self._default_node_dir)
             if self._last_logged_default_dir != self._default_node_dir:

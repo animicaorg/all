@@ -54,7 +54,7 @@ def default_chain_data_dir(chain_id: int) -> Path:
 
 def default_da_contrib_dir() -> Path:
     """Return the default Studio-side DA contribution directory."""
-    return Path.home() / ".animica" / "da_contrib"
+    return Path.home() / ".animica" / "da"
 
 
 def running_as_root() -> bool:
