@@ -5,6 +5,7 @@ from animica_studio.services.ena_full_auto_engine import (
     NodeToHostPathMapper,
     _bootstrap_cycle,
     _build_da_configure_params,
+    _build_bootstrap_blocked_payload,
     is_host_path,
     is_node_path,
 )
@@ -170,3 +171,48 @@ def test_bootstrap_publish_single_flight_until_manual_retry(monkeypatch, tmp_pat
     out2 = _bootstrap_cycle(ctx, has_pointer=False)
     assert calls["n"] == 1
     assert out2.get("bootstrap_publish_attempted") is True
+
+
+def test_bootstrap_publish_mapping_missing_transitions_to_blocked(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "animica_studio.services.ena_full_auto_engine._ensure_da_ready",
+        lambda _ctx: {"ok": True, "logs": [], "diagnostics": "ok"},
+    )
+    monkeypatch.setattr(
+        "animica_studio.services.ena_full_auto_engine._publish_checkpoint",
+        lambda *_a, **_k: {
+            "ok": False,
+            "state": "error",
+            "detail": "Local ingest path mapping broken. Configure docker mount: host ~/.animica -> node /data. I wrote to host path /home/employee/.animica/da_ingest/pending/a.blob, node expected /data/da_ingest/pending/a.blob.",
+            "logs": [],
+        },
+    )
+    out = _bootstrap_cycle(
+        {
+            "cfg": {
+                "model_channel": "ena-main",
+                "train_locally_when_da_disabled": False,
+                "require_da_uploads": True,
+                "payout_address": "",
+            },
+            "storage": str(tmp_path),
+            "steps": 0,
+            "last_upload_step": 0,
+            "last_upload_time": 0,
+            "last_sync_time": 0,
+        },
+        has_pointer=False,
+    )
+    assert out["state"] == "bootstrap_blocked"
+    assert out["detail"] == "MOUNT_MAPPING_MISSING"
+    assert out.get("bootstrap_blocked_reason") == "MOUNT_MAPPING_MISSING"
+
+
+def test_build_bootstrap_blocked_payload_includes_compose_fix() -> None:
+    blocked = _build_bootstrap_blocked_payload(
+        {},
+        "Node cannot see host ingest directory. I wrote to host path /home/employee/.animica/da_ingest/pending/.studio_probe, node expected /data/da_ingest/pending/.studio_probe; mapping missing.",
+    )
+    assert blocked is not None
+    assert "volumes:" in str(blocked.get("volume_snippet"))
+    assert "/home/employee/.animica:/data" in str(blocked.get("volume_snippet"))
