@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import tempfile
 import time
+from base64 import b64encode
+from pathlib import Path
 from typing import Any
 
 from animica_studio.services.rpc_client import RpcClient, RpcParseError, RpcResponseError, RpcTransportError
@@ -158,16 +161,30 @@ class DaClient:
         }
 
     @staticmethod
-    def _build_upload_params(encoding: str, namespace_int: int, data_hex: str) -> list[Any] | dict[str, Any]:
-        if encoding == "positional":
-            params: list[Any] = [namespace_int, data_hex]
-            assert len(params) == 2 and not any(isinstance(p, list) for p in params)
-            return params
-        if encoding == "object":
-            params_obj: dict[str, Any] = {"namespace": namespace_int, "data": data_hex}
-            assert set(params_obj.keys()) == {"namespace", "data"}
-            return params_obj
-        raise RpcParseError(f"Unknown DA putBlob encoding {encoding!r}")
+    def _build_da_put_blob_params(namespace_int: int, data_hex: str) -> list[Any]:
+        params: list[Any] = [namespace_int, data_hex]
+        assert isinstance(params, list)
+        assert len(params) == 2
+        assert all(not isinstance(p, list) for p in params)
+        return params
+
+    @staticmethod
+    def _build_da_dot_put_blob_params(raw_bytes: bytes, namespace_label: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        params_obj: dict[str, Any] = {
+            "bytes": b64encode(raw_bytes).decode("ascii"),
+            "namespace": namespace_label,
+            "metadata": metadata,
+        }
+        assert isinstance(params_obj, dict)
+        assert "bytes" in params_obj
+        return params_obj
+
+    @staticmethod
+    def _build_da_ingest_local_params(path: str, namespace_int: int) -> dict[str, Any]:
+        params_obj: dict[str, Any] = {"path": path, "namespace": namespace_int}
+        assert isinstance(params_obj, dict)
+        assert "path" in params_obj
+        return params_obj
 
     @staticmethod
     def _retry_encoding_for_error(message: str, current_encoding: str) -> str | None:
@@ -178,86 +195,96 @@ class DaClient:
             return "positional"
         return None
 
-    def upload_bytes(self, data: bytes, namespace: int | str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _log_upload_attempt(method: str, encoding: str, params: list[Any] | dict[str, Any]) -> None:
+        if isinstance(params, list):
+            log.debug("DA upload method=%s encoding=%s params_type=list params_len=%d", method, encoding, len(params))
+            return
+        log.debug(
+            "DA upload method=%s encoding=%s params_type=dict params_keys=%s",
+            method,
+            encoding,
+            sorted(params.keys()),
+        )
+
+    @staticmethod
+    def _metadata_payload(raw_bytes: bytes, content_type: str | None, tags: dict[str, Any] | None) -> bytes:
+        if not content_type and not tags:
+            return raw_bytes
+        envelope = {
+            "content_type": content_type,
+            "tags": tags or {},
+            "payload_b64": b64encode(raw_bytes).decode("ascii"),
+        }
+        return json.dumps(envelope, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    @staticmethod
+    def _extract_status_flags(status: Any) -> tuple[bool, bool | None]:
+        if not isinstance(status, dict):
+            return False, None
+        enabled = bool(status.get("enabled", True))
+        allow_remote_put = status.get("allow_remote_put")
+        return enabled, bool(allow_remote_put) if isinstance(allow_remote_put, bool) else None
+
+    def upload_blob(
+        self,
+        namespace: int,
+        raw_bytes: bytes,
+        content_type: str | None = None,
+        tags: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         namespace_int = self._parse_namespace(namespace)
-        data_hex = "0x" + bytes(data).hex()
-        self._validate_hex_data(data_hex)
+        metadata: dict[str, Any] = {}
+        if content_type:
+            metadata["content_type"] = content_type
+        if tags:
+            metadata["tags"] = dict(tags)
 
         c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
         try:
             registry = c.registry()
-            method_options: list[dict[str, Any]] = []
-            for candidate in ("da.putBlob", "da_putBlob"):
-                if not registry.has_method(candidate):
-                    continue
-                schema = self._parse_put_blob_meta(candidate, registry.get_method_meta(candidate))
-                method_options.append({"method": candidate, "schema": schema})
+            status: Any = {}
+            for status_method in ("da.getStatus", "da.status", "da_getStatus", "da_status"):
+                if registry.has_method(status_method):
+                    status = c.call(status_method, [])
+                    break
+            enabled, allow_remote_put = self._extract_status_flags(status)
+            if not enabled:
+                raise DaUploadError("DA is disabled", diagnostics={"status": status})
 
-            if not method_options:
-                method = c.resolve_method("da.putBlob", ["da.putBlob", "da_putBlob"])
-                method_options = [{"method": method, "schema": self._parse_put_blob_meta(method, registry.get_method_meta(method))}]
+            if allow_remote_put is True and registry.has_method("da.putBlob"):
+                params = self._build_da_dot_put_blob_params(raw_bytes, "studio/checkpoint", metadata)
+                self._log_upload_attempt("da.putBlob", "by-name", params)
+                result = c.call("da.putBlob", params)
+                return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
 
-            selected = next(
-                (opt for opt in method_options if opt["schema"].get("schema_encoding") in {"positional", "object"}),
-                method_options[0],
-            )
-            method = str(selected["method"])
-            schema = selected["schema"]
-            preferred_encoding = str(schema.get("schema_encoding") or "unknown")
-            chosen_encoding = self._param_encoding.get(method, preferred_encoding if preferred_encoding in {"positional", "object"} else "positional")
-
-            log.debug(
-                "DA putBlob schema resolved method=%s param_spec=%s schema_encoding=%s chosen_encoding=%s",
-                method,
-                schema.get("param_spec", []),
-                preferred_encoding,
-                chosen_encoding,
-            )
-
-            attempt_log: list[dict[str, Any]] = []
-            try:
-                params = self._build_upload_params(chosen_encoding, namespace_int, data_hex)
-                actual_arity = len(params) if isinstance(params, list) else len(params.keys())
-                attempt_log.append({"encoding": chosen_encoding, "actual_arity": actual_arity})
+            if registry.has_method("da.ingestLocal") or registry.has_method("da_ingestLocal"):
+                ingest_info = self.get_ingest_dir()
+                ingest_dir = Path(str(ingest_info.get("dir") or "").strip() or tempfile.gettempdir())
+                ingest_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=ingest_dir, prefix="studio-upload-", suffix=".blob", delete=False) as fh:
+                    fh.write(raw_bytes)
+                    node_path = str(fh.name)
+                method = "da.ingestLocal" if registry.has_method("da.ingestLocal") else "da_ingestLocal"
+                params = self._build_da_ingest_local_params(node_path, namespace_int)
+                self._log_upload_attempt(method, "by-name", params)
                 result = c.call(method, params)
-            except RpcResponseError as exc:
-                retry_encoding = None
-                if exc.rpc_error.code == -32602:
-                    retry_encoding = self._retry_encoding_for_error(exc.rpc_error.message or "", chosen_encoding)
-                if retry_encoding:
-                    log.info("DA putBlob retrying with alternate encoding method=%s from=%s to=%s", method, chosen_encoding, retry_encoding)
-                    retry_params = self._build_upload_params(retry_encoding, namespace_int, data_hex)
-                    attempt_log.append(
-                        {
-                            "encoding": retry_encoding,
-                            "actual_arity": len(retry_params) if isinstance(retry_params, list) else len(retry_params.keys()),
-                        }
-                    )
-                    result = c.call(method, retry_params)
-                    self._param_encoding[method] = retry_encoding
-                elif exc.rpc_error.code == -32602:
-                    server_info: dict[str, Any] = {}
-                    try:
-                        server_info = getattr(registry, "server_info", {})
-                    except Exception:  # noqa: BLE001
-                        server_info = {}
-                    diag = self._build_upload_diagnostics(
-                        method=method,
-                        namespace=namespace_int,
-                        data_hex=data_hex,
-                        server_info=server_info,
-                        schema=schema,
-                        chosen_encoding=chosen_encoding,
-                        attempt_log=attempt_log,
-                    )
-                    raise DaUploadError(f"Invalid DA upload params: {exc}", diagnostics=diag) from exc
-                else:
-                    raise
-            else:
-                self._param_encoding[method] = chosen_encoding
+                return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
+
+            payload = self._metadata_payload(raw_bytes, content_type, tags)
+            data_hex = "0x" + payload.hex()
+            self._validate_hex_data(data_hex)
+            method = "da_putBlob" if registry.has_method("da_putBlob") else "da.putBlob"
+            params = self._build_da_put_blob_params(namespace_int, data_hex)
+            self._log_upload_attempt(method, "positional", params)
+            result = c.call(method, params)
+            return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
         finally:
             c.close()
-        return {"blob_id": result, "sha256": hashlib.sha256(data).hexdigest()}
+
+    def upload_bytes(self, data: bytes, namespace: int | str | None = None) -> dict[str, Any]:
+        namespace_int = self._parse_namespace(namespace)
+        return self.upload_blob(namespace_int, bytes(data), None, None)
 
     def upload_json(self, payload: dict[str, Any], namespace: int | str | None = None) -> dict[str, Any]:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
