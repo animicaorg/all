@@ -169,7 +169,7 @@ def test_rejects_studio_contrib_dir_under_node_data(tmp_path: Path):
         )
     )
     assert not ok
-    assert "Studio needs a host path" in msg
+    assert "Choose a host path for Studio dir" in msg
 
 
 def test_normalize_uses_default_studio_contrib_dir_when_missing(tmp_path: Path):
@@ -198,4 +198,4 @@ def test_rejects_node_path_with_clean_ui_error(tmp_path: Path):
         )
     )
     assert not ok
-    assert "Studio needs a host path" in msg
+    assert "Choose a host path for Studio dir" in msg
