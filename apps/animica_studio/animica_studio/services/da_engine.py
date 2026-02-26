@@ -101,6 +101,10 @@ class DaContributionEngine(QObject):
         self._last_state_transition_ts = self._utc_now()
         self._start_attempts = 0
         self._config_validation_reasons: list[str] = []
+        self._last_applied_node_dir = ""
+        self._last_applied_limit_bytes = 0
+        self._last_applied_mode = ""
+        self._start_in_progress = False
 
     @staticmethod
     def _is_writable_dir(path: Path) -> tuple[bool, str]:
@@ -225,6 +229,19 @@ class DaContributionEngine(QObject):
         if not ok:
             self._set_error(detail)
             return False, detail
+        config_changed = (
+            self.config.enabled != config.enabled
+            or self.config.host_data_dir != config.host_data_dir
+            or self.config.node_data_dir != config.node_data_dir
+            or self.config.mode != config.mode
+            or self.config.limit_bytes != config.limit_bytes
+            or self.config.rpc_url != config.rpc_url
+            or self.config.contributor_id != config.contributor_id
+            or self.config.auto_start != config.auto_start
+            or (self.config.allowed_base_dirs or []) != (config.allowed_base_dirs or [])
+        )
+        if not config_changed:
+            return True, "unchanged"
         self.config = config
         self.metrics.host_directory = config.host_data_dir
         self.metrics.node_directory = config.node_data_dir
@@ -253,27 +270,38 @@ class DaContributionEngine(QObject):
         return False, "; ".join(reasons)
 
     def start(self) -> None:
-        if self.state == DaEngineState.RUNNING:
+        if self.state == DaEngineState.RUNNING or self._start_in_progress:
             return
+        self._start_in_progress = True
         self._start_attempts += 1
         self.logLine.emit("system", f"DA start requested (attempt={self._start_attempts})")
-        ok, detail = self.validate_config(self.config)
-        if not ok:
-            self._set_error(detail)
-            return
-        if not self.config.enabled:
-            self.config.enabled = True
-            self._transition_to(DaEngineState.CONFIGURED, "start enabled DA feature")
-        self._transition_to(DaEngineState.STARTING, "start")
         try:
-            self.client().configure(
-                {
-                    "enabled": True,
-                    "dir": self.config.node_data_dir,
-                    "max_bytes": self.config.limit_bytes,
-                    "on_full": "evict" if self.config.mode == "quota" else "reject",
-                }
+            ok, detail = self.validate_config(self.config)
+            if not ok:
+                self._set_error(detail)
+                return
+            if not self.config.enabled:
+                self.config.enabled = True
+                self._transition_to(DaEngineState.CONFIGURED, "start enabled DA feature")
+            self._transition_to(DaEngineState.STARTING, "start")
+            desired_on_full = "evict" if self.config.mode == "quota" else "reject"
+            should_configure = (
+                self._last_applied_node_dir != self.config.node_data_dir
+                or self._last_applied_limit_bytes != self.config.limit_bytes
+                or self._last_applied_mode != desired_on_full
             )
+            if should_configure:
+                self.client().configure(
+                    {
+                        "enabled": True,
+                        "dir": self.config.node_data_dir,
+                        "max_bytes": self.config.limit_bytes,
+                        "on_full": desired_on_full,
+                    }
+                )
+                self._last_applied_node_dir = self.config.node_data_dir
+                self._last_applied_limit_bytes = self.config.limit_bytes
+                self._last_applied_mode = desired_on_full
             self._timer.start()
             self._transition_to(DaEngineState.RUNNING, "start success")
             self.healthChanged.emit(True, "Running")
@@ -283,6 +311,8 @@ class DaContributionEngine(QObject):
             self._tick()
         except Exception as exc:
             self._set_error(str(exc))
+        finally:
+            self._start_in_progress = False
 
     def stop(self) -> None:
         if self.state not in {DaEngineState.RUNNING, DaEngineState.STARTING, DaEngineState.ERROR}:
@@ -293,6 +323,7 @@ class DaContributionEngine(QObject):
             self._busy_worker.quit()
             self._busy_worker.wait(1000)
         self._transition_to(DaEngineState.CONFIGURED, "stop complete")
+        self._start_in_progress = False
         self.healthChanged.emit(True, "Stopped")
         self.logLine.emit("system", "DA contribution engine stopped")
 
