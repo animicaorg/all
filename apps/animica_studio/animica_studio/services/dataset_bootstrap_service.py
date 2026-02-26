@@ -396,6 +396,7 @@ class VettedReposProvider(SourceProvider):
             cache = manager.cache_root / "github" / owner / name
             tarball_path: Path | None = None
             used_ref = ""
+            download_exc: str = ""
             for ref in refs:
                 try:
                     tarball_path = manager.download_with_mirrors(
@@ -407,9 +408,18 @@ class VettedReposProvider(SourceProvider):
                     )
                     used_ref = ref
                     break
-                except Exception:
+                except Exception as _dl_exc:
+                    download_exc = str(_dl_exc)
                     continue
             if tarball_path is None:
+                manager._record_failure(
+                    source=self.source_name,
+                    url=f"https://codeload.github.com/{owner}/{name}/tar.gz/<refs={refs}>",
+                    status=None,
+                    content_type="",
+                    excerpt="",
+                    message=download_exc or "all refs failed",
+                )
                 continue
             progress_cb({"stage": "extracting", "source": self.source_name, "repo": f"{owner}/{name}", "ref": used_ref})
             yield from self._iter_repo_docs(
@@ -581,6 +591,18 @@ class DownloadManager:
             with urlopen(req, timeout=30) as resp, tmp.open("ab") as out:  # noqa: S310
                 total = _safe_int(resp.headers.get("Content-Length"))
                 content_type = str(resp.headers.get("Content-Type") or "")
+                # Reject HTML responses early — these indicate error pages (rate limits, 302→HTML, etc.)
+                if content_type.startswith("text/html"):
+                    excerpt = resp.read(512).decode("utf-8", errors="replace")
+                    self._record_failure(
+                        source=source,
+                        url=url,
+                        status=getattr(resp, "status", None),
+                        content_type=content_type,
+                        excerpt=excerpt[:200],
+                        message=f"Expected tarball but got HTML (content-type: {content_type})",
+                    )
+                    raise RuntimeError(f"Download returned HTML instead of tarball from {url}")
                 if total and received and resp.status == 206:
                     total += received
                 while True:
@@ -616,6 +638,9 @@ class DownloadManager:
         except URLError as exc:
             self._record_failure(source=source, url=url, status=None, content_type="", excerpt="", message=str(exc.reason))
             raise RuntimeError(f"Download failed from {url}: {exc.reason}") from exc
+        except Exception as exc:  # noqa: BLE001 — catch timeout/SSL/other OS errors
+            self._record_failure(source=source, url=url, status=None, content_type="", excerpt="", message=str(exc))
+            raise RuntimeError(f"Download failed from {url}: {exc}") from exc
         if cancel.is_set():
             return dest
         shutil.move(tmp, dest)
@@ -841,9 +866,17 @@ class DatasetBootstrapService:
 
         shards = shard_writer.close()
         if not shards:
+            diags = manager.diagnostics()
+            diag_summary = json.dumps(diags[:8], indent=2) if diags else (
+                "No download failures recorded. Possible causes:\n"
+                "  - All repository files were excluded by the file-type filter\n"
+                "  - The repo tarball was empty or contained only binary files\n"
+                "  - The scheduler produced no work items (check source config)\n"
+                "  - A download exception was not captured (network/SSL/timeout)"
+            )
             raise RuntimeError(
                 "Dataset bootstrap produced no documents. Diagnostics:\n"
-                + json.dumps(manager.diagnostics()[:8], indent=2)
+                + diag_summary
                 + "\nSuggestions: Pick a different version, paste a custom URL, or use Starter dataset."
             )
 
