@@ -38,6 +38,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from animica_studio.services.da_path_guard import NODE_PATH_UI_ERROR, assert_host_writable_path
 from animica_studio.util.paths import default_da_contrib_dir
 
 log = logging.getLogger(__name__)
@@ -372,9 +373,12 @@ def _validate_config(directory: str, max_bytes: int) -> None:
     if not directory or not directory.strip():
         raise ValueError("Contribution directory must not be empty.")
 
-    path = Path(directory).expanduser().resolve()
-    if str(path) == "/data" or str(path).startswith("/data/"):
-        raise ValueError("Studio contribution dir must be a host path (e.g., ~/.animica/da_contrib), not node path /data")
+    try:
+        path = assert_host_writable_path(directory).resolve()
+    except ValueError as exc:
+        if str(exc) == NODE_PATH_UI_ERROR:
+            raise ValueError(NODE_PATH_UI_ERROR) from exc
+        raise
 
     if path.exists() and not path.is_dir():
         raise ValueError(f"Path exists but is not a directory: {path}")
