@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import shlex
+import shutil
 import subprocess
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 import typer
@@ -27,6 +32,194 @@ DEFAULT_HEALTH_RESPONSE = {"status": "ok"}
 DEFAULT_READY_RESPONSE = {"status": "ready"}
 
 app = typer.Typer(help="Manage Animica Studio Services.")
+LOGGER = logging.getLogger(__name__)
+ELEVATED_COMMAND_TIMEOUT_SECONDS = 120
+
+
+class PrivilegeActionType(str, Enum):
+    DOCKER_PERMISSION = "DOCKER_PERMISSION"
+    HOST_DIR_PERMISSION = "HOST_DIR_PERMISSION"
+    MOUNT_PERMISSION = "MOUNT_PERMISSION"
+    OTHER = "OTHER"
+
+
+@dataclass
+class PrivilegeCheckResult:
+    needs_docker_access: bool
+    needs_host_data_dir_write: bool
+    needs_privileged_port: bool
+
+
+class PrivilegeChecker:
+    """Best-effort checks for whether a given operation likely needs elevation."""
+
+    def evaluate(self, host_dir: Optional[str], port: Optional[int]) -> PrivilegeCheckResult:
+        return PrivilegeCheckResult(
+            needs_docker_access=not self._can_access_docker(),
+            needs_host_data_dir_write=not self._can_write_host_dir(host_dir),
+            needs_privileged_port=(port is not None and port < 1024),
+        )
+
+    def classify_error(self, stderr: str) -> PrivilegeActionType:
+        lowered = (stderr or "").lower()
+        if "docker.sock" in lowered or "permission denied while trying to connect" in lowered:
+            return PrivilegeActionType.DOCKER_PERMISSION
+        if "mount" in lowered:
+            return PrivilegeActionType.MOUNT_PERMISSION
+        if "eacces" in lowered or "eperm" in lowered or "errno 13" in lowered or "permission denied" in lowered:
+            return PrivilegeActionType.HOST_DIR_PERMISSION
+        return PrivilegeActionType.OTHER
+
+    def _can_access_docker(self) -> bool:
+        docker_sock = Path("/var/run/docker.sock")
+        return docker_sock.exists() and os.access(docker_sock, os.R_OK | os.W_OK)
+
+    def _can_write_host_dir(self, host_dir: Optional[str]) -> bool:
+        if not host_dir:
+            return True
+        candidate = Path(host_dir).expanduser().resolve()
+        parent = candidate if candidate.exists() else candidate.parent
+        return os.access(parent, os.W_OK)
+
+
+class ElevatedRunner:
+    """Run a single action with pkexec/sudo without re-execing the full app."""
+
+    def run(self, argv: Sequence[str], env: Dict[str, str], cwd: Optional[Path]) -> subprocess.CompletedProcess[str]:
+        if shutil.which("pkexec"):
+            full_cmd: List[str] = ["pkexec", *argv]
+        else:
+            subprocess.run(["sudo", "-k"], check=False)
+            full_cmd = ["sudo", "--preserve-env=PATH", *argv]
+
+        return subprocess.run(
+            full_cmd,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=ELEVATED_COMMAND_TIMEOUT_SECONDS,
+        )
+
+
+def _redact_sensitive_args(argv: Sequence[str]) -> List[str]:
+    redacted: List[str] = []
+    sensitive_keys = ("token", "password", "secret", "key")
+    for arg in argv:
+        lowered = arg.lower()
+        if any(key in lowered for key in sensitive_keys):
+            if "=" in arg:
+                redacted.append(f"{arg.split('=', 1)[0]}=<redacted>")
+            else:
+                redacted.append("<redacted>")
+        else:
+            redacted.append(arg)
+    return redacted
+
+
+def _recommended_non_sudo_fixes(checks: PrivilegeCheckResult, storage_dir: Optional[str]) -> List[str]:
+    fixes: List[str] = []
+    if checks.needs_docker_access:
+        fixes.append("Add your user to docker group: sudo usermod -aG docker $USER && newgrp docker")
+    if checks.needs_host_data_dir_write and storage_dir:
+        fixes.append(f"Use a user-writable directory (recommended): ~/.animica/studio instead of {storage_dir}")
+    if checks.needs_privileged_port:
+        fixes.append("Use an unprivileged port (>=1024), e.g. --port 8081")
+    if not fixes:
+        fixes.append("Retry the operation and inspect diagnostics; permission issue may be transient.")
+    return fixes
+
+
+def _prompt_privilege_required(
+    action_type: PrivilegeActionType,
+    explanation: str,
+    command_preview: Sequence[str],
+    checks: PrivilegeCheckResult,
+    storage_dir: Optional[str],
+) -> str:
+    typer.secho("\nAdministrator privileges required", fg=typer.colors.YELLOW, bold=True)
+    typer.echo(explanation)
+    typer.echo(f"Action type: {action_type.value}")
+    typer.echo(f"Command preview: {shlex.join(command_preview)}")
+    typer.echo("\nChoose an option:")
+    typer.echo("  1) Fix without sudo (recommended)")
+    typer.echo("  2) Run this action with sudo…")
+    typer.echo("  3) Cancel")
+    remember_for_session = typer.confirm("Remember for this session?", default=False)
+    if remember_for_session:
+        typer.echo("Session remember enabled for this process only.")
+    choice = typer.prompt("Select 1, 2, or 3", default="1").strip()
+    if choice == "1":
+        typer.secho("\nRecommended non-sudo fixes:", fg=typer.colors.CYAN, bold=True)
+        for fix in _recommended_non_sudo_fixes(checks, storage_dir):
+            typer.echo(f"  - {fix}")
+        typer.echo("\nCopy diagnostics: include command output and permission error details.")
+    return choice
+
+
+def _run_with_optional_elevation(
+    *,
+    cmd: Sequence[str],
+    env: Dict[str, str],
+    cwd: Path,
+    host_dir: Optional[str],
+    port: Optional[int],
+    feature_name: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run command unprivileged first, then optionally elevate a single action."""
+    result = subprocess.run(
+        list(cmd),
+        cwd=cwd,
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        typer.echo(result.stdout.rstrip())
+    if result.stderr:
+        typer.echo(result.stderr.rstrip(), err=True)
+    if result.returncode == 0:
+        return result
+
+    checker = PrivilegeChecker()
+    action_type = checker.classify_error(result.stderr)
+    permission_like_error = action_type != PrivilegeActionType.OTHER
+    if not permission_like_error:
+        return result
+
+    checks = checker.evaluate(host_dir=host_dir, port=port)
+    choice = _prompt_privilege_required(
+        action_type=action_type,
+        explanation=(
+            f"{feature_name} hit a permission error. Studio stays unprivileged, "
+            "but this specific action can be elevated after your explicit confirmation."
+        ),
+        command_preview=cmd,
+        checks=checks,
+        storage_dir=host_dir,
+    )
+    if choice != "2":
+        raise typer.Exit(code=1)
+
+    redacted = _redact_sensitive_args(cmd)
+    LOGGER.warning("Elevated action requested | action_type=%s | argv=%s", action_type.value, redacted)
+    elevated_runner = ElevatedRunner()
+    try:
+        elevated = elevated_runner.run(argv=cmd, env=env, cwd=cwd)
+    except subprocess.TimeoutExpired:
+        typer.echo(
+            f"Elevated command timed out after {ELEVATED_COMMAND_TIMEOUT_SECONDS} seconds.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if elevated.stdout:
+        typer.echo(elevated.stdout.rstrip())
+    if elevated.stderr:
+        typer.echo(elevated.stderr.rstrip(), err=True)
+    return elevated
 
 
 def _ensure_network_set() -> str:
@@ -339,11 +532,13 @@ def up(
         env[key] = str(value)
     
     try:
-        result = subprocess.run(
-            cmd,
+        result = _run_with_optional_elevation(
+            cmd=cmd,
             cwd=compose_file.parent,
-            check=False,
-            env=env
+            env=env,
+            host_dir=config.get("STORAGE_DIR"),
+            port=config.get("PORT"),
+            feature_name="Starting Studio Services",
         )
         
         if result.returncode == 0:
@@ -436,11 +631,13 @@ def down(
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
     
     try:
-        result = subprocess.run(
-            cmd,
+        result = _run_with_optional_elevation(
+            cmd=cmd,
             cwd=compose_file.parent,
-            check=False,
-            env={**os.environ, "ANIMICA_NETWORK": network}
+            env={**os.environ, "ANIMICA_NETWORK": network},
+            host_dir=None,
+            port=None,
+            feature_name="Stopping Studio Services",
         )
         
         if result.returncode == 0:
@@ -611,11 +808,13 @@ def logs(
     cmd.extend(["services", "explorer"])
     
     try:
-        # Run interactively to preserve output streaming
-        subprocess.run(
-            cmd,
+        _run_with_optional_elevation(
+            cmd=cmd,
             cwd=compose_file.parent,
-            env={**os.environ, "ANIMICA_NETWORK": network}
+            env={**os.environ, "ANIMICA_NETWORK": network},
+            host_dir=None,
+            port=None,
+            feature_name="Viewing Studio Services logs",
         )
     except FileNotFoundError:
         typer.echo(

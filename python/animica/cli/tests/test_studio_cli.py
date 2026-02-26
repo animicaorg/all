@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 import respx
 import typer
 from animica.cli import studio
@@ -13,6 +15,10 @@ from animica.cli.state import CLIState
 from typer.testing import CliRunner
 
 runner = CliRunner()
+
+
+def _completed_process(returncode: int, stdout: str = "", stderr: str = ""):
+    return subprocess.CompletedProcess(args=["docker"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def test_config_validate_success(monkeypatch: Any) -> None:
@@ -529,3 +535,47 @@ def test_logs_with_custom_tail(monkeypatch: Any) -> None:
             assert "--tail" in cmd
             tail_idx = cmd.index("--tail")
             assert cmd[tail_idx + 1] == "50"
+
+def test_privilege_checker_classification() -> None:
+    checker = studio.PrivilegeChecker()
+    assert checker.classify_error("permission denied while trying to connect to /var/run/docker.sock") == studio.PrivilegeActionType.DOCKER_PERMISSION
+    assert checker.classify_error("EACCES: [Errno 13] Permission denied: '/data'") == studio.PrivilegeActionType.HOST_DIR_PERMISSION
+    assert checker.classify_error("mount failed: permission denied") == studio.PrivilegeActionType.MOUNT_PERMISSION
+    assert checker.classify_error("network is unavailable") == studio.PrivilegeActionType.OTHER
+
+
+def test_run_with_optional_elevation_runs_sudo_after_confirmation(monkeypatch: Any) -> None:
+    first = _completed_process(1, stderr="permission denied while trying to connect to /var/run/docker.sock")
+    elevated = _completed_process(0, stdout="elevated ok")
+
+    monkeypatch.setattr("animica.cli.studio.subprocess.run", MagicMock(return_value=first))
+    monkeypatch.setattr("animica.cli.studio._prompt_privilege_required", lambda **kwargs: "2")
+    monkeypatch.setattr("animica.cli.studio.shutil.which", lambda _: None)
+    monkeypatch.setattr("animica.cli.studio.ElevatedRunner.run", lambda self, argv, env, cwd: elevated)
+
+    result = studio._run_with_optional_elevation(
+        cmd=["docker", "compose", "up", "-d"],
+        env={},
+        cwd=Path("."),
+        host_dir="/data",
+        port=8081,
+        feature_name="Start",
+    )
+
+    assert result.returncode == 0
+
+
+def test_run_with_optional_elevation_fix_without_sudo_exits(monkeypatch: Any) -> None:
+    first = _completed_process(1, stderr="permission denied")
+    monkeypatch.setattr("animica.cli.studio.subprocess.run", MagicMock(return_value=first))
+    monkeypatch.setattr("animica.cli.studio._prompt_privilege_required", lambda **kwargs: "1")
+
+    with pytest.raises(typer.Exit):
+        studio._run_with_optional_elevation(
+            cmd=["docker", "compose", "up", "-d"],
+            env={},
+            cwd=Path("."),
+            host_dir="/data",
+            port=8081,
+            feature_name="Start",
+        )
