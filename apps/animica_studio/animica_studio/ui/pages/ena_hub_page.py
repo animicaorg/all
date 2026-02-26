@@ -110,6 +110,7 @@ class EnaHubPage(QWidget):
     def _build_overview(self) -> QWidget:
         w = QWidget()
         root = QVBoxLayout(w)
+        root.addWidget(QLabel("ENA Multimodal (Text + Image + Video)"))
         root.addWidget(QLabel("ENA Guided Automation"))
         if self._full_auto_engine is not None:
             root.addWidget(EnaFullAutoPanel(self._config, self._full_auto_engine))
@@ -124,7 +125,7 @@ class EnaHubPage(QWidget):
             btn = QPushButton(label)
             btn.clicked.connect(lambda _, i=tab_idx: self._tabs.setCurrentIndex(i))
             root.addWidget(btn)
-        auto_btn = QPushButton("Auto mode")
+        auto_btn = QPushButton("FULL AUTO")
         auto_btn.clicked.connect(self._run_auto)
         root.addWidget(auto_btn)
         root.addWidget(self._status_label)
