@@ -87,6 +87,7 @@ class AnimicaCode(IntEnum):
     PQ_POLICY_VIOLATION = -32032
 
     # Data availability
+    DA_CONFIG_PERM_DENIED = -32006
     DA_ERROR = -32041
     DA_NOT_AVAILABLE = -32042
 
@@ -343,6 +344,13 @@ class PqPolicyViolation(RpcError):
 
 
 # DA
+class DaConfigPermDenied(RpcError):
+    def __init__(self, path: str, hint: str = "fix docker mount permissions or run container as matching UID", **extra: Any) -> None:
+        payload: dict[str, Any] = {"errno": 13, "path": path, "hint": hint}
+        payload.update(extra)
+        super().__init__(AnimicaCode.DA_CONFIG_PERM_DENIED, "permission denied", payload)
+
+
 class DaError(RpcError):
     def __init__(self, detail: str = "Data-availability error", **data: Any) -> None:
         super().__init__(AnimicaCode.DA_ERROR, detail, _extract_data_param(**data))
@@ -545,6 +553,7 @@ __all__ = [
     "PoIESRejected",
     "PqPolicyViolation",
     # DA
+    "DaConfigPermDenied",
     "DaError",
     "DaNotAvailable",
     # randomness

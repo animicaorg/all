@@ -78,7 +78,6 @@ class DaPage(QWidget):
         self._docker_mount_snippet = ""
         self._allowed_base_dirs: list[str] = []
         self._default_node_dir = ""
-        self._last_logged_default_dir = ""
         self._settings_dirty = False
         self._last_mapping_probe_at = 0.0
         self._mapping_probe_interval_seconds = 600.0
@@ -731,10 +730,10 @@ class DaPage(QWidget):
         if not self._contrib_host_dir_edit.text().strip():
             self._contrib_host_dir_edit.setText(host_dir)
         if self._default_node_dir:
+            old_node_dir = self._contrib_node_dir_edit.text().strip()
             self._contrib_node_dir_edit.setText(self._default_node_dir)
-            if self._last_logged_default_dir != self._default_node_dir:
+            if old_node_dir != self._default_node_dir.strip():
                 self._contrib_console.append_info(f"Using node default DA dir (node path): {self._default_node_dir}")
-                self._last_logged_default_dir = self._default_node_dir
             return
         self._refresh_da_recommendations(force_probe=False)
 
