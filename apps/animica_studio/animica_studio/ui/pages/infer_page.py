@@ -21,10 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from animica_studio.ena_mm.infer.chat import generate_text
-from animica_studio.ena_mm.infer.decoding.render import save_mp4_placeholder, save_png
-from animica_studio.ena_mm.infer.image_gen import generate_image
 from animica_studio.ena_mm.infer.safety_filters import validate_prompt
-from animica_studio.ena_mm.infer.video_gen import generate_video_frames
+from animica_studio.services.capabilities import has_pillow
 from animica_studio.services.ena_model_repository import EnaModelRepository, ModelEntry
 from animica_studio.storage.config import Config, save_config
 
@@ -37,6 +35,7 @@ class InferPage(QWidget):
         self._repo = EnaModelRepository()
         self._models: list[ModelEntry] = []
         self._turns: list[dict[str, str]] = []
+        self._media_rendering_available = has_pillow()
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -55,6 +54,10 @@ class InferPage(QWidget):
         self.tabs.addTab(self._build_chat_tab(), "Chat")
         self.tabs.addTab(self._build_image_tab(), "Image")
         self.tabs.addTab(self._build_video_tab(), "Video")
+
+        self.media_banner = QLabel("Inference media rendering unavailable. Install: pip install pillow")
+        self.media_banner.setVisible(not self._media_rendering_available)
+        root.addWidget(self.media_banner)
 
         self.refresh_models_btn.clicked.connect(self._refresh_models)
         self._load_settings()
@@ -107,6 +110,7 @@ class InferPage(QWidget):
         root.addLayout(form)
         self.image_out = QLabel("No image generated yet")
         self.image_gen_btn = QPushButton("Generate image")
+        self.image_gen_btn.setEnabled(self._media_rendering_available)
         self.image_gen_btn.clicked.connect(self._generate_image)
         root.addWidget(self.image_gen_btn)
         root.addWidget(self.image_out)
@@ -133,6 +137,7 @@ class InferPage(QWidget):
         self.video_notice = QLabel("GPU recommended for video generation. CPU may run tiny clips only.")
         self.video_out = QLabel("No video generated yet")
         self.video_btn = QPushButton("Generate video")
+        self.video_btn.setEnabled(self._media_rendering_available)
         self.video_btn.clicked.connect(self._generate_video)
         root.addWidget(self.video_notice)
         root.addWidget(self.video_btn)
@@ -173,12 +178,25 @@ class InferPage(QWidget):
         self._save_settings()
 
     def _generate_image(self) -> None:
+        if not self._media_rendering_available:
+            QMessageBox.information(self, "Inference", "Inference media rendering unavailable. Install: pip install pillow")
+            return
         prompt = self.image_prompt.toPlainText().strip()
         ok, reason = validate_prompt(prompt)
         if not ok:
             QMessageBox.warning(self, "Safety", reason)
             return
         w, h = [int(v) for v in self.image_size.currentText().split("x")]
+        try:
+            from animica_studio.ena_mm.infer.decoding.render import save_png
+            from animica_studio.ena_mm.infer.image_gen import generate_image
+        except ImportError:
+            QMessageBox.information(self, "Inference", "Inference media rendering unavailable. Install: pip install pillow")
+            self._media_rendering_available = False
+            self.media_banner.setVisible(True)
+            self.image_gen_btn.setEnabled(False)
+            self.video_btn.setEnabled(False)
+            return
         img = generate_image(prompt, w, h, int(self.image_seed.value()))
         out = Path("./ena-training-runs/mm-infer") / f"img-{int(time.time())}.png"
         path = save_png(img, str(out))
@@ -186,6 +204,9 @@ class InferPage(QWidget):
         self._save_settings()
 
     def _generate_video(self) -> None:
+        if not self._media_rendering_available:
+            QMessageBox.information(self, "Inference", "Inference media rendering unavailable. Install: pip install pillow")
+            return
         prompt = self.video_prompt.toPlainText().strip()
         ok, reason = validate_prompt(prompt)
         if not ok:
@@ -197,6 +218,16 @@ class InferPage(QWidget):
         flags = model.modality_flags if model else {}
         if flags and not flags.get("video", False):
             QMessageBox.information(self, "Video", "Selected model package does not include video head.")
+            return
+        try:
+            from animica_studio.ena_mm.infer.decoding.render import save_mp4_placeholder
+            from animica_studio.ena_mm.infer.video_gen import generate_video_frames
+        except ImportError:
+            QMessageBox.information(self, "Inference", "Inference media rendering unavailable. Install: pip install pillow")
+            self._media_rendering_available = False
+            self.media_banner.setVisible(True)
+            self.image_gen_btn.setEnabled(False)
+            self.video_btn.setEnabled(False)
             return
         imgs = generate_video_frames(prompt, w, h, max(1, frames), int(self.video_seed.value()))
         out = Path("./ena-training-runs/mm-infer") / f"vid-{int(time.time())}.mp4"

@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
-from PIL.Image import Image
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 
-def save_png(image: Image, path: str) -> str:
+def _require_pillow() -> None:
+    if Image is None:
+        raise RuntimeError("Pillow is required for image/video rendering. Install: pip install pillow")
+
+
+def save_png(image, path: str) -> str:
+    _require_pillow()
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     image.save(p)
     return str(p)
 
 
-def save_mp4_placeholder(frames: list[Image], path: str) -> str:
+def save_mp4_placeholder(frames: list, path: str) -> str:
+    _require_pillow()
     # Keep local-first + dependency-light: store a GIF bytes under mp4 filename as tiny placeholder artifact.
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)

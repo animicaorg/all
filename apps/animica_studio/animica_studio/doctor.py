@@ -143,14 +143,18 @@ def _probe_environment() -> EnvSection:
     sec.venv_active = sys.prefix != sys.base_prefix or os.environ.get("VIRTUAL_ENV", "") != ""
 
     # PyTorch
-    try:
-        import torch  # type: ignore[import-not-found]
-        sec.torch_available = True
-        sec.cuda_available = torch.cuda.is_available()
-        if sec.cuda_available:
-            sec.cuda_device = torch.cuda.get_device_name(0)
-    except ImportError:
-        pass
+    from animica_studio.services.capabilities import has_psutil, has_torch  # noqa: PLC0415
+
+    if has_torch():
+        try:
+            import torch  # type: ignore[import-not-found]
+
+            sec.torch_available = True
+            sec.cuda_available = torch.cuda.is_available()
+            if sec.cuda_available:
+                sec.cuda_device = torch.cuda.get_device_name(0)
+        except Exception:
+            sec.torch_available = False
 
     # Disk / RAM / CPU
     try:
@@ -159,14 +163,19 @@ def _probe_environment() -> EnvSection:
     except Exception:
         pass
 
-    try:
-        import psutil  # type: ignore[import-not-found]
-        vm = psutil.virtual_memory()
-        sec.ram_free_gib = round(vm.available / 1024 ** 3, 2)
-        sec.cpu_cores = psutil.cpu_count(logical=False) or os.cpu_count() or 1
-    except Exception:
-        sec.ram_free_gib = 0.0
-        sec.cpu_cores = os.cpu_count() or 1
+    if has_psutil():
+        try:
+            import psutil  # type: ignore[import-not-found]
+
+            vm = psutil.virtual_memory()
+            sec.ram_free_gib = round(vm.available / 1024 ** 3, 2)
+            sec.cpu_cores = psutil.cpu_count(logical=False) or os.cpu_count() or 1
+        except Exception:
+            sec.ram_free_gib = -1.0
+            sec.cpu_cores = -1
+    else:
+        sec.ram_free_gib = -1.0
+        sec.cpu_cores = -1
 
     # Package versions
     for label, pkg in {**_REQUIRED_PACKAGES, **_OPTIONAL_PACKAGES}.items():
@@ -252,7 +261,14 @@ def _probe_da(rpc_url: str) -> DASection:
             sec.ingest_available = False
 
     except Exception as exc:
-        sec.error = str(exc)
+        msg = str(exc)
+        lower = msg.lower()
+        if not rpc_url:
+            sec.error = "not_configured: No RPC URL configured"
+        elif "not enabled" in lower or "disabled" in lower:
+            sec.error = f"disabled: {msg}"
+        else:
+            sec.error = f"rpc_error: {msg}"
 
     return sec
 
@@ -432,8 +448,10 @@ def print_report(report: DoctorReport, as_json: bool = False) -> None:
     if env.torch_available:
         print(f"  CUDA:        {'yes (' + (env.cuda_device or '') + ')' if env.cuda_available else 'no'}")
     print(f"  Disk free:   {env.disk_free_gib} GiB")
-    print(f"  RAM free:    {env.ram_free_gib} GiB")
-    print(f"  CPU cores:   {env.cpu_cores}")
+    ram_display = "unknown" if env.ram_free_gib < 0 else f"{env.ram_free_gib} GiB"
+    cpu_display = "unknown" if env.cpu_cores < 0 else str(env.cpu_cores)
+    print(f"  RAM free:    {ram_display}")
+    print(f"  CPU cores:   {cpu_display}")
     for pkg, ver in env.packages.items():
         marker = "✓" if ver != "missing" else "✗"
         print(f"  {marker} {pkg}: {ver}")
