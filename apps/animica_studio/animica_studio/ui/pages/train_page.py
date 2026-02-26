@@ -166,6 +166,10 @@ class TrainPage(QWidget):
         self.dataset_source_wiki_version = QLineEdit(self._get_provider_setting("wikipedia", "version", "latest"))
         self.dataset_source_arxiv_base = QLineEdit(self._get_provider_setting("arxiv", "base_url", ""))
         self.dataset_source_arxiv_version = QLineEdit(self._get_provider_setting("arxiv", "version", ""))
+        self.dataset_source_repos = QLineEdit(self._get_provider_setting("vetted_repos", "repos_text", "animicaorg/all@main"))
+        self.dataset_source_max_file = QSpinBox(); self.dataset_source_max_file.setRange(64 * 1024, 8 * 1024 * 1024); self.dataset_source_max_file.setSingleStep(64 * 1024); self.dataset_source_max_file.setValue(int(self._get_provider_setting("vetted_repos", "max_file_size_bytes", str(3 * 1024 * 1024)) or (3 * 1024 * 1024)))
+        self.dataset_source_include = QLineEdit(self._get_provider_setting("vetted_repos", "include_patterns_text", ""))
+        self.dataset_source_exclude = QLineEdit(self._get_provider_setting("vetted_repos", "exclude_patterns_text", ""))
         self.save_dataset_sources_btn = QPushButton("Save dataset source overrides")
         self.save_dataset_sources_btn.clicked.connect(self._save_dataset_source_settings)
         self.copy_bootstrap_diag_btn = QPushButton("Copy diagnostics")
@@ -252,6 +256,10 @@ class TrainPage(QWidget):
         form.addRow("Dataset source: Wikipedia version", self.dataset_source_wiki_version)
         form.addRow("Dataset source: arXiv base", self.dataset_source_arxiv_base)
         form.addRow("Dataset source: arXiv version/date", self.dataset_source_arxiv_version)
+        form.addRow("Dataset source: vetted repos (csv owner/repo@ref)", self.dataset_source_repos)
+        form.addRow("Vetted repos max file bytes", self.dataset_source_max_file)
+        form.addRow("Vetted include patterns (csv)", self.dataset_source_include)
+        form.addRow("Vetted exclude patterns (csv)", self.dataset_source_exclude)
         form.addRow("Dataset sources", self.dataset_offline_mode)
         dataset_source_buttons = QHBoxLayout(); dataset_source_buttons.addWidget(self.save_dataset_sources_btn); dataset_source_buttons.addWidget(self.copy_bootstrap_diag_btn); dataset_source_buttons.addStretch(1)
         form.addRow("", dataset_source_buttons)
@@ -579,6 +587,9 @@ class TrainPage(QWidget):
                 target_bytes=target,
                 shards=int(payload.get("shards") or (run.shards_count if run else 0)),
                 output_bytes=processed,
+                repo=str(payload.get("repo") or ""),
+                ref=str(payload.get("ref") or ""),
+                sources_exhausted=bool(payload.get("sources_exhausted", False)),
             )
 
     def _on_bootstrap_runtime_log(self, kind: str, text: str) -> None:
@@ -597,6 +608,9 @@ class TrainPage(QWidget):
             return
         if result.get("cancelled"):
             return
+        manifest = result.get("manifest", {}) if isinstance(result.get("manifest"), dict) else {}
+        if manifest.get("sources_exhausted_before_target"):
+            QMessageBox.information(self, "Dataset bootstrap", f"Sources exhausted before target: processed {manifest.get('total_bytes', 0)} bytes; target {manifest.get('target_bytes', self._bootstrap_runtime.active_run.docs_total if self._bootstrap_runtime.active_run else 0)}.")
         self.dataset_path.setText(result.get("manifest_path") or "")
         self.dataset_id.setText(Path(result.get("dataset_dir") or "").name)
         if self.auto_start_after_dataset.isChecked():
@@ -619,6 +633,17 @@ class TrainPage(QWidget):
             return default
         return str(p.get(key, default) or default)
 
+    def _parse_repo_setting(self, text: str) -> dict:
+        raw = text.strip()
+        ref = ""
+        if "@" in raw:
+            raw, ref = raw.split("@", 1)
+        raw = raw.replace("https://github.com/", "").replace("github.com/", "").replace(".git", "")
+        parts = [p for p in raw.split("/") if p]
+        if len(parts) < 2:
+            return {"owner": "", "repo": "", "ref": ""}
+        return {"owner": parts[0], "repo": parts[1], "ref": ref.strip()}
+
     def _save_dataset_source_settings(self) -> None:
         ena = self._cfg.ena if isinstance(self._cfg.ena, dict) else {}
         if not isinstance(ena, dict):
@@ -633,6 +658,15 @@ class TrainPage(QWidget):
                 "arxiv": {
                     "base_url": self.dataset_source_arxiv_base.text().strip(),
                     "version": self.dataset_source_arxiv_version.text().strip(),
+                },
+                "vetted_repos": {
+                    "repos": [self._parse_repo_setting(item) for item in self.dataset_source_repos.text().split(",") if item.strip()],
+                    "repos_text": self.dataset_source_repos.text().strip(),
+                    "max_file_size_bytes": int(self.dataset_source_max_file.value()),
+                    "include_patterns": [s.strip() for s in self.dataset_source_include.text().split(",") if s.strip()],
+                    "exclude_patterns": [s.strip() for s in self.dataset_source_exclude.text().split(",") if s.strip()],
+                    "include_patterns_text": self.dataset_source_include.text().strip(),
+                    "exclude_patterns_text": self.dataset_source_exclude.text().strip(),
                 },
             },
         }

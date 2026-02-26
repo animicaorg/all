@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import tarfile
 import threading
 from pathlib import Path
 from urllib.error import HTTPError
@@ -106,3 +108,60 @@ def test_download_manager_offline_mode_requires_cache(tmp_path: Path) -> None:
         cancel=threading.Event(),
     )
     assert out == cached
+
+
+def test_vetted_repos_provider_ingests_multiple_files(monkeypatch, tmp_path: Path) -> None:
+    from animica_studio.services.dataset_bootstrap_service import VettedReposProvider
+
+    tar_path = tmp_path / "repo.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tf:
+        for name, content in [("repo-main/README.md", b"hello"), ("repo-main/src/app.py", b"print('x')"), ("repo-main/assets/logo.png", b"\x89PNG")]:
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+
+    class _Manager:
+        cache_root = tmp_path
+
+        def download_with_mirrors(self, **kwargs):  # noqa: ANN003
+            return tar_path
+
+    provider = VettedReposProvider(repos=[{"owner": "animicaorg", "repo": "all", "ref": "main"}])
+    docs = list(provider.iter_documents(_Manager(), source_settings={}, progress_cb=lambda _p: None, cancel=threading.Event()))
+    assert len(docs) > 1
+    assert all("logo.png" not in d.get("path", "") for d in docs)
+
+
+def test_bootstrap_progress_percent_grows(monkeypatch, tmp_path: Path) -> None:
+    svc = DatasetBootstrapService(source_settings={"providers": {"wikipedia": {"version": "none"}, "arxiv": {}, "gutenberg": {}, "vetted_repos": {"repos": [{"owner": "animicaorg", "repo": "all", "ref": "main"}]}}})
+
+    tar_path = tmp_path / "repo.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tf:
+        payload = ("x" * 6000).encode()
+        info = tarfile.TarInfo(name="repo-main/src/a.py")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+
+    class _Resp:
+        status = 200
+        headers = {"Content-Length": str(tar_path.stat().st_size), "Content-Type": "application/gzip"}
+
+        def __enter__(self):
+            self._fh = tar_path.open("rb")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self._fh.close()
+            return False
+
+        def read(self, n: int = -1) -> bytes:
+            return self._fh.read(n)
+
+    monkeypatch.setattr("animica_studio.services.dataset_bootstrap_service.urlopen", lambda *a, **k: _Resp())
+    progress = []
+    svc.bootstrap(
+        options=BootstrapOptions(name="p", size_preset="starter", output_dir=tmp_path / "out", shard_size_bytes=1024),
+        progress_cb=lambda p: progress.append(p.get("percent", 0)),
+        cancel=threading.Event(),
+    )
+    assert max(progress) > 1
