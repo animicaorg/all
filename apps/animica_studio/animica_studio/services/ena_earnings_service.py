@@ -93,7 +93,14 @@ class EnaEarningsService(QObject):
         method = reg.resolve_any(["aicf.getClaimable", "aicf_getClaimable", "aicf.creditsByAddress", "aicf_creditsByAddress"])
         if not method:
             return 0.0
-        out = client.call_with_schema(method, {"address": address})
+        try:
+            out = client.call_with_schema(method, {"address": address})
+        except Exception as exc:
+            message = str(exc).lower()
+            if "missing required params" in message:
+                out = client.call(method, [address])
+            else:
+                raise
         if isinstance(out, dict):
             for key in ("claimable", "credits", "amount"):
                 v = out.get(key)
