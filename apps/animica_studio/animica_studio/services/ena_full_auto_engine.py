@@ -24,6 +24,13 @@ from animica_studio.util.paths import app_data_dir
 log = logging.getLogger(__name__)
 
 
+def _ingest_headers_from_cfg(cfg: dict[str, Any]) -> dict[str, str] | None:
+    token = str(cfg.get("da_ingest_token") or os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()
+    if not token:
+        return None
+    return {"X-Animica-Ingest-Token": token}
+
+
 class FullAutoState(str, Enum):
     DISABLED = "disabled"
     STARTING = "starting"
@@ -61,6 +68,7 @@ class FullAutoConfig:
     max_daily_training_minutes: int = 24 * 60
     train_locally_when_da_disabled: bool = False
     channel_pointer_commitment: str = ""
+    da_ingest_token: str = ""
 
 
 @dataclass
@@ -629,6 +637,7 @@ def _build_local_only_blocked_payload(cfg: dict[str, Any], detail: str, rpc_url:
         return None
     remote_ip = "unknown"
     allowed = []
+    token_configured = False
     m = re.search(r'remote_ip[\'"]?\s*[:=]\s*[\'"]([^\'"\s,}]+)', detail)
     if m:
         remote_ip = m.group(1)
@@ -636,7 +645,7 @@ def _build_local_only_blocked_payload(cfg: dict[str, Any], detail: str, rpc_url:
     if m2:
         allowed = [x.strip(" '\"") for x in m2.group(1).split(",") if x.strip()]
     try:
-        with RpcClient(rpc_url, connect_timeout=2.0, read_timeout=5.0, max_retries=0) as c:
+        with RpcClient(rpc_url, connect_timeout=2.0, read_timeout=5.0, max_retries=0, default_headers=_ingest_headers_from_cfg(cfg)) as c:
             reg = c.registry()
             who = reg.resolve_any(["da.getCallerInfo", "da_getCallerInfo", "node.whoAmI", "node_whoAmI"])
             if who:
@@ -644,6 +653,7 @@ def _build_local_only_blocked_payload(cfg: dict[str, Any], detail: str, rpc_url:
                 if isinstance(out, dict):
                     remote_ip = str(out.get("remote_ip") or remote_ip)
                     allowed = [str(v) for v in (out.get("allowed_local_rpc_nets") or allowed)]
+                    token_configured = bool(out.get("token_configured", False))
     except Exception:
         pass
     return {
@@ -651,6 +661,7 @@ def _build_local_only_blocked_payload(cfg: dict[str, Any], detail: str, rpc_url:
         "remote_ip": remote_ip,
         "allowed": allowed,
         "recommendation": "Allowlist Docker bridge net (e.g. 172.16.0.0/12), set ANIMICA_DA_INGEST_TOKEN + X-Animica-Ingest-Token, and keep RPC bound to localhost.",
+        "token_configured": token_configured,
     }
 
 
@@ -822,11 +833,12 @@ def _build_da_configure_params(status: dict[str, Any], defaults: dict[str, Any])
 
 
 def _ensure_da_ready(ctx: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(ctx.get("cfg") or {})
     rpc_url = str(ctx.get("rpc_url") or "")
     logs: list[tuple[str, str]] = []
     diagnostics = ""
     try:
-        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=12.0, max_retries=1) as c:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=12.0, max_retries=1, default_headers=_ingest_headers_from_cfg(cfg)) as c:
             reg = c.registry()
             status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
             configure_method = reg.resolve_any(["da.configure", "da_configure"])
@@ -1027,7 +1039,7 @@ def _publish_checkpoint(ctx: dict[str, Any], checkpoint_path: Path, step: int, l
     rpc_url = str(ctx.get("rpc_url") or "")
     logs: list[tuple[str, str]] = []
     try:
-        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1) as c:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1, default_headers=_ingest_headers_from_cfg(cfg)) as c:
             reg = c.registry()
             status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
             status = _rpc_call_with_backoff(c, status_method, {}) if status_method else {}
@@ -1126,7 +1138,7 @@ def _create_channel_pointer(ctx: dict[str, Any], publish: dict[str, Any]) -> dic
     logs: list[tuple[str, str]] = []
     rpc_url = str(ctx.get("rpc_url") or "")
     try:
-        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1) as c:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1, default_headers=_ingest_headers_from_cfg(cfg)) as c:
             reg = c.registry()
             status_method = reg.resolve_any(["da.getStatus", "da_getStatus", "da.status", "da_status"])
             status = _rpc_call_with_backoff(c, status_method, {}) if status_method else {}
@@ -1180,7 +1192,7 @@ def _sync_checkpoint(ctx: dict[str, Any], channel: str) -> dict[str, Any]:
         return {"logs": logs, "state": "training", "detail": "TRAINING"}
 
     try:
-        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=15.0, max_retries=1) as c:
+        with RpcClient(rpc_url, connect_timeout=3.0, read_timeout=15.0, max_retries=1, default_headers=_ingest_headers_from_cfg(cfg)) as c:
             reg = c.registry()
             get_method = reg.resolve_any(["da.getBlob", "da_getBlob"])
             if get_method and version:
