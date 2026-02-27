@@ -450,24 +450,27 @@ if [[ -n "$DA_STATUS_METHOD" ]]; then
 fi
 
 if [[ -z "$DA_STATUS_JSON" ]]; then
-  warn "Could not fetch DA status (methods unavailable)"
+  err "DA status response is empty"
+  err "payload method=$DA_STATUS_METHOD params=[] id=11"
+  exit 1
 else
-  DA_VERIFY_MSG="$(printf '%s' "$DA_STATUS_JSON" | "$VENV_DIR/bin/python" - <<'PY'
-import json,sys
-obj=json.load(sys.stdin)
-res=obj.get('result') if isinstance(obj,dict) else {}
-enabled=bool((res or {}).get('enabled', False))
-writable=bool((res or {}).get('writable', False))
-print(f"enabled={enabled} writable={writable}")
-if not (enabled and writable):
-    raise SystemExit(2)
+  if ! "$PYTHON_BIN" - <<'PY' "$DA_STATUS_JSON"
+import json
+import sys
+
+doc = json.loads(sys.argv[1])
+res = doc.get("result", {}) if isinstance(doc, dict) else {}
+enabled = bool(res.get("enabled"))
+writable = bool(res.get("writable"))
+print(f"[setup_studio] DA enabled={enabled} writable={writable}")
+sys.exit(0 if (enabled and writable) else 1)
 PY
-)" || {
+  then
     err "DA status is not healthy (need enabled=true and writable=true)"
     printf '%s\n' "$DA_STATUS_JSON"
     exit 1
-  }
-  ok "DA status: $DA_VERIFY_MSG"
+  fi
+  ok "DA is healthy"
 fi
 
 INGEST_BLOCKED=0
