@@ -168,6 +168,18 @@ source "$VENV_DIR/bin/activate"
 
 log "Installing Studio dependencies"
 run_as_real_user "$VENV_DIR/bin/python" -m pip install --upgrade pip
+log "Cleaning up broken pip distributions"
+run_as_real_user "$VENV_DIR/bin/python" - <<'PY'
+import glob
+import os
+import shutil
+import site
+
+for site_path in site.getsitepackages():
+    for broken_dist in glob.glob(os.path.join(site_path, "~nimica*")):
+        print(f"[setup_studio] Removing broken dist: {broken_dist}")
+        shutil.rmtree(broken_dist, ignore_errors=True)
+PY
 if [[ -f "$REPO_ROOT/apps/animica_studio/requirements.txt" ]]; then
   run_as_real_user "$VENV_DIR/bin/pip" install -r "$REPO_ROOT/apps/animica_studio/requirements.txt"
 else
@@ -187,29 +199,55 @@ log "Patching Studio config at $CONFIG_PATH"
 CONFIG_PARENT="$(dirname "$CONFIG_PATH")"
 ensure_dir_owned "$CONFIG_PARENT"
 CONFIG_PATH="$CONFIG_PATH" REAL_HOME="$REAL_HOME" CLI_PATH="$CLI_PATH" run_as_real_user "$VENV_DIR/bin/python" - <<'PY'
-import json, os
+import json
+import os
+import shutil
 from pathlib import Path
 
 cfg_path = Path(os.environ["CONFIG_PATH"])
 real_home = os.environ["REAL_HOME"]
 cli_path = os.environ["CLI_PATH"]
 
-cfg = {}
+raw = None
 if cfg_path.exists():
-    try:
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict):
-            cfg = {}
-    except Exception:
-        cfg = {}
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    backup_path = cfg_path.with_suffix(".json.bak")
+    shutil.copy2(cfg_path, backup_path)
+else:
+    raw = {}
+
+cfg = {}
+if isinstance(raw, dict):
+    cfg = raw
+elif isinstance(raw, list):
+    for item in reversed(raw):
+        if isinstance(item, dict):
+            cfg = item
+            cfg["_migrated_from_list"] = True
+            break
 
 da = cfg.setdefault("da", {})
-da["node_dir"] = "/data/chain-1/da"
-da["host_dir"] = f"{real_home}/.animica/chain-1/da"
-da["ingest_host_dir"] = f"{real_home}/.animica/chain-1/da_ingest"
-da["studio_dir"] = f"{real_home}/.animica/da_contrib"
+profiles = cfg.setdefault("profiles", {})
+if isinstance(profiles, list):
+    converted_profiles = {}
+    for index, profile_item in enumerate(profiles):
+        if isinstance(profile_item, dict):
+            profile_name = profile_item.get("name") or profile_item.get("id") or f"profile{index}"
+            converted_profiles[profile_name] = profile_item
+    profiles = converted_profiles
+    cfg["profiles"] = profiles
 
-cfg["da_namespace"] = 0
+default_profile = profiles.setdefault("default", {})
+default_profile.setdefault("rpc_url", "http://127.0.0.1:8545/rpc")
+
+da.setdefault("node_dir", "/data/chain-1/da")
+da.setdefault("host_dir", f"{real_home}/.animica/chain-1/da")
+da.setdefault("ingest_host_dir", f"{real_home}/.animica/chain-1/da_ingest")
+da.setdefault("studio_dir", f"{real_home}/.animica/da_contrib")
+da.setdefault("auto_start", True)
+da["da_namespace"] = int(da.get("da_namespace", 0) or 0)
+
+cfg["da_namespace"] = int(cfg.get("da_namespace", 0) or 0)
 
 for k in ("host_dir", "ingest_host_dir", "studio_dir"):
     v = str(da.get(k, ""))
@@ -220,10 +258,6 @@ for k in ("host_dir", "ingest_host_dir", "studio_dir"):
             da[k] = f"{real_home}/.animica/chain-1/da_ingest"
         elif k == "studio_dir":
             da[k] = f"{real_home}/.animica/da_contrib"
-
-profiles = cfg.setdefault("profiles", {})
-default_profile = profiles.setdefault("default", {})
-default_profile["rpc_url"] = "http://127.0.0.1:8545/rpc"
 
 if Path(cli_path).exists():
     cfg["cli_path"] = cli_path
