@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import tempfile
 import time
 from base64 import b64encode
@@ -11,6 +12,7 @@ from typing import Any
 
 from animica_studio.services.path_mapper import NodeHostPathMapper
 from animica_studio.services.rpc_client import RpcClient, RpcParseError, RpcResponseError, RpcTransportError
+from animica_studio.storage.config import load_config
 
 log = logging.getLogger(__name__)
 
@@ -24,11 +26,24 @@ class DaUploadError(RuntimeError):
 
 
 class DaClient:
-    def __init__(self, rpc_url: str) -> None:
+    def __init__(self, rpc_url: str, ingest_token: str | None = None) -> None:
         self.rpc_url = rpc_url.rstrip("/")
         if not self.rpc_url.endswith("/rpc"):
             self.rpc_url += "/rpc"
         self._param_encoding = _DA_PARAM_ENCODING_BY_URL.setdefault(self.rpc_url, {})
+        self._ingest_token = (ingest_token or self._load_ingest_token() or "").strip()
+
+    @staticmethod
+    def _load_ingest_token() -> str:
+        env_token = (os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()
+        if env_token:
+            return env_token
+        try:
+            cfg = load_config()
+            full = ((cfg.ena or {}).get("full_auto") or {}) if isinstance(cfg.ena, dict) else {}
+            return str(full.get("da_ingest_token") or "").strip()
+        except Exception:
+            return ""
 
     @staticmethod
     def _parse_put_blob_meta(method: str, meta: dict[str, Any]) -> dict[str, Any]:
@@ -89,7 +104,8 @@ class DaClient:
         return isinstance(exc, RpcTransportError)
 
     def _call_multi(self, methods: tuple[str, ...], params: list[Any] | dict[str, Any]) -> Any:
-        c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
+        headers = {"X-Animica-Ingest-Token": self._ingest_token} if self._ingest_token else None
+        c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1, default_headers=headers)
         failures: list[str] = []
         try:
             if hasattr(c, "resolve_method"):
@@ -261,6 +277,9 @@ class DaClient:
             or ingest_info.get("host_mapping_verified")
             or bool(host_data_root)
         )
+        if not host_data_root and node_pending_dir.startswith("/") and not node_pending_dir.startswith("/data/"):
+            host_data_root = node_data_root
+            mapping_verified = True
         if allow_remote_put is False and node_pending_dir.startswith("/data/") and not mapping_verified:
             raise RuntimeError(
                 "Local ingest requires verified host↔node mapping. Re-run setup and fix Docker mounts (da.statPath must pass)."
@@ -285,7 +304,8 @@ class DaClient:
         if tags:
             metadata["tags"] = dict(tags)
 
-        c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1)
+        headers = {"X-Animica-Ingest-Token": self._ingest_token} if self._ingest_token else None
+        c = RpcClient(self.rpc_url, connect_timeout=3.0, read_timeout=10.0, max_retries=1, default_headers=headers)
         try:
             registry = c.registry()
             status: Any = {}

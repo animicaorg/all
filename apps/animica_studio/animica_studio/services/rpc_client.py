@@ -248,6 +248,7 @@ class RpcClient:
         connect_timeout: float = _DEFAULT_CONNECT_TIMEOUT,
         read_timeout: float = _DEFAULT_READ_TIMEOUT,
         max_retries: int = _MAX_RETRIES,
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         self._url = url
         self._connect_timeout = connect_timeout
@@ -255,6 +256,8 @@ class RpcClient:
         self._max_retries = max(1, max_retries)
         self._session = requests.Session()
         self._session.headers.update({"Content-Type": "application/json"})
+        if default_headers:
+            self._session.headers.update({str(k): str(v) for k, v in default_headers.items() if str(k).strip() and str(v).strip()})
 
         # discover cache
         self._discover_cache: dict[str, Any] | None = None
@@ -267,6 +270,15 @@ class RpcClient:
         self._last_request_excerpt: dict[str, Any] = {}
         self._last_response_excerpt: dict[str, Any] = {}
 
+
+    def set_header(self, name: str, value: str | None) -> None:
+        key = str(name or "").strip()
+        if not key:
+            return
+        if value is None or not str(value).strip():
+            self._session.headers.pop(key, None)
+            return
+        self._session.headers[key] = str(value)
     # ------------------------------------------------------------------
     # Low-level call
     # ------------------------------------------------------------------
