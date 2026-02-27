@@ -457,8 +457,7 @@ class EnaFullAutoPanel(QGroupBox):
         entered = self._addr.text().strip()
         earnings_address = str(full.get("payout_address") or "")
         if entered and not is_valid_address(entered):
-            earnings_address = ""
-            self._logs.appendPlainText("[warning] Earnings tracker disabled: entered payout address is invalid.")
+            self._logs.appendPlainText("[warning] Entered payout address failed bech32 validation; continuing with last valid payout address.")
         self._earnings.configure(
             rpc_url=self._config.get_active_profile().node.rpc_local_url,
             address=earnings_address,

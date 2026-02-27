@@ -9,6 +9,7 @@ from base64 import b64encode
 from pathlib import Path
 from typing import Any
 
+from animica_studio.services.path_mapper import NodeHostPathMapper
 from animica_studio.services.rpc_client import RpcClient, RpcParseError, RpcResponseError, RpcTransportError
 
 log = logging.getLogger(__name__)
@@ -226,6 +227,50 @@ class DaClient:
         allow_remote_put = status.get("allow_remote_put")
         return enabled, bool(allow_remote_put) if isinstance(allow_remote_put, bool) else None
 
+
+    def _build_path_mapper(
+        self,
+        ingest_info: dict[str, Any],
+        *,
+        allow_remote_put: bool | None,
+    ) -> NodeHostPathMapper:
+        pending_dir_raw = str(ingest_info.get("pending_dir") or "").strip()
+        ingest_dir_raw = str(ingest_info.get("dir") or "").strip()
+        node_pending_dir = pending_dir_raw or (str(Path(ingest_dir_raw) / "pending") if ingest_dir_raw else "")
+        node_data_root = str(
+            ingest_info.get("node_data_root")
+            or ingest_info.get("node_root")
+            or ingest_info.get("data_root")
+            or ingest_info.get("nodeDataRoot")
+            or "/data"
+        ).strip() or "/data"
+        host_data_root = str(
+            ingest_info.get("host_data_root")
+            or ingest_info.get("host_root")
+            or ingest_info.get("host_dir")
+            or ingest_info.get("hostMountRoot")
+            or ""
+        ).strip()
+        if not host_data_root and node_pending_dir.startswith("/data/"):
+            parts = Path(node_pending_dir).parts
+            if len(parts) >= 3:
+                host_data_root = str(Path.home() / ".animica")
+        mapping_verified = bool(
+            ingest_info.get("mapping_verified")
+            or ingest_info.get("mount_verified")
+            or ingest_info.get("host_mapping_verified")
+            or bool(host_data_root)
+        )
+        if allow_remote_put is False and node_pending_dir.startswith("/data/") and not mapping_verified:
+            raise RuntimeError(
+                "Local ingest requires verified host↔node mapping. Re-run setup and fix Docker mounts (da.statPath must pass)."
+            )
+        return NodeHostPathMapper(
+            node_data_root=node_data_root,
+            host_data_root=host_data_root,
+            mapping_verified=mapping_verified,
+        )
+
     def upload_blob(
         self,
         namespace: int,
@@ -260,31 +305,29 @@ class DaClient:
 
             if registry.has_method("da.ingestLocal") or registry.has_method("da_ingestLocal"):
                 ingest_info = self.get_ingest_dir()
-                pending_dir_raw = str(ingest_info.get("pending_dir") or "").strip()
-                ingest_dir_raw = str(ingest_info.get("dir") or "").strip()
-                pending_dir_value = pending_dir_raw or (str(Path(ingest_dir_raw) / "pending") if ingest_dir_raw else tempfile.gettempdir())
-                pending_dir = Path(pending_dir_value)
-                pending_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(dir=pending_dir, prefix="studio-upload-", suffix=".blob", delete=False) as fh:
+                node_pending_dir = str(ingest_info.get("pending_dir") or "").strip()
+                if not node_pending_dir:
+                    ingest_dir_raw = str(ingest_info.get("dir") or "").strip()
+                    node_pending_dir = str(Path(ingest_dir_raw) / "pending") if ingest_dir_raw else ""
+                if not node_pending_dir:
+                    raise RuntimeError("da.getIngestDir did not return a pending_dir")
+
+                mapper = self._build_path_mapper(ingest_info, allow_remote_put=allow_remote_put)
+                host_pending_dir_raw = mapper.node_to_host(node_pending_dir)
+                host_pending_dir = Path(host_pending_dir_raw).expanduser()
+                if str(host_pending_dir) == "/data" or str(host_pending_dir).startswith("/data/"):
+                    raise RuntimeError("Host pending dir resolved to /data; mapping bug")
+
+                host_pending_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=host_pending_dir, prefix="studio-upload-", suffix=".blob", delete=False) as fh:
                     fh.write(raw_bytes)
-                    node_path = str(fh.name)
+                    temp_name = Path(fh.name).name
+                node_path = str(Path(node_pending_dir) / temp_name)
                 method = "da.ingestLocal" if registry.has_method("da.ingestLocal") else "da_ingestLocal"
                 params = self._build_da_ingest_local_params(node_path, namespace_int)
                 self._log_upload_attempt(method, "by-name", params)
-                try:
-                    result = c.call(method, params)
-                    return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
-                except RpcResponseError as exc:
-                    if exc.rpc_error.code == -32006 and allow_remote_put is False and registry.has_method("da.configure") and registry.has_method("da.putBlob"):
-                        try:
-                            c.call("da.configure", {"allow_remote_put": True})
-                        except Exception:
-                            pass
-                        params_put = self._build_da_dot_put_blob_params(raw_bytes, "studio/checkpoint", metadata)
-                        self._log_upload_attempt("da.putBlob", "by-name", params_put)
-                        out = c.call("da.putBlob", params_put)
-                        return {"blob_id": out, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
-                    raise
+                result = c.call(method, params)
+                return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
 
             payload = self._metadata_payload(raw_bytes, content_type, tags)
             data_hex = "0x" + payload.hex()
