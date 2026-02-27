@@ -171,7 +171,13 @@ class StreamConsole(QWidget):
         self.append_line("error", text)
 
     def append_info(self, text: str) -> None:
-        self.append_line("info", text)
+        self.append_system(text)
+
+    def append_warn(self, text: str) -> None:
+        self.append_error(f"⚠️ {text}")
+
+    def append_debug(self, text: str) -> None:
+        self.append_line("debug", text)
 
     def clear(self) -> None:
         self._output.clear()
