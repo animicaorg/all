@@ -291,9 +291,9 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   ok "Wrote $DOCKER_ENV with REAL_USER UID/GID and mount source"
 
   if command -v docker >/dev/null 2>&1; then
-    if docker ps --format '{{.Names}}' | rg -x 'animica-mainnet-node|node' >/dev/null 2>&1; then
-      NODE_CONTAINER="$(docker ps --format '{{.Names}}' | rg -x 'animica-mainnet-node|node' | head -n1)"
-      if docker exec "$NODE_CONTAINER" sh -lc 'touch /data/.write_test && rm -f /data/.write_test'; then
+    NODE_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q node 2>/dev/null || true)"
+    if [[ -n "$NODE_CONTAINER" ]]; then
+      if docker exec "$NODE_CONTAINER" sh -lc 'touch /data/.write_test && ls -al /data/.write_test && rm -f /data/.write_test'; then
         ok "Container write test succeeded (/data writable)"
       else
         warn "Container cannot write to /data. Fix compose with:"
@@ -306,7 +306,7 @@ services:
 SNIP
       fi
     else
-      warn "No running node container named animica-mainnet-node or node; skipping container write test"
+      warn "No running compose node container found; skipping container write test"
     fi
   else
     warn "Docker not found; skipping dockerized node checks"
@@ -315,18 +315,62 @@ fi
 
 rpc_call() {
   local method="$1"
-  local params_json="${2:-{}}"
-  curl -fsS "$RPC_URL" \
-    -H 'content-type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params_json}" 
+  local params_json="${2:-[]}"
+  local id="${3:-1}"
+
+  local payload
+  payload="$("$PYTHON_BIN" - "$method" "$params_json" "$id" <<'PY'
+import json
+import sys
+
+method = sys.argv[1]
+params = json.loads(sys.argv[2])
+req = {"jsonrpc": "2.0", "id": int(sys.argv[3]), "method": method, "params": params}
+print(json.dumps(req, separators=(",", ":")))
+PY
+)"
+
+  local resp
+  resp="$(curl -sS -m 5 "$RPC_URL" -H 'content-type: application/json' --data-binary "$payload" || true)"
+
+  if [[ -z "$resp" ]]; then
+    err "RPC empty response for method=$method"
+    err "payload=$payload"
+    return 2
+  fi
+
+  if ! "$PYTHON_BIN" - "$method" "$payload" "$resp" <<'PY'
+import json
+import sys
+
+method, payload, resp = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    obj = json.loads(resp)
+except Exception:
+    print(f"[error] RPC response not JSON for {method}", file=sys.stderr)
+    print(f"[error] payload={payload}", file=sys.stderr)
+    print(f"[error] resp_head={resp[:2000]}", file=sys.stderr)
+    raise
+
+if isinstance(obj, dict) and obj.get("error") is not None:
+    print(f"[error] RPC error response for {method}", file=sys.stderr)
+    print(f"[error] payload={payload}", file=sys.stderr)
+    print(f"[error] resp_head={resp[:2000]}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    return 3
+  fi
+
+  printf '%s\n' "$resp"
 }
 
 log "Checking RPC readiness at $RPC_URL"
 RPC_OK=0
 RPC_DISCOVER_JSON=""
 for _ in {1..30}; do
-  if RPC_DISCOVER_JSON="$(rpc_call "rpc.discover" "{}" 2>/tmp/animica_rpc_discover.err)"; then
-    printf '%s\n' "$RPC_DISCOVER_JSON" >/tmp/animica_rpc_discover.json
+  if RPC_DISCOVER_JSON="$(rpc_call "rpc.discover" "[]" 1 2>/tmp/animica_rpc_discover.err)"; then
+    printf '%s\n' "$RPC_DISCOVER_JSON" > /tmp/animica_rpc_discover.json
     RPC_OK=1
     break
   fi
@@ -344,38 +388,34 @@ EOF_BLOCK
 fi
 ok "RPC reachable"
 
-DISCOVER_CHECK="$(printf '%s' "$RPC_DISCOVER_JSON" | "$VENV_DIR/bin/python" - <<'PY'
-import json,sys
-raw=sys.stdin.read().strip()
-methods=set()
-try:
-    obj=json.loads(raw)
-except Exception:
-    print('warn|rpc.discover payload unreadable')
-    raise SystemExit(0)
-res=obj.get('result',{}) if isinstance(obj,dict) else {}
-if isinstance(res,dict):
-    caps=res.get('capabilities')
-    if isinstance(caps,dict):
-        methods.update(caps.keys())
-        da_caps=caps.get('da')
-        if isinstance(da_caps,dict):
-            methods.update({f"da.{k}" for k in da_caps.keys() if isinstance(k,str)})
-    for key in ('methods','available_methods'):
-        values=res.get(key)
-        if isinstance(values,list):
-            methods.update(str(v) for v in values)
-missing=[m for m in ('da.getIngestDir','da.ingestLocal','da.statPath') if m not in methods]
-if missing:
-    print('warn|' + ', '.join(missing))
-else:
-    print('ok|all ingest methods discovered')
+DISCOVER_INFO="$("$PYTHON_BIN" - "$RPC_DISCOVER_JSON" <<'PY'
+import json
+import sys
+
+doc = json.loads(sys.argv[1])
+methods = doc.get("result", {}).get("methods", [])
+names = set()
+if isinstance(methods, list):
+    for entry in methods:
+        if isinstance(entry, dict):
+            name = entry.get("name")
+            if isinstance(name, str):
+                names.add(name)
+
+print("HAS_DA_CONFIGURE=" + ("1" if "da.configure" in names else "0"))
+print("HAS_DA_GETSTATUS=" + ("1" if "da.getStatus" in names else "0"))
+print("HAS_DA_STATUS=" + ("1" if "da.status" in names else "0"))
+print("HAS_DA_INGESTLOCAL=" + ("1" if "da.ingestLocal" in names else "0"))
+print("HAS_DA_GETINGESTDIR=" + ("1" if "da.getIngestDir" in names else "0"))
+print("HAS_DA_STATPATH=" + ("1" if "da.statPath" in names else "0"))
 PY
 )"
-if [[ "${DISCOVER_CHECK%%|*}" == "warn" ]]; then
-  warn "Missing or unclear ingest RPC methods from rpc.discover: ${DISCOVER_CHECK#*|}"
-else
+eval "$DISCOVER_INFO"
+
+if [[ "${HAS_DA_INGESTLOCAL:-0}" -eq 1 && "${HAS_DA_GETINGESTDIR:-0}" -eq 1 && "${HAS_DA_STATPATH:-0}" -eq 1 ]]; then
   ok "rpc.discover reports ingest methods"
+else
+  warn "Missing or unclear ingest RPC methods from rpc.discover: da.getIngestDir=${HAS_DA_GETINGESTDIR:-0}, da.ingestLocal=${HAS_DA_INGESTLOCAL:-0}, da.statPath=${HAS_DA_STATPATH:-0}"
 fi
 
 ALLOW_REMOTE_PUT=false
@@ -384,27 +424,31 @@ if [[ "$DEV_REMOTE_PUT" -eq 1 ]]; then
 fi
 
 DA_PARAMS="{\"enabled\":true,\"dir\":\"/data/chain-1/da\",\"max_bytes\":$MAX_BYTES,\"allow_remote_get\":true,\"allow_remote_put\":$ALLOW_REMOTE_PUT}"
-DA_CONFIG_OK=0
-for method in da.configure da_configure; do
-  if rpc_call "$method" "$DA_PARAMS" >/tmp/animica_da_configure.json 2>/tmp/animica_da_configure.err; then
-    DA_CONFIG_OK=1
-    ok "Configured DA using $method"
-    break
-  fi
-done
-if [[ "$DA_CONFIG_OK" -ne 1 ]]; then
+if [[ "${HAS_DA_CONFIGURE:-0}" -ne 1 ]]; then
+  err "rpc.discover did not advertise da.configure"
+  exit 1
+fi
+
+if rpc_call "da.configure" "$DA_PARAMS" 10 >/tmp/animica_da_configure.json 2>/tmp/animica_da_configure.err; then
+  ok "Configured DA using da.configure"
+else
   err "Unable to configure DA via RPC"
   cat /tmp/animica_da_configure.err >&2 || true
   exit 1
 fi
 
 DA_STATUS_JSON=""
-for method in da.getStatus da.status da_getStatus da_status; do
-  if out="$(rpc_call "$method" "{}" 2>/dev/null)"; then
-    DA_STATUS_JSON="$out"
-    break
-  fi
-done
+DA_STATUS_METHOD=""
+if [[ "${HAS_DA_GETSTATUS:-0}" -eq 1 ]]; then
+  DA_STATUS_METHOD="da.getStatus"
+elif [[ "${HAS_DA_STATUS:-0}" -eq 1 ]]; then
+  DA_STATUS_METHOD="da.status"
+fi
+
+if [[ -n "$DA_STATUS_METHOD" ]]; then
+  DA_STATUS_JSON="$(rpc_call "$DA_STATUS_METHOD" "[]" 11 2>/tmp/animica_da_status.err || true)"
+fi
+
 if [[ -z "$DA_STATUS_JSON" ]]; then
   warn "Could not fetch DA status (methods unavailable)"
 else
@@ -432,7 +476,10 @@ if [[ "$ALLOW_REMOTE_PUT" == false ]]; then
   PROBE_PATH="$HOST_DA_INGEST_PENDING/.studio_probe"
   run_as_real_user touch "$PROBE_PATH"
   STAT_PARAMS="{\"path\":\"/data/chain-1/da_ingest/pending/.studio_probe\"}"
-  if ! rpc_call "da.statPath" "$STAT_PARAMS" >/tmp/animica_da_statpath.json 2>/tmp/animica_da_statpath.err; then
+  if [[ "${HAS_DA_STATPATH:-0}" -ne 1 ]]; then
+    INGEST_BLOCKED=1
+    warn "rpc.discover did not advertise da.statPath"
+  elif ! rpc_call "da.statPath" "$STAT_PARAMS" 12 >/tmp/animica_da_statpath.json 2>/tmp/animica_da_statpath.err; then
     INGEST_BLOCKED=1
   fi
   if [[ "$INGEST_BLOCKED" -eq 1 ]]; then
