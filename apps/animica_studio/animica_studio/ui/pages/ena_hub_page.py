@@ -277,13 +277,16 @@ class EnaFullAutoPanel(QGroupBox):
         self._rule = QComboBox(); self._rule.addItem("latest", "latest"); self._rule.addItem("best (lowest eval loss)", "best"); self._rule.addItem("majority tip", "majority")
         self._channel = QLineEdit("ena-main")
         self._namespace = QLineEdit("0")
+        self._ingest_token = QLineEdit()
+        self._ingest_token.setPlaceholderText("Optional: X-Animica-Ingest-Token")
+        self._ingest_token.setEchoMode(QLineEdit.EchoMode.Password)
         self._require_upload = QCheckBox("Require DA uploads enabled")
         self._auto_fallback = QCheckBox("Auto-fallback when allow_remote_put=false")
         self._auto_fallback.setChecked(True)
         self._train_local_only = QCheckBox("Train locally even if DA disabled")
         self._keep_last_k = QSpinBox(); self._keep_last_k.setRange(1, 100); self._keep_last_k.setValue(5)
         self._max_daily_min = QSpinBox(); self._max_daily_min.setRange(1, 24 * 60); self._max_daily_min.setValue(24 * 60)
-        for w in [self._upload_steps, self._upload_minutes, self._sync_minutes, self._rule, self._channel, self._namespace, self._require_upload, self._auto_fallback, self._train_local_only, self._keep_last_k, self._max_daily_min]:
+        for w in [self._upload_steps, self._upload_minutes, self._sync_minutes, self._rule, self._channel, self._namespace, self._ingest_token, self._require_upload, self._auto_fallback, self._train_local_only, self._keep_last_k, self._max_daily_min]:
             if hasattr(w, 'valueChanged'):
                 w.valueChanged.connect(self._save_settings)
             if hasattr(w, 'currentIndexChanged'):
@@ -301,6 +304,7 @@ class EnaFullAutoPanel(QGroupBox):
         form.addRow("Selection rule:", self._rule)
         form.addRow("Model channel:", self._channel)
         form.addRow("DA namespace:", self._namespace)
+        form.addRow("DA ingest token:", self._ingest_token)
         form.addRow("Keep last K checkpoints:", self._keep_last_k)
         form.addRow("Max daily training minutes:", self._max_daily_min)
         form.addRow("", self._require_upload)
@@ -398,9 +402,9 @@ class EnaFullAutoPanel(QGroupBox):
         entered_payout = self._addr.text().strip()
         previous_payout = str(full.get("payout_address") or "").strip()
         payout_for_config = entered_payout
-        if entered_payout and not is_valid_address(entered_payout) and is_valid_address(previous_payout):
-            payout_for_config = previous_payout
-            self._logs.appendPlainText("[warning] Payout address validation failed; keeping previous payout address and disabling earnings updates for invalid input.")
+        if entered_payout and not is_valid_address(entered_payout):
+            payout_for_config = ""
+            self._logs.appendPlainText("[warning] Payout address is invalid. Pick a wallet from wallet list.")
         full.update(
             {
                 "enabled": True,
@@ -417,6 +421,7 @@ class EnaFullAutoPanel(QGroupBox):
                 "auto_fallback_on_remote_put_block": self._auto_fallback.isChecked(),
                 "max_daily_training_minutes": int(self._max_daily_min.value()),
                 "train_locally_when_da_disabled": self._train_local_only.isChecked(),
+                "da_ingest_token": self._ingest_token.text().strip(),
             }
         )
         ena["full_auto"] = full
@@ -434,6 +439,7 @@ class EnaFullAutoPanel(QGroupBox):
         self._set_combo(self._rule, str(full.get("selection_rule") or "latest"))
         self._channel.setText(str(full.get("model_channel") or "ena-main"))
         self._namespace.setText(str(_coerce_da_namespace(full.get("da_namespace"))))
+        self._ingest_token.setText(str(full.get("da_ingest_token") or ""))
         self._require_upload.setChecked(bool(full.get("require_da_uploads", False)))
         self._auto_fallback.setChecked(bool(full.get("auto_fallback_on_remote_put_block", True)))
         self._keep_last_k.setValue(int(full.get("keep_last_k") or 5))
@@ -454,10 +460,9 @@ class EnaFullAutoPanel(QGroupBox):
         full = self._cfg()
         save_config(self._config)
         self._engine.apply_config(FullAutoConfig(**full), self._config.get_active_profile().node.rpc_local_url)
-        entered = self._addr.text().strip()
         earnings_address = str(full.get("payout_address") or "")
-        if entered and not is_valid_address(entered):
-            self._logs.appendPlainText("[warning] Entered payout address failed bech32 validation; continuing with last valid payout address.")
+        if not earnings_address:
+            self._logs.appendPlainText("[warning] Payout address is invalid. Pick a wallet from wallet list.")
         self._earnings.configure(
             rpc_url=self._config.get_active_profile().node.rpc_local_url,
             address=earnings_address,
@@ -522,7 +527,10 @@ class EnaFullAutoPanel(QGroupBox):
                 self._blocked_host.setText(f"What Studio wrote: {host_path}")
                 self._blocked_node.setText(f"What node expected: {node_path}")
                 self._blocked_compose.setText(f"Compose file path: {blocked_info.get('compose_path') or '-'}")
-                self._blocked_fix.setPlainText(str(blocked_info.get("volume_snippet") or blocked_info.get("recommendation") or ""))
+                token_hint = ""
+                if bool(blocked_info.get("token_configured")) and not self._ingest_token.text().strip():
+                    token_hint = "\nNode requires ingest token. Paste token in 'DA ingest token' and press Retry."
+                self._blocked_fix.setPlainText(str(blocked_info.get("volume_snippet") or blocked_info.get("recommendation") or "") + token_hint)
                 self._blocked_commands.setPlainText(str(blocked_info.get("command_snippet") or "Retry after updating node policy"))
                 alternatives = blocked_info.get("alternatives") if isinstance(blocked_info.get("alternatives"), list) else []
                 if alternatives:

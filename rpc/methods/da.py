@@ -255,7 +255,7 @@ def _rpc_bound_localhost_only() -> bool:
 
 
 def _allowed_local_rpc_nets() -> list[str]:
-    raw = (os.getenv("ANIMICA_ALLOWED_LOCAL_RPC_NETS") or "").strip()
+    raw = (os.getenv("ANIMICA_DA_INGEST_ALLOWED_NETS") or os.getenv("ANIMICA_ALLOWED_LOCAL_RPC_NETS") or "").strip()
     if raw:
         return [entry.strip() for entry in raw.split(",") if entry.strip()]
     allowed = ["127.0.0.1/32", "::1/128"]

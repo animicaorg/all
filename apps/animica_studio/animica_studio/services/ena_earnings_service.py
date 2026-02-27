@@ -7,6 +7,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from animica_studio.services.rpc_client import RpcClient
+from animica_studio.models.wallet_models import is_valid_address
 
 
 @dataclass
@@ -37,6 +38,8 @@ class EnaEarningsService(QObject):
         self._auto_claim = False
         self._claim_threshold = 0.0
         self._claimable_positional_fallback = False
+        self._refresh_paused = False
+        self._pause_reason = ""
 
     @property
     def snapshot(self) -> EarningsSnapshot:
@@ -48,6 +51,8 @@ class EnaEarningsService(QObject):
         self._claim_threshold = max(0.0, float(claim_threshold or 0.0))
         if address != self._snapshot.address:
             self._snapshot = EarningsSnapshot(address=address)
+            self._refresh_paused = False
+            self._pause_reason = ""
 
     def start(self) -> None:
         self.refresh()
@@ -58,6 +63,14 @@ class EnaEarningsService(QObject):
 
     def refresh(self) -> None:
         if not self._snapshot.address:
+            return
+        if not is_valid_address(self._snapshot.address):
+            snap = EarningsSnapshot(**asdict(self._snapshot))
+            snap.error = "Payout address is invalid. Pick a wallet from wallet list."
+            self._snapshot = snap
+            self.earningsUpdated.emit(self._snapshot)
+            return
+        if self._refresh_paused:
             return
         snap = EarningsSnapshot(**asdict(self._snapshot))
         snap.updated_at = time.time()
@@ -76,11 +89,24 @@ class EnaEarningsService(QObject):
         except Exception as exc:  # noqa: BLE001
             snap.error = str(exc)
             self.logLine.emit("warning", f"earnings refresh failed: {exc}")
+            msg = str(exc).lower()
+            if "invalid address" in msg or "address" in msg and "invalid" in msg:
+                self._refresh_paused = True
+                self._pause_reason = str(exc)
+                self.logLine.emit("warning", "earnings refresh paused due to invalid payout address")
         self._snapshot = snap
         self.earningsUpdated.emit(self._snapshot)
 
     def claim_now(self) -> None:
         if not self._snapshot.address:
+            return
+        if not is_valid_address(self._snapshot.address):
+            snap = EarningsSnapshot(**asdict(self._snapshot))
+            snap.error = "Payout address is invalid. Pick a wallet from wallet list."
+            self._snapshot = snap
+            self.earningsUpdated.emit(self._snapshot)
+            return
+        if self._refresh_paused:
             return
         try:
             with RpcClient(self._rpc_url, connect_timeout=3.0, read_timeout=20.0, max_retries=1) as client:
