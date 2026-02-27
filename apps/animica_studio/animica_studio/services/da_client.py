@@ -260,16 +260,31 @@ class DaClient:
 
             if registry.has_method("da.ingestLocal") or registry.has_method("da_ingestLocal"):
                 ingest_info = self.get_ingest_dir()
-                ingest_dir = Path(str(ingest_info.get("dir") or "").strip() or tempfile.gettempdir())
-                ingest_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(dir=ingest_dir, prefix="studio-upload-", suffix=".blob", delete=False) as fh:
+                pending_dir_raw = str(ingest_info.get("pending_dir") or "").strip()
+                ingest_dir_raw = str(ingest_info.get("dir") or "").strip()
+                pending_dir_value = pending_dir_raw or (str(Path(ingest_dir_raw) / "pending") if ingest_dir_raw else tempfile.gettempdir())
+                pending_dir = Path(pending_dir_value)
+                pending_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=pending_dir, prefix="studio-upload-", suffix=".blob", delete=False) as fh:
                     fh.write(raw_bytes)
                     node_path = str(fh.name)
                 method = "da.ingestLocal" if registry.has_method("da.ingestLocal") else "da_ingestLocal"
                 params = self._build_da_ingest_local_params(node_path, namespace_int)
                 self._log_upload_attempt(method, "by-name", params)
-                result = c.call(method, params)
-                return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
+                try:
+                    result = c.call(method, params)
+                    return {"blob_id": result, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
+                except RpcResponseError as exc:
+                    if exc.rpc_error.code == -32006 and allow_remote_put is False and registry.has_method("da.configure") and registry.has_method("da.putBlob"):
+                        try:
+                            c.call("da.configure", {"allow_remote_put": True})
+                        except Exception:
+                            pass
+                        params_put = self._build_da_dot_put_blob_params(raw_bytes, "studio/checkpoint", metadata)
+                        self._log_upload_attempt("da.putBlob", "by-name", params_put)
+                        out = c.call("da.putBlob", params_put)
+                        return {"blob_id": out, "sha256": hashlib.sha256(raw_bytes).hexdigest()}
+                    raise
 
             payload = self._metadata_payload(raw_bytes, content_type, tags)
             data_hex = "0x" + payload.hex()
