@@ -207,8 +207,13 @@ class DaContributionEngine(QObject):
         else:
             allowed_base_dirs = [os.path.abspath(str(v)) for v in list(cfg.allowed_base_dirs or []) if str(v).strip()]
             node_dir = os.path.abspath(cfg.node_data_dir)
+            if node_dir == "/data":
+                reasons.append(
+                    "Node DA dir cannot be the base directory root; "
+                    "use a subdirectory such as /data/chain-<id>/da"
+                )
             # Reject the exact base dir root (e.g. /data) — must be a subdir
-            if allowed_base_dirs and any(node_dir == base for base in allowed_base_dirs):
+            elif allowed_base_dirs and any(node_dir == base for base in allowed_base_dirs):
                 reasons.append(
                     "Node DA dir cannot be the base directory root; "
                     "use a subdirectory such as /data/chain-<id>/da"
