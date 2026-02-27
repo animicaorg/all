@@ -206,7 +206,11 @@ class AicfService:
                 spec = client.get_param_spec(alias)
                 if spec:
                     break
+        meta = client.registry().get_method_meta(method)
+        param_structure = str(meta.get("param_structure") or "unknown")
         if not spec:
+            return values, "object"
+        if param_structure == "object":
             return values, "object"
         positional: list[Any] = []
         for p in spec:
