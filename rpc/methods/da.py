@@ -245,7 +245,8 @@ def _remote_rpc_ip(rpc_ctx: Any = None) -> str | None:
             continue
 
     # Direct in-process method calls (tests/internal) have no request context.
-    return "127.0.0.1"
+    # Return None so call sites can distinguish unresolved transport peers.
+    return None
 
 
 def _rpc_bound_localhost_only() -> bool:
@@ -300,10 +301,11 @@ def _authorize_local_ingest_request(rpc_ctx: Any = None) -> dict[str, Any]:
     token_allowed = _valid_ingest_token(rpc_ctx)
     return {
         "allowed": bool(ip_allowed or token_allowed),
-        "remote_ip": remote_ip or "unknown",
+        "remote_ip": remote_ip,
         "allowed_nets": allowed_cidrs,
         "token_configured": bool((os.getenv("ANIMICA_DA_INGEST_TOKEN") or "").strip()),
         "token_valid": token_allowed,
+        "reason": "no_transport_peer" if not remote_ip else None,
     }
 
 
@@ -839,6 +841,8 @@ def da_ingest_local(params=None, ctx=None, **kwargs) -> dict:
                 "remote_ip": auth["remote_ip"],
                 "allowed": auth["allowed_nets"],
                 "token_configured": auth["token_configured"],
+                "token_matched": auth["token_valid"],
+                "reason": auth.get("reason"),
             },
         )
 
@@ -901,12 +905,14 @@ def da_get_caller_info(params=None, ctx=None, **kwargs) -> dict:
     auth = _authorize_local_ingest_request(ctx)
     return {
         "remote_ip": auth["remote_ip"],
-        "is_loopback": auth["remote_ip"] not in ("unknown", "") and _is_local_rpc_request(ctx),
+        "is_loopback": bool(auth["remote_ip"]) and _is_local_rpc_request(ctx),
         "transport": "http",
         "rpc_bind": os.getenv("ANIMICA_RPC_HOST", "127.0.0.1"),
         "allowed_local_rpc_nets": auth["allowed_nets"],
         "rpc_bound_localhost_only": _rpc_bound_localhost_only(),
         "token_configured": auth["token_configured"],
+        "token_matched": auth["token_valid"],
+        "reason": auth.get("reason"),
     }
 
 @method("da.get", aliases=("da_get", "da.getBlob", "da_getBlob"),

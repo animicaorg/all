@@ -105,6 +105,34 @@ from rpc.access_policy import get_active_policy
 
 log = logging.getLogger(__name__)
 
+
+def _extract_peer_client(request: Request) -> tuple[str, int] | None:
+    """Best-effort transport peer extraction without trusting proxy headers."""
+    candidates: list[tuple[Any, Any]] = []
+    try:
+        scope_client = request.scope.get("client") if isinstance(request.scope, dict) else None
+        if isinstance(scope_client, tuple) and len(scope_client) >= 2:
+            candidates.append((scope_client[0], scope_client[1]))
+    except Exception:
+        pass
+    try:
+        rc = request.client
+        if rc is not None:
+            candidates.append((getattr(rc, "host", None), getattr(rc, "port", None)))
+    except Exception:
+        pass
+
+    for host_raw, port_raw in candidates:
+        host = str(host_raw or "").strip()
+        if not host:
+            continue
+        try:
+            port = int(port_raw)
+        except Exception:
+            port = 0
+        return (host, port)
+    return None
+
 Json = Dict[str, Any]
 Params = Union[List[Any], Dict[str, Any]]
 CallableLike = Union[Callable[..., Any], Callable[..., Awaitable[Any]]]
@@ -651,21 +679,21 @@ async def jsonrpc_endpoint(request: Request) -> Response:
             payload_preview = {"batch_size": len(payload)}
         else:
             payload_preview = type(payload).__name__
+        peer = _extract_peer_client(request)
         log.info(
             "rpc.request",
             extra={
                 "correlation_id": correlation_id,
-                "remote": request.client.host if request.client else None,
+                "remote": peer[0] if peer else None,
                 "user_agent": request.headers.get("user-agent"),
                 "preview": payload_preview,
             },
         )
         # Build context
-        client = request.client
         ctx = Context(
             request=request,
             received_at_ms=_now_ms(),
-            client=(client.host, client.port) if client else None,  # type: ignore[arg-type]
+            client=peer,
             headers={k.lower(): v for k, v in request.headers.items()},
         )
         result = await dispatch(payload, ctx)
