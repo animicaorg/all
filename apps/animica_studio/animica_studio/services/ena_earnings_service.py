@@ -36,6 +36,7 @@ class EnaEarningsService(QObject):
         self._poll.setInterval(30_000)
         self._auto_claim = False
         self._claim_threshold = 0.0
+        self._claimable_positional_fallback = False
 
     @property
     def snapshot(self) -> EarningsSnapshot:
@@ -94,11 +95,15 @@ class EnaEarningsService(QObject):
         if not method:
             return 0.0
         try:
-            out = client.call_with_schema(method, {"address": address})
+            if self._claimable_positional_fallback:
+                out = client.call(method, [address])
+            else:
+                out = client.call_with_schema(method, {"address": address})
         except Exception as exc:
             message = str(exc).lower()
-            if "missing required params" in message:
+            if "missing required params" in message and not self._claimable_positional_fallback:
                 out = client.call(method, [address])
+                self._claimable_positional_fallback = True
             else:
                 raise
         if isinstance(out, dict):
