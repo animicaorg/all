@@ -654,7 +654,7 @@ def test_da_ingest_local_remote_permission_denied(tmp_path, monkeypatch):
     store = _make_store_mock()
     store.root_dir = str(tmp_path / "chain-1" / "da")
 
-    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda: {
+    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda rpc_ctx=None: {
         "allowed": False,
         "remote_ip": "172.17.0.1",
         "allowed_nets": ["127.0.0.1/32", "::1/128", "172.16.0.0/12"],
@@ -688,7 +688,7 @@ def test_allowed_local_rpc_nets_docker_localhost_only(monkeypatch):
 def test_da_get_caller_info(monkeypatch):
     from rpc.methods.da import da_get_caller_info
 
-    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda: {
+    monkeypatch.setattr("rpc.methods.da._authorize_local_ingest_request", lambda rpc_ctx=None: {
         "allowed": True,
         "remote_ip": "172.17.0.1",
         "allowed_nets": ["127.0.0.1/32", "::1/128", "172.16.0.0/12"],

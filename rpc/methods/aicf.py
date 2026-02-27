@@ -178,12 +178,14 @@ async def getStatus(ctx: Any, params: List[Any]) -> Dict[str, Any]:
 
 
 @method("aicf.getClaimable", desc="Get claimable rewards for an address")
-async def getClaimable(ctx: Any, params: List[Any]) -> Dict[str, Any]:
+async def getClaimable(address: str, ctx: Any = None, up_to_epoch: Optional[int] = None, include_details: bool = False) -> Dict[str, Any]:
     """
     aicf.getClaimable - Get claimable rewards for an address.
-    
-    Params: [address: HexString, upToEpoch?: int]
-    
+
+    Accepts params by name (paramStructure=by-name) or positional.
+
+    Params: address (string), up_to_epoch? (int), include_details? (bool)
+
     Returns: {
         claimable: HexQuantity,
         epochs: [int, ...],
@@ -195,42 +197,37 @@ async def getClaimable(ctx: Any, params: List[Any]) -> Dict[str, Any]:
         }, ...]
     }
     """
-    if not params or len(params) < 1:
+    if not isinstance(address, str) or not address.strip():
         raise InvalidParams("Missing required parameter: address")
-    
-    addr_str = params[0]
-    if not isinstance(addr_str, str):
-        raise InvalidParams("Address must be a string")
-    
-    address = _decode_address(addr_str)
-    
+
+    addr_decoded = _decode_address(address.strip())
+
     try:
         from execution.state.aicf_state import compute_claimable, get_epoch_length
     except ImportError:
         raise InternalError("AICF state module not available")
-    
+
     state = getattr(ctx, "state", None)
     if state is None:
         raise InternalError("State not available")
-    
+
     # Get current epoch
     current_epoch = _get_current_epoch(ctx)
-    
+
     # Get max epochs from params
     aicf_params = _get_aicf_params(ctx)
     max_epochs = aicf_params.get("max_claim_epochs", 100)
-    
+
     # Compute claimable
-    claimable = compute_claimable(state, address, current_epoch, max_epochs)
-    
+    claimable = compute_claimable(state, addr_decoded, current_epoch, max_epochs)
+
     # Format response
-    result = {
+    result: Dict[str, Any] = {
         "claimable": _to_hex_quantity(claimable.total_claimable),
         "epochs": claimable.epochs,
     }
-    
-    # Include details if requested (via optional param)
-    if len(params) > 1 and params[1]:
+
+    if include_details:
         details = []
         for epoch, credits_user, credits_total, share in claimable.details:
             details.append({
@@ -240,7 +237,7 @@ async def getClaimable(ctx: Any, params: List[Any]) -> Dict[str, Any]:
                 "share": _to_hex_quantity(share),
             })
         result["details"] = details
-    
+
     return result
 
 
@@ -363,16 +360,16 @@ async def buildClaimTx(ctx: Any, params: List[Any]) -> Dict[str, Any]:
 
 
 @method("aicf.claim", desc="Get claim information (read-only)")
-async def claim(ctx: Any, params: List[Any]) -> Dict[str, Any]:
+async def claim(address: str, ctx: Any = None, up_to_epoch: Optional[int] = None) -> Dict[str, Any]:
     """
     aicf.claim - Process a claim transaction.
-    
+
     NOTE: This is a read-only method that returns claimable info.
     Actual claiming requires sending a transaction through tx.sendRawTransaction.
     Use aicf.buildClaimTx to build an unsigned transaction.
-    
-    Params: [address: HexString, upToEpoch?: int]
-    
+
+    Params: address (string), up_to_epoch? (int)
+
     Returns: {
         claimable: HexQuantity,
         epochs: [int, ...],
@@ -380,7 +377,7 @@ async def claim(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     }
     """
     # For now, this just returns claimable info
-    claimable_info = await getClaimable(ctx, params)
+    claimable_info = await getClaimable(address=address, ctx=ctx, up_to_epoch=up_to_epoch)
     claimable_info["message"] = (
         "This is a read-only response. To claim, use aicf.buildClaimTx to build an unsigned "
         "transaction, sign it, and send via tx.sendRawTransaction."
