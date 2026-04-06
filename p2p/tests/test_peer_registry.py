@@ -37,6 +37,7 @@ def test_peer_registry_enforces_handshake_rate_limits():
         handshake_rate_limit_per_netgroup=3,
         handshake_rate_window_s=0.05,
         handshake_rate_netgroup_v4_bits=24,
+        trusted_reconnect_grace_s=0.0,
     )
 
     registry.register("198.51.100.1:1000", "inbound")
@@ -44,10 +45,36 @@ def test_peer_registry_enforces_handshake_rate_limits():
     with pytest.raises(ValueError):
         registry.register("198.51.100.1:1002", "inbound")
 
-    time.sleep(0.06)
-    registry.register("198.51.100.1:1003", "inbound")
+    deadline = time.time() + 0.5
+    while True:
+        try:
+            registry.register("198.51.100.1:1003", "inbound")
+            break
+        except ValueError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.02)
 
     registry.register("198.51.100.2:1004", "inbound")
     registry.register("198.51.100.3:1005", "inbound")
     with pytest.raises(ValueError):
         registry.register("198.51.100.4:1006", "inbound")
+
+
+def test_peer_registry_allows_recently_identified_reconnect_burst():
+    registry = PeerRegistry(
+        max_inbound_per_ip=10,
+        handshake_timeout_s=0.5,
+        handshake_rate_limit_per_ip=1,
+        handshake_rate_limit_per_netgroup=1,
+        handshake_rate_window_s=30.0,
+        trusted_reconnect_grace_s=60.0,
+    )
+
+    first = registry.register("203.0.113.10:3000", "inbound")
+    registry.mark_identified(first.session_id, "leader-peer")
+    registry.remove(first.session_id)
+
+    # Should not raise even though generic per-IP/netgroup handshake window is tiny.
+    registry.register("203.0.113.10:3001", "inbound")
+    registry.register("203.0.113.10:3002", "inbound")
