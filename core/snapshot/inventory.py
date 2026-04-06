@@ -234,7 +234,12 @@ def latest_snapshot(
 ) -> Optional[SnapshotEntry]:
     entries = read_inventory(snapshots_dir or get_snapshots_dir())
     if not entries:
-        entries = rebuild_inventory(snapshots_dir)
+        try:
+            entries = rebuild_inventory(snapshots_dir)
+        except PermissionError:
+            return None
+        except OSError:
+            return None
     if chain_id is not None:
         entries = [entry for entry in entries if entry.chain_id == chain_id]
     if not entries:
