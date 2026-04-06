@@ -87,3 +87,55 @@ async def test_two_node_outbound_stays_connected(tmp_path, monkeypatch):
     finally:
         await node_b.stop()
         await node_a.stop()
+
+
+@pytest.mark.asyncio
+async def test_bidirectional_duplicate_links_converge_to_single_stable_direction(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
+    monkeypatch.setenv("ANIMICA_P2P_ALLOW_SELF_PEERS", "1")
+    monkeypatch.setenv("ANIMICA_P2P_OUTBOUND", "1")
+    port_a = _free_port()
+    port_b = _free_port()
+
+    addr_a = f"/ip4/127.0.0.1/tcp/{port_a}"
+    addr_b = f"/ip4/127.0.0.1/tcp/{port_b}"
+    monkeypatch.setattr(P2PService, "_genesis_hash", lambda self: b"\x00" * 32)
+
+    node_a = P2PService(
+        listen_addrs=[addr_a],
+        seeds=[addr_b],
+        chain_id=1337,
+        peerstore_path=tmp_path / "node-a-dupe",
+    )
+    node_b = P2PService(
+        listen_addrs=[addr_b],
+        seeds=[addr_a],
+        chain_id=1337,
+        peerstore_path=tmp_path / "node-b-dupe",
+    )
+    zero_hash = "0x" + "00" * 32
+    monkeypatch.setattr(node_a, "_local_head", lambda: (0, zero_hash))
+    monkeypatch.setattr(node_b, "_local_head", lambda: (0, zero_hash))
+    monkeypatch.setattr(node_a, "_genesis_header_hash", lambda: b"\x00" * 32)
+    monkeypatch.setattr(node_b, "_genesis_header_hash", lambda: b"\x00" * 32)
+    monkeypatch.setattr(node_a, "_genesis_block_hash", lambda: b"\x00" * 32)
+    monkeypatch.setattr(node_b, "_genesis_block_hash", lambda: b"\x00" * 32)
+
+    await node_a.start()
+    await node_b.start()
+    try:
+        await node_a.dial(addr_b)
+        await node_b.dial(addr_a)
+        assert await _eventually(lambda: node_a.peer_count() >= 1 and node_b.peer_count() >= 1, timeout=15.0)
+        await asyncio.sleep(2.0)
+        snap_a = node_a.peer_registry.snapshot()
+        snap_b = node_b.peer_registry.snapshot()
+        identified_a = [p for p in snap_a if p.get("peer_id") not in (None, "unknown")]
+        identified_b = [p for p in snap_b if p.get("peer_id") not in (None, "unknown")]
+        assert len(identified_a) == 1
+        assert len(identified_b) == 1
+    finally:
+        await node_b.stop()
+        await node_a.stop()

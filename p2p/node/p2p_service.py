@@ -922,7 +922,14 @@ class P2PService:
             handshake_rate_netgroup_v6_bits=int(
                 os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_NETGROUP_V6", "48") or 48
             ),
+            trusted_reconnect_grace_s=float(
+                os.environ.get("ANIMICA_P2P_TRUSTED_RECONNECT_GRACE", "180.0") or 180.0
+            ),
         )
+        self._hello_timeout_grace_s = float(
+            os.environ.get("ANIMICA_P2P_HELLO_TIMEOUT_GRACE", "5.0") or 5.0
+        )
+        self._hello_timeout_grace_used: set[str] = set()
 
         # Seen LRU (dedupe + rebroadcast suppression)
         self._seen_tx: "OrderedDict[bytes, float]" = OrderedDict()
@@ -2264,11 +2271,15 @@ class P2PService:
                 return peer
         return None
 
-    def _peer_by_id(self, peer_id: Optional[str]) -> Optional[_PeerState]:
+    def _peer_by_id(
+        self, peer_id: Optional[str], *, direction: Optional[str] = None
+    ) -> Optional[_PeerState]:
         if not peer_id:
             return None
         for peer in self._peers.values():
-            if peer.peer_id == peer_id:
+            if peer.peer_id == peer_id and (
+                direction is None or peer.direction == direction
+            ):
                 return peer
         return None
 
@@ -5672,7 +5683,7 @@ class P2PService:
                     outbound = [
                         p for p in self._peers.values() if p.direction == "outbound"
                     ]
-                    active_keys = {self._addr_key(p.remote) for p in outbound}
+                    active_keys = {self._addr_key(p.remote) for p in self._peers.values()}
                 if len(outbound) >= target_outbound:
                     if self._seeding_mode:
                         self._seeding_mode = False
@@ -5975,6 +5986,31 @@ class P2PService:
                 peer.hello_done.wait(), timeout=self._peer_registry.handshake_timeout_s
             )
         except asyncio.TimeoutError:
+            peer_key = self._peer_key(peer.remote, peer.direction)
+            should_grant_grace = (
+                self._hello_timeout_grace_s > 0
+                and peer_key not in self._hello_timeout_grace_used
+                and (self._sync_target_height is not None or self._network_best_height() is not None)
+            )
+            if should_grant_grace:
+                self._hello_timeout_grace_used.add(peer_key)
+                log.warning(
+                    "Deferring hello-timeout drop during active sync",
+                    extra={
+                        "remote": peer.remote,
+                        "direction": peer.direction,
+                        "grace_s": self._hello_timeout_grace_s,
+                        "target_height": self._sync_target_height,
+                        "network_best_height": self._network_best_height(),
+                    },
+                )
+                try:
+                    await asyncio.wait_for(
+                        peer.hello_done.wait(), timeout=self._hello_timeout_grace_s
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass
             log.info("Dropping peer %s due to hello timeout", peer.remote)
             await self._drop_peer(peer, reason="hello_timeout")
 
@@ -6046,6 +6082,7 @@ class P2PService:
     async def _drop_peer(self, peer: _PeerState, *, reason: str) -> None:
         with contextlib.suppress(Exception):
             await peer.conn.close()
+        self._hello_timeout_grace_used.discard(self._peer_key(peer.remote, peer.direction))
         self._peer_registry.remove(peer.session_id)
         self._txrelay.unregister_peer(self._peer_tx_key(peer))
 
@@ -7042,6 +7079,27 @@ class P2PService:
                     self._drop_peer(dup_peer, reason="duplicate_peer_id"),
                     name=f"p2p.drop_peer@{dup_peer.remote}",
                 )
+        # Resolve duplicate bidirectional links for the same peer_id by selecting a
+        # deterministic single direction. This prevents simultaneous inbound/outbound
+        # churn between two nodes that dial each other at the same time.
+        opposite_direction = "inbound" if peer.direction == "outbound" else "outbound"
+        opposite = self._peer_by_id(peer.peer_id, direction=opposite_direction)
+        if opposite is not None and opposite.session_id != peer.session_id:
+            local_peer_id_hex = self._peer_id_bytes.hex()
+            keep_direction = (
+                "outbound" if local_peer_id_hex < peer.peer_id else "inbound"
+            )
+            if peer.direction != keep_direction:
+                await self._drop_peer(
+                    peer, reason=f"duplicate_bidirectional_prefer_{keep_direction}"
+                )
+                return
+            self._create_child_task(
+                self._drop_peer(
+                    opposite, reason=f"duplicate_bidirectional_prefer_{keep_direction}"
+                ),
+                name=f"p2p.drop_peer@{opposite.remote}",
+            )
         self._stats["peers"] = self._peer_registry.peer_count()
         log.info(
             "P2P_SESSION_READY",
@@ -9931,12 +9989,17 @@ class P2PService:
             selected_peers = [peer] if peer.hello_done.is_set() else []
 
         if not selected_peers:
+            eligible_block_peers, ineligible_block_reasons = self._eligible_block_peers()
             log.info(
                 "BLOCK_FETCH_NOT_SCHEDULED",
                 extra={
                     "reason": "no_peer" if peer is None else "handshake_pending",
                     "needed_height": next_block_height,
                     "needed_hash": self._canon_hash0x(next_block_hash),
+                    "eligible_peers": [p.remote for p in eligible_block_peers],
+                    "ineligible_reasons": dict(ineligible_block_reasons),
+                    "queue_len": len(self._sync_block_queue),
+                    "inflight_blocks": len(self._sync_inflight_blocks),
                 },
             )
             return 0
