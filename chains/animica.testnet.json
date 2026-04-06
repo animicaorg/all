@@ -5,24 +5,36 @@
   "network": "testnet",
   "status": "active",
   "testnet": true,
-
-  "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
-
-  "rpc": {
-    "http": ["https://rpc.testnet.animica.org/rpc", "http://144.126.133.21:8545/rpc"],
-    "ws":   ["wss://ws.testnet.animica.org"]
+  "nativeCurrency": {
+    "name": "Animica",
+    "symbol": "ANM",
+    "decimals": 18
   },
-
+  "rpc": {
+    "http": [
+      "https://rpc.testnet.animica.org/rpc",
+      "http://144.126.133.21:8545/rpc"
+    ],
+    "ws": [
+      "wss://ws.testnet.animica.org"
+    ]
+  },
   "explorers": [
-    { "name": "Animica Explorer", "url": "https://explorer.testnet.animica.org" }
+    {
+      "name": "Animica Explorer",
+      "url": "https://explorer.testnet.animica.org"
+    }
   ],
-
   "faucets": [
-    { "name": "Faucet", "url": "https://faucet.testnet.animica.org" }
+    {
+      "name": "Faucet",
+      "url": "https://faucet.testnet.animica.org"
+    }
   ],
-
   "p2p": {
-    "protocols": ["animica/1"],
+    "protocols": [
+      "animica/1"
+    ],
     "port": 30303,
     "seeds": [
       "rpc.testnet.animica.org",
@@ -32,53 +44,54 @@
     ],
     "bootnodes": []
   },
-
   "addresses": {
     "format": "bech32m",
     "hrp": "am",
-    "pubkeyTypes": ["ed25519", "secp256k1", "dilithium3"]
+    "pubkeyTypes": [
+      "ed25519",
+      "secp256k1",
+      "dilithium3"
+    ]
   },
-
   "pq": {
     "sigDefault": "dilithium3",
     "kex": "kyber-768",
     "policyVersion": "2025-10"
   },
-
   "vm": {
     "lang": "python",
     "version": "0.5.0",
     "gasModel": "v1"
   },
-
   "da": {
     "maxBlobSizeBytes": 2097152,
     "nmtNamespaceBytes": 8,
     "rsRate": "10/16"
   },
-
   "randomness": {
     "method": "vdf+qrng",
-    "params": { "tau": 1024 }
+    "params": {
+      "tau": 1024
+    }
   },
-
   "genesis": {
-    "hash": "0x6da84a9b99fddadfc4afeed9941e38fc53f24455a747091bcb0e4c67393c8627",
-    "timestamp": "2026-02-08T02:50:03Z",
+    "hash": "0xc0add9a3db2602b2d721d4cabd1681a5877842c66a6cf137b1d2f21c1af8dcf7",
+    "timestamp": "2026-04-06T00:00:00Z",
     "initialHeight": 0
   },
-
   "governance": {
     "site": "https://gov.animica.dev",
     "votingPeriodDays": 7
   },
-
   "links": {
     "website": "https://animica.dev",
     "docs": "https://docs.animica.dev"
   },
-
-  "features": ["poies", "pq", "da", "vm_py"],
-
+  "features": [
+    "poies",
+    "pq",
+    "da",
+    "vm_py"
+  ],
   "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
 }
