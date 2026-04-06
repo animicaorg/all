@@ -74,6 +74,7 @@ class PeerRegistry:
         handshake_rate_window_s: float = 60.0,
         handshake_rate_netgroup_v4_bits: int = 24,
         handshake_rate_netgroup_v6_bits: int = 48,
+        trusted_reconnect_grace_s: float = 180.0,
     ) -> None:
         self._sessions: Dict[str, PeerSession] = {}
         self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
@@ -90,8 +91,10 @@ class PeerRegistry:
         self._handshake_rate_netgroup_v6_bits = max(
             1, min(128, int(handshake_rate_netgroup_v6_bits))
         )
+        self._trusted_reconnect_grace_s = max(0.0, float(trusted_reconnect_grace_s))
         self._handshake_rate_ip: Dict[str, List[float]] = {}
         self._handshake_rate_netgroup: Dict[str, List[float]] = {}
+        self._trusted_reconnect_ip: Dict[str, float] = {}
 
     # --------------------------- registration --------------------------- #
 
@@ -125,6 +128,8 @@ class PeerRegistry:
 
         session.peer_id = peer_id
         session.last_seen = time.time()
+        trusted_ip = _extract_ip(session.remote)
+        self._trusted_reconnect_ip[trusted_ip] = session.last_seen
 
         replaced: List[str] = []
         peer_key = (peer_id, session.direction)
@@ -222,6 +227,15 @@ class PeerRegistry:
 
     def _enforce_handshake_rate(self, ip: str) -> None:
         now = time.time()
+        trusted_seen_at = self._trusted_reconnect_ip.get(ip)
+        if (
+            trusted_seen_at is not None
+            and self._trusted_reconnect_grace_s > 0
+            and now - trusted_seen_at <= self._trusted_reconnect_grace_s
+        ):
+            # This IP was recently identified successfully. Allow reconnect bursts
+            # without tripping generic anti-abuse handshake limits.
+            return
         if self._handshake_rate_limit_per_ip > 0:
             ip_events = self._handshake_rate_ip.setdefault(ip, [])
             self._prune_rate_window(ip_events, now)

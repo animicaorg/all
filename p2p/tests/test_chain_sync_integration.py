@@ -127,6 +127,72 @@ async def test_two_nodes_sync_from_genesis(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_follower_syncs_block_2_then_block_3_from_leader(tmp_path: Path) -> None:
+    deps_leader_sync, deps_leader = _make_deps(tmp_path, "leader")
+    deps_follower_sync, deps_follower = _make_deps(tmp_path, "follower")
+
+    port_leader = free_port()
+    port_follower = free_port()
+    addr_leader = tcp_multiaddr(port_leader)
+    addr_follower = tcp_multiaddr(port_follower)
+
+    node_leader = P2PService(
+        listen_addrs=[addr_leader],
+        seeds=[],
+        chain_id=deps_leader_sync.chain_id,
+        deps=deps_leader,
+        peerstore_path=str(tmp_path / "leader" / "p2p"),
+    )
+    node_follower = P2PService(
+        listen_addrs=[addr_follower],
+        seeds=[addr_leader],
+        chain_id=deps_follower_sync.chain_id,
+        deps=deps_follower,
+        peerstore_path=str(tmp_path / "follower" / "p2p"),
+    )
+
+    try:
+        _mine_blocks(deps_leader_sync, 3)
+        _mine_blocks(deps_follower_sync, 1)
+    except AssertionError as exc:
+        if "No module named 'animica'" in str(exc):
+            pytest.skip("sync block import runtime dependency missing in this environment")
+        raise
+    assert deps_follower_sync.head()[0] == 1
+    assert deps_leader_sync.head()[0] == 3
+
+    await node_leader.start()
+    await node_follower.start()
+    observed_anchor = False
+    observed_target = False
+    observed_next_block_2 = False
+    try:
+        await node_follower.dial(addr_leader)
+        assert await _wait_for_peers(node_follower, 1)
+
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            status = node_follower.sync_status_snapshot()
+            if status.last_anchor_check is not None:
+                observed_anchor = True
+            if status.target_height is not None and int(status.target_height) >= 3:
+                observed_target = True
+            if status.next_block_needed_height == 2:
+                observed_next_block_2 = True
+            if deps_follower_sync.head()[0] >= 3:
+                break
+            await asyncio.sleep(0.2)
+
+        assert deps_follower_sync.head()[0] >= 3
+        assert observed_anchor
+        assert observed_target
+        assert observed_next_block_2
+    finally:
+        await node_follower.stop()
+        await node_leader.stop()
+
+
+@pytest.mark.asyncio
 async def test_three_nodes_converge_headers_first(tmp_path: Path) -> None:
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
