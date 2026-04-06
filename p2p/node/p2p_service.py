@@ -3559,10 +3559,35 @@ class P2PService:
             return self._apply_sync_status_cache_meta(
                 self._sync_status_cache, now, source="cache"
             )
+        previous_snapshot = self._sync_status_cache
         snapshot = self._build_sync_status_snapshot()
+        if previous_snapshot is not None:
+            stale_fields = (
+                ("head_height", previous_snapshot.head_height, snapshot.head_height),
+                (
+                    "network_best_height",
+                    previous_snapshot.network_best_height,
+                    snapshot.network_best_height,
+                ),
+                ("target_height", previous_snapshot.target_height, snapshot.target_height),
+            )
+            for field_name, old_value, new_value in stale_fields:
+                if old_value != new_value:
+                    log.debug(
+                        "STATUS_STALE_FIELD_DETECTED",
+                        extra={
+                            "field": field_name,
+                            "old": old_value,
+                            "new": new_value,
+                        },
+                    )
         self._sync_status_cache = snapshot
         self._sync_status_cache_at = now
         self._sync_status_cache_refreshes += 1
+        log.debug(
+            "STATUS_CACHE_REFRESH",
+            extra={"reason": "sync_status_snapshot", "at": now},
+        )
         return self._apply_sync_status_cache_meta(snapshot, now, source="refresh")
 
     def _apply_sync_status_cache_meta(
@@ -3831,7 +3856,7 @@ class P2PService:
             synchronized=synchronized,
             paused=self._sync_paused,
             sync_enabled=self._sync_enabled,
-            target_height=self._sync_target_height,
+            target_height=target_height,
             peers_total=len(self._peers),
             cache_size_bytes=cache_size_bytes,
             cache_entries=cache_entries,
@@ -5393,9 +5418,23 @@ class P2PService:
     def set_sync_target(self, height: Optional[int]) -> dict[str, Any]:
         if height is not None and height < 0:
             height = None
-        self._sync_target_height = height
+        self._update_sync_target_height(height, reason="manual_set_sync_target")
         self._sync_wakeup.set()
         return {"target_height": self._sync_target_height}
+
+    def _update_sync_target_height(self, height: Optional[int], *, reason: str) -> None:
+        new_target = None if height is None else int(height)
+        old_target = self._sync_target_height
+        self._sync_target_height = new_target
+        if new_target is None:
+            if old_target is not None:
+                log.info("SYNC_TARGET_CLEARED", extra={"reason": reason})
+            return
+        if old_target != new_target:
+            log.info(
+                "SYNC_TARGET_SET",
+                extra={"reason": reason, "target_height": new_target},
+            )
 
     async def dial(self, addr: str) -> None:
         normalized = self._sanitize_peer_addr(
@@ -8282,6 +8321,13 @@ class P2PService:
             self._sync_last_block_at = time.time()
             self._sync_last_progress_at = self._sync_last_block_at
             head_height, head_hash = self._local_head()
+            log.info(
+                "BLOCK_IMPORTED",
+                extra={
+                    "height": int(head_height or 0),
+                    "hash": self._canon_hash0x(sync_block.hash),
+                },
+            )
             self._note_sync_progress(
                 reason="block_imported",
                 head_height=int(head_height or 0),
@@ -8744,6 +8790,29 @@ class P2PService:
 
     def _next_block_needed(self) -> tuple[Optional[int], Optional[bytes]]:
         if not self._sync_block_queue:
+            local_height, _ = self._local_head()
+            local_height_int = int(local_height or 0)
+            best_header_height = (
+                int(self._sync_best_header.height)
+                if self._sync_best_header is not None
+                else local_height_int
+            )
+            target_height = self._sync_target_height
+            if target_height is None:
+                target_height = self._network_best_height()
+            if target_height is not None:
+                best_header_height = max(best_header_height, int(target_height))
+            if best_header_height > local_height_int:
+                expected_next_height = local_height_int + 1
+                next_hash = next(
+                    (
+                        h
+                        for h, hdr in self._sync_headers.items()
+                        if int(hdr.height) == expected_next_height
+                    ),
+                    None,
+                )
+                return expected_next_height, next_hash
             return None, None
         best_hash = None
         best_height = None
@@ -9703,6 +9772,15 @@ class P2PService:
             return [], "invalid_headers", {"invalid_headers": len(headers)}
 
         self._sync_headers_accepted_total += len(contiguous)
+        log.info(
+            "HEADER_ACCEPTED",
+            extra={
+                "count": len(contiguous),
+                "first": int(contiguous[0].height) if contiguous else None,
+                "last": int(contiguous[-1].height) if contiguous else None,
+                "peer": peer.remote,
+            },
+        )
         self._note_header_progress(peer, reason="headers_accepted")
         now = time.time()
         peer.broadcast.successful_headers_served += 1
@@ -9860,6 +9938,14 @@ class P2PService:
             self._sync_inflight_block_requests[h] = request
             requested.append(h)
             self._record_block_attempt(peer, h)
+            log.info(
+                "BLOCK_SCHEDULED",
+                extra={
+                    "height": self._block_height_hint(h),
+                    "hash": self._canon_hash0x(h),
+                    "peer": peer.remote,
+                },
+            )
             inflight_for_peer += 1
             height_hint = self._block_height_hint(h)
             if height_hint is not None:
@@ -10183,8 +10269,13 @@ class P2PService:
                 and local_height >= self._sync_target_height
                 and not force
             ):
-                self._sync_phase = "TARGET_REACHED"
-                return result
+                network_best_height = self._network_best_height()
+                if (
+                    network_best_height is None
+                    or int(network_best_height) <= int(local_height or 0)
+                ):
+                    self._sync_phase = "TARGET_REACHED"
+                    return result
             eligible_peers, _ = self._eligible_sync_peers()
             if not eligible_peers:
                 if self._sync_last_header_error == "invalid_headers":
@@ -10602,16 +10693,23 @@ class P2PService:
                         discard_reason_counts = {}
                         if accepted_count == 0 and headers:
                             discard_reason = (
-                                "duplicate_headers" if all_known else header_error
+                                "already_known_headers" if all_known else header_error
                             )
                             if discard_reason:
                                 discard_reason_counts[discard_reason] = len(headers)
                         elif discarded_count > 0:
-                            discard_reason_counts["duplicate_headers"] = discarded_count
+                            discard_reason_counts["already_known_headers"] = discarded_count
                     self._sync_last_headers_accepted_count = accepted_count
                     self._sync_last_headers_discarded_count = discarded_count
                     self._sync_last_headers_discard_reason_counts = discard_reason_counts
                     if discarded_count > 0 or header_error:
+                        discard_reason = header_error or ",".join(
+                            sorted(discard_reason_counts.keys())
+                        )
+                        log.info(
+                            "HEADER_DISCARDED",
+                            extra={"reason": discard_reason, "peer": peer.remote},
+                        )
                         first_header = headers[0] if headers else None
                         log.info(
                             "HEADER_BATCH_DISCARDED",
@@ -10841,6 +10939,22 @@ class P2PService:
                     self._sync_phase = "SYNCING"
                 else:
                     self._sync_phase = "SYNCED" if new_height > 0 else "IDLE"
+            network_best_after = self._network_best_height()
+            if (
+                self._sync_target_height is not None
+                and network_best_after is not None
+                and int(new_height or 0) >= int(network_best_after)
+            ):
+                self._update_sync_target_height(
+                    None, reason="converged_to_network_best"
+                )
+                log.info(
+                    "SYNC_CONVERGED",
+                    extra={
+                        "local_height": int(new_height or 0),
+                        "remote_height": int(network_best_after),
+                    },
+                )
 
             result["started"] = True
             result["blocksRequested"] = requested
@@ -11010,7 +11124,10 @@ class P2PService:
                         if target_height is not None
                         else int(network_best_height)
                     )
-                self._sync_target_height = target_height
+                self._update_sync_target_height(
+                    target_height,
+                    reason="sync_loop_target_update",
+                )
                 if (
                     target_height is not None
                     and (previous_target is None or target_height > int(previous_target))
@@ -13075,7 +13192,9 @@ class P2PService:
             return
         state = self._sync_cache.load_state()
         self._sync_paused = bool(state.paused)
-        self._sync_target_height = state.target_height
+        self._update_sync_target_height(
+            state.target_height, reason="load_sync_cache_state"
+        )
         self._sync_peer_penalties.update(state.peer_penalties)
         self._sync_last_validated_height = int(state.last_validated_height or 0)
         for header_payload in state.headers:
@@ -13487,7 +13606,9 @@ class P2PService:
 
         best_peer, best_height, _best_hash = self._best_broadcast_peer_head(now=now)
         if best_height is not None:
-            self._sync_target_height = int(best_height)
+            self._update_sync_target_height(
+                int(best_height), reason="reset_from_highest_next_height"
+            )
 
         locator = self._build_headers_locator()
         if not locator:
@@ -13538,7 +13659,7 @@ class P2PService:
             self._prune_canonical_heights(bdb, above_height=0, batch=None)
         self._reset_sync_state(reason=reason)
         self._clear_sync_cache()
-        self._sync_target_height = None
+        self._update_sync_target_height(None, reason="reset_chain_to_genesis")
         self._sync_paused = False
         hdr = self._sync_header_by_hash(bytes(genesis))
         if hdr is not None:

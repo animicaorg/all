@@ -172,7 +172,9 @@ def head(
         typer.echo("-" * 60)
         height = head_data.get("height") or head_data.get("number") or "?"
         hash_val = head_data.get("hash") or head_data.get("blockHash") or "?"
-        timestamp = head_data.get("timestamp") or "?"
+        timestamp = head_data.get("timestamp")
+        if timestamp is None:
+            timestamp = "?"
 
         typer.echo(f"Height:    {height}")
         typer.echo(f"Hash:      {hash_val}")
