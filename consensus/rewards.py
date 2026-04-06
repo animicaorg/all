@@ -48,7 +48,7 @@ MAINNET_PREMINE_TOTAL: int = PREMINE_AMOUNT  # 81M ANM in base units
 # managed by the Animica Foundation. This address will handle distributions
 # to treasury, AICF, and other ecosystem participants as needed.
 #
-# Premine address: anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz
+# Premine address: anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208
 # Total: 81,000,000 ANM (81,000,000,000,000,000 base units)
 #
 # Note: genesis.sample.mainnet.json uses a different distribution across
@@ -57,7 +57,7 @@ MAINNET_PREMINE_TOTAL: int = PREMINE_AMOUNT  # 81M ANM in base units
 
 MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
     # Single premine address containing the entire 81M ANM allocation
-    ("anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz", PREMINE_AMOUNT),
+    ("anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208", PREMINE_AMOUNT),
 ]
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
