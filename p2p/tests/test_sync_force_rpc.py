@@ -49,3 +49,33 @@ async def test_sync_force_rpc_triggers_wakeup(
     finally:
         p2p.clear_service()
         await node.stop()
+
+
+@pytest.mark.asyncio
+async def test_sync_force_rpc_reports_blocking_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _DummySvc:
+        _sync_wakeup = SimpleNamespace(set=lambda: None)
+
+        def enable_sync(self, _enabled: bool = True) -> None:
+            return None
+
+        async def force_sync_with_cache(self, *, clear_cache: bool = False) -> dict[str, object]:
+            return {
+                "started": False,
+                "phase": "IDLE",
+                "clear_cache": clear_cache,
+            }
+
+        def peer_count(self) -> int:
+            return 1
+
+    dummy_ctx = SimpleNamespace(get_head=lambda: {"height": 2})
+    monkeypatch.setattr(sync_methods, "_get_p2p_service", lambda: _DummySvc())
+    monkeypatch.setattr(sync_methods, "_get_core_p2p_service", lambda: None)
+    monkeypatch.setattr(sync_methods.deps, "ensure_started", lambda: dummy_ctx)
+
+    result = await sync_methods.sync_force(clear_cache=True)
+    assert result["success"] is False
+    assert result["blockingReason"] == "sync_phase:idle"

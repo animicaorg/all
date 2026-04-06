@@ -285,6 +285,18 @@ animica sync resume
 animica sync force --clear-cache
 ```
 
+`animica sync force` now distinguishes between queued intent and actual scheduled work.
+If a sync round cannot start, RPC returns `success=false` plus an explicit `blockingReason`
+instead of a generic success response.
+
+### Structured Stall Diagnostics
+
+When sync cannot progress, logs now emit explicit reason-coded events:
+
+- `HEADER_BATCH_DISCARDED` (includes discard reasons and first header context)
+- `PEER_NOT_ACTIVATED` (eligible peer filtering / activation failures)
+- `BLOCK_FETCH_NOT_SCHEDULED` (known needed block but request not scheduled)
+
 ### Monitor Logs
 
 ```bash

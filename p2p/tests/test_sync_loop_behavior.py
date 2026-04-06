@@ -837,3 +837,31 @@ async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
     node._handle_sync_stall(reason="blocks stalled")
     assert node._sync_last_recovery_action == "retry_blocks_new_peer"
     assert node._sync_active_block_peer == peer_b.remote
+
+
+def test_select_sync_peer_considers_proven_peer_when_heights_are_close(
+    tmp_path: Path,
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-peer-selection")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-peer-selection" / "p2p"),
+    )
+    noisy = _register_peer(node, "10.1.0.2:30333")
+    healthy = _register_peer(node, "10.1.0.3:30333")
+    noisy.peer_id = "peer-noisy"
+    healthy.peer_id = "peer-healthy"
+    noisy.hello["head_height"] = 30
+    healthy.hello["head_height"] = 28
+    healthy.broadcast.successful_headers_served = 3
+    healthy.anchored = True
+
+    selected_remotes: set[str] = set()
+    for _ in range(20):
+        selected = node._select_sync_peer()
+        assert selected is not None
+        selected_remotes.add(selected.remote)
+    assert healthy.remote in selected_remotes
