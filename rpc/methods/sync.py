@@ -88,6 +88,7 @@ async def sync_force(
         }
 
     queued = False
+    force_result: dict[str, t.Any] | None = None
     if svc is not None:
         if hasattr(svc, "enable_sync"):
             try:
@@ -105,15 +106,36 @@ async def sync_force(
             except Exception:
                 pass
         if hasattr(svc, "force_sync_with_cache"):
-            asyncio.create_task(
-                _run_in_background(
-                    svc.force_sync_with_cache(clear_cache=bool(clear_cache))
+            try:
+                force_result = await asyncio.wait_for(
+                    svc.force_sync_with_cache(clear_cache=bool(clear_cache)),
+                    timeout=5.0,
                 )
-            )
-            queued = True
+                queued = True
+            except asyncio.TimeoutError:
+                asyncio.create_task(
+                    _run_in_background(
+                        svc.force_sync_with_cache(clear_cache=bool(clear_cache))
+                    )
+                )
+                queued = True
+                force_result = {
+                    "started": False,
+                    "queued": True,
+                    "blockingReason": "force_sync_timeout",
+                }
         elif hasattr(svc, "force_sync"):
-            asyncio.create_task(_run_in_background(svc.force_sync()))
-            queued = True
+            try:
+                force_result = await asyncio.wait_for(svc.force_sync(), timeout=5.0)
+                queued = True
+            except asyncio.TimeoutError:
+                asyncio.create_task(_run_in_background(svc.force_sync()))
+                queued = True
+                force_result = {
+                    "started": False,
+                    "queued": True,
+                    "blockingReason": "force_sync_timeout",
+                }
     elif core_svc is not None:
         asyncio.create_task(_run_in_background(_core_force_sync(core_svc)))
         queued = True
@@ -122,6 +144,8 @@ async def sync_force(
         return {"success": False, "error": "force_sync not implemented"}
 
     result: dict[str, t.Any] = {"success": True, "queued": True, "started": True}
+    if isinstance(force_result, dict):
+        result.update(force_result)
 
     try:
         if svc is not None:
@@ -132,7 +156,16 @@ async def sync_force(
         peer_count = 0
 
     result.setdefault("peerCount", peer_count)
-    result.setdefault("success", bool(result.get("started")))
+    started = bool(result.get("started"))
+    result["success"] = started
+    if not started and "error" not in result:
+        result["error"] = "force-sync-not-started"
+    if not started and "blockingReason" not in result:
+        blocking = result.get("phase")
+        if blocking in {"IDLE", "TARGET_REACHED", "SYNCED"}:
+            result["blockingReason"] = f"sync_phase:{blocking.lower()}"
+        else:
+            result["blockingReason"] = "no-work-scheduled"
     if head_height is not None:
         result.setdefault("height", head_height)
     return result

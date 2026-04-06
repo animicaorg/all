@@ -9931,9 +9931,13 @@ class P2PService:
             selected_peers = [peer] if peer.hello_done.is_set() else []
 
         if not selected_peers:
-            log.debug(
-                "Skipped block requests: no eligible block peer",
-                extra={"reason": "no_peer" if peer is None else "handshake_pending"},
+            log.info(
+                "BLOCK_FETCH_NOT_SCHEDULED",
+                extra={
+                    "reason": "no_peer" if peer is None else "handshake_pending",
+                    "needed_height": next_block_height,
+                    "needed_hash": self._canon_hash0x(next_block_hash),
+                },
             )
             return 0
         self._sync_active_block_peer = selected_peers[0].remote
@@ -10024,10 +10028,13 @@ class P2PService:
             if height_hint is not None:
                 self._sync_block_queue_heights[h] = height_hint
         if not to_request:
-            log.debug(
-                "Skipped block requests: no eligible blocks to request",
+            log.info(
+                "BLOCK_FETCH_NOT_SCHEDULED",
                 extra={
+                    "reason": "no_eligible_blocks",
                     "remote": selected_peers[0].remote,
+                    "needed_height": next_block_height,
+                    "needed_hash": self._canon_hash0x(next_block_hash),
                     "queue_len": len(self._sync_block_queue),
                     "inflight_blocks": len(self._sync_inflight_blocks),
                 },
@@ -10135,6 +10142,15 @@ class P2PService:
                             )
                 if not eligible_peers:
                     self._sync_phase = "IDLE"
+                    _eligible, ineligible = self._eligible_sync_peers()
+                    log.info(
+                        "PEER_NOT_ACTIVATED",
+                        extra={
+                            "reason": "no_eligible_header_peers",
+                            "eligible_count": len(_eligible),
+                            "ineligible_reasons": ineligible,
+                        },
+                    )
                     log.debug("Sync idle: no eligible peers for headers")
                     return result
 
@@ -10532,6 +10548,24 @@ class P2PService:
                     self._sync_last_headers_accepted_count = accepted_count
                     self._sync_last_headers_discarded_count = discarded_count
                     self._sync_last_headers_discard_reason_counts = discard_reason_counts
+                    if discarded_count > 0 or header_error:
+                        first_header = headers[0] if headers else None
+                        log.info(
+                            "HEADER_BATCH_DISCARDED",
+                            extra={
+                                "reason": header_error or "partial_discard",
+                                "remote": peer.remote,
+                                "first_height": int(first_header.height) if first_header else None,
+                                "first_prev_hash": self._canon_hash0x(
+                                    bytes(first_header.parent_hash)
+                                )
+                                if first_header
+                                else None,
+                                "accepted": accepted_count,
+                                "discarded": discarded_count,
+                                "discard_reason_counts": discard_reason_counts,
+                            },
+                        )
 
                     rotate_peer = False
                     if header_error == "invalid_headers":
@@ -11693,6 +11727,8 @@ class P2PService:
         
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
+        local_height, _ = self._local_head()
+        local_height = int(local_height or 0)
         for p in eligible:
             if p.remote in avoid_remotes:
                 continue
@@ -11716,25 +11752,43 @@ class P2PService:
             )
             candidates.append((h, broadcast_score, non_broadcasting, p))
         if not candidates:
+            log.debug(
+                "PEER_NOT_ACTIVATED",
+                extra={
+                    "reason": "no_candidates_after_filter",
+                    "require_anchored": require_anchored,
+                    "avoid_remotes_count": len(avoid_remotes),
+                },
+            )
             return None
         max_height = max(h for h, _score, _nb, _ in candidates)
+        floor_height = max(local_height + 1, max_height - 2)
         height_filtered = [
-            (score, non_broadcasting, peer)
+            (h, score, non_broadcasting, peer)
             for h, score, non_broadcasting, peer in candidates
-            if h == max_height
+            if h >= floor_height
         ]
-        if any(not non_broadcasting for _score, non_broadcasting, _peer in height_filtered):
+        if not height_filtered:
+            height_filtered = list(candidates)
+        if any(
+            not non_broadcasting
+            for _h, _score, non_broadcasting, _peer in height_filtered
+        ):
             height_filtered = [
-                (score, non_broadcasting, peer)
-                for score, non_broadcasting, peer in height_filtered
+                (h, score, non_broadcasting, peer)
+                for h, score, non_broadcasting, peer in height_filtered
                 if not non_broadcasting
             ]
         scored: list[tuple[tuple[float, ...], _PeerState]] = []
-        for broadcast_score, non_broadcasting, p in height_filtered:
+        for head_height, broadcast_score, non_broadcasting, p in height_filtered:
             latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
             outbound_bonus = 1 if p.direction == "outbound" else 0
             netgroup_penalty = 1 if avoid_netgroup and p.netgroup == avoid_netgroup else 0
             sync_score = self._peer_sync_score(p)
+            anchored_bonus = 1 if self._peer_is_anchored(p) else 0
+            proven_headers_bonus = 1 if p.broadcast.successful_headers_served > 0 else 0
+            lag_delta = max(0, int(head_height) - local_height)
+            capped_delta = min(lag_delta, 64)
             non_broadcasting_penalty = -5.0 if non_broadcasting else 0.0
             recent_header_bonus = (
                 1.0
@@ -11744,8 +11798,11 @@ class P2PService:
                 else 0.0
             )
             score = (
+                anchored_bonus,
+                proven_headers_bonus,
                 broadcast_score,
                 recent_header_bonus,
+                capped_delta,
                 non_broadcasting_penalty,
                 outbound_bonus,
                 *sync_score,
@@ -11755,6 +11812,15 @@ class P2PService:
             )
             scored.append((score, p))
         if not scored:
+            log.debug(
+                "PEER_NOT_ACTIVATED",
+                extra={
+                    "reason": "no_scored_candidates",
+                    "candidate_count": len(height_filtered),
+                    "local_height": local_height,
+                    "max_height": max_height,
+                },
+            )
             return None
         scored.sort(key=lambda item: item[0], reverse=True)
         top_count = max(1, min(3, len(scored)))
