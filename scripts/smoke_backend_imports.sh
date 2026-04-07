@@ -9,14 +9,16 @@ export PYTHONPATH="$ROOT/python:$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 echo "[smoke-backend] checking core runtime imports"
 
 "$PYTHON_BIN" - <<'PY'
+from importlib.metadata import version
+
 import fastapi
 import prometheus_client
 import rpc.server
 import ena.services.ena_node.main
 import animica.stratum_pool.cli
 
-print("fastapi", fastapi.__version__)
-print("prometheus_client", getattr(prometheus_client, "__version__", "unknown"))
+print("fastapi", version("fastapi"))
+print("prometheus_client", version("prometheus-client"))
 print("backend-imports-ok")
 PY
 

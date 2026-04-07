@@ -211,12 +211,14 @@ verify_installation() {
   fi
 
   if ! PYTHONPATH="$ROOT/python:$ROOT${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY' >/dev/null 2>&1
+from importlib.metadata import version
+
 import fastapi
 import prometheus_client
 import rpc.server
 import ena.services.ena_node.main
 import animica.stratum_pool.cli
-print(fastapi.__version__, prometheus_client.__version__)
+print(version("fastapi"), version("prometheus-client"))
 PY
   then
     die "Installation verification failed: backend/runtime imports failed (fastapi, prometheus_client, rpc.server, ena.services.ena_node.main, animica.stratum_pool.cli)"
