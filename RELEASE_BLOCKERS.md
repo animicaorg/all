@@ -1,92 +1,39 @@
 # Release Blockers
 
-Date: 2026-04-07
+## Cleared In This Pass
 
-## Prioritized Blockers
+- Setup verification no longer relies on undeclared backend dependencies.
+- `setup.sh` validates backend/runtime imports that match the actual operator path.
+- ENA has a real local daemon path with inference, training, checkpoints, and
+  model artifact routes.
+- Stratum now has an operator lifecycle CLI and a live smoke handshake harness.
+- Clean-install, backend-import, ENA, and Stratum smoke helpers exist and run.
 
-| Priority | Blocker | Status | Evidence |
-| --- | --- | --- | --- |
-| P0 | Explorer ops runtime points at a non-existent app path | Open | `ops/docker/entrypoints/explorer.sh` defaults to `explorer.api:app`; no matching module was found in the current codebase |
-| P0 | Studio web provider surface is contract-drifted | Open | `npm --prefix studio-web test -- test/unit/provider.test.ts` fails because provider helpers return promises where tests expect synchronous provider access |
-| P0 | Exchange admin web does not type-check | Open | `npm --prefix apps/admin-web run type-check` fails with `AdminRole` and `Admin` shape mismatches in `src/contexts/AuthContext.tsx` |
-| P0 | CEX e2e harness is not build-ready in the current workspace | Open | `npm --prefix cex/tests/e2e run build` fails with `tsc: not found` |
-| P1 | No live leader/follower sync convergence smoke exists in the new RC harness | Open | Current proof is limited to CLI and supervisor tests |
-| P1 | Wallet extension backend contract is unvalidated against current RPC behavior | Open | Focused wallet extension smoke has not been stabilized in this pass |
-| P1 | Explorer truth against live backend is not yet proven | Open | Only explorer-web unit smoke was run |
+## Remaining Blockers
 
-## Resolved or Reduced This Iteration
+1. ENA training is still a local mock-worker vertical slice.
+   - Good enough for coherent local operator and Studio flows.
+   - Not yet a production multi-worker / GPU / queue-backed training network.
 
-- Backend runtime dependency drift in `setup.sh`
-- Docker build context bloat due missing `.dockerignore`
-- Explorer Dockerfile non-root script installation failure
-- Sync CLI cache path write-on-read bug
-- Wallet `pending_outgoing` accounting losing `pending_txs` at load time
-- Node and sync CLI test drift around retry loops and shutdown command shape
+2. Stratum payout/accounting is not yet a full operator payout system.
+   - Shares are tracked and validated.
+   - Pool startup and miner handshake are operator-usable.
+   - Automated payout calculation and settlement policy still need hardening.
 
-## Iteration 2026-04-07 A
+3. Some long-form docs remain stale outside the updated operator pages.
+   - High-signal operator docs were updated in this pass.
+   - Older ENA/AICF/Studio narrative docs still contain superseded commands.
 
-### What was broken
+4. ENA node code still emits framework deprecation warnings.
+   - FastAPI `on_event` should move to lifespan handlers.
+   - Pydantic v1-style validators should move to `field_validator`.
 
-- Setup and Docker drift hid real backend and ops failures behind missing dependencies and noisy build contexts.
-- Sync and node status tests were failing against current behavior even where the shipped CLI contract was acceptable.
+5. Source checkout is still the supported runtime shape.
+   - `ena/` and `rpc/` are repo-local modules, not separately published packages.
 
-### Root cause
+## Recommended Next Release Gates
 
-- Packaging and test harness drift.
-- Ops packaging drift.
-- Test drift.
-
-### Files changed
-
-- `.dockerignore`
-- `python/pyproject.toml`
-- `setup.sh`
-- `ops/docker/explorer.Dockerfile`
-- `ops/docker/tests/test_compose_port_bindings.py`
-- `python/animica/cli/node.py`
-- `python/animica/cli/sync.py`
-- `python/animica/cli/tests/test_node_cli.py`
-- `python/animica/cli/tests/test_sync_cli.py`
-- `p2p/tests/__init__.py`
-- `rpc/deps.py`
-
-### Tests added or updated
-
-- Focused CLI and compose test updates
-
-### Validation run
-
-- `pytest -q python/animica/cli/tests/test_node_cli.py python/animica/cli/tests/test_sync_cli.py`
-- `pytest -q ops/docker/tests/test_compose_port_bindings.py`
-
-### Remaining risks
-
-- Explorer runtime still blocked
-- Live sync e2e still missing
-
-## Iteration 2026-04-07 B
-
-### What was broken
-
-- Wallet pending reservation accounting was false after canonical load.
-
-### Root cause
-
-- `pending_txs` metadata was discarded during canonical wallet parsing.
-
-### Files changed
-
-- `python/animica/wallet/serialization.py`
-- `python/animica/cli/tests/test_wallet_serialization.py`
-
-### Tests added or updated
-
-- Pending tx preservation test in wallet serialization
-
-### Validation run
-
-- `pytest -q python/animica/cli/tests/test_wallet_show_output.py python/animica/cli/tests/test_wallet_serialization.py`
-
-### Remaining risks
-
-- Wallet extension and full send/receive e2e are still open.
+- Replace ENA mock training with the intended worker/queue execution model.
+- Define and implement pool payout accounting and operator settlement outputs.
+- Sweep remaining ENA/Studio docs for command drift.
+- Remove FastAPI/Pydantic deprecations before strict CI warning gates.

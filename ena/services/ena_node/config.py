@@ -39,6 +39,8 @@ class Config:
     
     # Database
     DB_PATH = os.getenv("ENA_DB_PATH", "./ena_data/ena.db")
+    TRAINING_DIR = os.getenv("ENA_TRAINING_DIR", "./ena_data/training")
+    CHECKPOINTS_DIR = os.getenv("ENA_CHECKPOINTS_DIR", "./ena_data/checkpoints")
     
     # Models
     DEFAULT_MODEL = os.getenv("ENA_DEFAULT_MODEL", "ena.tiny.v1")
@@ -75,7 +77,13 @@ class Config:
         """Ensure necessary directories exist."""
         db_dir = Path(cls.DB_PATH).parent
         db_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        training_dir = Path(cls.TRAINING_DIR)
+        training_dir.mkdir(parents=True, exist_ok=True)
+
+        checkpoints_dir = Path(cls.CHECKPOINTS_DIR)
+        checkpoints_dir.mkdir(parents=True, exist_ok=True)
+
         log_dir = Path(cls.LOG_FILE).parent
         log_dir.mkdir(parents=True, exist_ok=True)
         

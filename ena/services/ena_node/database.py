@@ -5,8 +5,11 @@ Tracks:
 - Used transaction hashes (replay protection)
 - Credit balances (deposit mode)
 - Request history (audit logs)
+- Training jobs
+- Published checkpoints
 """
 
+import json
 import logging
 import sqlite3
 import time
@@ -51,6 +54,39 @@ class RequestLog:
     timestamp: float
     success: bool
     error: Optional[str]
+
+
+@dataclass
+class TrainingJob:
+    """Training job tracked by the ENA service."""
+
+    job_id: str
+    payer: str
+    model: str
+    plan: Dict[str, Any]
+    budget: int
+    spent: int
+    status: str
+    progress: int
+    message: Optional[str]
+    created_at: float
+    updated_at: float
+    checkpoint_version: Optional[str]
+    output_dir: Optional[str]
+
+
+@dataclass
+class CheckpointRecord:
+    """Checkpoint bundle tracked by the ENA service."""
+
+    version: str
+    job_id: str
+    model: str
+    epoch: int
+    size_bytes: int
+    path: str
+    metadata: Dict[str, Any]
+    published_at: float
 
 
 class Database:
@@ -114,6 +150,49 @@ class Database:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_request_logs_payer 
                 ON request_logs(payer, timestamp)
+            """)
+
+            # Training jobs table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS training_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    payer TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    plan_json TEXT NOT NULL,
+                    budget INTEGER NOT NULL,
+                    spent INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    progress INTEGER NOT NULL,
+                    message TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    checkpoint_version TEXT,
+                    output_dir TEXT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_training_jobs_status
+                ON training_jobs(status, created_at)
+            """)
+
+            # Checkpoints table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS checkpoints (
+                    version TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    epoch INTEGER NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    published_at REAL NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_checkpoints_model
+                ON checkpoints(model, published_at)
             """)
             
             conn.commit()
@@ -318,3 +397,247 @@ class Database:
                 )
                 for row in rows
             ]
+
+    def create_training_job(
+        self,
+        job_id: str,
+        payer: str,
+        model: str,
+        plan: Dict[str, Any],
+        budget: int,
+        status: str = "pending",
+        progress: int = 0,
+        message: Optional[str] = None,
+        output_dir: Optional[str] = None,
+    ) -> None:
+        """Create a new tracked training job."""
+        now = time.time()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO training_jobs
+                (job_id, payer, model, plan_json, budget, spent, status, progress,
+                 message, created_at, updated_at, checkpoint_version, output_dir)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    payer,
+                    model,
+                    json.dumps(plan),
+                    budget,
+                    0,
+                    status,
+                    progress,
+                    message,
+                    now,
+                    now,
+                    None,
+                    output_dir,
+                ),
+            )
+            conn.commit()
+
+    def update_training_job(
+        self,
+        job_id: str,
+        *,
+        status: Optional[str] = None,
+        progress: Optional[int] = None,
+        spent: Optional[int] = None,
+        message: Optional[str] = None,
+        checkpoint_version: Optional[str] = None,
+        output_dir: Optional[str] = None,
+    ) -> bool:
+        """Update mutable training job fields."""
+        updates: list[str] = []
+        values: list[Any] = []
+
+        if status is not None:
+            updates.append("status = ?")
+            values.append(status)
+        if progress is not None:
+            updates.append("progress = ?")
+            values.append(progress)
+        if spent is not None:
+            updates.append("spent = ?")
+            values.append(spent)
+        if message is not None:
+            updates.append("message = ?")
+            values.append(message)
+        if checkpoint_version is not None:
+            updates.append("checkpoint_version = ?")
+            values.append(checkpoint_version)
+        if output_dir is not None:
+            updates.append("output_dir = ?")
+            values.append(output_dir)
+
+        updates.append("updated_at = ?")
+        values.append(time.time())
+        values.append(job_id)
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE training_jobs SET {', '.join(updates)} WHERE job_id = ?",
+                tuple(values),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_training_job(self, job_id: str) -> Optional[TrainingJob]:
+        """Fetch a single training job."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM training_jobs WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            return self._row_to_training_job(row) if row else None
+
+    def list_training_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[TrainingJob]:
+        """List tracked training jobs."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if status:
+                cursor.execute(
+                    """
+                    SELECT * FROM training_jobs
+                    WHERE status = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM training_jobs
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            rows = cursor.fetchall()
+            return [self._row_to_training_job(row) for row in rows]
+
+    def save_checkpoint(
+        self,
+        *,
+        version: str,
+        job_id: str,
+        model: str,
+        epoch: int,
+        size_bytes: int,
+        path: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Persist checkpoint metadata."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO checkpoints
+                (version, job_id, model, epoch, size_bytes, path, metadata_json, published_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version,
+                    job_id,
+                    model,
+                    epoch,
+                    size_bytes,
+                    path,
+                    json.dumps(metadata),
+                    time.time(),
+                ),
+            )
+            conn.commit()
+
+    def get_checkpoint(self, version: str) -> Optional[CheckpointRecord]:
+        """Fetch a checkpoint by version."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM checkpoints WHERE version = ?", (version,))
+            row = cursor.fetchone()
+            return self._row_to_checkpoint(row) if row else None
+
+    def get_checkpoint_for_job(self, job_id: str) -> Optional[CheckpointRecord]:
+        """Fetch the latest checkpoint generated for a job."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM checkpoints
+                WHERE job_id = ?
+                ORDER BY published_at DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_checkpoint(row) if row else None
+
+    def list_checkpoints(
+        self,
+        *,
+        model: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[CheckpointRecord]:
+        """List checkpoint bundles."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if model:
+                cursor.execute(
+                    """
+                    SELECT * FROM checkpoints
+                    WHERE model = ?
+                    ORDER BY published_at DESC
+                    LIMIT ?
+                    """,
+                    (model, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM checkpoints
+                    ORDER BY published_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            rows = cursor.fetchall()
+            return [self._row_to_checkpoint(row) for row in rows]
+
+    def _row_to_training_job(self, row: sqlite3.Row) -> TrainingJob:
+        return TrainingJob(
+            job_id=row["job_id"],
+            payer=row["payer"],
+            model=row["model"],
+            plan=json.loads(row["plan_json"]),
+            budget=row["budget"],
+            spent=row["spent"],
+            status=row["status"],
+            progress=row["progress"],
+            message=row["message"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            checkpoint_version=row["checkpoint_version"],
+            output_dir=row["output_dir"],
+        )
+
+    def _row_to_checkpoint(self, row: sqlite3.Row) -> CheckpointRecord:
+        return CheckpointRecord(
+            version=row["version"],
+            job_id=row["job_id"],
+            model=row["model"],
+            epoch=row["epoch"],
+            size_bytes=row["size_bytes"],
+            path=row["path"],
+            metadata=json.loads(row["metadata_json"]),
+            published_at=row["published_at"],
+        )

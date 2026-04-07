@@ -14,7 +14,7 @@ This repository now exposes an **ASIC-friendly Stratum v1 surface** so off-the-s
 cd /root/animica
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e python
+pip install -e "python[operator,dev]"
 
 export ANIMICA_RPC_URL="http://127.0.0.1:8545/rpc"
 export ANIMICA_MINING_POOL_DB_URL="sqlite:////root/animica/data/mining_pool.db"
@@ -24,7 +24,8 @@ export ANIMICA_POOL_API_BIND="0.0.0.0:8082"
 export ANIMICA_POOL_PROFILE="asic_sha256"
 export ANIMICA_STRATUM_EXTRANONCE2_SIZE=4
 
-python -m animica.stratum_pool
+animica stratum up --daemon --profile asic_sha256
+animica stratum status
 ```
 
 Point an ASIC at `stratum+tcp://<SERVER_IP>:3333` with the payout Animica address as the username. Passwords are ignored.
@@ -33,3 +34,4 @@ Point an ASIC at `stratum+tcp://<SERVER_IP>:3333` with the payout Animica addres
 
 - The flow is experimental and currently submits blocks via a stub endpoint while preserving share validation logic.
 - Difficulty defaults to the pool's minimum difficulty; adjust via environment variables or CLI flags.
+- The repo ships a runtime smoke harness: `./scripts/smoke_stratum.sh`

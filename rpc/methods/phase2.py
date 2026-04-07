@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from rpc.jsonrpc import method
 from rpc.errors import RpcError
+from rpc.methods import method
 
 __all__ = []  # Methods are auto-registered via @method decorator
 
