@@ -5,6 +5,7 @@ import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
 import tailwind from '@astrojs/tailwind';
+import { createMalformedUriMiddleware } from './scripts/malformed-uri-middleware.mjs';
 // Optional: generates robots.txt from policy.
 // If you haven't added it yet, run: pnpm add -D @astrojs/robots
 
@@ -27,22 +28,14 @@ const aliases = {
 
 const sanitizeMalformedUriPlugin = {
   name: 'sanitize-malformed-uri',
-  enforce: 'pre',
+  enforce: 'post',
   configureServer(server) {
-    server.middlewares.use((req, _res, next) => {
-      if (typeof req.url !== 'string') {
-        next();
-        return;
-      }
-
-      try {
-        decodeURI(req.url);
-      } catch {
-        req.url = req.url.replace(/%(?![0-9A-Fa-f]{2})/g, '%25');
-      }
-
-      next();
-    });
+    return () => {
+      server.middlewares.stack.unshift({
+        route: '',
+        handle: createMalformedUriMiddleware(),
+      });
+    };
   },
 };
 
