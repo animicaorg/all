@@ -37,7 +37,7 @@ def test_mining_page_resolve_payout_address_blocks_non_address(monkeypatch) -> N
     monkeypatch.setattr(
         page._wallet_store,
         "reload_local_wallets",
-        lambda _path: [WalletRecord(wallet_id="1", address="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", label="premine")],
+        lambda _path: [WalletRecord(wallet_id="1", address="anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208", label="premine")],
     )
 
     page._payout_input.setCurrentText("Error: RpcError(-32601)")

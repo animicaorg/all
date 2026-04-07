@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -107,20 +108,48 @@ class EnaService:
         return host in {"127.0.0.1", "localhost", "::1"}
 
     @staticmethod
-    def _map_container_da_dir_to_host(da_dir: str) -> str:
-        if da_dir.startswith("/data/chain-"):
-            return os.path.expanduser("~/.animica") + da_dir.removeprefix("/data")
-        if da_dir.startswith("/data/"):
-            return os.path.expanduser("~/.animica") + da_dir.removeprefix("/data")
-        return da_dir
+    def _dir_is_writable(path: Path) -> bool:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True
+        except OSError:
+            return False
 
-    @staticmethod
-    def _map_node_path_to_host(path: str) -> str:
-        cleaned = str(path or "").strip()
-        if cleaned.startswith("/data/chain-"):
-            return os.path.expanduser("~/.animica") + cleaned.removeprefix("/data")
+    def _host_data_root(self) -> Path:
+        cfg = self.config.da_contribution if isinstance(self.config.da_contribution, dict) else {}
+        configured = str(
+            cfg.get("studio_dir")
+            or cfg.get("studio_contrib_dir")
+            or cfg.get("host_data_dir")
+            or cfg.get("data_dir")
+            or cfg.get("directory")
+            or ""
+        ).strip()
+        candidates = []
+        if configured:
+            candidates.append(Path(configured).expanduser())
+        candidates.append(Path.home() / ".animica")
+        candidates.append(app_data_dir() / "da-host")
+        for candidate in candidates:
+            if self._dir_is_writable(candidate):
+                return candidate
+        return app_data_dir() / "da-host"
+
+    def _map_container_da_dir_to_host(self, da_dir: str) -> str:
+        cleaned = str(da_dir or "").strip()
         if cleaned.startswith("/data/"):
-            return os.path.expanduser("~/.animica") + cleaned.removeprefix("/data")
+            rel = cleaned.removeprefix("/data").lstrip("/")
+            return str(self._host_data_root() / rel)
+        return cleaned
+
+    def _map_node_path_to_host(self, path: str) -> str:
+        cleaned = str(path or "").strip()
+        if cleaned.startswith("/data/"):
+            rel = cleaned.removeprefix("/data").lstrip("/")
+            return str(self._host_data_root() / rel)
         return cleaned
 
     def _build_da_diagnostics(self, status: dict[str, Any]) -> dict[str, Any]:
@@ -390,7 +419,7 @@ class EnaService:
             "local_path": "",
             "channel": "ena-main",
             "namespace": 0,
-            "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "uploaded": False,
         }
         rows.append(row)

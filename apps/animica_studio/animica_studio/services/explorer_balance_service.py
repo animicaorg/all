@@ -26,7 +26,7 @@ except ImportError:
 import requests
 
 from animica_studio.models.profile_models import RpcProfile
-from animica_studio.models.wallet_models import format_amount
+from animica_studio.models.wallet_models import ANM_DECIMALS, format_amount
 from animica_studio.services.activity_store import ActivityStore
 
 log = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class TotalBalanceResult:
     updated_ts: float = field(default_factory=time.time)
 
 
-def _fetch_balance_sync(address: str, base_url: str, decimals: int = 18) -> BalanceResult:
+def _fetch_balance_sync(address: str, base_url: str, decimals: int = ANM_DECIMALS) -> BalanceResult:
     """Blocking fallback fetch for headless environments."""
     url = f"{base_url}/api/address/{address}"
     t0 = time.monotonic()
@@ -175,7 +175,7 @@ if _QT_AVAILABLE:
             *,
             on_result: Callable[[BalanceResult], None] | None = None,
             force_refresh: bool = False,
-            decimals: int = 18,
+            decimals: int = ANM_DECIMALS,
         ) -> None:
             base_url = (profile.explorer_base_url or "").strip().rstrip("/")
             if not base_url:
@@ -226,7 +226,7 @@ if _QT_AVAILABLE:
             self._on_result(address, result)
             self._dispatch_next()
 
-        def get_balances(self, addresses: list[str], profile: RpcProfile, *, on_each=None, on_all=None, force_refresh=False, decimals=18) -> None:
+        def get_balances(self, addresses: list[str], profile: RpcProfile, *, on_each=None, on_all=None, force_refresh=False, decimals=ANM_DECIMALS) -> None:
             if not addresses:
                 if on_all:
                     QTimer.singleShot(0, lambda: on_all({}))
@@ -246,7 +246,7 @@ if _QT_AVAILABLE:
             for addr in addresses:
                 self.get_balance(addr, profile, on_result=lambda r, a=addr: _handle(a, r), force_refresh=force_refresh, decimals=decimals)
 
-        def sum_balances(self, addresses: list[str], profile: RpcProfile, *, on_result=None, force_refresh=False, decimals=18) -> None:
+        def sum_balances(self, addresses: list[str], profile: RpcProfile, *, on_result=None, force_refresh=False, decimals=ANM_DECIMALS) -> None:
             if not addresses:
                 total = TotalBalanceResult(wallet_count=0, formatted="0 ANM", ok_count=0)
                 if on_result:
@@ -316,13 +316,13 @@ else:
                 cls._instance = cls()
             return cls._instance
 
-        def get_balance(self, address: str, profile: RpcProfile, *, on_result=None, force_refresh=False, decimals=18):
+        def get_balance(self, address: str, profile: RpcProfile, *, on_result=None, force_refresh=False, decimals=ANM_DECIMALS):
             base_url = (profile.explorer_base_url or "").strip().rstrip("/")
             result = BalanceResult(address=address, ok=False, error="Explorer not configured") if not base_url else _fetch_balance_sync(address, base_url, decimals)
             if on_result:
                 on_result(result)
 
-        def get_balances(self, addresses, profile, *, on_each=None, on_all=None, force_refresh=False, decimals=18):
+        def get_balances(self, addresses, profile, *, on_each=None, on_all=None, force_refresh=False, decimals=ANM_DECIMALS):
             results: dict[str, BalanceResult] = {}
             for addr in addresses:
                 self.get_balance(addr, profile, on_result=lambda r, a=addr: results.__setitem__(a, r), force_refresh=force_refresh, decimals=decimals)
@@ -331,7 +331,7 @@ else:
             if on_all:
                 on_all(results)
 
-        def sum_balances(self, addresses, profile, *, on_result=None, force_refresh=False, decimals=18):
+        def sum_balances(self, addresses, profile, *, on_result=None, force_refresh=False, decimals=ANM_DECIMALS):
             def _on_all(results):
                 total_wei = sum(r.balance_wei for r in results.values() if r.ok)
                 ok_count = sum(1 for r in results.values() if r.ok)

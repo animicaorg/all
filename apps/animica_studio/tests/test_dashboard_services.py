@@ -113,10 +113,10 @@ def test_explorer_balance_service_ok():
     from animica_studio.services.explorer_balance_service import _fetch_balance_sync
 
     with patch("requests.get") as mock_get:
-        mock_get.return_value = _mock_response({"confirmedBalance": "1000000000000000000"})
+        mock_get.return_value = _mock_response({"confirmedBalance": "1000000000"})
         result = _fetch_balance_sync("anim1test", "http://explorer.example.com")
     assert result.ok
-    assert result.balance_wei == 1_000_000_000_000_000_000
+    assert result.balance_wei == 1_000_000_000
     assert "ANM" in result.formatted
 
 

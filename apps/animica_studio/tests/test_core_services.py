@@ -790,6 +790,21 @@ def test_cli_registry_parse_options_with_wrapped_help_descriptions():
     assert "--help" in opts
 
 
+def test_cli_registry_seeds_required_studio_operations():
+    from animica_studio.services.cli_registry import CliRegistry
+    from animica_studio.storage.config import Config
+
+    registry = CliRegistry(Config())
+
+    assert "wallet" in registry.top_level_commands()
+    assert registry.has_cmd(["wallet", "create"])
+    assert registry.has_opt(["wallet", "create"], "--label")
+    assert registry.has_opt(["wallet", "create"], "--alg")
+    assert registry.has_cmd(["miner", "mine-blocks"])
+    assert registry.has_opt(["miner", "mine-blocks"], "--count")
+    assert registry.has_cmd(["aicf", "status"])
+
+
 def test_node_status_as_dict():
     from animica_studio.services.node_service import NodeStatus
     s = NodeStatus(running=True, pid=1234, rpc_reachable=True, head_number=42)
@@ -864,7 +879,7 @@ def test_config_from_dict_wallet_settings_defaults_when_missing():
     from animica_studio.storage.config import _config_from_dict
 
     cfg = _config_from_dict({})
-    assert cfg.wallet_settings["decimals"] == 18
+    assert cfg.wallet_settings["decimals"] == 9
     assert cfg.wallet_settings["explorer_base_url"] == "https://explorer.animica.org"
 
 

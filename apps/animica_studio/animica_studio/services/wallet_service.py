@@ -24,6 +24,8 @@ from typing import Any
 
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.models.wallet_models import (
+    ANM_BASE_UNITS,
+    ANM_DECIMALS,
     Account,
     BalanceState,
     BalanceSource,
@@ -39,12 +41,13 @@ from animica_studio.services.tx_builder import estimate_fee
 from animica_studio.services.explorer_style_rpc import ExplorerStyleRpcClient
 from animica_studio.storage.config import Config, save_config
 from animica_studio.util.cancel import CancelToken
+from animica_studio.util.paths import animica_wallets_file
 
 log = logging.getLogger(__name__)
 
 _MAX_PENDING_TXS = 100  # keep only the last N pending/sent txs; older entries are trimmed on save
 _BALANCE_CONCURRENCY = 6
-_DEFAULT_DECIMALS = 18
+_DEFAULT_DECIMALS = ANM_DECIMALS
 _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _ANM_BALANCE_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*ANM", re.IGNORECASE)
@@ -148,7 +151,7 @@ class WalletService:
         return args, clean_label, scheme
 
     def _wallet_store_path(self) -> str:
-        return os.environ.get("ANIMICA_WALLETS_FILE") or str((Path.home() / ".animica" / "wallets.json"))
+        return str(animica_wallets_file())
 
     def _load_wallet_store_addresses(self) -> set[str]:
         path = self._wallet_store_path()
@@ -514,7 +517,7 @@ class WalletService:
         fee = estimate_fee(_gas_limit, _gas_price)
 
         # Decimal ANM value (no scientific notation) for: animica tx send --value
-        amount_anm = (Decimal(amount_wei) / Decimal(10 ** 18)).normalize()
+        amount_anm = (Decimal(amount_wei) / Decimal(ANM_BASE_UNITS)).normalize()
         amount_arg = format(amount_anm, "f")
 
         ptx = PendingTx(

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 
 from animica_studio.services.ena_contribution_engine import (
     CycleResult,
@@ -33,7 +33,7 @@ def test_run_contribution_cycle_pure_local_mode() -> None:
 
 
 def test_tick_uses_pure_worker_callable_and_applies_result(monkeypatch) -> None:
-    app = QCoreApplication.instance() or QCoreApplication([])
+    app = QApplication.instance() or QApplication([])
     _ = app
 
     cfg = EnaContributionConfig(enabled=True, mode="local", intensity="low")

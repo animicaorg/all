@@ -120,6 +120,10 @@ class RpcProfile:
             return self.node_rpc_url
         return self.rpc_url
 
+    def get_rpc_url(self) -> str:
+        """Backward-compatible accessor used by legacy Studio pages/services."""
+        return self.effective_rpc_url().strip()
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from animica_studio.models.wallet_models import ANM_DECIMALS
+from animica_studio.models.profile_models import RpcProfile
 from animica_studio.util.paths import config_file, app_data_dir, default_chain_data_dir, default_da_contrib_dir
 
 log = logging.getLogger(__name__)
@@ -81,7 +83,7 @@ class Profile:
 class WalletSettings:
     """Per-profile wallet display settings."""
 
-    decimals: int = 18
+    decimals: int = ANM_DECIMALS
     explorer_base_url: str = "https://explorer.animica.org"
 
 
@@ -102,7 +104,7 @@ class Config:
     # ---------------------------------------------------------------------------
     accounts: list[dict[str, Any]] = field(default_factory=list)
     wallet_settings: dict[str, Any] = field(
-        default_factory=lambda: {"decimals": 18, "explorer_base_url": "https://explorer.animica.org"}
+        default_factory=lambda: {"decimals": ANM_DECIMALS, "explorer_base_url": "https://explorer.animica.org"}
     )
     pending_txs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -231,12 +233,33 @@ class Config:
     # ---------------------------------------------------------------------------
 
     def get_active_profile(self) -> Profile:
-        """Return the active :class:`Profile`, falling back to the first one."""
+        """Return the active profile bridged into the legacy :class:`Profile` shape."""
         for p in self.profiles:
             if p.name == self.active_profile:
                 return p
         if self.profiles:
             return self.profiles[0]
+        active_id = self.active_profile_id
+        if active_id:
+            for raw in self.rpc_profiles:
+                if not isinstance(raw, dict) or raw.get("id") != active_id:
+                    continue
+                profile = RpcProfile.from_dict(raw)
+                effective_rpc_url = profile.effective_rpc_url()
+                node_start_cmd = (
+                    list(profile.node_start_cmd)
+                    if isinstance(profile.node_start_cmd, list) and profile.node_start_cmd
+                    else ["animica", "node", "start"]
+                )
+                return Profile(
+                    name=profile.name,
+                    rpc_url=effective_rpc_url,
+                    chain_id_expected=profile.chain_id_expected,
+                    node=NodeConfig(
+                        start_cmd=node_start_cmd,
+                        rpc_local_url=profile.node_rpc_url or effective_rpc_url,
+                    ),
+                )
         default = Profile()
         self.profiles.append(default)
         return default
@@ -297,7 +320,7 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
     # preferences are not silently discarded on the next load.
     wallet_settings = {
         **wallet_settings_raw,
-        "decimals": int(wallet_settings_raw.get("decimals", 18)),
+        "decimals": int(wallet_settings_raw.get("decimals", ANM_DECIMALS)),
         "explorer_base_url": _normalize_explorer_base_url(
             wallet_settings_raw.get("explorer_base_url", "https://explorer.animica.org")
         ),

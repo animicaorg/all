@@ -5,6 +5,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolated_app_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIMICA_STUDIO_APP_DATA_DIR", str(tmp_path / "app-data"))
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_rpc_discover_cache():
     """Clear global RPC caches before every test.
 

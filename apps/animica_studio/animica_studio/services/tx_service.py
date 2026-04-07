@@ -11,6 +11,7 @@ from typing import Any
 from animica_studio.services.error_format import safe_str
 from animica_studio.services.job_runner import resolve_animica_cli_program_and_env, run_cli_blocking
 from animica_studio.storage.config import Config
+from animica_studio.models.wallet_models import ANM_BASE_UNITS, ANM_DECIMALS
 
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _ANIM_ADDR_RE = re.compile(r"^anim1[ac-hj-np-z02-9]{10,}$")
@@ -50,7 +51,7 @@ class TxService:
         return bool(_ANIM_ADDR_RE.match(text) or _HEX_ADDR_RE.match(text))
 
     @staticmethod
-    def parse_amount(amount_str: str, decimals: int = 18) -> int:
+    def parse_amount(amount_str: str, decimals: int = ANM_DECIMALS) -> int:
         raw = (amount_str or "").strip().upper().replace(",", ".")
         for suffix in (" ANM", "ANM"):
             if raw.endswith(suffix):
@@ -70,7 +71,7 @@ class TxService:
 
     @staticmethod
     def _amount_to_anm_string(amount_wei: int) -> str:
-        anm = (Decimal(amount_wei) / Decimal(10**18)).normalize()
+        anm = (Decimal(amount_wei) / Decimal(ANM_BASE_UNITS)).normalize()
         return format(anm, "f")
 
     def send_via_cli(

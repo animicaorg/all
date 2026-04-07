@@ -19,7 +19,7 @@ import uuid
 from typing import Callable
 
 from animica_studio.models.profile_models import RpcProfile, ProfileType
-from animica_studio.storage.config import Config, save_config
+from animica_studio.storage.config import CliConfig, Config, NodeConfig, Profile, save_config
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,36 @@ class ProfileService:
                 obs(profile)
             except Exception:  # noqa: BLE001
                 log.exception("ProfileService: observer error")
+
+    def _to_legacy_profile(self, profile: RpcProfile) -> Profile:
+        effective_rpc_url = profile.effective_rpc_url()
+        node_start_cmd = (
+            list(profile.node_start_cmd)
+            if isinstance(profile.node_start_cmd, list) and profile.node_start_cmd
+            else ["animica", "node", "start"]
+        )
+        return Profile(
+            name=profile.name,
+            rpc_url=effective_rpc_url,
+            chain_id_expected=profile.chain_id_expected,
+            node=NodeConfig(
+                start_cmd=node_start_cmd,
+                rpc_local_url=profile.node_rpc_url or effective_rpc_url,
+            ),
+            cli=CliConfig(),
+        )
+
+    def _sync_legacy_profiles(self, profiles: list[RpcProfile], active_id: str | None = None) -> None:
+        self._config.profiles = [self._to_legacy_profile(profile) for profile in profiles]
+        effective_active_id = active_id or self._config.active_profile_id
+        matched = False
+        for profile in profiles:
+            if profile.id == effective_active_id:
+                self._config.active_profile = profile.name
+                matched = True
+                break
+        if profiles and not matched:
+            self._config.active_profile = profiles[0].name
 
     # ------------------------------------------------------------------
     # CRUD operations
@@ -198,6 +228,7 @@ class ProfileService:
             default = RpcProfile.make_default_remote()
             self._config.rpc_profiles = [default.to_dict()]
             self._config.active_profile_id = default.id
+            self._sync_legacy_profiles([default], active_id=default.id)
             save_config(self._config)
             log.info("ProfileService: created default remote profile")
 
@@ -211,6 +242,7 @@ class ProfileService:
         self._config.rpc_profiles = [p.to_dict() for p in profiles]
         if active_id is not None:
             self._config.active_profile_id = active_id
+        self._sync_legacy_profiles(profiles, active_id=active_id)
         save_config(self._config)
 
     # ------------------------------------------------------------------

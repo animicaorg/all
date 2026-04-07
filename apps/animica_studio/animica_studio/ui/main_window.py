@@ -86,6 +86,17 @@ class MainWindow(QMainWindow):
         self._shutdown = ShutdownManager.instance()
         self._ide_page: QWidget | None = None
         self._ide_index: int | None = None
+        self._page_cache: dict[str, QWidget] = {}
+        self._lazy_page_labels = {
+            "Node",
+            "Mining",
+            "AICF",
+            "DA",
+            "Quantum",
+            "Console",
+            "IDE",
+            "ENA",
+        }
         self.setWindowTitle("Animica Studio")
         self.resize(1220, 760)
         self._profile_service.subscribe(self._on_profile_changed)
@@ -137,6 +148,12 @@ class MainWindow(QMainWindow):
         self._tx_send_page = TxSendPage(config=self._config)
         self._dashboard_page = DashboardPage(config=self._config, profile_service=self._profile_service)
         self._settings_page = SettingsPage(config=self._config, theme_manager=self._theme_manager)
+        self._page_cache = {
+            "Dashboard": self._dashboard_page,
+            "Wallet": self._wallet_page,
+            "TX Send": self._tx_send_page,
+            "Settings": self._settings_page,
+        }
         self._nav_entries = [
             _NavEntry("Dashboard", "◈", lambda: self._dashboard_page),
             _NavEntry("Wallet", "◉", lambda: self._wallet_page),
@@ -147,18 +164,32 @@ class MainWindow(QMainWindow):
             _NavEntry("DA", "◌", lambda: DaPage(config=self._config)),
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config)),
             _NavEntry("Console", "▣", lambda: ConsolePage(config=self._config)),
-            _NavEntry("IDE", "✎", self._build_ide_placeholder),
+            _NavEntry("IDE", "✎", self._build_ide_page_safe),
             _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service, contrib_engine=self._ena_contrib_engine, full_auto_engine=self._ena_full_auto_engine)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
         ]
         for i, e in enumerate(self._nav_entries):
-            self._stack.addWidget(e.page_factory())
+            self._stack.addWidget(self._initial_page_widget(e))
             self._sidebar.add_item(e.label, e.icon, i)
             if e.label == "IDE":
                 self._ide_index = i
         self._sidebar.navigate.connect(self._navigate)
         self._navigate(0)
         self.refresh_header()
+
+    def _initial_page_widget(self, entry: _NavEntry) -> QWidget:
+        cached = self._page_cache.get(entry.label)
+        if cached is not None:
+            return cached
+        return self._build_lazy_placeholder(entry.label)
+
+    def _build_lazy_placeholder(self, label: str) -> QWidget:
+        placeholder = QWidget(self)
+        layout = QVBoxLayout(placeholder)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.addWidget(QLabel(f"{label} loads on demand."))
+        layout.addStretch()
+        return placeholder
 
 
     def _build_menu(self) -> None:
@@ -176,7 +207,7 @@ class MainWindow(QMainWindow):
         if self._ide_index is None:
             return
         self._navigate(self._ide_index)
-        self._ensure_lazy_pages(self._ide_index)
+        self._ensure_page_loaded(self._ide_index)
         if self._ide_page is not None and hasattr(self._ide_page, "new_token_from_template"):
             self._ide_page.new_token_from_template()
 
@@ -184,7 +215,7 @@ class MainWindow(QMainWindow):
         if self._ide_index is None:
             return
         self._navigate(self._ide_index)
-        self._ensure_lazy_pages(self._ide_index)
+        self._ensure_page_loaded(self._ide_index)
         if self._ide_page is not None and hasattr(self._ide_page, "new_script_from_template"):
             self._ide_page.new_script_from_template()
 
@@ -208,7 +239,7 @@ class MainWindow(QMainWindow):
         self.resize(bounded_width, bounded_height)
 
     def _navigate(self, index: int) -> None:
-        self._ensure_lazy_pages(index)
+        self._ensure_page_loaded(index)
         self._stack.setCurrentIndexAnimated(index, reduced_motion=self._theme_manager.reduced_motion())
         self._sidebar.set_active(index)
 
@@ -228,12 +259,14 @@ class MainWindow(QMainWindow):
         self._tx_send_page.set_from_wallet(address)
         self._navigate(tx_index)
 
-    def _ensure_lazy_pages(self, index: int) -> None:
-        if self._ide_index is None or index != self._ide_index or self._ide_page is not None:
+    def _ensure_page_loaded(self, index: int) -> None:
+        entry = self._nav_entries[index]
+        if entry.label not in self._lazy_page_labels or entry.label in self._page_cache:
             return
-        self._ide_page = self._build_ide_page_safe()
+        page = entry.page_factory()
+        self._page_cache[entry.label] = page
         current = self._stack.widget(index)
-        self._stack.insertWidget(index, self._ide_page)
+        self._stack.insertWidget(index, page)
         if current is not None:
             self._stack.removeWidget(current)
             current.deleteLater()
@@ -395,6 +428,23 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._health_timer.stop()
+        try:
+            self._profile_service.unsubscribe(self._on_profile_changed)
+        except Exception:
+            log.exception("Failed to unsubscribe profile observer during shutdown")
+        try:
+            self._ena_contrib_engine.stop()
+        except Exception:
+            log.exception("Failed to stop ENA contribution engine")
+        try:
+            self._ena_full_auto_engine.stop()
+        except Exception:
+            log.exception("Failed to stop ENA full-auto engine")
+        if self._health_worker is not None and self._health_worker.isRunning():
+            self._health_worker.quit()
+            self._health_worker.wait(1000)
+        self._shutdown.shutdown()
+        super().closeEvent(event)
         event.accept()
 
     def _build_ide_page_safe(self) -> QWidget:

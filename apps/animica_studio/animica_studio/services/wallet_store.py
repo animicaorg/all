@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from animica_studio.util.paths import animica_wallets_file
 
 class _FallbackWalletParseError(Exception):
     """Stub used when the animica.wallet.serialization module is unavailable."""
@@ -140,8 +141,8 @@ class WalletStore:
 
 
     def reload_local_wallets(self, wallets_path: Path | None = None) -> list[WalletRecord]:
-        """Reload wallets from ~/.animica/wallets.json by default."""
-        path = wallets_path or (Path.home() / ".animica" / "wallets.json")
+        """Reload wallets from the effective CLI wallets.json path by default."""
+        path = wallets_path or animica_wallets_file()
         return self.load_local_wallets(path)
 
 def load_wallets(wallets_path: Path) -> list[WalletRecord]:

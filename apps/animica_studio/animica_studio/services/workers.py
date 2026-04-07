@@ -28,6 +28,13 @@ def _ensure_non_ui_callable(fn: Callable[..., Any]) -> None:
         raise TypeError("Worker callable must not be a bound QObject/UI method")
 
 
+def _safe_emit(signal: Signal, *args: Any) -> None:
+    try:
+        signal.emit(*args)
+    except RuntimeError:
+        log.debug("Skipped signal emit after Qt object deletion")
+
+
 class Worker(QObject):
     """Runs a callable on a background thread and emits lifecycle signals.
 
@@ -62,16 +69,16 @@ class Worker(QObject):
 
     def run(self) -> None:
         """Execute the wrapped callable.  Connected to :pymeth:`QThread.started`."""
-        self.started.emit()
+        _safe_emit(self.started)
         try:
             value = self._fn(*self._args, **self._kwargs)
-            self.result.emit(value)
+            _safe_emit(self.result, value)
         except Exception as exc:  # noqa: BLE001
             tb = traceback.format_exc()
             log.error("Worker error: %s\n%s", exc, tb)
-            self.error.emit(str(exc), tb)
+            _safe_emit(self.error, str(exc), tb)
         finally:
-            self.finished.emit()
+            _safe_emit(self.finished)
 
 
 class WorkerThread(QThread):
@@ -131,16 +138,16 @@ class WorkerRunnable(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             value = self._fn(*self._args, **self._kwargs)
-            self.signals.result.emit(value)
+            _safe_emit(self.signals.result, value)
         except Exception as exc:  # noqa: BLE001
             tb = traceback.format_exc()
             log.error("WorkerRunnable error: %s\n%s", exc, tb)
-            self.signals.error.emit(str(exc), tb)
+            _safe_emit(self.signals.error, str(exc), tb)
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
 
 
 def run_in_threadpool(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> WorkerRunnable:

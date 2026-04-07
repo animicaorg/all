@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from animica_studio.models.wallet_models import BalanceSource, BalanceState, format_amount
+from animica_studio.models.wallet_models import ANM_DECIMALS, BalanceSource, BalanceState, format_amount
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class ExplorerClient:
         self._connect_timeout_s = connect_timeout_s
         self._total_timeout_s = total_timeout_s
 
-    def get_balance(self, address: str, decimals: int = 18) -> BalanceState:
+    def get_balance(self, address: str, decimals: int = ANM_DECIMALS) -> BalanceState:
         if not self._base_url:
             raise RuntimeError("Explorer URL is not configured")
 

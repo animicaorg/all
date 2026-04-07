@@ -16,6 +16,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _BECH32M_RE = re.compile(r"^anim1[ac-hj-np-z02-9]{10,}$")
+ANM_DECIMALS = 9
+ANM_BASE_UNITS = 10**ANM_DECIMALS
 
 
 def is_valid_address(addr: str) -> bool:
@@ -44,10 +46,11 @@ def shorten_address(addr: str, head: int = 8, tail: int = 6) -> str:
 # Amount helpers
 # ---------------------------------------------------------------------------
 
-_WEI_PER_ANM = 10 ** 18
+# Legacy Studio code still uses *_wei names for smallest-unit amounts.
+_WEI_PER_ANM = ANM_BASE_UNITS
 
 
-def format_amount(wei: int, decimals: int = 18) -> str:
+def format_amount(wei: int, decimals: int = ANM_DECIMALS) -> str:
     """Format *wei* (raw integer) as a human-readable string.
 
     Returns e.g. ``"1.234567890123456789 ANM"`` trimming trailing zeros.
@@ -64,7 +67,7 @@ def format_amount(wei: int, decimals: int = 18) -> str:
     return f"{formatted} ANM"
 
 
-def format_amount_compact(wei: int, decimals: int = 18, max_frac: int = 6) -> str:
+def format_amount_compact(wei: int, decimals: int = ANM_DECIMALS, max_frac: int = 6) -> str:
     """Format *wei* similar to the extension wallet balance display.
 
     Shows at most ``max_frac`` decimal places, trimming trailing zeros,
@@ -90,7 +93,7 @@ def format_amount_compact(wei: int, decimals: int = 18, max_frac: int = 6) -> st
     return f"{number} ANM"
 
 
-def parse_amount_to_wei(text: str, decimals: int = 18) -> int:
+def parse_amount_to_wei(text: str, decimals: int = ANM_DECIMALS) -> int:
     """Parse a human-readable amount string into raw integer wei.
 
     Accepts:
