@@ -211,6 +211,7 @@ ANIMICA_GITHUB_URL=https://github.com/animicaorg/all
 # Optional services
 ANIMICA_FAUCET_URL=
 ANIMICA_POOL_URL=
+ANIMICA_MINING_API_BASE_URL=
 ANIMICA_DISCORD_URL=
 ANIMICA_TELEGRAM_URL=
 ANIMICA_X_URL=https://x.com/animica
@@ -227,6 +228,7 @@ Edit `src/config/site.ts` for:
 - Footer links
 - Social media URLs
 - Contact information
+- Mining API base URL override for split website/pool deployments
 
 ## 🧪 Testing
 
