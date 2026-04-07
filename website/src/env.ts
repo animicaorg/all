@@ -14,6 +14,7 @@ type EnvKey =
   | 'ANIMICA_GITHUB_URL'
   | 'ANIMICA_FAUCET_URL'
   | 'ANIMICA_POOL_URL'
+  | 'ANIMICA_MINING_API_BASE_URL'
   | 'ANIMICA_DISCORD_URL'
   | 'ANIMICA_TELEGRAM_URL'
   | 'ANIMICA_X_URL'
@@ -35,6 +36,7 @@ const DEFAULTS = {
   ANIMICA_GITHUB_URL: 'https://github.com/animicaorg/all',
   ANIMICA_FAUCET_URL: '',
   ANIMICA_POOL_URL: '',
+  ANIMICA_MINING_API_BASE_URL: '',
   ANIMICA_DISCORD_URL: 'https://discord.gg/animica',
   ANIMICA_TELEGRAM_URL: '',
   ANIMICA_X_URL: 'https://x.com/animica',
@@ -50,6 +52,7 @@ const LEGACY_ALIASES: Record<EnvKey, string[]> = {
   ANIMICA_GITHUB_URL: ['PUBLIC_ANIMICA_GITHUB_URL'],
   ANIMICA_FAUCET_URL: ['PUBLIC_ANIMICA_FAUCET_URL'],
   ANIMICA_POOL_URL: ['PUBLIC_ANIMICA_POOL_URL'],
+  ANIMICA_MINING_API_BASE_URL: ['PUBLIC_ANIMICA_MINING_API_BASE_URL'],
   ANIMICA_DISCORD_URL: ['PUBLIC_ANIMICA_DISCORD_URL'],
   ANIMICA_TELEGRAM_URL: ['PUBLIC_ANIMICA_TELEGRAM_URL'],
   ANIMICA_X_URL: ['PUBLIC_ANIMICA_X_URL'],
@@ -113,6 +116,7 @@ export interface PublicEnv {
   GITHUB_URL: string;
   FAUCET_URL?: string;
   POOL_URL?: string;
+  MINING_API_BASE_URL?: string;
   DISCORD_URL?: string;
   TELEGRAM_URL?: string;
   X_URL?: string;
@@ -128,6 +132,7 @@ export const ENV: Readonly<PublicEnv> = Object.freeze({
   GITHUB_URL: readURL('ANIMICA_GITHUB_URL'),
   FAUCET_URL: readOptionalURL('ANIMICA_FAUCET_URL'),
   POOL_URL: readOptionalURL('ANIMICA_POOL_URL'),
+  MINING_API_BASE_URL: readOptionalURL('ANIMICA_MINING_API_BASE_URL'),
   DISCORD_URL: readOptionalURL('ANIMICA_DISCORD_URL'),
   TELEGRAM_URL: readOptionalURL('ANIMICA_TELEGRAM_URL'),
   X_URL: readOptionalURL('ANIMICA_X_URL'),
@@ -142,6 +147,7 @@ export const docsUrl = ENV.DOCS_URL;
 export const githubUrl = ENV.GITHUB_URL;
 export const faucetUrl = ENV.FAUCET_URL;
 export const poolUrl = ENV.POOL_URL;
+export const miningApiBaseUrl = ENV.MINING_API_BASE_URL;
 export const discordUrl = ENV.DISCORD_URL;
 export const telegramUrl = ENV.TELEGRAM_URL;
 export const xUrl = ENV.X_URL;

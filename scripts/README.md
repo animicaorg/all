@@ -45,6 +45,10 @@ Bootstrap the explorer cache for faster initial load.
 
 Quick smoke test for mining functionality.
 
+### build_miner_packages.sh
+
+Build the production mining starter bundles used by the Animica mining portal.
+
 ### toy_miner.py
 
 Simple demonstration miner for testing.

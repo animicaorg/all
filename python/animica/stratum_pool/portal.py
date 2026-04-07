@@ -1,0 +1,618 @@
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from typing import Any, Optional
+from urllib.parse import urlencode, urlsplit
+
+from fastapi import Request
+
+from .config import PoolConfig
+
+PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
+DEFAULT_THREADS = 4
+DEFAULT_SCAN_WINDOW = 200_000
+DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.0")
+WILDCARD_HOSTS = {"", "0.0.0.0", "::", "[::]"}
+
+
+def _read_env(name: str) -> Optional[str]:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = _read_env(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str) -> Optional[int]:
+    value = _read_env(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _env_float(name: str) -> Optional[float]:
+    value = _read_env(name)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _is_publicly_routable_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    return normalized not in {"", "localhost", "127.0.0.1", "::1"}
+
+
+def _sanitize_worker_name(value: Optional[str]) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        raw = "animica-cpu"
+    clean = re.sub(r"[^a-zA-Z0-9._-]+", "-", raw).strip(".-_")
+    return clean or "animica-cpu"
+
+
+def normalize_threads(value: Optional[int]) -> int:
+    if value is None or value <= 0:
+        return DEFAULT_THREADS
+    return max(1, min(int(value), 256))
+
+
+def normalize_address(value: Optional[str]) -> str:
+    raw = (value or "").strip()
+    return raw or PLACEHOLDER_ADDRESS
+
+
+def _parse_host_port(raw: str) -> tuple[Optional[str], Optional[int]]:
+    candidate = raw.strip()
+    if not candidate:
+        return None, None
+    parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+    host = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return host, port
+
+
+def _parse_host_port_and_scheme(raw: str) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    candidate = raw.strip()
+    if not candidate:
+        return None, None, None
+    parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+    host = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return host, port, parsed.scheme or None
+
+
+def _request_host(request: Optional[Request]) -> tuple[Optional[str], Optional[int]]:
+    if request is None:
+        return None, None
+    forwarded = request.headers.get("x-forwarded-host")
+    raw = forwarded.split(",")[0].strip() if forwarded else request.headers.get("host", "")
+    if not raw:
+        raw = request.url.netloc
+    host, port = _parse_host_port(raw)
+    if host in WILDCARD_HOSTS:
+        return None, None
+    return host, port
+
+
+def _request_scheme(request: Optional[Request]) -> Optional[str]:
+    if request is None:
+        return None
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.url.scheme
+
+
+def _join_url(base: Optional[str], path: str) -> Optional[str]:
+    if not base:
+        return None
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _append_query(url: str, params: dict[str, Any]) -> str:
+    filtered = {k: v for k, v in params.items() if v not in (None, "", 0)}
+    if not filtered:
+        return url
+    return f"{url}?{urlencode(filtered)}"
+
+
+@dataclass(frozen=True)
+class ResolvedMiningConfig:
+    network: str
+    chain_id: int
+    pool_enabled: bool
+    bind_host: str
+    bind_port: int
+    public_host: str
+    public_port: int
+    public_scheme: str
+    tls_enabled: bool
+    host_source: str
+    api_base_url: str
+    profile: str
+    algorithm: str
+    device_type: str
+    fee_percent: Optional[float]
+    payout_minimum: Optional[str]
+    download_base_url: Optional[str]
+    warnings: tuple[str, ...]
+
+    @property
+    def stratum_url(self) -> str:
+        return f"{self.public_scheme}://{self.public_host}:{self.public_port}"
+
+
+@dataclass(frozen=True)
+class BundleInput:
+    address: str
+    worker: str
+    threads: int
+    scan_window: int = DEFAULT_SCAN_WINDOW
+    log_level: str = "INFO"
+
+
+def resolve_public_mining_config(
+    config: PoolConfig,
+    *,
+    request: Optional[Request] = None,
+) -> ResolvedMiningConfig:
+    warnings: list[str] = []
+    request_host, _ = _request_host(request)
+    request_scheme = _request_scheme(request)
+
+    public_url = _read_env("ANIMICA_PUBLIC_STRATUM_URL")
+    explicit_host = _read_env("ANIMICA_PUBLIC_STRATUM_HOST")
+    explicit_domain = _read_env("ANIMICA_PUBLIC_DOMAIN")
+    explicit_port = _env_int("ANIMICA_PUBLIC_STRATUM_PORT")
+
+    public_host: Optional[str] = None
+    public_port = explicit_port or config.port
+    public_scheme = _read_env("ANIMICA_PUBLIC_STRATUM_SCHEME") or "stratum+tcp"
+    host_source = "bind_host"
+
+    if public_url:
+        host, port, scheme = _parse_host_port_and_scheme(public_url)
+        if host:
+            public_host = host
+            host_source = "public_stratum_url"
+        if port:
+            public_port = port
+        if scheme:
+            public_scheme = scheme
+    elif explicit_host:
+        host, port, scheme = _parse_host_port_and_scheme(explicit_host)
+        if host:
+            public_host = host
+            host_source = "public_stratum_host"
+        if port:
+            public_port = port
+        if scheme:
+            public_scheme = scheme
+    elif explicit_domain:
+        public_host = explicit_domain
+        host_source = "public_domain"
+    elif request_host:
+        public_host = request_host
+        host_source = "request_host"
+    elif config.host not in WILDCARD_HOSTS:
+        public_host = config.host
+        host_source = "stratum_bind"
+    else:
+        rpc_host, _ = _parse_host_port(config.rpc_url)
+        public_host = rpc_host or "127.0.0.1"
+        host_source = "rpc_host_fallback"
+
+    if public_host in WILDCARD_HOSTS:
+        public_host = "127.0.0.1"
+        host_source = "localhost_fallback"
+
+    tls_enabled = _env_bool(
+        "ANIMICA_PUBLIC_STRATUM_TLS_ENABLED",
+        default=_env_bool("ANIMICA_STRATUM_TLS_ENABLED", default=False),
+    )
+    if tls_enabled and public_scheme == "stratum+tcp":
+        public_scheme = "stratum+tls"
+
+    api_base_url = _read_env("ANIMICA_PUBLIC_POOL_API_URL")
+    if not api_base_url:
+        if request is not None:
+            api_base_url = str(request.base_url).rstrip("/")
+        else:
+            scheme = "https" if request_scheme == "https" else "http"
+            api_base_url = f"{scheme}://{config.api_host}:{config.api_port}"
+
+    download_base_url = _read_env("ANIMICA_MINING_DOWNLOAD_BASE_URL") or api_base_url
+
+    pool_enabled = _env_bool("ANIMICA_POOL_ENABLED", default=True)
+    fee_percent = _env_float("ANIMICA_POOL_FEE_PERCENT")
+    payout_minimum = _read_env("ANIMICA_POOL_PAYOUT_MINIMUM")
+
+    algorithm = "Animica HashShare"
+    device_type = "CPU miner"
+    if config.profile.startswith("asic"):
+        algorithm = "SHA-256 bridge"
+        device_type = "ASIC / SHA-256 miner"
+        warnings.append(
+            "The active pool profile is ASIC/SHA-256. The bundled CPU miner targets hashshare pools."
+        )
+
+    lowered_network = (config.network or f"chain-{config.chain_id}").lower()
+    if "dev" in lowered_network:
+        warnings.append("Devnet pool detected. Rewards and balances are not mainnet assets.")
+    elif "test" in lowered_network:
+        warnings.append("Testnet pool detected. Use a testnet payout address, not a mainnet wallet.")
+
+    if not pool_enabled:
+        warnings.append("Mining portal is enabled, but pool traffic is marked disabled by configuration.")
+
+    if not _is_publicly_routable_host(public_host):
+        warnings.append(
+            "The resolved stratum host is local-only. Miners on other machines will need a public host override."
+        )
+
+    return ResolvedMiningConfig(
+        network=config.network or f"chain-{config.chain_id}",
+        chain_id=config.chain_id,
+        pool_enabled=pool_enabled,
+        bind_host=config.host,
+        bind_port=config.port,
+        public_host=public_host,
+        public_port=public_port,
+        public_scheme=public_scheme,
+        tls_enabled=tls_enabled,
+        host_source=host_source,
+        api_base_url=api_base_url.rstrip("/"),
+        profile=config.profile,
+        algorithm=algorithm,
+        device_type=device_type,
+        fee_percent=fee_percent,
+        payout_minimum=payout_minimum,
+        download_base_url=download_base_url.rstrip("/") if download_base_url else None,
+        warnings=tuple(warnings),
+    )
+
+
+def build_bundle_input(
+    *,
+    address: Optional[str] = None,
+    worker: Optional[str] = None,
+    threads: Optional[int] = None,
+    scan_window: Optional[int] = None,
+    log_level: Optional[str] = None,
+) -> BundleInput:
+    return BundleInput(
+        address=normalize_address(address),
+        worker=_sanitize_worker_name(worker),
+        threads=normalize_threads(threads),
+        scan_window=max(50_000, int(scan_window or DEFAULT_SCAN_WINDOW)),
+        log_level=(log_level or "INFO").upper(),
+    )
+
+
+def build_config_document(resolved: ResolvedMiningConfig, bundle: BundleInput) -> str:
+    return (
+        "{\n"
+        f'  "host": "{resolved.public_host}",\n'
+        f'  "port": {resolved.public_port},\n'
+        f'  "scheme": "{resolved.public_scheme}",\n'
+        f'  "tls": {"true" if resolved.tls_enabled else "false"},\n'
+        f'  "address": "{bundle.address}",\n'
+        f'  "worker": "{bundle.worker}",\n'
+        f'  "threads": {bundle.threads},\n'
+        f'  "scan_window": {bundle.scan_window},\n'
+        f'  "log_level": "{bundle.log_level}"\n'
+        "}\n"
+    )
+
+
+def build_manual_commands(resolved: ResolvedMiningConfig, bundle: BundleInput) -> dict[str, str]:
+    quoted_address = bundle.address
+    quoted_worker = bundle.worker
+    common_args = (
+        f"--host {resolved.public_host} "
+        f"--port {resolved.public_port} "
+        f"--address {quoted_address} "
+        f"--worker {quoted_worker} "
+        f"--threads {bundle.threads}"
+    )
+    return {
+        "windows": f"py -3 animica_cpu_miner.py {common_args}",
+        "macos": f"python3 animica_cpu_miner.py {common_args}",
+        "linux": f"python3 animica_cpu_miner.py {common_args}",
+    }
+
+
+def build_launcher_script(
+    platform: str,
+    resolved: ResolvedMiningConfig,
+    *,
+    config_name: str = "animica-miner.config.json",
+) -> str:
+    if platform == "windows":
+        return (
+            "@echo off\r\n"
+            "setlocal\r\n"
+            "cd /d %~dp0\r\n"
+            "title Animica CPU Miner\r\n"
+            "set CONFIG=animica-miner.config.json\r\n"
+            "set PYTHON_CMD=\r\n"
+            "where py >nul 2>nul\r\n"
+            "if %ERRORLEVEL%==0 set PYTHON_CMD=py -3\r\n"
+            "if not defined PYTHON_CMD (\r\n"
+            "  where python >nul 2>nul\r\n"
+            "  if %ERRORLEVEL%==0 set PYTHON_CMD=python\r\n"
+            ")\r\n"
+            "if not defined PYTHON_CMD (\r\n"
+            "  echo Python 3.10+ was not found on PATH.\r\n"
+            "  echo Install Python and run this launcher again.\r\n"
+            "  pause\r\n"
+            "  exit /b 1\r\n"
+            ")\r\n"
+            f"echo Connecting to {resolved.stratum_url}\r\n"
+            "%PYTHON_CMD% animica_cpu_miner.py --config %CONFIG%\r\n"
+            "set EXIT_CODE=%ERRORLEVEL%\r\n"
+            "echo.\r\n"
+            "if not %EXIT_CODE%==0 echo Miner exited with status %EXIT_CODE%.\r\n"
+            "pause\r\n"
+            "exit /b %EXIT_CODE%\r\n"
+        )
+    if platform == "macos":
+        return (
+            "#!/bin/bash\n"
+            'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
+            'cd "$SCRIPT_DIR"\n'
+            'PYTHON_BIN=""\n'
+            "if command -v python3 >/dev/null 2>&1; then\n"
+            '  PYTHON_BIN="python3"\n'
+            "elif command -v python >/dev/null 2>&1; then\n"
+            '  PYTHON_BIN="python"\n'
+            "else\n"
+            '  echo "Python 3.10+ was not found on PATH."\n'
+            '  read -r -p "Press Return to close this window."\n'
+            "  exit 1\n"
+            "fi\n"
+            f'echo "Connecting to {resolved.stratum_url}"\n'
+            f'"$PYTHON_BIN" animica_cpu_miner.py --config "{config_name}"\n'
+            "status=$?\n"
+            'echo ""\n'
+            'if [ "$status" -ne 0 ]; then echo "Miner exited with status $status."; fi\n'
+            'read -r -p "Press Return to close this window."\n'
+            "exit $status\n"
+        )
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
+        'cd "$SCRIPT_DIR"\n'
+        'PYTHON_BIN=""\n'
+        "if command -v python3 >/dev/null 2>&1; then\n"
+        '  PYTHON_BIN="python3"\n'
+        "elif command -v python >/dev/null 2>&1; then\n"
+        '  PYTHON_BIN="python"\n'
+        "else\n"
+        '  echo "Python 3.10+ was not found on PATH."\n'
+        "  exit 1\n"
+        "fi\n"
+        f'echo "Connecting to {resolved.stratum_url}"\n'
+        f'"$PYTHON_BIN" animica_cpu_miner.py --config "{config_name}"\n'
+    )
+
+
+def build_bundle_readme(
+    resolved: ResolvedMiningConfig,
+    bundle: BundleInput,
+    *,
+    version: str = DEFAULT_VERSION,
+) -> str:
+    warnings = "\n".join(f"- {warning}" for warning in resolved.warnings) or "- None"
+    return f"""# Animica CPU Miner Starter Bundle
+
+Version: {version}
+Network: {resolved.network}
+Pool profile: {resolved.profile}
+Algorithm: {resolved.algorithm}
+Recommended device: {resolved.device_type}
+Detected endpoint: {resolved.stratum_url}
+Configured worker: {bundle.worker}
+
+## Quick start
+
+1. Put your Animica payout address into `animica-miner.config.json`.
+2. Keep the detected pool host and port as-is unless your operator told you otherwise.
+3. Run the included launcher for your platform:
+   - Windows: `start_mining.bat`
+   - macOS: `start_mining.command`
+   - Ubuntu/Linux: `start_mining.sh`
+4. The launcher opens a terminal, prints the target pool, and starts the miner.
+
+## Manual command
+
+Windows:
+`{build_manual_commands(resolved, bundle)["windows"]}`
+
+macOS:
+`{build_manual_commands(resolved, bundle)["macos"]}`
+
+Linux:
+`{build_manual_commands(resolved, bundle)["linux"]}`
+
+## Payout address
+
+Use an address that matches the active network. The starter config ships with `{bundle.address}`.
+
+## Worker naming
+
+Worker names are informational. This bundle uses `{bundle.worker}` by default. Good patterns:
+- `office-cpu`
+- `mac-mini-01`
+- `ubuntu-rig-a`
+
+## Pool notes
+
+- Fee: {resolved.fee_percent if resolved.fee_percent is not None else "not published"}%
+- Payout minimum: {resolved.payout_minimum or "not published"}
+- Host source: {resolved.host_source}
+
+## Warnings
+
+{warnings}
+
+## Troubleshooting
+
+- If Python is missing, install Python 3.10 or newer and re-run the launcher.
+- If the miner cannot connect, confirm that `{resolved.public_host}:{resolved.public_port}` is reachable from this machine.
+- If you are mining from another computer and the host resolves to `localhost` or `127.0.0.1`, ask the operator to set `ANIMICA_PUBLIC_STRATUM_HOST`.
+- Personalized bundles can be re-generated from the mining portal with your payout address prefilled.
+"""
+
+
+class MiningPortalService:
+    def __init__(self, config: PoolConfig, metrics: Any) -> None:
+        self._config = config
+        self._metrics = metrics
+
+    def resolve(self, request: Optional[Request] = None) -> ResolvedMiningConfig:
+        return resolve_public_mining_config(self._config, request=request)
+
+    def status_payload(self, request: Optional[Request] = None) -> dict[str, Any]:
+        resolved = self.resolve(request)
+        summary = self._metrics.pool_summary()
+        health = self._metrics.health()
+        return {
+            "online": bool(resolved.pool_enabled and health.get("status") == "ok"),
+            "health": health,
+            "network": resolved.network,
+            "chain_id": resolved.chain_id,
+            "profile": resolved.profile,
+            "algorithm": resolved.algorithm,
+            "device_type": resolved.device_type,
+            "pool_hashrate": summary.get("pool_hashrate", 0),
+            "miners": summary.get("num_miners", 0),
+            "workers": summary.get("num_workers", 0),
+            "height": summary.get("height", 0),
+            "latest_block": summary.get("latest_block"),
+            "stratum_endpoint": resolved.stratum_url,
+            "warnings": list(resolved.warnings),
+            "last_update": summary.get("last_update"),
+        }
+
+    def config_payload(self, request: Request) -> dict[str, Any]:
+        resolved = self.resolve(request)
+        defaults = build_bundle_input()
+        commands = build_manual_commands(resolved, defaults)
+        downloads_url = str(request.url_for("mining_downloads_manifest"))
+        status_url = str(request.url_for("mining_status"))
+        generate_url = str(request.url_for("mining_generate"))
+        return {
+            "network": resolved.network,
+            "chain_id": resolved.chain_id,
+            "pool_enabled": resolved.pool_enabled,
+            "profile": resolved.profile,
+            "algorithm": resolved.algorithm,
+            "device_type": resolved.device_type,
+            "stratum_host": resolved.public_host,
+            "stratum_port": resolved.public_port,
+            "stratum_scheme": resolved.public_scheme,
+            "stratum_url": resolved.stratum_url,
+            "bind_host": resolved.bind_host,
+            "bind_port": resolved.bind_port,
+            "host_source": resolved.host_source,
+            "tls_enabled": resolved.tls_enabled,
+            "api_base_url": resolved.api_base_url,
+            "api_endpoint": str(request.url_for("mining_config")),
+            "status_endpoint": status_url,
+            "downloads_endpoint": downloads_url,
+            "generate_endpoint": generate_url,
+            "manual_commands": commands,
+            "default_worker": defaults.worker,
+            "default_threads": defaults.threads,
+            "fee_percent": resolved.fee_percent,
+            "payout_minimum": resolved.payout_minimum,
+            "warnings": list(resolved.warnings),
+            "payout_instructions": "Enter an address on the active Animica network. Pool rewards are credited to that payout address.",
+            "worker_instructions": "Worker names are labels only. Use short, stable names like rig-01 or office-cpu.",
+            "status": self.status_payload(request),
+        }
+
+    def generated_payload(
+        self,
+        request: Request,
+        *,
+        address: Optional[str] = None,
+        worker: Optional[str] = None,
+        threads: Optional[int] = None,
+    ) -> dict[str, Any]:
+        resolved = self.resolve(request)
+        bundle = build_bundle_input(address=address, worker=worker, threads=threads)
+        commands = build_manual_commands(resolved, bundle)
+        config_content = build_config_document(resolved, bundle)
+        base_downloads: dict[str, str] = {}
+        for platform in ("windows", "macos", "linux"):
+            base_url = str(request.url_for("download_miner_bundle", platform=platform))
+            base_downloads[platform] = _append_query(
+                base_url,
+                {
+                    "address": bundle.address if bundle.address != PLACEHOLDER_ADDRESS else None,
+                    "worker": bundle.worker,
+                    "threads": bundle.threads,
+                },
+            )
+        return {
+            "network": resolved.network,
+            "stratum_url": resolved.stratum_url,
+            "address": bundle.address,
+            "worker": bundle.worker,
+            "threads": bundle.threads,
+            "commands": commands,
+            "config": {
+                "filename": "animica-miner.config.json",
+                "content": config_content,
+            },
+            "starter_files": [
+                {
+                    "platform": "windows",
+                    "filename": "start_mining.bat",
+                    "content": build_launcher_script("windows", resolved),
+                },
+                {
+                    "platform": "macos",
+                    "filename": "start_mining.command",
+                    "content": build_launcher_script("macos", resolved),
+                },
+                {
+                    "platform": "linux",
+                    "filename": "start_mining.sh",
+                    "content": build_launcher_script("linux", resolved),
+                },
+            ],
+            "download_urls": base_downloads,
+        }
+
+
+def build_download_query(address: str, worker: str, threads: int) -> dict[str, Any]:
+    return {
+        "address": address if address != PLACEHOLDER_ADDRESS else None,
+        "worker": worker,
+        "threads": threads,
+    }

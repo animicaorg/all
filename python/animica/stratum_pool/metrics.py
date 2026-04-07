@@ -31,6 +31,10 @@ class PoolMetrics:
         self._db = self._init_db(config.db_url)
         self._db_lock = Lock()
 
+    @property
+    def config(self) -> PoolConfig:
+        return self._config
+
     def _init_db(self, db_url: str) -> Optional[sqlite3.Connection]:
         if not db_url or not db_url.startswith("sqlite"):
             return None

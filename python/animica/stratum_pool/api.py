@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
+from .package_builder import MinerBundleBuilder
+from .portal import MiningPortalService, build_bundle_input
 from .metrics import PoolMetrics
 
 
 def create_app(metrics: PoolMetrics) -> FastAPI:
     app = FastAPI(title="Animica Stratum Pool API", version="0.1.0")
+    portal = MiningPortalService(metrics.config, metrics)
+    bundle_builder = MinerBundleBuilder()
 
     app.add_middleware(
         CORSMiddleware,
@@ -47,5 +52,85 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     @app.get("/healthz")
     async def health():
         return metrics.health()
+
+    @app.get("/api/mining/config", name="mining_config")
+    async def mining_config(request: Request):
+        return portal.config_payload(request)
+
+    @app.get("/api/mining/status", name="mining_status")
+    async def mining_status(request: Request):
+        return portal.status_payload(request)
+
+    @app.get("/api/mining/generate", name="mining_generate")
+    async def mining_generate(
+        request: Request,
+        address: str = "",
+        worker: str = "",
+        threads: int = Query(0, ge=0, le=256),
+    ):
+        return portal.generated_payload(
+            request,
+            address=address or None,
+            worker=worker or None,
+            threads=threads or None,
+        )
+
+    @app.get("/api/mining/downloads", name="mining_downloads_manifest")
+    async def mining_downloads_manifest(request: Request):
+        resolved = portal.resolve(request)
+        entries = []
+        for platform, label in (
+            ("windows", "Windows"),
+            ("macos", "macOS"),
+            ("linux", "Ubuntu / Linux"),
+        ):
+            artifact = bundle_builder.build(resolved, platform, build_bundle_input())
+            entries.append(
+                {
+                    "platform": platform,
+                    "label": label,
+                    "filename": artifact.filename,
+                    "version": artifact.version,
+                    "launcher": artifact.launcher,
+                    "sha256": artifact.sha256,
+                    "size_bytes": artifact.size_bytes,
+                    "url": str(request.url_for("download_miner_bundle", platform=platform)),
+                    "notes": (
+                        "Generic starter bundle with placeholder payout address. "
+                        "Use /api/mining/generate for personalized launch files."
+                    ),
+                }
+            )
+        return {
+            "network": resolved.network,
+            "endpoint": resolved.stratum_url,
+            "items": entries,
+        }
+
+    @app.get("/api/mining/downloads/{platform}", name="download_miner_bundle")
+    async def download_miner_bundle(
+        request: Request,
+        platform: str,
+        address: str = "",
+        worker: str = "",
+        threads: int = Query(0, ge=0, le=256),
+    ):
+        resolved = portal.resolve(request)
+        bundle = build_bundle_input(
+            address=address or None,
+            worker=worker or None,
+            threads=threads or None,
+        )
+        try:
+            artifact = bundle_builder.build(resolved, platform, bundle)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(
+            content=artifact.path.read_bytes(),
+            media_type=artifact.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+            },
+        )
 
     return app
