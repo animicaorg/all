@@ -23,106 +23,54 @@ def load_compose_file(network: str) -> dict:
         return yaml.safe_load(f)
 
 
-def test_mainnet_rpc_port_binding():
-    """Test mainnet RPC is bound to 0.0.0.0:8545."""
-    compose = load_compose_file("mainnet")
+def _find_port_mapping(compose: dict, port_suffix: str) -> str:
     node_ports = compose["services"]["node"]["ports"]
-    
-    # Check RPC port binding
-    rpc_port_found = False
     for port in node_ports:
-        if isinstance(port, str) and ":8545" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"RPC port not bound to 0.0.0.0: {port}"
-            rpc_port_found = True
-            break
-    
-    assert rpc_port_found, "RPC port 8545 not found in mainnet compose"
+        if isinstance(port, str) and port.endswith(port_suffix):
+            return port
+    raise AssertionError(f"Port mapping ending with {port_suffix} not found")
+
+
+def test_mainnet_rpc_port_binding():
+    """Test mainnet RPC stays host-local by default for operator safety."""
+    compose = load_compose_file("mainnet")
+    port = _find_port_mapping(compose, ":8545")
+    assert port.startswith("127.0.0.1:"), f"RPC port should stay loopback-bound: {port}"
 
 
 def test_mainnet_p2p_port_9000():
-    """Test mainnet P2P port 9000 is exposed."""
+    """Test mainnet P2P metrics port is exposed on all interfaces."""
     compose = load_compose_file("mainnet")
-    node_ports = compose["services"]["node"]["ports"]
-    
-    # Check P2P port 9000
-    p2p_port_found = False
-    for port in node_ports:
-        if isinstance(port, str) and ":9000" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"P2P port 9000 not bound to 0.0.0.0: {port}"
-            p2p_port_found = True
-            break
-    
-    assert p2p_port_found, "P2P port 9000 not found in mainnet compose"
+    port = _find_port_mapping(compose, ":9000")
+    assert port.startswith("0.0.0.0:"), f"Metrics port 9000 should be public: {port}"
 
 
 def test_testnet_rpc_port_binding():
-    """Test testnet RPC is bound to 0.0.0.0:8546."""
+    """Test testnet RPC stays host-local by default for operator safety."""
     compose = load_compose_file("testnet")
-    node_ports = compose["services"]["node"]["ports"]
-    
-    # Check RPC port binding
-    rpc_port_found = False
-    for port in node_ports:
-        if isinstance(port, str) and ":8546" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"RPC port not bound to 0.0.0.0: {port}"
-            rpc_port_found = True
-            break
-    
-    assert rpc_port_found, "RPC port 8546 not found in testnet compose"
+    port = _find_port_mapping(compose, ":8546")
+    assert port.startswith("127.0.0.1:"), f"RPC port should stay loopback-bound: {port}"
 
 
 def test_testnet_p2p_port_9000():
-    """Test testnet P2P port 9000 is exposed."""
+    """Test testnet metrics port is exposed on all interfaces."""
     compose = load_compose_file("testnet")
-    node_ports = compose["services"]["node"]["ports"]
-    
-    # Check P2P port 9000
-    p2p_port_found = False
-    for port in node_ports:
-        if isinstance(port, str) and ":9000" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"P2P port 9000 not bound to 0.0.0.0: {port}"
-            p2p_port_found = True
-            break
-    
-    assert p2p_port_found, "P2P port 9000 not found in testnet compose"
+    port = _find_port_mapping(compose, ":9000")
+    assert port.startswith("0.0.0.0:"), f"Metrics port 9000 should be public: {port}"
 
 
 def test_devnet_rpc_port_binding():
-    """Test devnet RPC is bound to 0.0.0.0:8545."""
+    """Test devnet RPC stays host-local by default for operator safety."""
     compose = load_compose_file("devnet")
-    node_ports = compose["services"]["node"]["ports"]
-    
-    # Check RPC port binding
-    rpc_port_found = False
-    for port in node_ports:
-        if isinstance(port, str) and ":8545" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"RPC port not bound to 0.0.0.0: {port}"
-            rpc_port_found = True
-            break
-    
-    assert rpc_port_found, "RPC port 8545 not found in devnet compose"
+    port = _find_port_mapping(compose, ":8545")
+    assert port.startswith("127.0.0.1:"), f"RPC port should stay loopback-bound: {port}"
 
 
 def test_devnet_p2p_port_9000():
-    """Test devnet P2P port 9000 is exposed."""
+    """Test devnet metrics port is exposed on all interfaces."""
     compose = load_compose_file("devnet")
-    node_ports = compose["services"]["node"]["ports"]
-    
-    # Check P2P port 9000
-    p2p_port_found = False
-    for port in node_ports:
-        if isinstance(port, str) and ":9000" in port:
-            # Should be bound to 0.0.0.0
-            assert port.startswith("0.0.0.0:"), f"P2P port 9000 not bound to 0.0.0.0: {port}"
-            p2p_port_found = True
-            break
-    
-    assert p2p_port_found, "P2P port 9000 not found in devnet compose"
+    port = _find_port_mapping(compose, ":9000")
+    assert port.startswith("0.0.0.0:"), f"Metrics port 9000 should be public: {port}"
 
 
 def test_mainnet_rpc_command():

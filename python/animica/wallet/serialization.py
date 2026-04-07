@@ -127,6 +127,8 @@ def _wallet_from_legacy(raw: Dict[str, Any], warnings: List[str], idx: int) -> D
         wallet["keystore"] = raw.get("keystore")
     if isinstance(raw.get("meta"), dict):
         wallet["meta"] = raw.get("meta")
+    if isinstance(raw.get("pending_txs"), list):
+        wallet["pending_txs"] = [dict(item) for item in raw.get("pending_txs") if isinstance(item, dict)]
 
     return wallet
 

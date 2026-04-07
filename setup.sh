@@ -188,6 +188,15 @@ install_animica() {
   fi
 }
 
+install_backend_runtime_requirements() {
+  if [ ! -f "$ROOT/requirements.txt" ]; then
+    return
+  fi
+
+  log "Installing backend runtime requirements from requirements.txt"
+  python -m pip install -r "$ROOT/requirements.txt"
+}
+
 verify_installation() {
   log "Verifying installation"
 
@@ -197,6 +206,15 @@ verify_installation() {
 
   if [ ! -x "$VENV_DIR/bin/animica" ]; then
     warn "Console script not found at $VENV_DIR/bin/animica"
+  fi
+
+  if ! python - <<'PY' >/dev/null 2>&1
+import fastapi
+import prometheus_client
+print(fastapi.__version__, prometheus_client.__version__)
+PY
+  then
+    die "Installation verification failed: backend runtime imports (fastapi/prometheus_client) are missing"
   fi
 
   log "✓ Installation verified successfully"
@@ -558,10 +576,11 @@ main() {
   fi
 
   install_system_deps
-  ensure_venv
-  install_local_dependencies
-  install_animica
-  verify_installation
+ensure_venv
+install_local_dependencies
+install_animica
+install_backend_runtime_requirements
+verify_installation
 
   check_for_conflicting_p2p
 

@@ -29,6 +29,9 @@ dev = [
   "mypy>=1.9",
   "omni-sdk>=0.1.0",
   "respx>=0.22",
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

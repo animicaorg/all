@@ -43,6 +43,33 @@ def test_merge_collision_renames_labels() -> None:
     assert 'alice-2' in labels
 
 
+def test_parse_preserves_pending_txs_runtime_metadata() -> None:
+    result = parse_wallets_text(
+        """
+        {
+          "wallets": [
+            {
+              "label": "alice",
+              "address": "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+              "alg_id": 4097,
+              "public_key_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "secret_key_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "created_at": "2024-01-01T00:00:00Z",
+              "pending_txs": [
+                {
+                  "tx_hash": "0xabc",
+                  "status": "mempool_accepted",
+                  "reserve_amount": 11
+                }
+              ]
+            }
+          ]
+        }
+        """
+    )
+    assert result.store["wallets"][0]["pending_txs"][0]["reserve_amount"] == 11
+
+
 def test_invalid_json_line_col() -> None:
     with pytest.raises(WalletParseError) as exc:
         parse_wallets_text('{"wallets": [}', source='bad.json')

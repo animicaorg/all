@@ -43,7 +43,7 @@ import shutil
 import threading
 import time
 import typing as t
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from coretx.crypto import (
@@ -685,15 +685,15 @@ def _maybe_bootstrap_genesis(
 
 @dataclass
 class RpcContext:
-    cfg: _ConfigView
-    params: dict[str, t.Any]
-    chain_identity: t.Any | None
-    kv: t.Any
-    state_db: t.Any
-    block_db: t.Any
-    tx_index: t.Any
-    head: _HeadAccessor
-    data_root: Path
+    cfg: _ConfigView | None = None
+    params: dict[str, t.Any] = field(default_factory=dict)
+    chain_identity: t.Any | None = None
+    kv: t.Any = None
+    state_db: t.Any = None
+    block_db: t.Any = None
+    tx_index: t.Any = None
+    head: _HeadAccessor | None = None
+    data_root: Path = field(default_factory=lambda: Path("."))
     mempool: t.Any | None = None
     init_error: str | None = None
     init_error_code: str | None = None
@@ -708,6 +708,8 @@ class RpcContext:
     p2p_restart_backoff_s: float = 1.0
 
     def get_head(self) -> dict[str, t.Any]:
+        if self.head is None:
+            return {"height": 0, "hash": None, "header": None}
         return self.head.get()
 
     def close(self) -> None:
