@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio as _asyncio
 import contextlib as _contextlib
+import itertools
 import importlib
 import os
 import socket
@@ -40,12 +41,20 @@ except Exception:
 # --------------------------------------------------------------------------------------
 # Networking helpers
 # --------------------------------------------------------------------------------------
+_FALLBACK_PORTS = itertools.count(39000)
+
+
 def free_port() -> int:
     """Return an available TCP port on 127.0.0.1 (best-effort, race-free in practice)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return int(s.getsockname()[1])
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            return int(s.getsockname()[1])
+    except PermissionError:
+        # Restricted sandboxes can forbid opening loopback sockets during tests.
+        # These helpers only need stable, unique-looking ports for object setup.
+        return next(_FALLBACK_PORTS)
 
 
 def tcp_multiaddr(port: int) -> str:

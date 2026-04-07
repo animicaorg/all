@@ -111,9 +111,10 @@ def _resolve_sync_endpoints(
     return target, bootstrap
 
 
-def _sync_state_path(net_cfg) -> Path:
+def _sync_state_path(net_cfg, *, create: bool = False) -> Path:
     data_dir = Path(os.path.expanduser(net_cfg.data_dir))
-    data_dir.mkdir(parents=True, exist_ok=True)
+    if create:
+        data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "sync" / "progress.json"
 
 
@@ -123,7 +124,7 @@ def _load_cached_bootstrap_head(
 ) -> Optional[Dict[str, Any]]:
     if not bootstrap_url:
         return None
-    state_path = _sync_state_path(net_cfg)
+    state_path = _sync_state_path(net_cfg, create=False)
     if not state_path.exists():
         return None
     try:
@@ -791,12 +792,6 @@ def _persist_connected_peers(net_cfg, peers: List[Dict[str, Any]], *, quiet: boo
     return stored
 
 
-def _sync_state_path(net_cfg) -> Path:
-    """Return the path for persisting sync progress state."""
-
-    return Path(net_cfg.data_dir).expanduser() / "sync" / "progress.json"
-
-
 def _persist_sync_state(
     net_cfg,
     *,
@@ -809,9 +804,11 @@ def _persist_sync_state(
     note: Optional[str] = None,
 ) -> None:
     """Persist sync progress to disk for continuity across restarts."""
-
-    state_path = _sync_state_path(net_cfg)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        state_path = _sync_state_path(net_cfg, create=True)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
 
     height = _extract_height(head_info)
     head_hash = head_info.get("hash") if head_info else None
@@ -836,7 +833,10 @@ def _persist_sync_state(
     if note:
         payload["note"] = note
 
-    state_path.write_text(json.dumps(payload, indent=2))
+    try:
+        state_path.write_text(json.dumps(payload, indent=2))
+    except OSError:
+        return
 
 
 async def _trigger_sync(

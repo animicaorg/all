@@ -59,10 +59,6 @@ WORKDIR /app
 # If your code lives elsewhere, adjust this COPY or multi-stage build as needed.
 COPY . /app
 
-USER ${USER}
-
-EXPOSE 8085
-
 # Simple bootstrap to pass env → app config and launch uvicorn
 RUN printf '%s\n' '#!/usr/bin/env sh' \
   'set -eu' \
@@ -72,8 +68,12 @@ RUN printf '%s\n' '#!/usr/bin/env sh' \
   ': "${CHAIN_ID:=1}"' \
   ': "${CORS_ALLOW_ORIGINS:=*}"' \
   'export EXPLORER_PORT RPC_HTTP_URL RPC_WS_URL CHAIN_ID CORS_ALLOW_ORIGINS' \
-  'exec uvicorn explorer_api.app:app --host 0.0.0.0 --port "${EXPLORER_PORT}"' \
+  'exec /bin/sh -lc "/app/ops/docker/entrypoints/explorer.sh"' \
   > /usr/local/bin/start-explorer && chmod +x /usr/local/bin/start-explorer
+
+USER ${USER}
+
+EXPOSE 8085
 
 # Healthcheck hits /healthz (the app should expose it)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \

@@ -915,14 +915,15 @@ def _remove_path_preserving(path: Path, preserve: list[Path]) -> None:
         return
 
 
-def _sync_state_path(cfg: Any) -> Path:
+def _sync_state_path(cfg: Any, *, create: bool = False) -> Path:
     data_dir = Path(os.path.expanduser(cfg.data_dir))
-    data_dir.mkdir(parents=True, exist_ok=True)
+    if create:
+        data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "sync" / "progress.json"
 
 
 def _load_sync_state(cfg: Any) -> Optional[Dict[str, Any]]:
-    state_path = _sync_state_path(cfg)
+    state_path = _sync_state_path(cfg, create=False)
     if not state_path.exists():
         return None
     try:

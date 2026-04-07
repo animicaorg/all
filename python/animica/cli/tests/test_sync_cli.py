@@ -331,17 +331,27 @@ def test_sync_force_auto_bootstrap_and_reseed():
         with patch("httpx.AsyncClient") as mock_client:
             mock_client.return_value = MockAsyncClient(responses)
 
-            result = runner.invoke(
-                app,
-                [
-                    "sync",
-                    "force",
-                    "--timeout",
-                    "4",
-                    "--check-interval",
-                    "1",
-                ],
-            )
+            clock = {"now": 0}
+
+            def fake_time():
+                clock["now"] += 1
+                return clock["now"]
+
+            with patch("animica.cli.sync.time.sleep"), patch(
+                "animica.cli.sync.time.time", side_effect=fake_time
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "sync",
+                        "force",
+                        "--timeout",
+                        "4",
+                        "--check-interval",
+                        "1",
+                        "--follow",
+                    ],
+                )
 
             assert result.exit_code == 0
             assert "Auto-bootstrapping peers from discovery sources" in result.stdout
@@ -381,7 +391,7 @@ def test_sync_force_success(mock_rpc_success):
         ):
             result = runner.invoke(
                 app,
-                ["sync", "force", "--timeout", "10", "--check-interval", "2"]
+                ["sync", "force", "--timeout", "10", "--check-interval", "2", "--follow"]
             )
             
             assert result.exit_code == 0
@@ -405,7 +415,7 @@ def test_sync_force_no_progress(mock_rpc_success):
         ):
             result = runner.invoke(
                 app,
-                ["sync", "force", "--timeout", "10", "--check-interval", "2"]
+                ["sync", "force", "--timeout", "10", "--check-interval", "2", "--follow"]
             )
             
             assert result.exit_code == 0
@@ -449,7 +459,7 @@ def test_sync_force_with_custom_timeout(mock_rpc_success):
         ):
             result = runner.invoke(
                 app,
-                ["sync", "force", "--timeout", "60", "--check-interval", "10"]
+                ["sync", "force", "--timeout", "60", "--check-interval", "10", "--follow"]
             )
             
             assert result.exit_code == 0
@@ -477,7 +487,7 @@ def test_sync_force_uses_target_rpc_by_default(monkeypatch):
         async def __aexit__(self, *args):
             return None
 
-        async def post(self, url: str, json: Dict[str, Any]):
+        async def post(self, url: str, json: Dict[str, Any], **_kwargs: Any):
             method = json.get("method", "")
             calls.append((url, method))
             if method in self.responses:
@@ -532,7 +542,7 @@ def test_sync_status_not_synced_when_bootstrap_ahead(monkeypatch):
         async def __aexit__(self, *args):
             return None
 
-        async def post(self, url: str, json: Dict[str, Any]):
+        async def post(self, url: str, json: Dict[str, Any], **_kwargs: Any):
             method = json.get("method", "")
             if method == "chain.getHead" and url == bootstrap_url:
                 return MockRPCResponse(result={"height": 42, "hash": "0x" + "b" * 64})
