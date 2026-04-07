@@ -30,6 +30,7 @@ from animica_studio.services.wallet_store import WalletStore
 from animica_studio.services.workers import WorkerThread
 from animica_studio.storage.config import Config
 from animica_studio.ui.widgets.stream_console import StreamConsole
+from animica_studio.util.paths import animica_wallets_file
 
 log = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ class MiningPage(QWidget):
         layout.addWidget(self._console, stretch=1)
 
     def _refresh_wallet_labels(self) -> None:
-        records = self._wallet_store.reload_local_wallets(Path.home() / ".animica" / "wallets.json")
+        records = self._wallet_store.reload_local_wallets(animica_wallets_file())
         current = self._payout_input.currentText().strip() if hasattr(self, "_payout_input") else ""
         labels = [record.label for record in records if record.label]
         if hasattr(self, "_payout_input"):
@@ -230,7 +231,7 @@ class MiningPage(QWidget):
             self._validation_label.setText("Payout destination is required.")
             return None
 
-        records = self._wallet_store.reload_local_wallets(Path.home() / ".animica" / "wallets.json")
+        records = self._wallet_store.reload_local_wallets(animica_wallets_file())
         by_label = {record.label: record.address for record in records if record.label and record.address}
         if raw in by_label:
             resolved = by_label[raw].strip()

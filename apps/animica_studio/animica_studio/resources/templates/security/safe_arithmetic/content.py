@@ -26,7 +26,7 @@ INT64_MAX =  (1 << 63) - 1
 # One unit of fixed-point.  Adjust FIXED_POINT_SCALE to change precision:
 #   1_000_000  → 6 decimal places  (e.g. 1.500000 stored as 1_500_000)
 #   1_000      → 3 decimal places
-#   10**18     → 18 decimal places (wei-style)
+#   10**9      → 9 decimal places (Animica base units)
 FIXED_POINT_SCALE = 1_000_000
 
 

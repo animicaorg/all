@@ -157,6 +157,16 @@ def test_top_level_imports_smoke() -> None:
     assert wallet_page_mod is not None
 
 
+def test_console_page_smoke() -> None:
+    _app()
+    from animica_studio.storage.config import Config
+    from animica_studio.ui.pages.console_page import ConsolePage
+
+    page = ConsolePage(config=Config())
+    assert page is not None
+    page.close()
+
+
 def test_create_wallet_dialog_label_validation() -> None:
     _app()
     from animica_studio.ui.pages.wallet_page import _CreateWalletDialog

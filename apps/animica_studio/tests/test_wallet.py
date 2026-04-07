@@ -24,12 +24,12 @@ class TestFormatAmount:
     def test_one_anm(self):
         from animica_studio.models.wallet_models import format_amount
 
-        assert format_amount(10**18) == "1 ANM"
+        assert format_amount(10**9) == "1 ANM"
 
     def test_fractional(self):
         from animica_studio.models.wallet_models import format_amount
 
-        assert format_amount(1_500_000_000_000_000_000) == "1.5 ANM"
+        assert format_amount(1_500_000_000) == "1.5 ANM"
 
     def test_zero(self):
         from animica_studio.models.wallet_models import format_amount
@@ -50,12 +50,12 @@ class TestFormatAmountCompact:
     def test_limits_fractional_digits_like_extension(self):
         from animica_studio.models.wallet_models import format_amount_compact
 
-        assert format_amount_compact(1_234_567_890_123_456_789) == "1.234567 ANM"
+        assert format_amount_compact(1_234_567_890) == "1.234567 ANM"
 
     def test_trims_trailing_zeroes(self):
         from animica_studio.models.wallet_models import format_amount_compact
 
-        assert format_amount_compact(1_500_000_000_000_000_000) == "1.5 ANM"
+        assert format_amount_compact(1_500_000_000) == "1.5 ANM"
 
     def test_zero(self):
         from animica_studio.models.wallet_models import format_amount_compact
@@ -67,17 +67,17 @@ class TestParseAmountToWei:
     def test_integer_string(self):
         from animica_studio.models.wallet_models import parse_amount_to_wei
 
-        assert parse_amount_to_wei("1") == 10**18
+        assert parse_amount_to_wei("1") == 10**9
 
     def test_fractional(self):
         from animica_studio.models.wallet_models import parse_amount_to_wei
 
-        assert parse_amount_to_wei("1.5") == 1_500_000_000_000_000_000
+        assert parse_amount_to_wei("1.5") == 1_500_000_000
 
     def test_with_unit_suffix(self):
         from animica_studio.models.wallet_models import parse_amount_to_wei
 
-        assert parse_amount_to_wei("2 ANM") == 2 * 10**18
+        assert parse_amount_to_wei("2 ANM") == 2 * 10**9
 
     def test_negative_raises(self):
         from animica_studio.models.wallet_models import parse_amount_to_wei
@@ -365,10 +365,10 @@ class TestWalletServiceAccounts:
 
         # Simulate fetched balances
         ws._balances["anim1alice"] = BalanceState(
-            address="anim1alice", balance_wei=10**18, formatted="1 ANM"
+            address="anim1alice", balance_wei=10**9, formatted="1 ANM"
         )
         ws._balances["anim1bob"] = BalanceState(
-            address="anim1bob", balance_wei=2 * 10**18, formatted="2 ANM"
+            address="anim1bob", balance_wei=2 * 10**9, formatted="2 ANM"
         )
 
         alice_bal = ws.get_cached_balance("anim1alice")
@@ -524,7 +524,7 @@ class TestWalletServiceFetchBalance:
 
         mock_completed = MagicMock()
         mock_completed.returncode = 0
-        mock_completed.stdout = '{"balance_confirmed": 5000000000000000000, "balance_confirmed_formatted": "5 ANM"}'
+        mock_completed.stdout = '{"balance_confirmed": 5000000000, "balance_confirmed_formatted": "5 ANM"}'
 
         with (
             patch(
@@ -535,7 +535,7 @@ class TestWalletServiceFetchBalance:
         ):
             state = ws.fetch_balance("anim1test", "http://localhost:8545")
 
-        assert state.balance_wei == 5 * 10**18
+        assert state.balance_wei == 5 * 10**9
         assert state.error is None
         assert "5" in state.formatted
 
@@ -689,7 +689,7 @@ class TestWalletServiceFetchBalance:
                 completed.stderr = "Alice's RPC failed"
                 return completed
             completed.returncode = 0
-            completed.stdout = '{"balance_confirmed": 3000000000000000000, "balance_confirmed_formatted": "3 ANM"}'
+            completed.stdout = '{"balance_confirmed": 3000000000, "balance_confirmed_formatted": "3 ANM"}'
             completed.stderr = ""
             return completed
 
@@ -707,7 +707,7 @@ class TestWalletServiceFetchBalance:
 
         assert alice_state is not None and alice_state.error is not None
         assert bob_state is not None and bob_state.error is None
-        assert bob_state.balance_wei == 3 * 10**18
+        assert bob_state.balance_wei == 3 * 10**9
 
 
 # ---------------------------------------------------------------------------
@@ -722,7 +722,7 @@ class TestConfigWalletFields:
         cfg = Config()
         assert cfg.accounts == []
         assert cfg.pending_txs == []
-        assert cfg.wallet_settings["decimals"] == 18
+        assert cfg.wallet_settings["decimals"] == 9
         assert "explorer.animica.org" in cfg.wallet_settings["explorer_base_url"]
 
     def test_roundtrip(self):
@@ -733,7 +733,7 @@ class TestConfigWalletFields:
         d = _config_to_dict(cfg)
         cfg2 = _config_from_dict(d)
         assert cfg2.accounts[0]["address"] == "anim1x"
-        assert cfg2.wallet_settings["decimals"] == 18
+        assert cfg2.wallet_settings["decimals"] == 9
 
 class TestWalletStoreLocalFile:
     def test_load_local_wallets_from_v2_file(self, tmp_path):
@@ -905,7 +905,7 @@ class TestWalletServiceSendCli:
                     chain_id=1,
                     from_addr="anim1from",
                     to_addr="anim1to",
-                    amount_wei=1_500_000_000_000_000_000,
+                    amount_wei=1_500_000_000,
                 )
 
         assert ptx.status == "PENDING"
@@ -935,8 +935,8 @@ class TestBalanceHexParsing:
     def test_int_to_anm_string(self):
         from animica_studio.models.wallet_models import format_amount
 
-        # 1 ANM = 10^18 base units
-        assert format_amount(10 ** 18) == "1 ANM"
+        # 1 ANM = 10^9 base units
+        assert format_amount(10 ** 9) == "1 ANM"
         assert format_amount(0) == "0 ANM"
 
     def test_hex_balance_full_pipeline(self):
@@ -944,9 +944,9 @@ class TestBalanceHexParsing:
         from animica_studio.models.rpc_models import parse_hex_quantity
         from animica_studio.models.wallet_models import format_amount
 
-        raw_hex = "0xde0b6b3a7640000"  # 1 ANM in wei
+        raw_hex = "0x3b9aca00"  # 1 ANM in base units
         qty = parse_hex_quantity(raw_hex, "balance")
-        assert qty == 10 ** 18
+        assert qty == 10 ** 9
         display = format_amount(qty)
         assert display == "1 ANM"
 

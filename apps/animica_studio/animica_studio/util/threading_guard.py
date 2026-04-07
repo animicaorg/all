@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication
+try:
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QApplication
+except ImportError:
+    QThread = None  # type: ignore[assignment]
+    QApplication = None  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
 
 def assert_ui_thread() -> bool:
+    if QApplication is None or QThread is None:
+        return True
     app = QApplication.instance()
     if app is None:
         return True

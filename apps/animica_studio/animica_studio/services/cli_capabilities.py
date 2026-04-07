@@ -14,8 +14,6 @@ def get_cli_registry(config: Config) -> CliRegistry:
     global _registry
     if _registry is None:
         _registry = CliRegistry(config)
-        if not _registry.top_level_commands():
-            _registry.refresh()
     return _registry
 
 

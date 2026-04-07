@@ -23,6 +23,7 @@ from animica_studio.services.tx_service import TxService, TxServiceResult
 from animica_studio.services.wallet_repository import WalletRepository
 from animica_studio.services.workers import WorkerThread
 from animica_studio.storage.config import Config, load_config
+from animica_studio.models.wallet_models import ANM_BASE_UNITS
 
 class TxSendPage(QWidget):
     def __init__(self, config: Config | None = None, parent: QWidget | None = None) -> None:
@@ -168,7 +169,7 @@ class TxSendPage(QWidget):
         if not validated:
             return
         _, to_addr, amount_wei = validated
-        amount_anm = amount_wei / 10**18
+        amount_anm = amount_wei / ANM_BASE_UNITS
         self._append_log(f"[simulate] to={to_addr} amount={amount_anm:g} ANM")
 
     def _send(self) -> None:
@@ -200,6 +201,10 @@ class TxSendPage(QWidget):
         self._thread.worker.error.connect(self._on_send_error)
         self._thread.worker.finished.connect(lambda: self._set_busy(False))
         self._thread.start()
+
+    def showEvent(self, event) -> None:  # noqa: ANN001
+        super().showEvent(event)
+        self.reload_wallets()
 
     def _on_send_result(self, result: TxServiceResult) -> None:
         if result.ok:

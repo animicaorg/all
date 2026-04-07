@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from animica_studio.models.wallet_models import is_valid_address
+from animica_studio.util.paths import animica_wallets_file
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class WalletRepository:
     """Safe local wallets.json loader (source of truth in local mode)."""
 
     def __init__(self, wallets_path: Path | None = None) -> None:
-        self.wallets_path = wallets_path or (Path.home() / ".animica" / "wallets.json")
+        self.wallets_path = wallets_path or animica_wallets_file()
         self.last_error: str | None = None
 
     def load_wallets(self) -> list[WalletRecord]:

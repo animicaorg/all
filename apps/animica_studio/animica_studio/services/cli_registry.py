@@ -17,6 +17,20 @@ from animica_studio.util.paths import app_data_dir
 
 log = logging.getLogger(__name__)
 
+_DEFAULT_ROOT_COMMANDS = [
+    "node",
+    "wallet",
+    "miner",
+    "aicf",
+    "tx",
+    "rpc",
+    "chain",
+    "sync",
+    "da",
+    "ena",
+    "quantum",
+]
+
 
 def _norm_path(path: list[str]) -> str:
     return " ".join(path)
@@ -91,11 +105,51 @@ class CliNode:
     unknown: bool = False
 
 
+def _default_nodes() -> dict[str, CliNode]:
+    return {
+        "": CliNode(commands=list(_DEFAULT_ROOT_COMMANDS)),
+        "wallet": CliNode(commands=["create", "list", "show", "new", "set-default"]),
+        "wallet create": CliNode(options=["--label", "--name", "--alg", "--scheme", "--help"]),
+        "wallet list": CliNode(options=["--help"]),
+        "aicf": CliNode(commands=["status", "miner-credits", "jobs", "plans", "doctor", "watch"]),
+        "aicf status": CliNode(options=["--json", "--rpc-url", "--debug-rpc", "--help"]),
+        "aicf jobs": CliNode(commands=["list", "submit", "watch"]),
+        "aicf jobs watch": CliNode(options=["--interval", "--timeout", "--help"]),
+        "miner": CliNode(commands=["mine-blocks", "show-config", "generate-payout-address"]),
+        "miner mine-blocks": CliNode(options=["--address", "--miner", "--count", "--threads", "--rpc-url", "--help"]),
+        "node": CliNode(commands=["start", "stop", "restart", "status", "logs"]),
+        "sync": CliNode(commands=["status", "pause", "resume", "force"]),
+        "tx": CliNode(commands=["send", "status", "pending"]),
+        "chain": CliNode(commands=["head", "block", "tx", "account"]),
+        "rpc": CliNode(commands=["call"]),
+        "da": CliNode(commands=["put", "get", "status", "configure"]),
+        "ena": CliNode(commands=["status", "doctor", "contribute", "publish", "infer"]),
+        "quantum": CliNode(commands=["status", "jobs", "credits"]),
+    }
+
+
+def _merge_commands(primary: list[str], fallback: list[str]) -> list[str]:
+    merged: list[str] = []
+    for item in [*primary, *fallback]:
+        if item and item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _merge_nodes(primary: CliNode, fallback: CliNode) -> CliNode:
+    return CliNode(
+        commands=_merge_commands(primary.commands, fallback.commands),
+        options=_merge_commands(primary.options, fallback.options),
+        raw_help=primary.raw_help or fallback.raw_help,
+        unknown=primary.unknown and fallback.unknown,
+    )
+
+
 class CliRegistry:
     def __init__(self, config: Config) -> None:
         self._config = config
         self._runner = CliRunner()
-        self._nodes: dict[str, CliNode] = {}
+        self._nodes: dict[str, CliNode] = _default_nodes()
         self._cli_path: str = ""
         self._loaded_at: float | None = None
         self._registry_path = app_data_dir() / "cli_registry.json"
@@ -113,7 +167,10 @@ class CliRegistry:
             self._cli_path = str(payload.get("cli_path", ""))
             self._loaded_at = payload.get("loaded_at")
             nodes = payload.get("nodes", {})
-            self._nodes = {k: CliNode(**v) for k, v in nodes.items() if isinstance(v, dict)}
+            loaded_nodes = {k: CliNode(**v) for k, v in nodes.items() if isinstance(v, dict)}
+            for key, fallback in _default_nodes().items():
+                loaded_nodes[key] = _merge_nodes(loaded_nodes.get(key, CliNode()), fallback)
+            self._nodes = loaded_nodes or _default_nodes()
         except Exception as exc:  # noqa: BLE001
             log.warning("CliRegistry: failed to load cache: %s", exc)
 
@@ -126,31 +183,37 @@ class CliRegistry:
         self._registry_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def refresh(self) -> None:
-        self._nodes = {}
+        default_nodes = _default_nodes()
+        self._nodes = default_nodes.copy()
         try:
-            program, base_args, _env = resolve_animica_cli_program_and_env(self._config)
+            program, base_args, env = resolve_animica_cli_program_and_env(self._config)
         except FileNotFoundError:
             self._loaded_at = time.time()
             return
 
         self._cli_path = program
-        root = self._run_help([program, *base_args, "--help"])
-        self._nodes[""] = root
-        top_level = root.commands
+        root = self._run_help([program, *base_args, "--help"], env=env)
+        self._nodes[""] = _merge_nodes(root, self._nodes[""])
+        top_level = list(self._nodes[""].commands)
         for cmd in top_level:
-            node = self._run_help([program, *base_args, cmd, "--help"])
+            node = self._run_help([program, *base_args, cmd, "--help"], env=env)
             key = _norm_path([cmd])
-            self._nodes[key] = node
-            for sub in node.commands:
-                sub_node = self._run_help([program, *base_args, cmd, sub, "--help"])
-                self._nodes[_norm_path([cmd, sub])] = sub_node
+            fallback = self._nodes.get(key, CliNode())
+            self._nodes[key] = _merge_nodes(node, fallback)
+            subcommands = list(self._nodes[key].commands)
+            for sub in subcommands:
+                sub_key = _norm_path([cmd, sub])
+                sub_node = self._run_help([program, *base_args, cmd, sub, "--help"], env=env)
+                self._nodes[sub_key] = _merge_nodes(sub_node, self._nodes.get(sub_key, CliNode()))
 
         self._loaded_at = time.time()
         self.save()
 
-    def _run_help(self, argv: list[str]) -> CliNode:
-        result = self._runner.run(argv, timeout_s=5.0)
+    def _run_help(self, argv: list[str], *, env: dict[str, str] | None = None) -> CliNode:
+        result = self._runner.run(argv, timeout_s=5.0, env=env)
         text = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.timed_out:
+            return CliNode(raw_help=text, unknown=True)
         try:
             commands = _parse_commands(text)
             options = sorted(_parse_options(text))

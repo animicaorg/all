@@ -8,7 +8,12 @@ from pathlib import Path
 from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,9 +30,12 @@ from PySide6.QtWidgets import (
 from animica_studio.models.profile_models import RpcProfile
 from animica_studio.models.wallet_models import shorten_address
 from animica_studio.services.balance_service import BalanceResult, BalanceService
+from animica_studio.services.wallet_service import WalletService
 from animica_studio.services.wallet_repository import WalletRecord, WalletRepository
+from animica_studio.services.workers import WorkerThread
 from animica_studio.storage.config import Config, load_config
 from animica_studio.util.threading_guard import assert_ui_thread
+from animica_studio.util.paths import animica_wallets_file
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +45,74 @@ class _WalletUiState:
     wallet: WalletRecord
     balance_text: str = "Unavailable"
     reason: str = "Not fetched yet"
+
+
+class _CreateWalletDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create Wallet")
+        self.setModal(True)
+        self.resize(460, 220)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setVerticalSpacing(10)
+
+        self._label_edit = QLineEdit()
+        self._label_edit.setPlaceholderText("wallet_01")
+        form.addRow("Label", self._label_edit)
+
+        self._alg_combo = QComboBox()
+        self._alg_combo.addItem("Dilithium3", "dilithium3")
+        self._alg_combo.addItem("SPHINCS+ 128s", "sphincs_shake_128s")
+        form.addRow("Algorithm", self._alg_combo)
+
+        self._allow_insecure_fallback = QCheckBox("Allow insecure fallback when native PQ libs are unavailable")
+        form.addRow("", self._allow_insecure_fallback)
+
+        self._wallet_path = QLabel(str(animica_wallets_file()))
+        self._wallet_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._wallet_path.setStyleSheet("font-family: 'JetBrains Mono', 'Consolas', monospace; color: #8f99a5;")
+        form.addRow("Wallet Store", self._wallet_path)
+
+        self._validation = QLabel("")
+        self._validation.setStyleSheet("color: #d9534f;")
+        form.addRow("", self._validation)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._create_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self._create_btn.setText("Create Wallet")
+        self._create_btn.setEnabled(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._label_edit.textChanged.connect(self._update_validation)
+        self._alg_combo.currentIndexChanged.connect(self._update_validation)
+        self._update_validation()
+
+    def _update_validation(self) -> None:
+        try:
+            WalletService(Config()).validate_wallet_create_request(
+                self._label_edit.text(),
+                self.signature_scheme(),
+            )
+        except ValueError as exc:
+            self._validation.setText(str(exc))
+            self._create_btn.setEnabled(False)
+            return
+        self._validation.setText("")
+        self._create_btn.setEnabled(True)
+
+    def wallet_label(self) -> str:
+        return self._label_edit.text().strip()
+
+    def signature_scheme(self) -> str:
+        return str(self._alg_combo.currentData() or "dilithium3")
+
+    def allow_insecure_fallback(self) -> bool:
+        return self._allow_insecure_fallback.isChecked()
 
 
 class _WalletRowWidget(QFrame):
@@ -124,16 +200,18 @@ class WalletPage(QWidget):
         self._config = config or load_config()
         self._safe_mode = safe_mode
         self._repository = WalletRepository()
+        self._wallet_service = WalletService(self._config)
         self._balance_service = BalanceService(self)
         self._wallet_rows: list[_WalletUiState] = []
         self._selected_address: str | None = None
+        self._create_wallet_thread: WorkerThread | None = None
 
         self._refresh_tail_timer = QTimer(self)
         self._refresh_tail_timer.setSingleShot(True)
         self._refresh_tail_timer.timeout.connect(self._fetch_remaining)
 
         self._watcher = QFileSystemWatcher(self)
-        wallets_file = str(self._repository.wallets_path)
+        wallets_file = str(animica_wallets_file())
         if Path(wallets_file).exists():
             self._watcher.addPath(wallets_file)
         self._watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self.refresh_wallets))
@@ -282,8 +360,18 @@ class WalletPage(QWidget):
         if self._refresh_in_flight:
             return
         self._refresh_in_flight = True
+        wallets_path = str(self._repository.wallets_path)
+        if Path(wallets_path).exists() and wallets_path not in self._watcher.files():
+            self._watcher.addPath(wallets_path)
         wallets = self._repository.load_wallets()
         self._wallet_rows = [_WalletUiState(w) for w in wallets]
+        if not self._wallet_rows:
+            self._selected_address = None
+            self._detail_label.setText("No wallet selected")
+            self._detail_address.setText("Create or import a wallet to begin")
+            self._balance_big.setText("Unavailable")
+            empty_reason = self._repository.last_error or "No wallets found. Create one to begin."
+            self._reason.setText(empty_reason)
         self._render_wallet_list()
         if self._wallet_rows and not self._selected_address:
             self._selected_address = self._wallet_rows[0].wallet.address
@@ -407,7 +495,39 @@ class WalletPage(QWidget):
             self.send_requested.emit(self._selected_address)
 
     def _on_create_wallet(self) -> None:
-        QMessageBox.information(self, "Create Wallet", "Use the Animica CLI: animica wallet create")
+        dlg = _CreateWalletDialog(self)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+
+        self._create_wallet_btn.setEnabled(False)
+        self._status_chip.setText("Creating wallet…")
+        self._status_chip.setToolTip("Launching animica wallet create")
+        self._create_wallet_thread = WorkerThread(
+            self._wallet_service.create_wallet,
+            dlg.wallet_label(),
+            dlg.signature_scheme(),
+            allow_insecure_fallback=dlg.allow_insecure_fallback(),
+        )
+        self._create_wallet_thread.worker.result.connect(self._on_wallet_created)
+        self._create_wallet_thread.worker.error.connect(self._on_wallet_create_error)
+        self._create_wallet_thread.worker.finished.connect(self._on_wallet_create_finished)
+        self._create_wallet_thread.start()
+
+    def _on_wallet_created(self, account) -> None:  # noqa: ANN001
+        self._selected_address = getattr(account, "address", None)
+        self.refresh_wallets()
+        self.refresh_all_balances(force=True)
+        self._status_chip.setText("RPC Unknown")
+        self._status_chip.setToolTip("Wallet created successfully")
+
+    def _on_wallet_create_error(self, message: str, _traceback: str) -> None:
+        self._status_chip.setText("Create Failed")
+        self._status_chip.setToolTip(message)
+        QMessageBox.critical(self, "Create Wallet Failed", message)
+
+    def _on_wallet_create_finished(self) -> None:
+        self._create_wallet_btn.setEnabled(True)
+        self._create_wallet_thread = None
 
 
     def showEvent(self, event) -> None:  # noqa: ANN001

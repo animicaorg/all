@@ -14,8 +14,8 @@ def test_validate_to_address_supports_anim_and_hex() -> None:
 
 
 def test_parse_amount_positive_and_reject_zero() -> None:
-    assert TxService.parse_amount("1") == 10**18
-    assert TxService.parse_amount("0.5") == 5 * 10**17
+    assert TxService.parse_amount("1") == 10**9
+    assert TxService.parse_amount("0.5") == 5 * 10**8
 
     try:
         TxService.parse_amount("0")
@@ -41,7 +41,7 @@ def test_send_via_cli_parses_tx_hash(monkeypatch) -> None:
     result = svc.send_via_cli(
         from_addr="anim1qqqqqqqqqqqqqqqq",
         to_addr="anim1qqqqqqqqqqqqqqqq",
-        amount_wei=10**18,
+        amount_wei=10**9,
         rpc_url="http://127.0.0.1:8545",
         chain_id=1,
     )
