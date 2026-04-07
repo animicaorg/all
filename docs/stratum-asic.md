@@ -7,7 +7,7 @@ with Antminer/Whatsminer style devices.
 
 ## Configuration
 
-Environment variables (or CLI flags via `python -m animica.stratum_pool.cli`):
+Environment variables (or CLI flags via `animica stratum up` / `python -m animica.stratum_pool`):
 
 - `ANIMICA_POOL_PROFILE=asic_sha256` – enable the ASIC listener
 - `ANIMICA_STRATUM_BIND=0.0.0.0:3333` – bind address
@@ -19,7 +19,16 @@ Environment variables (or CLI flags via `python -m animica.stratum_pool.cli`):
 Run the pool:
 
 ```bash
-python -m animica.stratum_pool.cli --profile asic_sha256
+animica stratum up --daemon \
+  --profile asic_sha256 \
+  --rpc-url http://127.0.0.1:8545/rpc \
+  --host 0.0.0.0 \
+  --port 3333 \
+  --api-host 127.0.0.1 \
+  --api-port 8550 \
+  --pool-address anim1your_pool_address_here
+
+animica stratum status
 ```
 
 Point ASICs at:
@@ -42,3 +51,9 @@ python -m mining.cli.stratum_debug --host 127.0.0.1 --port 3333 --worker test.wo
 
 The tool prints subscribe/authorize responses and any `mining.notify` or
 `mining.set_difficulty` messages delivered by the server.
+
+Smoke validation:
+
+```bash
+./scripts/smoke_stratum.sh
+```

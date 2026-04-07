@@ -150,7 +150,9 @@ ensure_venv() {
   source "$VENV_DIR/bin/activate"
 
   log "Upgrading pip, setuptools, and wheel"
-  python -m pip install -U pip setuptools wheel --quiet
+  if ! python -m pip install -U pip setuptools wheel --quiet; then
+    warn "Could not upgrade pip/setuptools/wheel (likely offline or restricted environment); continuing with bundled venv tooling"
+  fi
 }
 
 install_local_dependencies() {
@@ -171,12 +173,12 @@ install_animica() {
   log "Installing Animica package in editable mode"
 
   if [ -d "$ROOT/python" ] && [ -f "$ROOT/python/pyproject.toml" ]; then
-    if ! python -m pip install -e "$ROOT/python[dev]"; then
-      die "Failed to install animica[dev]. Ensure omni-sdk is available via local path or PIP_EXTRA_INDEX_URL"
+    if ! python -m pip install -e "$ROOT/python[operator,dev]"; then
+      die "Failed to install animica[operator,dev]. Ensure omni-sdk is available via local path or PIP_EXTRA_INDEX_URL"
     fi
   elif [ -f "$ROOT/pyproject.toml" ]; then
-    if ! python -m pip install -e "$ROOT[dev]"; then
-      die "Failed to install animica[dev] from root pyproject.toml"
+    if ! python -m pip install -e "$ROOT[operator,dev]"; then
+      die "Failed to install animica[operator,dev] from root pyproject.toml"
     fi
   else
     die "Could not find pyproject.toml (checked ./python and repo root)"
@@ -208,13 +210,16 @@ verify_installation() {
     warn "Console script not found at $VENV_DIR/bin/animica"
   fi
 
-  if ! python - <<'PY' >/dev/null 2>&1
+  if ! PYTHONPATH="$ROOT/python:$ROOT${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY' >/dev/null 2>&1
 import fastapi
 import prometheus_client
+import rpc.server
+import ena.services.ena_node.main
+import animica.stratum_pool.cli
 print(fastapi.__version__, prometheus_client.__version__)
 PY
   then
-    die "Installation verification failed: backend runtime imports (fastapi/prometheus_client) are missing"
+    die "Installation verification failed: backend/runtime imports failed (fastapi, prometheus_client, rpc.server, ena.services.ena_node.main, animica.stratum_pool.cli)"
   fi
 
   log "✓ Installation verified successfully"

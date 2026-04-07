@@ -79,16 +79,43 @@ The mining process:
 6. Removes included transactions from the mempool
 
 ### Stratum Pool Operations
-- `run-pool` starts the Stratum + metrics API using `ANIMICA_RPC_URL`,
-  `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`, and `ANIMICA_MINING_POOL_DB_URL`
-  (CLI flags override env vars).
+- `animica stratum up` starts the Stratum + metrics API with pid/log tracking.
+- `animica stratum status` reports process state and probes `/healthz` + `/summary`.
+- `animica stratum down` stops the managed pool.
+- `run-pool` remains available as the lower-level direct launcher and still uses
+  `ANIMICA_RPC_URL`, `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`, and
+  `ANIMICA_MINING_POOL_DB_URL` (CLI flags override env vars).
 - `show-config` prints the resolved pool configuration.
 - `generate-payout-address` mints a dev payout address using the wallet helpers.
 
 Example matching the devnet profile:
 
 ```sh
-ANIMICA_POOL_PROFILE=hashshare animica-pool run-pool --rpc-url $ANIMICA_RPC_URL
+animica stratum up --daemon --profile hashshare --rpc-url $ANIMICA_RPC_URL
+animica stratum status
+```
+
+Smoke validation:
+
+```sh
+./scripts/smoke_stratum.sh
+```
+
+## ENA CLI
+
+- `animica ena serve start --daemon` launches the local ENA node in dev mode.
+- `animica ena serve status` / `animica ena serve stop` manage the local ENA daemon.
+- `animica ena infer --local "prompt"` hits the local `/v1/inference` path with no on-chain payment.
+- `animica ena train submit --plan <file> --budget 0 --payer local-dev --endpoint http://127.0.0.1:8000`
+  submits a local training job.
+- `animica ena train watch <job_id> --json` polls training status.
+- `animica ena checkpoints list|fetch|publish` manages locally published checkpoint bundles.
+- `animica ena models pull|export` downloads or exports the active local model artifact.
+
+Smoke validation:
+
+```sh
+./scripts/smoke_ena.sh
 ```
 
 ## Wallet CLI

@@ -10,14 +10,18 @@ and tests elsewhere in the repo to import `animica` modules directly.
 From the repository root you can install the package in editable mode:
 
 ```bash
-python -m pip install -e python
+python -m pip install -e "python[operator,dev]"
 ```
 
 ### Optional extras
 
-- `stratum`: pull in the FastAPI + Uvicorn dependencies required for the
-  `animica.stratum_pool` service.
-- `dev`: install pytest for running the bundled test suite.
+- Base package: now includes the backend runtime dependencies required by
+  `rpc.server`, the ENA node, and the Stratum pool (`fastapi`,
+  `uvicorn[standard]`, `prometheus-client`).
+- `backend`, `ena`, `stratum`, `operator`: compatibility aliases kept for
+  operator/install scripts and older docs. They resolve to the same runtime
+  dependency set as the base package.
+- `dev`: pytest, mypy, ruff, respx, and other local development tools.
 
 Example with extras:
 
@@ -27,7 +31,27 @@ python -m pip install -e "python[stratum,dev]"
 
 ### Stratum pool runtime
 
-Run the pool via ``python -m animica.stratum_pool`` (or ``animica.mining.pool``) and
-use ``--rpc-timeout``/``ANIMICA_STRATUM_RPC_TIMEOUT`` (falls back to
-``ANIMICA_RPC_TIMEOUT``) to stretch JSON-RPC deadlines when pointing at slower
-remote endpoints.
+Preferred operator path:
+
+```bash
+animica stratum up --daemon --profile asic_sha256 --rpc-url http://127.0.0.1:8545/rpc
+animica stratum status
+animica stratum down
+```
+
+Lower-level entrypoint:
+
+```bash
+python -m animica.stratum_pool --profile asic_sha256
+```
+
+### Validation helpers
+
+The repo now ships executable smoke helpers for the repaired setup/runtime path:
+
+```bash
+./scripts/smoke_backend_imports.sh
+./scripts/smoke_ena.sh
+./scripts/smoke_stratum.sh
+./scripts/smoke_setup_install.sh
+```

@@ -640,17 +640,21 @@ export ANIMICA_MINER_THREADS=4             # CPU mining threads
 ### Stratum Mining Pool (Advanced)
 
 ```bash
-# Run a Stratum pool
-animica miner run-pool \
-  --rpc-url http://localhost:8545 \
-  --db-url sqlite:///pool.db \
-  --stratum-bind 0.0.0.0:3333
-
-# Show pool configuration
-animica miner show-config
+# Run a managed Stratum pool
+animica stratum up --daemon \
+  --profile asic_sha256 \
+  --rpc-url http://localhost:8545/rpc \
+  --host 0.0.0.0 \
+  --port 3333 \
+  --api-host 127.0.0.1 \
+  --api-port 8550
 
 # Generate pool payout address
 animica miner generate-payout-address --label pool-operator
+
+# Show status / stop
+animica stratum status
+animica stratum down
 ```
 
 ## 💸 Transactions

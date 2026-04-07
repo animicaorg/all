@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from .service_runtime import (is_running, read_metadata, read_pid,
+                              service_state, start_daemon, stop_daemon)
 
 # Add ena module to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
@@ -57,8 +61,52 @@ except ImportError as e:
 # Default configuration
 DEFAULT_ENA_ENDPOINT = os.getenv("ENA_ENDPOINT", "https://ena.animica.org")
 DEFAULT_RPC_URL = os.getenv("ANIMICA_RPC_URL", "https://mainnet.animica.org/rpc")
+LOCAL_ENA_HOST = "127.0.0.1"
+LOCAL_ENA_PORT = 8000
 
 ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _local_ena_endpoint() -> str:
+    override = os.getenv("ENA_LOCAL_ENDPOINT")
+    if override:
+        return override
+
+    state = _ena_service_state()
+    metadata = read_metadata(state)
+    endpoint = metadata.get("endpoint")
+    if isinstance(endpoint, str) and endpoint:
+        return endpoint
+
+    return f"http://{LOCAL_ENA_HOST}:{LOCAL_ENA_PORT}"
+
+
+def _ena_service_state():
+    return service_state("ena")
+
+
+def _ena_service_env(host: str, port: int, model: str) -> Dict[str, str]:
+    repo_root = _repo_root()
+    pythonpath_entries = [str(repo_root / "python"), str(repo_root)]
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": os.pathsep.join(pythonpath_entries),
+            "ENA_DEV_MODE": env.get("ENA_DEV_MODE", "1"),
+            "ENA_HOST": host,
+            "ENA_PORT": str(port),
+            "ENA_DEFAULT_MODEL": model,
+        }
+    )
+    return env
 
 
 @app.command("smoke-test")
@@ -179,8 +227,6 @@ def _send_payment_tx(
     Returns:
         Transaction hash
     """
-    import subprocess
-    
     # Use animica CLI to send transaction
     cmd = [
         "animica",
@@ -412,7 +458,7 @@ def run_inference(
         raise typer.Exit(1)
     
     if local:
-        ena_endpoint = "http://127.0.0.1:8000"
+        ena_endpoint = _local_ena_endpoint()
     else:
         ena_endpoint = endpoint or _get_ena_endpoint()
     
@@ -693,8 +739,6 @@ def check_tx_status(
     ),
 ):
     """Check transaction status."""
-    import subprocess
-    
     animica_rpc = rpc_url or _get_rpc_url()
     
     # Use animica CLI to check status
@@ -768,7 +812,7 @@ def ena_status(
         with httpx.Client(timeout=10) as client:
             # Try /health endpoint first
             try:
-                response = client.get(f"{ena_endpoint}/health")
+                response = client.get(f"{ena_endpoint}/v1/health")
                 response.raise_for_status()
                 health_data = response.json()
                 status_data["network_available"] = True
@@ -784,11 +828,11 @@ def ena_status(
         pass
     
     # Check local endpoint if different
-    local_endpoint = "http://127.0.0.1:8000"
+    local_endpoint = _local_ena_endpoint()
     if local_endpoint != ena_endpoint:
         try:
             with httpx.Client(timeout=5) as client:
-                response = client.get(f"{local_endpoint}/health")
+                response = client.get(f"{local_endpoint}/v1/health")
                 response.raise_for_status()
                 status_data["local_available"] = True
         except httpx.HTTPError:
@@ -2509,6 +2553,11 @@ def image_list(
 def train_submit(
     plan: str = typer.Option(..., "--plan", help="Training plan JSON file path"),
     budget: str = typer.Option(..., "--budget", help="Budget in ANM (e.g., '10.5')"),
+    payer: Optional[str] = typer.Option(
+        None,
+        "--payer",
+        help="Explicit payer identifier for local/dev training flows",
+    ),
     from_wallet: Optional[str] = typer.Option(
         None,
         "--from",
@@ -2551,9 +2600,18 @@ def train_submit(
     
     # Parse budget
     budget_units = _parse_amount(budget)
-    
-    # Load wallet address
-    payer_address = _load_wallet_address(from_wallet)
+
+    local_endpoint = endpoint or _get_ena_endpoint()
+    is_local_endpoint = local_endpoint.startswith("http://127.0.0.1:") or local_endpoint.startswith("http://localhost:")
+
+    if payer:
+        payer_address = payer
+    elif from_wallet:
+        payer_address = _load_wallet_address(from_wallet)
+    elif is_local_endpoint:
+        payer_address = "local-dev"
+    else:
+        payer_address = _load_wallet_address(from_wallet)
     
     if not json_output:
         console.print(f"[bold]Submitting Training Job[/bold]\n")
@@ -3144,47 +3202,55 @@ def serve_start(
     ),
 ):
     """Start local inference daemon."""
-    import subprocess
-    
     model_arg = model or "ena.latest"
+    cmd = [sys.executable, "-m", "ena.services.ena_node.main"]
+    env = _ena_service_env(host, port, model_arg)
+    state = _ena_service_state()
+    metadata = {
+        "host": host,
+        "port": port,
+        "endpoint": f"http://{host}:{port}",
+        "model": model_arg,
+        "cmd": cmd,
+    }
     
     console.print(f"[bold]Starting ENA Inference Daemon[/bold]\n")
     console.print(f"Model: {model_arg}")
     console.print(f"Host: {host}")
     console.print(f"Port: {port}\n")
     
-    # Build command
-    cmd = [
-        "python",
-        "-m",
-        "ena.server",
-        "--model",
-        model_arg,
-        "--host",
-        host,
-        "--port",
-        str(port),
-    ]
-    
     try:
         if daemon:
-            # Run in background
+            pid = read_pid(state)
+            if is_running(pid):
+                console.print(f"[yellow]ENA daemon already running (pid {pid})[/yellow]")
+                console.print(f"[dim]Endpoint: {_local_ena_endpoint()}[/dim]")
+                raise typer.Exit(0)
+
             console.print("[yellow]Starting daemon...[/yellow]")
-            subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
+            pid = start_daemon(
+                state,
+                cmd=cmd,
+                env=env,
+                cwd=_repo_root(),
+                metadata=metadata,
             )
             console.print(f"[green]✓ Daemon started successfully[/green]")
+            console.print(f"PID: {pid}")
             console.print(f"Endpoint: http://{host}:{port}")
+            console.print(f"Log: {state.log_file}")
             console.print(f"\n[dim]Test with:[/dim]")
             console.print(f"[dim]  animica ena infer --local 'Hello, world!'[/dim]")
         else:
             # Run in foreground
             console.print("[yellow]Starting server (Ctrl+C to stop)...[/yellow]\n")
-            subprocess.run(cmd)
-    
+            subprocess.run(
+                cmd,
+                cwd=_repo_root(),
+                env=env,
+                check=False,
+            )
+
     except FileNotFoundError:
         console.print("[red]Error: ENA server module not found[/red]")
         console.print("[yellow]Install ENA server dependencies with:[/yellow]")
@@ -3192,6 +3258,38 @@ def serve_start(
         raise typer.Exit(1)
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped[/yellow]")
+
+
+@serve_app.command("stop")
+def serve_stop() -> None:
+    """Stop local inference daemon."""
+    state = _ena_service_state()
+    pid = read_pid(state)
+    if not is_running(pid):
+        console.print("[yellow]ENA daemon is not running[/yellow]")
+        raise typer.Exit(0)
+
+    stop_daemon(state)
+    console.print(f"[green]✓ Stopped ENA daemon (pid {pid})[/green]")
+
+
+@serve_app.command("status")
+def serve_status() -> None:
+    """Show local inference daemon status."""
+    state = _ena_service_state()
+    pid = read_pid(state)
+    metadata = read_metadata(state)
+
+    console.print("[bold]ENA Daemon Status[/bold]\n")
+    if is_running(pid):
+        endpoint = str(metadata.get("endpoint") or _local_ena_endpoint())
+        console.print(f"State: [green]running[/green] (pid {pid})")
+        console.print(f"Endpoint: {endpoint}")
+        console.print(f"Log: {state.log_file}")
+    else:
+        console.print("State: [yellow]stopped[/yellow]")
+        console.print(f"Expected endpoint: {_local_ena_endpoint()}")
+        console.print("[dim]Start with: animica ena serve start --daemon[/dim]")
 
 
 if __name__ == "__main__":

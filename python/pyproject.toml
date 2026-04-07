@@ -16,12 +16,35 @@ dependencies = [
   "pyyaml>=6.0.1",
   "cbor2>=5.6.0",
   "requests>=2.31.0",
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
 ]
 
 [project.scripts]
 animica = "animica.cli.main:main"
 
 [project.optional-dependencies]
+backend = [
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
+]
+ena = [
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
+]
+stratum = [
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
+]
+operator = [
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
+]
 dev = [
   "pytest>=7.0",
   "pytest-asyncio>=0.23",
@@ -29,9 +52,6 @@ dev = [
   "mypy>=1.9",
   "omni-sdk>=0.1.0",
   "respx>=0.22",
-  "fastapi>=0.115.0,<0.116.0",
-  "uvicorn[standard]>=0.30.0,<1.0.0",
-  "prometheus-client>=0.20.0,<1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

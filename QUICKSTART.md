@@ -515,14 +515,17 @@ python -m mining.cli.stats --rpc http://localhost:8545
 ```bash
 source .venv/bin/activate
 
-# Run a Stratum mining pool
-animica miner run-pool \
-  --rpc-url http://localhost:8545 \
-  --db-url sqlite:///pool.db \
-  --stratum-bind 0.0.0.0:3333
+# Run a managed Stratum mining pool
+animica stratum up --daemon \
+  --profile asic_sha256 \
+  --rpc-url http://localhost:8545/rpc \
+  --host 0.0.0.0 \
+  --port 3333 \
+  --api-host 127.0.0.1 \
+  --api-port 8550
 
 # Show pool configuration
-animica miner show-config
+animica stratum status
 ```
 
 **Note:** The setup script (`./setup.sh`) automatically installs all required dependencies for mining, including stratum pool modules and the Omni SDK.
@@ -679,7 +682,7 @@ After completing this quickstart:
 ### Mining Issues
 
 **Problem**: `animica miner run-pool` fails with "Stratum pool modules required"
-- **Solution**: Run `./setup.sh` to install all dependencies including stratum extras
+- **Solution**: Run `./setup.sh` or `./scripts/smoke_setup_install.sh` to install all dependencies including the Stratum runtime
 
 **Problem**: `animica miner mine-blocks` fails with "RpcClient not available"
 - **Solution**: Ensure SDK is installed: `pip install -e sdk/python` (or re-run `./setup.sh`)
