@@ -53,6 +53,9 @@ RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
 BOOTSTRAP_NODE_ENV = "ANIMICA_BOOTSTRAP_NODE"
 HASHRATE_WINDOW_ENV = "ANIMICA_HASHRATE_WINDOW"
+DEFAULT_CONTAINER_DATA_DIR = "/data"
+DEFAULT_CONTAINER_UID = 10001
+DEFAULT_CONTAINER_GID = 10001
 
 # Networks that use the 'dev' profile in docker-compose
 DEV_NETWORKS = {"devnet", "local-devnet"}
@@ -93,6 +96,28 @@ class ProcessInfo:
     pid: int
     command: str
     source: str
+
+
+@dataclass(frozen=True)
+class NodeStoragePlan:
+    mode: str
+    mount_source: str
+    volume_name: str
+    host_state_dir: Path
+    host_data_dir: Optional[Path]
+    host_chain_dir: Optional[Path]
+    host_p2p_dir: Optional[Path]
+    host_snapshots_dir: Optional[Path]
+    container_data_dir: str
+    container_chain_dir: str
+    container_p2p_dir: str
+    container_snapshots_dir: str
+    runtime_uid: int
+    runtime_gid: int
+
+    @property
+    def uses_named_volume(self) -> bool:
+        return self.mode == "named"
 
 
 def _repo_root() -> Path:
@@ -780,6 +805,204 @@ def _ensure_db_initialized(net_cfg: Any, *, quiet: bool = False) -> bool:
     if not quiet:
         typer.secho("✓ Database initialized from genesis.", fg=typer.colors.GREEN)
     return True
+
+
+def _resolve_runtime_id(env_var: str, default: int) -> int:
+    raw = os.getenv(env_var)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid {env_var}={raw!r}; expected an integer UID/GID."
+        ) from exc
+
+
+def _looks_like_bind_mount_source(raw: str) -> bool:
+    if not raw:
+        return False
+    return raw.startswith(("/", "~", "."))
+
+
+def _touch_writable(path: Path, *, label: str) -> None:
+    probe = path / ".animica-write-check"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"{label} could not be created at {path}: {exc}") from exc
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(f"{label} is not writable at {path}: {exc}") from exc
+
+
+def _chain_dir_name(chain_id: int) -> str:
+    return f"chain-{chain_id}"
+
+
+def _resolve_node_storage_plan(
+    *,
+    network: str,
+    net_cfg: Any,
+    chain_id: int,
+    volume_name: str,
+) -> NodeStoragePlan:
+    del network
+    configured_chain_dir = Path(os.path.expanduser(str(net_cfg.data_dir)))
+    chain_dir_name = _chain_dir_name(chain_id)
+    if configured_chain_dir.name == chain_dir_name:
+        host_state_dir = configured_chain_dir.parent
+    else:
+        host_state_dir = configured_chain_dir
+
+    raw_mount_source = (os.getenv("ANIMICA_DATA_MOUNT_SOURCE") or "").strip()
+    if raw_mount_source:
+        if _looks_like_bind_mount_source(raw_mount_source):
+            mode = "bind"
+            host_data_dir = Path(raw_mount_source).expanduser()
+            mount_source = str(host_data_dir)
+            resolved_volume_name = volume_name
+        else:
+            mode = "named"
+            mount_source = raw_mount_source
+            resolved_volume_name = raw_mount_source
+            host_data_dir = None
+    else:
+        mode = "named"
+        mount_source = volume_name
+        resolved_volume_name = volume_name
+        host_data_dir = None
+
+    if mode == "bind":
+        host_chain_dir = host_data_dir / chain_dir_name if host_data_dir else None
+        host_p2p_dir = host_chain_dir / "p2p" if host_chain_dir else None
+        host_snapshots_dir = host_data_dir / "snapshots" if host_data_dir else None
+        uid_default = os.getuid() if hasattr(os, "getuid") else DEFAULT_CONTAINER_UID
+        gid_default = os.getgid() if hasattr(os, "getgid") else DEFAULT_CONTAINER_GID
+    else:
+        host_chain_dir = None
+        host_p2p_dir = None
+        host_snapshots_dir = None
+        uid_default = DEFAULT_CONTAINER_UID
+        gid_default = DEFAULT_CONTAINER_GID
+
+    runtime_uid = _resolve_runtime_id("ANIMICA_RUNTIME_UID", uid_default)
+    runtime_gid = _resolve_runtime_id("ANIMICA_RUNTIME_GID", gid_default)
+    container_chain_dir = f"{DEFAULT_CONTAINER_DATA_DIR}/{chain_dir_name}"
+    return NodeStoragePlan(
+        mode=mode,
+        mount_source=mount_source,
+        volume_name=resolved_volume_name,
+        host_state_dir=host_state_dir,
+        host_data_dir=host_data_dir,
+        host_chain_dir=host_chain_dir,
+        host_p2p_dir=host_p2p_dir,
+        host_snapshots_dir=host_snapshots_dir,
+        container_data_dir=DEFAULT_CONTAINER_DATA_DIR,
+        container_chain_dir=container_chain_dir,
+        container_p2p_dir=f"{container_chain_dir}/p2p",
+        container_snapshots_dir=f"{DEFAULT_CONTAINER_DATA_DIR}/snapshots",
+        runtime_uid=runtime_uid,
+        runtime_gid=runtime_gid,
+    )
+
+
+def _prepare_bind_mount_storage(plan: NodeStoragePlan) -> None:
+    if plan.uses_named_volume:
+        return
+    assert plan.host_data_dir is not None
+    assert plan.host_chain_dir is not None
+    assert plan.host_p2p_dir is not None
+    assert plan.host_snapshots_dir is not None
+    _touch_writable(plan.host_data_dir, label="Host data mount")
+    _touch_writable(plan.host_chain_dir, label="Host chain data")
+    _touch_writable(plan.host_p2p_dir, label="Host P2P data")
+    _touch_writable(plan.host_snapshots_dir, label="Host snapshots directory")
+
+
+def _storage_display(value: Optional[Path]) -> str:
+    return str(value) if value is not None else "n/a (named volume)"
+
+
+def _print_storage_diagnostics(plan: NodeStoragePlan) -> None:
+    strategy = "named Docker volume" if plan.uses_named_volume else "explicit bind mount"
+    mount_type = "volume" if plan.uses_named_volume else "bind"
+    typer.echo(f"Storage strategy: {strategy}")
+    typer.echo(f"Mount type: {mount_type}")
+    typer.echo(f"Mount source: {plan.mount_source}")
+    typer.echo(f"Host data dir: {_storage_display(plan.host_data_dir)}")
+    typer.echo(f"Host chain dir: {_storage_display(plan.host_chain_dir)}")
+    typer.echo(f"Host snapshots dir: {_storage_display(plan.host_snapshots_dir)}")
+    typer.echo(f"Container data dir: {plan.container_data_dir}")
+    typer.echo(f"Container chain dir: {plan.container_chain_dir}")
+    typer.echo(f"Container snapshots dir: {plan.container_snapshots_dir}")
+    typer.echo(f"Runtime user: {plan.runtime_uid}:{plan.runtime_gid}")
+
+
+def _compose_node_data_source(network: str, plan: NodeStoragePlan) -> str:
+    if not plan.uses_named_volume:
+        return plan.mount_source
+    return {
+        "mainnet": "mainnet_node_data",
+        "testnet": "testnet_node_data",
+        "devnet": "animica_devnet_chain_1337_data",
+    }.get(network, plan.mount_source)
+
+
+def _build_compose_env(
+    *,
+    network: str,
+    compose_file: Path,
+    plan: NodeStoragePlan,
+    rpc_port: Optional[int] = None,
+    p2p_port: Optional[int] = None,
+    metrics_port: Optional[int] = None,
+    genesis_tag: Optional[str] = None,
+    bootstrap_setting: Optional[EnvBoolSetting] = None,
+    auto_reset_genesis_mismatch: bool = False,
+) -> dict[str, str]:
+    compose_env = {
+        **os.environ,
+        "ANIMICA_NETWORK": network,
+        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
+        "ANIMICA_DATA_MOUNT_SOURCE": _compose_node_data_source(network, plan),
+        "ANIMICA_NAMED_DATA_VOLUME": plan.mount_source if plan.uses_named_volume else "",
+        "ANIMICA_VOLUME_STRATEGY": plan.mode,
+        "ANIMICA_RUNTIME_UID": str(plan.runtime_uid),
+        "ANIMICA_RUNTIME_GID": str(plan.runtime_gid),
+        "ANIMICA_HOST_DATA_DIR": str(plan.host_data_dir) if plan.host_data_dir else "",
+        "ANIMICA_HOST_CHAIN_DIR": str(plan.host_chain_dir) if plan.host_chain_dir else "",
+        "ANIMICA_HOST_SNAPSHOTS_DIR": (
+            str(plan.host_snapshots_dir) if plan.host_snapshots_dir else ""
+        ),
+        "ANIMICA_CONTAINER_DATA_DIR": plan.container_data_dir,
+        "ANIMICA_CONTAINER_CHAIN_DIR": plan.container_chain_dir,
+        "ANIMICA_CONTAINER_P2P_DATA_DIR": plan.container_p2p_dir,
+        "ANIMICA_CONTAINER_SNAPSHOT_DIR": plan.container_snapshots_dir,
+    }
+    if genesis_tag:
+        compose_env.setdefault("GENESIS_TAG", genesis_tag)
+        compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
+    if rpc_port is not None:
+        compose_env.setdefault("HOST_RPC_PORT", str(rpc_port))
+    if p2p_port is not None:
+        compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
+        compose_env.setdefault("HOST_P2P_TCP_PORT", str(p2p_port))
+    if metrics_port is not None:
+        compose_env.setdefault("HOST_METRICS_PORT", str(metrics_port))
+    if bootstrap_setting is not None:
+        if bootstrap_setting.source == "cli_flag":
+            compose_env["ANIMICA_BOOTSTRAP_NODE"] = (
+                "true" if bootstrap_setting.value else "false"
+            )
+        compose_env.setdefault(
+            "ANIMICA_RPC_BOOTSTRAP_NODE", "1" if bootstrap_setting.value else "0"
+        )
+    if auto_reset_genesis_mismatch:
+        compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
+    return compose_env
 
 
 
@@ -2362,7 +2585,6 @@ def _up_impl(
     compose_file = _get_compose_file(network)
     defaults = get_network_defaults(network)
     net_cfg = load_network_config(network)
-    data_dir = str(Path(net_cfg.data_dir).expanduser())
 
     rpc_port = _resolve_host_port("HOST_RPC_PORT", defaults["rpc_port"])
     p2p_port = _resolve_host_port(
@@ -2373,6 +2595,12 @@ def _up_impl(
     metrics_port = _resolve_host_port("HOST_METRICS_PORT", defaults["metrics_port"])
     genesis_tag = _genesis_tag_for_network(net_cfg)
     volume_name = _volume_name_for_chain(network, defaults["chain_id"], genesis_tag)
+    storage_plan = _resolve_node_storage_plan(
+        network=network,
+        net_cfg=net_cfg,
+        chain_id=defaults["chain_id"],
+        volume_name=volume_name,
+    )
 
     allow_bootstrap = allow_bootstrap_rpc or parse_env_bool(
         os.getenv("ANIMICA_ALLOW_BOOTSTRAP_RPC"), False
@@ -2420,6 +2648,11 @@ def _up_impl(
         kill_conflicts=kill_conflicts,
         pid_file=_resolve_pid_file(),
     )
+    try:
+        _prepare_bind_mount_storage(storage_plan)
+    except RuntimeError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -2427,7 +2660,7 @@ def _up_impl(
     typer.echo(f"Host RPC Port: {rpc_port}")
     typer.echo(f"Host P2P Port: {p2p_port}")
     typer.echo(f"Host Metrics Port: {metrics_port}")
-    typer.echo(f"Data directory: {data_dir}")
+    _print_storage_diagnostics(storage_plan)
     
     # Build docker-compose command
     # For devnet, we need to use profiles; for mainnet/testnet, services run by default
@@ -2448,31 +2681,17 @@ def _up_impl(
     typer.echo(f"\nRunning: {' '.join(cmd)}")
     typer.echo("This may take a few minutes on first run...\n")
     
-    compose_env = {
-        **os.environ,
-        "ANIMICA_NETWORK": network,
-        "ANIMICA_DATA_DIR": data_dir,
-        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
-        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
-    }
-    if genesis_tag:
-        compose_env.setdefault("GENESIS_TAG", genesis_tag)
-        compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
-    if volume_name:
-        compose_env.setdefault("ANIMICA_DATA_ROOT", volume_name)
-    compose_env.setdefault("HOST_RPC_PORT", str(rpc_port))
-    compose_env.setdefault("HOST_P2P_PORT", str(p2p_port))
-    compose_env.setdefault("HOST_P2P_TCP_PORT", str(p2p_port))
-    compose_env.setdefault("HOST_METRICS_PORT", str(metrics_port))
-    if bootstrap_setting.source == "cli_flag":
-        compose_env["ANIMICA_BOOTSTRAP_NODE"] = (
-            "true" if bootstrap_setting.value else "false"
-        )
-    compose_env.setdefault(
-        "ANIMICA_RPC_BOOTSTRAP_NODE", "1" if bootstrap_setting.value else "0"
+    compose_env = _build_compose_env(
+        network=network,
+        compose_file=compose_file,
+        plan=storage_plan,
+        rpc_port=rpc_port,
+        p2p_port=p2p_port,
+        metrics_port=metrics_port,
+        genesis_tag=genesis_tag,
+        bootstrap_setting=bootstrap_setting,
+        auto_reset_genesis_mismatch=auto_reset_genesis_mismatch,
     )
-    if auto_reset_genesis_mismatch:
-        compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
     try:
         typer.echo("Compose up started.")
@@ -2721,10 +2940,15 @@ def up_all(
             defaults = get_network_defaults(network)
             compose_file = defaults["compose_file"]
             net_cfg = load_network_config(network)
-            data_dir = str(Path(net_cfg.data_dir).expanduser())
             genesis_tag = _genesis_tag_for_network(net_cfg)
             volume_name = _volume_name_for_chain(
                 network, defaults["chain_id"], genesis_tag
+            )
+            storage_plan = _resolve_node_storage_plan(
+                network=network,
+                net_cfg=net_cfg,
+                chain_id=defaults["chain_id"],
+                volume_name=volume_name,
             )
             
             if not compose_file.exists():
@@ -2763,13 +2987,19 @@ def up_all(
             )
             failed_networks.append(network)
             continue
+        try:
+            _prepare_bind_mount_storage(storage_plan)
+        except RuntimeError as exc:
+            typer.secho(f"✗ {network} storage preflight failed: {exc}", fg=typer.colors.RED)
+            failed_networks.append(network)
+            continue
 
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
         typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
         typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
         typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
-        typer.echo(f"Data directory: {data_dir}")
+        _print_storage_diagnostics(storage_plan)
         
         # Build docker-compose command
         cmd = _compose_base_cmd(compose_file, network)
@@ -2787,27 +3017,14 @@ def up_all(
 
         typer.echo(f"\nRunning: {' '.join(cmd)}")
 
-        compose_env = {
-            **os.environ,
-            "ANIMICA_NETWORK": network,
-            "ANIMICA_DATA_DIR": data_dir,
-            "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
-            "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
-        }
-        if genesis_tag:
-            compose_env.setdefault("GENESIS_TAG", genesis_tag)
-            compose_env.setdefault("ANIMICA_GENESIS_TAG", genesis_tag)
-        if volume_name:
-            compose_env.setdefault("ANIMICA_DATA_ROOT", volume_name)
-        if bootstrap_setting.source == "cli_flag":
-            compose_env["ANIMICA_BOOTSTRAP_NODE"] = (
-                "true" if bootstrap_setting.value else "false"
-            )
-        compose_env.setdefault(
-            "ANIMICA_RPC_BOOTSTRAP_NODE", "1" if bootstrap_setting.value else "0"
+        compose_env = _build_compose_env(
+            network=network,
+            compose_file=compose_file,
+            plan=storage_plan,
+            genesis_tag=genesis_tag,
+            bootstrap_setting=bootstrap_setting,
+            auto_reset_genesis_mismatch=auto_reset_genesis_mismatch,
         )
-        if auto_reset_genesis_mismatch:
-            compose_env.setdefault("ANIMICA_AUTO_RESET_GENESIS_MISMATCH", "1")
 
         try:
             result = subprocess.run(
@@ -2920,10 +3137,17 @@ def down(
     # Get network-specific compose file
     compose_file = _get_compose_file(network)
     net_cfg = load_network_config(network)
-    data_dir = str(Path(net_cfg.data_dir).expanduser())
+    genesis_tag = _genesis_tag_for_network(net_cfg)
+    storage_plan = _resolve_node_storage_plan(
+        network=network,
+        net_cfg=net_cfg,
+        chain_id=net_cfg.chain_id,
+        volume_name=_volume_name_for_chain(network, net_cfg.chain_id, genesis_tag),
+    )
     
     typer.secho(f"Stopping node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    _print_storage_diagnostics(storage_plan)
     
     if volumes:
         typer.secho(
@@ -2936,13 +3160,12 @@ def down(
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
 
-    compose_env = {
-        **os.environ,
-        "ANIMICA_NETWORK": network,
-        "ANIMICA_DATA_DIR": data_dir,
-        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
-        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
-    }
+    compose_env = _build_compose_env(
+        network=network,
+        compose_file=compose_file,
+        plan=storage_plan,
+        genesis_tag=genesis_tag,
+    )
 
     try:
         result = subprocess.run(
@@ -2961,9 +3184,28 @@ def down(
                     err=True,
                 )
             if volumes:
-                typer.echo(f"All volumes and {network} blockchain data have been removed.")
+                if storage_plan.uses_named_volume:
+                    typer.echo(f"All volumes and {network} blockchain data have been removed.")
+                    typer.echo(
+                        f"Removed docker volumes including node data volume: {storage_plan.mount_source}"
+                    )
+                else:
+                    typer.echo("Docker-managed volumes have been removed.")
+                    typer.echo(
+                        "Removed docker-managed volumes. Bind-mounted node data remains at "
+                        f"{storage_plan.host_data_dir}."
+                    )
             else:
-                typer.echo(f"{network.capitalize()} blockchain data has been preserved in volumes.")
+                if storage_plan.uses_named_volume:
+                    typer.echo(
+                        f"{network.capitalize()} blockchain data remains in named volume "
+                        f"{storage_plan.mount_source}."
+                    )
+                else:
+                    typer.echo(
+                        f"{network.capitalize()} blockchain data remains in bind mount "
+                        f"{storage_plan.host_data_dir}."
+                    )
                 typer.echo("Use 'animica node down --volumes' or 'animica node reset' to remove data.")
         else:
             typer.secho(
@@ -3022,12 +3264,22 @@ def reset(
     compose_file = _get_compose_file(resolved_network)
     net_cfg = load_network_config(resolved_network)
     data_dir = Path(net_cfg.data_dir).expanduser()
+    genesis_tag = _genesis_tag_for_network(net_cfg)
+    storage_plan = _resolve_node_storage_plan(
+        network=resolved_network,
+        net_cfg=net_cfg,
+        chain_id=net_cfg.chain_id,
+        volume_name=_volume_name_for_chain(resolved_network, net_cfg.chain_id, genesis_tag),
+    )
 
     targets: list[str] = []
     if volumes:
-        targets.append("docker volumes")
+        if storage_plan.uses_named_volume:
+            targets.append(f"docker volume {storage_plan.mount_source}")
+        else:
+            targets.append("docker-managed volumes")
     if host:
-        targets.append(f"host data at {data_dir}")
+        targets.append(f"host data at {storage_plan.host_chain_dir or data_dir}")
     if not targets:
         typer.secho("Nothing to reset: both volumes and host cleanup are disabled.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
@@ -3042,17 +3294,17 @@ def reset(
 
     typer.secho(f"Resetting node data for network: {resolved_network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    _print_storage_diagnostics(storage_plan)
 
     cmd = _compose_down_cmd(compose_file, resolved_network, volumes=volumes)
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
 
-    compose_env = {
-        **os.environ,
-        "ANIMICA_NETWORK": resolved_network,
-        "ANIMICA_DATA_DIR": str(data_dir),
-        "ANIMICA_P2P_DATA_DIR": str(Path(data_dir) / "p2p"),
-        "ANIMICA_COMPOSE_FILE": _compose_file_container_path(compose_file),
-    }
+    compose_env = _build_compose_env(
+        network=resolved_network,
+        compose_file=compose_file,
+        plan=storage_plan,
+        genesis_tag=genesis_tag,
+    )
 
     try:
         result = subprocess.run(
@@ -3083,11 +3335,8 @@ def reset(
             err=True,
         )
 
-    if volumes:
-        genesis_tag = _genesis_tag_for_network(net_cfg)
-        volume_name = _volume_name_for_chain(
-            resolved_network, net_cfg.chain_id, genesis_tag
-        )
+    if volumes and storage_plan.uses_named_volume:
+        volume_name = storage_plan.mount_source
         typer.echo(f"Removing volume: {volume_name}")
         volume_result = subprocess.run(
             ["docker", "volume", "rm", volume_name],
@@ -3105,17 +3354,18 @@ def reset(
     if host:
         try:
             preserve = _wallet_preserve_candidates()
-            _remove_path_preserving(data_dir, preserve)
-            if data_dir.exists():
+            host_target = storage_plan.host_chain_dir or data_dir
+            _remove_path_preserving(host_target, preserve)
+            if host_target.exists():
                 typer.echo(
                     "Host data directory cleaned; preserved wallet files to avoid "
                     "losing access to mined balances."
                 )
             else:
-                typer.echo(f"Removed host data directory: {data_dir}")
+                typer.echo(f"Removed host data directory: {host_target}")
         except OSError as exc:
             typer.secho(
-                f"Warning: failed to remove {data_dir} ({exc}). "
+                f"Warning: failed to remove {storage_plan.host_chain_dir or data_dir} ({exc}). "
                 "Ensure the node is stopped, then retry.",
                 fg=typer.colors.YELLOW,
                 err=True,

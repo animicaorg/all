@@ -1531,3 +1531,173 @@ def test_logs_command_falls_back_when_docker_missing(monkeypatch: Any, tmp_path:
     assert result.exit_code == 0
     assert "Docker is not installed" in result.output
     assert any(cmd[0].endswith("tail") or cmd[0] == "/usr/bin/tail" for cmd in calls)
+
+
+def test_resolve_node_storage_plan_defaults_to_named_volume(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.delenv("ANIMICA_DATA_MOUNT_SOURCE", raising=False)
+    monkeypatch.delenv("ANIMICA_RUNTIME_UID", raising=False)
+    monkeypatch.delenv("ANIMICA_RUNTIME_GID", raising=False)
+
+    cfg = SimpleNamespace(data_dir=str(tmp_path / "chain-1"), chain_id=1)
+    plan = node._resolve_node_storage_plan(
+        network="mainnet",
+        net_cfg=cfg,
+        chain_id=1,
+        volume_name="animica_mainnet_chain_1_deadbeef_data",
+    )
+
+    assert plan.mode == "named"
+    assert plan.mount_source == "animica_mainnet_chain_1_deadbeef_data"
+    assert plan.host_data_dir is None
+    assert plan.container_data_dir == "/data"
+    assert plan.container_chain_dir == "/data/chain-1"
+    assert plan.container_snapshots_dir == "/data/snapshots"
+    assert plan.runtime_uid == node.DEFAULT_CONTAINER_UID
+    assert plan.runtime_gid == node.DEFAULT_CONTAINER_GID
+
+
+def test_resolve_node_storage_plan_bind_mount_uses_host_uid_gid(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ANIMICA_DATA_MOUNT_SOURCE", str(tmp_path / "host-data"))
+    monkeypatch.delenv("ANIMICA_RUNTIME_UID", raising=False)
+    monkeypatch.delenv("ANIMICA_RUNTIME_GID", raising=False)
+
+    cfg = SimpleNamespace(data_dir=str(tmp_path / "chain-1"), chain_id=1)
+    plan = node._resolve_node_storage_plan(
+        network="mainnet",
+        net_cfg=cfg,
+        chain_id=1,
+        volume_name="ignored",
+    )
+
+    assert plan.mode == "bind"
+    assert plan.host_data_dir == tmp_path / "host-data"
+    assert plan.host_chain_dir == tmp_path / "host-data" / "chain-1"
+    assert plan.host_p2p_dir == tmp_path / "host-data" / "chain-1" / "p2p"
+    assert plan.host_snapshots_dir == tmp_path / "host-data" / "snapshots"
+    assert plan.runtime_uid == os.getuid()
+    assert plan.runtime_gid == os.getgid()
+
+
+def test_prepare_bind_mount_storage_creates_snapshots_dir(tmp_path: Path) -> None:
+    host_data = tmp_path / "host-data"
+    plan = node.NodeStoragePlan(
+        mode="bind",
+        mount_source=str(host_data),
+        volume_name="ignored",
+        host_state_dir=tmp_path,
+        host_data_dir=host_data,
+        host_chain_dir=host_data / "chain-1",
+        host_p2p_dir=host_data / "chain-1" / "p2p",
+        host_snapshots_dir=host_data / "snapshots",
+        container_data_dir="/data",
+        container_chain_dir="/data/chain-1",
+        container_p2p_dir="/data/chain-1/p2p",
+        container_snapshots_dir="/data/snapshots",
+        runtime_uid=1000,
+        runtime_gid=1000,
+    )
+
+    node._prepare_bind_mount_storage(plan)
+
+    assert (host_data / "chain-1").is_dir()
+    assert (host_data / "chain-1" / "p2p").is_dir()
+    assert (host_data / "snapshots").is_dir()
+
+
+def test_build_compose_env_does_not_leak_host_paths(tmp_path: Path) -> None:
+    plan = node.NodeStoragePlan(
+        mode="bind",
+        mount_source=str(tmp_path / "host-data"),
+        volume_name="ignored",
+        host_state_dir=tmp_path,
+        host_data_dir=tmp_path / "host-data",
+        host_chain_dir=tmp_path / "host-data" / "chain-1",
+        host_p2p_dir=tmp_path / "host-data" / "chain-1" / "p2p",
+        host_snapshots_dir=tmp_path / "host-data" / "snapshots",
+        container_data_dir="/data",
+        container_chain_dir="/data/chain-1",
+        container_p2p_dir="/data/chain-1/p2p",
+        container_snapshots_dir="/data/snapshots",
+        runtime_uid=1234,
+        runtime_gid=5678,
+    )
+    compose_file = tmp_path / "docker-compose.mainnet.yml"
+    compose_file.write_text("services:\n  node:\n    image: test\n", encoding="utf-8")
+
+    env = node._build_compose_env(
+        network="mainnet",
+        compose_file=compose_file,
+        plan=plan,
+        rpc_port=8545,
+        p2p_port=30333,
+        metrics_port=9000,
+    )
+
+    assert env["ANIMICA_DATA_MOUNT_SOURCE"] == str(tmp_path / "host-data")
+    assert env["ANIMICA_CONTAINER_P2P_DATA_DIR"] == "/data/chain-1/p2p"
+    assert env["ANIMICA_CONTAINER_SNAPSHOT_DIR"] == "/data/snapshots"
+    assert env.get("ANIMICA_DATA_DIR") != str(tmp_path / "host-data" / "chain-1")
+    assert env.get("ANIMICA_P2P_DATA_DIR") != str(
+        tmp_path / "host-data" / "chain-1" / "p2p"
+    )
+
+
+def test_up_reports_storage_diagnostics_and_mount_source(monkeypatch: Any, tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    state = CLIState(state_file)
+    state.set("active_network", "mainnet")
+    monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+
+    compose_file = tmp_path / "docker-compose.mainnet.yml"
+    compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n", encoding="utf-8")
+    monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: compose_file)
+    monkeypatch.setattr(
+        "animica.cli.node.load_network_config",
+        lambda network=None: SimpleNamespace(
+            data_dir=str(tmp_path / "chain-1"),
+            chain_id=1,
+            name="mainnet",
+            bootstrap_url="http://127.0.0.1:8545/rpc",
+        ),
+    )
+    monkeypatch.setenv("ANIMICA_DATA_MOUNT_SOURCE", str(tmp_path / "host-data"))
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
+        result = runner.invoke(node.app, ["up", "--no-wait-sync"])
+
+    assert result.exit_code == 0
+    assert "Storage strategy: explicit bind mount" in result.output
+    assert f"Mount source: {tmp_path / 'host-data'}" in result.output
+    env = mock_run.call_args.kwargs["env"]
+    assert env["ANIMICA_DATA_MOUNT_SOURCE"] == str(tmp_path / "host-data")
+    assert env["ANIMICA_CONTAINER_P2P_DATA_DIR"] == "/data/chain-1/p2p"
+
+
+def test_mainnet_compose_uses_named_volume_default_and_container_paths() -> None:
+    compose_path = Path(__file__).resolve().parents[4] / "ops" / "docker" / "docker-compose.mainnet.yml"
+    content = compose_path.read_text(encoding="utf-8")
+
+    assert 'name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_mainnet_chain_1_data}"' in content
+    assert "${ANIMICA_DATA_MOUNT_SOURCE:-mainnet_node_data}:/data" in content
+    assert 'user: "${ANIMICA_RUNTIME_UID:-10001}:${ANIMICA_RUNTIME_GID:-10001}"' in content
+    assert 'ANIMICA_P2P_DATA_DIR: "/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p"' in content
+    assert 'ANIMICA_SNAPSHOT_DIR: "/data/snapshots"' in content
+    assert "${HOME}/.animica" not in content
+
+
+def test_entrypoint_removes_permission_mutation_hacks() -> None:
+    entrypoint = (
+        Path(__file__).resolve().parents[4]
+        / "ops"
+        / "docker"
+        / "entrypoints"
+        / "entrypoint.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "chmod 0755" not in entrypoint
+    assert "chown -R" not in entrypoint
+    assert "/root/.animica" not in entrypoint

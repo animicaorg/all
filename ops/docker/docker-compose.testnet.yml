@@ -27,7 +27,7 @@ networks:
 
 volumes:
   testnet_node_data:
-    name: animica_testnet_chain_2_data
+    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_testnet_chain_2_data}"
   testnet_services_data:
     name: animica_testnet_services_data
 
@@ -41,6 +41,7 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-testnet-node
     working_dir: /app
+    user: "${ANIMICA_RUNTIME_UID:-10001}:${ANIMICA_RUNTIME_GID:-10001}"
     # Env precedence: shell/--env-file > env_file > defaults in compose.
     env_file:
       - path: ../../.env
@@ -50,7 +51,7 @@ services:
       # Use a Docker named volume by default to avoid host filesystem permission issues.
       # To bind a host path instead, set ANIMICA_DATA_MOUNT_SOURCE=/absolute/path/on/host
       # (for example: ${HOME}/.animica).
-      - ${ANIMICA_DATA_MOUNT_SOURCE:-animica_testnet_chain_2_data}:/data
+      - ${ANIMICA_DATA_MOUNT_SOURCE:-testnet_node_data}:/data
     environment:
       # Testnet chain config
       ANIMICA_NETWORK: "testnet"
@@ -58,6 +59,13 @@ services:
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/testnet.json}"
       ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
+      ANIMICA_HOME: "/data/chain-${ANIMICA_CHAIN_ID:-2}"
+      ANIMICA_VOLUME_STRATEGY: "${ANIMICA_VOLUME_STRATEGY:-named}"
+      ANIMICA_DATA_MOUNT_SOURCE: "${ANIMICA_NAMED_DATA_VOLUME:-${ANIMICA_DATA_MOUNT_SOURCE:-testnet_node_data}}"
+      ANIMICA_HOST_DATA_DIR: "${ANIMICA_HOST_DATA_DIR:-}"
+      ANIMICA_HOST_CHAIN_DIR: "${ANIMICA_HOST_CHAIN_DIR:-}"
+      ANIMICA_HOST_SNAPSHOTS_DIR: "${ANIMICA_HOST_SNAPSHOTS_DIR:-}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"
@@ -75,8 +83,9 @@ services:
       ANIMICA_P2P_LISTEN_QUIC: "${ANIMICA_P2P_LISTEN_QUIC:-0.0.0.0:443}"
       ANIMICA_P2P_ENABLE_TCP: "${ANIMICA_P2P_ENABLE_TCP:-true}"
       ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-true}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p}"
+      ANIMICA_P2P_DATA_DIR: "/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p"
+      ANIMICA_PEER_STORE_PATH: "/data/chain-${ANIMICA_CHAIN_ID:-2}/p2p"
+      ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30334}}"
