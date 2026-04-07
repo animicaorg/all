@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import builtins
+import importlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -21,6 +24,8 @@ def test_show_config(monkeypatch: Any) -> None:
 
 
 def test_run_pool_sets_env(monkeypatch: Any) -> None:
+    assert mining.HAVE_STRATUM is True
+
     called = {}
 
     def fake_main(argv: list[str] | None = None) -> None:
@@ -60,6 +65,104 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
         "ANIMICA_MINING_POOL_LOG_LEVEL",
     ]:
         os.environ.pop(key, None)
+
+
+def test_wallet_import_failure_does_not_disable_run_pool(monkeypatch: Any) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "animica.cli.wallet" or name.startswith("animica.cli.wallet."):
+            raise ImportError("wallet helpers exploded")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    reloaded = importlib.reload(mining)
+
+    assert reloaded.HAVE_STRATUM is True
+    assert reloaded.pool_cli is not None
+
+
+def test_run_pool_reports_missing_package_error(monkeypatch: Any) -> None:
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None) -> Any:
+        if name == "animica.stratum_pool.cli":
+            raise ModuleNotFoundError(
+                "No module named 'animica.stratum_pool'",
+                name="animica.stratum_pool",
+            )
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    try:
+        reloaded = importlib.reload(mining)
+        result = runner.invoke(
+            reloaded.app,
+            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+        )
+        assert result.exit_code == 1
+        assert "Stratum pool not installed; run: pip install 'animica[stratum]'" in result.output
+        assert "ModuleNotFoundError" in result.output
+        assert "animica.stratum_pool" in result.output
+    finally:
+        monkeypatch.setattr(importlib, "import_module", real_import_module)
+        importlib.reload(mining)
+
+
+def test_run_pool_reports_symbol_mismatch_error(monkeypatch: Any) -> None:
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None) -> Any:
+        if name == "animica.stratum_pool.cli":
+            return SimpleNamespace(main=lambda argv=None: None)
+        if name == "animica.stratum_pool.config":
+            return SimpleNamespace(PoolConfig=object)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    try:
+        reloaded = importlib.reload(mining)
+        result = runner.invoke(
+            reloaded.app,
+            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+        )
+        assert result.exit_code == 1
+        assert "Stratum pool import symbol mismatch" in result.output
+        assert "AttributeError" in result.output
+        assert "load_config_from_env" in result.output
+    finally:
+        monkeypatch.setattr(importlib, "import_module", real_import_module)
+        importlib.reload(mining)
+
+
+def test_run_pool_reports_runtime_import_error(monkeypatch: Any) -> None:
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None) -> Any:
+        if name == "animica.stratum_pool.cli":
+            raise RuntimeError("boom inside stratum import")
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    try:
+        reloaded = importlib.reload(mining)
+        result = runner.invoke(
+            reloaded.app,
+            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+        )
+        assert result.exit_code == 1
+        assert "Stratum pool failed during import" in result.output
+        assert "RuntimeError: boom inside stratum import" in result.output
+        assert "not installed" not in result.output
+    finally:
+        monkeypatch.setattr(importlib, "import_module", real_import_module)
+        importlib.reload(mining)
 
 
 def test_generate_payout_address(tmp_path: Path) -> None:

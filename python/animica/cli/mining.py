@@ -9,11 +9,13 @@ Provides commands for:
 
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import asyncio
 import logging
@@ -24,23 +26,6 @@ from animica.config import load_network_config
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.cli.rpc import call_rpc
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
-
-try:
-    from animica.cli.wallet import (WalletEntry, _wallet_file_path,
-                                    create_wallet)
-    from animica.stratum_pool import cli as pool_cli
-    from animica.stratum_pool.config import PoolConfig, load_config_from_env
-
-    HAVE_STRATUM = True
-except Exception:
-    HAVE_STRATUM = False
-
-    class _StubPoolCli:
-        """Stub used when animica[stratum] is not installed."""
-        def main(self, argv=None):
-            raise RuntimeError("Stratum pool not installed; run: pip install 'animica[stratum]'")
-
-    pool_cli = _StubPoolCli()  # type: ignore[assignment]
 
 app = typer.Typer(help="Mining operations and Stratum pool management.")
 
@@ -55,6 +40,94 @@ SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
 
 # Mining warning message suffix for verifier seed constraints
 VERIFIER_MINING_WARNING_SUFFIX = "mined blocks may be reorged."
+
+
+class _StratumRuntimeLoadError(RuntimeError):
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+@dataclass(frozen=True)
+class _StratumRuntime:
+    pool_cli: Any
+    pool_config_type: Any
+    load_config_from_env: Callable[..., Any]
+
+
+_STRATUM_RUNTIME: Optional[_StratumRuntime] = None
+_STRATUM_IMPORT_ERROR: Optional[_StratumRuntimeLoadError] = None
+HAVE_STRATUM = False
+pool_cli: Any = None
+
+
+def _format_import_exception(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _build_stratum_load_error(exc: BaseException) -> _StratumRuntimeLoadError:
+    if isinstance(exc, ModuleNotFoundError):
+        missing_name = getattr(exc, "name", "") or ""
+        if missing_name == "animica.stratum_pool" or missing_name.startswith(
+            "animica.stratum_pool."
+        ):
+            summary = "Stratum pool not installed; run: pip install 'animica[stratum]'"
+            kind = "missing_package"
+        else:
+            summary = "Stratum pool failed to import because a required dependency is missing"
+            kind = "runtime_import_error"
+    elif isinstance(exc, (ImportError, AttributeError)):
+        summary = "Stratum pool import symbol mismatch"
+        kind = "symbol_mismatch"
+    else:
+        summary = "Stratum pool failed during import"
+        kind = "runtime_import_error"
+    return _StratumRuntimeLoadError(
+        kind,
+        f"{summary}. Underlying error: {_format_import_exception(exc)}",
+    )
+
+
+def _load_stratum_runtime() -> _StratumRuntime:
+    global _STRATUM_IMPORT_ERROR, _STRATUM_RUNTIME, HAVE_STRATUM, pool_cli
+
+    if _STRATUM_RUNTIME is not None:
+        return _STRATUM_RUNTIME
+    if _STRATUM_IMPORT_ERROR is not None:
+        raise _STRATUM_IMPORT_ERROR
+
+    try:
+        pool_cli_module = importlib.import_module("animica.stratum_pool.cli")
+        config_module = importlib.import_module("animica.stratum_pool.config")
+        pool_config_type = getattr(config_module, "PoolConfig")
+        load_config = getattr(config_module, "load_config_from_env")
+    except Exception as exc:
+        error = _build_stratum_load_error(exc)
+        _STRATUM_IMPORT_ERROR = error
+        HAVE_STRATUM = False
+        pool_cli = None
+        raise error from exc
+
+    runtime = _StratumRuntime(
+        pool_cli=pool_cli_module,
+        pool_config_type=pool_config_type,
+        load_config_from_env=load_config,
+    )
+    _STRATUM_RUNTIME = runtime
+    _STRATUM_IMPORT_ERROR = None
+    HAVE_STRATUM = True
+    pool_cli = pool_cli_module
+    return runtime
+
+
+def _probe_stratum_support() -> None:
+    try:
+        _load_stratum_runtime()
+    except _StratumRuntimeLoadError:
+        return
+
+
+_probe_stratum_support()
 
 
 def _is_truthy_env(var_name: str, default: bool = False) -> bool:
@@ -215,14 +288,12 @@ def _ensure_network_env() -> None:
     os.environ.setdefault(RPC_ENV, cfg.rpc_url)
 
 
-def _ensure_stratum_available() -> None:
-    if not HAVE_STRATUM:
-        typer.echo(
-            "Error: Stratum pool modules required. "
-            "Ensure 'animica[stratum]' is installed.",
-            err=True,
-        )
-        raise typer.Exit(1)
+def _ensure_stratum_available() -> _StratumRuntime:
+    try:
+        return _load_stratum_runtime()
+    except _StratumRuntimeLoadError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 def _validate_bech32_address(address: str) -> bool:
@@ -535,6 +606,7 @@ def run_pool(
 ) -> None:
     """Start the Animica Stratum mining pool."""
     _ensure_network_env()
+    runtime = _ensure_stratum_available()
     effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
     guard_bootstrap_rpc(effective_rpc, allow_remote=allow_remote_rpc, method="miner.runPool")
     env_overrides = {
@@ -548,7 +620,7 @@ def run_pool(
         if value is not None:
             os.environ[key] = value
     try:
-        pool_cli.main([])
+        runtime.pool_cli.main([])
     except RuntimeError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -773,26 +845,13 @@ def da_run() -> None:
 def show_config() -> None:
     """Display the effective pool configuration."""
     _ensure_network_env()
-    if HAVE_STRATUM:
-        # load_config_from_env is provided by animica.stratum_pool when installed
-        try:
-            cfg: PoolConfig = load_config_from_env()
-        except Exception as e:
-            typer.echo(
-                "Error: could not load pool config; ensure animica[stratum] is installed",
-                err=True,
-            )
-            raise typer.Exit(1)
-        typer.echo(
-            f"RPC URL: {cfg.rpc_url}\n"
-            f"DB URL: {cfg.db_url}\n"
-            f"Chain ID: {cfg.chain_id}\n"
-            f"Pool address: {cfg.pool_address}\n"
-            f"Stratum bind: {cfg.host}:{cfg.port}\n"
-            f"API bind: {cfg.api_host}:{cfg.api_port}\n"
-            f"Log level: {cfg.log_level}"
-        )
-    else:
+    try:
+        runtime = _load_stratum_runtime()
+    except _StratumRuntimeLoadError as exc:
+        if exc.kind != "missing_package":
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
         # Stratum not installed; show what's available from env vars
         rpc_url = os.getenv(RPC_ENV, "(not set)")
         db_url = os.getenv(DB_ENV, "(not set)")
@@ -805,8 +864,28 @@ def show_config() -> None:
             f"Stratum bind: {stratum_bind}\n"
             f"API bind: {api_bind}\n"
             f"Log level: {log_level}\n"
-            f"Note: animica[stratum] not installed; full pool config unavailable."
+            f"Note: {exc}; full pool config unavailable."
         )
+        return
+
+    try:
+        cfg = runtime.load_config_from_env()
+    except Exception as exc:
+        typer.echo(
+            f"Error: could not load pool config: {_format_import_exception(exc)}",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+
+    typer.echo(
+        f"RPC URL: {cfg.rpc_url}\n"
+        f"DB URL: {cfg.db_url}\n"
+        f"Chain ID: {cfg.chain_id}\n"
+        f"Pool address: {cfg.pool_address}\n"
+        f"Stratum bind: {cfg.host}:{cfg.port}\n"
+        f"API bind: {cfg.api_host}:{cfg.api_port}\n"
+        f"Log level: {cfg.log_level}"
+    )
 
 
 @app.command("generate-payout-address")

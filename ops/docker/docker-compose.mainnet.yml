@@ -14,7 +14,8 @@
 #
 # Notes:
 # - Uses mainnet chain ID (1)
-# - Host bind mount for node data: ~/.animica -> /data
+# - Uses a named Docker volume for node data by default
+# - Optional bind mount: set ANIMICA_DATA_MOUNT_SOURCE=/absolute/path
 # - Isolated volume for services data: mainnet_services_data
 # - Genesis: /app/core/genesis/mainnet.json (bundled in image)
 # - Data directory isolated to prevent cross-network contamination
@@ -26,6 +27,8 @@ networks:
     driver: bridge
 
 volumes:
+  mainnet_node_data:
+    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_mainnet_chain_1_data}"
   mainnet_services_data:
     name: animica_mainnet_services_data
 
@@ -39,7 +42,7 @@ services:
       dockerfile: ops/docker/node.Dockerfile
     container_name: animica-mainnet-node
     working_dir: /app
-    user: "${ANIMICA_UID:-${UID:-1000}}:${ANIMICA_GID:-${GID:-1000}}"
+    user: "${ANIMICA_RUNTIME_UID:-10001}:${ANIMICA_RUNTIME_GID:-10001}"
     read_only: true
     tmpfs:
       - /tmp
@@ -49,8 +52,9 @@ services:
         required: false
     volumes:
       - ../..:/app:ro
-      # Bind host ~/.animica by default (override with ANIMICA_DATA_MOUNT_SOURCE).
-      - ${ANIMICA_DATA_MOUNT_SOURCE:-${HOME}/.animica}:/data
+      # Use a named Docker volume by default to avoid host filesystem permission drift.
+      # To bind a host path instead, set ANIMICA_DATA_MOUNT_SOURCE=/absolute/path/on/host
+      - ${ANIMICA_DATA_MOUNT_SOURCE:-mainnet_node_data}:/data
     environment:
       # Mainnet chain config
       ANIMICA_NETWORK: "mainnet"
@@ -60,6 +64,11 @@ services:
       ANIMICA_DATA_DIR: "/data"
       HOME: "/data"
       ANIMICA_HOME: "/data/chain-${ANIMICA_CHAIN_ID:-1}"
+      ANIMICA_VOLUME_STRATEGY: "${ANIMICA_VOLUME_STRATEGY:-named}"
+      ANIMICA_DATA_MOUNT_SOURCE: "${ANIMICA_NAMED_DATA_VOLUME:-${ANIMICA_DATA_MOUNT_SOURCE:-mainnet_node_data}}"
+      ANIMICA_HOST_DATA_DIR: "${ANIMICA_HOST_DATA_DIR:-}"
+      ANIMICA_HOST_CHAIN_DIR: "${ANIMICA_HOST_CHAIN_DIR:-}"
+      ANIMICA_HOST_SNAPSHOTS_DIR: "${ANIMICA_HOST_SNAPSHOTS_DIR:-}"
       ANIMICA_MEMPOOL_REQUIRE_PERSIST: "${ANIMICA_MEMPOOL_REQUIRE_PERSIST:-0}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
@@ -81,8 +90,9 @@ services:
       # Optional advertised address (public IP/host for inbound peers):
       # Example: ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.10:30333
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
-      ANIMICA_P2P_DATA_DIR: "${ANIMICA_P2P_DATA_DIR:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
-      ANIMICA_PEER_STORE_PATH: "${ANIMICA_PEER_STORE_PATH:-/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p}"
+      ANIMICA_P2P_DATA_DIR: "/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p"
+      ANIMICA_PEER_STORE_PATH: "/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p"
+      ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
       # Legacy P2P config (backward compatibility - deprecated):
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:${ANIMICA_P2P_PORT:-30333}}"
