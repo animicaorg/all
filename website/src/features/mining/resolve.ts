@@ -129,10 +129,10 @@ export function isLocalOnlyUrl(value?: string): boolean {
 }
 
 function selectMiningApiBase(input: {
-  currentOrigin?: string;
-  currentHostname?: string;
-  envMiningApiBaseUrl?: string;
-  envPoolUrl?: string;
+  currentOrigin?: string | undefined;
+  currentHostname?: string | undefined;
+  envMiningApiBaseUrl?: string | undefined;
+  envPoolUrl?: string | undefined;
 }): { source: MiningApiResolutionSource; baseUrl?: string } {
   if (input.envMiningApiBaseUrl) {
     return { source: 'env-mining-api-base', baseUrl: input.envMiningApiBaseUrl };
@@ -161,10 +161,10 @@ function selectMiningApiBase(input: {
 }
 
 function resolveRequestBases(input: {
-  currentOrigin?: string;
-  currentHostname?: string;
+  currentOrigin?: string | undefined;
+  currentHostname?: string | undefined;
   isLocalDev: boolean;
-  baseUrl?: string;
+  baseUrl?: string | undefined;
 }): MiningRequestBase[] {
   const sameOriginBase: MiningRequestBase = { kind: 'same-origin', label: 'same-origin' };
   const baseMatchesCurrentOrigin = Boolean(input.baseUrl && input.currentOrigin && input.baseUrl === input.currentOrigin);

@@ -218,7 +218,7 @@ function normalizeDownloadUrl(
   }
 }
 
-function buildStratumUrl(input: { scheme: string; host?: string; port?: number }): string {
+function buildStratumUrl(input: { scheme: string; host: string | undefined; port: number | undefined }): string {
   if (!input.host || input.host === 'Unavailable') return 'Unavailable';
   if (input.port && Number.isFinite(input.port)) {
     return `${input.scheme}://${input.host}:${input.port}`;

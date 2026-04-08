@@ -469,7 +469,7 @@ function setActiveTab(elements: ReturnType<typeof resolveElements>, platform: Mi
 
 function setFallback(
   elements: ReturnType<typeof resolveElements>,
-  input: { visible: boolean; message: string; directUrl?: string }
+  input: { visible: boolean; message: string; directUrl?: string | undefined }
 ): void {
   if (!elements.fallbackPanel || !elements.fallbackMessage) return;
 
@@ -643,9 +643,9 @@ function triggerDownload(filename: string, content: string): void {
 
 function escapeHtml(value: string): string {
   return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

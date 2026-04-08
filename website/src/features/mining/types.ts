@@ -145,36 +145,36 @@ export type MiningRequestBase =
     };
 
 export interface MiningApiResolution {
-  currentOrigin?: string;
-  currentHostname?: string;
+  currentOrigin?: string | undefined;
+  currentHostname?: string | undefined;
   source: MiningApiResolutionSource;
   isLocalDev: boolean;
-  publicBaseUrl?: string;
-  publicPoolHost?: string;
+  publicBaseUrl?: string | undefined;
+  publicPoolHost?: string | undefined;
   requestBases: MiningRequestBase[];
   diagnostics: string[];
 }
 
 export interface MiningEnvHints {
-  miningApiBaseUrl?: string;
-  poolUrl?: string;
+  miningApiBaseUrl?: string | undefined;
+  poolUrl?: string | undefined;
 }
 
 export interface NormalizedMiningDownloadItem extends MiningDownloadItem {
   label: string;
   launcher: string;
   notes: string;
-  normalizedUrl?: string;
+  normalizedUrl?: string | undefined;
 }
 
 export interface NormalizedMiningConfig {
   network: string;
-  chainId?: string | number;
+  chainId?: string | number | undefined;
   profile: string;
   algorithm: string;
   deviceType: string;
   stratumHost: string;
-  stratumPort?: number;
+  stratumPort?: number | undefined;
   stratumScheme: string;
   stratumUrl: string;
   payoutInstructions: string;

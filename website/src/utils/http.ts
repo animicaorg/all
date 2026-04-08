@@ -40,7 +40,7 @@ export class HttpError<TBody = unknown> extends Error {
   statusText: string;
   url: string;
   headers: Headers;
-  body?: TBody;
+  body?: TBody | undefined;
 
   constructor(opts: { url: string; status: number; statusText: string; headers: Headers; body?: TBody; message?: string }) {
     super(opts.message ?? `HTTP ${opts.status} ${opts.statusText} (${opts.url})`);
@@ -114,7 +114,7 @@ export async function fetchJSON<T = unknown>(url: string, opts: JsonRequestOptio
     attempt,
     {
       timeoutMs,
-      externalSignal: signal,
+      ...(signal ? { externalSignal: signal } : {}),
       retry: normalizeRetry(retry),
     },
     finalUrl
@@ -123,7 +123,7 @@ export async function fetchJSON<T = unknown>(url: string, opts: JsonRequestOptio
 
 /** Convenience: GET JSON with query params. */
 export function getJSON<T = unknown>(url: string, query?: JsonRequestOptions['query'], opts?: Omit<JsonRequestOptions, 'method' | 'query'>) {
-  return fetchJSON<T>(url, { ...opts, method: 'GET', query });
+  return fetchJSON<T>(url, { ...opts, method: 'GET', ...(query ? { query } : {}) });
 }
 
 /** Convenience: POST JSON payload and parse JSON response. */
