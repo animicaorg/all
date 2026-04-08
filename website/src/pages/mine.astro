@@ -6,14 +6,18 @@ import { ENV } from "../env";
 
 const pageTitle = "Start Mining Animica";
 const pageDesc =
-  "Production mining portal for Animica with live Stratum detection, starter bundles, generated launch files, and troubleshooting guidance.";
-const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
+  "Production mining portal for Animica with live Stratum detection, real download manifests, and troubleshooting guidance.";
+const mineRuntimeConfig = JSON.stringify({
+  miningApiBaseUrl: ENV.MINING_API_BASE_URL,
+  poolUrl: ENV.POOL_URL,
+  isDev: import.meta.env.DEV,
+});
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
   <Header slot="header" />
 
-  <main class="min-h-screen">
+  <main id="mine-page-root" class="min-h-screen">
     <section class="relative overflow-hidden border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(249,115,22,0.18),transparent_38%),linear-gradient(180deg,rgba(5,10,20,0.98),rgba(10,18,30,0.92))]">
       <div class="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent)] opacity-40"></div>
       <div class="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
@@ -22,6 +26,7 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
             <div class="flex flex-wrap gap-3">
               <span
                 id="pool-status-chip"
+                data-testid="mine-status-badge"
                 class="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200"
               >
                 Checking pool status
@@ -48,7 +53,7 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
               machine, and launch a reference CPU miner with the detected host and port already wired in.
             </p>
 
-            <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
               <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
                 <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Stratum Host</p>
                 <div class="mt-3 flex items-start justify-between gap-3">
@@ -78,8 +83,16 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
                 <p id="algorithm-text" class="mt-3 text-lg font-semibold text-white">Loading…</p>
               </div>
               <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Device Type</p>
+                <p id="device-type" class="mt-3 text-lg font-semibold text-white">Loading…</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
                 <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Active Miners</p>
-                <p id="active-miners" class="mt-3 text-lg font-semibold text-white">0</p>
+                <p id="active-miners" data-testid="mine-active-miners" class="mt-3 text-lg font-semibold text-white">0</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Active Workers</p>
+                <p id="active-workers" class="mt-3 text-lg font-semibold text-white">0</p>
               </div>
             </div>
 
@@ -87,6 +100,29 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
               <p class="font-semibold uppercase tracking-[0.24em] text-amber-100">Deployment Warnings</p>
               <ul id="warning-list" class="mt-3 space-y-2"></ul>
             </div>
+
+            <div
+              id="mining-fallback"
+              data-testid="mine-fallback"
+              class="mt-6 hidden rounded-2xl border border-rose-400/30 bg-rose-500/10 p-5 text-sm text-rose-50"
+            >
+              <p class="font-semibold uppercase tracking-[0.24em] text-rose-100">Live Mining Data</p>
+              <p id="mining-fallback-message" class="mt-3"></p>
+              <a
+                id="mining-fallback-link"
+                class="mt-4 inline-flex rounded-xl border border-white/10 px-4 py-2 font-medium text-white transition hover:border-sky-300/40 hover:text-sky-100"
+                href="#"
+                target="_blank"
+                rel="noopener"
+              >
+                Open pool service
+              </a>
+            </div>
+
+            <details id="mining-debug" class="mt-6 hidden rounded-2xl border border-white/10 bg-slate-950/50 p-5 text-sm text-slate-200">
+              <summary class="cursor-pointer font-semibold text-white">Debug details</summary>
+              <pre id="mining-debug-output" class="mt-4 overflow-x-auto whitespace-pre-wrap text-xs text-slate-300"></pre>
+            </details>
           </div>
 
           <div class="rounded-[28px] border border-white/10 bg-slate-950/60 p-6 shadow-2xl shadow-slate-950/50 backdrop-blur">
@@ -115,8 +151,9 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
               <div class="rounded-2xl border border-white/8 bg-white/5 p-4">
                 <p class="text-sm font-semibold text-white">4. Track pool health</p>
                 <p class="mt-2 text-sm text-slate-300">
-                  Current height: <span id="pool-height" class="font-semibold text-white">0</span><br />
-                  Pool hashrate: <span id="pool-hashrate" class="font-semibold text-white">0 H/s</span>
+                  Current height: <span id="pool-height" data-testid="mine-pool-height" class="font-semibold text-white">0</span><br />
+                  Pool hashrate: <span id="pool-hashrate" class="font-semibold text-white">0 H/s</span><br />
+                  Latest found block: <span id="latest-found-block" class="font-semibold text-white">Unavailable</span>
                 </p>
               </div>
             </div>
@@ -173,13 +210,20 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
             </label>
           </div>
 
-          <div class="mt-5 rounded-2xl border border-white/8 bg-slate-950/40 p-4 text-sm text-slate-300">
-            <p class="font-medium text-white">Worker naming</p>
-            <p class="mt-2">
-              Worker names are labels only. The payout address and worker name are sent separately, so
-              you can use short names like <code>rig-01</code>, <code>mac-mini</code>, or
-              <code>office-cpu</code>.
-            </p>
+          <div class="mt-5 grid gap-4 lg:grid-cols-2">
+            <div class="rounded-2xl border border-white/8 bg-slate-950/40 p-4 text-sm text-slate-300">
+              <p class="font-medium text-white">Payout instructions</p>
+              <p id="payout-instructions" class="mt-2">
+                Use an Animica wallet address that matches the active network shown on this page.
+              </p>
+            </div>
+
+            <div class="rounded-2xl border border-white/8 bg-slate-950/40 p-4 text-sm text-slate-300">
+              <p class="font-medium text-white">Worker naming</p>
+              <p id="worker-instructions" class="mt-2">
+                Worker names are labels only. Keep them short and unique for each machine.
+              </p>
+            </div>
           </div>
 
           <div class="mt-6 rounded-2xl border border-white/8 bg-slate-950/50 p-5">
@@ -254,18 +298,12 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
             <pre id="config-output" class="mt-4 max-h-72 overflow-auto rounded-2xl bg-black/40 p-4 text-sm text-slate-100">Loading config…</pre>
           </div>
 
-          <div class="mt-5 grid gap-3 sm:grid-cols-2">
+          <div class="mt-5 grid gap-3 sm:grid-cols-1">
             <button
               id="download-config"
               class="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-left text-sm font-medium text-emerald-100 transition hover:border-emerald-300 hover:bg-emerald-500/20"
             >
               Download config JSON
-            </button>
-            <button
-              id="download-active-launcher"
-              class="rounded-2xl border border-orange-300/30 bg-orange-400/10 px-4 py-3 text-left text-sm font-medium text-orange-100 transition hover:border-orange-200 hover:bg-orange-400/20"
-            >
-              Download launcher for active OS tab
             </button>
           </div>
         </div>
@@ -284,8 +322,8 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
             </p>
           </div>
           <p class="text-sm text-slate-300">
-            Checksums below are for generic bundles. Personalized downloads are generated on demand
-            after you fill in your payout address.
+            Download metadata comes from the live mining manifest. URLs are rewritten to a public pool
+            host when the API reports local-only links.
           </p>
         </div>
 
@@ -379,13 +417,13 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
                 <code>.command</code> file, and Linux uses the included shell script.
               </p>
             </div>
-            <div class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
-              <p class="text-sm font-semibold text-white">Step 4. Your miner connects automatically</p>
-              <p class="mt-2 text-sm text-slate-300">
-                The launcher reads the generated config, prompts if the address is missing, and begins
-                streaming jobs from the Animica pool.
-              </p>
-            </div>
+              <div class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
+                <p class="text-sm font-semibold text-white">Step 4. Your miner connects automatically</p>
+                <p class="mt-2 text-sm text-slate-300">
+                  Use the live pool endpoint, the reference config snippet, or the downloaded bundle to
+                  start streaming jobs from the Animica pool.
+                </p>
+              </div>
             <div class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
               <p class="text-sm font-semibold text-white">Step 5. Track rewards and status</p>
               <p class="mt-2 text-sm text-slate-300">
@@ -451,8 +489,8 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
               <details class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
                 <summary class="cursor-pointer text-sm font-semibold text-white">Does the bundle include checksums?</summary>
                 <p class="mt-3 text-sm text-slate-300">
-                  The portal shows SHA-256 hashes for the generic bundles. Personalized bundles are
-                  generated on demand with your address and worker name filled in.
+                  The portal shows SHA-256 hashes from the live download manifest so you can verify the
+                  bundle you downloaded for your platform.
                 </p>
               </details>
               <details class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
@@ -472,250 +510,10 @@ const miningApiBase = ENV.MINING_API_BASE_URL || ENV.POOL_URL || "";
 
   <Footer slot="footer" />
 
-  <script is:inline define:vars={{ miningApiBase }}>
-    const state = {
-      config: null,
-      downloads: [],
-      generated: null,
-      activeTab: 'windows',
-    };
+  <script type="application/json" id="mine-runtime" set:html={mineRuntimeConfig}></script>
+  <script>
+    import { initMinePage } from '../features/mining/page';
 
-    const elements = {
-      poolStatus: document.getElementById('pool-status-chip'),
-      networkChip: document.getElementById('network-chip'),
-      profileChip: document.getElementById('profile-chip'),
-      warningPanel: document.getElementById('warning-panel'),
-      warningList: document.getElementById('warning-list'),
-      stratumHost: document.getElementById('stratum-host'),
-      stratumPort: document.getElementById('stratum-port'),
-      stratumUrl: document.getElementById('stratum-url'),
-      faqEndpoint: document.getElementById('faq-endpoint'),
-      algorithmText: document.getElementById('algorithm-text'),
-      activeMiners: document.getElementById('active-miners'),
-      poolHeight: document.getElementById('pool-height'),
-      poolHashrate: document.getElementById('pool-hashrate'),
-      payoutAddress: document.getElementById('payout-address'),
-      workerName: document.getElementById('worker-name'),
-      threadCount: document.getElementById('thread-count'),
-      refreshGenerated: document.getElementById('refresh-generated'),
-      commandOutput: document.getElementById('command-output'),
-      configOutput: document.getElementById('config-output'),
-      copyActiveCommand: document.getElementById('copy-active-command'),
-      copyConfig: document.getElementById('copy-config'),
-      downloadConfig: document.getElementById('download-config'),
-      downloadActiveLauncher: document.getElementById('download-active-launcher'),
-      tabButtons: [...document.querySelectorAll('.command-tab')],
-      downloadCards: [...document.querySelectorAll('.download-card')],
-    };
-
-    const formatter = new Intl.NumberFormat('en-US');
-
-    function apiUrl(path) {
-      if (miningApiBase) {
-        return new URL(path, miningApiBase).toString();
-      }
-      return path;
-    }
-
-    function formatHashrate(value) {
-      const numeric = Number(value || 0);
-      if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(2)} MH/s`;
-      if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(2)} kH/s`;
-      return `${numeric.toFixed(2)} H/s`;
-    }
-
-    function formatBytes(value) {
-      const numeric = Number(value || 0);
-      if (numeric >= 1024 * 1024) return `${(numeric / (1024 * 1024)).toFixed(2)} MB`;
-      if (numeric >= 1024) return `${(numeric / 1024).toFixed(2)} KB`;
-      return `${numeric} B`;
-    }
-
-    async function fetchJson(path, params = null) {
-      const url = new URL(apiUrl(path), window.location.origin);
-      if (params) {
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
-        });
-      }
-      const response = await fetch(url.toString(), { headers: { accept: 'application/json' } });
-      if (!response.ok) {
-        throw new Error(await response.text() || response.statusText);
-      }
-      return response.json();
-    }
-
-    async function copyText(text) {
-      await navigator.clipboard.writeText(text);
-    }
-
-    function readValue(id) {
-      const element = document.getElementById(id);
-      return element ? element.textContent?.trim() || '' : '';
-    }
-
-    function triggerDownload(filename, content) {
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    }
-
-    function currentInput() {
-      return {
-        address: elements.payoutAddress.value.trim(),
-        worker: elements.workerName.value.trim(),
-        threads: Number(elements.threadCount.value || 0),
-      };
-    }
-
-    function setWarnings(warnings) {
-      if (!warnings || warnings.length === 0) {
-        elements.warningPanel.classList.add('hidden');
-        elements.warningList.innerHTML = '';
-        return;
-      }
-      elements.warningPanel.classList.remove('hidden');
-      elements.warningList.innerHTML = warnings.map((warning) => `<li>${warning}</li>`).join('');
-    }
-
-    function setActiveTab(tab) {
-      state.activeTab = tab;
-      elements.tabButtons.forEach((button) => {
-        const active = button.dataset.tabTarget === tab;
-        button.classList.toggle('bg-sky-500/15', active);
-        button.classList.toggle('border-sky-300/40', active);
-        button.classList.toggle('text-white', active);
-        button.classList.toggle('text-slate-300', !active);
-      });
-      renderGenerated();
-    }
-
-    function renderStatus(configPayload) {
-      const status = configPayload.status || {};
-      elements.poolStatus.textContent = status.online ? 'Pool online' : 'Pool requires attention';
-      elements.poolStatus.classList.toggle('bg-emerald-400/10', status.online);
-      elements.poolStatus.classList.toggle('border-emerald-400/30', status.online);
-      elements.poolStatus.classList.toggle('text-emerald-200', status.online);
-      elements.poolStatus.classList.toggle('bg-amber-500/10', !status.online);
-      elements.poolStatus.classList.toggle('border-amber-400/30', !status.online);
-      elements.poolStatus.classList.toggle('text-amber-100', !status.online);
-      elements.networkChip.textContent = configPayload.network || 'Unknown network';
-      elements.profileChip.textContent = `${configPayload.profile || 'pool'} · ${configPayload.device_type || 'miner'}`;
-      elements.algorithmText.textContent = configPayload.algorithm || 'Unknown';
-      elements.stratumHost.textContent = configPayload.stratum_host || 'Unknown';
-      elements.stratumPort.textContent = String(configPayload.stratum_port || '0');
-      elements.stratumUrl.textContent = configPayload.stratum_url || 'stratum+tcp://unknown:0';
-      elements.faqEndpoint.textContent = configPayload.stratum_url || 'stratum+tcp://unknown:0';
-      elements.activeMiners.textContent = formatter.format(Number(status.miners || 0));
-      elements.poolHeight.textContent = formatter.format(Number(status.height || 0));
-      elements.poolHashrate.textContent = formatHashrate(status.pool_hashrate || 0);
-      setWarnings(configPayload.warnings || []);
-    }
-
-    function renderDownloads() {
-      elements.downloadCards.forEach((card) => {
-        const platform = card.dataset.platform;
-        const item = state.downloads.find((entry) => entry.platform === platform);
-        if (!item) return;
-        const link = card.querySelector(`[data-download-link="${platform}"]`);
-        const personalizedUrl = state.generated?.download_urls?.[platform] || item.url;
-        link.href = personalizedUrl;
-        link.textContent = `Download ${item.label} bundle`;
-        card.querySelector('[data-download-version]').textContent = item.version;
-        card.querySelector('[data-download-file]').textContent = item.filename;
-        card.querySelector('[data-download-launcher]').textContent = item.launcher;
-        card.querySelector('[data-download-size]').textContent = formatBytes(item.size_bytes);
-        card.querySelector('[data-download-sha]').textContent = item.sha256;
-        card.querySelector('[data-download-note]').textContent = item.notes;
-      });
-    }
-
-    function renderGenerated() {
-      if (!state.generated) return;
-      const commands = state.generated.commands || {};
-      elements.commandOutput.textContent = commands[state.activeTab] || 'No command generated yet.';
-      elements.configOutput.textContent = state.generated.config?.content || '{}';
-      renderDownloads();
-    }
-
-    async function refreshGenerated() {
-      const payload = currentInput();
-      state.generated = await fetchJson('/api/mining/generate', payload);
-      renderGenerated();
-    }
-
-    async function load() {
-      try {
-        const [configPayload, downloadsPayload] = await Promise.all([
-          fetchJson('/api/mining/config'),
-          fetchJson('/api/mining/downloads'),
-        ]);
-        state.config = configPayload;
-        state.downloads = downloadsPayload.items || [];
-        elements.workerName.value = configPayload.default_worker || '';
-        const browserThreads = navigator.hardwareConcurrency ? Math.max(1, navigator.hardwareConcurrency - 1) : 0;
-        elements.threadCount.value = String(browserThreads || configPayload.default_threads || 4);
-        renderStatus(configPayload);
-        await refreshGenerated();
-      } catch (error) {
-        elements.poolStatus.textContent = 'Mining API unavailable';
-        elements.poolStatus.classList.remove('bg-emerald-400/10', 'border-emerald-400/30', 'text-emerald-200');
-        elements.poolStatus.classList.add('bg-rose-500/10', 'border-rose-400/30', 'text-rose-100');
-        elements.warningPanel.classList.remove('hidden');
-        elements.warningList.innerHTML = `<li>${String(error.message || error)}</li>`;
-        elements.commandOutput.textContent = 'The mining portal API could not be reached. Start the Stratum API or set ANIMICA_MINING_API_BASE_URL.';
-        elements.configOutput.textContent = '{\n  "error": "mining API unavailable"\n}';
-      }
-    }
-
-    document.addEventListener('click', async (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-
-      if (target.dataset.copyValueTarget) {
-        await copyText(readValue(target.dataset.copyValueTarget));
-      }
-
-      if (target.id === 'copy-active-command') {
-        await copyText(elements.commandOutput.textContent || '');
-      }
-
-      if (target.id === 'copy-config') {
-        await copyText(elements.configOutput.textContent || '');
-      }
-
-      if (target.dataset.copyDownloadSha) {
-        const card = target.closest('.download-card');
-        const sha = card?.querySelector('[data-download-sha]')?.textContent || '';
-        await copyText(sha);
-      }
-
-      if (target.id === 'download-config') {
-        triggerDownload(state.generated?.config?.filename || 'animica-miner.config.json', state.generated?.config?.content || '{}');
-      }
-
-      if (target.id === 'download-active-launcher') {
-        const file = (state.generated?.starter_files || []).find((entry) => entry.platform === state.activeTab);
-        if (file) triggerDownload(file.filename, file.content);
-      }
-    });
-
-    elements.tabButtons.forEach((button) => {
-      button.addEventListener('click', () => setActiveTab(button.dataset.tabTarget || 'windows'));
-    });
-
-    elements.refreshGenerated.addEventListener('click', refreshGenerated);
-    elements.payoutAddress.addEventListener('change', refreshGenerated);
-    elements.workerName.addEventListener('change', refreshGenerated);
-    elements.threadCount.addEventListener('change', refreshGenerated);
-
-    setActiveTab('windows');
-    load();
+    initMinePage();
   </script>
 </BaseLayout>

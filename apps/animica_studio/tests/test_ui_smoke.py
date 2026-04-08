@@ -186,3 +186,14 @@ def test_create_wallet_dialog_label_validation() -> None:
     assert dlg._create_btn.isEnabled()
 
     dlg.close()
+
+
+def test_setup_wizard_smoke() -> None:
+    _app()
+    from animica_studio.ui.wizard.wizard_window import SetupWizard
+
+    cfg = Config()
+    service = ProfileService(cfg)
+    wizard = SetupWizard(service)
+    assert wizard.windowTitle() == "Animica Studio Setup"
+    wizard.close()

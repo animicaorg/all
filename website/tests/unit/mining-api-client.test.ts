@@ -1,0 +1,101 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { createMiningApiClient } from '../../src/features/mining/api';
+import type { MiningApiResolution } from '../../src/features/mining/types';
+
+const baseResolution: MiningApiResolution = {
+  currentOrigin: 'https://animica.org',
+  currentHostname: 'animica.org',
+  source: 'production-default',
+  isLocalDev: false,
+  publicBaseUrl: 'https://pool.animica.org',
+  publicPoolHost: 'pool.animica.org',
+  requestBases: [
+    {
+      kind: 'absolute',
+      label: 'resolved-base',
+      baseUrl: 'https://pool.animica.org',
+    },
+    {
+      kind: 'same-origin',
+      label: 'same-origin',
+    },
+  ],
+  diagnostics: [],
+};
+
+describe('createMiningApiClient', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to the next candidate when the first endpoint fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'missing' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ network: 'mainnet', algorithm: 'sha3' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createMiningApiClient({
+      resolution: baseResolution,
+      currentOrigin: 'https://animica.org',
+    });
+
+    const result = await client.fetchConfig();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.network).toBe('mainnet');
+      expect(result.meta.url).toBe('https://animica.org/api/mining/config');
+    }
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://pool.animica.org/api/mining/config');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://animica.org/api/mining/config');
+  });
+
+  it('returns a structured error when every candidate fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'offline' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'still offline' }), {
+          status: 502,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createMiningApiClient({
+      resolution: baseResolution,
+      currentOrigin: 'https://animica.org',
+    });
+
+    const result = await client.fetchDownloads();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('http_error');
+      expect(result.error.attempts).toHaveLength(2);
+      expect(result.error.attempts[0]?.status).toBe(503);
+      expect(result.error.attempts[1]?.status).toBe(502);
+    }
+  });
+});

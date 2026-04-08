@@ -5,6 +5,29 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "out",
 
+  "rewrites": [
+    {
+      "source": "/api/mining/:path*",
+      "has": [{ "type": "host", "value": "animica.org" }],
+      "destination": "https://pool.animica.org/api/mining/:path*"
+    },
+    {
+      "source": "/api/mining/:path*",
+      "has": [{ "type": "host", "value": "www.animica.org" }],
+      "destination": "https://pool.animica.org/api/mining/:path*"
+    },
+    {
+      "source": "/api/pool/:path*",
+      "has": [{ "type": "host", "value": "animica.org" }],
+      "destination": "https://pool.animica.org/api/pool/:path*"
+    },
+    {
+      "source": "/api/pool/:path*",
+      "has": [{ "type": "host", "value": "www.animica.org" }],
+      "destination": "https://pool.animica.org/api/pool/:path*"
+    }
+  ],
+
   "redirects": [
     {
       "source": "/studio",
@@ -56,7 +79,7 @@
         { "key": "Permissions-Policy", "value": "browsing-topics=()" },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; font-src 'self' data:; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8545 ws://127.0.0.1:8546 https://studio.animica.org https://explorer.animica.org; upgrade-insecure-requests;"
+          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; font-src 'self' data:; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8545 ws://127.0.0.1:8546 https://studio.animica.org https://explorer.animica.org https://pool.animica.org https://*.animica.org; upgrade-insecure-requests;"
         }
       ]
     },

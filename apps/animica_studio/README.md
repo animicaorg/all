@@ -2,6 +2,16 @@
 
 Desktop application for the Animica blockchain — built with Python 3.11+ and PySide6.
 
+Studio is now organized around a beginner-first desktop flow:
+
+- `Home`: overall status, balance summary, sync summary, warnings, quick actions
+- `Wallet`: create/import/select wallet, receive, send, history, contacts
+- `Node`: start/stop/reset, sync progress, peers, diagnostics, logs
+- `Mining`, `ENA`, `AICF`, `DA`: optional advanced workflows once basics are working
+- `Settings`, `Logs`: configuration, diagnostics, and support bundle export
+
+For a user-focused walkthrough, see [STUDIO_USER_GUIDE.md](./STUDIO_USER_GUIDE.md).
+
 ## Requirements
 
 - Python 3.11 or newer
@@ -32,6 +42,52 @@ python -m animica_studio
 cd apps/animica_studio
 python -m animica_studio
 ```
+
+## First Run
+
+On first launch, Studio opens a guided setup wizard:
+
+1. Choose the network.
+2. Create, import, or reuse a wallet.
+3. Configure a managed local node or connect to an external RPC.
+4. Verify wallet + RPC reachability + sync status.
+5. Land on `Home`.
+
+The wizard can be rerun later from `Settings -> Developer -> Rerun Onboarding`.
+
+## Basic User Flow
+
+If you are new to Animica, use Studio in this order:
+
+1. Open `Home` and check the warning cards.
+2. Open `Wallet` and confirm your selected wallet and receive address.
+3. Open `Node` and wait for RPC reachability and sync progress to look healthy.
+4. Return to `Home` and confirm balance, peers, and recent activity.
+5. Use `Wallet -> Send` only after the node or RPC is reachable.
+
+## Key Screens
+
+### Home
+
+- Shows wallet summary, balance summary, node/sync status, mining/ENA/DA/AICF status, recent activity, and quick actions.
+- Use it as the default “what should I do next?” screen.
+
+### Wallet
+
+- Create or import wallets without leaving the main page.
+- Send validates recipient address and amount before submitting.
+- Receive shows the selected address clearly with copy helpers.
+- History shows pending vs refreshed transaction state.
+
+### Node
+
+- Shows whether the process is running, whether RPC is reachable, sync progress, peer count, chain height, and recent log lines.
+- Includes `Start Node`, `Stop Node`, `Restart Node`, `Force Sync`, `Bootstrap Peers`, `Discover Snapshot`, and `Open Logs`.
+
+### Settings and Logs
+
+- `Settings` is grouped into `Basic`, `Advanced`, and `Developer`.
+- `Logs` shows live issues, recent log lines, build/runtime metadata, and lets you export a diagnostics bundle.
 
 ## Project layout
 
@@ -82,21 +138,25 @@ pytest
 
 ## Features
 
-Animica Studio provides a complete desktop interface to all Animica CLI operations:
+Animica Studio still exposes the full toolset, but the core product path is now centered on:
 
-| Page | Description |
+| Section | Description |
 |------|-------------|
-| **Dashboard** | Node health, chain info, quick actions |
-| **Wallet** | Multi-account balances, send transactions, history, explorer links |
-| **Node** | Start/stop/restart local node, status, log tail |
-| **Mining** | Mine blocks (CPU), automine toggle, live mining log stream |
-| **AICF** | Status, miner credits, claim, jobs list/submit/watch |
-| **DA** | Blob put/get/proof with chunked upload and namespace support |
-| **Quantum** | Quantum job status, credits, submit, and stream watch |
-| **Console** | Raw CLI runner with presets, history, and streaming output |
-| **IDE** | Monaco editor with run-script placeholder |
-| **ENA** | ENA chat/agent, local daemon controls, profile-scoped endpoints, training push wizard |
-| **Settings** | Profiles, RPC config, timeouts |
+| **Home** | Status overview, warnings, recent activity, quick actions |
+| **Wallet** | Create/import/select wallet, balances, send/receive, history, contacts |
+| **Node** | Managed node controls, sync health, diagnostics, logs |
+| **Mining** | Mining controls and payout defaults |
+| **ENA** | Consolidated ENA hub for contribution, checkpoints, training, publish, and inference |
+| **AICF** | Credits, claims, jobs, and miner-linked workflows |
+| **DA** | Storage/contribution tooling and status |
+| **Settings** | Beginner/basic settings, advanced RPC/node/ENA/DA settings, developer diagnostics |
+| **Logs** | Structured issues, live logs, diagnostics export |
+
+Advanced tools remain available under `Tools`:
+
+- `Console`
+- `IDE`
+- `Quantum`
 
 ### Bug fixes included
 
@@ -192,8 +252,25 @@ bash scripts/package_macos.sh
 pwsh -File scripts/package_windows.ps1
 ```
 
-Artifacts appear in `dist/AnimicaStudio/`. Include Monaco assets before
-packaging by running `scripts/setup_monaco.py` first.
+Artifacts appear in `dist/AnimicaStudio/`.
+
+The packaged build now explicitly bundles:
+
+- `animica_studio/ui/web`
+- `animica_studio/ui/resources`
+- `animica_studio/templates`
+- `animica_studio/resources/templates`
+
+If you use the Monaco-based IDE view, include Monaco assets before packaging by
+running `scripts/setup_monaco.py` first.
+
+## Troubleshooting
+
+- If `Home` or `Node` shows RPC offline, open `Node` first and use `Refresh Status` or `Start Node`.
+- If sync is stalled with zero peers, use `Bootstrap Peers` on the `Node` page.
+- If a wallet balance is unavailable, open `Wallet` and confirm the current RPC/explorer settings in `Settings`.
+- If ENA remote features are unavailable, open `Settings -> Advanced -> ENA` and fill in the provider endpoint/model.
+- If you need support data, open `Logs` and use `Copy Bundle` or `Export Bundle`.
 
 
 ## Manual Verification Checklist

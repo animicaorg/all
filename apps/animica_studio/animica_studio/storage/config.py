@@ -103,6 +103,8 @@ class Config:
     # Wallet fields
     # ---------------------------------------------------------------------------
     accounts: list[dict[str, Any]] = field(default_factory=list)
+    wallet_contacts: list[dict[str, Any]] = field(default_factory=list)
+    wallet_last_selected_address: str | None = None
     wallet_settings: dict[str, Any] = field(
         default_factory=lambda: {"decimals": ANM_DECIMALS, "explorer_base_url": "https://explorer.animica.org"}
     )
@@ -180,6 +182,13 @@ class Config:
     cli_path_override: str | None = None
     use_repo_venv_automatically: bool = True
     templates_user_path: str | None = None
+    onboarding: dict[str, Any] = field(
+        default_factory=lambda: {
+            "wizard_version": 2,
+            "completed_at": None,
+            "last_network": "mainnet",
+        }
+    )
     ena: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": True,
@@ -398,6 +407,8 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         active_profile_id=d.get("active_profile_id") or None,
         rpc_profiles=list(d.get("rpc_profiles") or []),
         accounts=list(d.get("accounts") or []),
+        wallet_contacts=list(d.get("wallet_contacts") or []),
+        wallet_last_selected_address=d.get("wallet_last_selected_address") or None,
         wallet_settings=wallet_settings,
         pending_txs=list(d.get("pending_txs") or []),
         console_presets=list(d.get("console_presets") or []),
@@ -417,6 +428,12 @@ def _config_from_dict(d: dict[str, Any]) -> Config:
         cli_path_override=d.get("cli_path_override") or None,
         use_repo_venv_automatically=bool(d.get("use_repo_venv_automatically", True)),
         templates_user_path=d.get("templates_user_path") or None,
+        onboarding={
+            "wizard_version": 2,
+            "completed_at": None,
+            "last_network": "mainnet",
+            **(d.get("onboarding") or {}),
+        },
         ena={
             "enabled": True,
             "provider": "local",

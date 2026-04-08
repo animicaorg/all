@@ -5,19 +5,20 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Usage:
  *   # Start preview yourself (arbitrary port) and point tests at it:
- *   SITE_BASE_URL="http://localhost:4321" pnpm run test:e2e
+ *   SITE_BASE_URL="http://127.0.0.1:4410" pnpm run test:e2e
  *
- *   # Or let Playwright start a preview on :4321 automatically:
+ *   # Or let Playwright start a preview on :4410 automatically:
  *   pnpm run build
  *   pnpm run test:e2e
  *
  * Notes:
  * - If SITE_BASE_URL is set, we assume an external preview is already running
  *   and we DO NOT start a webServer here.
- * - Otherwise, we start "pnpm preview --port 4321" and use http://localhost:4321.
+ * - Otherwise, we start Astro preview on a dedicated port and use that base URL.
  */
 
-const baseURL = process.env.SITE_BASE_URL ?? 'http://localhost:4321';
+const previewPort = 4410;
+const baseURL = process.env.SITE_BASE_URL ?? `http://127.0.0.1:${previewPort}`;
 const startServer = !process.env.SITE_BASE_URL;
 
 export default defineConfig({
@@ -46,9 +47,9 @@ export default defineConfig({
   // Start Astro preview locally if SITE_BASE_URL is not provided.
   webServer: startServer
     ? {
-        command: 'pnpm preview --port 4321 --host 127.0.0.1',
+        command: `pnpm exec astro preview --host 127.0.0.1 --port ${previewPort}`,
         url: baseURL,
-        reuseExistingServer: true,
+        reuseExistingServer: false,
         timeout: 120_000,
         cwd: process.cwd().endsWith('/website') ? process.cwd() : `${process.cwd()}/website`,
       }

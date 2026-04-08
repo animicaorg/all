@@ -7,6 +7,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolated_app_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("ANIMICA_STUDIO_APP_DATA_DIR", str(tmp_path / "app-data"))
+    monkeypatch.setenv("ANIMICA_WALLETS_FILE", str(tmp_path / "wallets.json"))
     yield
 
 

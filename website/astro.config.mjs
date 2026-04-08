@@ -19,6 +19,10 @@ const IMAGE_DOMAINS = [
 ];
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
+const MINING_PROXY_TARGET = normalizeProxyTarget(
+  process.env.ANIMICA_MINING_API_BASE_URL || process.env.ANIMICA_POOL_URL || ''
+);
+const miningProxy = createMiningProxy(MINING_PROXY_TARGET);
 
 const aliases = {
   '@': resolve(projectRoot, 'src'),
@@ -93,6 +97,45 @@ export default defineConfig({
         'preview.animica.org',
         'explorer.animica.org',
       ],
+      ...(miningProxy ? { proxy: miningProxy } : {}),
     },
+    ...(miningProxy
+      ? {
+          preview: {
+            proxy: miningProxy,
+          },
+        }
+      : {}),
   },
 });
+
+function normalizeProxyTarget(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    return new URL(trimmed).toString().replace(/\/+$/, '');
+  } catch {
+    console.warn(`[mining-proxy] ignoring invalid proxy target: ${trimmed}`);
+    return '';
+  }
+}
+
+function createMiningProxy(target) {
+  if (!target) return undefined;
+
+  console.info(`[mining-proxy] enabled for /api/mining/* and /api/pool/* -> ${target}`);
+
+  return {
+    '/api/mining': {
+      target,
+      changeOrigin: true,
+      secure: true,
+    },
+    '/api/pool': {
+      target,
+      changeOrigin: true,
+      secure: true,
+    },
+  };
+}
