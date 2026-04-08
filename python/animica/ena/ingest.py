@@ -56,7 +56,7 @@ class _HTMLExtractor(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         attr_map = dict(attrs)
-        if tag in {"script", "style", "noscript"}:
+        if tag in {"script", "style", "noscript", "nav", "footer", "aside", "header", "form"}:
             self.skip_depth += 1
         if tag == "title":
             self.in_title = True
@@ -69,7 +69,7 @@ class _HTMLExtractor(HTMLParser):
             self.description = attr_map.get("content")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript"} and self.skip_depth > 0:
+        if tag in {"script", "style", "noscript", "nav", "footer", "aside", "header", "form"} and self.skip_depth > 0:
             self.skip_depth -= 1
         if tag == "title":
             self.in_title = False
@@ -398,9 +398,21 @@ class Crawler:
     def __init__(self, fetcher: Fetcher):
         self.fetcher = fetcher
 
-    def crawl(self, seeds: List[str], *, max_depth: Optional[int] = None, max_requests: Optional[int] = None) -> List[Dict[str, Any]]:
+    def crawl(
+        self,
+        seeds: List[str],
+        *,
+        max_depth: Optional[int] = None,
+        max_requests: Optional[int] = None,
+        discover_sitemaps: bool = False,
+    ) -> List[Dict[str, Any]]:
         depth_limit = self.fetcher.policy.max_depth if max_depth is None else max_depth
         request_limit = self.fetcher.policy.max_requests if max_requests is None else max_requests
+        if discover_sitemaps:
+            sitemap_urls: List[str] = []
+            for seed in list(seeds):
+                sitemap_urls.extend(discover_sitemap_urls(self.fetcher, seed))
+            seeds = list(dict.fromkeys(list(seeds) + sitemap_urls))
         queue: deque[Tuple[str, int]] = deque((seed, 0) for seed in seeds)
         seen = set()
         results: List[Dict[str, Any]] = []
@@ -427,3 +439,26 @@ class Crawler:
 
 def load_seed_file(path: Path) -> List[str]:
     return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+
+
+def discover_sitemap_urls(fetcher: Fetcher, root_url: str, *, limit: int = 100) -> List[str]:
+    parsed = urlparse(root_url)
+    if not parsed.scheme or not parsed.netloc:
+        return []
+    sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
+    try:
+        outcome = fetcher.fetch(sitemap_url)
+    except Exception:
+        return []
+    try:
+        root = ElementTree.fromstring(outcome.content)
+    except Exception:
+        return []
+    urls: List[str] = []
+    for element in root.iter():
+        tag = element.tag.split("}", 1)[-1]
+        if tag == "loc" and element.text:
+            urls.append(canonicalize_url(element.text.strip()))
+            if len(urls) >= limit:
+                break
+    return urls

@@ -281,6 +281,13 @@ class AgentRunner:
                 ],
                 schema=schema,
             )
+            self._audit_model_interaction(
+                "plan",
+                provider_name=provider.provider_name,
+                model=provider.config.model,
+                payload={"task": spec.task, "context_paths": spec.context_paths, "urls": spec.urls},
+                result=response.parsed,
+            )
             steps = response.parsed["steps"][: spec.max_steps]
             return steps
         except Exception:
@@ -395,6 +402,25 @@ class AgentRunner:
                 "search_hits": [hit.model_dump(mode="json") for hit in gathered_hits[:12]],
                 "records": gathered_records[:12],
             }
+            if spec.response_schema:
+                structured_final = provider.extract(
+                    json.dumps(
+                        {
+                            "task": spec.task,
+                            "answer": final_answer,
+                            "citations": final_citations,
+                            "evidence": outputs["evidence"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    spec.response_schema,
+                    instruction="Return the final answer in the requested schema using only the supplied evidence.",
+                )
+                outputs["structured_response"] = structured_final
+                if spec.output_format == "json":
+                    outputs["answer"] = structured_final
+                else:
+                    outputs["answer"] = json.dumps(structured_final, ensure_ascii=False)
         except Exception:
             session.status = "failed"
             session.updated_at = utc_now_iso()
@@ -481,6 +507,13 @@ class AgentRunner:
     ) -> Dict[str, Any]:
         try:
             response = provider.chat(messages, tools=tool_definitions)
+            self._audit_model_interaction(
+                "decide_chat",
+                provider_name=provider.provider_name,
+                model=provider.config.model,
+                payload={"messages": list(messages), "tools": [tool.name for tool in tool_definitions]},
+                result={"tool_calls": [call.name for call in response.tool_calls], "content": response.content},
+            )
             if response.tool_calls:
                 tool_call = response.tool_calls[0]
                 return {"action": "tool", "tool_name": tool_call.name, "arguments": tool_call.arguments}
@@ -514,6 +547,13 @@ class AgentRunner:
             ],
             schema=schema,
         )
+        self._audit_model_interaction(
+            "decide_structured",
+            provider_name=provider.provider_name,
+            model=provider.config.model,
+            payload={"messages": list(messages), "tools": [tool.name for tool in tool_definitions]},
+            result=response.parsed,
+        )
         parsed = response.parsed
         return {
             "action": parsed["action"],
@@ -540,6 +580,13 @@ class AgentRunner:
         try:
             if passages:
                 answer = provider.summarize(query, passages)
+                self._audit_model_interaction(
+                    "summarize",
+                    provider_name=provider.provider_name,
+                    model=provider.config.model,
+                    payload={"query": query, "passage_count": len(passages)},
+                    result={"answer": answer},
+                )
         except ProviderError:
             answer = ""
         if not answer:
@@ -561,6 +608,25 @@ class AgentRunner:
                     ).model_dump(mode="json")
                 )
         return {"answer": answer, "citations": citations}
+
+    def _audit_model_interaction(
+        self,
+        event: str,
+        *,
+        provider_name: str,
+        model: str,
+        payload: Dict[str, Any],
+        result: Any,
+    ) -> None:
+        self.store.audit(
+            f"model.{event}",
+            {
+                "provider_name": provider_name,
+                "model": model,
+                "payload": payload,
+                "result": result,
+            },
+        )
 
     def _run_deterministic(self, session: SessionRecord, spec: TaskSpec, outputs: Dict[str, Any]) -> Dict[str, Any]:
         gathered_hits: List[SearchHit] = []

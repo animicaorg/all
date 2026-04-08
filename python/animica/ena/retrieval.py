@@ -121,14 +121,28 @@ class IndexManager:
         provider = create_embedding_provider(self.config, provider_name=provider_name)
         return provider.test()
 
+    def stats(self, index_name: str) -> Dict[str, Any]:
+        record = self.store.get_index(index_name)
+        if record is None:
+            raise ValueError(f"index not found: {index_name}")
+        return {
+            "index": record.model_dump(mode="json"),
+            "chunk_count": record.chunk_count,
+            "source_count": record.source_count,
+            "embedding_provider": record.embedding_provider,
+            "embedding_model": record.embedding_model,
+            "retrieval_mode": record.retrieval_mode,
+            "metadata": record.metadata,
+        }
+
     def index_path(
         self,
         path: Path,
         *,
         index_name: Optional[str] = None,
         reset: bool = False,
-        chunk_lines: int = 80,
-        overlap: int = 10,
+        chunk_lines: Optional[int] = None,
+        overlap: Optional[int] = None,
         embedding_provider_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         path = path.resolve()
@@ -136,11 +150,14 @@ class IndexManager:
         if reset:
             self.store.clear_index(name)
 
+        resolved_chunk_lines = chunk_lines or self.config.default_index_chunk_lines
+        resolved_overlap = overlap or self.config.default_index_overlap
+
         chunks: List[Dict[str, Any]] = []
         total_files = 0
         for candidate in self._iter_files(path):
             total_files += 1
-            chunks.extend(_chunk_path(candidate, chunk_lines=chunk_lines, overlap=overlap))
+            chunks.extend(_chunk_path(candidate, chunk_lines=resolved_chunk_lines, overlap=resolved_overlap))
 
         total_chunks = self._store_chunks(name, chunks, embedding_provider_name=embedding_provider_name)
         return self._finalize_index(
@@ -150,6 +167,8 @@ class IndexManager:
             total_files=total_files,
             total_chunks=total_chunks,
             embedding_provider_name=embedding_provider_name,
+            chunk_lines=resolved_chunk_lines,
+            overlap=resolved_overlap,
         )
 
     def index_jsonl_records(
@@ -276,6 +295,8 @@ class IndexManager:
         total_files: int,
         total_chunks: int,
         embedding_provider_name: Optional[str] = None,
+        chunk_lines: Optional[int] = None,
+        overlap: Optional[int] = None,
     ) -> Dict[str, Any]:
         provider_name = embedding_provider_name or self.config.default_embedding_provider
         provider_model = None
@@ -286,15 +307,72 @@ class IndexManager:
             retrieval_mode = "hybrid" if provider.capabilities().get("semantic") else "keyword"
         except ProviderError:
             provider_name = "disabled"
+        chunk_manifest = [
+            {
+                "chunk_id": item["chunk_id"],
+                "source": item["source"],
+                "title": item.get("title"),
+                "content_sha256": sha256_hex(item["content"]),
+                "metadata": item.get("metadata", {}),
+            }
+            for item in chunks
+        ]
+        chunk_manifest_artifact = self.store.put_artifact(
+            "index_chunk_manifest",
+            json.dumps(chunk_manifest, indent=2, ensure_ascii=False),
+            metadata={"index_name": index_name, "root": root},
+            suffix=".json",
+        )
+        index_manifest = {
+            "index_schema_version": "1.0",
+            "index_name": index_name,
+            "root": root,
+            "chunk_count": total_chunks,
+            "source_count": total_files,
+            "embedding_provider": provider_name,
+            "embedding_model": provider_model,
+            "retrieval_mode": retrieval_mode,
+            "chunk_lines": chunk_lines,
+            "overlap": overlap,
+            "chunk_manifest_artifact_id": chunk_manifest_artifact.artifact_id,
+            "source_hashes": sorted({sha256_hex(item["source"]) for item in chunks}),
+            "chunk_manifest_hash": chunk_manifest_artifact.sha256,
+        }
+        manifest_artifact = self.store.put_artifact(
+            "index_manifest",
+            json.dumps(index_manifest, indent=2, ensure_ascii=False),
+            metadata={"index_name": index_name, "root": root},
+            suffix=".json",
+        )
         record = IndexRecord(
             index_name=index_name,
             root=root,
+            index_schema_version="1.0",
             chunk_count=total_chunks,
             source_count=total_files,
             embedding_provider=provider_name,
             embedding_model=provider_model,
             retrieval_mode=retrieval_mode,
-            metadata={"chunked_sources": len({item["source"] for item in chunks})},
+            manifest_artifact_id=manifest_artifact.artifact_id,
+            chunk_manifest_artifact_id=chunk_manifest_artifact.artifact_id,
+            metadata={
+                "chunked_sources": len({item["source"] for item in chunks}),
+                "chunk_lines": chunk_lines,
+                "overlap": overlap,
+                "build_signature": sha256_hex(
+                    json.dumps(
+                        {
+                            "index_name": index_name,
+                            "root": root,
+                            "provider": provider_name,
+                            "provider_model": provider_model,
+                            "chunks": [item["chunk_id"] for item in chunk_manifest],
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
+            },
         )
         self.store.save_index(record)
         return {
@@ -305,6 +383,8 @@ class IndexManager:
             "embedding_provider": provider_name,
             "embedding_model": provider_model,
             "retrieval_mode": retrieval_mode,
+            "index_manifest_artifact_id": manifest_artifact.artifact_id,
+            "chunk_manifest_artifact_id": chunk_manifest_artifact.artifact_id,
         }
 
     def _iter_files(self, root: Path) -> Iterable[Path]:

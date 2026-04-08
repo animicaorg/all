@@ -19,6 +19,7 @@ from animica.ena.datasets import DatasetManager
 from animica.ena.ingest import Fetcher, export_jsonl, extract_local_path, load_seed_file, records_from_fetch
 from animica.ena.jobs import JobManager, WorkerEngine
 from animica.ena.models import AutonomyLevel, JobSpec, JobStatus, JobType, TaskSpec
+from animica.ena.operator import EnaOperator
 from animica.ena.providers import create_embedding_provider, create_model_provider
 from animica.ena.retrieval import IndexManager
 from animica.ena.service import create_app
@@ -44,6 +45,14 @@ prove_app = typer.Typer(help="Verification and proof commands.")
 models_app = typer.Typer(help="Model provider commands.")
 embeddings_app = typer.Typer(help="Embedding provider commands.")
 index_app = typer.Typer(help="Index build/rebuild/list commands.", invoke_without_command=True)
+scrape_app = typer.Typer(help="Fetch, batch scrape, and constrained crawl workflows.")
+ingest_app = typer.Typer(help="Ingest local files and directories.")
+extract_app = typer.Typer(help="Structured extraction commands.")
+collect_app = typer.Typer(help="Dataset collection and build commands.")
+artifacts_app = typer.Typer(help="Artifact inspection and verification.")
+runs_app = typer.Typer(help="Agent run inspection commands.")
+credits_app = typer.Typer(help="AICF credit inspection commands.")
+mining_app = typer.Typer(help="ENA useful-work mining integration commands.")
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(train_app, name="train")
@@ -57,6 +66,14 @@ app.add_typer(prove_app, name="prove")
 app.add_typer(models_app, name="models")
 app.add_typer(embeddings_app, name="embeddings")
 app.add_typer(index_app, name="index")
+app.add_typer(scrape_app, name="scrape")
+app.add_typer(ingest_app, name="ingest")
+app.add_typer(extract_app, name="extract")
+app.add_typer(collect_app, name="collect")
+app.add_typer(artifacts_app, name="artifacts")
+app.add_typer(runs_app, name="runs")
+app.add_typer(credits_app, name="credits")
+app.add_typer(mining_app, name="mining")
 
 try:
     from . import ena_artifact
@@ -105,6 +122,13 @@ def _runtime() -> tuple[Any, EnaStore, AgentRunner, IndexManager, DatasetManager
     worker = WorkerEngine(store, config)
     training = TrainingManager(store, config)
     return config, store, runner, index, datasets, jobs, worker, training
+
+
+def _operator_runtime() -> tuple[Any, EnaStore, EnaOperator]:
+    config = load_ena_config(explicit_path=_state.config_path)
+    store = EnaStore(config)
+    operator = EnaOperator(store=store, config=config)
+    return config, store, operator
 
 
 def _emit(data: Any, *, json_output: Optional[bool] = None) -> None:
@@ -245,6 +269,12 @@ def index_rebuild(
 @index_app.command("list")
 def index_list() -> None:
     _emit({"indexes": [item.model_dump(mode="json") for item in _runtime()[1].list_indexes()]})
+
+
+@index_app.command("stats")
+def index_stats(index_name: str = typer.Argument(..., help="Index name")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.index.stats(index_name))
 
 
 @app.command("chat")
@@ -396,61 +426,124 @@ def fetch(
     _emit(result)
 
 
-@app.command("scrape")
-def scrape(
-    url: str = typer.Argument(..., help="Seed URL"),
-    depth: int = typer.Option(1, "--depth", help="Max crawl depth"),
-    max_requests: int = typer.Option(25, "--max-requests", help="Max fetches"),
+@scrape_app.command("url")
+def scrape_url(
+    url: str = typer.Argument(..., help="URL to fetch or crawl"),
+    depth: int = typer.Option(0, "--depth", help="Crawl depth. Use 0 for single-page fetch."),
+    max_requests: int = typer.Option(25, "--max-requests", help="Maximum requests"),
+    include_sitemap: bool = typer.Option(False, "--include-sitemap", help="Seed crawl URLs from sitemap.xml when crawling"),
     out: Optional[Path] = typer.Option(None, "--out", help="Write JSONL output"),
+    index_after: bool = typer.Option(False, "--index", help="Index the scraped output after writing it"),
+    index_name: Optional[str] = typer.Option(None, "--index-name", help="Optional index name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
 ) -> None:
-    config, store, runner, index, datasets, jobs, worker, training = _runtime()
-    result = runner.tools.crawl([url], depth=depth, max_requests=max_requests)
-    if out and result.get("output_path"):
-        Path(out).write_bytes(Path(result["output_path"]).read_bytes())
-        result["output_path"] = str(out)
-    _emit(result)
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.scrape_url(
+            url,
+            depth=depth,
+            max_requests=max_requests,
+            include_sitemap=include_sitemap,
+            out=out,
+            index_after=index_after,
+            index_name=index_name,
+            embedding_provider=embedding_provider,
+        )
+    )
 
 
-@app.command("crawl")
-def crawl(
-    seed_file: Optional[Path] = typer.Option(None, "--seed-file", help="File of seed URLs"),
-    allow_domain: List[str] = typer.Option([], "--allow-domain", help="Allowed domain"),
-    depth: int = typer.Option(2, "--depth", help="Max crawl depth"),
-    max_requests: int = typer.Option(50, "--max-requests", help="Max requests"),
-    out: Path = typer.Option(..., "--out", help="Output JSONL path"),
-    url: List[str] = typer.Option([], "--url", help="Seed URL"),
+@scrape_app.command("batch")
+def scrape_batch(
+    seed_file: Path = typer.Argument(..., help="File with one URL per line"),
+    depth: int = typer.Option(0, "--depth", help="Crawl depth for each seed"),
+    max_requests: int = typer.Option(25, "--max-requests", help="Maximum requests"),
+    include_sitemap: bool = typer.Option(False, "--include-sitemap", help="Seed crawl URLs from sitemap.xml when crawling"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write JSONL output"),
+    index_after: bool = typer.Option(False, "--index", help="Index the scraped output after writing it"),
+    index_name: Optional[str] = typer.Option(None, "--index-name", help="Optional index name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
 ) -> None:
-    config, store, runner, index, datasets, jobs, worker, training = _runtime()
-    if allow_domain:
-        config.network.allow_domains = allow_domain
-    seeds = url[:]
-    if seed_file:
-        seeds.extend(load_seed_file(seed_file))
-    result = runner.tools.crawl(seeds, depth=depth, max_requests=max_requests)
-    Path(out).write_bytes(Path(result["output_path"]).read_bytes())
-    result["output_path"] = str(out)
-    _emit(result)
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.scrape_batch(
+            seed_file,
+            depth=depth,
+            max_requests=max_requests,
+            include_sitemap=include_sitemap,
+            out=out,
+            index_after=index_after,
+            index_name=index_name,
+            embedding_provider=embedding_provider,
+        )
+    )
 
 
-@app.command("extract")
-def extract(
+@scrape_app.command("crawl")
+def scrape_crawl(
+    root_url: str = typer.Argument(..., help="Root URL to crawl"),
+    depth: int = typer.Option(2, "--depth", help="Maximum crawl depth"),
+    max_requests: int = typer.Option(50, "--max-requests", help="Maximum requests"),
+    include_sitemap: bool = typer.Option(False, "--include-sitemap", help="Seed crawl URLs from sitemap.xml"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write JSONL output"),
+    index_after: bool = typer.Option(False, "--index", help="Index the crawl output after writing it"),
+    index_name: Optional[str] = typer.Option(None, "--index-name", help="Optional index name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.scrape_crawl(
+            root_url,
+            depth=depth,
+            max_requests=max_requests,
+            include_sitemap=include_sitemap,
+            out=out,
+            index_after=index_after,
+            index_name=index_name,
+            embedding_provider=embedding_provider,
+        )
+    )
+
+
+@extract_app.command("records")
+def extract_records(
     source: List[str] = typer.Argument(..., help="Local path(s) or URL(s) to extract"),
     out: Optional[Path] = typer.Option(None, "--out", help="Write extracted JSONL"),
 ) -> None:
-    config, store, runner, index, datasets, jobs, worker, training = _runtime()
-    fetcher = Fetcher(config.network)
-    records: List[dict] = []
-    for item in source:
-        if item.startswith("http://") or item.startswith("https://"):
-            records.extend(records_from_fetch(fetcher.fetch(item)))
-        else:
-            records.extend(extract_local_path(Path(item)))
-    if out is None:
-        out = Path(config.storage.datasets_dir) / f"{Path(source[0]).stem}.extract.jsonl"
-    export_jsonl(records, out)
-    artifact = store.put_artifact("extract_records", out.read_text(encoding="utf-8"), metadata={"sources": source}, suffix=".jsonl")
-    datasets.register(out, kind="extract_records", metadata={"artifact_id": artifact.artifact_id})
-    _emit({"artifact_id": artifact.artifact_id, "output_path": str(out), "rows": len(records)})
+    config, store, operator = _operator_runtime()
+    records = operator._records_from_sources(source)
+    result = operator._persist_records(
+        kind="extract_records",
+        records=records,
+        out=out or (Path(config.storage.datasets_dir) / f"{Path(source[0]).stem}.extract.jsonl"),
+        metadata={"sources": list(source)},
+    )
+    _emit(result)
+
+
+@extract_app.command("schema")
+def extract_schema(
+    source: List[str] = typer.Argument(..., help="Local path(s) or URL(s) to extract from"),
+    schema_text: Optional[str] = typer.Option(None, "--schema", help="Inline JSON schema"),
+    schema_file: Optional[Path] = typer.Option(None, "--schema-file", help="Path to JSON schema file"),
+    instruction: str = typer.Option("Extract the requested fields from the provided source.", "--instruction", help="Extraction instruction"),
+    model_provider: Optional[str] = typer.Option(None, "--model-provider", help="Configured model provider name"),
+    model_name: Optional[str] = typer.Option(None, "--model", help="Override model name"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write extracted JSONL"),
+) -> None:
+    if not schema_text and not schema_file:
+        raise typer.BadParameter("provide --schema or --schema-file")
+    schema = json.loads(schema_text) if schema_text else json.loads(schema_file.read_text(encoding="utf-8"))
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.extract_schema(
+            source,
+            schema=schema,
+            instruction=instruction,
+            model_provider=model_provider,
+            model_name=model_name,
+            out=out,
+        )
+    )
 
 
 @app.command("search")
@@ -474,6 +567,30 @@ def search(
         strategy = "hybrid"
     hits = indexer.search(query, index_name=index_name, limit=limit, strategy=strategy, embedding_provider_name=embedding_provider)
     _emit_hits(hits)
+
+
+@app.command("summarize")
+def summarize(
+    query: str = typer.Argument(..., help="Question or topic to summarize"),
+    source: List[str] = typer.Option([], "--source", help="Local path(s) or URL(s) to summarize"),
+    index_name: Optional[str] = typer.Option(None, "--index", help="Existing index name"),
+    model_provider: Optional[str] = typer.Option(None, "--model-provider", help="Configured model provider name"),
+    model_name: Optional[str] = typer.Option(None, "--model", help="Override model name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write JSON output"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.summarize(
+            query,
+            sources=source or None,
+            index_name=index_name,
+            model_provider=model_provider,
+            model_name=model_name,
+            embedding_provider=embedding_provider,
+            out=out,
+        )
+    )
 
 
 @jobs_app.command("create")
@@ -730,6 +847,68 @@ def datasets_export(
     _emit(datasets.export(path, out, format_name=format_name))
 
 
+@ingest_app.command("file")
+def ingest_file(
+    path: Path = typer.Argument(..., help="Local file to ingest"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write JSONL output"),
+    index_after: bool = typer.Option(False, "--index", help="Index the ingested output after writing it"),
+    index_name: Optional[str] = typer.Option(None, "--index-name", help="Optional index name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.ingest_file(
+            path,
+            out=out,
+            index_after=index_after,
+            index_name=index_name,
+            embedding_provider=embedding_provider,
+        )
+    )
+
+
+@ingest_app.command("dir")
+def ingest_dir(
+    path: Path = typer.Argument(..., help="Directory to ingest"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write JSONL output"),
+    index_after: bool = typer.Option(False, "--index", help="Index the ingested output after writing it"),
+    index_name: Optional[str] = typer.Option(None, "--index-name", help="Optional index name"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Embedding provider name"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.ingest_dir(
+            path,
+            out=out,
+            index_after=index_after,
+            index_name=index_name,
+            embedding_provider=embedding_provider,
+        )
+    )
+
+
+@collect_app.command("build-dataset")
+def collect_build_dataset(
+    input_paths: List[Path] = typer.Argument(..., help="Input file(s) or JSONL source(s)"),
+    raw_out: Path = typer.Option(..., "--raw-out", help="Combined raw JSONL output"),
+    task_type: str = typer.Option("summarize", "--task-type", help="Training task type"),
+    dedupe: bool = typer.Option(True, "--dedupe/--no-dedupe", help="Deduplicate normalized rows"),
+    split: bool = typer.Option(False, "--split/--no-split", help="Create deterministic train/eval/test splits"),
+    manifest_path: Optional[Path] = typer.Option(None, "--manifest", help="Write dataset build manifest"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(
+        operator.build_dataset(
+            input_paths,
+            raw_out=raw_out,
+            task_type=task_type,
+            dedupe=dedupe,
+            split=split,
+            manifest_path=manifest_path,
+        )
+    )
+
+
 @train_app.command("prepare")
 def train_prepare(
     dataset: Path = typer.Option(..., "--dataset", help="Training dataset path"),
@@ -809,6 +988,17 @@ def train_export(
 ) -> None:
     config, store, runner, indexer, datasets, jobs, worker, training = _runtime()
     _emit(training.export(run_id, out))
+
+
+@train_app.command("resume")
+def train_resume(
+    run_id: str = typer.Argument(..., help="Training run id to resume"),
+    backend: Optional[str] = typer.Option(None, "--backend", help="Override training backend"),
+    command: Optional[str] = typer.Option(None, "--command", help="Override training command"),
+) -> None:
+    config, store, runner, indexer, datasets, jobs, worker, training = _runtime()
+    record = training.resume(run_id, backend=backend, command=shlex.split(command) if command else None)
+    _emit(record.model_dump(mode="json"))
 
 
 @eval_app.command("run")
@@ -908,6 +1098,83 @@ def config_show() -> None:
 def config_init(path: Optional[Path] = typer.Option(None, "--path", help="Target config path")) -> None:
     path = path or (Path("~/.animica/ena").expanduser() / "config.toml")
     _emit({"config_path": str(save_default_config(path))})
+
+
+@artifacts_app.command("list")
+def artifacts_list(limit: int = typer.Option(50, "--limit", help="Maximum artifacts")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.list_artifacts(limit=limit))
+
+
+@artifacts_app.command("show")
+def artifacts_show(artifact_id: str = typer.Argument(..., help="Artifact id")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.show_artifact(artifact_id))
+
+
+@artifacts_app.command("verify")
+def artifacts_verify(artifact_id: str = typer.Argument(..., help="Artifact id")) -> None:
+    config, store, operator = _operator_runtime()
+    result = operator.verify_artifact(artifact_id)
+    _emit(result)
+    if not result.get("ok", False):
+        raise typer.Exit(code=1)
+
+
+@runs_app.command("list")
+def runs_list(limit: int = typer.Option(50, "--limit", help="Maximum runs")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.list_runs(limit=limit))
+
+
+@runs_app.command("show")
+def runs_show(session_id: str = typer.Argument(..., help="Agent run/session id")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.show_run(session_id))
+
+
+@credits_app.command("show")
+def credits_show(
+    miner_address: Optional[str] = typer.Option(None, "--miner-address", help="Miner or worker identity"),
+    limit: int = typer.Option(20, "--limit", help="Maximum ledger entries"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.credits_show(miner_address=miner_address, limit=limit))
+
+
+@mining_app.command("status")
+def mining_status(
+    miner_address: Optional[str] = typer.Option(None, "--miner-address", help="Miner or worker identity"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.mining_status(miner_address=miner_address))
+
+
+@app.command("doctor")
+def doctor(
+    check_model: bool = typer.Option(False, "--check-model", help="Call the configured model provider smoke tests"),
+    check_embeddings: bool = typer.Option(False, "--check-embeddings", help="Call the configured embedding provider smoke tests"),
+) -> None:
+    config, store, operator = _operator_runtime()
+    result = operator.doctor(check_model=check_model, check_embeddings=check_embeddings)
+    _emit(result)
+    if not result.get("ok", False):
+        raise typer.Exit(code=1)
+
+
+@app.command("verify")
+def verify(run_demo: bool = typer.Option(False, "--demo", help="Also run the local ENA demo workflow")) -> None:
+    config, store, operator = _operator_runtime()
+    result = operator.verify(run_demo=run_demo)
+    _emit(result)
+    if not result.get("ok", False):
+        raise typer.Exit(code=1)
+
+
+@app.command("demo")
+def demo(work_dir: Optional[Path] = typer.Option(None, "--work-dir", help="Optional demo workspace")) -> None:
+    config, store, operator = _operator_runtime()
+    _emit(operator.demo(work_dir=work_dir))
 
 
 @app.command("serve")

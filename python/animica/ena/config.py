@@ -29,7 +29,7 @@ def _default_home() -> Path:
     override = os.getenv("ANIMICA_ENA_HOME")
     if override:
         return Path(override).expanduser()
-    return Path("~/.animica/ena").expanduser()
+    return (Path.cwd() / ".animica" / "ena").resolve()
 
 
 def _workspace_config_candidates(start: Optional[Path] = None) -> list[Path]:
@@ -123,6 +123,12 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     env["shell"] = shell
     env["storage"] = storage
 
+    if os.getenv("ANIMICA_ENA_AICF_DB"):
+        env["aicf_db_path"] = os.environ["ANIMICA_ENA_AICF_DB"]
+    if os.getenv("ANIMICA_ENA_WORKER_ID"):
+        env["default_worker_id"] = os.environ["ANIMICA_ENA_WORKER_ID"]
+    if os.getenv("ANIMICA_ENA_MINER_ADDRESS"):
+        env["default_miner_address"] = os.environ["ANIMICA_ENA_MINER_ADDRESS"]
     if os.getenv("ANIMICA_ENA_MODEL_ENDPOINT"):
         env["model_endpoint"] = os.environ["ANIMICA_ENA_MODEL_ENDPOINT"]
     if os.getenv("ANIMICA_ENA_LOG_LEVEL"):
@@ -326,6 +332,7 @@ def load_ena_config(
     storage.manifests_dir = storage.manifests_dir or storage.home / "manifests"
     config.default_output_dir = config.default_output_dir or storage.home / "outputs"
     config.workspace = Path(config.workspace).resolve()
+    config.aicf_db_path = Path(config.aicf_db_path).expanduser() if config.aicf_db_path else storage.home / "state" / "aicf_protocol.sqlite3"
     return config
 
 
@@ -336,6 +343,7 @@ log_level = "INFO"
 semantic_search_backend = "external"
 default_model_provider = "deterministic"
 default_embedding_provider = "disabled"
+default_worker_id = "local-worker"
 
 [storage]
 home = "{_default_home()}"

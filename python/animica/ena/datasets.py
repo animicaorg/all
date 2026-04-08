@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .ingest import export_jsonl, extract_local_path
 from .models import DatasetRecord, DatasetSplitRecord, EnaConfigModel, TrainingManifest, TrainingSample
 from .store import EnaStore
-from .text import hamming_distance, normalize_text, sha256_hex, simhash64, stable_id
+from .text import hamming_distance, normalize_text, sha256_hex, simhash64, stable_id, utc_now_iso
 
 
 class DatasetManager:
@@ -218,6 +219,65 @@ class DatasetManager:
             pq.write_table(table, out_path)
             return {"path": str(out_path), "format": "parquet", "rows": len(rows)}
         raise ValueError(f"unsupported export format: {format_name}")
+
+    def build_dataset(
+        self,
+        inputs: List[Path],
+        *,
+        raw_out: Path,
+        task_type: str = "summarize",
+        dedupe: bool = True,
+        split: bool = False,
+        manifest_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        raw_rows: List[Dict[str, Any]] = []
+        source_paths: List[str] = []
+        for input_path in inputs:
+            resolved = input_path.resolve()
+            source_paths.append(str(resolved))
+            if resolved.suffix == ".jsonl":
+                with resolved.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if line:
+                            raw_rows.append(json.loads(line))
+                continue
+            raw_rows.extend(extract_local_path(resolved))
+
+        raw_out.parent.mkdir(parents=True, exist_ok=True)
+        export_jsonl(raw_rows, raw_out)
+        raw_record = self.register(raw_out, kind="raw_records", metadata={"inputs": source_paths})
+
+        normalized_out = raw_out.with_name(f"{raw_out.stem}.training.jsonl")
+        normalized = self.normalize(raw_out, normalized_out, task_type=task_type)
+
+        final_path = Path(normalized["path"])
+        dedupe_result = None
+        if dedupe:
+            deduped_out = raw_out.with_name(f"{raw_out.stem}.deduped.jsonl")
+            dedupe_result = self.dedupe(final_path, deduped_out)
+            final_path = Path(dedupe_result["path"])
+
+        split_result = None
+        if split:
+            split_dir = raw_out.parent / f"{raw_out.stem}.splits"
+            split_result = self.split_dataset(final_path, split_dir)
+
+        manifest = {
+            "built_at": utc_now_iso(),
+            "inputs": source_paths,
+            "raw_dataset": raw_record.model_dump(mode="json"),
+            "normalized_dataset": normalized,
+            "dedupe": dedupe_result,
+            "final_dataset_path": str(final_path),
+            "final_dataset_sha256": sha256_hex(final_path.read_bytes()),
+            "split": split_result,
+            "task_type": task_type,
+        }
+        if manifest_path is not None:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        return manifest
 
     def training_manifest(
         self,

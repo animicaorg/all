@@ -21,6 +21,26 @@ class StructuredOutputError(ProviderError):
     pass
 
 
+class ProviderTimeoutError(ProviderError):
+    pass
+
+
+class ProviderAuthError(ProviderError):
+    pass
+
+
+class ProviderRateLimitError(ProviderError):
+    pass
+
+
+class ProviderTransportError(ProviderError):
+    pass
+
+
+class ProviderResponseError(ProviderError):
+    pass
+
+
 @dataclass
 class ToolDefinition:
     name: str
@@ -63,6 +83,23 @@ def _sleep_with_backoff(backoff_seconds: float, max_backoff_seconds: float, atte
     delay = min(backoff_seconds * max(attempt, 1), max_backoff_seconds)
     if delay > 0:
         time.sleep(delay)
+
+
+def _classify_request_error(provider_name: str, path: str, exc: Exception) -> ProviderError:
+    if isinstance(exc, httpx.TimeoutException):
+        return ProviderTimeoutError(f"request timed out for {provider_name}{path}: {exc}")
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            return ProviderAuthError(f"authentication failed for {provider_name}{path}: {status_code}")
+        if status_code == 429:
+            return ProviderRateLimitError(f"rate limited by {provider_name}{path}: {status_code}")
+        if status_code >= 500:
+            return ProviderTransportError(f"upstream error from {provider_name}{path}: {status_code}")
+        return ProviderResponseError(f"request failed for {provider_name}{path}: {status_code}")
+    if isinstance(exc, (httpx.RequestError, OSError)):
+        return ProviderTransportError(f"transport failed for {provider_name}{path}: {exc}")
+    return ProviderError(f"request failed for {provider_name}{path}: {exc}")
 
 
 def _coerce_json(value: Any) -> Any:
@@ -402,7 +439,47 @@ class DeterministicModelProvider(BaseModelProvider):
                 steps.append({"goal": "Search indexed context", "tool": "search_context"})
             steps.append({"goal": "Summarize findings", "tool": None})
             return {"steps": steps}
+        if schema.get("type") == "object" and properties:
+            generic: Dict[str, Any] = {}
+            for key, item in properties.items():
+                item_type = item.get("type")
+                if item_type == "string":
+                    generic[key] = normalize_text(prompt)[:400]
+                elif item_type == "boolean":
+                    generic[key] = False
+                elif item_type == "integer":
+                    generic[key] = 0
+                elif item_type == "number":
+                    generic[key] = 0.0
+                elif item_type == "array":
+                    generic[key] = []
+                elif item_type == "object":
+                    generic[key] = {}
+            return generic
         return {}
+
+
+class StubModelProvider(DeterministicModelProvider):
+    def capabilities(self) -> Dict[str, bool]:
+        return {
+            "tool_calling": True,
+            "json_schema": True,
+            "chat": True,
+        }
+
+    def chat(
+        self,
+        messages: Sequence[Dict[str, Any]],
+        *,
+        tools: Optional[Sequence[ToolDefinition]] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
+    ) -> ModelResponse:
+        response = super().chat(messages, tools=tools, response_schema=response_schema)
+        if response.parsed is None and not response_schema:
+            response.content = normalize_text(response.content) or "stub provider response"
+        response.provider_name = self.provider_name
+        response.model = self.config.model
+        return response
 
 
 class HttpModelProvider(BaseModelProvider):
@@ -419,7 +496,7 @@ class HttpModelProvider(BaseModelProvider):
         if self.api_key:
             headers.setdefault("Authorization", f"Bearer {self.api_key}")
         timeout = httpx.Timeout(self.config.timeout_seconds)
-        last_error: Optional[Exception] = None
+        last_error: Optional[ProviderError] = None
         for attempt in range(self.config.retry_policy.attempts + 1):
             try:
                 with httpx.Client(timeout=timeout, headers=headers) as client:
@@ -427,14 +504,16 @@ class HttpModelProvider(BaseModelProvider):
                 response.raise_for_status()
                 return response.json()
             except Exception as exc:  # noqa: BLE001
-                last_error = exc
+                last_error = _classify_request_error(self.provider_name, path, exc)
+                if isinstance(last_error, ProviderAuthError):
+                    break
                 if attempt < self.config.retry_policy.attempts:
                     _sleep_with_backoff(
                         self.config.retry_policy.backoff_seconds,
                         self.config.retry_policy.max_backoff_seconds,
                         attempt + 1,
                     )
-        raise ProviderError(f"request failed for {self.provider_name}{path}: {last_error}")
+        raise last_error or ProviderError(f"request failed for {self.provider_name}{path}")
 
 
 class OpenAICompatibleModelProvider(HttpModelProvider):
@@ -638,6 +717,24 @@ class HashingEmbeddingProvider(BaseEmbeddingProvider):
         return vectors
 
 
+class StubEmbeddingProvider(BaseEmbeddingProvider):
+    def embed_texts(self, texts: Sequence[str]) -> List[List[float]]:
+        dimensions = self.config.dimensions or 16
+        vectors: List[List[float]] = []
+        for text in texts:
+            digest = sha256_hex(text)
+            values = []
+            for index in range(dimensions):
+                start = (index * 4) % len(digest)
+                chunk = digest[start : start + 4]
+                if len(chunk) < 4:
+                    chunk = (chunk + digest)[:4]
+                values.append((int(chunk, 16) / 65535.0) * 2.0 - 1.0)
+            norm = math.sqrt(sum(value * value for value in values))
+            vectors.append([value / norm for value in values] if norm else values)
+        return vectors
+
+
 class HttpEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, provider_name: str, config: EmbeddingProviderConfig):
         super().__init__(provider_name, config)
@@ -652,7 +749,7 @@ class HttpEmbeddingProvider(BaseEmbeddingProvider):
         if self.api_key:
             headers.setdefault("Authorization", f"Bearer {self.api_key}")
         timeout = httpx.Timeout(self.config.timeout_seconds)
-        last_error: Optional[Exception] = None
+        last_error: Optional[ProviderError] = None
         for attempt in range(self.config.retry_policy.attempts + 1):
             try:
                 with httpx.Client(timeout=timeout, headers=headers) as client:
@@ -660,14 +757,16 @@ class HttpEmbeddingProvider(BaseEmbeddingProvider):
                 response.raise_for_status()
                 return response.json()
             except Exception as exc:  # noqa: BLE001
-                last_error = exc
+                last_error = _classify_request_error(self.provider_name, path, exc)
+                if isinstance(last_error, ProviderAuthError):
+                    break
                 if attempt < self.config.retry_policy.attempts:
                     _sleep_with_backoff(
                         self.config.retry_policy.backoff_seconds,
                         self.config.retry_policy.max_backoff_seconds,
                         attempt + 1,
                     )
-        raise ProviderError(f"request failed for {self.provider_name}{path}: {last_error}")
+        raise last_error or ProviderError(f"request failed for {self.provider_name}{path}")
 
 
 class OpenAICompatibleEmbeddingProvider(HttpEmbeddingProvider):
@@ -701,18 +800,32 @@ class OllamaEmbeddingProvider(HttpEmbeddingProvider):
         return results
 
 
+MODEL_PROVIDER_REGISTRY = {
+    "deterministic": DeterministicModelProvider,
+    "openai_compatible": OpenAICompatibleModelProvider,
+    "ollama": OllamaModelProvider,
+    "stub": StubModelProvider,
+}
+
+
+EMBEDDING_PROVIDER_REGISTRY = {
+    "disabled": DisabledEmbeddingProvider,
+    "hashing": HashingEmbeddingProvider,
+    "openai_compatible": OpenAICompatibleEmbeddingProvider,
+    "ollama": OllamaEmbeddingProvider,
+    "stub": StubEmbeddingProvider,
+}
+
+
 def create_model_provider(config: EnaConfigModel, provider_name: Optional[str] = None) -> BaseModelProvider:
     name = provider_name or config.default_model_provider
     provider_config = config.model_providers.get(name)
     if provider_config is None:
         raise ProviderError(f"unknown model provider: {name}")
-    if provider_config.provider == "deterministic":
-        return DeterministicModelProvider(name, provider_config)
-    if provider_config.provider == "openai_compatible":
-        return OpenAICompatibleModelProvider(name, provider_config)
-    if provider_config.provider == "ollama":
-        return OllamaModelProvider(name, provider_config)
-    raise ProviderError(f"unsupported model provider type: {provider_config.provider}")
+    provider_cls = MODEL_PROVIDER_REGISTRY.get(provider_config.provider)
+    if provider_cls is None:
+        raise ProviderError(f"unsupported model provider type: {provider_config.provider}")
+    return provider_cls(name, provider_config)
 
 
 def create_embedding_provider(config: EnaConfigModel, provider_name: Optional[str] = None) -> BaseEmbeddingProvider:
@@ -720,12 +833,7 @@ def create_embedding_provider(config: EnaConfigModel, provider_name: Optional[st
     provider_config = config.embedding_providers.get(name)
     if provider_config is None:
         raise ProviderError(f"unknown embedding provider: {name}")
-    if provider_config.provider == "disabled":
-        return DisabledEmbeddingProvider(name, provider_config)
-    if provider_config.provider == "hashing":
-        return HashingEmbeddingProvider(name, provider_config)
-    if provider_config.provider == "openai_compatible":
-        return OpenAICompatibleEmbeddingProvider(name, provider_config)
-    if provider_config.provider == "ollama":
-        return OllamaEmbeddingProvider(name, provider_config)
-    raise ProviderError(f"unsupported embedding provider type: {provider_config.provider}")
+    provider_cls = EMBEDDING_PROVIDER_REGISTRY.get(provider_config.provider)
+    if provider_cls is None:
+        raise ProviderError(f"unsupported embedding provider type: {provider_config.provider}")
+    return provider_cls(name, provider_config)

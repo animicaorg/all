@@ -178,13 +178,17 @@ class PythonTransformersTrainingRunner(BaseTrainingRunner):
             eval_dataset=eval_dataset,
             data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
         )
-        train_result = trainer.train()
+        existing_checkpoints = sorted((output_dir / "checkpoints").glob("checkpoint-*"))
+        resume_from_checkpoint = str(existing_checkpoints[-1]) if existing_checkpoints else None
+        train_result = trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         model_dir = output_dir / "model"
         trainer.save_model(str(model_dir))
         tokenizer.save_pretrained(str(model_dir))
         metrics: Dict[str, Any] = dict(train_result.metrics)
         if eval_dataset is not None:
             metrics["eval"] = trainer.evaluate()
+        if resume_from_checkpoint:
+            metrics["resumed_from_checkpoint"] = resume_from_checkpoint
         metrics_path = output_dir / "metrics.json"
         _dump_json(metrics_path, metrics)
         checkpoints = sorted(str(path) for path in (output_dir / "checkpoints").glob("checkpoint-*"))
@@ -244,6 +248,8 @@ class TrainingManager:
         *,
         backend: Optional[str] = None,
         command: Optional[Sequence[str]] = None,
+        output_dir: Optional[Path] = None,
+        resume_from_run_id: Optional[str] = None,
     ) -> TrainingRunRecord:
         manifest_payload = _load_json(manifest_path)
         if command:
@@ -253,7 +259,7 @@ class TrainingManager:
             manifest_payload["backend"] = backend
         manifest = _manifest_from_payload(manifest_payload)
         run_id = stable_id("trainrun", str(manifest_path.resolve()), utc_now_iso())
-        output_dir = Path(manifest.output_dir or (self.config.default_output_dir / "training" / run_id)).resolve()
+        output_dir = Path(output_dir or manifest.output_dir or (self.config.default_output_dir / "training" / run_id)).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         record = TrainingRunRecord(
             run_id=run_id,
@@ -262,6 +268,7 @@ class TrainingManager:
             manifest_path=str(manifest_path.resolve()),
             base_model=manifest.base_model,
             output_dir=str(output_dir),
+            resumed_from_run_id=resume_from_run_id,
             metadata={"manifest": manifest.model_dump(mode="json")},
         )
         self.store.save_training_run(record)
@@ -274,8 +281,9 @@ class TrainingManager:
             record.command = list(result.get("command", []))
             record.checkpoint_paths = list(result.get("checkpoint_paths", []))
             record.metrics = dict(result.get("metrics", {}))
-            artifact_ids = self._materialize_run_artifacts(record, output_dir, result)
-            record.artifact_ids = artifact_ids
+            artifact_payload = self._materialize_run_artifacts(record, output_dir, result)
+            record.artifact_ids = artifact_payload["artifact_ids"]
+            record.checkpoint_manifest = artifact_payload["checkpoint_manifest"]
             self.store.add_memory(
                 kind="training_run",
                 content=f"training run {record.run_id} completed for base model {record.base_model}",
@@ -292,6 +300,24 @@ class TrainingManager:
             raise
         self.store.save_training_run(record)
         return record
+
+    def resume(
+        self,
+        run_id: str,
+        *,
+        backend: Optional[str] = None,
+        command: Optional[Sequence[str]] = None,
+    ) -> TrainingRunRecord:
+        existing = self.store.get_training_run(run_id)
+        if existing is None:
+            raise ValueError(f"training run not found: {run_id}")
+        return self.run(
+            Path(existing.manifest_path),
+            backend=backend or existing.backend,
+            command=command or existing.command or None,
+            output_dir=Path(existing.output_dir),
+            resume_from_run_id=existing.run_id,
+        )
 
     def eval(
         self,
@@ -392,7 +418,7 @@ class TrainingManager:
         record: TrainingRunRecord,
         output_dir: Path,
         result: Dict[str, Any],
-    ) -> List[str]:
+    ) -> Dict[str, Any]:
         artifacts: List[str] = []
         summary_artifact = self.store.put_artifact(
             "training_run_summary",
@@ -429,7 +455,8 @@ class TrainingManager:
             suffix=".json",
         )
         artifacts.append(manifest_artifact.artifact_id)
-        return artifacts
+        checkpoint_manifest = [item for item in file_manifest if item["path"].startswith("checkpoints/") or "checkpoint" in item["path"]]
+        return {"artifact_ids": artifacts, "checkpoint_manifest": checkpoint_manifest}
 
     def _token_overlap(self, actual: str, expected: str) -> float:
         actual_tokens = set(actual.lower().split())
