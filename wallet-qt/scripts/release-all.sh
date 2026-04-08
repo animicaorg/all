@@ -3,8 +3,8 @@
 #
 # This is a convenience script that runs all platform-specific release scripts.
 # Should be run on macOS to build native macOS releases.
-# Can cross-compile for Linux (if tools available).
-# Cannot build Windows natively from Unix (requires Windows or VM).
+# Can build Linux natively and Windows via the Linux cross-release helper when the
+# Windows Qt/OpenSSL SDKs are installed.
 #
 # Usage:
 #   ./scripts/release-all.sh [--sign-mac] [--notarize-mac]
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --notarize-mac   Sign and notarize macOS build (requires Apple credentials)"
             echo ""
             echo "Note: This script can only build for platforms available on the current system."
-            echo "      Windows builds require Windows or cross-compilation setup."
+            echo "      Windows builds require the Linux cross-compilation prerequisites."
             exit 0
             ;;
         *)
@@ -166,9 +166,8 @@ case "$CURRENT_OS" in
         echo "macOS build requires macOS. Skipping."
         BUILD_STATUS[macOS]="⏭️  Requires macOS platform"
         
-        # Windows requires Windows
-        echo "Windows build requires Windows. Skipping."
-        BUILD_STATUS[Windows]="⏭️  Requires Windows platform"
+        echo "Windows cross-build is available via ./scripts/release-windows-cross.sh"
+        BUILD_STATUS[Windows]="⏭️  Run ./scripts/release-windows-cross.sh"
         ;;
         
     MINGW*|MSYS*|CYGWIN*)

@@ -197,46 +197,6 @@ EOF
     dpkg-deb --info "$deb_path" | grep -E "Package|Version|Architecture|Depends|Description"
 }
 
-publish_website_artifacts() {
-    local website_dir="$1"
-    local checksum_file="$website_dir/animica-wallet-linux.sha256"
-    local website_files=()
-
-    mkdir -p "$website_dir"
-
-    if [ -n "$RELEASE_APPIMAGE" ] && [ -f "$RELEASE_APPIMAGE" ]; then
-        cp "$RELEASE_APPIMAGE" "$website_dir/animica-wallet-linux.AppImage"
-    fi
-
-    if [ -n "$RELEASE_DEB" ] && [ -f "$RELEASE_DEB" ]; then
-        cp "$RELEASE_DEB" "$website_dir/animica-wallet-linux.deb"
-    fi
-
-    if [ -n "$RELEASE_TARBALL" ] && [ -f "$RELEASE_TARBALL" ]; then
-        cp "$RELEASE_TARBALL" "$website_dir/animica-wallet-linux.tar.gz"
-    fi
-
-    if [ -f "$website_dir/animica-wallet-linux.AppImage" ]; then
-        website_files+=("animica-wallet-linux.AppImage")
-    fi
-
-    if [ -f "$website_dir/animica-wallet-linux.deb" ]; then
-        website_files+=("animica-wallet-linux.deb")
-    fi
-
-    if [ -f "$website_dir/animica-wallet-linux.tar.gz" ]; then
-        website_files+=("animica-wallet-linux.tar.gz")
-    fi
-
-    if [ "${#website_files[@]}" -gt 0 ]; then
-        (
-            cd "$website_dir"
-            sha256sum "${website_files[@]}" > "$(basename "$checksum_file")"
-        )
-        echo "✓ Website downloads refreshed in $website_dir"
-    fi
-}
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -448,7 +408,22 @@ fi
 
 if [ -d "$REPO_ROOT/website/public" ]; then
     log_section "Refreshing Website Downloads"
-    publish_website_artifacts "$WEBSITE_WALLET_DIR"
+    publish_args=(
+        --platform linux
+        --version "$VERSION"
+        --website-dir "$WEBSITE_WALLET_DIR"
+        --raw "$INSTALL_STAGE/usr/bin/animica-wallet"
+    )
+    if [ -n "$RELEASE_APPIMAGE" ] && [ -f "$RELEASE_APPIMAGE" ]; then
+        publish_args+=(--appimage "$RELEASE_APPIMAGE")
+    fi
+    if [ -n "$RELEASE_DEB" ] && [ -f "$RELEASE_DEB" ]; then
+        publish_args+=(--deb "$RELEASE_DEB")
+    fi
+    if [ -n "$RELEASE_TARBALL" ] && [ -f "$RELEASE_TARBALL" ]; then
+        publish_args+=(--tarball "$RELEASE_TARBALL")
+    fi
+    "$SCRIPT_DIR/publish-wallet-downloads.sh" "${publish_args[@]}"
 fi
 
 log_section "Generating Checksums"
