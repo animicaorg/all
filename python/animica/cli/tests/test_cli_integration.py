@@ -7,6 +7,9 @@ Tests wallet round-trips, RPC calls, chain queries, and transaction operations.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -27,6 +30,23 @@ runner = typer.testing.CliRunner()
 class TestCLIBasics:
     """Test CLI help and basic structure."""
 
+    def test_cli_import_bootstraps_repo_root(self) -> None:
+        """Test CLI import succeeds when only the Python package root is on PYTHONPATH."""
+        python_root = Path(__file__).resolve().parents[3]
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(python_root)
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import animica.cli.main; import aicf.queue.jobkind; print('ok')"],
+            capture_output=True,
+            text=True,
+            cwd=tempfile.gettempdir(),
+            env=env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "ok" in result.stdout
+
     def test_help(self) -> None:
         """Test that --help works."""
         result = runner.invoke(app, ["--help"])
@@ -35,9 +55,6 @@ class TestCLIBasics:
 
     def test_module_invocation(self) -> None:
         """Test that the package can be invoked as a module."""
-        import subprocess
-        import sys
-        
         # Test: python -m animica --help
         result = subprocess.run(
             [sys.executable, "-m", "animica", "--help"],
