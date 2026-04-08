@@ -10,8 +10,11 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
-        # Include web assets (Monaco IDE HTML/JS)
+        # Include packaged web assets, UI resources, and token/templates that Studio loads at runtime.
         (str(ROOT / "animica_studio" / "ui" / "web"), "animica_studio/ui/web"),
+        (str(ROOT / "animica_studio" / "ui" / "resources"), "animica_studio/ui/resources"),
+        (str(ROOT / "animica_studio" / "templates"), "animica_studio/templates"),
+        (str(ROOT / "animica_studio" / "resources" / "templates"), "animica_studio/resources/templates"),
     ],
     hiddenimports=[
         "PySide6.QtWebEngineWidgets",

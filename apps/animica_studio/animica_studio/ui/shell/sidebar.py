@@ -16,6 +16,7 @@ class Sidebar(QFrame):
         self.setObjectName("Sidebar")
         self._expanded = True
         self._buttons: list[QPushButton] = []
+        self._button_indices: list[int] = []
         self._full_labels: list[str] = []
         self._anim: QPropertyAnimation | None = None
 
@@ -52,11 +53,12 @@ class Sidebar(QFrame):
         btn.clicked.connect(lambda _c=False, i=index: self.navigate.emit(i))
         self._layout.addWidget(btn)
         self._buttons.append(btn)
+        self._button_indices.append(index)
         self._full_labels.append(f"{icon}  {label}")
 
     def set_active(self, index: int) -> None:
         for i, b in enumerate(self._buttons):
-            b.setChecked(i == index)
+            b.setChecked(self._button_indices[i] == index)
 
     def toggle(self, animate: bool = True) -> None:
         self._expanded = not self._expanded

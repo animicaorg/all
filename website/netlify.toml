@@ -34,7 +34,7 @@
       img-src 'self' data: blob:;
       script-src 'self';
       style-src 'self' 'unsafe-inline';
-      connect-src 'self' http://127.0.0.1:8545 ws://127.0.0.1:8546 https://studio.animica.org https://explorer.animica.org;
+      connect-src 'self' http://127.0.0.1:8545 ws://127.0.0.1:8546 https://studio.animica.org https://explorer.animica.org https://pool.animica.org https://*.animica.org;
       upgrade-insecure-requests;
     """
 
@@ -62,6 +62,20 @@
   status = 301
   force = true
   conditions = { Host = ["www.animica.org"] }
+
+[[redirects]]
+  from = "/api/mining/*"
+  to = "https://pool.animica.org/api/mining/:splat"
+  status = 200
+  force = true
+  conditions = { Host = ["animica.org", "www.animica.org"] }
+
+[[redirects]]
+  from = "/api/pool/*"
+  to = "https://pool.animica.org/api/pool/:splat"
+  status = 200
+  force = true
+  conditions = { Host = ["animica.org", "www.animica.org"] }
 
 # If you host previews under a different domain, you can add additional host rules above.
 
