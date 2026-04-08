@@ -50,9 +50,9 @@ export function createMiningApiClient(input: {
       try {
         const data = await fetchJSON<T>(url, {
           method: 'GET',
-          query,
           timeoutMs,
           retry: { maxRetries: 0, retryOnStatuses: [] },
+          ...(query ? { query } : {}),
         });
 
         return {

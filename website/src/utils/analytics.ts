@@ -28,18 +28,23 @@ export interface AnalyticsConfig {
 const LS_KEY = 'analytics:enabled';
 const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
+type PlausibleFn = {
+  (event: string, opts?: { props?: Record<string, unknown> }): void;
+  q?: unknown[];
+};
+
 declare global {
   interface Window {
-    plausible?: (event: string, opts?: { props?: Record<string, any] }) => void & { q?: any[] };
+    plausible?: PlausibleFn;
     posthog?: {
-      init: (key: string, opts: Record<string, any>) => void;
-      capture: (event: string, props?: Record<string, any>) => void;
-      identify: (id: string, props?: Record<string, any>) => void;
+      init: (key: string, opts: Record<string, unknown>) => void;
+      capture: (event: string, props?: Record<string, unknown>) => void;
+      identify: (id: string, props?: Record<string, unknown>) => void;
       opt_in_capturing?: () => void;
       opt_out_capturing?: () => void;
       isFeatureEnabled?: (key: string) => boolean;
       onFeatureFlags?: (cb: () => void) => void;
-      register?: (props: Record<string, any>) => void;
+      register?: (props: Record<string, unknown>) => void;
       reset?: () => void;
       __loaded?: boolean;
     };

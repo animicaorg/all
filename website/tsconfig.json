@@ -30,7 +30,7 @@
     "useDefineForClassFields": true,
 
     // Type roots & global types
-    "types": ["astro/client", "vite/client"],
+    "types": ["astro/client"],
 
     // Nice-to-haves
     "allowSyntheticDefaultImports": true,
