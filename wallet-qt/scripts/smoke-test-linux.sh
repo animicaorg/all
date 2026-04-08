@@ -39,6 +39,12 @@ if echo "$WALLET_PATH" | grep -q "\.AppImage$"; then
     echo "Detected AppImage format"
 fi
 
+if [ "$IS_APPIMAGE" = true ]; then
+    :
+else
+    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-bundle-layout.py" --platform linux --path "$(dirname "$WALLET_PATH")/.."
+fi
+
 # Test 1: Check node binary exists
 echo "[1/5] Checking node binary..."
 
@@ -50,6 +56,7 @@ if [ "$IS_APPIMAGE" = true ]; then
     
     if [ -d "squashfs-root" ]; then
         NODE_PYTHON="$(pwd)/squashfs-root/usr/lib/node/venv/bin/python"
+        python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-bundle-layout.py" --platform linux --path "$(pwd)/squashfs-root"
     else
         echo "❌ FAIL: Could not extract AppImage"
         exit 1
@@ -86,7 +93,7 @@ if ! "$NODE_PYTHON" --version; then
     exit 1
 fi
 
-if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core; print('All imports OK')" 2>&1; then
+if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core; print('All imports OK')" 2>&1; then
     echo "❌ FAIL: Node imports failed"
     exit 1
 fi

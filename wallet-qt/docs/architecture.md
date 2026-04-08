@@ -67,7 +67,13 @@ The wallet deliberately does not claim encryption support because the canonical 
 
 ### Receive
 
-The receive view is derived from the selected wallet in `wallets.json`. It shows the canonical address, current balance, copy action, and a local note field. QR generation is not shipped yet, so the UI shows an explicit availability notice instead of a fake image.
+The receive view is derived from the selected wallet in `wallets.json`. It shows the canonical address, current balance, copy action, optional amount/message request fields, and a QR generated from the `animica:` payment URI for the selected wallet.
+
+The QR flow is split deliberately:
+
+- `ReceiveWidget` owns Qt-only UI state and async refresh behavior
+- `ReceiveQrService` builds the payment URI and asks the bundled Python helper for a PNG
+- `python -m animica.wallet_qr` renders the actual QR image inside the packaged runtime
 
 ## Transaction History Strategy
 
@@ -117,4 +123,4 @@ The runtime lookup logic supports these embedded-node locations:
 - macOS bundle: `Contents/Resources/node/venv/bin/python`
 - Windows package: `node/venv/Scripts/python.exe`
 
-This lookup is shared by both the wallet bridge adapter and the node manager so packaged builds and development builds resolve the same embedded runtime correctly.
+The runtime also bundles deterministic node assets under `node/assets/` so packaged builds do not need the repo checkout to locate `spec/params.yaml` or network genesis files.

@@ -13,25 +13,7 @@
 namespace {
 QString bundledPythonPath()
 {
-    const QString appDir = QCoreApplication::applicationDirPath();
-    QStringList candidates;
-#ifdef Q_OS_MACOS
-    candidates << QDir(appDir).filePath("../Resources/node/venv/bin/python");
-#elif defined(Q_OS_WIN)
-    candidates << QDir(appDir).filePath("node/venv/Scripts/python.exe");
-#else
-    candidates << QDir(appDir).filePath("node/venv/bin/python");
-    candidates << QDir(appDir).filePath("../lib/node/venv/bin/python");
-    candidates << QDir(appDir).filePath("../lib/animica-wallet/node/venv/bin/python");
-    candidates << QStringLiteral("/usr/lib/animica-wallet/node/venv/bin/python");
-#endif
-    for (const QString& candidate : candidates) {
-        QFileInfo info(candidate);
-        if (info.exists() && info.isExecutable()) {
-            return info.absoluteFilePath();
-        }
-    }
-    return QString();
+    return AppPaths::bundledPythonPath();
 }
 
 QStringList repoPythonCandidates()

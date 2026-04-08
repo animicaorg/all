@@ -28,20 +28,28 @@ Outputs:
 - `dist/wallet-qt/<version>/linux/*.deb`
 - `dist/wallet-qt/<version>/linux/SHA256SUMS`
 
+Validate:
+
+```bash
+./scripts/smoke-test-linux.sh <artifact>
+```
+
 ## 3. macOS release
+
+Staged build:
 
 ```bash
 cd wallet-qt
-./scripts/release-mac.sh --dmg
+./scripts/build-mac.sh --clean
 ```
 
-Outputs:
+Unsigned/ad-hoc DMG:
 
-- `dist/wallet-qt/<version>/macos/*.app`
-- `dist/wallet-qt/<version>/macos/*.dmg`
-- `dist/wallet-qt/<version>/macos/SHA256SUMS`
+```bash
+./scripts/release-mac.sh --adhoc-sign --dmg
+```
 
-For signing/notarization:
+Developer ID / notarization placeholders:
 
 ```bash
 export CODESIGN_IDENTITY="Developer ID Application: ..."
@@ -50,36 +58,70 @@ export APPLE_TEAM_ID="TEAMID"
 ./scripts/release-mac.sh --sign --notarize --dmg
 ```
 
+Outputs:
+
+- `dist/wallet-qt/<version>/macos/*.app`
+- `dist/wallet-qt/<version>/macos/*.dmg`
+- `dist/wallet-qt/<version>/macos/SHA256SUMS`
+
+Validate:
+
+```bash
+./scripts/smoke-test-mac.sh dist/wallet-qt/<version>/macos/*.app
+```
+
 ## 4. Windows release
+
+Staged build:
 
 ```powershell
 cd wallet-qt
+.\scripts\build-windows.ps1
+```
+
+Per-user release:
+
+```powershell
 .\scripts\release-windows.ps1
 ```
 
-Outputs:
+Per-machine release:
 
-- `dist\wallet-qt\<version>\windows\*.msi` when WiX is available
-- `dist\wallet-qt\<version>\windows\*.zip` otherwise
-- `dist\wallet-qt\<version>\windows\SHA256SUMS`
+```powershell
+.\scripts\release-windows.ps1 -PerMachine
+```
 
-For signing:
+Signing placeholder:
 
 ```powershell
 $env:CODESIGN_CERT = "thumbprint-or-pfx"
 .\scripts\release-windows.ps1 -Sign
 ```
 
-## 5. Validate artifacts
+Outputs:
 
-Run the platform smoke tests where supported:
+- `dist\wallet-qt\<version>\windows\*.zip`
+- `dist\wallet-qt\<version>\windows\*.msi` when WiX Toolset v3 is installed
+- `dist\wallet-qt\<version>\windows\SHA256SUMS`
 
-```bash
-./wallet-qt/scripts/smoke-test-linux.sh <AppImage-or-binary>
-./wallet-qt/scripts/smoke-test-mac.sh <AnimicaWallet.app>
+Validate:
+
+```powershell
+.\scripts\smoke-test-windows.ps1 -WalletPath .\build\windows-release\stage
 ```
 
-Also run the manual operator checklist in [operator-checklist.md](operator-checklist.md).
+## 5. Release Verification Checklist
+
+Run this on the native target OS before publishing:
+
+- wallet opens
+- balances load
+- receive address shows a real QR
+- QR saves to PNG
+- send form opens
+- history loads
+- packaged app launches without the repo checkout
+- bundled runtime can import `animica.wallet_qr`
 
 ## 6. Publish
 
@@ -91,7 +133,7 @@ Ship the artifacts together with:
 
 ## Common Failure Modes
 
-- Embedded-node configure fails because Python packages cannot be installed on the build host.
-- Linux packaging host lacks `linuxdeployqt`.
-- Windows host lacks WiX or `windeployqt`.
-- macOS signing/notarization credentials are missing.
+- the bundled node build host cannot install Python dependencies
+- Qt deployment did not run because the workflow skipped `cmake --install`
+- WiX Toolset v3 is missing on Windows
+- Apple signing or notarization credentials are missing on macOS

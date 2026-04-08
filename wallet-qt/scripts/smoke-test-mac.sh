@@ -31,8 +31,12 @@ echo "======================================"
 echo "App bundle: $APP_BUNDLE"
 echo ""
 
+echo "[0/6] Verifying bundle layout..."
+python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-bundle-layout.py" --platform macos --path "$APP_BUNDLE"
+echo ""
+
 # Test 1: Check node binary exists
-echo "[1/5] Checking node binary..."
+echo "[1/6] Checking node binary..."
 NODE_PYTHON="$APP_BUNDLE/Contents/Resources/node/venv/bin/python"
 
 if [ ! -f "$NODE_PYTHON" ]; then
@@ -49,13 +53,13 @@ echo "✓ Node binary exists and is executable"
 echo ""
 
 # Test 2: Check node version and imports
-echo "[2/5] Testing node imports..."
+echo "[2/6] Testing node imports..."
 if ! "$NODE_PYTHON" --version; then
     echo "❌ FAIL: Node Python --version failed"
     exit 1
 fi
 
-if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core; print('All imports OK')" 2>&1; then
+if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core; print('All imports OK')" 2>&1; then
     echo "❌ FAIL: Node imports failed"
     exit 1
 fi
@@ -64,7 +68,7 @@ echo "✓ Node imports successful"
 echo ""
 
 # Test 3: Start node and check RPC
-echo "[3/5] Starting node..."
+echo "[3/6] Starting node..."
 
 # Use a temporary datadir for testing
 TEST_DATADIR="/tmp/animica-smoke-test-$$"
@@ -133,7 +137,7 @@ fi
 echo ""
 
 # Test 4: Query node status
-echo "[4/5] Testing node RPC calls..."
+echo "[4/6] Testing node RPC calls..."
 
 # Test /health endpoint
 HEALTH_RESPONSE=$(curl -s -f "http://127.0.0.1:$RPC_PORT/health" || echo "ERROR")
@@ -161,7 +165,7 @@ echo "✓ /status: chain_id=$CHAIN_ID"
 echo ""
 
 # Test 5: Clean shutdown
-echo "[5/5] Testing clean shutdown..."
+echo "[5/6] Testing clean shutdown..."
 kill "$NODE_PID"
 sleep 2
 
@@ -178,6 +182,14 @@ fi
 
 NODE_PID=""  # Prevent cleanup from trying again
 echo "✓ Node shutdown successful"
+
+echo ""
+echo "[6/6] Checking deployed Qt platform plugin..."
+if [ ! -f "$APP_BUNDLE/Contents/PlugIns/platforms/libqcocoa.dylib" ]; then
+    echo "❌ FAIL: libqcocoa.dylib missing from staged app"
+    exit 1
+fi
+echo "✓ libqcocoa.dylib present"
 
 echo ""
 echo "======================================"

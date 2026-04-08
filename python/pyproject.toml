@@ -45,6 +45,10 @@ stratum = [
   "uvicorn[standard]>=0.30.0,<1.0.0",
   "prometheus-client>=0.20.0,<1.0.0",
 ]
+wallet_qt = [
+  "segno>=1.6.1,<2.0.0",
+  "pypng>=0.20220715.0",
+]
 operator = [
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",

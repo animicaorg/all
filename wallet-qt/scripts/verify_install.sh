@@ -104,6 +104,7 @@ if $IS_MACOS; then
         NODE_DIR="$BUNDLE_PATH/Contents/Resources/node"
         if [ -d "$NODE_DIR" ]; then
             log_info "✓ Found bundled node at: $NODE_DIR"
+            python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform macos --path "$BUNDLE_PATH"
         else
             log_warn "Bundled node not found at: $NODE_DIR (may require full build)"
         fi
@@ -135,6 +136,7 @@ else
     NODE_DIR="$INSTALL_PREFIX/lib/animica-wallet/node"
     if [ -d "$NODE_DIR" ]; then
         log_info "✓ Found installed bundled node at: $NODE_DIR"
+        python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$INSTALL_PREFIX"
     else
         log_warn "Installed bundled node not found at: $NODE_DIR"
     fi
