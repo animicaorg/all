@@ -1,11 +1,12 @@
-#include <QTest>
-#include <QTemporaryFile>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRandomGenerator>
+#include <QTemporaryFile>
+#include <QTest>
+
 #include "../src/wallet/EncryptedKeystore.h"
 
-/**
- * @brief Security tests for EncryptedKeystore.
- */
 class TestKeystoreSecurity : public QObject
 {
     Q_OBJECT
@@ -15,71 +16,86 @@ private slots:
     {
         QTemporaryFile tmpFile;
         QVERIFY(tmpFile.open());
-        QString path = tmpFile.fileName();
+        const QString path = tmpFile.fileName();
         tmpFile.close();
-        
-        QByteArray payload = "secret data";
-        QString password = "correct_password_123";
-        
+
+        const QByteArray payload = "secret data";
+        const QString password = "correct_password_123";
+
         QVERIFY(EncryptedKeystore::create(path, payload, password));
-        
+
+        EncryptedKeystore keystore;
+        QVERIFY(keystore.load(path));
+
         QByteArray decrypted;
-        QVERIFY(!EncryptedKeystore::unlock(path, "wrong_password", decrypted));
-        QVERIFY(EncryptedKeystore::unlock(path, password, decrypted));
+        QVERIFY(!keystore.unlock("wrong_password", decrypted));
+        QVERIFY(keystore.unlock(password, decrypted));
         QCOMPARE(decrypted, payload);
     }
-    
+
     void testFileTamperingDetected()
     {
         QTemporaryFile tmpFile;
         QVERIFY(tmpFile.open());
-        QString path = tmpFile.fileName();
+        const QString path = tmpFile.fileName();
         tmpFile.close();
-        
-        QByteArray payload = "important secret";
-        QString password = "password123";
-        
-        QVERIFY(EncryptedKeystore::create(path, payload, password));
-        
-        // Tamper with file
+
+        QVERIFY(EncryptedKeystore::create(path, QByteArray("important secret"), "password123"));
+
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
-        QByteArray fileData = file.readAll();
+        const QByteArray fileData = file.readAll();
         file.close();
-        
-        if (fileData.size() > 100) {
-            fileData[fileData.size() / 2] ^= 0xFF;
-        }
-        
+
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(fileData, &parseError);
+        QVERIFY(parseError.error == QJsonParseError::NoError);
+        QVERIFY(doc.isObject());
+
+        QJsonObject obj = doc.object();
+        QString ciphertext = obj.value("encrypted_payload").toString();
+        QVERIFY(ciphertext.size() > 8);
+        ciphertext[4] = ciphertext[4] == QChar('A') ? QChar('B') : QChar('A');
+        obj["encrypted_payload"] = ciphertext;
+
+        const QByteArray tamperedData = QJsonDocument(obj).toJson(QJsonDocument::Compact);
         QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-        file.write(fileData);
+        QCOMPARE(file.write(tamperedData), tamperedData.size());
         file.close();
-        
+
+        EncryptedKeystore keystore;
+        QVERIFY(keystore.load(path));
+
         QByteArray decrypted;
-        QVERIFY(!EncryptedKeystore::unlock(path, password, decrypted));
+        QVERIFY(!keystore.unlock("password123", decrypted));
     }
-    
-    void testRoundtripEncryption()
+
+    void testRoundtripEncryptionAndPasswordChange()
     {
         QTemporaryFile tmpFile;
         QVERIFY(tmpFile.open());
-        QString path = tmpFile.fileName();
+        const QString path = tmpFile.fileName();
         tmpFile.close();
-        
+
         QList<int> sizes = {16, 100, 1000, 4096};
-        
         for (int size : sizes) {
-            QByteArray payload(size, 0);
-            for (int i = 0; i < size; i++) {
+            QByteArray payload(size, Qt::Uninitialized);
+            for (int i = 0; i < size; ++i) {
                 payload[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
             }
-            
-            QString password = QString("password_%1").arg(size);
-            
-            QVERIFY(EncryptedKeystore::create(path, payload, password));
-            
+
+            const QString oldPassword = QString("password_%1").arg(size);
+            const QString newPassword = QString("new_password_%1").arg(size);
+
+            QVERIFY(EncryptedKeystore::create(path, payload, oldPassword));
+
+            EncryptedKeystore keystore;
+            QVERIFY(keystore.load(path));
+            QVERIFY(keystore.changePassword(oldPassword, newPassword));
+
             QByteArray decrypted;
-            QVERIFY(EncryptedKeystore::unlock(path, password, decrypted));
+            QVERIFY(!keystore.unlock(oldPassword, decrypted));
+            QVERIFY(keystore.unlock(newPassword, decrypted));
             QCOMPARE(decrypted, payload);
         }
     }

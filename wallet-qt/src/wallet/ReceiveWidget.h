@@ -17,14 +17,13 @@ struct Balance;
  * Displays:
  * - Account selector with balance
  * - Current account address with copy button
- * - QR code for address (placeholder)
+ * - QR code / QR availability notice for address
  * - Optional payment note field
  * 
  * Features:
  * - Copy address to clipboard with visual feedback
  * - Monospace font for address display
  * - Auto-updates when accounts change
- * - Optional: Generate new address (HD derivation)
  * 
  * Layout:
  * ┌─────────────────────────────────────┐
@@ -48,7 +47,6 @@ struct Balance;
  * │ Payment Note: [___________________] │
  * │ (local label, not sent)            │
  * │                                     │
- * │ [Generate New Address]              │
  * └─────────────────────────────────────┘
  * 
  * Example Usage:
@@ -83,7 +81,6 @@ public slots:
 private slots:
     void onAccountChanged(int index);
     void onCopyClicked();
-    void onGenerateNewClicked();
     void onBalanceUpdated(const QString& address, const Balance& balance);
     
 private:
@@ -101,7 +98,6 @@ private:
     QLabel* m_addressLabel;
     QLabel* m_qrCodeLabel;
     QPushButton* m_copyButton;
-    QPushButton* m_generateNewButton;
     QLineEdit* m_noteEdit;
     QLabel* m_balanceLabel;
 };

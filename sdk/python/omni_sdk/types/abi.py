@@ -13,6 +13,7 @@ Validation here is structural and type-string–aware.
 """
 
 import re
+import hashlib
 from dataclasses import dataclass
 from typing import (Any, Dict, List, Literal, Optional, Sequence, Tuple,
                     TypedDict, Union)
@@ -30,8 +31,8 @@ except Exception:  # pragma: no cover
 # Supported base types (kept in-sync with vm & codegen minimal set)
 _BASE_TYPES = {
     # integers
-    **{f"u{b}": True for b in (8, 16, 32, 64, 128, 256)},
-    **{f"i{b}": True for b in (8, 16, 32, 64, 128, 256)},
+    **{f"uint{b}": True for b in (8, 16, 32, 64, 128, 256)},
+    **{f"int{b}": True for b in (8, 16, 32, 64, 128, 256)},
     # misc scalars
     "bool": True,
     "address": True,  # bech32m string at the wire level
@@ -44,6 +45,8 @@ _BASE_TYPES = {
 
 _TUPLE_RE = re.compile(r"^\((.*)\)$")
 _ARRAY_SUFFIX_RE = re.compile(r"(\[\]|\[\d+\])$")
+_UINT_ALIAS_RE = re.compile(r"^u(\d+)$")
+_INT_ALIAS_RE = re.compile(r"^i(\d+)$")
 
 
 def canonical_type(type_str: str) -> str:
@@ -113,6 +116,20 @@ def _peel_array_suffixes(t: str) -> Tuple[str, List[Optional[int]]]:
     return t, dims
 
 
+def _normalize_base_type(t: str) -> str:
+    if t == "uint":
+        return "uint256"
+    if t == "int":
+        return "int256"
+    match = _UINT_ALIAS_RE.match(t)
+    if match:
+        return f"uint{match.group(1)}"
+    match = _INT_ALIAS_RE.match(t)
+    if match:
+        return f"int{match.group(1)}"
+    return t
+
+
 def _parse_type(
     type_str: str,
 ) -> Union[str, Tuple[str, Tuple[Union[str, Tuple], ...], Tuple[Optional[int], ...]]]:
@@ -124,6 +141,7 @@ def _parse_type(
     Will raise AbiError for unsupported shapes.
     """
     t, dims = _peel_array_suffixes(type_str)
+    t = _normalize_base_type(t)
     # Tuple?
     m = _TUPLE_RE.match(t)
     if m:
@@ -283,13 +301,13 @@ def canonical_fn_signature(name: str, inputs: Sequence[AbiParam]) -> str:
 
 
 def function_selector(fn: Union[AbiFunction, Tuple[str, Sequence[AbiParam]]]) -> bytes:
-    """First 4 bytes of hash(signature)."""
+    """First 8 bytes of the ABI v1 selector domain hash."""
     if isinstance(fn, tuple):
         name, inputs = fn
     else:
         name, inputs = fn["name"], fn.get("inputs", [])
     sig = canonical_fn_signature(name, inputs)
-    return _hash_sig(sig)[:4]
+    return hashlib.sha3_256(f"animica:abi:v1|{sig}".encode("utf-8")).digest()[:8]
 
 
 def event_topic(ev: Union[AbiEvent, Tuple[str, Sequence[AbiParam]]]) -> bytes:
@@ -337,6 +355,325 @@ class AbiModel:
             raise AbiError(f"Event not found in ABI: {name}")
 
 
+def normalize_abi(abi: Any) -> Dict[str, Any]:
+    if isinstance(abi, dict) and {"entries", "functions", "events"} <= set(abi.keys()):
+        return abi
+    entries = abi.get("abi") if isinstance(abi, dict) and "abi" in abi else abi
+    validated = validate_abi(entries)
+    model = AbiModel.from_list(validated)
+    return {
+        "entries": validated,
+        "functions": model.functions,
+        "events": model.events,
+    }
+
+
+def _uvarint_encode(value: int) -> bytes:
+    try:
+        from omni_sdk.utils.bytes import uvarint_encode
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("omni_sdk.utils.bytes.uvarint_encode is required") from exc
+    return uvarint_encode(int(value))
+
+
+def _uvarint_decode(buf: bytes, offset: int = 0) -> Tuple[int, int]:
+    try:
+        from omni_sdk.utils.bytes import uvarint_decode
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("omni_sdk.utils.bytes.uvarint_decode is required") from exc
+    value, consumed = uvarint_decode(buf, offset=offset)
+    return value, offset + consumed
+
+
+def _minimal_unsigned_bytes(value: int) -> bytes:
+    if value < 0:
+        raise AbiError("unsigned integer cannot be negative")
+    if value == 0:
+        return b"\x00"
+    length = (value.bit_length() + 7) // 8
+    return value.to_bytes(length, "big", signed=False)
+
+
+def _require_bytes(value: Any, *, fixed_len: int | None = None) -> bytes:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        data = bytes(value)
+    elif isinstance(value, str):
+        text = value[2:] if value.startswith(("0x", "0X")) else value
+        try:
+            data = bytes.fromhex(text)
+        except ValueError as exc:
+            raise AbiError("expected bytes or 0x-hex string") from exc
+    else:
+        raise AbiError("expected bytes or 0x-hex string")
+    if fixed_len is not None and len(data) != fixed_len:
+        raise AbiError(f"expected {fixed_len} bytes, got {len(data)}")
+    return data
+
+
+def _encode_scalar(value: Any, typ: str) -> bytes:
+    if typ.startswith("uint"):
+        bits = int(typ[4:])
+        if not isinstance(value, int):
+            raise AbiError(f"{typ} requires an integer value")
+        max_value = (1 << bits) - 1
+        if value < 0 or value > max_value:
+            raise AbiError(f"{typ} out of range")
+        mag = _minimal_unsigned_bytes(value)
+        return _uvarint_encode(len(mag)) + mag
+
+    if typ.startswith("int"):
+        bits = int(typ[3:])
+        if not isinstance(value, int):
+            raise AbiError(f"{typ} requires an integer value")
+        min_value = -(1 << (bits - 1))
+        max_value = (1 << (bits - 1)) - 1
+        if value < min_value or value > max_value:
+            raise AbiError(f"{typ} out of range")
+        payload = bytes([0x00 if value >= 0 else 0x01]) + _minimal_unsigned_bytes(abs(value))
+        return _uvarint_encode(len(payload)) + payload
+
+    if typ == "bool":
+        if not isinstance(value, bool):
+            raise AbiError("bool requires a boolean value")
+        return b"\x01" if value else b"\x00"
+
+    if typ == "address":
+        if not isinstance(value, str) or not value:
+            raise AbiError("address requires a bech32m string")
+        encoded = value.encode("utf-8")
+        return _uvarint_encode(len(encoded)) + encoded
+
+    if typ == "string":
+        if not isinstance(value, str):
+            raise AbiError("string requires a text value")
+        encoded = value.encode("utf-8")
+        return _uvarint_encode(len(encoded)) + encoded
+
+    if typ == "bytes":
+        data = _require_bytes(value)
+        return _uvarint_encode(len(data)) + data
+
+    if typ == "hash":
+        return _require_bytes(value, fixed_len=32)
+
+    if typ.startswith("bytes"):
+        fixed_len = int(typ[5:])
+        return _require_bytes(value, fixed_len=fixed_len)
+
+    raise AbiError(f"unsupported ABI scalar type: {typ}")
+
+
+def _encode_desc(value: Any, desc: Any) -> bytes:
+    if isinstance(desc, str):
+        return _encode_scalar(value, desc)
+
+    kind = desc[0]
+    if kind == "array":
+        _, element_desc, dims = desc
+        if not isinstance(value, (list, tuple)):
+            raise AbiError("array argument must be a list or tuple")
+        if dims and dims[0] is not None and len(value) != dims[0]:
+            raise AbiError(f"array length mismatch: expected {dims[0]}, got {len(value)}")
+        encoded_items = []
+        next_desc = element_desc if len(dims) == 1 else ("array", element_desc, dims[1:])
+        for item in value:
+            encoded_items.append(_encode_desc(item, next_desc))
+        return _uvarint_encode(len(value)) + b"".join(encoded_items)
+
+    if kind == "tuple":
+        _, elements, dims = desc
+        if dims:
+            return _encode_desc(value, ("array", ("tuple", elements, ()), dims))
+        if not isinstance(value, (list, tuple)):
+            raise AbiError("tuple argument must be a list or tuple")
+        if len(value) != len(elements):
+            raise AbiError(f"tuple length mismatch: expected {len(elements)}, got {len(value)}")
+        encoded = [_uvarint_encode(len(elements))]
+        for item, element_type in zip(value, elements):
+            encoded.append(_encode_desc(item, _parse_type(element_type)))
+        return b"".join(encoded)
+
+    raise AbiError(f"unsupported ABI descriptor: {desc!r}")
+
+
+def encode_call(abi: Any, fn_name: str, args: Sequence[Any]) -> bytes:
+    normalized = normalize_abi(abi)
+    functions = normalized["functions"]
+    if fn_name not in functions:
+        raise AbiError(f"function not found in ABI: {fn_name}")
+    fn = functions[fn_name]
+    inputs = fn.get("inputs", [])
+    if len(inputs) != len(args):
+        raise AbiError(f"{fn_name} expects {len(inputs)} argument(s), got {len(args)}")
+    encoded = [function_selector(fn), _uvarint_encode(len(inputs))]
+    for arg, param in zip(args, inputs):
+        encoded.append(_encode_desc(arg, _parse_type(param["type"])))
+    return b"".join(encoded)
+
+
+def _read_exact(buf: bytes, offset: int, length: int) -> Tuple[bytes, int]:
+    end = offset + length
+    if end > len(buf):
+        raise AbiError("truncated ABI payload")
+    return buf[offset:end], end
+
+
+def _decode_scalar(buf: bytes, typ: str, offset: int) -> Tuple[Any, int]:
+    if typ.startswith("uint"):
+        length, offset = _uvarint_decode(buf, offset)
+        payload, offset = _read_exact(buf, offset, length)
+        return int.from_bytes(payload, "big", signed=False), offset
+
+    if typ.startswith("int"):
+        length, offset = _uvarint_decode(buf, offset)
+        payload, offset = _read_exact(buf, offset, length)
+        if not payload:
+            raise AbiError("truncated signed integer payload")
+        magnitude = int.from_bytes(payload[1:] or b"\x00", "big", signed=False)
+        return (-magnitude if payload[0] == 0x01 else magnitude), offset
+
+    if typ == "bool":
+        payload, offset = _read_exact(buf, offset, 1)
+        if payload not in (b"\x00", b"\x01"):
+            raise AbiError("invalid boolean value")
+        return payload == b"\x01", offset
+
+    if typ in {"address", "string", "bytes"}:
+        length, offset = _uvarint_decode(buf, offset)
+        payload, offset = _read_exact(buf, offset, length)
+        if typ == "address" or typ == "string":
+            return payload.decode("utf-8"), offset
+        return payload, offset
+
+    if typ == "hash":
+        payload, offset = _read_exact(buf, offset, 32)
+        return "0x" + payload.hex(), offset
+
+    if typ.startswith("bytes"):
+        fixed_len = int(typ[5:])
+        payload, offset = _read_exact(buf, offset, fixed_len)
+        return "0x" + payload.hex(), offset
+
+    raise AbiError(f"unsupported ABI scalar type: {typ}")
+
+
+def _decode_desc(buf: bytes, desc: Any, offset: int) -> Tuple[Any, int]:
+    if isinstance(desc, str):
+        return _decode_scalar(buf, desc, offset)
+
+    kind = desc[0]
+    if kind == "array":
+        _, element_desc, dims = desc
+        count, offset = _uvarint_decode(buf, offset)
+        if dims and dims[0] is not None and count != dims[0]:
+            raise AbiError(f"array length mismatch: expected {dims[0]}, got {count}")
+        next_desc = element_desc if len(dims) == 1 else ("array", element_desc, dims[1:])
+        items = []
+        for _ in range(count):
+            item, offset = _decode_desc(buf, next_desc, offset)
+            items.append(item)
+        return items, offset
+
+    if kind == "tuple":
+        _, elements, dims = desc
+        if dims:
+            return _decode_desc(buf, ("array", ("tuple", elements, ()), dims), offset)
+        count, offset = _uvarint_decode(buf, offset)
+        if count != len(elements):
+            raise AbiError(f"tuple length mismatch: expected {len(elements)}, got {count}")
+        values = []
+        for element_type in elements:
+            value, offset = _decode_desc(buf, _parse_type(element_type), offset)
+            values.append(value)
+        return values, offset
+
+    raise AbiError(f"unsupported ABI descriptor: {desc!r}")
+
+
+def decode_return(abi: Any, fn_name: str, data: bytes) -> Any:
+    normalized = normalize_abi(abi)
+    functions = normalized["functions"]
+    if fn_name not in functions:
+        raise AbiError(f"function not found in ABI: {fn_name}")
+    outputs = functions[fn_name].get("outputs", [])
+    if not outputs and data in (b"", b"\x00"):
+        return None
+
+    count, offset = _uvarint_decode(data, 0)
+    if count != len(outputs):
+        raise AbiError(f"return value count mismatch: expected {len(outputs)}, got {count}")
+    values = []
+    for output in outputs:
+        value, offset = _decode_desc(data, _parse_type(output["type"]), offset)
+        values.append(value)
+    if offset != len(data):
+        raise AbiError("unexpected trailing bytes in return payload")
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return values
+
+
+def event_selector(ev: Union[AbiEvent, Tuple[str, Sequence[AbiParam]]]) -> bytes:
+    if isinstance(ev, tuple):
+        name, inputs = ev
+    else:
+        name, inputs = ev["name"], ev.get("inputs", [])
+    signature = f"{name}(" + ",".join(canonical_type(p["type"]) for p in inputs) + ")"
+    return hashlib.sha3_256(signature.encode("utf-8")).digest()
+
+
+def _decode_indexed_topic(topic: bytes, typ: str) -> Any:
+    if typ.startswith("uint"):
+        return int.from_bytes(topic[-32:], "big", signed=False)
+    if typ.startswith("int"):
+        value = int.from_bytes(topic[-32:], "big", signed=False)
+        bits = int(typ[3:])
+        if value >= (1 << (bits - 1)):
+            value -= 1 << bits
+        return value
+    if typ == "bool":
+        return topic[-1] != 0
+    return "0x" + topic.hex()
+
+
+def decode_event(*args: Any) -> Dict[str, Any]:
+    if len(args) == 4:
+        abi, name, topics, data = args
+        normalized = normalize_abi(abi)
+        event_def = normalized["events"].get(name)
+        if event_def is None:
+            raise AbiError(f"event not found in ABI: {name}")
+    elif len(args) == 3:
+        event_def, topics, data = args
+        name = event_def.get("name", "")
+    else:  # pragma: no cover - defensive
+        raise TypeError("decode_event expects (abi, name, topics, data) or (event_def, topics, data)")
+
+    if not isinstance(event_def, dict):
+        raise AbiError("event definition must be a mapping")
+
+    topics_b = [bytes(topic) for topic in topics]
+    data_b = bytes(data)
+    topic_index = 0 if bool(event_def.get("anonymous", False)) else 1
+    offset = 0
+    decoded: Dict[str, Any] = {}
+
+    for index, param in enumerate(event_def.get("inputs", [])):
+        param_name = str(param.get("name") or index)
+        param_type = canonical_type(str(param.get("type") or "bytes"))
+        if bool(param.get("indexed", False)):
+            if topic_index >= len(topics_b):
+                raise AbiError("not enough indexed topics to decode event")
+            decoded[param_name] = _decode_indexed_topic(topics_b[topic_index], param_type)
+            topic_index += 1
+        else:
+            decoded[param_name], offset = _decode_desc(data_b, _parse_type(param_type), offset)
+
+    return decoded
+
+
 __all__ = [
     "AbiParam",
     "AbiFunction",
@@ -345,6 +682,11 @@ __all__ = [
     "Abi",
     "AbiModel",
     "validate_abi",
+    "normalize_abi",
+    "encode_call",
+    "decode_return",
+    "event_selector",
+    "decode_event",
     "canonical_type",
     "is_valid_type",
     "canonical_fn_signature",

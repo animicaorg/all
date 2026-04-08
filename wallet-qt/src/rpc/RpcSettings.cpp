@@ -13,7 +13,7 @@ RpcEndpointSettings RpcSettings::defaultSettings()
 {
     RpcEndpointSettings settings;
     settings.scheme = "http";
-    settings.host = "144.126.133.21";
+    settings.host = "127.0.0.1";
     settings.port = 8545;
     settings.path = "/rpc";
     return settings;

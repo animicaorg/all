@@ -45,6 +45,8 @@ private slots:
     void onEditClicked();
     void onDeleteClicked();
     void onCopyAddressClicked();
+    void onImportClicked();
+    void onExportClicked();
     void onSearchTextChanged(const QString& text);
     void onTableSelectionChanged();
     void onTableDoubleClicked(int row, int column);
@@ -56,6 +58,7 @@ private:
     void setupUi();
     void updateContactRow(int row, const Contact& contact);
     void showAddEditDialog(const QString& existingAddress = QString());
+    bool isOwnAddress(const QString& address) const;
     QString formatAddress(const QString& address) const;
     int findContactRow(const QString& address) const;
     
@@ -66,6 +69,8 @@ private:
     QPushButton* m_editButton;
     QPushButton* m_deleteButton;
     QPushButton* m_copyButton;
+    QPushButton* m_importButton;
+    QPushButton* m_exportButton;
 };
 
 #endif // ADDRESSBOOKWIDGET_H

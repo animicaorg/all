@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTextEdit>
+#include <QFutureWatcher>
 #include <QString>
 #include "FeeEstimator.h"
 #include "BalanceTracker.h"
@@ -89,18 +90,20 @@ private slots:
     void onAmountChanged();
     void onAccountChanged(int index);
     void onBalanceUpdated(const QString& address, const Balance& balance);
+    void handleSendFinished();
     
 private:
     void setupUI();
     void updateFeeDisplay();
     void updateBalanceLabel();
+    void updateRecipientCompleter();
     bool validateInputs();
     bool validateAddress(const QString& address);
     void showValidationError(const QString& field, const QString& message);
     void clearValidationErrors();
     void showError(const QString& title, const QString& message);
     void showSuccess(const QString& title, const QString& message);
-    QString addressToHex(const QString& bech32mAddress);
+    QString normalizedRecipientAddress() const;
     QString getCurrentAccountId() const;
     QString getCurrentAccountAddress() const;
     qint64 getAvailableBalance() const;
@@ -119,12 +122,18 @@ private:
     QComboBox* m_feeTierCombo;
     QLabel* m_feeLabel;
     QLineEdit* m_memoEdit;
+    QLineEdit* m_nonceEdit;
+    QLineEdit* m_validAfterEdit;
+    QLineEdit* m_validUntilEdit;
+    QLineEdit* m_dataPayloadEdit;
     QPushButton* m_maxButton;
     QPushButton* m_sendButton;
     QLabel* m_balanceLabel;
     QLabel* m_addressValidationLabel;
     QLabel* m_amountValidationLabel;
     QLabel* m_feeWarningLabel;
+    QLabel* m_statusLabel;
+    QFutureWatcher<QJsonObject>* m_sendWatcher;
     
     qint64 m_chainId;
 };

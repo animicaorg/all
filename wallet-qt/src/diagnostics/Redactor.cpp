@@ -35,7 +35,7 @@ void Redactor::initializeRules()
 
     // Private key patterns (private_key, privkey, secret followed by hex)
     s_rules.append({
-        QRegularExpression(R"((private_key|privkey|secret|priv)[\s]*[=:]\s*([0-9a-fA-F]{64,}|"[0-9a-fA-F]{64,}"|'[0-9a-fA-F]{64,}'))"),
+        QRegularExpression(R"((private_key|privkey|secret|priv)[\s]*[=:]\s*(0x[0-9a-fA-F]{6,}|[0-9a-fA-F]{6,}|"0x?[0-9a-fA-F]{6,}"|'0x?[0-9a-fA-F]{6,}'))"),
         R"(\1=***REDACTED***)"
     });
 

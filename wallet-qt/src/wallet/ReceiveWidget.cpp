@@ -21,7 +21,6 @@ ReceiveWidget::ReceiveWidget(WalletEngine* walletEngine, QWidget* parent)
     , m_addressLabel(nullptr)
     , m_qrCodeLabel(nullptr)
     , m_copyButton(nullptr)
-    , m_generateNewButton(nullptr)
     , m_noteEdit(nullptr)
     , m_balanceLabel(nullptr)
 {
@@ -151,22 +150,6 @@ void ReceiveWidget::setupUi()
     mainLayout->addLayout(noteLayout);
     
     mainLayout->addSpacing(10);
-    
-    // Generate new address button (disabled for now)
-    m_generateNewButton = new QPushButton("Generate New Address", this);
-    m_generateNewButton->setEnabled(false);
-    m_generateNewButton->setToolTip("HD derivation not implemented yet");
-    m_generateNewButton->setStyleSheet(
-        "QPushButton:disabled {"
-        "  background-color: #E0E0E0;"
-        "  color: #9E9E9E;"
-        "  border: 1px solid #CCCCCC;"
-        "  border-radius: 4px;"
-        "  padding: 8px 16px;"
-        "}"
-    );
-    connect(m_generateNewButton, &QPushButton::clicked, this, &ReceiveWidget::onGenerateNewClicked);
-    mainLayout->addWidget(m_generateNewButton);
     
     mainLayout->addStretch();
     
@@ -331,12 +314,6 @@ void ReceiveWidget::onCopyClicked()
     });
 }
 
-void ReceiveWidget::onGenerateNewClicked()
-{
-    // HD derivation not implemented yet
-    qWarning() << "Generate new address not implemented";
-}
-
 void ReceiveWidget::onBalanceUpdated(const QString& address, const Balance& balance)
 {
     // Check if this is the currently selected account
@@ -376,41 +353,25 @@ void ReceiveWidget::generateQRCode()
         return;
     }
     
-    // Generate QR code placeholder
-    // TODO: Integrate with qrencode library for actual QR code generation
-    QPixmap placeholder(200, 200);
-    placeholder.fill(Qt::white);
-    
-    QPainter painter(&placeholder);
-    painter.setPen(Qt::black);
-    
-    // Draw a simple grid pattern as placeholder
-    for (int i = 0; i < 200; i += 20) {
-        painter.drawLine(i, 0, i, 200);
-        painter.drawLine(0, i, 200, i);
-    }
-    
-    // Draw text in center
-    painter.setFont(QFont("Arial", 10));
-    painter.drawText(placeholder.rect(), Qt::AlignCenter, "QR Code\n(Placeholder)");
-    
-    m_qrCodeLabel->setPixmap(placeholder);
+    QPixmap notice(200, 200);
+    notice.fill(Qt::white);
+
+    QPainter painter(&notice);
+    painter.setPen(Qt::darkGray);
+    painter.drawRect(0, 0, 199, 199);
+    painter.setFont(QFont("Arial", 9));
+    painter.drawText(notice.rect(), Qt::AlignCenter, "QR unavailable\nin this build");
+
+    m_qrCodeLabel->setPixmap(notice);
 }
 
 QString ReceiveWidget::formatBalance(qint64 wei) const
 {
-    // Format wei to ANM (1 ANM = 10^18 wei)
-    // For display, show up to 6 decimal places
-    
     if (wei == 0) {
         return "0.0 ANM";
     }
-    
-    // Convert wei to ANM with precision
-    // ANM = wei / 10^18
-    double anm = static_cast<double>(wei) / 1e18;
-    
-    // Format with appropriate precision
+
+    double anm = static_cast<double>(wei) / 1e9;
     QString formatted;
     if (anm >= 1.0) {
         formatted = QString::number(anm, 'f', 6);

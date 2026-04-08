@@ -355,7 +355,13 @@ def validate(address: str, *, expected_hrp: Optional[str] = None) -> bool:
             return False
         return True
     except Exception:
-        return False
+        try:
+            from pq.py.address import validate_address as _pq_validate_address  # type: ignore
+
+            _pq_validate_address(address, expect_hrp=expected_hrp or DEFAULT_HRP)
+            return True
+        except Exception:
+            return False
 
 
 # Friendly alias

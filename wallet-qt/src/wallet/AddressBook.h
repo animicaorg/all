@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QList>
 #include <QJsonObject>
+#include <functional>
 
 /**
  * @brief Contact data structure.
@@ -33,6 +34,21 @@ class AddressBook : public QObject
     Q_OBJECT
 
 public:
+    struct ImportResult {
+        bool ok = false;
+        int imported = 0;
+        int skipped = 0;
+        QString error;
+    };
+
+    struct ExportResult {
+        bool ok = false;
+        int exported = 0;
+        QString error;
+    };
+
+    using AddressValidator = std::function<bool(const QString&)>;
+
     explicit AddressBook(QObject* parent = nullptr);
     
     /**
@@ -87,6 +103,14 @@ public:
      * @return List of contacts
      */
     QList<Contact> listContacts(const QString& filter = QString()) const;
+
+    ImportResult importFromFile(
+        const QString& path,
+        bool replaceExisting,
+        const AddressValidator& validator = AddressValidator()
+    );
+    ExportResult exportToFile(const QString& path) const;
+    bool replaceAllContacts(const QList<Contact>& contacts);
     
     /**
      * @brief Validate bech32m address.
@@ -101,6 +125,12 @@ signals:
     void contactRemoved(const QString& address);
 
 private:
+    static bool readContactsFile(const QString& path, QList<Contact>* contacts, QString* error = nullptr);
+    static bool writeContactsFile(const QString& path, const QList<Contact>& contacts, QString* error = nullptr);
+    static QList<Contact> contactsFromJsonArray(const QJsonArray& contactsArray);
+    static QStringList parseCsvRow(const QString& line);
+    static QString csvField(const QString& value);
+
     QList<Contact> m_contacts;
     QString m_path;
 };

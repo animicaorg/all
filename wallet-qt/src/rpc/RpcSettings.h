@@ -27,7 +27,7 @@ public:
     static bool isDefault(const RpcEndpointSettings& settings);
 
 private:
-    QSettings m_settings;
+    mutable QSettings m_settings;
     static RpcEndpointSettings defaultSettings();
 };
 

@@ -14,7 +14,7 @@ class AnimicaRpcClient;
  */
 struct Balance {
     QString address;
-    quint64 confirmed;      // In smallest unit (1 ANM = 10^18)
+    quint64 confirmed;      // In smallest unit (1 ANM = 10^9)
     quint64 pending;
     QString asset;          // "ANM" or token address
     bool syncing;

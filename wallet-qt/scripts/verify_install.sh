@@ -60,7 +60,7 @@ trap cleanup EXIT
 # Step 1: Configure
 log_info "Step 1: Configuring CMake..."
 cd "$BUILD_DIR"
-if ! cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DBUILD_TESTING=OFF; then
+if ! cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DWALLET_REMOTE_RPC_ONLY=OFF -DBUILD_TESTING=OFF; then
     log_error "CMake configuration failed"
     exit 1
 fi
@@ -132,12 +132,11 @@ else
         exit 1
     fi
     
-    # Check for bundled node (should be in bin/node or adjacent)
-    # Note: This is checked in build dir since node bundling happens at build time
-    if [ -d "$BUILD_DIR/bin/node" ]; then
-        log_info "✓ Found bundled node in build directory"
+    NODE_DIR="$INSTALL_PREFIX/lib/animica-wallet/node"
+    if [ -d "$NODE_DIR" ]; then
+        log_info "✓ Found installed bundled node at: $NODE_DIR"
     else
-        log_warn "Bundled node not found (may require full build or different configuration)"
+        log_warn "Installed bundled node not found at: $NODE_DIR"
     fi
 fi
 

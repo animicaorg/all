@@ -55,7 +55,7 @@ if ! "$NODE_PYTHON" --version; then
     exit 1
 fi
 
-if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica; import core; print('All imports OK')" 2>&1; then
+if ! "$NODE_PYTHON" -c "import sys; import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core; print('All imports OK')" 2>&1; then
     echo "❌ FAIL: Node imports failed"
     exit 1
 fi

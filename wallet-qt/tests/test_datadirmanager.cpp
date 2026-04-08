@@ -82,10 +82,13 @@ void TestDataDirManager::testEnsureDirectoriesExist()
     // Check directories were created
     QVERIFY(QDir(testPath).exists());
     QVERIFY(QDir(manager.getLogsDir()).exists());
+
+#if !WALLET_REMOTE_RPC_ONLY
     QVERIFY(QDir(manager.getSnapshotsDir()).exists());
     QVERIFY(QDir(manager.getChainDataDir(1)).exists());
     QVERIFY(QDir(manager.getChainDataDir(2)).exists());
     QVERIFY(QDir(manager.getChainDataDir(1337)).exists());
+#endif
 }
 
 void TestDataDirManager::testNetworkMarker()

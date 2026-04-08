@@ -572,26 +572,28 @@ QString NodeManager::findBundledPython()
 {
     // Get the application directory
     QString appDir = QCoreApplication::applicationDirPath();
-    QString bundledPython;
-    
+    QStringList candidates;
+
 #ifdef Q_OS_MACOS
-    // macOS: AnimicaWallet.app/Contents/Resources/node/venv/bin/python
-    bundledPython = appDir + "/../Resources/node/venv/bin/python";
+    candidates << appDir + "/../Resources/node/venv/bin/python";
 #elif defined(Q_OS_WIN)
-    // Windows: <exe_dir>/node/venv/Scripts/python.exe
-    bundledPython = appDir + "/node/venv/Scripts/python.exe";
+    candidates << appDir + "/node/venv/Scripts/python.exe";
 #else
-    // Linux: <exe_dir>/node/venv/bin/python
-    bundledPython = appDir + "/node/venv/bin/python";
+    candidates << appDir + "/node/venv/bin/python";
+    candidates << appDir + "/../lib/node/venv/bin/python";
+    candidates << appDir + "/../lib/animica-wallet/node/venv/bin/python";
+    candidates << "/usr/lib/animica-wallet/node/venv/bin/python";
 #endif
-    
-    QFileInfo bundledInfo(bundledPython);
-    if (bundledInfo.exists() && bundledInfo.isExecutable()) {
-        qDebug() << "Found bundled Python:" << bundledPython;
-        return bundledInfo.absoluteFilePath();
+
+    for (const QString& candidate : candidates) {
+        QFileInfo bundledInfo(candidate);
+        if (bundledInfo.exists() && bundledInfo.isExecutable()) {
+            qDebug() << "Found bundled Python:" << candidate;
+            return bundledInfo.absoluteFilePath();
+        }
     }
-    
-    qDebug() << "Bundled Python not found at:" << bundledPython;
+
+    qDebug() << "Bundled Python not found in any known runtime location";
     return QString();
 }
 
