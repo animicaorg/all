@@ -1,14 +1,17 @@
 #include "AddressBookWidget.h"
 #include "WalletEngine.h"
+#include "WalletAccount.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
-#include <QInputDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QFormLayout>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QTextEdit>
 #include <QClipboard>
 #include <QApplication>
@@ -23,6 +26,9 @@ AddressBookWidget::AddressBookWidget(WalletEngine* engine, QWidget* parent)
     connect(m_engine, &WalletEngine::contactAdded, this, &AddressBookWidget::handleContactAdded);
     connect(m_engine, &WalletEngine::contactUpdated, this, &AddressBookWidget::handleContactUpdated);
     connect(m_engine, &WalletEngine::contactRemoved, this, &AddressBookWidget::handleContactRemoved);
+    connect(m_engine, &WalletEngine::accountAdded, this, [this](const WalletAccount&) { refreshContacts(); });
+    connect(m_engine, &WalletEngine::accountUpdated, this, [this](const WalletAccount&) { refreshContacts(); });
+    connect(m_engine, &WalletEngine::accountRemoved, this, [this](const QString&) { refreshContacts(); });
 }
 
 void AddressBookWidget::setupUi()
@@ -40,10 +46,11 @@ void AddressBookWidget::setupUi()
     connect(m_searchEdit, &QLineEdit::textChanged, this, &AddressBookWidget::onSearchTextChanged);
     
     // Contacts table
-    m_contactTable = new QTableWidget(0, 3, this);
-    m_contactTable->setHorizontalHeaderLabels({"Label", "Address", "Note"});
+    m_contactTable = new QTableWidget(0, 4, this);
+    m_contactTable->setHorizontalHeaderLabels({"Label", "Address", "Type", "Note"});
     m_contactTable->horizontalHeader()->setStretchLastSection(true);
     m_contactTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_contactTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_contactTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_contactTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_contactTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -60,6 +67,8 @@ void AddressBookWidget::setupUi()
     m_editButton = new QPushButton("Edit", this);
     m_deleteButton = new QPushButton("Delete", this);
     m_copyButton = new QPushButton("Copy Address", this);
+    m_importButton = new QPushButton("Import", this);
+    m_exportButton = new QPushButton("Export", this);
     
     m_editButton->setEnabled(false);
     m_deleteButton->setEnabled(false);
@@ -69,6 +78,8 @@ void AddressBookWidget::setupUi()
     buttonLayout->addWidget(m_editButton);
     buttonLayout->addWidget(m_deleteButton);
     buttonLayout->addWidget(m_copyButton);
+    buttonLayout->addWidget(m_importButton);
+    buttonLayout->addWidget(m_exportButton);
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
     
@@ -76,6 +87,8 @@ void AddressBookWidget::setupUi()
     connect(m_editButton, &QPushButton::clicked, this, &AddressBookWidget::onEditClicked);
     connect(m_deleteButton, &QPushButton::clicked, this, &AddressBookWidget::onDeleteClicked);
     connect(m_copyButton, &QPushButton::clicked, this, &AddressBookWidget::onCopyAddressClicked);
+    connect(m_importButton, &QPushButton::clicked, this, &AddressBookWidget::onImportClicked);
+    connect(m_exportButton, &QPushButton::clicked, this, &AddressBookWidget::onExportClicked);
 }
 
 void AddressBookWidget::refreshContacts()
@@ -98,15 +111,21 @@ void AddressBookWidget::updateContactRow(int row, const Contact& contact)
 {
     auto* labelItem = new QTableWidgetItem(contact.label);
     labelItem->setData(Qt::UserRole, contact.address);
+    labelItem->setToolTip(contact.label);
     m_contactTable->setItem(row, 0, labelItem);
     
-    m_contactTable->setItem(row, 1, new QTableWidgetItem(formatAddress(contact.address)));
+    auto* addressItem = new QTableWidgetItem(formatAddress(contact.address));
+    addressItem->setToolTip(contact.address);
+    m_contactTable->setItem(row, 1, addressItem);
+    m_contactTable->setItem(row, 2, new QTableWidgetItem(isOwnAddress(contact.address) ? "Own Address" : "Contact"));
     
     QString note = contact.note;
     if (note.length() > 50) {
         note = note.left(47) + "...";
     }
-    m_contactTable->setItem(row, 2, new QTableWidgetItem(note));
+    auto* noteItem = new QTableWidgetItem(note);
+    noteItem->setToolTip(contact.note);
+    m_contactTable->setItem(row, 3, noteItem);
 }
 
 QString AddressBookWidget::formatAddress(const QString& address) const
@@ -193,9 +212,8 @@ void AddressBookWidget::showAddEditDialog(const QString& existingAddress)
             return;
         }
         
-        // Validate address (basic check)
-        if (!address.startsWith("anim1")) {
-            QMessageBox::warning(this, "Error", "Invalid address format (must start with 'anim1')");
+        if (!m_engine->validateAddress(address)) {
+            QMessageBox::warning(this, "Error", "Invalid Animica address.");
             return;
         }
         
@@ -210,6 +228,17 @@ void AddressBookWidget::showAddEditDialog(const QString& existingAddress)
             QMessageBox::warning(this, "Error", "Failed to save contact");
         }
     }
+}
+
+bool AddressBookWidget::isOwnAddress(const QString& address) const
+{
+    const QList<WalletAccount> accounts = m_engine->listAccounts();
+    for (const WalletAccount& account : accounts) {
+        if (account.address == address) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void AddressBookWidget::onAddClicked()
@@ -247,6 +276,72 @@ void AddressBookWidget::onCopyAddressClicked()
     if (!address.isEmpty()) {
         QApplication::clipboard()->setText(address);
     }
+}
+
+void AddressBookWidget::onImportClicked()
+{
+    const QString fileName = QFileDialog::getOpenFileName(
+        this,
+        "Import Contacts",
+        QDir::homePath(),
+        "Contacts (*.json *.csv)"
+    );
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QMessageBox choice(this);
+    choice.setWindowTitle("Import Contacts");
+    choice.setText("Import the selected contacts file into the local address book.");
+    choice.setInformativeText("Choose Merge to keep existing contacts, or Replace to overwrite the local address book.");
+    choice.addButton("Merge", QMessageBox::AcceptRole);
+    QPushButton* replaceButton = choice.addButton("Replace", QMessageBox::DestructiveRole);
+    QPushButton* cancelButton = choice.addButton(QMessageBox::Cancel);
+    choice.exec();
+
+    if (choice.clickedButton() == nullptr || choice.clickedButton() == cancelButton) {
+        return;
+    }
+
+    const bool replaceExisting = choice.clickedButton() == replaceButton;
+    const auto result = m_engine->importContactsFile(fileName, replaceExisting);
+    if (!result.ok) {
+        QMessageBox::warning(this, "Import Failed", result.error.isEmpty() ? "Failed to import contacts." : result.error);
+        return;
+    }
+
+    refreshContacts();
+    QMessageBox::information(
+        this,
+        "Contacts Imported",
+        QString("Imported %1 contact(s); skipped %2.").arg(result.imported).arg(result.skipped)
+    );
+}
+
+void AddressBookWidget::onExportClicked()
+{
+    const QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Export Contacts",
+        QDir::home().filePath("animica-address-book.json"),
+        "JSON Files (*.json);;CSV Files (*.csv)"
+    );
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QString destination = fileName;
+    if (QFileInfo(destination).suffix().isEmpty()) {
+        destination += ".json";
+    }
+
+    const auto result = m_engine->exportContactsFile(destination);
+    if (!result.ok) {
+        QMessageBox::warning(this, "Export Failed", result.error.isEmpty() ? "Failed to export contacts." : result.error);
+        return;
+    }
+
+    QMessageBox::information(this, "Contacts Exported", QString("Exported %1 contact(s).").arg(result.exported));
 }
 
 void AddressBookWidget::onSearchTextChanged(const QString& text)

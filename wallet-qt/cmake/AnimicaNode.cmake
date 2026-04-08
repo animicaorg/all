@@ -235,7 +235,7 @@ function(animica_build_node OUT_VAR)
     # Verify installation
     message(STATUS "Verifying node installation")
     execute_process(
-        COMMAND ${NODE_PYTHON} -c "import rpc; import animica; import core"
+        COMMAND ${NODE_PYTHON} -c "import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core"
         RESULT_VARIABLE VERIFY_RESULT
         ERROR_VARIABLE VERIFY_ERROR
     )

@@ -246,18 +246,21 @@ try {
         # Use Visual Studio generator
         cmake $ProjectRoot `
             -DCMAKE_BUILD_TYPE="$BuildType" `
+            -DWALLET_REMOTE_RPC_ONLY=OFF `
             -G "Visual Studio 16 2019"
         
         if ($LASTEXITCODE -ne 0) {
             # Try newer VS version
             cmake $ProjectRoot `
                 -DCMAKE_BUILD_TYPE="$BuildType" `
+                -DWALLET_REMOTE_RPC_ONLY=OFF `
                 -G "Visual Studio 17 2022"
         }
     } else {
         # Use MinGW
         cmake $ProjectRoot `
             -DCMAKE_BUILD_TYPE="$BuildType" `
+            -DWALLET_REMOTE_RPC_ONLY=OFF `
             -G "MinGW Makefiles"
     }
     

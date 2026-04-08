@@ -1,21 +1,25 @@
 #include "SendWidget.h"
-#include "WalletEngine.h"
-#include "WalletDatabase.h"
+
 #include "TransactionMonitor.h"
+#include "WalletDatabase.h"
+#include "WalletEngine.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+#include "../rpc/RpcReply.h"
+
+#include <QtConcurrent/QtConcurrentRun>
+
+#include <QDateTime>
+#include <QCompleter>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QMessageBox>
-#include "../rpc/RpcReply.h"
 #include <QJsonDocument>
+#include <QHBoxLayout>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QEventLoop>
-#include <QTimer>
-#include <QDateTime>
-#include <QDebug>
+#include <QMessageBox>
+#include <QRegularExpression>
+#include <QSettings>
+#include <QStringListModel>
+#include <QVBoxLayout>
 
 SendWidget::SendWidget(
     WalletEngine* walletEngine,
@@ -30,71 +34,77 @@ SendWidget::SendWidget(
     , m_database(database)
     , m_monitor(monitor)
     , m_feeEstimator(new FeeEstimator(rpcClient, this))
-    , m_chainId(1337) // Default, will be updated
+    , m_sendWatcher(new QFutureWatcher<QJsonObject>(this))
+    , m_chainId(1337)
 {
     setupUI();
-    
-    // Get chain ID
-    RpcReply* reply = m_rpcClient->getChainId();
-    connect(reply, &RpcReply::finished, [this, reply]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-            if (doc.isObject()) {
-                QJsonObject obj = doc.object();
-                if (obj.contains("result")) {
-                    m_chainId = obj["result"].toInt(1337);
+
+    connect(m_sendWatcher, &QFutureWatcher<QJsonObject>::finished, this, &SendWidget::handleSendFinished);
+    connect(m_walletEngine, &WalletEngine::balanceUpdated, this, &SendWidget::onBalanceUpdated);
+    connect(m_walletEngine, &WalletEngine::accountAdded, this, [this](const WalletAccount&) { onAccountChanged(0); });
+    connect(m_walletEngine, &WalletEngine::accountRemoved, this, [this](const QString&) { onAccountChanged(0); });
+    connect(m_walletEngine, &WalletEngine::accountUpdated, this, [this](const WalletAccount&) { onAccountChanged(m_fromAccountCombo->currentIndex()); });
+    connect(m_walletEngine, &WalletEngine::contactAdded, this, [this](const Contact&) { updateRecipientCompleter(); });
+    connect(m_walletEngine, &WalletEngine::contactUpdated, this, [this](const Contact&) { updateRecipientCompleter(); });
+    connect(m_walletEngine, &WalletEngine::contactRemoved, this, [this](const QString&) { updateRecipientCompleter(); });
+
+    if (m_rpcClient) {
+        RpcReply* reply = m_rpcClient->getChainId();
+        connect(reply, &RpcReply::finished, [this, reply]() {
+            if (reply->error() == QNetworkReply::NoError) {
+                const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+                if (doc.isObject()) {
+                    const QJsonObject obj = doc.object();
+                    const QJsonValue result = obj.value("result");
+                    if (result.isDouble()) {
+                        m_chainId = static_cast<qint64>(result.toDouble(1337));
+                    } else if (result.isString()) {
+                        bool ok = false;
+                        m_chainId = result.toString().toLongLong(&ok);
+                        if (!ok) {
+                            m_chainId = 1337;
+                        }
+                    }
                 }
             }
-        }
-        reply->deleteLater();
-    });
-    
-    // Connect to balance updates
-    connect(m_walletEngine, &WalletEngine::balanceUpdated,
-            this, &SendWidget::onBalanceUpdated);
+            reply->deleteLater();
+        });
+    }
+
+    onAccountChanged(0);
 }
 
-SendWidget::~SendWidget()
-{
-}
+SendWidget::~SendWidget() = default;
 
 void SendWidget::setupUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
-    
-    // Title
+
     auto* titleLabel = new QLabel("Send Transaction", this);
     titleLabel->setStyleSheet("font-weight: bold; font-size: 16px;");
     mainLayout->addWidget(titleLabel);
-    
-    // Form group
+
     auto* formGroup = new QGroupBox("Transaction Details", this);
     auto* formLayout = new QFormLayout(formGroup);
-    
-    // From account
+
     m_fromAccountCombo = new QComboBox(this);
-    m_fromAccountCombo->setMinimumWidth(300);
-    formLayout->addRow("From Account:", m_fromAccountCombo);
-    
-    // Balance label (below from account)
+    m_fromAccountCombo->setMinimumWidth(320);
+    formLayout->addRow("From Wallet:", m_fromAccountCombo);
+
     m_balanceLabel = new QLabel("Balance: 0.000000000 ANM", this);
     m_balanceLabel->setStyleSheet("color: #666; font-size: 12px;");
     formLayout->addRow("", m_balanceLabel);
-    
-    // To address
+
     auto* addressLayout = new QHBoxLayout();
     m_toAddressEdit = new QLineEdit(this);
     m_toAddressEdit->setPlaceholderText("anim1...");
-    m_toAddressEdit->setMinimumWidth(400);
+    m_toAddressEdit->setMinimumWidth(420);
     addressLayout->addWidget(m_toAddressEdit);
-    
     m_addressValidationLabel = new QLabel(this);
     addressLayout->addWidget(m_addressValidationLabel);
     addressLayout->addStretch();
-    
-    formLayout->addRow("To Address:", addressLayout);
-    
-    // Amount
+    formLayout->addRow("Recipient:", addressLayout);
+
     auto* amountLayout = new QHBoxLayout();
     m_amountSpinBox = new QDoubleSpinBox(this);
     m_amountSpinBox->setDecimals(9);
@@ -103,73 +113,79 @@ void SendWidget::setupUI()
     m_amountSpinBox->setSuffix(" ANM");
     m_amountSpinBox->setMinimumWidth(200);
     amountLayout->addWidget(m_amountSpinBox);
-    
     m_maxButton = new QPushButton("Max", this);
-    m_maxButton->setMaximumWidth(60);
     amountLayout->addWidget(m_maxButton);
     amountLayout->addStretch();
-    
     formLayout->addRow("Amount:", amountLayout);
-    
-    // Amount validation label
+
     m_amountValidationLabel = new QLabel(this);
-    m_amountValidationLabel->setStyleSheet("color: red; font-size: 11px;");
+    m_amountValidationLabel->setStyleSheet("color: #b91c1c; font-size: 11px;");
     formLayout->addRow("", m_amountValidationLabel);
-    
-    // Fee tier
+
     m_feeTierCombo = new QComboBox(this);
-    m_feeTierCombo->addItem("Slow (Minimum Fee)", FeeEstimator::Slow);
-    m_feeTierCombo->addItem("Normal (Recommended)", FeeEstimator::Normal);
-    m_feeTierCombo->addItem("Fast (Priority)", FeeEstimator::Fast);
-    m_feeTierCombo->setCurrentIndex(1); // Normal by default
+    m_feeTierCombo->addItem("Slow", FeeEstimator::Slow);
+    m_feeTierCombo->addItem("Normal", FeeEstimator::Normal);
+    m_feeTierCombo->addItem("Fast", FeeEstimator::Fast);
+    m_feeTierCombo->setCurrentIndex(1);
     formLayout->addRow("Fee Tier:", m_feeTierCombo);
-    
-    // Fee display
-    m_feeLabel = new QLabel("Est. Fee: --", this);
+
+    m_feeLabel = new QLabel("Max Fee: --", this);
     m_feeLabel->setStyleSheet("color: #666;");
     formLayout->addRow("", m_feeLabel);
-    
-    // Fee warning
+
     m_feeWarningLabel = new QLabel(this);
-    m_feeWarningLabel->setStyleSheet("color: orange; font-size: 11px;");
+    m_feeWarningLabel->setStyleSheet("color: #b45309; font-size: 11px;");
     formLayout->addRow("", m_feeWarningLabel);
-    
-    // Memo
+
+    auto* advancedGroup = new QGroupBox("Advanced", this);
+    auto* advancedLayout = new QFormLayout(advancedGroup);
+
+    m_nonceEdit = new QLineEdit(this);
+    m_nonceEdit->setPlaceholderText("auto");
+    advancedLayout->addRow("Nonce Override:", m_nonceEdit);
+
+    m_validAfterEdit = new QLineEdit(this);
+    m_validAfterEdit->setPlaceholderText("head height");
+    advancedLayout->addRow("Valid After:", m_validAfterEdit);
+
+    m_validUntilEdit = new QLineEdit(this);
+    m_validUntilEdit->setPlaceholderText("head + ttl");
+    advancedLayout->addRow("Valid Until:", m_validUntilEdit);
+
+    m_dataPayloadEdit = new QLineEdit(this);
+    m_dataPayloadEdit->setPlaceholderText("0x... raw call data / payload");
+    advancedLayout->addRow("Raw Payload:", m_dataPayloadEdit);
+
     m_memoEdit = new QLineEdit(this);
-    m_memoEdit->setPlaceholderText("Optional message");
-    m_memoEdit->setMaxLength(256);
-    formLayout->addRow("Memo:", m_memoEdit);
-    
+    m_memoEdit->setPlaceholderText("Local note only");
+    advancedLayout->addRow("Local Note:", m_memoEdit);
+
+    formLayout->addRow(advancedGroup);
     mainLayout->addWidget(formGroup);
-    
-    // Send button
+
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setStyleSheet("color: #666;");
+    mainLayout->addWidget(m_statusLabel);
+
     auto* buttonLayout = new QHBoxLayout();
     buttonLayout->addStretch();
     m_sendButton = new QPushButton("Send Transaction", this);
-    m_sendButton->setMinimumWidth(150);
-    m_sendButton->setEnabled(false);
     buttonLayout->addWidget(m_sendButton);
-    buttonLayout->addStretch();
     mainLayout->addLayout(buttonLayout);
-    
     mainLayout->addStretch();
-    
-    // Connect signals
-    connect(m_fromAccountCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SendWidget::onAccountChanged);
-    connect(m_toAddressEdit, &QLineEdit::textChanged,
-            this, &SendWidget::onAddressChanged);
-    connect(m_amountSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this]() { onAmountChanged(); });
-    connect(m_feeTierCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SendWidget::onFeeTierChanged);
-    connect(m_maxButton, &QPushButton::clicked,
-            this, &SendWidget::onMaxClicked);
-    connect(m_sendButton, &QPushButton::clicked,
-            this, &SendWidget::onSendClicked);
-    
-    // Refresh accounts
-    onAccountChanged(0);
+
+    connect(m_fromAccountCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SendWidget::onAccountChanged);
+    connect(m_toAddressEdit, &QLineEdit::textChanged, this, &SendWidget::onAddressChanged);
+    connect(m_amountSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this]() { onAmountChanged(); });
+    connect(m_feeTierCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SendWidget::onFeeTierChanged);
+    connect(m_maxButton, &QPushButton::clicked, this, &SendWidget::onMaxClicked);
+    connect(m_sendButton, &QPushButton::clicked, this, &SendWidget::onSendClicked);
+    connect(m_nonceEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
+    connect(m_validAfterEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
+    connect(m_validUntilEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
+    connect(m_dataPayloadEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
+
+    updateRecipientCompleter();
 }
 
 void SendWidget::clearForm()
@@ -177,8 +193,13 @@ void SendWidget::clearForm()
     m_toAddressEdit->clear();
     m_amountSpinBox->setValue(m_amountSpinBox->minimum());
     m_memoEdit->clear();
-    m_feeTierCombo->setCurrentIndex(1); // Normal
+    m_nonceEdit->clear();
+    m_validAfterEdit->clear();
+    m_validUntilEdit->clear();
+    m_dataPayloadEdit->clear();
+    m_feeTierCombo->setCurrentIndex(1);
     clearValidationErrors();
+    m_statusLabel->clear();
 }
 
 void SendWidget::setRecipientAddress(const QString& address)
@@ -193,245 +214,145 @@ void SendWidget::setAmount(double amount)
 
 void SendWidget::onSendClicked()
 {
-    if (!validateInputs()) {
+    if (!validateInputs() || m_sendWatcher->isRunning()) {
         return;
     }
-    
-    // Get values
-    QString accountId = getCurrentAccountId();
-    QString toAddress = m_toAddressEdit->text().trimmed();
-    qint64 amountWei = static_cast<qint64>(m_amountSpinBox->value() * 1e9);
-    qint64 gasLimit = FeeEstimator::standardTransferGas();
-    qint64 gasPrice = m_feeEstimator->getGasPrice(currentFeeTier());
-    qint64 fee = gasPrice * gasLimit;
-    qint64 total = amountWei + fee;
-    
-    // Confirmation dialog
-    QString msg = QString(
-        "Send %1 ANM to %2?\n\n"
-        "Fee: %3 ANM\n"
-        "Total: %4 ANM"
-    ).arg(m_amountSpinBox->value(), 0, 'f', 9)
-     .arg(toAddress)
-     .arg(fee / 1e9, 0, 'f', 9)
-     .arg(total / 1e9, 0, 'f', 9);
-    
-    int ret = QMessageBox::question(this, "Confirm Transaction", msg,
-                                     QMessageBox::Yes | QMessageBox::No);
-    if (ret != QMessageBox::Yes) {
+
+    const QString accountId = getCurrentAccountId();
+    const QString fromAddress = getCurrentAccountAddress();
+    const QString toAddress = normalizedRecipientAddress();
+    const QString amountText = QString::number(m_amountSpinBox->value(), 'f', 9);
+    const qint64 gasLimit = FeeEstimator::standardTransferGas();
+    const qint64 maxFee = m_feeEstimator->getGasPrice(currentFeeTier());
+    const qint64 totalBase = static_cast<qint64>(m_amountSpinBox->value() * 1e9) + maxFee;
+
+    const QString confirmation = QString(
+        "Send %1 ANM from\n%2\n\nto\n%3\n\nMax fee: %4 ANM\nTotal reserved: %5 ANM"
+    )
+        .arg(amountText)
+        .arg(fromAddress)
+        .arg(toAddress)
+        .arg(maxFee / 1e9, 0, 'f', 9)
+        .arg(totalBase / 1e9, 0, 'f', 9);
+    if (QMessageBox::question(this, "Confirm Transaction", confirmation, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
         return;
     }
-    
-    // Get account
-    WalletAccount account = m_walletEngine->getAccount(accountId);
-    if (account.address.isEmpty()) {
-        showError("Error", "Account not found");
+
+    QJsonObject request;
+    request["from_address"] = fromAddress;
+    request["to_address"] = toAddress;
+    request["amount"] = amountText;
+    request["gas_limit"] = static_cast<qint64>(gasLimit);
+    request["max_fee"] = maxFee;
+    request["chain_id"] = m_chainId;
+    if (!m_nonceEdit->text().trimmed().isEmpty()) {
+        request["nonce"] = m_nonceEdit->text().trimmed().toLongLong();
+    }
+    if (!m_validAfterEdit->text().trimmed().isEmpty()) {
+        request["valid_after"] = m_validAfterEdit->text().trimmed().toLongLong();
+    }
+    if (!m_validUntilEdit->text().trimmed().isEmpty()) {
+        request["valid_until"] = m_validUntilEdit->text().trimmed().toLongLong();
+    }
+    if (!m_dataPayloadEdit->text().trimmed().isEmpty()) {
+        request["data_hex"] = m_dataPayloadEdit->text().trimmed();
+    }
+
+    m_sendWatcher->setProperty("accountId", accountId);
+    m_sendWatcher->setProperty("toAddress", toAddress);
+    m_sendWatcher->setProperty("amountBase", static_cast<qlonglong>(m_amountSpinBox->value() * 1e9));
+    m_sendWatcher->setProperty("maxFee", static_cast<qlonglong>(maxFee));
+
+    m_statusLabel->setText("Submitting transaction...");
+    m_sendButton->setEnabled(false);
+
+    m_sendWatcher->setFuture(QtConcurrent::run([this, request]() {
+        return m_walletEngine->submitTransaction(request);
+    }));
+}
+
+void SendWidget::handleSendFinished()
+{
+    m_sendButton->setEnabled(true);
+
+    const QJsonObject result = m_sendWatcher->future().result();
+    if (result.isEmpty()) {
+        showError("Send Failed", "The transaction was not admitted by the node.");
+        m_statusLabel->setText("Transaction failed.");
         return;
     }
-    
-    // Get nonce
-    RpcReply* nonceReply = m_rpcClient->getNonce(account.address, "pending");
-    QEventLoop loop;
-    QTimer timer;
-    timer.setSingleShot(true);
-    
-    connect(nonceReply, &RpcReply::finished, &loop, &QEventLoop::quit);
-    connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    
-    timer.start(10000);
-    loop.exec();
-    
-    if (!timer.isActive()) {
-        nonceReply->abort();
-        nonceReply->deleteLater();
-        showError("Error", "Timeout getting nonce");
-        return;
-    }
-    timer.stop();
-    
-    if (nonceReply->error() != QNetworkReply::NoError) {
-        QString error = nonceReply->errorString();
-        nonceReply->deleteLater();
-        showError("Error", "Failed to get nonce: " + error);
-        return;
-    }
-    
-    QByteArray nonceData = nonceReply->readAll();
-    nonceReply->deleteLater();
-    
-    QJsonDocument nonceDoc = QJsonDocument::fromJson(nonceData);
-    qint64 nonce = 0;
-    if (nonceDoc.isObject()) {
-        QJsonObject obj = nonceDoc.object();
-        if (obj.contains("result")) {
-            nonce = obj["result"].toVariant().toLongLong();
-        }
-    }
-    
-    // Build unsigned transaction
-    QJsonObject unsignedTx;
-    unsignedTx["version"] = 1;
-    unsignedTx["chain_id"] = m_chainId;
-    unsignedTx["sender"] = addressToHex(account.address);
-    unsignedTx["nonce"] = QString::number(nonce);
-    unsignedTx["gas_price"] = QString::number(gasPrice);
-    unsignedTx["gas_limit"] = QString::number(gasLimit);
-    unsignedTx["kind"] = 0; // TRANSFER
-    
-    QJsonObject payload;
-    payload["to"] = addressToHex(toAddress);
-    payload["amount"] = QString::number(amountWei);
-    payload["data"] = QString::fromUtf8(m_memoEdit->text().toUtf8().toHex());
-    unsignedTx["payload"] = payload;
-    
-    // Sign transaction
-    QString signedHex = m_walletEngine->signTransaction(unsignedTx, accountId);
-    if (signedHex.isEmpty()) {
-        showError("Signing Failed", "Failed to sign transaction");
-        return;
-    }
-    
-    // Add to database as SIGNED (with temporary txid)
-    QString tempTxid = "pending_" + QString::number(QDateTime::currentMSecsSinceEpoch());
-    
-    WalletTx dbTx;
-    dbTx.txid = tempTxid;
-    dbTx.direction = "out";
-    dbTx.fromAccountId = accountId;
-    dbTx.toAddress = toAddress;
-    dbTx.amount = amountWei;
-    dbTx.fee = fee;
-    dbTx.state = "SIGNED";
-    dbTx.firstSeenAt = QDateTime::currentMSecsSinceEpoch();
-    dbTx.lastUpdateAt = dbTx.firstSeenAt;
-    
-    if (!m_database->addTransaction(dbTx)) {
-        showError("Error", "Failed to save transaction");
-        return;
-    }
-    
-    // Reserve balance
-    LedgerEntry pendingOut;
-    pendingOut.txid = tempTxid;
-    pendingOut.accountId = accountId;
-    pendingOut.asset = "ANM";
-    pendingOut.type = "PENDING_OUT";
-    pendingOut.delta = -amountWei;
-    pendingOut.stateVersion = m_database->nextStateVersion();
-    pendingOut.createdAt = QDateTime::currentMSecsSinceEpoch();
-    
-    if (!m_database->addLedgerEntry(pendingOut)) {
-        showError("Error", "Failed to reserve balance (insufficient funds)");
-        m_database->deleteTransaction(tempTxid);
-        return;
-    }
-    
-    LedgerEntry feeReserved = pendingOut;
-    feeReserved.type = "FEE_RESERVED";
-    feeReserved.delta = -fee;
-    feeReserved.stateVersion = m_database->nextStateVersion();
-    
-    if (!m_database->addLedgerEntry(feeReserved)) {
-        showError("Error", "Failed to reserve fee");
-        m_database->deleteTransaction(tempTxid);
-        return;
-    }
-    
-    // Broadcast transaction
-    RpcReply* txReply = m_rpcClient->sendRawTransaction(signedHex);
-    QEventLoop txLoop;
-    QTimer txTimer;
-    txTimer.setSingleShot(true);
-    
-    connect(txReply, &RpcReply::finished, &txLoop, &QEventLoop::quit);
-    connect(&txTimer, &QTimer::timeout, &txLoop, &QEventLoop::quit);
-    
-    txTimer.start(10000);
-    txLoop.exec();
-    
-    if (!txTimer.isActive()) {
-        txReply->abort();
-        txReply->deleteLater();
-        showError("Error", "Timeout broadcasting transaction");
-        // TODO: Revert ledger entries
-        return;
-    }
-    txTimer.stop();
-    
-    if (txReply->error() != QNetworkReply::NoError) {
-        QString error = txReply->errorString();
-        txReply->deleteLater();
-        showError("Broadcast Failed", "Failed to broadcast: " + error);
-        // TODO: Revert ledger entries
-        return;
-    }
-    
-    QByteArray txData = txReply->readAll();
-    txReply->deleteLater();
-    
-    QJsonDocument txDoc = QJsonDocument::fromJson(txData);
-    QString txHash;
-    
-    if (txDoc.isObject()) {
-        QJsonObject obj = txDoc.object();
-        if (obj.contains("error")) {
-            QJsonObject errorObj = obj["error"].toObject();
-            QString errorMsg = errorObj["message"].toString();
-            showError("Broadcast Failed", errorMsg);
-            // TODO: Revert ledger entries
-            return;
-        }
-        if (obj.contains("result")) {
-            txHash = obj["result"].toString();
-        }
-    }
-    
+
+    const QString txHash = result.value("tx_hash").toString();
     if (txHash.isEmpty()) {
-        showError("Error", "No transaction hash returned");
-        // TODO: Revert ledger entries
+        showError("Send Failed", "The node did not return a transaction hash.");
+        m_statusLabel->setText("Transaction failed.");
         return;
     }
-    
-    // Update transaction with real txid
-    dbTx.txid = txHash;
-    dbTx.state = "BROADCAST";
-    dbTx.lastUpdateAt = QDateTime::currentMSecsSinceEpoch();
-    
-    if (!m_database->updateTransaction(tempTxid, dbTx)) {
-        qWarning() << "Failed to update transaction ID";
+
+    const QString accountId = m_sendWatcher->property("accountId").toString();
+    const QString toAddress = m_sendWatcher->property("toAddress").toString();
+    const qint64 amountBase = m_sendWatcher->property("amountBase").toLongLong();
+    const qint64 maxFee = m_sendWatcher->property("maxFee").toLongLong();
+
+    if (m_database) {
+        WalletTx tx;
+        tx.txid = txHash;
+        tx.direction = "out";
+        tx.fromAccountId = accountId;
+        tx.toAddress = toAddress;
+        tx.amount = amountBase;
+        tx.fee = maxFee;
+        tx.state = result.value("mempool_admitted").toBool() ? "MEMPOOL" : "BROADCAST";
+        tx.firstSeenAt = QDateTime::currentMSecsSinceEpoch();
+        tx.lastUpdateAt = tx.firstSeenAt;
+        const QString rawTx = result.value("raw_transaction").toString();
+        tx.rawTx = rawTx.startsWith("0x") ? QByteArray::fromHex(rawTx.mid(2).toLatin1()) : QByteArray::fromHex(rawTx.toLatin1());
+        m_database->addTransaction(tx);
+
+        LedgerEntry pendingOut;
+        pendingOut.txid = txHash;
+        pendingOut.accountId = accountId;
+        pendingOut.asset = "ANM";
+        pendingOut.type = "PENDING_OUT";
+        pendingOut.delta = -amountBase;
+        pendingOut.stateVersion = m_database->nextStateVersion();
+        pendingOut.createdAt = tx.firstSeenAt;
+        m_database->addLedgerEntry(pendingOut);
+
+        LedgerEntry feeReserved = pendingOut;
+        feeReserved.type = "FEE_RESERVED";
+        feeReserved.delta = -maxFee;
+        feeReserved.stateVersion = m_database->nextStateVersion();
+        m_database->addLedgerEntry(feeReserved);
     }
-    
-    // TODO: Update ledger entries with real txid
-    // This would require a method in WalletDatabase to update txid in ledger
-    
-    // Start monitoring
+
     if (m_monitor) {
         m_monitor->trackTransaction(txHash, "out");
     }
-    
-    // Show success
-    showSuccess("Transaction Sent", "TX: " + txHash);
+
+    QSettings settings;
+    QStringList recent = settings.value("WalletQt/recentRecipients").toStringList();
+    recent.removeAll(toAddress);
+    recent.prepend(toAddress);
+    while (recent.size() > 10) {
+        recent.removeLast();
+    }
+    settings.setValue("WalletQt/recentRecipients", recent);
+    updateRecipientCompleter();
+
+    m_statusLabel->setText(QString("Submitted: %1").arg(txHash));
+    showSuccess("Transaction Sent", txHash);
     emit transactionSent(txHash);
-    
-    // Clear form
     clearForm();
     updateBalanceLabel();
 }
 
 void SendWidget::onMaxClicked()
 {
-    qint64 available = getAvailableBalance();
-    qint64 gasLimit = FeeEstimator::standardTransferGas();
-    qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), gasLimit);
-    qint64 maxAmount = available - fee;
-    
-    if (maxAmount > 0) {
-        double maxAnm = maxAmount / 1e9;
-        m_amountSpinBox->setValue(maxAnm);
-    } else {
-        m_amountSpinBox->setValue(0);
-        showValidationError("amount", "Insufficient balance for fee");
-    }
+    const qint64 available = getAvailableBalance();
+    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
+    const qint64 maxAmount = qMax<qint64>(0, available - fee);
+    m_amountSpinBox->setValue(maxAmount / 1e9);
 }
 
 void SendWidget::onFeeTierChanged(int)
@@ -442,18 +363,16 @@ void SendWidget::onFeeTierChanged(int)
 
 void SendWidget::onAddressChanged()
 {
-    QString address = m_toAddressEdit->text().trimmed();
-    
+    const QString address = m_toAddressEdit->text().trimmed();
     if (address.isEmpty()) {
         m_addressValidationLabel->clear();
     } else if (validateAddress(address)) {
-        m_addressValidationLabel->setText("✓");
-        m_addressValidationLabel->setStyleSheet("color: green; font-weight: bold;");
+        m_addressValidationLabel->setText("Valid");
+        m_addressValidationLabel->setStyleSheet("color: #15803d; font-weight: bold;");
     } else {
-        m_addressValidationLabel->setText("✗");
-        m_addressValidationLabel->setStyleSheet("color: red; font-weight: bold;");
+        m_addressValidationLabel->setText("Invalid");
+        m_addressValidationLabel->setStyleSheet("color: #b91c1c; font-weight: bold;");
     }
-    
     validateInputs();
 }
 
@@ -465,50 +384,39 @@ void SendWidget::onAmountChanged()
 
 void SendWidget::onAccountChanged(int)
 {
-    // Refresh account list
     m_fromAccountCombo->clear();
-    
     if (!m_walletEngine || m_walletEngine->isLocked()) {
-        m_balanceLabel->setText("Balance: (Locked)");
+        m_balanceLabel->setText("Balance: unavailable");
         m_sendButton->setEnabled(false);
         return;
     }
-    
-    auto accounts = m_walletEngine->listAccounts();
-    for (const auto& account : accounts) {
-        QString displayText = account.label + " (" + account.address + ")";
-        m_fromAccountCombo->addItem(displayText, account.accountId);
+    const auto accounts = m_walletEngine->listAccounts();
+    for (const WalletAccount& account : accounts) {
+        const QString label = account.isDefault
+            ? QString("%1 (Default)").arg(account.label)
+            : account.label;
+        m_fromAccountCombo->addItem(QString("%1 | %2").arg(label, account.address), account.accountId);
     }
-
-    // Ensure tracked balances are refreshed when account list changes
-    // so placeholders don't persist in the wallet view.
     m_walletEngine->refreshBalances();
-
     updateBalanceLabel();
     updateFeeDisplay();
+    validateInputs();
 }
 
 void SendWidget::onBalanceUpdated(const QString& address, const Balance&)
 {
-    QString currentAddress = getCurrentAccountAddress();
-    if (currentAddress == address) {
+    if (address == getCurrentAccountAddress()) {
         updateBalanceLabel();
+        validateInputs();
     }
 }
 
 void SendWidget::updateFeeDisplay()
 {
-    qint64 gasLimit = FeeEstimator::standardTransferGas();
-    qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), gasLimit);
-    
-    m_feeLabel->setText("Est. Fee: " + m_feeEstimator->formatFeeANM(fee));
-    
-    // Warn if fee > 1% of amount
-    double amountAnm = m_amountSpinBox->value();
-    double feeAnm = fee / 1e9;
-    
-    if (amountAnm > 0 && feeAnm > amountAnm * 0.01) {
-        m_feeWarningLabel->setText("⚠ Fee is more than 1% of amount");
+    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
+    m_feeLabel->setText("Max Fee: " + m_feeEstimator->formatFeeANM(fee));
+    if (m_amountSpinBox->value() > 0 && (fee / 1e9) > (m_amountSpinBox->value() * 0.01)) {
+        m_feeWarningLabel->setText("Fee reserve is more than 1% of the transfer amount.");
     } else {
         m_feeWarningLabel->clear();
     }
@@ -516,99 +424,131 @@ void SendWidget::updateFeeDisplay()
 
 void SendWidget::updateBalanceLabel()
 {
-    QString accountId = getCurrentAccountId();
-    if (accountId.isEmpty()) {
-        m_balanceLabel->setText("Balance: 0.000000000 ANM");
-        return;
+    const qint64 available = getAvailableBalance();
+    const QString address = getCurrentAccountAddress();
+    const Balance balance = m_walletEngine->getBalance(address);
+    m_balanceLabel->setText(
+        QString("Confirmed: %1 ANM | Available: %2 ANM")
+            .arg(balance.confirmed / 1e9, 0, 'f', 9)
+            .arg(available / 1e9, 0, 'f', 9)
+    );
+}
+
+void SendWidget::updateRecipientCompleter()
+{
+    QStringList candidates;
+    for (const Contact& contact : m_walletEngine->listContacts()) {
+        if (!contact.label.isEmpty()) {
+            candidates << QString("%1 <%2>").arg(contact.label, contact.address);
+        }
+        candidates << contact.address;
     }
-    
-    qint64 available = getAvailableBalance();
-    double availableAnm = available / 1e9;
-    
-    m_balanceLabel->setText(QString("Balance: %1 ANM").arg(availableAnm, 0, 'f', 9));
+    const QStringList recent = QSettings().value("WalletQt/recentRecipients").toStringList();
+    for (const QString& item : recent) {
+        if (!candidates.contains(item)) {
+            candidates << item;
+        }
+    }
+    auto* model = new QStringListModel(candidates, m_toAddressEdit);
+    auto* completer = new QCompleter(model, m_toAddressEdit);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    m_toAddressEdit->setCompleter(completer);
 }
 
 bool SendWidget::validateInputs()
 {
     clearValidationErrors();
-    
-    if (!m_walletEngine || m_walletEngine->isLocked()) {
+    if (!m_walletEngine || m_walletEngine->isLocked() || m_sendWatcher->isRunning()) {
         m_sendButton->setEnabled(false);
         return false;
     }
-    
-    QString accountId = getCurrentAccountId();
+
+    const QString accountId = getCurrentAccountId();
     if (accountId.isEmpty()) {
         m_sendButton->setEnabled(false);
         return false;
     }
-    
-    // Validate address
-    QString address = m_toAddressEdit->text().trimmed();
+
+    const QString address = normalizedRecipientAddress();
     if (address.isEmpty() || !validateAddress(address)) {
-        m_sendButton->setEnabled(false);
         if (!address.isEmpty()) {
-            showValidationError("address", "Invalid address format");
+            showValidationError("address", "Recipient address is invalid.");
         }
+        m_sendButton->setEnabled(false);
         return false;
     }
-    
-    // Validate amount
-    double amountAnm = m_amountSpinBox->value();
+
+    const double amountAnm = m_amountSpinBox->value();
     if (amountAnm <= 0) {
+        showValidationError("amount", "Amount must be greater than zero.");
         m_sendButton->setEnabled(false);
         return false;
     }
-    
-    qint64 amountWei = static_cast<qint64>(amountAnm * 1e9);
-    qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
-    qint64 total = amountWei + fee;
-    qint64 available = getAvailableBalance();
-    
-    if (total > available) {
-        showValidationError("amount", "Insufficient balance (including fee)");
-        m_sendButton->setEnabled(false);
-        return false;
+
+    bool ok = true;
+    const qint64 amountBase = static_cast<qint64>(amountAnm * 1e9);
+    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
+    const qint64 available = getAvailableBalance();
+    if (available < amountBase + fee) {
+        ok = false;
+        showValidationError("amount", "Insufficient available balance for amount plus fee.");
     }
-    
-    m_sendButton->setEnabled(true);
-    return true;
+
+    auto parseOptionalInt = [&ok, this](QLineEdit* edit, const QString& label) -> qint64 {
+        const QString text = edit->text().trimmed();
+        if (text.isEmpty()) {
+            return -1;
+        }
+        bool localOk = false;
+        const qint64 value = text.toLongLong(&localOk);
+        if (!localOk || value < 0) {
+            ok = false;
+            showValidationError("amount", QString("%1 must be a non-negative integer.").arg(label));
+        }
+        return value;
+    };
+    const qint64 validAfter = parseOptionalInt(m_validAfterEdit, "Valid After");
+    const qint64 validUntil = parseOptionalInt(m_validUntilEdit, "Valid Until");
+    if (validAfter >= 0 && validUntil >= 0 && validUntil <= validAfter) {
+        ok = false;
+        showValidationError("amount", "Valid Until must be greater than Valid After.");
+    }
+
+    QString payload = m_dataPayloadEdit->text().trimmed();
+    if (payload.startsWith("0x")) {
+        payload = payload.mid(2);
+    }
+    if (!payload.isEmpty()) {
+        const QRegularExpression hexPattern("^[0-9a-fA-F]+$");
+        if (!hexPattern.match(payload).hasMatch() || payload.size() % 2 != 0) {
+            ok = false;
+            showValidationError("amount", "Raw payload must be even-length hexadecimal.");
+        }
+    }
+
+    m_sendButton->setEnabled(ok);
+    return ok;
 }
 
 bool SendWidget::validateAddress(const QString& address)
 {
-    // Check prefix
-    if (!address.startsWith("anim1")) {
-        return false;
-    }
-    
-    // Check length (bech32m addresses should be at least 42 characters)
-    if (address.length() < 42) {
-        return false;
-    }
-    
-    // TODO: Implement full bech32m checksum validation
-    // For now, basic validation is sufficient
-    
-    return true;
+    return m_walletEngine && m_walletEngine->validateAddress(address);
 }
 
 void SendWidget::showValidationError(const QString& field, const QString& message)
 {
     if (field == "address") {
-        m_addressValidationLabel->setText("✗ " + message);
-        m_addressValidationLabel->setStyleSheet("color: red; font-size: 11px;");
-    } else if (field == "amount") {
-        m_amountValidationLabel->setText("✗ " + message);
-        m_amountValidationLabel->setStyleSheet("color: red; font-size: 11px;");
+        m_addressValidationLabel->setText(message);
+        m_addressValidationLabel->setStyleSheet("color: #b91c1c; font-size: 11px;");
+        return;
     }
+    m_amountValidationLabel->setText(message);
 }
 
 void SendWidget::clearValidationErrors()
 {
     m_amountValidationLabel->clear();
-    m_feeWarningLabel->clear();
-    onAddressChanged(); // Revalidate address
 }
 
 void SendWidget::showError(const QString& title, const QString& message)
@@ -622,61 +562,49 @@ void SendWidget::showSuccess(const QString& title, const QString& message)
     QMessageBox::information(this, title, message);
 }
 
-QString SendWidget::addressToHex(const QString& bech32mAddress)
+QString SendWidget::normalizedRecipientAddress() const
 {
-    // Convert bech32m address to hex
-    // This is a placeholder implementation
-    // In production, this should properly decode bech32m
-    
-    if (bech32mAddress.startsWith("anim1")) {
-        // Remove prefix and convert to hex
-        QString data = bech32mAddress.mid(5);
-        // For now, just return as-is with 0x prefix
-        // TODO: Implement proper bech32m decoding
-        return "0x" + data;
+    QString address = m_toAddressEdit->text().trimmed();
+    const int left = address.indexOf('<');
+    const int right = address.indexOf('>');
+    if (left >= 0 && right > left) {
+        address = address.mid(left + 1, right - left - 1).trimmed();
     }
-    
-    return bech32mAddress;
+    return address;
 }
 
 QString SendWidget::getCurrentAccountId() const
 {
-    if (m_fromAccountCombo->currentIndex() < 0) {
-        return QString();
-    }
     return m_fromAccountCombo->currentData().toString();
 }
 
 QString SendWidget::getCurrentAccountAddress() const
 {
-    QString accountId = getCurrentAccountId();
-    if (accountId.isEmpty()) {
-        return QString();
-    }
-    
-    WalletAccount account = m_walletEngine->getAccount(accountId);
+    const WalletAccount account = m_walletEngine->getAccount(getCurrentAccountId());
     return account.address;
 }
 
 qint64 SendWidget::getAvailableBalance() const
 {
-    QString accountId = getCurrentAccountId();
-    if (accountId.isEmpty()) {
-        return 0;
+    const QString accountId = getCurrentAccountId();
+    const QString address = getCurrentAccountAddress();
+    qint64 confirmed = static_cast<qint64>(m_walletEngine->getBalance(address).confirmed);
+    qint64 reserved = 0;
+    if (m_database && !accountId.isEmpty()) {
+        const QList<LedgerEntry> entries = m_database->listLedgerEntries();
+        for (const LedgerEntry& entry : entries) {
+            if (entry.accountId != accountId) {
+                continue;
+            }
+            if ((entry.type == "PENDING_OUT" || entry.type == "FEE_RESERVED") && entry.delta < 0) {
+                reserved += -entry.delta;
+            }
+        }
     }
-    
-    if (!m_database) {
-        return 0;
-    }
-    
-    return m_database->getBalance(accountId, "ANM");
+    return qMax<qint64>(0, confirmed - reserved);
 }
 
 FeeEstimator::FeeTier SendWidget::currentFeeTier() const
 {
-    int index = m_feeTierCombo->currentIndex();
-    if (index < 0) {
-        return FeeEstimator::Normal;
-    }
-    return static_cast<FeeEstimator::FeeTier>(m_feeTierCombo->itemData(index).toInt());
+    return static_cast<FeeEstimator::FeeTier>(m_feeTierCombo->currentData().toInt());
 }

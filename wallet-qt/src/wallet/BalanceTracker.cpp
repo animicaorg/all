@@ -138,14 +138,21 @@ void BalanceTracker::handleBalanceReply()
         return;
     }
     
-    // Parse balance (hex string)
-    QString balanceHex = obj["result"].toString();
-    if (balanceHex.startsWith("0x")) {
-        balanceHex = balanceHex.mid(2);
+    quint64 balance = 0;
+    bool ok = false;
+    const QJsonValue result = obj["result"];
+    if (result.isString()) {
+        QString balanceText = result.toString().trimmed();
+        int base = 10;
+        if (balanceText.startsWith("0x")) {
+            balanceText = balanceText.mid(2);
+            base = 16;
+        }
+        balance = balanceText.toULongLong(&ok, base);
+    } else if (result.isDouble()) {
+        balance = static_cast<quint64>(result.toDouble());
+        ok = true;
     }
-    
-    bool ok;
-    quint64 balance = balanceHex.toULongLong(&ok, 16);
     
     if (ok) {
         Balance& balanceData = m_balances[address];

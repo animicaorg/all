@@ -104,6 +104,7 @@ fi
 cmake "$WALLET_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -DBUILD_TESTING=OFF
 
 echo ""
@@ -151,7 +152,7 @@ echo "✓ Architecture: $NODE_ARCH"
 
 # Check node imports
 echo "Checking node imports..."
-if ! "$NODE_PYTHON" -c "import rpc; import animica; import core" 2>/dev/null; then
+if ! "$NODE_PYTHON" -c "import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core" 2>/dev/null; then
     echo "Error: Node imports failed"
     exit 1
 fi

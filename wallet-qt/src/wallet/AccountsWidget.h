@@ -58,6 +58,8 @@ private slots:
     void onSetDefaultAccount();
     void onRemoveAccount();
     void onCopyAddress();
+    void onExportPublicInfo();
+    void onExportSecretBackup();
     void handleAccountAdded(const WalletAccount& account);
     void handleAccountUpdated(const WalletAccount& account);
     void handleAccountRemoved(const QString& accountId);
@@ -66,6 +68,7 @@ private slots:
 private:
     void setupUi();
     void updateAccountRow(int row, const WalletAccount& account);
+    void showAccountDetails(const WalletAccount& account);
     QString formatAddress(const QString& address) const;
     QString formatBalance(quint64 balance) const;
     int findAccountRow(const QString& accountId) const;

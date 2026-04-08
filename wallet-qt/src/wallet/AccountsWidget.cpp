@@ -1,6 +1,10 @@
 #include "AccountsWidget.h"
 #include "WalletEngine.h"
 #include "BalanceTracker.h"
+#include <QDir>
+#include <QFile>
+#include <QFileDialog>
+#include <QJsonDocument>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -32,8 +36,8 @@ void AccountsWidget::setupUi()
     layout->addWidget(m_statusLabel);
     
     // Accounts table
-    m_accountTable = new QTableWidget(0, 4, this);
-    m_accountTable->setHorizontalHeaderLabels({"", "Label", "Address", "Balance"});
+    m_accountTable = new QTableWidget(0, 6, this);
+    m_accountTable->setHorizontalHeaderLabels({"", "Label", "Address", "Algorithm", "Created", "Balance"});
     m_accountTable->horizontalHeader()->setStretchLastSection(true);
     m_accountTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
     m_accountTable->setColumnWidth(0, 30);  // Star column
@@ -73,6 +77,8 @@ void AccountsWidget::setupUi()
     m_contextMenu->addAction("Set as Default", this, &AccountsWidget::onSetDefaultAccount);
     m_contextMenu->addSeparator();
     m_contextMenu->addAction("Copy Address", this, &AccountsWidget::onCopyAddress);
+    m_contextMenu->addAction("Export Public Info...", this, &AccountsWidget::onExportPublicInfo);
+    m_contextMenu->addAction("Export Secret Backup...", this, &AccountsWidget::onExportSecretBackup);
     m_contextMenu->addSeparator();
     m_contextMenu->addAction("Remove", this, &AccountsWidget::onRemoveAccount);
 }
@@ -109,10 +115,16 @@ void AccountsWidget::updateAccountRow(int row, const WalletAccount& account)
     
     // Address (truncated)
     m_accountTable->setItem(row, 2, new QTableWidgetItem(formatAddress(account.address)));
-    
+
+    // Algorithm
+    m_accountTable->setItem(row, 3, new QTableWidgetItem(account.algName));
+
+    // Created
+    m_accountTable->setItem(row, 4, new QTableWidgetItem(account.createdAt.toUTC().toString(Qt::ISODate)));
+
     // Balance
     auto balance = m_engine->getBalance(account.address);
-    m_accountTable->setItem(row, 3, new QTableWidgetItem(formatBalance(balance.confirmed)));
+    m_accountTable->setItem(row, 5, new QTableWidgetItem(formatBalance(balance.confirmed)));
 }
 
 QString AccountsWidget::formatAddress(const QString& address) const
@@ -125,8 +137,7 @@ QString AccountsWidget::formatAddress(const QString& address) const
 
 QString AccountsWidget::formatBalance(quint64 balance) const
 {
-    // Convert from smallest unit to ANM (1 ANM = 10^18)
-    double anm = balance / 1e18;
+    double anm = balance / 1e9;
     return QString::number(anm, 'f', 6) + " ANM";
 }
 
@@ -159,14 +170,43 @@ void AccountsWidget::onCreateClicked()
 
 void AccountsWidget::onImportClicked()
 {
-    emit importAccountRequested();
+    const QString sourceFile = QFileDialog::getOpenFileName(
+        this,
+        "Import wallets.json",
+        QDir::homePath(),
+        "Wallet Files (wallets.json *.json);;All Files (*)"
+    );
+    if (sourceFile.isEmpty()) {
+        return;
+    }
+
+    QMessageBox choice(this);
+    choice.setWindowTitle("Import Wallets");
+    choice.setText("Import the selected wallets.json into the current wallet store.");
+    QPushButton* mergeButton = choice.addButton("Merge", QMessageBox::AcceptRole);
+    QPushButton* replaceButton = choice.addButton("Replace", QMessageBox::DestructiveRole);
+    choice.addButton(QMessageBox::Cancel);
+    choice.exec();
+
+    bool merge = true;
+    if (choice.clickedButton() == replaceButton) {
+        merge = false;
+    } else if (choice.clickedButton() != mergeButton) {
+        return;
+    }
+
+    if (!m_engine->importWalletsFile(sourceFile, merge)) {
+        QMessageBox::warning(this, "Import Failed", "Failed to import the selected wallets.json file.");
+        return;
+    }
+    refreshAccounts();
 }
 
 void AccountsWidget::onExportClicked()
 {
     QString accountId = selectedAccountId();
     if (!accountId.isEmpty()) {
-        emit exportAccountRequested(accountId);
+        onExportSecretBackup();
     }
 }
 
@@ -176,7 +216,8 @@ void AccountsWidget::onTableDoubleClicked(int row, int column)
     auto* item = m_accountTable->item(row, 0);
     if (item) {
         QString accountId = item->data(Qt::UserRole).toString();
-        emit viewAccountDetailsRequested(accountId);
+        const WalletAccount account = m_engine->getAccount(accountId);
+        showAccountDetails(account);
     }
 }
 
@@ -251,6 +292,66 @@ void AccountsWidget::onCopyAddress()
     QApplication::clipboard()->setText(account.address);
 }
 
+void AccountsWidget::onExportPublicInfo()
+{
+    const QString accountId = selectedAccountId();
+    if (accountId.isEmpty()) {
+        return;
+    }
+    const QJsonObject info = m_engine->exportPublicInfo(accountId);
+    if (info.isEmpty()) {
+        QMessageBox::warning(this, "Export Failed", "Failed to export wallet public information.");
+        return;
+    }
+    const QString destination = QFileDialog::getSaveFileName(
+        this,
+        "Export Wallet Public Info",
+        QDir::home().filePath("wallet-public.json"),
+        "JSON Files (*.json)"
+    );
+    if (destination.isEmpty()) {
+        return;
+    }
+    QFile file(destination);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, "Export Failed", "Failed to open the destination file.");
+        return;
+    }
+    file.write(QJsonDocument(info).toJson(QJsonDocument::Indented));
+    file.close();
+}
+
+void AccountsWidget::onExportSecretBackup()
+{
+    const QString accountId = selectedAccountId();
+    if (accountId.isEmpty()) {
+        return;
+    }
+    const WalletAccount account = m_engine->getAccount(accountId);
+    const auto reply = QMessageBox::warning(
+        this,
+        "Export Secret Backup",
+        QString("Export the secret material for '%1'?\n\nThis file grants control over the wallet and must be stored securely.").arg(account.label),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+    );
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+    const QString destination = QFileDialog::getSaveFileName(
+        this,
+        "Export Secret Wallet Backup",
+        QDir::home().filePath(account.label + "-wallet.json"),
+        "Wallet Files (*.json)"
+    );
+    if (destination.isEmpty()) {
+        return;
+    }
+    if (!m_engine->exportSecretMaterial(accountId, destination)) {
+        QMessageBox::warning(this, "Export Failed", "Failed to export wallet secret material.");
+    }
+}
+
 void AccountsWidget::handleAccountAdded(const WalletAccount& account)
 {
     int row = m_accountTable->rowCount();
@@ -286,9 +387,33 @@ void AccountsWidget::handleBalanceUpdated(const QString& address, const Balance&
             int row = findAccountRow(account.accountId);
             if (row >= 0) {
                 auto bal = m_engine->getBalance(address);
-                m_accountTable->item(row, 3)->setText(formatBalance(bal.confirmed));
+                m_accountTable->item(row, 5)->setText(formatBalance(bal.confirmed));
             }
             break;
         }
     }
+}
+
+void AccountsWidget::showAccountDetails(const WalletAccount& account)
+{
+    if (account.accountId.isEmpty()) {
+        return;
+    }
+    const auto balance = m_engine->getBalance(account.address);
+    const QString details = QString(
+        "Label: %1\n"
+        "Address: %2\n"
+        "Algorithm: %3 (%4)\n"
+        "Created: %5\n"
+        "Default: %6\n"
+        "Balance: %7"
+    )
+        .arg(account.label)
+        .arg(account.address)
+        .arg(account.algName)
+        .arg(account.algId)
+        .arg(account.createdAt.toUTC().toString(Qt::ISODate))
+        .arg(account.isDefault ? "Yes" : "No")
+        .arg(formatBalance(balance.confirmed));
+    QMessageBox::information(this, "Wallet Details", details);
 }

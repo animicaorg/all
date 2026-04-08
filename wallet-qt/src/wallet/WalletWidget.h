@@ -17,6 +17,9 @@ class AccountsWidget;
 class AddressBookWidget;
 class SendWidget;
 class ReceiveWidget;
+class TransactionHistoryWidget;
+class ContractInteractionWidget;
+class SettingsWidget;
 
 /**
  * @brief Main wallet UI coordinator.
@@ -57,12 +60,9 @@ public:
     void setRpcEndpoint(const QString& endpoint);
 
 signals:
-    void lockRequested();
-    void unlockRequested();
+    void settingsRequested();
 
 private slots:
-    void onLockAction();
-    void onUnlockAction();
     void onCreateAccountAction();
     void onRefreshAction();
     void handleWalletLocked();
@@ -96,8 +96,6 @@ private:
     QLabel* m_rpcEndpointLabel;
     
     // Actions
-    QAction* m_lockAction;
-    QAction* m_unlockAction;
     QAction* m_createAccountAction;
     QAction* m_refreshAction;
     
@@ -106,6 +104,9 @@ private:
     AddressBookWidget* m_addressBookWidget;
     SendWidget* m_sendWidget;
     ReceiveWidget* m_receiveWidget;
+    TransactionHistoryWidget* m_historyWidget;
+    ContractInteractionWidget* m_contractWidget;
+    SettingsWidget* m_settingsWidget;
 };
 
 #endif // WALLETWIDGET_H

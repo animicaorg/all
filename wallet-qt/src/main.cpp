@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QDesktopServices>
+#include <QPushButton>
 #include <QUrl>
 #include "platform/AppPaths.h"
 #include "platform/DataDirManager.h"
@@ -18,10 +19,9 @@
 #include "wallet/WalletWidget.h"
 #include "wallet/WalletDatabase.h"
 #include "wallet/TransactionMonitor.h"
-#include "wallet/UnlockDialog.h"
-#include <QInputDialog>
 #include <QFileInfo>
 #include <QDir>
+#include <QTabWidget>
 #if !WALLET_REMOTE_RPC_ONLY
 #include "ui/NodeControlWidget.h"
 #include "node/NodeManager.h"
@@ -70,40 +70,9 @@ int main(int argc, char *argv[])
     TransactionMonitor txMonitor(&rpcClient, &walletDb, &window);
     txMonitor.start();
 
-    QString keystorePath = QDir(dataDirManager.getDataDir()).filePath("keystore.json");
-    if (QFile::exists(keystorePath)) {
-        if (!walletEngine.openWallet(keystorePath)) {
-            QMessageBox::warning(&window, "Wallet Error", "Failed to open wallet keystore.");
-        }
-    } else {
-        bool ok = false;
-        QString password = QInputDialog::getText(
-            &window,
-            "Create Wallet",
-            "Create a new wallet password:",
-            QLineEdit::Password,
-            QString(),
-            &ok
-        );
-        if (ok && !password.isEmpty()) {
-            bool confirmOk = false;
-            QString confirm = QInputDialog::getText(
-                &window,
-                "Create Wallet",
-                "Confirm wallet password:",
-                QLineEdit::Password,
-                QString(),
-                &confirmOk
-            );
-
-            if (!confirmOk || confirm != password) {
-                QMessageBox::warning(&window, "Wallet Error", "Passwords did not match.");
-            } else if (!walletEngine.createWallet(password, dataDirManager.getDataDir())) {
-                QMessageBox::warning(&window, "Wallet Error", "Failed to create new wallet.");
-            } else {
-                walletEngine.unlockWallet(password);
-            }
-        }
+    const QString walletFilePath = dataDirManager.getWalletsFilePath();
+    if (!walletEngine.openWallet(walletFilePath)) {
+        QMessageBox::warning(&window, "Wallet Error", "Failed to initialize the canonical wallets.json store.");
     }
 
     WalletWidget* walletWidget = new WalletWidget(&walletEngine, &rpcClient, &walletDb, &txMonitor, &window);
@@ -118,7 +87,10 @@ int main(int argc, char *argv[])
     
     // Create and set central widget
     NodeControlWidget* nodeControl = new NodeControlWidget(&nodeManager);
-    window.setCentralWidget(nodeControl);
+    QTabWidget* mainTabs = new QTabWidget(&window);
+    mainTabs->addTab(walletWidget, "Wallet");
+    mainTabs->addTab(nodeControl, "Node");
+    window.setCentralWidget(mainTabs);
 #else
     window.setCentralWidget(walletWidget);
 #endif
@@ -133,7 +105,7 @@ int main(int argc, char *argv[])
     QMenu* walletMenu = fileMenu->addMenu("&Wallet");
     
     QAction* importWalletAction = walletMenu->addAction("&Import wallets.json...");
-    QObject::connect(importWalletAction, &QAction::triggered, [&window, &dataDirManager]() {
+    QObject::connect(importWalletAction, &QAction::triggered, [&window, &dataDirManager, &walletEngine, walletWidget]() {
         // Stop node warning
         QMessageBox::StandardButton reply = QMessageBox::warning(
             &window,
@@ -211,6 +183,8 @@ int main(int argc, char *argv[])
             if (!result.backupPath.isEmpty()) {
                 msg += QString("\n\nBackup created:\n%1").arg(result.backupPath);
             }
+            walletEngine.openWallet(targetFile);
+            walletWidget->refresh();
             QMessageBox::information(&window, "Import Successful", msg);
         } else {
             QMessageBox::critical(&window, "Import Failed", result.errorMessage);
@@ -428,20 +402,12 @@ int main(int argc, char *argv[])
     QObject::connect(aboutAction, &QAction::triggered, [&window]() {
         QMessageBox::about(&window, "About Animica Wallet",
                           "<h2>Animica Wallet v0.1.0</h2>"
-                          "<p>A desktop wallet for the Animica blockchain using remote RPC.</p>"
-                          "<p>This build connects to an external RPC endpoint by default.</p>"
+                          "<p>A Qt desktop wallet for the Animica blockchain.</p>"
                           "<p><b>Features:</b></p>"
                           "<ul>"
-                          "<li>Remote RPC client mode</li>"
-                          "<li>Configurable RPC endpoint</li>"
-                          "<li>Balance display and transaction tools</li>"
-                          "</ul>"
-                          "<p><b>Coming soon:</b></p>"
-                          "<ul>"
-                          "<li>Key management and wallet creation</li>"
-                          "<li>Send/receive transactions</li>"
-                          "<li>Balance display</li>"
-                          "<li>Transaction history</li>"
+                          "<li>Canonical wallets.json key management</li>"
+                          "<li>Balance, send, receive, and history tooling</li>"
+                          "<li>Address book, contract tools, and advanced RPC settings</li>"
                           "</ul>"
                           "<p>© 2024 Animica. All rights reserved.</p>");
     });
@@ -452,16 +418,5 @@ int main(int argc, char *argv[])
     // Show window
     window.show();
 
-    QObject::connect(walletWidget, &WalletWidget::unlockRequested, [&window, &walletEngine]() {
-        UnlockDialog dialog(&window);
-        if (dialog.exec() == QDialog::Accepted) {
-            if (!walletEngine.unlockWallet(dialog.password())) {
-                QMessageBox::warning(&window, "Unlock Failed", "Incorrect password.");
-                return;
-            }
-            walletEngine.setAutoLockTimeout(dialog.autoLockMinutes());
-        }
-    });
-    
     return app.exec();
 }

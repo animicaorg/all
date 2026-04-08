@@ -233,6 +233,7 @@ cd "$BUILD_DIR"
 
 cmake "$PROJECT_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -G "Unix Makefiles" \
     || die "CMake configuration failed"
 

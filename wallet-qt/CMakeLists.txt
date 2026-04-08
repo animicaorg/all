@@ -73,6 +73,7 @@ set(SOURCES
     src/rpc/RpcSettings.cpp
     src/ui/RpcSettingsDialog.cpp
     src/wallet/WalletAccount.cpp
+    src/wallet/AnimicaWalletBackend.cpp
     src/wallet/EncryptedKeystore.cpp
     src/wallet/AccountManager.cpp
     src/wallet/AddressBook.cpp
@@ -85,10 +86,13 @@ set(SOURCES
     src/wallet/WalletWidget.cpp
     src/wallet/WalletDatabase.cpp
     src/wallet/TransactionMonitor.cpp
+    src/wallet/TransactionHistoryWidget.cpp
     src/wallet/FeeEstimator.cpp
     src/wallet/SendWidget.cpp
     src/wallet/ReconciliationJob.cpp
     src/wallet/ReceiveWidget.cpp
+    src/wallet/ContractInteractionWidget.cpp
+    src/wallet/SettingsWidget.cpp
     src/wallet/WalletImporter.cpp
     src/wallet/WalletExporter.cpp
     src/diagnostics/Redactor.cpp
@@ -109,6 +113,14 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
     )
 endif()
 
+if(QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE))
+    qt_generate_deploy_app_script(
+        TARGET animica-wallet
+        OUTPUT_SCRIPT qt_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+endif()
+
 set(HEADERS
     src/platform/AppPaths.h
     src/platform/DataDirManager.h
@@ -117,6 +129,7 @@ set(HEADERS
     src/rpc/RpcSettings.h
     src/ui/RpcSettingsDialog.h
     src/wallet/WalletAccount.h
+    src/wallet/AnimicaWalletBackend.h
     src/wallet/EncryptedKeystore.h
     src/wallet/AccountManager.h
     src/wallet/AddressBook.h
@@ -129,10 +142,13 @@ set(HEADERS
     src/wallet/WalletWidget.h
     src/wallet/WalletDatabase.h
     src/wallet/TransactionMonitor.h
+    src/wallet/TransactionHistoryWidget.h
     src/wallet/FeeEstimator.h
     src/wallet/SendWidget.h
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
+    src/wallet/ContractInteractionWidget.h
+    src/wallet/SettingsWidget.h
     src/wallet/WalletImporter.h
     src/wallet/WalletExporter.h
     src/diagnostics/Redactor.h
@@ -310,10 +326,37 @@ if(APPLE)
     install(TARGETS animica-wallet
         BUNDLE DESTINATION "."
     )
+elseif(WIN32)
+    install(TARGETS animica-wallet
+        RUNTIME DESTINATION "."
+    )
 else()
     install(TARGETS animica-wallet
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
+endif()
+
+if(NOT WALLET_REMOTE_RPC_ONLY)
+    if(APPLE)
+        install(DIRECTORY "${ANIMICA_NODE_VENV}"
+            DESTINATION "AnimicaWallet.app/Contents/Resources/node"
+            USE_SOURCE_PERMISSIONS
+        )
+    elseif(WIN32)
+        install(DIRECTORY "${ANIMICA_NODE_VENV}"
+            DESTINATION "node"
+            USE_SOURCE_PERMISSIONS
+        )
+    else()
+        install(DIRECTORY "${ANIMICA_NODE_VENV}"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node"
+            USE_SOURCE_PERMISSIONS
+        )
+    endif()
+endif()
+
+if(QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE) AND qt_deploy_script)
+    install(SCRIPT "${qt_deploy_script}")
 endif()
 
 # Print build information

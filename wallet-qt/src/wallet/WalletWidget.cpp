@@ -5,14 +5,18 @@
 #include "CreateAccountDialog.h"
 #include "SendWidget.h"
 #include "ReceiveWidget.h"
-#include "UnlockDialog.h"
+#include "TransactionHistoryWidget.h"
+#include "ContractInteractionWidget.h"
+#include "SettingsWidget.h"
 #include "BalanceTracker.h"
 #include "../rpc/AnimicaRpcClient.h"
+#include "../rpc/RpcSettings.h"
 #include "WalletDatabase.h"
 #include "TransactionMonitor.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSettings>
 #include <QTimer>
 #include <QDateTime>
 
@@ -45,6 +49,7 @@ WalletWidget::WalletWidget(
     }
     
     // Initial state
+    m_engine->setExplorerUrl(QSettings().value("WalletQt/explorerUrl").toString());
     updateToolbarState();
     updateStatus();
     
@@ -64,18 +69,8 @@ void WalletWidget::setupUi()
     m_toolbar = new QToolBar("Wallet Toolbar", this);
     m_toolbar->setMovable(false);
     
-    m_unlockAction = m_toolbar->addAction("Unlock");
-    m_unlockAction->setToolTip("Unlock wallet to perform operations");
-    connect(m_unlockAction, &QAction::triggered, this, &WalletWidget::onUnlockAction);
-    
-    m_lockAction = m_toolbar->addAction("Lock");
-    m_lockAction->setToolTip("Lock wallet and clear keys from memory");
-    connect(m_lockAction, &QAction::triggered, this, &WalletWidget::onLockAction);
-    
-    m_toolbar->addSeparator();
-    
     m_createAccountAction = m_toolbar->addAction("Create Account");
-    m_createAccountAction->setToolTip("Create a new wallet account");
+    m_createAccountAction->setToolTip("Create a new wallet entry");
     connect(m_createAccountAction, &QAction::triggered, this, &WalletWidget::onCreateAccountAction);
     
     m_toolbar->addSeparator();
@@ -106,6 +101,33 @@ void WalletWidget::setupUi()
     // Receive tab
     m_receiveWidget = new ReceiveWidget(m_engine, this);
     m_tabWidget->addTab(m_receiveWidget, "Receive");
+
+    // History tab
+    m_historyWidget = new TransactionHistoryWidget(m_engine, this);
+    m_tabWidget->addTab(m_historyWidget, "History");
+
+    // Contracts tab
+    m_contractWidget = new ContractInteractionWidget(m_engine, this);
+    m_tabWidget->addTab(m_contractWidget, "Contracts");
+
+    // Settings tab
+    m_settingsWidget = new SettingsWidget(m_engine->walletFilePath(), m_engine->dataDir(), this);
+    m_tabWidget->addTab(m_settingsWidget, "Settings");
+    connect(m_settingsWidget, &SettingsWidget::rpcSettingsApplied,
+            this,
+            [this](const RpcEndpointSettings& settings, const QString& explorerUrl, int pollIntervalMs, int timeoutMs) {
+                if (m_rpcClient) {
+                    m_rpcClient->setEndpoint(RpcSettings::toUrl(settings).toString());
+                    m_rpcClient->setTimeout(timeoutMs);
+                }
+                m_engine->setRpcEndpoint(RpcSettings::toUrl(settings).toString());
+                m_engine->setExplorerUrl(explorerUrl);
+                if (m_engine->balanceTracker()) {
+                    m_engine->balanceTracker()->setPollingInterval(pollIntervalMs);
+                }
+                setRpcEndpoint(RpcSettings::toDisplayUrl(settings));
+                refresh();
+            });
     
     layout->addWidget(m_tabWidget);
     
@@ -137,6 +159,9 @@ void WalletWidget::refresh()
     m_accountsWidget->refreshAccounts();
     m_addressBookWidget->refreshContacts();
     m_receiveWidget->refresh();
+    if (m_historyWidget) {
+        m_historyWidget->refresh();
+    }
     m_engine->refreshBalances();
     updateStatus();
 }
@@ -144,8 +169,6 @@ void WalletWidget::refresh()
 void WalletWidget::updateToolbarState()
 {
     bool locked = m_engine->isLocked();
-    m_unlockAction->setEnabled(locked);
-    m_lockAction->setEnabled(!locked);
     m_createAccountAction->setEnabled(!locked);
 }
 
@@ -153,14 +176,9 @@ void WalletWidget::updateStatus()
 {
     // Lock status
     if (m_engine->isLocked()) {
-        m_statusLabel->setText("🔒 Locked");
+        m_statusLabel->setText("Wallet store unavailable");
     } else {
-        int timeout = m_engine->autoLockTimeout();
-        if (timeout > 0) {
-            m_statusLabel->setText(QString("🔓 Unlocked (auto-lock: %1 min)").arg(timeout));
-        } else {
-            m_statusLabel->setText("🔓 Unlocked");
-        }
+        m_statusLabel->setText(QString("Wallets: %1").arg(m_engine->listAccounts().size()));
     }
     
     // Total balance
@@ -170,6 +188,7 @@ void WalletWidget::updateStatus()
 void WalletWidget::setRpcEndpoint(const QString& endpoint)
 {
     m_rpcEndpointLabel->setText(QString("Endpoint: %1").arg(endpoint));
+    m_engine->setRpcEndpoint(endpoint);
 }
 
 QString WalletWidget::formatTotalBalance() const
@@ -184,18 +203,8 @@ QString WalletWidget::formatTotalBalance() const
         total += balance.confirmed;
     }
     
-    double anm = total / 1e18;
+    double anm = total / 1e9;
     return QString("Total: %1 ANM").arg(anm, 0, 'f', 6);
-}
-
-void WalletWidget::onLockAction()
-{
-    m_engine->lockWallet();
-}
-
-void WalletWidget::onUnlockAction()
-{
-    emit unlockRequested();
 }
 
 void WalletWidget::onCreateAccountAction()

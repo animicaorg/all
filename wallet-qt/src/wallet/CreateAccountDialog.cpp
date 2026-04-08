@@ -3,6 +3,8 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QTimer>
 
@@ -30,12 +32,21 @@ void CreateAccountDialog::setupUi()
     
     // Algorithm selection
     m_algorithmCombo = new QComboBox(this);
-    m_algorithmCombo->addItem("Dilithium3 (Recommended)", 0x1001);
-    m_algorithmCombo->addItem("SPHINCS+ (Advanced)", 0x1002);
-    m_algorithmCombo->setToolTip(
-        "Dilithium3: Fast, stateless, quantum-resistant signatures\n"
-        "SPHINCS+: Stateful, smaller signatures, slower"
-    );
+    const QJsonArray algorithms = m_engine->supportedAlgorithms();
+    for (const QJsonValue& value : algorithms) {
+        const QJsonObject item = value.toObject();
+        const QString name = item["name"].toString();
+        const QString display = item["display_name"].toString(name);
+        const int algId = item["alg_id"].toInt();
+        QString label = display;
+        if (name == "dilithium3") {
+            label += " (Recommended)";
+        }
+        m_algorithmCombo->addItem(label, algId);
+    }
+    if (m_algorithmCombo->count() == 0) {
+        m_algorithmCombo->addItem("dilithium3", 0x1001);
+    }
     formLayout->addRow("Algorithm:", m_algorithmCombo);
     
     layout->addLayout(formLayout);
@@ -137,7 +148,7 @@ void CreateAccountDialog::onCreateClicked()
 
 void CreateAccountDialog::onAccountCreated()
 {
-    auto account = m_engine->createAccount(accountLabel());
+    auto account = m_engine->createAccount(accountLabel(), algorithmId());
     
     m_progressBar->setVisible(false);
     

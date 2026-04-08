@@ -1,143 +1,181 @@
 #include "WalletEngine.h"
+
+#include "AnimicaWalletBackend.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include "../platform/AppPaths.h"
+
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
-#include <QJsonArray>
-#include <QProcess>
-#include <QDebug>
+#include <QSet>
 
 WalletEngine::WalletEngine(AnimicaRpcClient* rpcClient, QObject* parent)
     : QObject(parent)
     , m_rpcClient(rpcClient)
-    , m_keystore(new EncryptedKeystore())
-    , m_accountManager(new AccountManager(this))
+    , m_backend(new AnimicaWalletBackend(this))
     , m_addressBook(new AddressBook(this))
     , m_balanceTracker(new BalanceTracker(rpcClient, this))
-    , m_autoLockMinutes(15)
+    , m_autoLockMinutes(0)
     , m_locked(true)
 {
-    // Connect auto-lock timer
     connect(&m_autoLockTimer, &QTimer::timeout, this, &WalletEngine::handleAutoLock);
     m_autoLockTimer.setSingleShot(true);
-    
-    // Forward signals from components
-    connect(m_accountManager, &AccountManager::accountAdded, this, &WalletEngine::accountAdded);
-    connect(m_accountManager, &AccountManager::accountUpdated, this, &WalletEngine::accountUpdated);
-    connect(m_accountManager, &AccountManager::accountRemoved, this, &WalletEngine::accountRemoved);
-    
+
     connect(m_addressBook, &AddressBook::contactAdded, this, &WalletEngine::contactAdded);
     connect(m_addressBook, &AddressBook::contactUpdated, this, &WalletEngine::contactUpdated);
     connect(m_addressBook, &AddressBook::contactRemoved, this, &WalletEngine::contactRemoved);
-    
+
     connect(m_balanceTracker, &BalanceTracker::balanceUpdated, this, &WalletEngine::balanceUpdated);
     connect(m_balanceTracker, &BalanceTracker::syncStatusChanged, this, &WalletEngine::syncStatusChanged);
     connect(m_balanceTracker, &BalanceTracker::error, this, &WalletEngine::error);
+
+    if (m_rpcClient) {
+        setRpcEndpoint(m_rpcClient->endpoint());
+    }
 }
 
 WalletEngine::~WalletEngine()
 {
-    if (!m_locked) {
-        lockWallet();
+    stopBalanceTracking();
+}
+
+QJsonObject WalletEngine::backendResult(const QString& operation, const QJsonObject& args, int timeoutMs) const
+{
+    const QJsonObject response = m_backend->call(operation, args, timeoutMs);
+    if (!response.value("ok").toBool()) {
+        const QString message = response.value("error").toObject().value("message").toString("Wallet backend operation failed.");
+        emit const_cast<WalletEngine*>(this)->error(message);
     }
-    delete m_keystore;
+    return response;
+}
+
+QString WalletEngine::algorithmNameForId(int algId) const
+{
+    switch (algId) {
+    case 0x1001:
+        return "dilithium3";
+    case 0x1002:
+        return "sphincs_shake_128s";
+    default:
+        return "dilithium3";
+    }
+}
+
+WalletAccount WalletEngine::walletFromJson(const QJsonObject& json) const
+{
+    WalletAccount account;
+    account.accountId = json.value("wallet_id").toString(json.value("address").toString());
+    account.label = json.value("label").toString();
+    account.address = json.value("address").toString();
+    account.algId = json.value("algorithm_id").toInt();
+    account.algName = json.value("algorithm").toString();
+    account.publicKey = QByteArray::fromHex(json.value("public_key_hex").toString().toLatin1());
+    account.createdAt = QDateTime::fromString(json.value("created_at").toString(), Qt::ISODate);
+    if (!account.createdAt.isValid()) {
+        account.createdAt = QDateTime::currentDateTimeUtc();
+    }
+    account.lastUsedAt = account.createdAt;
+    account.isDefault = json.value("is_default").toBool();
+    return account;
+}
+
+bool WalletEngine::reloadAccounts(bool emitChanges)
+{
+    const QJsonObject response = backendResult("list_wallets");
+    if (!response.value("ok").toBool()) {
+        return false;
+    }
+
+    const QJsonArray wallets = response.value("result").toObject().value("wallets").toArray();
+    QMap<QString, WalletAccount> oldAccounts;
+    for (const WalletAccount& account : m_accounts) {
+        oldAccounts.insert(account.accountId, account);
+    }
+
+    QList<WalletAccount> nextAccounts;
+    QSet<QString> seenIds;
+    for (const QJsonValue& value : wallets) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const WalletAccount account = walletFromJson(value.toObject());
+        nextAccounts.append(account);
+        seenIds.insert(account.accountId);
+    }
+
+    m_accounts = nextAccounts;
+
+    if (emitChanges) {
+        for (auto it = oldAccounts.constBegin(); it != oldAccounts.constEnd(); ++it) {
+            if (!seenIds.contains(it.key())) {
+                emit accountRemoved(it.key());
+            }
+        }
+        for (const WalletAccount& account : m_accounts) {
+            if (!oldAccounts.contains(account.accountId)) {
+                emit accountAdded(account);
+            } else {
+                emit accountUpdated(account);
+            }
+        }
+    }
+
+    startBalanceTracking();
+    return true;
 }
 
 bool WalletEngine::createWallet(const QString& password, const QString& dataDir)
 {
-    m_dataDir = dataDir;
-    
-    // Ensure directory exists
-    QDir dir;
-    if (!dir.mkpath(dataDir)) {
-        emit error("Failed to create data directory");
+    Q_UNUSED(password);
+
+    QDir dir(dataDir);
+    if (!dir.exists() && !dir.mkpath(".")) {
+        emit error("Failed to create wallet data directory.");
         return false;
     }
-    
-    // Create empty wallet payload
-    QJsonObject payload;
-    payload["accounts"] = QJsonArray();
-    payload["master_seed"] = QJsonValue::Null;
-    payload["address_book_notes"] = QJsonObject();
-    
-    QJsonDocument doc(payload);
-    QByteArray payloadBytes = doc.toJson(QJsonDocument::Compact);
-    
-    // Create keystore
-    QString keystorePath = dataDir + "/keystore.json";
-    if (!EncryptedKeystore::create(keystorePath, payloadBytes, password)) {
-        emit error("Failed to create keystore");
-        return false;
-    }
-    
-    // Load keystore
-    if (!m_keystore->load(keystorePath)) {
-        emit error("Failed to load created keystore");
-        return false;
-    }
-    
-    // Create address book file
-    m_addressBookPath = dataDir + "/address_book.json";
-    m_addressBook->load(m_addressBookPath);
-    
-    return true;
+    return openWallet(dir.filePath("wallets.json"));
 }
 
-bool WalletEngine::openWallet(const QString& keystorePath)
+bool WalletEngine::openWallet(const QString& walletFilePath)
 {
-    if (!m_keystore->load(keystorePath)) {
-        emit error("Failed to load keystore");
+    QFileInfo info(walletFilePath);
+    m_walletFilePath = info.absoluteFilePath();
+    m_dataDir = info.absolutePath();
+    m_addressBookPath = QDir(m_dataDir).filePath("address_book.json");
+    m_backend->setWalletFile(m_walletFilePath);
+
+    const QJsonObject response = backendResult("init_store");
+    if (!response.value("ok").toBool()) {
         return false;
     }
-    
-    // Derive data directory from keystore path
-    QFileInfo fileInfo(keystorePath);
-    m_dataDir = fileInfo.absolutePath();
-    m_addressBookPath = m_dataDir + "/address_book.json";
-    
-    // Load address book
-    m_addressBook->load(m_addressBookPath);
-    
+
+    if (!m_addressBook->load(m_addressBookPath)) {
+        emit error("Failed to load address book.");
+    }
+
+    m_locked = false;
+    reloadAccounts(false);
+    emit walletUnlocked();
+    resetAutoLock();
     return true;
 }
 
 bool WalletEngine::unlockWallet(const QString& password)
 {
-    if (!m_keystore->isLoaded()) {
-        emit error("No wallet loaded");
+    Q_UNUSED(password);
+    if (m_walletFilePath.isEmpty()) {
+        emit error("No wallet store is loaded.");
         return false;
     }
-    
-    // Decrypt keystore
-    QByteArray payload;
-    if (!m_keystore->unlock(password, payload)) {
-        emit error("Incorrect password");
-        return false;
+    if (!m_locked) {
+        return true;
     }
-    
-    // Parse payload JSON
-    QJsonDocument doc = QJsonDocument::fromJson(payload);
-    if (!doc.isObject()) {
-        emit error("Invalid wallet payload");
-        return false;
-    }
-    
-    // TODO: Load public accounts metadata from keystore
-    // For now, pass empty array - accounts will have minimal metadata
-    QJsonArray publicAccounts;
-    m_accountManager->loadAccounts(payload, publicAccounts);
-    
     m_locked = false;
-    emit walletUnlocked();
-    
-    // Start balance tracking
-    startBalanceTracking();
-    
-    // Start auto-lock timer if enabled
-    if (m_autoLockMinutes > 0) {
-        m_autoLockTimer.start(m_autoLockMinutes * 60 * 1000);
+    if (!reloadAccounts(false)) {
+        m_locked = true;
+        return false;
     }
-    
+    emit walletUnlocked();
+    resetAutoLock();
     return true;
 }
 
@@ -146,162 +184,187 @@ void WalletEngine::lockWallet()
     if (m_locked) {
         return;
     }
-    
-    // Stop balance tracking
     stopBalanceTracking();
-    
-    // Clear accounts from memory
-    m_accountManager->clearAccounts();
-    
-    // Lock keystore
-    m_keystore->lock();
-    
+    m_accounts.clear();
     m_locked = true;
-    m_autoLockTimer.stop();
-    
     emit walletLocked();
 }
 
 bool WalletEngine::isLoaded() const
 {
-    return m_keystore && m_keystore->isLoaded();
+    return !m_walletFilePath.isEmpty();
 }
 
 bool WalletEngine::changePassword(const QString& oldPassword, const QString& newPassword)
 {
-    if (!m_keystore->isLoaded()) {
-        emit error("No wallet loaded");
-        return false;
-    }
-    
-    if (!m_keystore->changePassword(oldPassword, newPassword)) {
-        emit error("Failed to change password");
-        return false;
-    }
-    
-    return true;
+    Q_UNUSED(oldPassword);
+    Q_UNUSED(newPassword);
+    emit error("Wallet encryption is not supported by the canonical Animica wallets.json store.");
+    return false;
 }
 
 void WalletEngine::setAutoLockTimeout(int minutes)
 {
-    m_autoLockMinutes = minutes;
-    
-    if (!m_locked && minutes > 0) {
-        m_autoLockTimer.start(minutes * 60 * 1000);
-    } else {
-        m_autoLockTimer.stop();
-    }
+    m_autoLockMinutes = qMax(0, minutes);
+    resetAutoLock();
 }
 
 void WalletEngine::resetAutoLock()
 {
-    if (!m_locked && m_autoLockMinutes > 0) {
-        m_autoLockTimer.start(m_autoLockMinutes * 60 * 1000);
+    if (m_locked || m_autoLockMinutes <= 0) {
+        m_autoLockTimer.stop();
+        return;
     }
+    m_autoLockTimer.start(m_autoLockMinutes * 60 * 1000);
 }
 
 void WalletEngine::handleAutoLock()
 {
-    qDebug() << "Auto-lock timeout reached";
     lockWallet();
 }
 
-WalletAccount WalletEngine::createAccount(const QString& label)
+QJsonArray WalletEngine::supportedAlgorithms() const
+{
+    const QJsonObject response = backendResult("supported_algorithms");
+    if (!response.value("ok").toBool()) {
+        return QJsonArray();
+    }
+    return response.value("result").toObject().value("algorithms").toArray();
+}
+
+WalletAccount WalletEngine::createAccount(const QString& label, int algId)
 {
     if (m_locked) {
-        emit error("Wallet is locked");
+        emit error("Wallet store is locked.");
         return WalletAccount();
     }
-    
-    WalletAccount account = m_accountManager->createAccount(label);
-    
-    if (!account.accountId.isEmpty()) {
-        saveWallet();
-        resetAutoLock();
+    QJsonObject args;
+    args["label"] = label;
+    args["algorithm"] = algorithmNameForId(algId);
+    const QJsonObject response = backendResult("create_wallet", args, 120000);
+    if (!response.value("ok").toBool()) {
+        return WalletAccount();
     }
-    
-    return account;
+    reloadAccounts(true);
+    const QJsonObject wallet = response.value("result").toObject().value("wallet").toObject();
+    return walletFromJson(wallet);
 }
 
 WalletAccount WalletEngine::importAccount(const QJsonObject& json)
 {
-    if (m_locked) {
-        emit error("Wallet is locked");
-        return WalletAccount();
+    Q_UNUSED(json);
+    emit error("Single-account import is not supported; import a canonical wallets.json file instead.");
+    return WalletAccount();
+}
+
+bool WalletEngine::importWalletsFile(const QString& sourcePath, bool merge)
+{
+    QJsonObject args;
+    args["source_file"] = sourcePath;
+    args["mode"] = merge ? "merge" : "replace";
+    const QJsonObject response = backendResult("import_wallets", args, 120000);
+    if (!response.value("ok").toBool()) {
+        return false;
     }
-    
-    WalletAccount account = m_accountManager->importAccount(json);
-    
-    if (!account.accountId.isEmpty()) {
-        saveWallet();
-        resetAutoLock();
-    }
-    
-    return account;
+    return reloadAccounts(true);
 }
 
 bool WalletEngine::removeAccount(const QString& accountId)
 {
     if (m_locked) {
-        emit error("Wallet is locked");
+        emit error("Wallet store is locked.");
         return false;
     }
-    
-    // Not implemented in AccountManager - would need to add this method
-    emit error("Remove account not implemented");
-    return false;
+    QJsonObject args;
+    args["wallet_id"] = accountId;
+    const QJsonObject response = backendResult("remove_wallet", args);
+    if (!response.value("ok").toBool()) {
+        return false;
+    }
+    return reloadAccounts(true);
 }
 
 bool WalletEngine::renameAccount(const QString& accountId, const QString& newLabel)
 {
     if (m_locked) {
-        emit error("Wallet is locked");
+        emit error("Wallet store is locked.");
         return false;
     }
-    
-    if (m_accountManager->renameAccount(accountId, newLabel)) {
-        saveWallet();
-        resetAutoLock();
-        return true;
+    QJsonObject args;
+    args["wallet_id"] = accountId;
+    args["label"] = newLabel;
+    const QJsonObject response = backendResult("rename_wallet", args);
+    if (!response.value("ok").toBool()) {
+        return false;
     }
-    
-    return false;
+    return reloadAccounts(true);
 }
 
 WalletAccount WalletEngine::setDefaultAccount(const QString& accountId)
 {
     if (m_locked) {
-        emit error("Wallet is locked");
+        emit error("Wallet store is locked.");
         return WalletAccount();
     }
-    
-    WalletAccount account = m_accountManager->setDefault(accountId);
-    
-    if (!account.accountId.isEmpty()) {
-        saveWallet();
-        resetAutoLock();
+    QJsonObject args;
+    args["wallet_id"] = accountId;
+    const QJsonObject response = backendResult("set_default", args);
+    if (!response.value("ok").toBool()) {
+        return WalletAccount();
     }
-    
-    return account;
+    reloadAccounts(true);
+    return walletFromJson(response.value("result").toObject().value("wallet").toObject());
 }
 
 QList<WalletAccount> WalletEngine::listAccounts() const
 {
-    return m_accountManager->listAccounts();
+    return m_accounts;
 }
 
 WalletAccount WalletEngine::getAccount(const QString& accountId) const
 {
-    return m_accountManager->getAccount(accountId);
+    for (const WalletAccount& account : m_accounts) {
+        if (account.accountId == accountId) {
+            return account;
+        }
+    }
+    return WalletAccount();
+}
+
+QJsonObject WalletEngine::exportPublicInfo(const QString& accountId) const
+{
+    QJsonObject args;
+    args["wallet_id"] = accountId;
+    const QJsonObject response = backendResult("export_public", args);
+    return response.value("ok").toBool()
+        ? response.value("result").toObject().value("wallet").toObject()
+        : QJsonObject();
+}
+
+bool WalletEngine::exportSecretMaterial(const QString& accountId, const QString& destination)
+{
+    QJsonObject args;
+    args["wallet_id"] = accountId;
+    args["destination"] = destination;
+    const QJsonObject response = backendResult("export_secret", args);
+    return response.value("ok").toBool();
 }
 
 bool WalletEngine::addContact(const QString& label, const QString& address, const QString& note)
 {
+    if (!validateAddress(address)) {
+        emit error("Invalid Animica address.");
+        return false;
+    }
     return m_addressBook->addContact(label, address, note);
 }
 
 bool WalletEngine::updateContact(const QString& address, const QString& label, const QString& note)
 {
+    if (!validateAddress(address)) {
+        emit error("Invalid Animica address.");
+        return false;
+    }
     return m_addressBook->updateContact(address, label, note);
 }
 
@@ -315,6 +378,33 @@ QList<Contact> WalletEngine::listContacts(const QString& filter) const
     return m_addressBook->listContacts(filter);
 }
 
+AddressBook::ImportResult WalletEngine::importContactsFile(const QString& sourcePath, bool replaceExisting)
+{
+    return m_addressBook->importFromFile(
+        sourcePath,
+        replaceExisting,
+        [this](const QString& address) {
+            return validateAddress(address);
+        }
+    );
+}
+
+AddressBook::ExportResult WalletEngine::exportContactsFile(const QString& destinationPath) const
+{
+    return m_addressBook->exportToFile(destinationPath);
+}
+
+bool WalletEngine::validateAddress(const QString& address) const
+{
+    QJsonObject args;
+    args["address"] = address;
+    const QJsonObject response = backendResult("validate_address", args);
+    if (!response.value("ok").toBool()) {
+        return false;
+    }
+    return response.value("result").toObject().value("valid").toBool();
+}
+
 QMap<QString, Balance> WalletEngine::getBalances() const
 {
     return m_balanceTracker->getBalances();
@@ -325,74 +415,100 @@ Balance WalletEngine::getBalance(const QString& address) const
     return m_balanceTracker->getBalance(address);
 }
 
-void WalletEngine::refreshBalances()
-{
-    m_balanceTracker->refresh();
-    resetAutoLock();
-}
-
-QString WalletEngine::signTransaction(const QJsonObject& txJson, const QString& fromAccountId)
-{
-    if (m_locked) {
-        emit error("Wallet is locked");
-        return QString();
-    }
-    
-    WalletAccount account = m_accountManager->getAccount(fromAccountId);
-    if (account.accountId.isEmpty() || !account.hasSecretKey()) {
-        emit error("Account not found or missing secret key");
-        return QString();
-    }
-    
-    // TODO: Implement proper transaction signing with domain separation
-    // This requires:
-    // 1. Serialize transaction to canonical CBOR format
-    // 2. Call pq.py.sign.sign_detached with domain="tx/sign", chain_id, etc.
-    // 3. Build SignedTransaction envelope (see omni_sdk for format)
-    // 4. Return hex-encoded signed transaction
-    
-    // Update last used timestamp
-    m_accountManager->updateLastUsed(fromAccountId);
-    saveWallet();
-    resetAutoLock();
-    
-    emit error("Transaction signing not yet implemented");
-    return QString();
-}
-
-bool WalletEngine::saveWallet()
-{
-    if (!m_keystore->isLoaded()) {
-        return false;
-    }
-    
-    // Serialize accounts to payload
-    QByteArray payload;
-    QJsonArray publicAccounts;
-    m_accountManager->saveAccounts(payload, publicAccounts);
-    
-    // For now, we use a simple password re-prompt approach
-    // In production, would cache the password or use a key derivation
-    // For this implementation, we'll assume the password is available
-    // This is a limitation - proper implementation would need password caching
-    
-    emit error("Save wallet requires password (not implemented in this version)");
-    return false;
-}
-
 void WalletEngine::startBalanceTracking()
 {
     QStringList addresses;
-    for (const WalletAccount& account : m_accountManager->listAccounts()) {
-        addresses.append(account.address);
+    for (const WalletAccount& account : m_accounts) {
+        if (!account.address.isEmpty()) {
+            addresses.append(account.address);
+        }
     }
-    
-    if (!addresses.isEmpty()) {
-        m_balanceTracker->startTracking(addresses);
+    if (addresses.isEmpty()) {
+        stopBalanceTracking();
+        return;
     }
+    m_balanceTracker->startTracking(addresses);
 }
 
 void WalletEngine::stopBalanceTracking()
 {
     m_balanceTracker->stopTracking();
+}
+
+void WalletEngine::refreshBalances()
+{
+    if (!m_locked) {
+        startBalanceTracking();
+        m_balanceTracker->refresh();
+    }
+}
+
+QString WalletEngine::signTransaction(const QJsonObject& txJson, const QString& fromAccountId)
+{
+    Q_UNUSED(txJson);
+    Q_UNUSED(fromAccountId);
+    emit error("Direct transaction signing is not exposed; use the canonical send flow.");
+    return QString();
+}
+
+QJsonObject WalletEngine::submitTransaction(const QJsonObject& request)
+{
+    const QJsonObject response = backendResult("send_transaction", request, 180000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::transactionStatus(const QString& txHash) const
+{
+    QJsonObject args;
+    args["tx_hash"] = txHash;
+    const QJsonObject response = backendResult("transaction_status", args, 30000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::transactionDetails(const QString& txHash) const
+{
+    QJsonObject args;
+    args["tx_hash"] = txHash;
+    const QJsonObject response = backendResult("transaction_details", args, 30000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::fetchTransactionHistory(const QJsonObject& filters) const
+{
+    const QJsonObject response = backendResult("fetch_history", filters, 60000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::contractRead(const QJsonObject& request) const
+{
+    const QJsonObject response = backendResult("contract_read", request, 60000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::rawContractRead(const QJsonObject& request) const
+{
+    const QJsonObject response = backendResult("raw_contract_read", request, 60000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::previewContractCall(const QJsonObject& request) const
+{
+    const QJsonObject response = backendResult("preview_contract_call", request, 30000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+QJsonObject WalletEngine::contractWrite(const QJsonObject& request)
+{
+    const QJsonObject response = backendResult("contract_write", request, 180000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
+void WalletEngine::setRpcEndpoint(const QString& rpcUrl)
+{
+    m_backend->setRpcUrl(rpcUrl);
+}
+
+void WalletEngine::setExplorerUrl(const QString& explorerUrl)
+{
+    m_backend->setExplorerUrl(explorerUrl);
 }

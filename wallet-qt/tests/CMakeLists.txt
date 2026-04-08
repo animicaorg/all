@@ -16,6 +16,8 @@ set(TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/src/diagnostics
 )
 
+get_filename_component(ANIMICA_REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
+
 # Helper function to add Qt tests
 function(add_wallet_test TEST_NAME TEST_SOURCE)
     add_executable(${TEST_NAME} ${TEST_SOURCE})
@@ -23,6 +25,7 @@ function(add_wallet_test TEST_NAME TEST_SOURCE)
     target_link_libraries(${TEST_NAME}
         Qt6::Test
         Qt6::Core
+        Qt6::Gui
         Qt6::Network
         Qt6::Sql
         OpenSSL::SSL
@@ -36,6 +39,7 @@ function(add_wallet_test TEST_NAME TEST_SOURCE)
     # Set working directory to build dir
     set_tests_properties(${TEST_NAME} PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endfunction()
 
@@ -62,6 +66,7 @@ target_sources(test_keystore_security PRIVATE
 
 target_sources(test_wallet_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/WalletEngine.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AnimicaWalletBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/wallet/WalletAccount.cpp
     ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
     ${CMAKE_SOURCE_DIR}/src/wallet/AccountManager.cpp
@@ -69,6 +74,11 @@ target_sources(test_wallet_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/BalanceTracker.cpp
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
+)
+
+target_compile_definitions(test_wallet_engine PRIVATE
+    ANIMICA_REPO_ROOT_PATH="${ANIMICA_REPO_ROOT}"
 )
 
 target_sources(test_walletdatabase PRIVATE
@@ -89,6 +99,7 @@ target_sources(test_executor PRIVATE
     ${CMAKE_SOURCE_DIR}/src/diagnostics/ConsoleExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/diagnostics/Redactor.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
 )
 
@@ -109,6 +120,7 @@ target_sources(test_walletimporter PRIVATE
 # Link RPC client source to MOC syntax test
 target_sources(test_rpc_moc_syntax PRIVATE
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
 )
 
 # Link node manager sources to test
@@ -117,4 +129,5 @@ target_sources(test_node_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
     ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
 )

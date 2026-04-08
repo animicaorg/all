@@ -98,6 +98,7 @@ try {
     
     & cmake $WalletRoot `
         -DCMAKE_BUILD_TYPE="$BuildType" `
+        -DWALLET_REMOTE_RPC_ONLY=OFF `
         -DBUILD_TESTING=OFF `
         -G "Visual Studio 16 2019" `
         -A $Arch
@@ -158,7 +159,7 @@ Write-Host "✓ Architecture: $Arch"
 
 # Check node imports
 Write-Host "Checking node imports..."
-$ImportTest = & $NodePython -c "import rpc; import animica; import core" 2>&1
+$ImportTest = & $NodePython -c "import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core" 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error output: $ImportTest"
     throw "Node imports failed"
@@ -261,13 +262,21 @@ if ($WixAvailable) {
     Copy-Item $ExePath $StageDir
     Copy-Item -Recurse (Join-Path $BuildDir "bin\node") $StageDir
     
-    # Copy Qt DLLs and dependencies
     $QtBinDir = Join-Path $env:CMAKE_PREFIX_PATH "bin"
-    if (Test-Path $QtBinDir) {
-        Write-Host "Copying Qt libraries..."
-        $QtDlls = @(
-            "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Sql.dll"
-        )
+    $WinDeployQt = if (Test-Path (Join-Path $QtBinDir "windeployqt.exe")) {
+        Join-Path $QtBinDir "windeployqt.exe"
+    } elseif (Get-Command windeployqt.exe -ErrorAction SilentlyContinue) {
+        (Get-Command windeployqt.exe).Source
+    } else {
+        $null
+    }
+
+    if ($WinDeployQt) {
+        Write-Host "Running windeployqt for ZIP staging..."
+        & $WinDeployQt --release --no-translations --dir $StageDir $ExePath
+    } elseif (Test-Path $QtBinDir) {
+        Write-Host "Copying core Qt libraries..."
+        $QtDlls = @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Sql.dll")
         foreach ($Dll in $QtDlls) {
             $DllPath = Join-Path $QtBinDir $Dll
             if (Test-Path $DllPath) {
