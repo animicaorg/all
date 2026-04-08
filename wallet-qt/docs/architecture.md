@@ -118,8 +118,8 @@ Disruptive actions such as endpoint changes trigger explicit reconfiguration rat
 The runtime lookup logic supports these embedded-node locations:
 
 - Linux build tree: `bin/node/venv/bin/python`
-- Linux installed package: `../lib/animica-wallet/node/venv/bin/python`
-- Linux AppImage: `../lib/node/venv/bin/python`
+- Linux installed package: `../lib/<multiarch>/animica-wallet/node/venv/bin/python` or `../lib/animica-wallet/node/venv/bin/python`
+- Linux AppImage/tarball: `../lib/<multiarch>/animica-wallet/node/venv/bin/python` or `../lib/animica-wallet/node/venv/bin/python`
 - macOS bundle: `Contents/Resources/node/venv/bin/python`
 - Windows package: `node/venv/Scripts/python.exe`
 

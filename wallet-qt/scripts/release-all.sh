@@ -218,7 +218,7 @@ if [ -d "$DIST_DIR" ]; then
         if [ -d "$platform_dir" ]; then
             platform=$(basename "$platform_dir")
             echo "  $platform:"
-            find "$platform_dir" -type f \( -name "*.app" -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "SHA256SUMS" \) -exec basename {} \; | sed 's/^/    - /'
+            find "$platform_dir" -type f \( -name "*.app" -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" -o -name "SHA256SUMS" \) -exec basename {} \; | sed 's/^/    - /'
             echo ""
         fi
     done

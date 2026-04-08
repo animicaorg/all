@@ -5,6 +5,7 @@ enable_testing()
 
 # Find Qt6 Test module
 find_package(Qt6 COMPONENTS Test Widgets Concurrent REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # Common include directories
 set(TEST_INCLUDE_DIRS
@@ -54,6 +55,14 @@ add_wallet_test(test_walletimporter test_walletimporter.cpp)
 add_wallet_test(test_node_manager test_node_manager.cpp)
 add_wallet_test(test_receive_qr test_receive_qr.cpp)
 add_wallet_test(test_packaging_config test_packaging_config.cpp)
+
+add_test(
+    NAME test_linux_layout_resolver
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_linux_layout_resolver.py
+)
+set_tests_properties(test_linux_layout_resolver PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 # Add RPC MOC syntax test (verifies AnimicaRpcClient.h compiles with AUTOMOC)
 add_wallet_test(test_rpc_moc_syntax test_rpc_moc_syntax.cpp)

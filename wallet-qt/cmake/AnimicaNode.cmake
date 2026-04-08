@@ -186,9 +186,11 @@ function(animica_build_node OUT_VAR)
     set(REPO_MODULES
         rpc
         core
+        coretx
         consensus
         execution
         mempool
+        mempool2
         p2p
         mining
         proofs
@@ -236,7 +238,7 @@ function(animica_build_node OUT_VAR)
     # Verify installation
     message(STATUS "Verifying node installation")
     execute_process(
-        COMMAND ${NODE_PYTHON} -c "import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core"
+        COMMAND ${NODE_PYTHON} -c "import core; import coretx; import mempool2; import rpc.mempool2_service; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk"
         RESULT_VARIABLE VERIFY_RESULT
         ERROR_VARIABLE VERIFY_ERROR
     )
