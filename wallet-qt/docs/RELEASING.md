@@ -26,6 +26,7 @@ Outputs:
 
 - `dist/wallet-qt/<version>/linux/*.AppImage`
 - `dist/wallet-qt/<version>/linux/*.deb`
+- `dist/wallet-qt/<version>/linux/*.tar.gz`
 - `dist/wallet-qt/<version>/linux/SHA256SUMS`
 
 Validate:
@@ -33,6 +34,20 @@ Validate:
 ```bash
 ./scripts/smoke-test-linux.sh <artifact>
 ```
+
+Linux validation resolves the bundled node under either:
+
+- `usr/lib/x86_64-linux-gnu/animica-wallet/node`
+- `usr/lib/animica-wallet/node`
+
+The same resolver is used for staged installs, AppDir/AppImage contents, tarballs, and direct executable smoke tests.
+
+If `website/public/wallet/` exists beside `wallet-qt/`, the Linux release script also refreshes the website download copies:
+
+- `website/public/wallet/animica-wallet-linux.AppImage`
+- `website/public/wallet/animica-wallet-linux.deb`
+- `website/public/wallet/animica-wallet-linux.tar.gz`
+- `website/public/wallet/animica-wallet-linux.sha256`
 
 ## 3. macOS release
 

@@ -114,7 +114,7 @@ if [[ -z "$SITE_PACKAGES" ]]; then
 fi
 
 # List of modules to copy
-MODULES="rpc core consensus execution mempool p2p mining proofs da randomness capabilities aicf queue chains genesis services billing relayer"
+MODULES="rpc core coretx consensus execution mempool mempool2 p2p mining proofs da randomness capabilities aicf queue chains genesis services billing relayer"
 
 for MODULE in $MODULES; do
     if [[ -d "$REPO_ROOT/$MODULE" ]]; then
@@ -128,11 +128,11 @@ echo "✓ Modules copied to $SITE_PACKAGES"
 # Test imports
 echo ""
 echo "Testing Python imports..."
-if $NODE_PYTHON -c "import rpc; import animica; import core" 2>/dev/null; then
-    echo "✓ Imports successful (rpc, animica, core)"
+if $NODE_PYTHON -c "import core; import coretx; import mempool2; import rpc.mempool2_service; import animica" 2>/dev/null; then
+    echo "✓ Imports successful (core, coretx, mempool2, rpc.mempool2_service, animica)"
 else
     echo "✗ Import test failed"
-    $NODE_PYTHON -c "import rpc; import animica; import core" 2>&1
+    $NODE_PYTHON -c "import core; import coretx; import mempool2; import rpc.mempool2_service; import animica" 2>&1
     exit 1
 fi
 

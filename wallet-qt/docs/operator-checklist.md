@@ -71,8 +71,8 @@ Run this after building a development or release artifact.
 
 - Confirm the packaged artifact launches.
 - Confirm the packaged runtime can locate the embedded node Python.
-- On Linux installs, verify `/usr/lib/animica-wallet/node/venv/bin/python`.
-- On AppImage, verify `usr/lib/node/venv/bin/python` after extraction.
+- On Linux installs, verify `/usr/lib/x86_64-linux-gnu/animica-wallet/node/venv/bin/python` or `/usr/lib/animica-wallet/node/venv/bin/python`, depending on the resolved libdir.
+- On Linux AppImage/tarball, verify `usr/lib/x86_64-linux-gnu/animica-wallet/node/venv/bin/python` or `usr/lib/animica-wallet/node/venv/bin/python` after extraction.
 - On macOS, verify `Contents/PlugIns/platforms/libqcocoa.dylib`.
 - On Windows, verify `platforms\qwindows.dll`.
 - Confirm the packaged receive tab still renders a QR and can save PNG.

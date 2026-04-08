@@ -12,7 +12,7 @@
 - Address book with add/edit/delete, merge-or-replace import, JSON/CSV export, duplicate prevention, and own-address tagging
 - Contract interaction for ABI-driven read/write calls plus raw-call fallback
 - Advanced settings for RPC/network/explorer/polling/timeouts plus import/export/default reset
-- Bundled-node packaging scripts for AppImage, DMG, and MSI build flows
+- Bundled-node packaging scripts for Linux AppImage/deb/tarball, macOS DMG, and Windows MSI build flows
 
 ## Architecture
 
@@ -78,7 +78,7 @@ See [docs/receive_qr.md](docs/receive_qr.md), [docs/packaging.md](docs/packaging
 Quick commands:
 
 ```bash
-./wallet-qt/scripts/release-linux.sh --appimage-only
+./wallet-qt/scripts/release-linux.sh
 ./wallet-qt/scripts/release-mac.sh --adhoc-sign --dmg
 ./wallet-qt/scripts/release-mac.sh --dmg
 pwsh ./wallet-qt/scripts/release-windows.ps1

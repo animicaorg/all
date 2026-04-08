@@ -5,6 +5,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from linux_layout import (
+    LINUX_NODE_REQUIRED_PATHS,
+    linux_node_root_candidates_from_root,
+    resolve_linux_node_root_from_root,
+)
+
 
 def _assert_exists(path: Path, errors: list[str], label: str) -> None:
     if not path.exists():
@@ -40,30 +46,35 @@ def verify_linux(path: Path) -> list[str]:
     root = path if path.is_dir() else path.parent
     errors: list[str] = []
 
+    build_node_root = root / "bin" / "node"
     build_exe = root / "bin" / "animica-wallet"
-    build_python = root / "bin" / "node" / "venv" / "bin" / "python"
-    build_params = root / "bin" / "node" / "assets" / "spec" / "params.yaml"
-
     install_exe = root / "bin" / "animica-wallet"
-    install_python = root / "lib" / "animica-wallet" / "node" / "venv" / "bin" / "python"
-    install_params = root / "lib" / "animica-wallet" / "node" / "assets" / "spec" / "params.yaml"
-
     appdir_exe = root / "usr" / "bin" / "animica-wallet"
-    appdir_python = root / "usr" / "lib" / "node" / "venv" / "bin" / "python"
-    appdir_params = root / "usr" / "lib" / "node" / "assets" / "spec" / "params.yaml"
 
-    if build_python.exists():
+    if build_node_root.is_dir():
         _assert_exists(build_exe, errors, "build-tree wallet executable")
-        _assert_exists(build_python, errors, "build-tree bundled Python")
-        _assert_exists(build_params, errors, "build-tree bundled params")
-    elif install_exe.exists():
-        _assert_exists(install_exe, errors, "wallet executable")
-        _assert_exists(install_python, errors, "bundled Python")
-        _assert_exists(install_params, errors, "bundled params")
+        node_root = build_node_root
+        label = "build-tree"
     else:
-        _assert_exists(appdir_exe, errors, "AppDir wallet executable")
-        _assert_exists(appdir_python, errors, "AppDir bundled Python")
-        _assert_exists(appdir_params, errors, "AppDir bundled params")
+        executable = install_exe if install_exe.exists() else appdir_exe
+        if install_exe.exists():
+            _assert_exists(install_exe, errors, "wallet executable")
+            label = "install tree"
+        else:
+            _assert_exists(appdir_exe, errors, "AppDir wallet executable")
+            label = "AppDir"
+
+        node_root = resolve_linux_node_root_from_root(root)
+        if node_root is None:
+            checked_candidates = ", ".join(str(candidate) for candidate in linux_node_root_candidates_from_root(root))
+            errors.append(
+                f"missing {label} bundled node root under {root}; checked: {checked_candidates}"
+            )
+            return errors
+
+    for relative_path in LINUX_NODE_REQUIRED_PATHS:
+        label_suffix = relative_path.as_posix()
+        _assert_exists(node_root / relative_path, errors, f"{label} {label_suffix}")
 
     return errors
 

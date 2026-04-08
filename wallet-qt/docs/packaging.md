@@ -16,15 +16,18 @@ All native release scripts build with `-DWALLET_REMOTE_RPC_ONLY=OFF`.
 ### Linux install tree
 
 - executable: `bin/animica-wallet`
-- embedded node: `lib/animica-wallet/node/venv/bin/python`
-- bundled chain params: `lib/animica-wallet/node/assets/spec/params.yaml`
-- bundled genesis files: `lib/animica-wallet/node/assets/genesis/*.json`
+- embedded node: `lib/<multiarch>/animica-wallet/node/venv/bin/python` or `lib/animica-wallet/node/venv/bin/python`
+- bundled chain params: `lib/<multiarch>/animica-wallet/node/assets/spec/params.yaml` or `lib/animica-wallet/node/assets/spec/params.yaml`
+- bundled genesis files: `lib/<multiarch>/animica-wallet/node/assets/genesis/*.json` or `lib/animica-wallet/node/assets/genesis/*.json`
+
+`<multiarch>` is typically `x86_64-linux-gnu` on Debian-derived x86_64 systems. The Linux packaging and smoke-test tooling resolves both layouts, preferring the actual installed multiarch path when present and falling back to the legacy `lib/animica-wallet` layout for compatibility.
 
 ### Linux AppImage
 
 - executable: `usr/bin/animica-wallet`
-- embedded node: `usr/lib/node/venv/bin/python`
-- bundled chain params: `usr/lib/node/assets/spec/params.yaml`
+- embedded node: `usr/lib/<multiarch>/animica-wallet/node/venv/bin/python` or `usr/lib/animica-wallet/node/venv/bin/python`
+- bundled chain params: `usr/lib/<multiarch>/animica-wallet/node/assets/spec/params.yaml` or `usr/lib/animica-wallet/node/assets/spec/params.yaml`
+- bundled genesis files: `usr/lib/<multiarch>/animica-wallet/node/assets/genesis/*.json` or `usr/lib/animica-wallet/node/assets/genesis/*.json`
 
 ### macOS app bundle
 
@@ -47,8 +50,8 @@ All native release scripts build with `-DWALLET_REMOTE_RPC_ONLY=OFF`.
 - Qt 6
 - CMake 3.16+
 - Python 3.10+
-- `linuxdeployqt` for AppImage generation
-- `dpkg-deb` / CPack tooling for `.deb`
+- `linuxdeployqt` for AppImage and portable tarball generation
+- `dpkg-deb` for `.deb`
 
 ### macOS
 
@@ -98,13 +101,20 @@ Artifacts:
 
 - `dist/wallet-qt/<version>/linux/AnimicaWallet-<version>-linux-<arch>.AppImage`
 - `dist/wallet-qt/<version>/linux/animica-wallet_<version>_<arch>.deb`
+- `dist/wallet-qt/<version>/linux/AnimicaWallet-<version>-linux-<arch>.tar.gz`
 - `dist/wallet-qt/<version>/linux/SHA256SUMS`
 
 ### Validate Linux artifacts
 
 ```bash
-./wallet-qt/scripts/smoke-test-linux.sh <path-to-AppImage-or-wallet-executable>
+./wallet-qt/scripts/smoke-test-linux.sh <path-to-AppImage-or-tarball-or-wallet-executable>
 ```
+
+The verifier checks these bundled node files in whichever Linux libdir layout is present:
+
+- `venv/bin/python`
+- `assets/spec/params.yaml`
+- `assets/genesis/devnet.json`
 
 ## macOS Commands
 

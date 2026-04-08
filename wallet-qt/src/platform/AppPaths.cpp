@@ -4,6 +4,35 @@
 #include <QFileInfo>
 #include <QDebug>
 
+namespace {
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+void appendLinuxInstallNodeCandidates(QStringList& candidates, const QDir& libDir)
+{
+    const QString preferred = libDir.filePath("x86_64-linux-gnu/animica-wallet/node");
+    if (!candidates.contains(preferred)) {
+        candidates << preferred;
+    }
+
+    const QFileInfoList multiarchEntries = libDir.entryInfoList(
+        QStringList() << "*-linux-gnu",
+        QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Name
+    );
+    for (const QFileInfo& entry : multiarchEntries) {
+        const QString candidate = QDir(entry.absoluteFilePath()).filePath("animica-wallet/node");
+        if (!candidates.contains(candidate)) {
+            candidates << candidate;
+        }
+    }
+
+    const QString legacy = libDir.filePath("animica-wallet/node");
+    if (!candidates.contains(legacy)) {
+        candidates << legacy;
+    }
+}
+#endif
+}
+
 QString AppPaths::baseDir()
 {
     // Use QStandardPaths to get OS-appropriate app data directory
@@ -97,9 +126,9 @@ QString AppPaths::getBundledNodePath()
     candidates << appDir.filePath("node");
 #else
     candidates << appDir.filePath("node");
+    appendLinuxInstallNodeCandidates(candidates, QDir(appDir.filePath("../lib")));
     candidates << appDir.filePath("../lib/node");
-    candidates << appDir.filePath("../lib/animica-wallet/node");
-    candidates << QStringLiteral("/usr/lib/animica-wallet/node");
+    appendLinuxInstallNodeCandidates(candidates, QDir(QStringLiteral("/usr/lib")));
 #endif
 
 #ifdef BUNDLED_NODE_PATH

@@ -8,18 +8,19 @@
 # 4. Node shuts down cleanly
 #
 # Usage:
-#   ./scripts/smoke-test-linux.sh <path-to-executable-or-appimage>
+#   ./scripts/smoke-test-linux.sh <path-to-executable-or-appimage-or-tarball>
 
-set -e
+set -euo pipefail
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <path-to-executable-or-appimage>"
+    echo "Usage: $0 <path-to-executable-or-appimage-or-tarball>"
     echo "Example: $0 ./build/linux/bin/animica-wallet"
     echo "Example: $0 ./AnimicaWallet-v0.1.0-linux-x86_64.AppImage"
+    echo "Example: $0 ./AnimicaWallet-v0.1.0-linux-x86_64.tar.gz"
     exit 1
 fi
 
-WALLET_PATH="$1"
+WALLET_PATH="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 
 if [ ! -f "$WALLET_PATH" ]; then
     echo "Error: Wallet not found: $WALLET_PATH"
@@ -32,18 +33,37 @@ echo "======================================"
 echo "Wallet: $WALLET_PATH"
 echo ""
 
-# Determine if this is an AppImage or regular executable
+# Determine artifact type
 IS_APPIMAGE=false
+IS_TARBALL=false
 if echo "$WALLET_PATH" | grep -q "\.AppImage$"; then
     IS_APPIMAGE=true
     echo "Detected AppImage format"
+elif echo "$WALLET_PATH" | grep -Eq "\.(tar\.gz|tgz)$"; then
+    IS_TARBALL=true
+    echo "Detected portable tarball format"
 fi
 
-if [ "$IS_APPIMAGE" = true ]; then
-    :
-else
-    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-bundle-layout.py" --platform linux --path "$(dirname "$WALLET_PATH")/.."
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/linux-layout.sh"
+
+print_linux_root_candidates() {
+    local root="$1"
+    while IFS= read -r candidate; do
+        echo "  - $candidate" >&2
+    done < <(list_linux_node_root_candidates_from_root "$root")
+}
+
+print_linux_wallet_candidates() {
+    local wallet_bin="$1"
+    while IFS= read -r candidate; do
+        echo "  - $candidate" >&2
+    done < <(list_linux_node_root_candidates_from_wallet "$wallet_bin")
+}
+
+NODE_ROOT=""
+NODE_PYTHON=""
+NODE_PID=""
 
 # Test 1: Check node binary exists
 echo "[1/5] Checking node binary..."
@@ -51,12 +71,20 @@ echo "[1/5] Checking node binary..."
 if [ "$IS_APPIMAGE" = true ]; then
     # For AppImage, we need to extract it first
     echo "Extracting AppImage to check contents..."
-    EXTRACT_DIR="/tmp/animica-appimage-$$"
-    "$WALLET_PATH" --appimage-extract > /dev/null 2>&1 || true
+    EXTRACT_DIR="$(mktemp -d /tmp/animica-appimage-XXXXXX)"
+    (
+        cd "$EXTRACT_DIR"
+        "$WALLET_PATH" --appimage-extract > /dev/null 2>&1 || true
+    )
     
-    if [ -d "squashfs-root" ]; then
-        NODE_PYTHON="$(pwd)/squashfs-root/usr/lib/node/venv/bin/python"
-        python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-bundle-layout.py" --platform linux --path "$(pwd)/squashfs-root"
+    if [ -d "$EXTRACT_DIR/squashfs-root" ]; then
+        python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$EXTRACT_DIR/squashfs-root"
+        if ! NODE_ROOT="$(resolve_linux_node_root_from_root "$EXTRACT_DIR/squashfs-root")"; then
+            echo "❌ FAIL: Could not resolve bundled node root inside extracted AppImage" >&2
+            print_linux_root_candidates "$EXTRACT_DIR/squashfs-root"
+            exit 1
+        fi
+        NODE_PYTHON="$NODE_ROOT/venv/bin/python"
     else
         echo "❌ FAIL: Could not extract AppImage"
         exit 1
@@ -64,13 +92,41 @@ if [ "$IS_APPIMAGE" = true ]; then
     
     # Cleanup function for AppImage
     cleanup_appimage() {
-        rm -rf "squashfs-root"
+        rm -rf "$EXTRACT_DIR"
     }
     trap cleanup_appimage EXIT
+elif [ "$IS_TARBALL" = true ]; then
+    EXTRACT_DIR="$(mktemp -d /tmp/animica-tarball-XXXXXX)"
+    tar -xzf "$WALLET_PATH" -C "$EXTRACT_DIR"
+
+    EXTRACT_ROOT="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -1)"
+    if [ -z "$EXTRACT_ROOT" ] || [ ! -d "$EXTRACT_ROOT" ]; then
+        echo "❌ FAIL: Could not determine extracted tarball root"
+        exit 1
+    fi
+
+    python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$EXTRACT_ROOT"
+    if ! NODE_ROOT="$(resolve_linux_node_root_from_root "$EXTRACT_ROOT")"; then
+        echo "❌ FAIL: Could not resolve bundled node root inside extracted tarball" >&2
+        print_linux_root_candidates "$EXTRACT_ROOT"
+        exit 1
+    fi
+    NODE_PYTHON="$NODE_ROOT/venv/bin/python"
+
+    cleanup_tarball() {
+        rm -rf "$EXTRACT_DIR"
+    }
+    trap cleanup_tarball EXIT
 else
-    # For regular build, assume node is in ../node relative to executable
-    WALLET_DIR="$(dirname "$WALLET_PATH")"
-    NODE_PYTHON="$WALLET_DIR/node/venv/bin/python"
+    VERIFY_ROOT="$(dirname "$WALLET_PATH")/.."
+    python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$VERIFY_ROOT"
+
+    if ! NODE_ROOT="$(resolve_linux_node_root_from_wallet "$WALLET_PATH")"; then
+        echo "❌ FAIL: Could not resolve bundled node root relative to $WALLET_PATH" >&2
+        print_linux_wallet_candidates "$WALLET_PATH"
+        exit 1
+    fi
+    NODE_PYTHON="$NODE_ROOT/venv/bin/python"
 fi
 
 if [ ! -f "$NODE_PYTHON" ]; then
@@ -84,6 +140,7 @@ if [ ! -x "$NODE_PYTHON" ]; then
 fi
 
 echo "✓ Node binary exists and is executable"
+echo "✓ Bundled node root: $NODE_ROOT"
 echo ""
 
 # Test 2: Check node version and imports
@@ -107,12 +164,14 @@ echo "[3/5] Starting node..."
 # Use a temporary datadir for testing
 TEST_DATADIR="/tmp/animica-smoke-test-$$"
 mkdir -p "$TEST_DATADIR"
+TEST_HOME="$TEST_DATADIR/home"
+mkdir -p "$TEST_HOME"
 
 # Cleanup function
 cleanup() {
     echo ""
     echo "Cleaning up..."
-    if [ ! -z "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
+    if [ -n "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
         echo "Stopping node (PID $NODE_PID)..."
         kill "$NODE_PID" 2>/dev/null || true
         sleep 2
@@ -122,6 +181,8 @@ cleanup() {
     
     if [ "$IS_APPIMAGE" = true ]; then
         cleanup_appimage
+    elif [ "$IS_TARBALL" = true ]; then
+        cleanup_tarball
     fi
 }
 
@@ -129,7 +190,7 @@ trap cleanup EXIT
 
 # Start node in background
 RPC_PORT=18545  # Use non-standard port to avoid conflicts
-"$NODE_PYTHON" -m rpc \
+HOME="$TEST_HOME" "$NODE_PYTHON" -m rpc \
     --host 127.0.0.1 \
     --port $RPC_PORT \
     --chain-id 1337 \

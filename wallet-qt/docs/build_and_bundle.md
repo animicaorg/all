@@ -259,15 +259,11 @@ To debug the bundled node:
 
 After a successful build, create distribution packages:
 
-#### Linux (AppImage or Tarball)
+#### Linux (AppImage, .deb, and portable tarball)
 
 ```bash
 cd wallet-qt
-mkdir -p dist/linux
-cp -r build/linux/bin/* dist/linux/
-
-# Create tarball
-tar -czf dist/AnimicaWallet-linux-x64.tar.gz -C dist/linux .
+./scripts/release-linux.sh
 ```
 
 #### macOS (DMG)

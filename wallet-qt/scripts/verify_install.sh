@@ -3,10 +3,11 @@
 # Verifies that CMake configure, build, and install work correctly
 # for the animica-wallet target on both macOS and Linux.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$SCRIPT_DIR/linux-layout.sh"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -24,6 +25,13 @@ log_error() {
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_linux_root_candidates() {
+    local root="$1"
+    while IFS= read -r candidate; do
+        log_info "  $candidate"
+    done < <(list_linux_node_root_candidates_from_root "$root")
 }
 
 # Determine platform
@@ -133,13 +141,15 @@ else
         exit 1
     fi
     
-    NODE_DIR="$INSTALL_PREFIX/lib/animica-wallet/node"
-    if [ -d "$NODE_DIR" ]; then
-        log_info "✓ Found installed bundled node at: $NODE_DIR"
-        python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$INSTALL_PREFIX"
-    else
-        log_warn "Installed bundled node not found at: $NODE_DIR"
+    if ! NODE_DIR="$(resolve_linux_node_root_from_root "$INSTALL_PREFIX")"; then
+        log_error "Installed bundled node root not found under: $INSTALL_PREFIX"
+        log_info "Checked candidate node roots:"
+        log_linux_root_candidates "$INSTALL_PREFIX"
+        exit 1
     fi
+
+    log_info "✓ Found installed bundled node at: $NODE_DIR"
+    python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$INSTALL_PREFIX"
 fi
 
 log_info ""
