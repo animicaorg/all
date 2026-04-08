@@ -1,0 +1,80 @@
+version = "0.2"
+log_level = "INFO"
+semantic_search_backend = "external"
+default_model_provider = "ollama"
+default_embedding_provider = "ollama"
+
+[storage]
+home = "~/.animica/ena"
+
+[network]
+allow_domains = ["docs.animica.org", "github.com"]
+deny_domains = []
+max_requests = 100
+max_depth = 2
+size_limit_bytes = 2000000
+request_timeout_seconds = 20.0
+retries = 2
+backoff_seconds = 0.5
+rate_limit_per_domain_per_minute = 30
+user_agent = "Animica-ENA/0.2 (+https://animica.org)"
+respect_robots = true
+allow_browser_automation = false
+allow_login = false
+
+[shell]
+allow_shell = false
+allow_destructive = false
+allow_write_outside_workspace = false
+approval_required = true
+approved_prefixes = []
+
+[model_providers.deterministic]
+provider = "deterministic"
+transport = "fallback"
+model = "deterministic"
+max_tokens = 1024
+temperature = 0.0
+timeout_seconds = 15.0
+
+[model_providers.ollama]
+provider = "ollama"
+transport = "local_runtime"
+model = "llama3.1"
+base_url = "http://127.0.0.1:11434"
+max_tokens = 2048
+temperature = 0.2
+timeout_seconds = 30.0
+
+[model_providers.openai]
+provider = "openai_compatible"
+transport = "remote_api"
+model = "gpt-4.1-mini"
+base_url = "https://api.openai.com/v1"
+api_key_env_vars = ["OPENAI_API_KEY"]
+max_tokens = 2048
+temperature = 0.2
+timeout_seconds = 30.0
+
+[embedding_providers.ollama]
+provider = "ollama"
+transport = "local_runtime"
+model = "nomic-embed-text"
+base_url = "http://127.0.0.1:11434"
+batch_size = 16
+timeout_seconds = 30.0
+
+[embedding_providers.openai]
+provider = "openai_compatible"
+transport = "remote_api"
+model = "text-embedding-3-small"
+base_url = "https://api.openai.com/v1"
+api_key_env_vars = ["OPENAI_API_KEY"]
+batch_size = 16
+timeout_seconds = 30.0
+
+[embedding_providers.hashing]
+provider = "hashing"
+transport = "fallback"
+model = "legacy-hash"
+batch_size = 64
