@@ -1,220 +1,123 @@
-# ENA CLI Reference
+# ENA CLI
 
-## Command Group
-
-All ENA commands are under the `animica ena` subcommand:
+All commands are under:
 
 ```bash
 animica ena --help
 ```
 
----
+Use `--json` for scriptable output.
 
-## `animica ena call`
-
-Submit an ENA inference request and optionally wait for the result.
+## Model Commands
 
 ```bash
-animica ena call \
-  --model ena-v0.9.0-h10000 \
-  --task classify \
-  --input "Is this spam?" \
-  --fee-limit 0.00001 \
-  [--wait] \
-  [--json] \
-  [--rpc-url http://127.0.0.1:8545/rpc]
+animica ena models list
+animica ena models test --provider deterministic
+animica ena models test --provider openai --model gpt-4.1-mini
 ```
 
-**Options:**
-- `--model TEXT` — Model version (required, or use default)
-- `--task TEXT` — Task type: classify, embed, summarize, custom (required)
-- `--input TEXT` — Input text (use `--file` for binary input)
-- `--file PATH` — Read input from file
-- `--fee-limit FLOAT` — Max ANM fee (default: network minimum)
-- `--wait` — Poll until result is available
-- `--json` — Output JSON
-- `--rpc-url TEXT` — Override RPC endpoint
+`models list` shows configured providers and can query the endpoint with `--remote`. `models test` performs a structured-output smoke test through the selected adapter.
 
-**Example output:**
-```
-ENA Request Submitted
-  Request ID: ena-a1b2c3d4e5f6...
-  Status: queued
-  Model: ena-v0.9.0-h10000
-  Task: classify
-  Fee locked: 0.00001 ANM
-```
-
-With `--wait`:
-```
-ENA Request Submitted
-  Request ID: ena-a1b2c3d4e5f6...
-Waiting for result...
-  ✓ Status: completed
-  Result hash: sha3hex...
-  DA pointer: da:abc123...
-```
-
----
-
-## `animica ena status <request_id>`
-
-Get the status of a previously submitted ENA request.
+## Agent Commands
 
 ```bash
-animica ena status ena-a1b2c3d4e5f6...
+animica ena ask "Summarize sync in this repo" --context . --model-provider ollama --model llama3.1
+animica ena plan "Build a retrieval index and answer docs questions" --context .
+animica ena run task.yaml --model-provider openai
+animica ena agent run task.yaml --model-provider ollama
+animica ena chat --repo . --model-provider deterministic
 ```
 
-**Output:**
-```
-Request: ena-a1b2c3d4e5f6...
-Status: completed
-Model: ena-v0.9.0-h10000
-Task: classify
-Created at height: 10050
-Expiry height: 11490
-```
+`ask`, `run`, and `chat` all use the model-backed planner/executor when a real provider is configured. Deterministic mode remains available as fallback.
 
----
-
-## `animica ena result <request_id>`
-
-Get the result of a completed ENA request.
+## Retrieval Commands
 
 ```bash
-animica ena result ena-a1b2c3d4e5f6...
-animica ena result ena-a1b2c3d4e5f6... --raw
-animica ena result ena-a1b2c3d4e5f6... --json
+animica ena index build ./docs --embedding-provider ollama
+animica ena index rebuild out/crawl.jsonl --name docs_crawl --embedding-provider openai
+animica ena index list
+animica ena search "consensus finality" --hybrid
+animica ena search "stable chain head" --semantic --index docs_crawl --embedding-provider openai
+animica ena search "header sync" --keyword
+animica ena embeddings test --provider ollama
 ```
 
-**Options:**
-- `--raw` — Print raw result bytes
-- `--json` — Output as JSON
+`index build` and `index rebuild` write chunk metadata plus embedding metadata to the ENA store. `search` supports keyword, semantic, and hybrid ranking.
 
-**Output:**
-```
-Result for: ena-a1b2c3d4e5f6...
-  Status: completed
-  Result hash: sha3hex...
-  DA pointer: da:abc123...
-  Worker: provider-0x1234
-  Accepted at height: 10051
-```
-
----
-
-## `animica ena models`
-
-List available ENA model versions.
+## Useful-Work Commands
 
 ```bash
-animica ena models
-animica ena models --json
+animica ena jobs create --type extract --source docs/guide.md
+animica ena jobs create --type label --dataset out/train.jsonl --label safe --label unsafe
+animica ena jobs claim --worker-id miner-01 --types extract,index
+animica ena jobs run --worker-id miner-01 --types extract,index
+animica ena jobs run <job_id>
+animica ena jobs submit <job_id> result.json
+animica ena jobs verify <job_id>
+animica ena jobs receipt <job_id>
+animica ena jobs export-onchain <job_id>
+animica ena jobs list
+animica ena jobs show <job_id>
 ```
 
-**Output:**
-```
-ENA Model Versions
-┌────────────────────────┬────────────┬────────┬─────────────┐
-│ Version                │ Activation │ Status │ DA Pointer  │
-├────────────────────────┼────────────┼────────┼─────────────┤
-│ ena-v0.9.0-h10000      │ 10000      │ active │ da:abc123.. │
-│ ena-v0.8.0-h0          │ 0          │ depr.  │ da:old123.. │
-└────────────────────────┴────────────┴────────┴─────────────┘
-Active model: ena-v0.9.0-h10000
-```
+Useful-work job types now include:
 
----
+- `scrape`
+- `extract`
+- `chunk`
+- `label`
+- `embed`
+- `index`
+- `summarize`
+- `eval`
+- `dataset_clean`
+- `training_records`
+- `train_prepare`
 
-## `animica ena model show <version>`
+`jobs export-onchain` emits the receipt, validation result, and chain-consumable export envelope.
 
-Show details for a specific ENA model version.
+## Dataset Commands
 
 ```bash
-animica ena model show ena-v0.9.0-h10000
+animica ena datasets ingest out/raw.jsonl --kind scrape_records
+animica ena datasets normalize out/raw.jsonl --out out/train.jsonl
+animica ena datasets dedupe out/train.jsonl --out out/train.clean.jsonl
+animica ena datasets split out/train.clean.jsonl --out-dir out/splits
+animica ena datasets validate out/train.clean.jsonl
+animica ena datasets export out/train.clean.jsonl --out out/train.parquet --format parquet
 ```
 
-**Output:**
-```
-ENA Model: ena-v0.9.0-h10000
-  Activation height: 10000
-  Status: active
-  DA pointer: da:abc123...
-  Metadata hash: da:meta456...
-```
-
----
-
-## `animica ena fees`
-
-Show the current ENA fee schedule.
+## Training Commands
 
 ```bash
-animica ena fees
+animica ena train prepare \
+  --dataset out/train.clean.jsonl \
+  --out manifests/train_manifest.json \
+  --base-model tiny-local-model \
+  --backend command \
+  --auto-split \
+  --launcher-command "python external_trainer.py --manifest {manifest} --output-dir {output_dir}"
+
+animica ena train run --manifest manifests/train_manifest.json
+animica ena train eval --manifest manifests/train_manifest.json --model-provider ollama --model llama3.1
+animica ena train status <run_id>
+animica ena train list
+animica ena train export <run_id> --out out/train-run.json
 ```
 
-**Output:**
-```
-ENA Fee Schedule
-  Base fee (nano-units): 10000
-  Provider share: 60% (6000 bps)
-  AICF pool share: 30% (3000 bps)
-  Treasury share: 10% (1000 bps)
-  Failure/expiry slash: 1% to AICF, 99% refund
+`train run` supports:
 
-Example (fee_limit=10000 nano-units):
-  → Provider: 6000 nano-units
-  → AICF: 3000 nano-units
-  → Treasury: 1000 nano-units
-```
+- `command`: launch an external trainer command described by the manifest
+- `python_transformers`: optional local fine-tune backend when `datasets` and `transformers` are installed
 
----
-
-## `animica ena explain <request_id>`
-
-Debug tool: explain the status or rejection reason for a request.
+## Memory, Config, and Service Commands
 
 ```bash
-animica ena explain ena-a1b2c3d4e5f6...
+animica ena memory add "Sync uses header-first validation" --source docs/sync.md
+animica ena memory query "header-first sync"
+animica ena config init
+animica ena config show
+animica ena serve --host 127.0.0.1 --port 8787
 ```
 
-**Output:**
-```
-ENA Request Explanation
-  Request ID: ena-a1b2c3d4e5f6...
-  Model: ena-v0.9.0-h10000
-  Task: classify
-  Policy check: ✓ PASS
-
-  Status: queued
-  Reason: Waiting for worker assignment
-  Expiry in: 1389 blocks (~3.9 hours)
-```
-
----
-
-## Global Options
-
-All `animica ena` commands support:
-
-- `--rpc-url TEXT` — Override the RPC endpoint URL (default: `ANIMICA_RPC_URL` env or mainnet)
-- `--json` — Output structured JSON for piping/scripting
-- `--verbose` — Enable verbose logging
-
----
-
-## Environment Variables
-
-| Variable           | Description                                      |
-|--------------------|--------------------------------------------------|
-| `ANIMICA_RPC_URL`  | JSON-RPC endpoint (e.g., `http://127.0.0.1:8545/rpc`) |
-| `ANIMICA_NETWORK`  | Network profile (local-devnet, devnet, mainnet)  |
-| `ENA_ENDPOINT`     | Direct ENA service endpoint (for local inference)|
-
----
-
-## See Also
-
-- [rpc.md](rpc.md) — Underlying RPC methods
-- [contract-integration.md](contract-integration.md) — Contract usage
-- [operator.md](operator.md) — Operator guide
+The HTTP API now exposes sessions, indexes, jobs, receipts, eval runs, and training runs.

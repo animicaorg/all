@@ -1,135 +1,102 @@
-# ENA — Embedded Neural Agent: Overview
+# ENA Overview
 
-## What is ENA?
+ENA is the CLI-first agent, retrieval, useful-work, and training orchestration layer for Animica.
 
-ENA (Embedded Neural Agent) is Animica's decentralized open-source AI model,
-trained and improved collaboratively by the network via the AICF (AI Compute Fund).
-ENA enables smart contracts to request AI inference in a **safe, deterministic,
-and auditable** way — without compromising consensus integrity.
+It now has four concrete production-facing pillars:
 
-ENA checkpoints are published to the DA (Data Availability) layer approximately
-every 10,000 blocks, providing verifiable provenance for every model version
-used in on-chain requests.
+1. A model-backed agent runtime with pluggable providers and deterministic fallback
+2. A real embedding-backed retrieval layer with keyword and hybrid search
+3. A useful-work lifecycle with stable job hashes, receipts, and on-chain export envelopes
+4. A training orchestrator that tracks manifests, runs, artifacts, checkpoints, and eval reports
 
----
+## Architecture
 
-## Why Are On-Chain ENA Calls Asynchronous?
+The implementation lives under `python/animica/ena/`.
 
-Blockchain consensus requires that every validator arrives at the **exact same
-result** from the same inputs. Traditional AI inference is:
+- `config.py`: layered config loading plus provider defaults and env overrides
+- `models.py`: typed config, retrieval, receipt, and training schemas
+- `providers.py`: model and embedding provider adapters
+- `store.py`: SQLite state for sessions, traces, chunks, indexes, jobs, receipts, evals, and training runs
+- `retrieval.py`: chunking, index builds, embedding writes, and hybrid search
+- `agent.py`: plan/act/observe/retry/summarize loop with auditable tools
+- `jobs.py`: useful-work create/claim/run/submit/verify/receipt/export-onchain lifecycle
+- `receipts.py`: deterministic receipt hashing, validation, credit-event envelopes
+- `datasets.py`: normalize, dedupe, shard, split, validate, export, and manifest generation
+- `training.py`: prepare/run/eval/status/list/export orchestration
+- `service.py`: HTTP API for sessions, indexes, jobs, receipts, evals, and training runs
 
-- Non-deterministic (floating-point variability, sampling randomness)
-- Slow (cannot fit in a block production time window)
-- Resource-intensive (requires GPU or large RAM)
+## Model Runtime
 
-Therefore, ENA on-chain calls use an **asynchronous oracle / receipt-based** pattern:
+ENA supports multiple model adapters through config:
 
-```
-Contract                    Chain State               Off-chain Worker
-  │                             │                          │
-  ├── ena.request(...) ────────>│ create ENARequest         │
-  │   (returns request_id)      │ status=queued             │
-  │                             │                          │
-  │                             │<─── worker polls queued ──┤
-  │                             │     requests              │
-  │                             │                          │
-  │                             │<─── submit_result ────────┤
-  │                             │     (receipt + result hash│
-  │                             │      + DA pointer)        │
-  │                             │                          │
-  ├── ena.get_status(req_id) ──>│ returns "completed"       │
-  ├── ena.get_result_hash(...)─>│ returns hash of output    │
-  └── ena.read_result(...)─────>│ returns inline output     │
-                                │ (if small enough)         │
-```
+- `deterministic`: extractive fallback for offline or policy-only flows
+- `openai_compatible`: remote or self-hosted OpenAI-style APIs
+- `ollama`: local or remote Ollama runtimes
 
-Contracts do **not** run inference — they submit a request, and later read
-the committed, verified result.
+The agent loop persists every tool action and result. Tool invocations are traceable in:
 
----
+- session traces in SQLite
+- `logs/audit.jsonl`
+- output artifacts for fetch, crawl, search-backed summaries, and agent runs
 
-## Fee Model & AICF Linkage
+## Retrieval
 
-Every ENA request locks a small ANM fee. On completion, the fee is split:
+Semantic retrieval is no longer hard-wired to local hash vectors.
 
-| Recipient          | Default Share | Description                          |
-|--------------------|---------------|--------------------------------------|
-| Inference Worker   | 60%           | Compensation for running inference   |
-| AICF Pool          | 30%           | Funds model training and improvement |
-| Treasury/Protocol  | 10%           | Protocol sustainability              |
+ENA now supports:
 
-On failure or expiry:
-- Creator receives ~99% refund
-- AICF receives 1% slashing fee (discourages spam)
+- real embedding providers through `providers.py`
+- stored chunk metadata and index metadata
+- keyword search
+- semantic search
+- hybrid ranking
+- explicit embedding provider tests
 
-Fee splits are governance-adjustable via chain parameters.
+Legacy hashing vectors remain available only as a backward-compatible fallback provider.
 
----
+## Useful-Work
 
-## Model Versioning & DA Anchoring
+Useful-work jobs now carry:
 
-Every ~10,000 blocks, a new ENA checkpoint is:
-1. Published to the DA layer (content-addressed manifest + weights reference)
-2. Registered in the on-chain model version registry
-3. Optionally set as the active model for new requests
+- deterministic `job_id`
+- deterministic `job_hash`
+- deterministic `aicf_task_id`
+- typed lifecycle states
+- verification records
+- machine-readable receipts
+- export-ready on-chain envelopes
 
-Model version strings follow the format: `ena-v{major}.{minor}.{patch}-h{height}`
+The receipt/export path is designed so future chain-side or AICF-side consumers can ingest the local artifacts without re-deriving the job state model.
 
-Example: `ena-v0.9.0-h10000`
+## Training
 
-Contracts **must** specify a model version when submitting requests. This ensures:
-- Reproducibility: the exact model used is recorded on-chain
-- Auditability: anyone can verify what model produced a given result
-- Governance: deprecated models are rejected by chain policy
+ENA training is no longer limited to `train prepare`.
 
----
+It now includes:
 
-## Security & Policy Guardrails
+- manifest generation with dataset split records
+- tracked training runs
+- command-launcher backend for external trainers
+- optional Python/Transformers backend for local fine-tunes when dependencies are installed
+- eval reports against configured model providers
+- artifact and run metadata storage in the ENA store
 
-The ENA system enforces these protections at the chain level:
+## What Remains External
 
-- **Max input bytes**: Prevents unbounded payload storage (default: 4096 bytes)
-- **Max output bytes**: Prevents large inline results (default: 8192 bytes, large outputs go to DA)
-- **Allowed task types**: Whitelist of permitted operations (classify, embed, summarize, custom)
-- **Model allowlist**: Only active, registered model versions are accepted
-- **Request expiry**: Requests expire after N blocks (default: 1440) if not fulfilled
-- **No live inference in VM**: AI inference NEVER runs inside contract execution
-- **No internet access**: Contracts cannot trigger arbitrary external data fetching
-- **No hidden system prompts**: All request parameters are fully on-chain and auditable
-- **No nondeterministic sampling**: On-chain mode uses fixed parameters only
-- **Replay protection**: Receipt hashes prevent duplicate result submissions
+ENA owns orchestration, manifests, receipts, and artifact tracking in-repo.
 
----
+The heavyweight parts that may still be external are:
 
-## Quick Example
+- the remote model endpoint or local model server itself
+- the external trainer command or GPU compute stack when using `train run --backend command`
+- future chain submission methods for receipts, if the node-side RPC is not yet implemented
 
-```python
-# In a Python contract (vm_py/stdlib/ena)
-from stdlib import ena
+Those boundaries are explicit and typed. ENA does not pretend they are complete when they are not.
 
-# Submit an ENA classify request
-request_id = ena.request(
-    model_version="ena-v0.9.0-h10000",
-    task_type="classify",
-    input_payload=b"Is this message spam?",
-    fee_limit=10000,  # ANM nano-units
-)
+## Related Docs
 
-# In a later transaction / callback:
-status = ena.get_status(request_id)
-if status == "completed":
-    result_hash = ena.get_result_hash(request_id)
-    # result_hash is a deterministic SHA3-256 hex string
-    # Use it for on-chain verification
-```
-
-See [contract-integration.md](contract-integration.md) for full examples.
-
----
-
-## See Also
-
-- [contract-integration.md](contract-integration.md) — Python contract examples
-- [rpc.md](rpc.md) — JSON-RPC API reference
-- [cli.md](cli.md) — CLI usage examples
-- [operator.md](operator.md) — Node operator guide (model registration, DA anchoring)
+- [cli.md](cli.md)
+- [providers.md](providers.md)
+- [useful-work-jobs.md](useful-work-jobs.md)
+- [training-data-flow.md](training-data-flow.md)
+- [studio-integration.md](studio-integration.md)
