@@ -239,7 +239,13 @@ Without it the IDE falls back to a plain text editor.
 
 ## Packaging
 
-Build standalone executables with [PyInstaller](https://pyinstaller.org):
+Install the packaging dependency set first:
+
+```bash
+.venv/bin/pip install -e 'apps/animica_studio[dev,package]'
+```
+
+Build platform-specific release artifacts:
 
 ```bash
 # Linux
@@ -252,7 +258,13 @@ bash scripts/package_macos.sh
 pwsh -File scripts/package_windows.ps1
 ```
 
-Artifacts appear in `dist/AnimicaStudio/`.
+Artifacts appear as:
+
+- Linux: `dist/animica-studio_<version>_<arch>.deb`
+- macOS: `dist/AnimicaStudio.app`
+- Windows: `dist/AnimicaStudio.exe`
+
+Use `--skip-build` to re-wrap an existing PyInstaller output without rebuilding it first.
 
 The packaged build now explicitly bundles:
 

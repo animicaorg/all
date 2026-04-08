@@ -19,6 +19,7 @@ $BuildDir = Join-Path $WalletRoot "build\windows-release"
 $InstallDir = Join-Path $BuildDir "stage"
 $OutputDir = Join-Path $RepoRoot "dist\wallet-qt"
 $Arch = "x64"
+$ExeInstallerName = "animica-wallet-setup-x64.exe"
 $InstallScope = if ($PerMachine) { "perMachine" } else { "perUser" }
 
 function Write-Log {
@@ -40,6 +41,148 @@ function Find-WinDeployQt {
     $command = Get-Command windeployqt.exe -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
     return $null
+}
+
+function Find-MakeNsis {
+    foreach ($commandName in @("makensis.exe", "makensis")) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+    }
+
+    foreach ($candidate in @(
+        (Join-Path $env:ProgramFiles "NSIS\makensis.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe")
+    )) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    throw "NSIS (makensis.exe) is required to produce the Windows installer .exe."
+}
+
+function Get-VersionDotted {
+    param([string]$VersionLabel)
+
+    $trimmed = $VersionLabel.TrimStart('v')
+    $core = $trimmed.Split('-')[0]
+    $parts = @($core.Split('.'))
+    while ($parts.Count -lt 3) {
+        $parts += "0"
+    }
+
+    return "{0}.{1}.{2}.0" -f $parts[0], $parts[1], $parts[2]
+}
+
+function Get-RelativeStagePath {
+    param(
+        [string]$RootPath,
+        [string]$FullPath
+    )
+
+    $normalizedRoot = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\')
+    $normalizedFull = [System.IO.Path]::GetFullPath($FullPath)
+    return $normalizedFull.Substring($normalizedRoot.Length).TrimStart('\')
+}
+
+function New-NsisFileLists {
+    param(
+        [string]$StageRoot,
+        [string]$InstallIncludePath,
+        [string]$UninstallIncludePath
+    )
+
+    $files = Get-ChildItem -Path $StageRoot -Recurse -File |
+        Where-Object { $_.Name -ne "uninstall.exe" } |
+        Sort-Object FullName
+
+    $installLines = New-Object System.Collections.Generic.List[string]
+    $uninstallLines = New-Object System.Collections.Generic.List[string]
+    $lastDir = $null
+
+    foreach ($file in $files) {
+        $relativePath = Get-RelativeStagePath -RootPath $StageRoot -FullPath $file.FullName
+        $relativeDir = Split-Path $relativePath -Parent
+        if ([string]::IsNullOrEmpty($relativeDir)) {
+            $relativeDir = "."
+        }
+
+        if ($relativeDir -ne $lastDir) {
+            if ($relativeDir -eq ".") {
+                $installLines.Add('  SetOutPath "$INSTDIR"')
+            } else {
+                $installLines.Add(("  SetOutPath `"$INSTDIR\{0}`"" -f $relativeDir))
+            }
+            $lastDir = $relativeDir
+        }
+
+        $installLines.Add(("  File `"{0}`"" -f $file.FullName))
+    }
+
+    $filesDescending = Get-ChildItem -Path $StageRoot -Recurse -File |
+        Where-Object { $_.Name -ne "uninstall.exe" } |
+        Sort-Object FullName -Descending
+    foreach ($file in $filesDescending) {
+        $relativePath = Get-RelativeStagePath -RootPath $StageRoot -FullPath $file.FullName
+        $uninstallLines.Add(("  Delete `"$INSTDIR\{0}`"" -f $relativePath))
+    }
+
+    $dirsDescending = Get-ChildItem -Path $StageRoot -Recurse -Directory |
+        Sort-Object FullName -Descending
+    foreach ($directory in $dirsDescending) {
+        $relativeDir = Get-RelativeStagePath -RootPath $StageRoot -FullPath $directory.FullName
+        if (-not [string]::IsNullOrEmpty($relativeDir)) {
+            $uninstallLines.Add(("  RMDir `"$INSTDIR\{0}`"" -f $relativeDir))
+        }
+    }
+
+    Set-Content -Path $InstallIncludePath -Value $installLines -Encoding UTF8
+    Set-Content -Path $UninstallIncludePath -Value $uninstallLines -Encoding UTF8
+}
+
+function Write-NsisInstaller {
+    param(
+        [string]$TemplatePath,
+        [string]$OutputScriptPath,
+        [string]$InstallerOutputPath,
+        [string]$InstallIncludePath,
+        [string]$UninstallIncludePath,
+        [string]$VersionLabel,
+        [string]$Scope
+    )
+
+    $installDir = '$LOCALAPPDATA\Programs\Animica Wallet'
+    $regRoot = 'HKCU'
+    $shellVarContext = 'current'
+    $requestExecutionLevel = 'user'
+    if ($Scope -eq "perMachine") {
+        $installDir = '$PROGRAMFILES64\Animica Wallet'
+        $regRoot = 'HKLM'
+        $shellVarContext = 'all'
+        $requestExecutionLevel = 'admin'
+    }
+    $uninstallRegKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\AnimicaWallet'
+
+    $content = Get-Content -Path $TemplatePath -Raw
+    $replacements = @{
+        "@OUTPUT_FILE@" = $InstallerOutputPath
+        "@INSTALL_DIR@" = $installDir
+        "@REG_ROOT@" = $regRoot
+        "@REQUEST_EXECUTION_LEVEL@" = $requestExecutionLevel
+        "@SHELL_VAR_CONTEXT@" = $shellVarContext
+        "@UNINSTALL_REG_KEY@" = $uninstallRegKey
+        "@ICON_FILE@" = (Join-Path $WalletRoot "resources\icons\animica.ico")
+        "@DISPLAY_VERSION@" = $VersionLabel
+        "@VERSION_DOTTED@" = (Get-VersionDotted -VersionLabel $VersionLabel)
+        "@INSTALL_FILES_INCLUDE@" = $InstallIncludePath
+        "@UNINSTALL_FILES_INCLUDE@" = $UninstallIncludePath
+    }
+
+    foreach ($entry in $replacements.GetEnumerator()) {
+        $content = $content.Replace($entry.Key, $entry.Value)
+    }
+
+    Set-Content -Path $OutputScriptPath -Value $content -Encoding UTF8
 }
 
 function Sign-File {
@@ -78,6 +221,7 @@ Write-Log "Install scope: $(if ($PerMachine) { "per-machine" } else { "per-user"
 Write-Log ""
 
 $PythonCmd = Find-PythonCommand
+$MakeNsis = Find-MakeNsis
 
 Push-Location $WalletRoot
 try {
@@ -154,6 +298,30 @@ Sign-File (Join-Path $InstallDir "node\venv\Scripts\python.exe")
 $DistDir = Join-Path $OutputDir "$Version\windows"
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 
+$InstallerIncludePath = Join-Path $BuildDir "installer-files.nsh"
+$UninstallIncludePath = Join-Path $BuildDir "uninstaller-files.nsh"
+$NsisScriptPath = Join-Path $BuildDir "installer.nsi"
+$ExeInstallerPath = Join-Path $DistDir $ExeInstallerName
+
+New-NsisFileLists -StageRoot $InstallDir -InstallIncludePath $InstallerIncludePath -UninstallIncludePath $UninstallIncludePath
+Write-NsisInstaller `
+    -TemplatePath (Join-Path $WalletRoot "resources\windows\installer.nsi.in") `
+    -OutputScriptPath $NsisScriptPath `
+    -InstallerOutputPath $ExeInstallerPath `
+    -InstallIncludePath $InstallerIncludePath `
+    -UninstallIncludePath $UninstallIncludePath `
+    -VersionLabel $Version `
+    -Scope $InstallScope
+
+if (Test-Path $ExeInstallerPath) {
+    Remove-Item -Force $ExeInstallerPath
+}
+& $MakeNsis $NsisScriptPath | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "NSIS installer generation failed"
+}
+Sign-File $ExeInstallerPath
+
 $ZipPath = Join-Path $DistDir "AnimicaWallet-${Version}-windows-${Arch}.zip"
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
 Compress-Archive -Path (Join-Path $InstallDir "*") -DestinationPath $ZipPath -Force
@@ -195,6 +363,7 @@ Write-Log "======================================"
 Write-Log "Release Build Complete"
 Write-Log "======================================"
 Write-Log "Staged runtime: $InstallDir"
+Write-Log "EXE artifact:   $ExeInstallerPath"
 Write-Log "ZIP artifact:   $ZipPath"
 if (Test-Path (Join-Path $DistDir "AnimicaWallet-${Version}-windows-${Arch}.msi")) {
     Write-Log "MSI artifact:   $(Join-Path $DistDir "AnimicaWallet-${Version}-windows-${Arch}.msi")"

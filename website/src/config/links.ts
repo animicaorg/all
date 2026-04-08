@@ -117,6 +117,9 @@ export const Links = {
 
   studio: {
     root: ENV.STUDIO_URL,
+    page(): string {
+      return '/studio';
+    },
     home(): string {
       return join(ENV.STUDIO_URL, '/');
     },

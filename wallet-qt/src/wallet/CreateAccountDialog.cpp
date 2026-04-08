@@ -118,6 +118,18 @@ int CreateAccountDialog::algorithmId() const
 
 void CreateAccountDialog::onCreateClicked()
 {
+    if (!m_engine->isLoaded()) {
+        QMessageBox::warning(this, "Wallet Unavailable",
+                             "The wallet store is unavailable. The application could not open or create wallets.json.");
+        return;
+    }
+
+    if (m_engine->isLocked()) {
+        QMessageBox::information(this, "Wallet Locked",
+                                 "Please unlock the wallet first to create an account.");
+        return;
+    }
+
     QString label = accountLabel();
     
     if (label.isEmpty()) {
@@ -157,7 +169,7 @@ void CreateAccountDialog::onAccountCreated()
         m_labelEdit->setEnabled(true);
         m_algorithmCombo->setEnabled(true);
         m_createButton->setEnabled(true);
-        QMessageBox::critical(this, "Error", "Failed to create account. Check wallet is unlocked.");
+        QMessageBox::critical(this, "Error", "Failed to create account.");
         return;
     }
     

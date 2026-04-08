@@ -10,6 +10,7 @@
 
 # Find the repository root (assuming wallet-qt is a subdirectory)
 get_filename_component(ANIMICA_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(ANIMICA_NODE_VENV_OVERRIDE "" CACHE PATH "Path to a prebuilt Animica node virtual environment to bundle instead of building one")
 
 # Detect Python 3.11+ (required for Animica)
 function(find_python_for_node OUT_PYTHON)
@@ -52,6 +53,53 @@ function(animica_build_node OUT_VAR)
     message(STATUS "========================================")
     message(STATUS "Building Animica Node")
     message(STATUS "========================================")
+
+    if(ANIMICA_NODE_VENV_OVERRIDE)
+        get_filename_component(NODE_VENV_DIR "${ANIMICA_NODE_VENV_OVERRIDE}" ABSOLUTE)
+        if(WIN32)
+            set(NODE_PYTHON "${NODE_VENV_DIR}/Scripts/python.exe")
+        else()
+            set(NODE_PYTHON "${NODE_VENV_DIR}/bin/python")
+        endif()
+
+        if(NOT EXISTS "${NODE_PYTHON}")
+            message(FATAL_ERROR
+                "ANIMICA_NODE_VENV_OVERRIDE was set, but the bundled Python executable was not found:\n"
+                "  ${NODE_PYTHON}\n"
+            )
+        endif()
+
+        message(STATUS "Using prebuilt Animica node virtual environment at ${NODE_VENV_DIR}")
+
+        if(CMAKE_CROSSCOMPILING)
+            message(STATUS "Cross-compiling detected; skipping runtime import verification for the prebuilt node bundle")
+        else()
+            message(STATUS "Verifying prebuilt node installation")
+            execute_process(
+                COMMAND ${NODE_PYTHON} -c "import core; import coretx; import mempool2; import rpc.mempool2_service; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk"
+                RESULT_VARIABLE VERIFY_RESULT
+                ERROR_VARIABLE VERIFY_ERROR
+            )
+
+            if(NOT VERIFY_RESULT EQUAL 0)
+                message(FATAL_ERROR
+                    "Prebuilt node installation verification failed:\n"
+                    "Error: ${VERIFY_ERROR}\n"
+                )
+            endif()
+        endif()
+
+        message(STATUS "Animica node bundle ready")
+        message(STATUS "Node Python: ${NODE_PYTHON}")
+        message(STATUS "Node venv: ${NODE_VENV_DIR}")
+        message(STATUS "========================================")
+        message(STATUS "")
+
+        set(${OUT_VAR} ${NODE_PYTHON} PARENT_SCOPE)
+        set(ANIMICA_NODE_PYTHON ${NODE_PYTHON} PARENT_SCOPE)
+        set(ANIMICA_NODE_VENV ${NODE_VENV_DIR} PARENT_SCOPE)
+        return()
+    endif()
     
     # Find Python
     find_python_for_node(PYTHON_EXE)

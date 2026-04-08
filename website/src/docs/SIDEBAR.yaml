@@ -72,7 +72,7 @@ sections:
   - id: products
     title: Products & Tools
     items:
-      - title: Studio (Web IDE)
+      - title: Studio (Linux Download)
         href: /studio
       - title: Explorer
         href: /explorer

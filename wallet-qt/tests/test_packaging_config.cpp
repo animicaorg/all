@@ -11,6 +11,7 @@ private slots:
     void testLinuxLayoutResolverIsSharedAcrossScripts();
     void testMacReleaseStagesInstalledBundle();
     void testWindowsReleaseStagesInstalledTree();
+    void testWindowsCrossReleaseScripts();
     void testCMakeIncludesPackagingMetadata();
 
 private:
@@ -80,9 +81,33 @@ void TestPackagingConfig::testWindowsReleaseStagesInstalledTree()
     const QString content = readFile("scripts/release-windows.ps1");
     QVERIFY(!content.isEmpty());
     QVERIFY(content.contains("cmake --install"));
+    QVERIFY(content.contains("makensis", Qt::CaseInsensitive));
+    QVERIFY(content.contains("animica-wallet-setup-x64.exe"));
     QVERIFY(content.contains("cpack -G WIX"));
     QVERIFY(content.contains("verify-bundle-layout.py"));
     QVERIFY(content.contains("per-user", Qt::CaseInsensitive));
+}
+
+void TestPackagingConfig::testWindowsCrossReleaseScripts()
+{
+    const QString buildContent = readFile("scripts/build-windows-cross.sh");
+    const QString publishContent = readFile("scripts/publish-wallet-downloads.sh");
+    const QString toolchainContent = readFile("cmake/toolchains/mingw64.cmake");
+
+    QVERIFY(!buildContent.isEmpty());
+    QVERIFY(buildContent.contains("makensis"));
+    QVERIFY(buildContent.contains("CMAKE_TOOLCHAIN_FILE"));
+    QVERIFY(buildContent.contains("SHA256SUMS.txt"));
+    QVERIFY(buildContent.contains("animica-wallet-setup-x64.exe"));
+    QVERIFY(buildContent.contains("--remote-rpc-only"));
+
+    QVERIFY(!publishContent.isEmpty());
+    QVERIFY(publishContent.contains("manifest.json"));
+    QVERIFY(publishContent.contains("animica-wallet-windows.sha256"));
+
+    QVERIFY(!toolchainContent.isEmpty());
+    QVERIFY(toolchainContent.contains("CMAKE_SYSTEM_NAME Windows"));
+    QVERIFY(toolchainContent.contains("CMAKE_RC_COMPILER"));
 }
 
 void TestPackagingConfig::testCMakeIncludesPackagingMetadata()
@@ -93,6 +118,7 @@ void TestPackagingConfig::testCMakeIncludesPackagingMetadata()
     QVERIFY(content.contains("include(CPack)"));
     QVERIFY(content.contains("CPACK_PACKAGE_EXECUTABLES"));
     QVERIFY(content.contains("resources/wallet-qt.qrc"));
+    QVERIFY(content.contains("WALLET_ENABLE_QT_INSTALL_DEPLOYMENT"));
 }
 
 QTEST_MAIN(TestPackagingConfig)

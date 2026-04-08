@@ -24,6 +24,7 @@ Makefile
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!cmake/toolchains/*.cmake
 
 # IDE
 .vscode/

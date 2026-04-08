@@ -31,6 +31,65 @@ void appendLinuxInstallNodeCandidates(QStringList& candidates, const QDir& libDi
     }
 }
 #endif
+
+QStringList bundledSitePackagesCandidates(const QString& nodeDirPath)
+{
+    if (nodeDirPath.isEmpty()) {
+        return {};
+    }
+
+#ifdef Q_OS_WIN
+    const QString candidate = QDir(nodeDirPath).filePath("venv/Lib/site-packages");
+    const QFileInfo info(candidate);
+    if (info.exists() && info.isDir()) {
+        return { info.absoluteFilePath() };
+    }
+    return {};
+#else
+    const QDir libDir(QDir(nodeDirPath).filePath("venv/lib"));
+    if (!libDir.exists()) {
+        return {};
+    }
+
+    QStringList candidates;
+    const QFileInfoList pythonEntries = libDir.entryInfoList(
+        QStringList() << "python*",
+        QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Name
+    );
+    for (const QFileInfo& entry : pythonEntries) {
+        const QString candidate = QDir(entry.absoluteFilePath()).filePath("site-packages");
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isDir()) {
+            candidates << info.absoluteFilePath();
+        }
+    }
+    return candidates;
+#endif
+}
+
+QString firstExistingFile(const QStringList& candidates)
+{
+    for (const QString& candidate : candidates) {
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isFile()) {
+            return info.absoluteFilePath();
+        }
+    }
+    return QString();
+}
+
+QString genesisFileNameForNetwork(const QString& network)
+{
+    const QString normalized = network.trimmed().toLower();
+    if (normalized == QStringLiteral("testnet")) {
+        return QStringLiteral("testnet.json");
+    }
+    if (normalized == QStringLiteral("devnet")) {
+        return QStringLiteral("devnet.json");
+    }
+    return QStringLiteral("mainnet.json");
+}
 }
 
 QString AppPaths::baseDir()
@@ -177,40 +236,46 @@ QString AppPaths::bundledAssetsDir()
 
 QString AppPaths::bundledParamsPath()
 {
+    const QString nodeDir = getBundledNodePath();
+    const QStringList sitePackages = bundledSitePackagesCandidates(nodeDir);
+    for (const QString& sitePackagesDir : sitePackages) {
+        const QString canonical = firstExistingFile({
+            QDir(sitePackagesDir).filePath("spec/params.yaml"),
+            QDir(sitePackagesDir).filePath("core/genesis/spec/params.yaml"),
+        });
+        if (!canonical.isEmpty()) {
+            return canonical;
+        }
+    }
+
     const QString assetsDir = bundledAssetsDir();
     if (assetsDir.isEmpty()) {
         return QString();
     }
-
-    const QString candidate = QDir(assetsDir).filePath("spec/params.yaml");
-    const QFileInfo info(candidate);
-    if (info.exists() && info.isFile()) {
-        return info.absoluteFilePath();
-    }
-    return QString();
+    return firstExistingFile({ QDir(assetsDir).filePath("spec/params.yaml") });
 }
 
 QString AppPaths::bundledGenesisPath(const QString& network)
 {
+    const QString fileName = genesisFileNameForNetwork(network);
+    const QString nodeDir = getBundledNodePath();
+    const QStringList sitePackages = bundledSitePackagesCandidates(nodeDir);
+    for (const QString& sitePackagesDir : sitePackages) {
+        const QString canonical = firstExistingFile({
+            QDir(sitePackagesDir).filePath(QStringLiteral("core/genesis/%1").arg(fileName)),
+        });
+        if (!canonical.isEmpty()) {
+            return canonical;
+        }
+    }
+
     const QString assetsDir = bundledAssetsDir();
     if (assetsDir.isEmpty()) {
         return QString();
     }
-
-    const QString normalized = network.trimmed().toLower();
-    QString fileName = QStringLiteral("mainnet.json");
-    if (normalized == QStringLiteral("testnet")) {
-        fileName = QStringLiteral("testnet.json");
-    } else if (normalized == QStringLiteral("devnet")) {
-        fileName = QStringLiteral("devnet.json");
-    }
-
-    const QString candidate = QDir(assetsDir).filePath(QStringLiteral("genesis/%1").arg(fileName));
-    const QFileInfo info(candidate);
-    if (info.exists() && info.isFile()) {
-        return info.absoluteFilePath();
-    }
-    return QString();
+    return firstExistingFile({
+        QDir(assetsDir).filePath(QStringLiteral("genesis/%1").arg(fileName)),
+    });
 }
 
 bool AppPaths::ensureDirectoriesExist()

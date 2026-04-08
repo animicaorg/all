@@ -86,3 +86,12 @@ apps/chat-animica/.modal-endpoint
 ena_data/
 ena/**/*.db
 ena/**/*.log
+
+# large release artifacts
+website/public/studio/*.deb
+website/public/studio/*.AppImage
+website/public/studio/*.tar.gz
+website/public/studio/*.zip
+website/public/studio/*.dmg
+website/public/studio/*.msi
+website/public/studio/*.exe

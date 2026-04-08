@@ -1,0 +1,316 @@
+import { existsSync, readFileSync } from 'node:fs';
+
+export interface WalletManifestPlatform {
+  architecture?: string;
+  build_label?: string;
+  checksum_url?: string;
+  checksum_filename?: string;
+  checksum_size_bytes?: number;
+  installer_url?: string;
+  installer_filename?: string;
+  installer_sha256?: string;
+  installer_size_bytes?: number;
+  zip_url?: string;
+  zip_filename?: string;
+  zip_sha256?: string;
+  zip_size_bytes?: number;
+  appimage_url?: string;
+  appimage_filename?: string;
+  appimage_sha256?: string;
+  appimage_size_bytes?: number;
+  deb_url?: string;
+  deb_filename?: string;
+  deb_sha256?: string;
+  deb_size_bytes?: number;
+  tarball_url?: string;
+  tarball_filename?: string;
+  tarball_sha256?: string;
+  tarball_size_bytes?: number;
+  raw_url?: string;
+  raw_filename?: string;
+  raw_sha256?: string;
+  raw_size_bytes?: number;
+  package_checksum_url?: string;
+  package_checksum_filename?: string;
+  package_checksum_size_bytes?: number;
+  raw_checksum_url?: string;
+  raw_checksum_filename?: string;
+  raw_checksum_size_bytes?: number;
+}
+
+export interface WalletManifest {
+  version?: string;
+  generated_at?: string;
+  windows?: WalletManifestPlatform;
+  linux?: WalletManifestPlatform;
+}
+
+export interface WalletDownloadEntry {
+  href: string;
+  download: string;
+  label: string;
+  primary?: boolean;
+  sha256?: string;
+  sizeBytes?: number;
+  sizeLabel?: string;
+}
+
+export interface WalletChecksumLink {
+  href: string;
+  label: string;
+}
+
+export interface WalletPlatformCard {
+  key: 'windows' | 'linux';
+  title: string;
+  description: string;
+  architecture?: string;
+  buildLabel?: string;
+  downloads: WalletDownloadEntry[];
+  checksums: WalletChecksumLink[];
+  instructions: string[];
+}
+
+export interface WalletDownloadPageData {
+  versionLabel?: string;
+  generatedAt?: string;
+  platformCards: WalletPlatformCard[];
+}
+
+const walletPublicDir = new URL('../../../public/wallet/', import.meta.url);
+const walletManifestPath = new URL('../../../public/wallet/manifest.json', import.meta.url);
+
+function formatBytes(bytes?: number): string | undefined {
+  if (!bytes || bytes <= 0) return undefined;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1);
+  return `${rounded} ${units[unitIndex]}`;
+}
+
+function readManifestFile(): WalletManifest | null {
+  if (!existsSync(walletManifestPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(walletManifestPath, 'utf-8')) as WalletManifest;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDownload(
+  href: string | undefined,
+  download: string | undefined,
+  label: string,
+  sizeBytes?: number,
+  sha256?: string,
+  primary?: boolean,
+): WalletDownloadEntry | null {
+  if (!href || !download) {
+    return null;
+  }
+
+  return {
+    href,
+    download,
+    label,
+    primary,
+    sha256,
+    sizeBytes,
+    sizeLabel: formatBytes(sizeBytes),
+  };
+}
+
+export function normalizeWalletManifest(manifest: WalletManifest | null): WalletPlatformCard[] {
+  if (!manifest) {
+    return [];
+  }
+
+  const cards: WalletPlatformCard[] = [];
+
+  if (manifest.windows) {
+    const windowsDownloads = [
+      normalizeDownload(
+        manifest.windows.installer_url,
+        manifest.windows.installer_filename,
+        'Windows Installer (.exe)',
+        manifest.windows.installer_size_bytes,
+        manifest.windows.installer_sha256,
+        true,
+      ),
+      normalizeDownload(
+        manifest.windows.zip_url,
+        manifest.windows.zip_filename,
+        'Portable ZIP',
+        manifest.windows.zip_size_bytes,
+        manifest.windows.zip_sha256,
+      ),
+    ].filter((entry): entry is WalletDownloadEntry => entry !== null);
+
+    if (windowsDownloads.length > 0) {
+      const checksums: WalletChecksumLink[] = [];
+      if (manifest.windows.checksum_url) {
+        checksums.push({
+          href: manifest.windows.checksum_url,
+          label: 'SHA-256 checksums',
+        });
+      }
+
+      cards.push({
+        key: 'windows',
+        title: 'Windows',
+        description: 'Linux cross-built download artifacts for Windows 10/11 on x86_64.',
+        architecture: manifest.windows.architecture,
+        buildLabel: manifest.windows.build_label ?? manifest.version,
+        downloads: windowsDownloads,
+        checksums,
+        instructions: [
+          'Download the installer and run it on Windows.',
+          'If SmartScreen warns because the build is unsigned, click “More info” and verify the SHA-256 checksum before running.',
+          'Use the portable ZIP only if you need a non-installed copy.',
+        ],
+      });
+    }
+  }
+
+  if (manifest.linux) {
+    const linuxDownloads = [
+      normalizeDownload(
+        manifest.linux.appimage_url,
+        manifest.linux.appimage_filename,
+        'AppImage',
+        manifest.linux.appimage_size_bytes,
+        manifest.linux.appimage_sha256,
+        true,
+      ),
+      normalizeDownload(
+        manifest.linux.deb_url,
+        manifest.linux.deb_filename,
+        '.deb Package',
+        manifest.linux.deb_size_bytes,
+        manifest.linux.deb_sha256,
+      ),
+      normalizeDownload(
+        manifest.linux.tarball_url,
+        manifest.linux.tarball_filename,
+        'Portable tar.gz',
+        manifest.linux.tarball_size_bytes,
+        manifest.linux.tarball_sha256,
+      ),
+      normalizeDownload(
+        manifest.linux.raw_url,
+        manifest.linux.raw_filename,
+        'Raw executable',
+        manifest.linux.raw_size_bytes,
+        manifest.linux.raw_sha256,
+      ),
+    ].filter((entry): entry is WalletDownloadEntry => entry !== null);
+
+    if (linuxDownloads.length > 0) {
+      const checksums: WalletChecksumLink[] = [];
+      if (manifest.linux.package_checksum_url) {
+        checksums.push({
+          href: manifest.linux.package_checksum_url,
+          label: 'Package SHA-256 checksums',
+        });
+      }
+      if (manifest.linux.raw_checksum_url) {
+        checksums.push({
+          href: manifest.linux.raw_checksum_url,
+          label: 'Raw executable SHA-256 checksum',
+        });
+      }
+
+      cards.push({
+        key: 'linux',
+        title: 'Linux',
+        description: 'Native Linux builds with bundled runtime assets when those artifacts are published.',
+        architecture: manifest.linux.architecture,
+        buildLabel: manifest.linux.build_label ?? manifest.version,
+        downloads: linuxDownloads,
+        checksums,
+        instructions: [
+          'Choose AppImage for the simplest desktop launch.',
+          'Use the .deb package for Debian or Ubuntu installs.',
+          'Verify the matching SHA-256 file before first launch.',
+        ],
+      });
+    }
+  }
+
+  return cards;
+}
+
+function buildLegacyLinuxCard(): WalletPlatformCard | null {
+  const appImagePath = new URL('animica-wallet-linux.AppImage', walletPublicDir);
+  const debPath = new URL('animica-wallet-linux.deb', walletPublicDir);
+  const tarballPath = new URL('animica-wallet-linux.tar.gz', walletPublicDir);
+  const rawPath = new URL('animica-wallet', walletPublicDir);
+  const packageChecksumPath = new URL('animica-wallet-linux.sha256', walletPublicDir);
+  const rawChecksumPath = new URL('animica-wallet.sha256', walletPublicDir);
+
+  const downloads = [
+    existsSync(appImagePath)
+      ? normalizeDownload('/wallet/animica-wallet-linux.AppImage', 'animica-wallet-linux.AppImage', 'AppImage', undefined, undefined, true)
+      : null,
+    existsSync(debPath)
+      ? normalizeDownload('/wallet/animica-wallet-linux.deb', 'animica-wallet-linux.deb', '.deb Package')
+      : null,
+    existsSync(tarballPath)
+      ? normalizeDownload('/wallet/animica-wallet-linux.tar.gz', 'animica-wallet-linux.tar.gz', 'Portable tar.gz')
+      : null,
+    existsSync(rawPath)
+      ? normalizeDownload('/wallet/animica-wallet', 'animica-wallet', 'Raw executable')
+      : null,
+  ].filter((entry): entry is WalletDownloadEntry => entry !== null);
+
+  if (downloads.length === 0) {
+    return null;
+  }
+
+  const checksums: WalletChecksumLink[] = [];
+  if (existsSync(packageChecksumPath)) {
+    checksums.push({ href: '/wallet/animica-wallet-linux.sha256', label: 'Package SHA-256 checksums' });
+  }
+  if (existsSync(rawChecksumPath)) {
+    checksums.push({ href: '/wallet/animica-wallet.sha256', label: 'Raw executable SHA-256 checksum' });
+  }
+
+  return {
+    key: 'linux',
+    title: 'Linux',
+    description: 'Legacy website wallet files detected without a generated manifest.',
+    architecture: 'x86_64',
+    downloads,
+    checksums,
+    instructions: [
+      'Choose AppImage for the simplest desktop launch.',
+      'Use the .deb package for Debian or Ubuntu installs.',
+      'Verify the matching SHA-256 file before first launch.',
+    ],
+  };
+}
+
+export function loadWalletDownloadPageData(): WalletDownloadPageData {
+  const manifest = readManifestFile();
+  const manifestCards = normalizeWalletManifest(manifest);
+  if (manifestCards.length > 0) {
+    return {
+      versionLabel: manifest?.version,
+      generatedAt: manifest?.generated_at,
+      platformCards: manifestCards,
+    };
+  }
+
+  const legacyLinuxCard = buildLegacyLinuxCard();
+  return {
+    platformCards: legacyLinuxCard ? [legacyLinuxCard] : [],
+  };
+}

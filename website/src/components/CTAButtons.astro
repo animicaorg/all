@@ -1,6 +1,5 @@
 ---
 import { links } from "../config/links";
-import { docsUrl, explorerUrl, studioUrl } from "../env";
 
 interface Props {
   align?: "start" | "center" | "end";
@@ -18,9 +17,9 @@ const {
   class: className = "",
 } = Astro.props as Props;
 
-const studioHref = links?.studio?.home ?? studioUrl ?? "/studio";
-const explorerHref = links?.explorer?.home ?? explorerUrl ?? "/explorer";
-const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
+const studioHref = links.studio.page();
+const explorerHref = links.explorer.home();
+const docsHref = links.docs.home();
 
 const sizeClass = size === "sm" ? "button--sm" : size === "lg" ? "button--lg" : "";
 const justifyClass = 
@@ -29,13 +28,13 @@ const justifyClass =
 ---
 
 <div class={`cta-buttons ${justifyClass} ${className}`}>
-  <!-- Launch Studio (primary) -->
+  <!-- Studio download page (primary) -->
   <a
     href={studioHref}
     class={`button button--primary ${sizeClass} hover-lift group`}
-    aria-label="Launch Studio"
+    aria-label="Get Studio"
   >
-    <span>Launch Studio</span>
+    <span>Get Studio</span>
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" class="cta-icon">
       <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
     </svg>

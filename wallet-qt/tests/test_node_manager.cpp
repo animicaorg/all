@@ -1,5 +1,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <QFile>
+#include <QStandardPaths>
 #include "../src/node/NodeManager.h"
 
 /**
@@ -16,12 +18,24 @@ class TestNodeManager : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void testLogDeduplication();
     void testDegradationPatternDetection();
     void testRestartBackoffCalculation();
     void testStateTransitions();
     void testIsRunningStates();
+    void testLocalLogWritesToFile();
+    void testRecoverySignalsRequireEscalationThreshold();
+    void testRecoverySignalsScheduleEmbeddedReset();
 };
+
+void TestNodeManager::initTestCase()
+{
+    QCoreApplication::setApplicationName("AnimicaWalletTest");
+    const QByteArray testDataHome("/tmp/animica-wallet-qt-test");
+    QDir().mkpath(QString::fromUtf8(testDataHome));
+    qputenv("XDG_DATA_HOME", testDataHome);
+}
 
 void TestNodeManager::testLogDeduplication()
 {
@@ -46,23 +60,15 @@ void TestNodeManager::testLogDeduplication()
 void TestNodeManager::testDegradationPatternDetection()
 {
     NodeManager manager;
-    
-    // Test patterns that should be detected
-    QStringList degradingPatterns = {
-        "UnboundLocalError: cannot access local variable 'asyncio' where it is not associated with a value",
-        "TypeError: '>=' not supported between instances of 'NoneType' and 'int'",
-        "sync: reset cursor due to missing head_hash in db"
-    };
-    
-    for (const QString& pattern : degradingPatterns) {
-        // The detectDegradationPattern method is private, but we can test via signals
-        // when the node is running. For now, verify the method exists by instantiation.
-        QVERIFY(true);
-    }
-    
-    // Test patterns that should NOT trigger degradation
-    QString benignPattern = "INFO: Starting RPC server on 127.0.0.1:8548";
-    QVERIFY(true);  // Should not trigger degradation
+
+    QVERIFY(manager.detectDegradationPattern(
+        "UnboundLocalError: cannot access local variable 'asyncio' where it is not associated with a value"));
+    QVERIFY(manager.detectDegradationPattern(
+        "TypeError: '>=' not supported between instances of 'NoneType' and 'int'"));
+    QVERIFY(manager.detectDegradationPattern(
+        "sync: reset cursor due to missing head_hash in db"));
+    QVERIFY(!manager.detectDegradationPattern(
+        "INFO: Starting RPC server on 127.0.0.1:8548"));
 }
 
 void TestNodeManager::testRestartBackoffCalculation()
@@ -134,6 +140,55 @@ void TestNodeManager::testIsRunningStates()
     // Since we can't easily transition states without starting a real node,
     // we verify the logic exists
     QVERIFY(true);
+}
+
+void TestNodeManager::testLocalLogWritesToFile()
+{
+    NodeManager manager;
+    manager.m_currentNetwork = "devnet";
+
+    QFile::remove(manager.logFilePath());
+    manager.emitLocalLogLine("[wallet-qt] test local log line");
+
+    QFile logFile(manager.logFilePath());
+    QVERIFY(logFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString content = QString::fromUtf8(logFile.readAll());
+    QVERIFY(content.contains("[wallet-qt] test local log line"));
+}
+
+void TestNodeManager::testRecoverySignalsRequireEscalationThreshold()
+{
+    NodeManager manager;
+    manager.m_state = NodeManager::State::Degraded;
+    manager.m_currentNetwork = "devnet";
+    manager.m_syncWatchdogForceAttempts = NodeManager::MAX_SYNC_FORCE_ATTEMPTS - 1;
+
+    for (int i = 0; i < NodeManager::CURSOR_RESET_RECOVERY_THRESHOLD; ++i) {
+        manager.noteRecoverySignals("sync: reset cursor due to missing head_hash in db");
+    }
+    for (int i = 0; i < NodeManager::NODE_WATCHDOG_RECOVERY_THRESHOLD; ++i) {
+        manager.noteRecoverySignals("Sync watchdog recovery triggered");
+    }
+
+    QCOMPARE(manager.m_embeddedResetRecoveryScheduled, false);
+}
+
+void TestNodeManager::testRecoverySignalsScheduleEmbeddedReset()
+{
+    NodeManager manager;
+    manager.m_state = NodeManager::State::Degraded;
+    manager.m_currentNetwork = "devnet";
+    manager.m_syncWatchdogForceAttempts = NodeManager::MAX_SYNC_FORCE_ATTEMPTS;
+
+    for (int i = 0; i < NodeManager::CURSOR_RESET_RECOVERY_THRESHOLD; ++i) {
+        manager.noteRecoverySignals("sync: reset cursor due to missing head_hash in db");
+    }
+    for (int i = 0; i < NodeManager::NODE_WATCHDOG_RECOVERY_THRESHOLD; ++i) {
+        manager.noteRecoverySignals("Sync watchdog recovery triggered");
+    }
+
+    QCOMPARE(manager.m_embeddedResetRecoveryScheduled, true);
+    manager.m_embeddedResetRecoveryInProgress = true;
 }
 
 QTEST_MAIN(TestNodeManager)

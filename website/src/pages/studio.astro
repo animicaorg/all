@@ -1,88 +1,146 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import InlineLink from "../components/InlineLink.astro";
-import CTAButtons from "../components/CTAButtons.astro";
-import CodeBlock from "../components/CodeBlock.astro";
 
 import { links } from "../config/links";
+import { loadStudioDownloadPageData } from "../features/studio/downloads";
 
-const pageTitle = "Studio — Build, simulate, deploy";
+const pageTitle = "Studio — Linux Download";
 const pageDesc =
-  "Animica Studio is a web IDE to write Python-VM contracts, simulate calls in-browser (WASM), and deploy on-chain.";
+  "Download the official Animica Studio Linux desktop build and verify its checksum before installing.";
 
-const studioHome = links.studio.home();
-const servicesDocs = links.docs.page("studio/overview");
-const walletHome = "/wallet";
+const studioDownloads = loadStudioDownloadPageData();
+const hostedStudio = links.studio.home();
+const studioDocs = links.docs.page("studio/overview");
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Studio</h1>
-    <p class="mt-3 text-base opacity-80">
-      Studio is a browser-based environment to <strong>edit</strong>, <strong>simulate</strong>, and
-      <strong>deploy</strong> Python-VM contracts. It runs a trimmed VM in WebAssembly for local
-      simulation, and talks to your node via JSON-RPC for deploy/verify. Keys stay in your
-      wallet — Studio never holds secrets.
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Animica Studio</h1>
+    <p class="mt-3 opacity-80">
+      Download the official Linux desktop build of Studio for local contract work, node-connected
+      workflows, and bundled Qt desktop tooling. The hosted web Studio remains available when you
+      only need browser-based editing.
     </p>
 
-    <div class="mt-6">
-      <a
-        href={studioHome}
-        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-               bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-               hover:opacity-90"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Open Studio
-      </a>
-      <p class="mt-2 text-sm opacity-70">
-        Deep link: <InlineLink href={studioHome} underline>{studioHome}</InlineLink>
-      </p>
-    </div>
-
-    <div class="mt-10 grid gap-6 sm:grid-cols-2">
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+    <div class="mt-8 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">What you get</h3>
-        <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
-          <li>Monaco editor with diagnostics and gas estimates</li>
-          <li>In-browser simulator (Pyodide/WASM) — no node required</li>
-          <li>Deploy &amp; verify via <InlineLink href={servicesDocs} underline noIcon>Studio Services</InlineLink></li>
-          <li>Data availability and AI/Quantum capability hooks</li>
-        </ul>
-      </div>
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">Prerequisites</h3>
-        <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
-          <li>A modern browser (Chromium, Firefox, Safari recent)</li>
-          <li>RPC target reachable: <InlineLink href={links.rpc.url} underline noIcon>{links.rpc.url}</InlineLink></li>
-          <li>Optional: <InlineLink href={walletHome} underline>Animica Wallet</InlineLink> for local signing</li>
-        </ul>
-      </div>
-    </div>
-  </section>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-semibold">Linux desktop download</h2>
+            <p class="mt-2 text-sm opacity-80">
+              This page serves the current published <code>.deb</code> build from{" "}
+              <code>website/public/studio</code>.
+            </p>
+          </div>
+          {studioDownloads.buildLabel && (
+            <div class="rounded-lg border px-3 py-2 text-sm
+                        border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+              <div class="font-medium">Build</div>
+              <div class="opacity-80">{studioDownloads.buildLabel}</div>
+            </div>
+          )}
+        </div>
 
-  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 mt-4 sm:mt-0">
-    <div class="grid gap-8 lg:grid-cols-2">
-      <div>
-        <h2 class="text-xl font-semibold tracking-tight">Quickstart</h2>
-        <p class="mt-2 text-sm opacity-80">Deploy a sample contract in minutes:</p>
-        <div class="mt-4">
-          <CodeBlock lang="bash" title="Deploy from Studio">
-{`1) Open ${studioHome}
-2) Choose the Counter template
-3) Deploy to ${links.rpc.url}
-4) Verify on the Explorer`}
-          </CodeBlock>
+        {studioDownloads.linuxDownload ? (
+          <>
+            <div class="mt-6 flex flex-wrap gap-3">
+              <a
+                href={studioDownloads.linuxDownload.href}
+                download={studioDownloads.linuxDownload.download}
+                class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
+                       bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
+                       hover:opacity-90"
+              >
+                {studioDownloads.linuxDownload.label}
+              </a>
+
+              {studioDownloads.checksumLink && (
+                <a
+                  href={studioDownloads.checksumLink.href}
+                  class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
+                         border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
+                         hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
+                >
+                  {studioDownloads.checksumLink.label}
+                </a>
+              )}
+            </div>
+
+            <ul class="mt-4 space-y-1 text-xs opacity-70">
+              <li>
+                Filename: <code>{studioDownloads.linuxDownload.download}</code>
+              </li>
+              {studioDownloads.architecture && <li>Architecture: {studioDownloads.architecture}</li>}
+              {studioDownloads.linuxDownload.sizeLabel && <li>Size: {studioDownloads.linuxDownload.sizeLabel}</li>}
+              {studioDownloads.linuxDownload.sha256 && (
+                <li>
+                  SHA-256: <code>{studioDownloads.linuxDownload.sha256}</code>
+                </li>
+              )}
+              {studioDownloads.generatedAt && <li>Published: {studioDownloads.generatedAt}</li>}
+            </ul>
+
+            <div class="mt-5">
+              <h3 class="font-medium">Install</h3>
+              <ul class="mt-2 space-y-2 text-sm opacity-80">
+                {studioDownloads.instructions.map((instruction) => (
+                  <li>{instruction}</li>
+                ))}
+              </ul>
+            </div>
+          </>
+        ) : (
+          <div class="mt-6">
+            <p class="text-sm opacity-80">
+              A website-hosted Studio artifact is not published yet. Use{" "}
+              <InlineLink href={links.github.releases()}>GitHub Releases</InlineLink> until the
+              Linux package is published into <code>website/public/studio</code>.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h2 class="text-xl font-semibold">Need the browser version?</h2>
+        <p class="mt-2 text-sm opacity-80">
+          The hosted web Studio is still available for quick edit, simulate, and deploy sessions.
+        </p>
+        <div class="mt-4 flex flex-col gap-3">
+          <a
+            href={hostedStudio}
+            class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
+                   border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
+                   hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open hosted Studio
+          </a>
+          <InlineLink href={studioDocs}>Read Studio docs</InlineLink>
         </div>
       </div>
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+    </div>
+
+    <div class="mt-10 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">Need docs?</h3>
-        <p class="mt-2 text-sm opacity-80">Read the Studio guide and API references.</p>
-        <CTAButtons showExplorer={false} showDocs={true} />
+        <h3 class="font-semibold">What’s included</h3>
+        <p class="mt-2 text-sm opacity-80">
+          The Linux desktop package wraps the PySide6-based Studio application and bundled runtime
+          assets needed for local workflows.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="font-semibold">Verify before install</h3>
+        <p class="mt-2 text-sm opacity-80">
+          Compare the downloaded package hash with the published SHA-256 file before running the
+          installer on production machines.
+        </p>
       </div>
     </div>
   </section>

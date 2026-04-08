@@ -10,6 +10,8 @@
 #include "../rpc/AnimicaRpcClient.h"
 #include "../platform/DataDirManager.h"
 
+class TestNodeManager;
+
 /**
  * @brief Manages the lifecycle of the embedded Animica node.
  * 
@@ -214,6 +216,8 @@ private slots:
     void onRestartBackoffTimeout();
 
 private:
+    friend class TestNodeManager;
+
     void setState(State state);
     void setError(const QString& message);
     
@@ -297,12 +301,60 @@ private:
      * @return Delay in milliseconds
      */
     int calculateRestartDelay();
-    
+
     /**
      * @brief Schedule restart with backoff.
      */
     void scheduleRestart();
-    
+
+    /**
+     * @brief Append raw process output to the persisted node log.
+     * @param text Raw process output chunk
+     */
+    void appendProcessLogOutput(const QString& text);
+
+    /**
+     * @brief Emit a wallet-generated log line to the UI and persisted log.
+     * @param line Message to emit
+     */
+    void emitLocalLogLine(const QString& line);
+
+    /**
+     * @brief Track node-side recovery signals seen in stdout/stderr.
+     * @param line Log line to inspect
+     */
+    void noteRecoverySignals(const QString& line);
+
+    /**
+     * @brief Evaluate sync progress and trigger wallet-side recovery when stalled.
+     * @param currentBlock Current synced block height
+     * @param highestBlock Best known target height
+     * @param syncing Whether sync is still active
+     */
+    void evaluateSyncWatchdog(int currentBlock, int highestBlock, bool syncing);
+
+    /**
+     * @brief Trigger an RPC-level sync.force recovery attempt.
+     * @param reason Human-readable reason for diagnostics/logging
+     */
+    void triggerWalletSyncForceRecovery(const QString& reason);
+
+    /**
+     * @brief Escalate to a local chain reset + node restart if corruption persists.
+     * @param reason Human-readable reason for diagnostics/logging
+     */
+    void maybeScheduleEmbeddedResetRecovery(const QString& reason);
+
+    /**
+     * @brief Execute the scheduled local chain reset + embedded node restart.
+     */
+    void performEmbeddedResetRecovery();
+
+    /**
+     * @brief Reset wallet-side recovery counters for a fresh node session.
+     */
+    void resetRecoveryState();
+
     /**
      * @brief Perform enhanced health check.
      */
@@ -340,7 +392,24 @@ private:
     // Degradation tracking
     bool m_degradationDetected;
     QString m_degradationReason;
-    
+
+    // Wallet-side sync watchdog tracking
+    QDateTime m_syncWatchdogLastProgressAt;
+    QDateTime m_syncWatchdogLastForceAt;
+    int m_syncWatchdogLastCurrentBlock;
+    int m_syncWatchdogLastTargetBlock;
+    int m_syncWatchdogForceAttempts;
+    bool m_syncForceInFlight;
+    bool m_embeddedResetRecoveryScheduled;
+    bool m_embeddedResetRecoveryInProgress;
+    int m_embeddedResetRecoveryAttempts;
+
+    // Windowed log counters used to distinguish transient stalls from persistent local corruption.
+    int m_cursorResetWindowCount;
+    QDateTime m_cursorResetWindowStartedAt;
+    int m_nodeWatchdogWindowCount;
+    QDateTime m_nodeWatchdogWindowStartedAt;
+
     static constexpr int DEFAULT_RPC_PORT = 8548;  // mainnet default from problem statement
     static constexpr int DEFAULT_P2P_PORT = 30333;
     static constexpr int HEALTH_CHECK_INITIAL_INTERVAL = 250;  // 250ms initially
@@ -348,6 +417,13 @@ private:
     static constexpr int HEALTH_CHECK_MAX_ATTEMPTS = 120;  // 30 seconds initially (250ms * 120), then keep trying with backoff
     static constexpr int SYNC_CHECK_INTERVAL = 5000;  // 5 seconds
     static constexpr int SYNC_CHECK_DEGRADED_INTERVAL = 15000;  // 15 seconds when degraded
+    static constexpr int SYNC_WALLET_WATCHDOG_STALL_MS = 30000;  // 30s without block-height progress
+    static constexpr int SYNC_FORCE_COOLDOWN_MS = 20000;  // avoid spamming sync.force
+    static constexpr int MAX_SYNC_FORCE_ATTEMPTS = 2;
+    static constexpr int RECOVERY_SIGNAL_WINDOW_MS = 30000;  // correlate repeated corruption signals
+    static constexpr int CURSOR_RESET_RECOVERY_THRESHOLD = 6;
+    static constexpr int NODE_WATCHDOG_RECOVERY_THRESHOLD = 3;
+    static constexpr int MAX_EMBEDDED_RESET_RECOVERY_ATTEMPTS = 1;
     static constexpr int MAX_LOG_BUFFER_SIZE = 5000;
     static constexpr int LOG_DEDUPE_WINDOW_MS = 2000;  // 2 second deduplication window
     static constexpr int MAX_RESTART_DELAY_MS = 60000;  // 60 seconds max backoff

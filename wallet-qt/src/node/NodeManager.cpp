@@ -13,6 +13,55 @@
 #include <QRandomGenerator>
 #include <QDebug>
 
+namespace {
+int chainIdForNetwork(const QString& network)
+{
+    if (network == "mainnet") {
+        return 1;
+    }
+    if (network == "testnet") {
+        return 2;
+    }
+    return 1337;
+}
+
+int jsonIntValue(const QJsonObject& object, const QStringList& keys, int fallback = 0)
+{
+    for (const QString& key : keys) {
+        const QJsonValue value = object.value(key);
+        if (value.isDouble()) {
+            return value.toInt(fallback);
+        }
+        if (value.isString()) {
+            bool ok = false;
+            const int parsed = value.toString().toInt(&ok);
+            if (ok) {
+                return parsed;
+            }
+        }
+    }
+    return fallback;
+}
+
+bool syncPhaseImpliesSyncing(const QString& phase)
+{
+    const QString normalized = phase.trimmed().toUpper();
+    if (normalized == "HEADERS" ||
+        normalized == "BLOCKS" ||
+        normalized == "SYNCING" ||
+        normalized == "VERIFYING" ||
+        normalized == "STALLED") {
+        return true;
+    }
+    if (normalized == "SYNCED" ||
+        normalized == "IDLE" ||
+        normalized == "TARGET_REACHED") {
+        return false;
+    }
+    return false;
+}
+}
+
 NodeManager::NodeManager(QObject* parent)
     : QObject(parent)
     , m_state(State::Stopped)
@@ -26,6 +75,15 @@ NodeManager::NodeManager(QObject* parent)
     , m_restartAttempts(0)
     , m_lockFile(nullptr)
     , m_degradationDetected(false)
+    , m_syncWatchdogLastCurrentBlock(0)
+    , m_syncWatchdogLastTargetBlock(0)
+    , m_syncWatchdogForceAttempts(0)
+    , m_syncForceInFlight(false)
+    , m_embeddedResetRecoveryScheduled(false)
+    , m_embeddedResetRecoveryInProgress(false)
+    , m_embeddedResetRecoveryAttempts(0)
+    , m_cursorResetWindowCount(0)
+    , m_nodeWatchdogWindowCount(0)
 {
     // Configure process
     m_process->setProcessChannelMode(QProcess::MergedChannels);
@@ -77,12 +135,11 @@ bool NodeManager::startNode(const QString& network)
     m_currentNetwork = network;
     m_degradationDetected = false;
     m_degradationReason.clear();
+    resetRecoveryState();
     setState(State::Starting);
     
     // Determine chain ID from network
-    int chainId = 1337;  // devnet
-    if (network == "mainnet") chainId = 1;
-    else if (network == "testnet") chainId = 2;
+    const int chainId = chainIdForNetwork(network);
     
     // Check network compatibility if using DataDirManager
     if (m_dataDirManager) {
@@ -193,6 +250,17 @@ bool NodeManager::startNode(const QString& network)
     
     // Reset restart attempts on successful start
     m_restartAttempts = 0;
+
+    QFile sessionLog(logFilePath());
+    if (sessionLog.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QTextStream out(&sessionLog);
+        out << "=== Embedded node session started "
+            << QDateTime::currentDateTime().toString(Qt::ISODate)
+            << " network=" << network
+            << " rpc=" << rpcPort
+            << " p2p=" << p2pPort
+            << " ===\n";
+    }
     
     // Start process
     m_process->start(python, args);
@@ -209,6 +277,7 @@ void NodeManager::stopNode()
     setState(State::Stopping);
     stopHealthCheck();
     stopSyncMonitoring();
+    m_syncForceInFlight = false;
     
     if (m_process->state() != QProcess::NotRunning) {
         qDebug() << "Stopping node process...";
@@ -338,6 +407,7 @@ void NodeManager::onProcessStarted()
 void NodeManager::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
     qDebug() << "Node process finished, exit code:" << exitCode << "status:" << exitStatus;
+    m_syncForceInFlight = false;
     
     bool crashed = (exitStatus == QProcess::CrashExit) || 
                    (exitCode != 0 && m_state != State::Stopping);
@@ -358,6 +428,7 @@ void NodeManager::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatu
 
 void NodeManager::onProcessError(QProcess::ProcessError error)
 {
+    m_syncForceInFlight = false;
     QString errorMsg;
     switch (error) {
         case QProcess::FailedToStart:
@@ -393,11 +464,14 @@ void NodeManager::onProcessOutput()
 {
     QByteArray output = m_process->readAllStandardOutput();
     QString text = QString::fromUtf8(output);
+    appendProcessLogOutput(text);
     
     // Split into lines
     QStringList lines = text.split('\n', Qt::SkipEmptyParts);
     
     for (const QString& line : lines) {
+        noteRecoverySignals(line);
+
         // Add to buffer with deduplication
         addLogLine(line);
         
@@ -440,12 +514,33 @@ void NodeManager::onSyncCheckTimeout()
             QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
             QJsonObject obj = doc.object();
             QJsonObject result = obj["result"].toObject();
-            
-            bool syncing = result["syncing"].toBool(false);
-            int currentBlock = result["currentBlock"].toInt(0);
-            int highestBlock = result["highestBlock"].toInt(0);
-            
+
+            const int currentBlock = jsonIntValue(
+                result,
+                {"best_block_height", "bestBlockHeight", "currentBlock", "head_height", "headHeight"},
+                0
+            );
+            int highestBlock = jsonIntValue(
+                result,
+                {"targetHeight", "target_height", "highestBlock", "best_header_height", "bestHeaderHeight", "network_best_height"},
+                currentBlock
+            );
+            if (highestBlock < currentBlock) {
+                highestBlock = currentBlock;
+            }
+
+            bool syncing = false;
+            const QJsonValue syncingValue = result.value("syncing");
+            if (syncingValue.isBool()) {
+                syncing = syncingValue.toBool();
+            } else if (syncingValue.isObject()) {
+                syncing = true;
+            } else {
+                syncing = syncPhaseImpliesSyncing(result.value("phase").toString()) || highestBlock > currentBlock;
+            }
+
             emit syncProgress(currentBlock, highestBlock, syncing);
+            evaluateSyncWatchdog(currentBlock, highestBlock, syncing);
         }
     });
 }
@@ -762,6 +857,233 @@ void NodeManager::scheduleRestart()
     
     qDebug() << "Scheduling restart in" << delay << "ms";
     m_restartTimer->start(delay);
+}
+
+void NodeManager::appendProcessLogOutput(const QString& text)
+{
+    if (text.isEmpty()) {
+        return;
+    }
+
+    QFile logFile(logFilePath());
+    if (!logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        qWarning() << "Failed to append node log output to" << logFilePath();
+        return;
+    }
+
+    QTextStream out(&logFile);
+    out << text;
+}
+
+void NodeManager::emitLocalLogLine(const QString& line)
+{
+    if (line.isEmpty()) {
+        return;
+    }
+
+    addLogLine(line);
+    appendProcessLogOutput(line + "\n");
+    emit logLinesAvailable(QStringList() << line);
+}
+
+void NodeManager::noteRecoverySignals(const QString& line)
+{
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+
+    if (line.contains("sync: reset cursor due to missing head_hash in db")) {
+        if (!m_cursorResetWindowStartedAt.isValid() ||
+            m_cursorResetWindowStartedAt.msecsTo(now) > RECOVERY_SIGNAL_WINDOW_MS) {
+            m_cursorResetWindowStartedAt = now;
+            m_cursorResetWindowCount = 0;
+        }
+        ++m_cursorResetWindowCount;
+    }
+
+    if (line.contains("Sync watchdog recovery triggered")) {
+        if (!m_nodeWatchdogWindowStartedAt.isValid() ||
+            m_nodeWatchdogWindowStartedAt.msecsTo(now) > RECOVERY_SIGNAL_WINDOW_MS) {
+            m_nodeWatchdogWindowStartedAt = now;
+            m_nodeWatchdogWindowCount = 0;
+        }
+        ++m_nodeWatchdogWindowCount;
+    }
+
+    maybeScheduleEmbeddedResetRecovery("node_watchdog_loop");
+}
+
+void NodeManager::evaluateSyncWatchdog(int currentBlock, int highestBlock, bool syncing)
+{
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+
+    if (currentBlock > m_syncWatchdogLastCurrentBlock) {
+        m_syncWatchdogLastProgressAt = now;
+        m_syncWatchdogForceAttempts = 0;
+        m_syncWatchdogLastCurrentBlock = currentBlock;
+        m_syncWatchdogLastTargetBlock = highestBlock;
+        return;
+    }
+
+    m_syncWatchdogLastCurrentBlock = currentBlock;
+    m_syncWatchdogLastTargetBlock = highestBlock;
+
+    if (!syncing || highestBlock <= currentBlock) {
+        m_syncWatchdogLastProgressAt = now;
+        m_syncWatchdogForceAttempts = 0;
+        return;
+    }
+
+    if (!m_syncWatchdogLastProgressAt.isValid()) {
+        m_syncWatchdogLastProgressAt = now;
+        return;
+    }
+
+    if (m_syncWatchdogLastProgressAt.msecsTo(now) < SYNC_WALLET_WATCHDOG_STALL_MS) {
+        return;
+    }
+
+    if (m_syncWatchdogLastForceAt.isValid() &&
+        m_syncWatchdogLastForceAt.msecsTo(now) < SYNC_FORCE_COOLDOWN_MS) {
+        return;
+    }
+
+    if (m_syncWatchdogForceAttempts < MAX_SYNC_FORCE_ATTEMPTS) {
+        const qint64 stalledSeconds = m_syncWatchdogLastProgressAt.secsTo(now);
+        triggerWalletSyncForceRecovery(
+            QString("stalled at %1/%2 for %3s")
+                .arg(currentBlock)
+                .arg(highestBlock)
+                .arg(stalledSeconds)
+        );
+        return;
+    }
+
+    maybeScheduleEmbeddedResetRecovery("wallet_sync_force_exhausted");
+}
+
+void NodeManager::triggerWalletSyncForceRecovery(const QString& reason)
+{
+    if (m_syncForceInFlight || !isRunning()) {
+        return;
+    }
+
+    m_syncForceInFlight = true;
+    m_syncWatchdogLastForceAt = QDateTime::currentDateTimeUtc();
+    ++m_syncWatchdogForceAttempts;
+
+    const QString message = QString(
+        "[wallet-qt] Embedded sync watchdog requesting sync.force (%1/%2): %3"
+    )
+        .arg(m_syncWatchdogForceAttempts)
+        .arg(MAX_SYNC_FORCE_ATTEMPTS)
+        .arg(reason);
+    emitLocalLogLine(message);
+
+    if (!m_degradationDetected) {
+        m_degradationDetected = true;
+        m_degradationReason = "Embedded node sync stalled; forcing recovery";
+        if (m_state == State::RpcReady || m_state == State::Healthy) {
+            setState(State::Degraded);
+            emit nodeDegraded(m_degradationReason);
+            m_syncCheckTimer->setInterval(SYNC_CHECK_DEGRADED_INTERVAL);
+        }
+    }
+
+    RpcReply* reply = m_rpcClient->call("sync.force");
+    connect(reply, &RpcReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        m_syncForceInFlight = false;
+
+        if (reply->error() == QNetworkReply::NoError) {
+            emitLocalLogLine("[wallet-qt] sync.force accepted by embedded node");
+            return;
+        }
+
+        emitLocalLogLine(
+            QString("[wallet-qt] sync.force failed: %1").arg(reply->errorString())
+        );
+    });
+}
+
+void NodeManager::maybeScheduleEmbeddedResetRecovery(const QString& reason)
+{
+    if (m_embeddedResetRecoveryScheduled ||
+        m_embeddedResetRecoveryInProgress ||
+        m_embeddedResetRecoveryAttempts >= MAX_EMBEDDED_RESET_RECOVERY_ATTEMPTS) {
+        return;
+    }
+
+    if (!isRunning() || m_syncWatchdogForceAttempts < MAX_SYNC_FORCE_ATTEMPTS) {
+        return;
+    }
+
+    if (m_cursorResetWindowCount < CURSOR_RESET_RECOVERY_THRESHOLD ||
+        m_nodeWatchdogWindowCount < NODE_WATCHDOG_RECOVERY_THRESHOLD) {
+        return;
+    }
+
+    m_embeddedResetRecoveryScheduled = true;
+    emitLocalLogLine(
+        QString(
+            "[wallet-qt] Embedded node watchdog escalating to local chain reset + restart (%1)"
+        ).arg(reason)
+    );
+
+    QTimer::singleShot(0, this, [this]() {
+        performEmbeddedResetRecovery();
+    });
+}
+
+void NodeManager::performEmbeddedResetRecovery()
+{
+    if (m_embeddedResetRecoveryInProgress || !m_embeddedResetRecoveryScheduled) {
+        return;
+    }
+
+    m_embeddedResetRecoveryScheduled = false;
+    m_embeddedResetRecoveryInProgress = true;
+    ++m_embeddedResetRecoveryAttempts;
+
+    const QString network = m_currentNetwork;
+    const int chainId = chainIdForNetwork(network);
+
+    emitLocalLogLine(
+        QString("[wallet-qt] Resetting embedded node chain data for %1")
+            .arg(network)
+    );
+
+    stopNode();
+
+    if (!resetChainData(chainId)) {
+        m_embeddedResetRecoveryInProgress = false;
+        setError("Embedded node watchdog failed to reset local chain data");
+        return;
+    }
+
+    resetRecoveryState();
+
+    QTimer::singleShot(1500, this, [this, network]() {
+        m_embeddedResetRecoveryInProgress = false;
+        emitLocalLogLine(
+            QString("[wallet-qt] Restarting embedded node after watchdog recovery on %1")
+                .arg(network)
+        );
+        startNode(network);
+    });
+}
+
+void NodeManager::resetRecoveryState()
+{
+    m_syncWatchdogLastProgressAt = QDateTime();
+    m_syncWatchdogLastForceAt = QDateTime();
+    m_syncWatchdogLastCurrentBlock = 0;
+    m_syncWatchdogLastTargetBlock = 0;
+    m_syncWatchdogForceAttempts = 0;
+    m_syncForceInFlight = false;
+    m_embeddedResetRecoveryScheduled = false;
+    m_cursorResetWindowCount = 0;
+    m_cursorResetWindowStartedAt = QDateTime();
+    m_nodeWatchdogWindowCount = 0;
+    m_nodeWatchdogWindowStartedAt = QDateTime();
 }
 
 void NodeManager::onRestartBackoffTimeout()
