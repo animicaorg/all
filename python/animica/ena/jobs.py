@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from aicf.queue.jobkind import JobKind as AicfJobKind
 from capabilities.jobs.id import derive_task_id_hex
 
+from .credits import EnaCreditsAdapter
 from .datasets import DatasetManager
 from .ingest import Crawler, Fetcher, export_jsonl, extract_local_path, load_seed_file, records_from_fetch
 from .models import EnaConfigModel, JobReceipt, JobRecord, JobSpec, JobStatus, JobType, VerificationCheck, VerificationRecord
@@ -28,7 +29,16 @@ def _compute_job_hash(spec: JobSpec) -> str:
 
 
 def _aicf_job_kind(job_type: JobType) -> AicfJobKind:
-    if job_type in {JobType.SCRAPE, JobType.EXTRACT, JobType.DATASET_CLEAN, JobType.TRAINING_RECORDS, JobType.SUMMARIZE}:
+    if job_type in {
+        JobType.SCRAPE,
+        JobType.EXTRACT,
+        JobType.CLEAN,
+        JobType.DEDUPE,
+        JobType.DATASET_BUILD,
+        JobType.DATASET_CLEAN,
+        JobType.TRAINING_RECORDS,
+        JobType.SUMMARIZE,
+    }:
         return AicfJobKind.DATA_CURATION
     if job_type in {JobType.CHUNK, JobType.EMBED, JobType.INDEX}:
         return AicfJobKind.RAG_INDEX_BUILD
@@ -43,17 +53,20 @@ def _base_credit(job_type: JobType) -> int:
     return {
         JobType.SCRAPE: 120,
         JobType.EXTRACT: 120,
+        JobType.CLEAN: 110,
+        JobType.DEDUPE: 110,
         JobType.CHUNK: 110,
         JobType.LABEL: 150,
+        JobType.CLASSIFY: 120,
         JobType.EMBED: 180,
         JobType.INDEX: 180,
+        JobType.DATASET_BUILD: 160,
         JobType.EVAL: 160,
         JobType.VERIFY: 100,
         JobType.DATASET_CLEAN: 110,
         JobType.TRAINING_RECORDS: 130,
         JobType.TRAIN_PREPARE: 220,
         JobType.SUMMARIZE: 80,
-        JobType.CLASSIFY: 120,
     }.get(job_type, 100)
 
 
@@ -226,7 +239,17 @@ class JobManager:
                 passed = passed and sources_ok
             passed = passed and provenance_ok
 
-        if job.job_type in {JobType.CHUNK, JobType.LABEL, JobType.EMBED, JobType.TRAINING_RECORDS, JobType.DATASET_CLEAN} and output_path and Path(output_path).exists():
+        if job.job_type in {
+            JobType.CHUNK,
+            JobType.LABEL,
+            JobType.CLASSIFY,
+            JobType.EMBED,
+            JobType.CLEAN,
+            JobType.DEDUPE,
+            JobType.DATASET_BUILD,
+            JobType.TRAINING_RECORDS,
+            JobType.DATASET_CLEAN,
+        } and output_path and Path(output_path).exists():
             row_count = sum(1 for line in Path(output_path).open("r", encoding="utf-8") if line.strip())
             checks.append(VerificationCheck(name="row_count_positive", passed=row_count > 0, detail=str(row_count)))
             passed = passed and row_count > 0
@@ -317,6 +340,7 @@ class JobManager:
             return None
         receipt = build_job_receipt(job, store=self.store)
         self.store.save_receipt(receipt)
+        EnaCreditsAdapter(self.store, self.config).apply_receipt(receipt)
         return receipt
 
     def export_onchain(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -380,13 +404,17 @@ class WorkerEngine:
             handler = {
                 JobType.SCRAPE: self._run_scrape,
                 JobType.EXTRACT: self._run_extract,
+                JobType.CLEAN: self._run_dataset_clean,
+                JobType.DEDUPE: self._run_dataset_clean,
                 JobType.CHUNK: self._run_chunk,
                 JobType.LABEL: self._run_label,
+                JobType.CLASSIFY: self._run_label,
                 JobType.EMBED: self._run_embed,
                 JobType.INDEX: self._run_index,
                 JobType.SUMMARIZE: self._run_summarize,
                 JobType.EVAL: self._run_eval,
                 JobType.VERIFY: self._run_verify,
+                JobType.DATASET_BUILD: self._run_dataset_build,
                 JobType.DATASET_CLEAN: self._run_dataset_clean,
                 JobType.TRAINING_RECORDS: self._run_training_records,
                 JobType.TRAIN_PREPARE: self._run_train_prepare,
@@ -678,6 +706,34 @@ class WorkerEngine:
         input_path = Path(spec.input_payload["dataset"])
         out_path = Path(self.config.storage.datasets_dir) / f"{spec.job_id}.deduped.jsonl"
         return self.datasets.dedupe(input_path, out_path)
+
+    def _run_dataset_build(self, spec: JobSpec) -> Dict[str, Any]:
+        inputs = [Path(item) for item in spec.sources]
+        if spec.input_payload.get("dataset"):
+            inputs.append(Path(spec.input_payload["dataset"]))
+        if spec.input_payload.get("path"):
+            inputs.append(Path(spec.input_payload["path"]))
+        if not inputs:
+            raise ValueError("dataset build job requires one or more input paths")
+        raw_out = Path(self.config.storage.datasets_dir) / f"{spec.job_id}.raw.jsonl"
+        manifest_path = Path(self.config.storage.manifests_dir) / f"{spec.job_id}.dataset.json"
+        manifest = self.datasets.build_dataset(
+            inputs,
+            raw_out=raw_out,
+            task_type=spec.input_payload.get("task_type", "summarize"),
+            dedupe=bool(spec.input_payload.get("dedupe", True)),
+            split=bool(spec.input_payload.get("split", False)),
+            manifest_path=manifest_path,
+        )
+        artifact = self.store.put_artifact(
+            "dataset_build_manifest",
+            manifest_path.read_text(encoding="utf-8"),
+            metadata={"job_id": spec.job_id},
+            suffix=".json",
+        )
+        manifest["artifact_id"] = artifact.artifact_id
+        manifest["output_path"] = manifest["final_dataset_path"]
+        return manifest
 
     def _run_training_records(self, spec: JobSpec) -> Dict[str, Any]:
         input_path = Path(spec.input_payload["dataset"])

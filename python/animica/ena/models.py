@@ -34,6 +34,8 @@ class AutonomyLevel(str, Enum):
 class JobType(str, Enum):
     SCRAPE = "scrape"
     EXTRACT = "extract"
+    CLEAN = "clean"
+    DEDUPE = "dedupe"
     CLASSIFY = "classify"
     CHUNK = "chunk"
     LABEL = "label"
@@ -42,6 +44,7 @@ class JobType(str, Enum):
     VERIFY = "verify"
     SUMMARIZE = "summarize"
     INDEX = "index"
+    DATASET_BUILD = "dataset_build"
     DATASET_CLEAN = "dataset_clean"
     TRAINING_RECORDS = "training_records"
     TRAIN_PREPARE = "train_prepare"
@@ -113,7 +116,7 @@ class RetryPolicy(BaseSchema):
 
 
 class ModelProviderConfig(BaseSchema):
-    provider: Literal["deterministic", "openai_compatible", "ollama"] = "deterministic"
+    provider: Literal["deterministic", "openai_compatible", "ollama", "stub"] = "deterministic"
     transport: Literal["fallback", "remote_api", "local_runtime"] = "fallback"
     model: str = "deterministic"
     endpoint: Optional[str] = None
@@ -129,7 +132,7 @@ class ModelProviderConfig(BaseSchema):
 
 
 class EmbeddingProviderConfig(BaseSchema):
-    provider: Literal["disabled", "hashing", "openai_compatible", "ollama"] = "disabled"
+    provider: Literal["disabled", "hashing", "openai_compatible", "ollama", "stub"] = "disabled"
     transport: Literal["fallback", "remote_api", "local_runtime"] = "fallback"
     model: str = ""
     endpoint: Optional[str] = None
@@ -160,6 +163,11 @@ class EnaConfigModel(BaseSchema):
     studio_api_enabled: bool = True
     default_model_provider: str = "deterministic"
     default_embedding_provider: str = "disabled"
+    default_worker_id: str = "local-worker"
+    default_miner_address: Optional[str] = None
+    aicf_db_path: Optional[Path] = None
+    default_index_chunk_lines: int = 80
+    default_index_overlap: int = 10
     model_providers: Dict[str, ModelProviderConfig] = Field(default_factory=dict)
     embedding_providers: Dict[str, EmbeddingProviderConfig] = Field(default_factory=dict)
     agent_retry_limit: int = 2
@@ -179,10 +187,13 @@ class ArtifactRecord(BaseSchema):
     kind: str
     path: str
     sha256: str
+    sha3_256: Optional[str] = None
     size_bytes: int
     created_at: str = Field(default_factory=utc_now_iso)
     source_uri: Optional[str] = None
     parent_artifact_id: Optional[str] = None
+    manifest_path: Optional[str] = None
+    provenance: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -316,11 +327,14 @@ class AgentTrace(BaseSchema):
 class IndexRecord(BaseSchema):
     index_name: str
     root: str
+    index_schema_version: str = "1.0"
     chunk_count: int = 0
     source_count: int = 0
     embedding_provider: str = "disabled"
     embedding_model: Optional[str] = None
     retrieval_mode: str = "keyword"
+    manifest_artifact_id: Optional[str] = None
+    chunk_manifest_artifact_id: Optional[str] = None
     updated_at: str = Field(default_factory=utc_now_iso)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -388,6 +402,7 @@ class JobReceipt(BaseSchema):
     receipt_hash: str = ""
     job_id: str
     job_hash: str
+    manifest_hash: str = ""
     job_type: JobType
     job_status: JobStatus
     aicf_task_id: Optional[str] = None
@@ -400,6 +415,9 @@ class JobReceipt(BaseSchema):
     verification_hash: Optional[str] = None
     verification_passed: bool = False
     result_hash: str
+    input_refs: List[str] = Field(default_factory=list)
+    output_refs: List[str] = Field(default_factory=list)
+    event_timestamps: Dict[str, str] = Field(default_factory=dict)
     source_hashes: List[str] = Field(default_factory=list)
     artifact_ids: List[str] = Field(default_factory=list)
     artifact_hashes: Dict[str, str] = Field(default_factory=dict)
@@ -407,6 +425,7 @@ class JobReceipt(BaseSchema):
     score_components: List[ReceiptScoreComponent] = Field(default_factory=list)
     reward: Dict[str, Any] = Field(default_factory=dict)
     onchain_payload: Dict[str, Any] = Field(default_factory=dict)
+    export_payload_hash: str = ""
     created_at: str = Field(default_factory=utc_now_iso)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -442,10 +461,12 @@ class TrainingRunRecord(BaseSchema):
     manifest_path: str
     base_model: str
     output_dir: str
+    resumed_from_run_id: Optional[str] = None
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
     command: List[str] = Field(default_factory=list)
     checkpoint_paths: List[str] = Field(default_factory=list)
+    checkpoint_manifest: List[Dict[str, Any]] = Field(default_factory=list)
     artifact_ids: List[str] = Field(default_factory=list)
     metrics: Dict[str, Any] = Field(default_factory=dict)
     eval_report: Dict[str, Any] = Field(default_factory=dict)

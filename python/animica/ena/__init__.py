@@ -4,6 +4,7 @@ from .agent import AgentRunner
 from .config import load_ena_config, save_default_config
 from .datasets import DatasetManager
 from .jobs import JobManager, WorkerEngine
+from .operator import EnaOperator
 from .models import (
     AgentTrace,
     ArtifactRecord,
@@ -54,6 +55,7 @@ __all__ = [
     "JobSpec",
     "JobStatus",
     "JobType",
+    "EnaOperator",
     "ModelProviderConfig",
     "SearchHit",
     "SessionRecord",

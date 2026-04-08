@@ -17,7 +17,7 @@ from .models import (
     TrainingRunRecord,
     VerificationRecord,
 )
-from .text import cosine_similarity, normalize_text, sha256_hex, stable_id, text_score, utc_now_iso
+from .text import cosine_similarity, normalize_text, sha256_hex, sha3_hex, stable_id, text_score, utc_now_iso
 
 
 def _json(data: Any) -> str:
@@ -58,10 +58,13 @@ class EnaStore:
               kind TEXT NOT NULL,
               path TEXT NOT NULL,
               sha256 TEXT NOT NULL,
+              sha3_256 TEXT,
               size_bytes INTEGER NOT NULL,
               created_at TEXT NOT NULL,
               source_uri TEXT,
               parent_artifact_id TEXT,
+              manifest_path TEXT,
+              provenance_json TEXT NOT NULL DEFAULT '{}',
               metadata_json TEXT NOT NULL
             )
             """
@@ -114,11 +117,14 @@ class EnaStore:
             CREATE TABLE IF NOT EXISTS search_indexes(
               index_name TEXT PRIMARY KEY,
               root TEXT NOT NULL,
+              index_schema_version TEXT NOT NULL DEFAULT '1.0',
               chunk_count INTEGER NOT NULL,
               source_count INTEGER NOT NULL,
               embedding_provider TEXT NOT NULL,
               embedding_model TEXT,
               retrieval_mode TEXT NOT NULL,
+              manifest_artifact_id TEXT,
+              chunk_manifest_artifact_id TEXT,
               updated_at TEXT NOT NULL,
               metadata_json TEXT NOT NULL
             )
@@ -212,10 +218,12 @@ class EnaStore:
               manifest_path TEXT NOT NULL,
               base_model TEXT NOT NULL,
               output_dir TEXT NOT NULL,
+              resumed_from_run_id TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
               command_json TEXT NOT NULL,
               checkpoint_paths_json TEXT NOT NULL,
+              checkpoint_manifest_json TEXT NOT NULL DEFAULT '[]',
               artifact_ids_json TEXT NOT NULL,
               metrics_json TEXT NOT NULL,
               eval_report_json TEXT NOT NULL,
@@ -225,6 +233,14 @@ class EnaStore:
             """
         )
         self._ensure_column("jobs", "job_hash", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("artifacts", "sha3_256", "TEXT")
+        self._ensure_column("artifacts", "manifest_path", "TEXT")
+        self._ensure_column("artifacts", "provenance_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column("search_indexes", "index_schema_version", "TEXT NOT NULL DEFAULT '1.0'")
+        self._ensure_column("search_indexes", "manifest_artifact_id", "TEXT")
+        self._ensure_column("search_indexes", "chunk_manifest_artifact_id", "TEXT")
+        self._ensure_column("training_runs", "resumed_from_run_id", "TEXT")
+        self._ensure_column("training_runs", "checkpoint_manifest_json", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, spec: str) -> None:
@@ -255,39 +271,58 @@ class EnaStore:
     ) -> ArtifactRecord:
         raw = content.encode("utf-8") if isinstance(content, str) else content
         sha = sha256_hex(raw)
+        sha3 = sha3_hex(raw)
         artifact_id = stable_id(kind, sha)
-        path = Path(self.storage.artifacts_dir) / f"{artifact_id}{suffix}"
+        base_dir = Path(self.storage.artifacts_dir) / kind
+        base_dir.mkdir(parents=True, exist_ok=True)
+        path = base_dir / f"{artifact_id}{suffix}"
+        manifest_path = base_dir / f"{artifact_id}.manifest.json"
         path.write_bytes(raw)
         record = ArtifactRecord(
             artifact_id=artifact_id,
             kind=kind,
             path=str(path),
             sha256=sha,
+            sha3_256=sha3,
             size_bytes=len(raw),
             source_uri=source_uri,
             parent_artifact_id=parent_artifact_id,
+            manifest_path=str(manifest_path),
+            provenance={
+                "source_uri": source_uri,
+                "parent_artifact_id": parent_artifact_id,
+            },
             metadata=metadata or {},
         )
         self.conn.execute(
             """
             INSERT OR REPLACE INTO artifacts(
-              artifact_id, kind, path, sha256, size_bytes, created_at,
-              source_uri, parent_artifact_id, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              artifact_id, kind, path, sha256, sha3_256, size_bytes, created_at,
+              source_uri, parent_artifact_id, manifest_path, provenance_json, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.artifact_id,
                 record.kind,
                 record.path,
                 record.sha256,
+                record.sha3_256,
                 record.size_bytes,
                 record.created_at,
                 record.source_uri,
                 record.parent_artifact_id,
+                record.manifest_path,
+                _json(record.provenance),
                 _json(record.metadata),
             ),
         )
         self.conn.commit()
+        manifest_payload = {
+            "artifact": record.model_dump(mode="json"),
+            "content_suffix": suffix,
+            "created_at": record.created_at,
+        }
+        manifest_path.write_text(_json(manifest_payload), encoding="utf-8")
         self.audit("artifact.put", {"artifact_id": record.artifact_id, "kind": kind})
         return record
 
@@ -302,10 +337,13 @@ class EnaStore:
                 kind=row["kind"],
                 path=row["path"],
                 sha256=row["sha256"],
+                sha3_256=row["sha3_256"],
                 size_bytes=row["size_bytes"],
                 created_at=row["created_at"],
                 source_uri=row["source_uri"],
                 parent_artifact_id=row["parent_artifact_id"],
+                manifest_path=row["manifest_path"],
+                provenance=json.loads(row["provenance_json"]),
                 metadata=json.loads(row["metadata_json"]),
             )
             for row in rows
@@ -323,12 +361,39 @@ class EnaStore:
             kind=row["kind"],
             path=row["path"],
             sha256=row["sha256"],
+            sha3_256=row["sha3_256"],
             size_bytes=row["size_bytes"],
             created_at=row["created_at"],
             source_uri=row["source_uri"],
             parent_artifact_id=row["parent_artifact_id"],
+            manifest_path=row["manifest_path"],
+            provenance=json.loads(row["provenance_json"]),
             metadata=json.loads(row["metadata_json"]),
         )
+
+    def verify_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        record = self.get_artifact(artifact_id)
+        if record is None:
+            return {"ok": False, "artifact_id": artifact_id, "error": "artifact not found"}
+        path = Path(record.path)
+        if not path.exists():
+            return {"ok": False, "artifact_id": artifact_id, "error": "artifact path missing", "path": record.path}
+        raw = path.read_bytes()
+        sha256_ok = sha256_hex(raw) == record.sha256
+        sha3_ok = True if not record.sha3_256 else sha3_hex(raw) == record.sha3_256
+        manifest_ok = True
+        if record.manifest_path:
+            manifest_path = Path(record.manifest_path)
+            manifest_ok = manifest_path.exists()
+        return {
+            "ok": bool(sha256_ok and sha3_ok and manifest_ok),
+            "artifact_id": artifact_id,
+            "path": record.path,
+            "sha256_ok": sha256_ok,
+            "sha3_ok": sha3_ok,
+            "manifest_ok": manifest_ok,
+            "size_bytes": len(raw),
+        }
 
     def save_session(self, session: SessionRecord) -> SessionRecord:
         self.conn.execute(
@@ -480,18 +545,22 @@ class EnaStore:
         self.conn.execute(
             """
             INSERT OR REPLACE INTO search_indexes(
-              index_name, root, chunk_count, source_count, embedding_provider,
-              embedding_model, retrieval_mode, updated_at, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              index_name, root, index_schema_version, chunk_count, source_count, embedding_provider,
+              embedding_model, retrieval_mode, manifest_artifact_id, chunk_manifest_artifact_id,
+              updated_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.index_name,
                 record.root,
+                record.index_schema_version,
                 record.chunk_count,
                 record.source_count,
                 record.embedding_provider,
                 record.embedding_model,
                 record.retrieval_mode,
+                record.manifest_artifact_id,
+                record.chunk_manifest_artifact_id,
                 record.updated_at,
                 _json(record.metadata),
             ),
@@ -509,11 +578,14 @@ class EnaStore:
         return IndexRecord(
             index_name=row["index_name"],
             root=row["root"],
+            index_schema_version=row["index_schema_version"],
             chunk_count=row["chunk_count"],
             source_count=row["source_count"],
             embedding_provider=row["embedding_provider"],
             embedding_model=row["embedding_model"],
             retrieval_mode=row["retrieval_mode"],
+            manifest_artifact_id=row["manifest_artifact_id"],
+            chunk_manifest_artifact_id=row["chunk_manifest_artifact_id"],
             updated_at=row["updated_at"],
             metadata=json.loads(row["metadata_json"]),
         )
@@ -526,11 +598,14 @@ class EnaStore:
             IndexRecord(
                 index_name=row["index_name"],
                 root=row["root"],
+                index_schema_version=row["index_schema_version"],
                 chunk_count=row["chunk_count"],
                 source_count=row["source_count"],
                 embedding_provider=row["embedding_provider"],
                 embedding_model=row["embedding_model"],
                 retrieval_mode=row["retrieval_mode"],
+                manifest_artifact_id=row["manifest_artifact_id"],
+                chunk_manifest_artifact_id=row["chunk_manifest_artifact_id"],
                 updated_at=row["updated_at"],
                 metadata=json.loads(row["metadata_json"]),
             )
@@ -812,9 +887,9 @@ class EnaStore:
             """
             INSERT OR REPLACE INTO training_runs(
               run_id, status, backend, manifest_path, base_model, output_dir,
-              created_at, updated_at, command_json, checkpoint_paths_json,
-              artifact_ids_json, metrics_json, eval_report_json, metadata_json, error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              resumed_from_run_id, created_at, updated_at, command_json, checkpoint_paths_json,
+              checkpoint_manifest_json, artifact_ids_json, metrics_json, eval_report_json, metadata_json, error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.run_id,
@@ -823,10 +898,12 @@ class EnaStore:
                 record.manifest_path,
                 record.base_model,
                 record.output_dir,
+                record.resumed_from_run_id,
                 record.created_at,
                 record.updated_at,
                 _json(record.command),
                 _json(record.checkpoint_paths),
+                _json(record.checkpoint_manifest),
                 _json(record.artifact_ids),
                 _json(record.metrics),
                 _json(record.eval_report),
@@ -851,10 +928,12 @@ class EnaStore:
             manifest_path=row["manifest_path"],
             base_model=row["base_model"],
             output_dir=row["output_dir"],
+            resumed_from_run_id=row["resumed_from_run_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             command=json.loads(row["command_json"]),
             checkpoint_paths=json.loads(row["checkpoint_paths_json"]),
+            checkpoint_manifest=json.loads(row["checkpoint_manifest_json"]),
             artifact_ids=json.loads(row["artifact_ids_json"]),
             metrics=json.loads(row["metrics_json"]),
             eval_report=json.loads(row["eval_report_json"]),
@@ -877,10 +956,12 @@ class EnaStore:
                     manifest_path=row["manifest_path"],
                     base_model=row["base_model"],
                     output_dir=row["output_dir"],
+                    resumed_from_run_id=row["resumed_from_run_id"],
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     command=json.loads(row["command_json"]),
                     checkpoint_paths=json.loads(row["checkpoint_paths_json"]),
+                    checkpoint_manifest=json.loads(row["checkpoint_manifest_json"]),
                     artifact_ids=json.loads(row["artifact_ids_json"]),
                     metrics=json.loads(row["metrics_json"]),
                     eval_report=json.loads(row["eval_report_json"]),

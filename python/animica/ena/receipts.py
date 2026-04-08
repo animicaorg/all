@@ -43,6 +43,37 @@ def _artifact_hashes(store: EnaStore, artifact_ids: List[str], result: Dict[str,
     return hashes
 
 
+def _input_refs(job: JobRecord) -> List[str]:
+    refs: List[str] = []
+    refs.extend(str(item) for item in job.spec.sources if item)
+    for key in ("path", "dataset", "eval_dataset", "test_dataset", "seed_file", "index_name"):
+        value = job.spec.input_payload.get(key)
+        if value:
+            refs.append(f"{key}:{value}")
+    if job.spec.input_payload.get("texts"):
+        refs.append(f"texts:{len(job.spec.input_payload['texts'])}")
+    return sorted(dict.fromkeys(refs))
+
+
+def _output_refs(result: Dict[str, Any]) -> List[str]:
+    refs: List[str] = []
+    for key in ("output_path", "artifact_id", "index_name"):
+        value = result.get(key)
+        if value:
+            refs.append(f"{key}:{value}")
+    for artifact_id in _artifact_ids_from_result(result):
+        refs.append(f"artifact:{artifact_id}")
+    return sorted(dict.fromkeys(refs))
+
+
+def _event_timestamps(store: EnaStore, job_id: str) -> Dict[str, str]:
+    events = store.list_job_events(job_id)
+    timestamps: Dict[str, str] = {}
+    for event in events:
+        timestamps.setdefault(event["event"], event["created_at"])
+    return timestamps
+
+
 def build_credit_event(receipt: JobReceipt) -> Dict[str, Any]:
     credits = int(receipt.reward.get("credits", 0) or 0)
     ledger_id = sha3_hex(
@@ -81,11 +112,14 @@ def build_onchain_export(receipt: JobReceipt) -> Dict[str, Any]:
         "receipt_id": receipt.receipt_id,
         "job_id": receipt.job_id,
         "job_hash": receipt.job_hash,
+        "manifest_hash": receipt.manifest_hash,
         "job_type": receipt.job_type.value,
         "aicf_task_id": receipt.aicf_task_id,
         "aicf_job_kind": receipt.aicf_job_kind,
         "result_hash": receipt.result_hash,
         "verification_hash": receipt.verification_hash,
+        "input_refs": receipt.input_refs,
+        "output_refs": receipt.output_refs,
         "artifact_hashes": receipt.artifact_hashes,
         "reward": receipt.reward,
         "credit_event": credit_event,
@@ -105,6 +139,9 @@ def build_job_receipt(
     artifact_ids = _artifact_ids_from_result(job.result)
     artifact_hashes = _artifact_hashes(store, artifact_ids, job.result)
     source_hashes = sorted(dict.fromkeys(artifact_hashes.values()))
+    input_refs = _input_refs(job)
+    output_refs = _output_refs(job.result)
+    event_timestamps = _event_timestamps(store, job.job_id)
     components = [
         ReceiptScoreComponent(
             name="verification",
@@ -123,6 +160,7 @@ def build_job_receipt(
         receipt_id=stable_id("receipt", job.job_id, result_hash, verification_hash or ""),
         job_id=job.job_id,
         job_hash=job.job_hash or job.spec.job_hash,
+        manifest_hash=job.job_hash or job.spec.job_hash,
         job_type=job.job_type,
         job_status=job.status,
         aicf_task_id=job.aicf_task_id,
@@ -135,6 +173,9 @@ def build_job_receipt(
         verification_hash=verification_hash,
         verification_passed=bool(job.verification and job.verification.passed),
         result_hash=result_hash,
+        input_refs=input_refs,
+        output_refs=output_refs,
+        event_timestamps=event_timestamps,
         source_hashes=source_hashes,
         artifact_ids=artifact_ids,
         artifact_hashes=artifact_hashes,
@@ -148,13 +189,18 @@ def build_job_receipt(
             "status": job.status.value,
         },
     )
-    receipt.receipt_hash = _canonical_hash(receipt.model_copy(update={"receipt_hash": "", "onchain_payload": {}}))
+    receipt.receipt_hash = _canonical_hash(
+        receipt.model_copy(update={"receipt_hash": "", "onchain_payload": {}, "export_payload_hash": ""})
+    )
     receipt.onchain_payload = build_onchain_export(receipt)
+    receipt.export_payload_hash = _canonical_hash(receipt.onchain_payload)
     return receipt
 
 
 def validate_receipt(receipt: JobReceipt) -> Dict[str, Any]:
-    expected_hash = _canonical_hash(receipt.model_copy(update={"receipt_hash": "", "onchain_payload": {}}))
+    expected_hash = _canonical_hash(
+        receipt.model_copy(update={"receipt_hash": "", "onchain_payload": {}, "export_payload_hash": ""})
+    )
     ok = expected_hash == receipt.receipt_hash
     return {
         "ok": ok,
