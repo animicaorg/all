@@ -15,6 +15,7 @@ WalletEngine::WalletEngine(AnimicaRpcClient* rpcClient, QObject* parent)
     , m_addressBook(new AddressBook(this))
     , m_balanceTracker(new BalanceTracker(rpcClient, this))
     , m_autoLockMinutes(0)
+    , m_loaded(false)
     , m_locked(true)
 {
     connect(&m_autoLockTimer, &QTimer::timeout, this, &WalletEngine::handleAutoLock);
@@ -137,14 +138,47 @@ bool WalletEngine::createWallet(const QString& password, const QString& dataDir)
 
 bool WalletEngine::openWallet(const QString& walletFilePath)
 {
+    const QString previousBackendWalletFile = m_backend->walletFile();
+    const QString previousWalletFilePath = m_walletFilePath;
+    const QString previousDataDir = m_dataDir;
+    const QString previousAddressBookPath = m_addressBookPath;
+    const bool previousLoaded = m_loaded;
+    const bool previousLocked = m_locked;
+    const QList<WalletAccount> previousAccounts = m_accounts;
+
     QFileInfo info(walletFilePath);
-    m_walletFilePath = info.absoluteFilePath();
-    m_dataDir = info.absolutePath();
-    m_addressBookPath = QDir(m_dataDir).filePath("address_book.json");
-    m_backend->setWalletFile(m_walletFilePath);
+    const QString nextWalletFilePath = info.absoluteFilePath();
+    const QString nextDataDir = info.absolutePath();
+    const QString nextAddressBookPath = QDir(nextDataDir).filePath("address_book.json");
+
+    m_backend->setWalletFile(nextWalletFilePath);
 
     const QJsonObject response = backendResult("init_store");
     if (!response.value("ok").toBool()) {
+        m_backend->setWalletFile(previousBackendWalletFile);
+        m_walletFilePath = previousWalletFilePath;
+        m_dataDir = previousDataDir;
+        m_addressBookPath = previousAddressBookPath;
+        m_loaded = previousLoaded;
+        m_locked = previousLocked;
+        m_accounts = previousAccounts;
+        return false;
+    }
+
+    m_walletFilePath = nextWalletFilePath;
+    m_dataDir = nextDataDir;
+    m_addressBookPath = nextAddressBookPath;
+    m_loaded = true;
+
+    m_locked = false;
+    if (!reloadAccounts(false)) {
+        m_backend->setWalletFile(previousBackendWalletFile);
+        m_walletFilePath = previousWalletFilePath;
+        m_dataDir = previousDataDir;
+        m_addressBookPath = previousAddressBookPath;
+        m_loaded = previousLoaded;
+        m_locked = previousLocked;
+        m_accounts = previousAccounts;
         return false;
     }
 
@@ -152,8 +186,6 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
         emit error("Failed to load address book.");
     }
 
-    m_locked = false;
-    reloadAccounts(false);
     emit walletUnlocked();
     resetAutoLock();
     return true;
@@ -162,7 +194,7 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
 bool WalletEngine::unlockWallet(const QString& password)
 {
     Q_UNUSED(password);
-    if (m_walletFilePath.isEmpty()) {
+    if (!m_loaded) {
         emit error("No wallet store is loaded.");
         return false;
     }
@@ -192,7 +224,7 @@ void WalletEngine::lockWallet()
 
 bool WalletEngine::isLoaded() const
 {
-    return !m_walletFilePath.isEmpty();
+    return m_loaded;
 }
 
 bool WalletEngine::changePassword(const QString& oldPassword, const QString& newPassword)
@@ -234,6 +266,10 @@ QJsonArray WalletEngine::supportedAlgorithms() const
 
 WalletAccount WalletEngine::createAccount(const QString& label, int algId)
 {
+    if (!m_loaded) {
+        emit error("No wallet store is loaded.");
+        return WalletAccount();
+    }
     if (m_locked) {
         emit error("Wallet store is locked.");
         return WalletAccount();

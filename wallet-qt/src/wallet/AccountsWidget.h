@@ -67,6 +67,7 @@ private slots:
 
 private:
     void setupUi();
+    void updateActionState();
     void updateAccountRow(int row, const WalletAccount& account);
     void showAccountDetails(const WalletAccount& account);
     QString formatAddress(const QString& address) const;

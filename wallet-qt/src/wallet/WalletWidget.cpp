@@ -51,7 +51,7 @@ WalletWidget::WalletWidget(
     // Initial state
     m_engine->setExplorerUrl(QSettings().value("WalletQt/explorerUrl").toString());
     updateToolbarState();
-    updateStatus();
+    refresh();
     
     // Periodic status updates
     auto* statusTimer = new QTimer(this);
@@ -168,15 +168,17 @@ void WalletWidget::refresh()
 
 void WalletWidget::updateToolbarState()
 {
-    bool locked = m_engine->isLocked();
-    m_createAccountAction->setEnabled(!locked);
+    const bool createEnabled = m_engine->isLoaded() && !m_engine->isLocked();
+    m_createAccountAction->setEnabled(createEnabled);
 }
 
 void WalletWidget::updateStatus()
 {
     // Lock status
-    if (m_engine->isLocked()) {
+    if (!m_engine->isLoaded()) {
         m_statusLabel->setText("Wallet store unavailable");
+    } else if (m_engine->isLocked()) {
+        m_statusLabel->setText("Wallet store locked");
     } else {
         m_statusLabel->setText(QString("Wallets: %1").arg(m_engine->listAccounts().size()));
     }
@@ -193,7 +195,7 @@ void WalletWidget::setRpcEndpoint(const QString& endpoint)
 
 QString WalletWidget::formatTotalBalance() const
 {
-    if (m_engine->isLocked()) {
+    if (!m_engine->isLoaded() || m_engine->isLocked()) {
         return "Total: —";
     }
     
@@ -269,6 +271,12 @@ void WalletWidget::handleRpcError(const QString& message)
 
 void WalletWidget::handleCreateAccountRequested()
 {
+    if (!m_engine->isLoaded()) {
+        QMessageBox::warning(this, "Wallet Unavailable",
+                             "The wallet store is unavailable. The application could not open or create wallets.json.");
+        return;
+    }
+
     if (m_engine->isLocked()) {
         QMessageBox::information(this, "Wallet Locked",
                                 "Please unlock the wallet first to create an account.");

@@ -1,0 +1,22 @@
+{
+  "version": "v0.1.0-9a47e7d06",
+  "generated_at": "2026-04-08T23:08:49Z",
+  "linux": {
+    "architecture": "x86_64",
+    "build_label": "v0.1.0-9a47e7d06",
+    "deb_url": "/wallet/animica-wallet-linux.deb",
+    "deb_filename": "animica-wallet-linux.deb",
+    "deb_sha256": "ed9c60756403f9918e319107e64550e05276cc557bac5fab3db19a5642aed076",
+    "deb_size_bytes": 22669440,
+    "raw_url": "/wallet/animica-wallet",
+    "raw_filename": "animica-wallet",
+    "raw_sha256": "b1481d76fe6c7c196cebc989c021b0b37e62355830acbfc91037c4e4c61f69fe",
+    "raw_size_bytes": 1609560,
+    "package_checksum_url": "/wallet/animica-wallet-linux.sha256",
+    "package_checksum_filename": "animica-wallet-linux.sha256",
+    "package_checksum_size_bytes": 91,
+    "raw_checksum_url": "/wallet/animica-wallet.sha256",
+    "raw_checksum_filename": "animica-wallet.sha256",
+    "raw_checksum_size_bytes": 81
+  }
+}

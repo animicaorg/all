@@ -53,6 +53,7 @@ add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 add_wallet_test(test_datadirmanager test_datadirmanager.cpp)
 add_wallet_test(test_walletimporter test_walletimporter.cpp)
 add_wallet_test(test_node_manager test_node_manager.cpp)
+add_wallet_test(test_app_paths test_app_paths.cpp)
 add_wallet_test(test_receive_qr test_receive_qr.cpp)
 add_wallet_test(test_packaging_config test_packaging_config.cpp)
 
@@ -61,6 +62,22 @@ add_test(
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_linux_layout_resolver.py
 )
 set_tests_properties(test_linux_layout_resolver PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(
+    NAME test_wallet_manifest_generator
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_wallet_manifest_generator.py
+)
+set_tests_properties(test_wallet_manifest_generator PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(
+    NAME test_windows_cross_release_scripts
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_windows_cross_release_scripts.py
+)
+set_tests_properties(test_windows_cross_release_scripts PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
@@ -166,4 +183,8 @@ target_sources(test_node_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
+)
+
+target_sources(test_app_paths PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
 )

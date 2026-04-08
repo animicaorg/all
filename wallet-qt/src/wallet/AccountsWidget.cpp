@@ -24,6 +24,10 @@ AccountsWidget::AccountsWidget(WalletEngine* engine, QWidget* parent)
     connect(m_engine, &WalletEngine::accountUpdated, this, &AccountsWidget::handleAccountUpdated);
     connect(m_engine, &WalletEngine::accountRemoved, this, &AccountsWidget::handleAccountRemoved);
     connect(m_engine, &WalletEngine::balanceUpdated, this, &AccountsWidget::handleBalanceUpdated);
+    connect(m_engine, &WalletEngine::walletLocked, this, &AccountsWidget::refreshAccounts);
+    connect(m_engine, &WalletEngine::walletUnlocked, this, &AccountsWidget::refreshAccounts);
+
+    refreshAccounts();
 }
 
 void AccountsWidget::setupUi()
@@ -86,9 +90,16 @@ void AccountsWidget::setupUi()
 void AccountsWidget::refreshAccounts()
 {
     m_accountTable->setRowCount(0);
-    
-    if (!m_engine || m_engine->isLocked()) {
+
+    if (!m_engine || !m_engine->isLoaded()) {
+        m_statusLabel->setText("Accounts (Unavailable)");
+        updateActionState();
+        return;
+    }
+
+    if (m_engine->isLocked()) {
         m_statusLabel->setText("Accounts (Locked)");
+        updateActionState();
         return;
     }
     
@@ -100,6 +111,19 @@ void AccountsWidget::refreshAccounts()
         m_accountTable->insertRow(row);
         updateAccountRow(row, account);
     }
+
+    updateActionState();
+}
+
+void AccountsWidget::updateActionState()
+{
+    const bool storeAvailable = m_engine && m_engine->isLoaded();
+    const bool unlocked = storeAvailable && !m_engine->isLocked();
+    const bool hasSelection = !m_accountTable->selectedItems().isEmpty();
+
+    m_createButton->setEnabled(unlocked);
+    m_importButton->setEnabled(storeAvailable);
+    m_exportButton->setEnabled(unlocked && hasSelection);
 }
 
 void AccountsWidget::updateAccountRow(int row, const WalletAccount& account)
@@ -224,8 +248,8 @@ void AccountsWidget::onTableDoubleClicked(int row, int column)
 void AccountsWidget::onTableSelectionChanged()
 {
     bool hasSelection = !m_accountTable->selectedItems().isEmpty();
-    m_exportButton->setEnabled(hasSelection);
-    
+    updateActionState();
+
     if (hasSelection) {
         emit accountSelected(selectedAccountId());
     }

@@ -20,6 +20,9 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
 ]
+package = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 animica-studio = "animica_studio.app:main"

@@ -105,6 +105,7 @@ private:
     QList<WalletAccount> m_accounts;
     QTimer m_autoLockTimer;
     int m_autoLockMinutes;
+    bool m_loaded;
     bool m_locked;
     QString m_walletFilePath;
     QString m_dataDir;

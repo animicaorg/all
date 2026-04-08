@@ -1,4 +1,5 @@
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -193,6 +194,35 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&engine, "handleAutoLock", Qt::DirectConnection));
         QVERIFY(engine.isLocked());
         QCOMPARE(lockedSpy.count(), 2);
+    }
+
+    void testFailedOpenDoesNotMarkEngineLoaded()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+
+        const QString blockerPath = QDir(tmpDir.path()).filePath("not-a-directory");
+        QFile blocker(blockerPath);
+        QVERIFY(blocker.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        blocker.write("blocker");
+        blocker.close();
+
+        AnimicaRpcClient rpcClient;
+        WalletEngine engine(&rpcClient);
+        configureBackendEnvironment();
+
+        QVERIFY(!engine.openWallet(blockerPath + "/wallets.json"));
+        QVERIFY(!engine.isLoaded());
+        QVERIFY(engine.isLocked());
+        QCOMPARE(engine.listAccounts().size(), 0);
+
+        const WalletAccount failedAccount = engine.createAccount("Primary", 0x1001);
+        QVERIFY(failedAccount.accountId.isEmpty());
+        QVERIFY(failedAccount.address.isEmpty());
+
+        QVERIFY(engine.createWallet(QString(), tmpDir.path()));
+        QVERIFY(engine.isLoaded());
+        QVERIFY(!engine.isLocked());
     }
 };
 

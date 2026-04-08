@@ -1,0 +1,69 @@
+Unicode True
+CRCCheck on
+SetCompressor /SOLID lzma
+
+!include "MUI2.nsh"
+!include "x64.nsh"
+
+Name "Animica Wallet"
+BrandingText "Animica Wallet"
+OutFile "@OUTPUT_FILE@"
+InstallDir "@INSTALL_DIR@"
+InstallDirRegKey @REG_ROOT@ "@UNINSTALL_REG_KEY@" "InstallLocation"
+RequestExecutionLevel @REQUEST_EXECUTION_LEVEL@
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "@ICON_FILE@"
+!define MUI_UNICON "@ICON_FILE@"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\animica-wallet.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch Animica Wallet"
+!define MUI_FINISHPAGE_SHOWREADME ""
+
+VIProductVersion "@VERSION_DOTTED@"
+VIAddVersionKey /LANG=1033 "ProductName" "Animica Wallet"
+VIAddVersionKey /LANG=1033 "FileDescription" "Animica Wallet installer"
+VIAddVersionKey /LANG=1033 "CompanyName" "Animica"
+VIAddVersionKey /LANG=1033 "FileVersion" "@DISPLAY_VERSION@"
+VIAddVersionKey /LANG=1033 "ProductVersion" "@DISPLAY_VERSION@"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetShellVarContext @SHELL_VAR_CONTEXT@
+  SetOutPath "$INSTDIR"
+!include "@INSTALL_FILES_INCLUDE@"
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  CreateDirectory "$SMPROGRAMS\Animica Wallet"
+  CreateShortCut "$SMPROGRAMS\Animica Wallet\Animica Wallet.lnk" "$INSTDIR\animica-wallet.exe"
+  CreateShortCut "$SMPROGRAMS\Animica Wallet\Uninstall Animica Wallet.lnk" "$INSTDIR\uninstall.exe"
+
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "DisplayName" "Animica Wallet"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "DisplayVersion" "@DISPLAY_VERSION@"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "Publisher" "Animica"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "InstallLocation" "$INSTDIR"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "DisplayIcon" "$INSTDIR\animica-wallet.exe"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr @REG_ROOT@ "@UNINSTALL_REG_KEY@" "QuietUninstallString" "$INSTDIR\uninstall.exe /S"
+  WriteRegDWORD @REG_ROOT@ "@UNINSTALL_REG_KEY@" "NoModify" 1
+  WriteRegDWORD @REG_ROOT@ "@UNINSTALL_REG_KEY@" "NoRepair" 1
+SectionEnd
+
+Section "Uninstall"
+  SetShellVarContext @SHELL_VAR_CONTEXT@
+  Delete "$SMPROGRAMS\Animica Wallet\Animica Wallet.lnk"
+  Delete "$SMPROGRAMS\Animica Wallet\Uninstall Animica Wallet.lnk"
+  RMDir "$SMPROGRAMS\Animica Wallet"
+  DeleteRegKey @REG_ROOT@ "@UNINSTALL_REG_KEY@"
+!include "@UNINSTALL_FILES_INCLUDE@"
+  Delete "$INSTDIR\uninstall.exe"
+  RMDir "$INSTDIR"
+SectionEnd

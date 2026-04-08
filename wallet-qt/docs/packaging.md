@@ -62,14 +62,16 @@ All native release scripts build with `-DWALLET_REMOTE_RPC_ONLY=OFF`.
 - `create-dmg` for polished DMG generation
 - Apple signing credentials only if you are doing Developer ID signing/notarization
 
-### Windows
+### Windows from Linux
 
-- Qt 6 for MSVC
+- MinGW-w64 cross compiler (`x86_64-w64-mingw32-*`)
+- Qt 6 for Windows (MinGW target) plus Qt host tools on Linux
 - CMake 3.16+
+- Ninja
+- NSIS (`makensis`) for installer `.exe` generation
 - Python 3.10+
-- Visual Studio 2022 or newer with C++ tools
-- WiX Toolset v3 (`candle.exe`, `light.exe`) for MSI generation through CPack
-- `signtool.exe` only if you are code signing
+- Windows-target OpenSSL headers, import libraries, and DLLs
+- optional: a prebuilt Windows node virtual environment if you want the embedded-node bundle instead of the default remote-RPC-only build
 
 ## QR Dependency Note
 
@@ -185,61 +187,79 @@ export APPLE_TEAM_ID="TEAMID"
 
 ## Windows Commands
 
-### Build a staged runtime
+### Check Linux cross-build prerequisites
 
-```powershell
+```bash
 cd wallet-qt
-.\scripts\build-windows.ps1
+./scripts/build-windows-cross.sh --check
 ```
 
-Expected staged output:
+### Build a staged Windows runtime and release artifacts from Linux
 
-- `wallet-qt\build\windows\stage\`
+Remote-RPC-only build (default):
 
-### Build release ZIP and MSI
-
-Per-user MSI/ZIP:
-
-```powershell
+```bash
 cd wallet-qt
-.\scripts\release-windows.ps1
+./scripts/build-windows-cross.sh --clean
 ```
 
-Per-machine MSI/ZIP:
+Embedded-node build with a prebuilt Windows venv:
 
-```powershell
+```bash
 cd wallet-qt
-.\scripts\release-windows.ps1 -PerMachine
+./scripts/build-windows-cross.sh --clean --node-venv /abs/path/to/windows-node/venv
 ```
 
 Artifacts:
 
-- `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-x64.zip`
-- `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-x64.msi` when WiX v3 is installed
-- `dist\wallet-qt\<version>\windows\SHA256SUMS`
+- `wallet-qt/dist/windows/animica-wallet-setup-x64.exe`
+- `wallet-qt/dist/windows/animica-wallet-windows-x64.zip`
+- `wallet-qt/dist/windows/SHA256SUMS.txt`
 
-### Windows signing flow
+Expected staged output:
 
-```powershell
-$env:CODESIGN_CERT = "thumbprint-or-path-to-pfx"
-.\scripts\release-windows.ps1 -Sign
+- `wallet-qt/build/windows-cross/stage/`
+
+### Publish Windows downloads into the website
+
+```bash
+cd wallet-qt
+./scripts/publish-wallet-downloads.sh \
+  --platform windows \
+  --version "$(git describe --tags --always --dirty)" \
+  --source-dir ./dist/windows
 ```
 
-### Validate a staged or installed Windows runtime
+Combined build + website publish:
 
-```powershell
-.\scripts\smoke-test-windows.ps1 -WalletPath .\build\windows-release\stage
+```bash
+cd wallet-qt
+./scripts/release-windows-cross.sh --clean
+```
+
+### Validate a staged Windows runtime
+
+Remote-RPC-only verification:
+
+```bash
+./wallet-qt/scripts/verify-bundle-layout.py --platform windows --path ./wallet-qt/build/windows-cross/stage --remote-rpc-only
+```
+
+Embedded-node verification:
+
+```bash
+./wallet-qt/scripts/verify-bundle-layout.py --platform windows --path ./wallet-qt/build/windows-cross/stage
 ```
 
 ### Native Windows validation checklist
 
-- run `python .\wallet-qt\scripts\verify-bundle-layout.py --platform windows --path <stage-or-install-dir>`
-- confirm `platforms\qwindows.dll` exists
+- `.\scripts\release-windows.ps1` should produce `animica-wallet-setup-x64.exe`
+- verify `platforms\qwindows.dll` exists
 - run the packaged executable outside the repo checkout
 - confirm the receive tab renders a real QR and can save PNG
-- confirm Add/Remove Programs metadata is correct after MSI install
-- test uninstall from Apps & Features or `msiexec /x <product-code-or-msi>`
-- if signing is enabled, verify with `signtool verify /pa <artifact>`
+- confirm the NSIS installer writes Add/Remove Programs metadata correctly
+- confirm uninstall works from Apps & Features or the generated uninstaller
+- if you opted into the native PowerShell/WiX path, validate MSI install/uninstall separately
 
 ## Common Failure Points
 
@@ -264,7 +284,16 @@ Check:
 
 - the build/release flow used `cmake --install`
 - `platforms\qwindows.dll` exists in the staged runtime
-- `windeployqt.exe` is available if you need the fallback deployment step
+- the Linux cross-build was pointed at the correct `WINDOWS_QT_ROOT`
+
+### Linux cross-build stops before CMake configure
+
+Check:
+
+- `./wallet-qt/scripts/build-windows-cross.sh --check` passes
+- `WINDOWS_QT_ROOT` points at a Windows Qt prefix with `lib/cmake/Qt6/Qt6Config.cmake`
+- `QT_HOST_PATH` points at a Linux Qt host tools prefix
+- `WINDOWS_OPENSSL_ROOT` contains Windows-target headers, import libraries, and DLLs
 
 ### Packaged app still depends on the repo checkout
 

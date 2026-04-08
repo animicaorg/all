@@ -3,6 +3,8 @@
 ## Current Runtime Expectations
 - install Studio extras into repo venv:
   - `.venv/bin/pip install -e 'apps/animica_studio[dev]'`
+- install packaging tooling when building release artifacts:
+  - `.venv/bin/pip install -e 'apps/animica_studio[package]'`
 - for headless smoke:
   - `QT_QPA_PLATFORM=offscreen`
 - writable runtime override when needed:
@@ -15,12 +17,13 @@
 - startup no longer requires synchronous CLI help probing
 - heavy pages are lazy-loaded, so packaged launch is less sensitive to optional subsystems on first paint
 - worker signal emission is hardened against deleted Qt objects during shutdown
+- packaging scripts now emit platform-native release artifacts: Linux `.deb`, macOS `.app`, Windows `.exe`
 
 ## Packaging Risks Still Open
 - packaged Qt plugin/resource discovery has not been exercised
 - CLI discovery in packaged mode may still need an explicit bundled CLI path or documented external-CLI requirement
 - ENA/DA local-ingest features require real host-path and node-mount validation on the packaged target machine
-- macOS signing/notarization and Linux desktop integration remain unvalidated
+- macOS signing/notarization, Windows code-signing, and installed-package validation remain unvalidated
 
 ## Suggested Packaging Smoke
 1. Launch packaged Studio with a clean writable app-data dir.

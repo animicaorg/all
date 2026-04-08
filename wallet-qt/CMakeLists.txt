@@ -14,6 +14,7 @@ configure_file(
 )
 
 option(WALLET_REMOTE_RPC_ONLY "Disable embedded node and use remote RPC only" ON)
+option(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT "Use Qt's install-time deployment script when supported" ON)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -126,14 +127,6 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
     )
 endif()
 
-if(QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE))
-    qt_generate_deploy_app_script(
-        TARGET animica-wallet
-        OUTPUT_SCRIPT qt_deploy_script
-        NO_UNSUPPORTED_PLATFORM_ERROR
-    )
-endif()
-
 set(HEADERS
     src/platform/AppPaths.h
     src/platform/DataDirManager.h
@@ -185,6 +178,14 @@ endif()
 
 # Create executable
 add_executable(animica-wallet ${SOURCES} ${HEADERS})
+
+if(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT AND QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE))
+    qt_generate_deploy_app_script(
+        TARGET animica-wallet
+        OUTPUT_SCRIPT qt_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+endif()
 
 # Compiler-specific warnings
 if(MSVC)
@@ -416,7 +417,7 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
     endif()
 endif()
 
-if(QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE) AND qt_deploy_script)
+if(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT AND QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE) AND qt_deploy_script)
     install(SCRIPT "${qt_deploy_script}")
 endif()
 
@@ -456,6 +457,7 @@ message(STATUS "Version: ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Qt version: ${Qt6_VERSION}")
+message(STATUS "Qt install deployment: ${WALLET_ENABLE_QT_INSTALL_DEPLOYMENT}")
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "Build tests: ${BUILD_TESTING}")
 message(STATUS "========================================")
