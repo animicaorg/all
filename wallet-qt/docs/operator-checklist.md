@@ -23,7 +23,10 @@ Run this after building a development or release artifact.
 
 - Select each wallet in the receive tab.
 - Confirm the correct address is shown.
+- Confirm a real QR is rendered for the selected wallet.
+- Enter an optional amount and message and confirm the QR refreshes.
 - Use copy address and verify clipboard contents.
+- Use `Save QR as PNG` and confirm the file is written and opens as a valid image.
 - Confirm balance refresh updates the selected wallet.
 
 ## Send
@@ -70,3 +73,6 @@ Run this after building a development or release artifact.
 - Confirm the packaged runtime can locate the embedded node Python.
 - On Linux installs, verify `/usr/lib/animica-wallet/node/venv/bin/python`.
 - On AppImage, verify `usr/lib/node/venv/bin/python` after extraction.
+- On macOS, verify `Contents/PlugIns/platforms/libqcocoa.dylib`.
+- On Windows, verify `platforms\qwindows.dll`.
+- Confirm the packaged receive tab still renders a QR and can save PNG.

@@ -3,10 +3,16 @@
 
 #include <QWidget>
 #include <QComboBox>
+#include <QFutureWatcher>
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QString>
+#include <QTimer>
+
+#include "ReceiveQrService.h"
+
+#include <memory>
 
 class WalletEngine;
 struct Balance;
@@ -17,13 +23,14 @@ struct Balance;
  * Displays:
  * - Account selector with balance
  * - Current account address with copy button
- * - QR code / QR availability notice for address
- * - Optional payment note field
+ * - QR code rendered from the receive URI
+ * - Optional request amount and message fields
  * 
  * Features:
  * - Copy address to clipboard with visual feedback
+ * - Save QR code as PNG
  * - Monospace font for address display
- * - Auto-updates when accounts change
+ * - Auto-updates when accounts or QR inputs change
  * 
  * Layout:
  * ┌─────────────────────────────────────┐
@@ -41,11 +48,12 @@ struct Balance;
  * │                                     │
  * │       ┌───────────────┐             │
  * │       │   QR Code     │             │
- * │       │  (Placeholder)│             │
+ * │       │    PNG QR     │             │
  * │       └───────────────┘             │
  * │                                     │
- * │ Payment Note: [___________________] │
- * │ (local label, not sent)            │
+ * │ Amount:        [_______________]    │
+ * │ Message:       [_______________]    │
+ * │ [Save QR as PNG]                    │
  * │                                     │
  * └─────────────────────────────────────┘
  * 
@@ -67,7 +75,8 @@ public:
      */
     explicit ReceiveWidget(
         WalletEngine* walletEngine,
-        QWidget* parent = nullptr
+        QWidget* parent = nullptr,
+        std::shared_ptr<ReceiveQrService> qrService = nullptr
     );
     
     ~ReceiveWidget();
@@ -81,25 +90,40 @@ public slots:
 private slots:
     void onAccountChanged(int index);
     void onCopyClicked();
+    void onSaveQrClicked();
     void onBalanceUpdated(const QString& address, const Balance& balance);
+    void onQrGenerationFinished();
     
 private:
     void setupUi();
     void updateAccounts();
     void updateAddress();
     void updateBalance();
-    void generateQRCode();
+    void scheduleQrGeneration();
+    void startQrGeneration();
+    void applyQrResult(const ReceiveQrResult& result);
     QString formatBalance(qint64 wei) const;
     
     WalletEngine* m_walletEngine;
+    std::shared_ptr<ReceiveQrService> m_qrService;
     
     // UI components
     QComboBox* m_accountCombo;
     QLabel* m_addressLabel;
     QLabel* m_qrCodeLabel;
+    QLabel* m_qrStatusLabel;
     QPushButton* m_copyButton;
-    QLineEdit* m_noteEdit;
+    QPushButton* m_saveQrButton;
+    QLineEdit* m_amountEdit;
+    QLineEdit* m_messageEdit;
     QLabel* m_balanceLabel;
+    QTimer* m_qrUpdateTimer;
+    QFutureWatcher<ReceiveQrResult>* m_qrWatcher;
+    QImage m_currentQrImage;
+    QString m_currentQrPayload;
+    quint64 m_qrRequestedRevision;
+    quint64 m_qrActiveRevision;
+    bool m_qrGenerationPending;
 };
 
 #endif // RECEIVEWIDGET_H

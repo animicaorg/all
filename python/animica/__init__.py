@@ -7,14 +7,25 @@ This package hosts Python-side utilities for the Animica stack
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-# Editable installs expose `/root/animica/python` but not the monorepo root.
-# Add the repo root so sibling packages like `aicf` and `capabilities` resolve
-# when the CLI is launched via the console-script entrypoint.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
+def _resolve_repo_root() -> Path | None:
+    override = os.environ.get("ANIMICA_REPO_ROOT")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if (candidate / "python" / "animica").exists():
+            return candidate
+
+    candidate = Path(__file__).resolve().parents[2]
+    if (candidate / "python" / "animica").exists():
+        return candidate
+    return None
+
+
+REPO_ROOT = _resolve_repo_root()
+if REPO_ROOT is not None and str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 __all__ = ["cli", "config", "da", "mining", "stratum_pool", "wallet_cli"]

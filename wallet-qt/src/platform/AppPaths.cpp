@@ -1,6 +1,7 @@
 #include "AppPaths.h"
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QDebug>
 
 QString AppPaths::baseDir()
@@ -82,13 +83,105 @@ QString AppPaths::nodeInfoFile()
 
 QString AppPaths::getBundledNodePath()
 {
-#ifdef BUNDLED_NODE_PATH
-    return QString(BUNDLED_NODE_PATH);
-#else
-    // Fallback: assume node is in ../node relative to executable
     QDir appDir(QCoreApplication::applicationDirPath());
-    return appDir.filePath("node");
+    QStringList candidates;
+
+    const QString override = qEnvironmentVariable("ANIMICA_WALLET_NODE_DIR");
+    if (!override.isEmpty()) {
+        candidates << override;
+    }
+
+#ifdef Q_OS_MACOS
+    candidates << appDir.filePath("../Resources/node");
+#elif defined(Q_OS_WIN)
+    candidates << appDir.filePath("node");
+#else
+    candidates << appDir.filePath("node");
+    candidates << appDir.filePath("../lib/node");
+    candidates << appDir.filePath("../lib/animica-wallet/node");
+    candidates << QStringLiteral("/usr/lib/animica-wallet/node");
 #endif
+
+#ifdef BUNDLED_NODE_PATH
+    candidates << QStringLiteral(BUNDLED_NODE_PATH);
+#endif
+
+    for (const QString& candidate : candidates) {
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isDir()) {
+            return info.absoluteFilePath();
+        }
+    }
+
+    return appDir.filePath("node");
+}
+
+QString AppPaths::bundledPythonPath()
+{
+    const QString nodeDir = getBundledNodePath();
+    if (nodeDir.isEmpty()) {
+        return QString();
+    }
+
+#ifdef Q_OS_WIN
+    const QString candidate = QDir(nodeDir).filePath("venv/Scripts/python.exe");
+#else
+    const QString candidate = QDir(nodeDir).filePath("venv/bin/python");
+#endif
+
+    const QFileInfo info(candidate);
+    if (info.exists() && info.isExecutable()) {
+        return info.absoluteFilePath();
+    }
+    return QString();
+}
+
+QString AppPaths::bundledAssetsDir()
+{
+    const QString candidate = QDir(getBundledNodePath()).filePath("assets");
+    const QFileInfo info(candidate);
+    if (info.exists() && info.isDir()) {
+        return info.absoluteFilePath();
+    }
+    return QString();
+}
+
+QString AppPaths::bundledParamsPath()
+{
+    const QString assetsDir = bundledAssetsDir();
+    if (assetsDir.isEmpty()) {
+        return QString();
+    }
+
+    const QString candidate = QDir(assetsDir).filePath("spec/params.yaml");
+    const QFileInfo info(candidate);
+    if (info.exists() && info.isFile()) {
+        return info.absoluteFilePath();
+    }
+    return QString();
+}
+
+QString AppPaths::bundledGenesisPath(const QString& network)
+{
+    const QString assetsDir = bundledAssetsDir();
+    if (assetsDir.isEmpty()) {
+        return QString();
+    }
+
+    const QString normalized = network.trimmed().toLower();
+    QString fileName = QStringLiteral("mainnet.json");
+    if (normalized == QStringLiteral("testnet")) {
+        fileName = QStringLiteral("testnet.json");
+    } else if (normalized == QStringLiteral("devnet")) {
+        fileName = QStringLiteral("devnet.json");
+    }
+
+    const QString candidate = QDir(assetsDir).filePath(QStringLiteral("genesis/%1").arg(fileName));
+    const QFileInfo info(candidate);
+    if (info.exists() && info.isFile()) {
+        return info.absoluteFilePath();
+    }
+    return QString();
 }
 
 bool AppPaths::ensureDirectoriesExist()

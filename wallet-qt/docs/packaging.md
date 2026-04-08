@@ -2,49 +2,43 @@
 
 ## Scope
 
-Packaging in `wallet-qt/` targets a bundled desktop wallet, not a thin remote-RPC shell. All release scripts now configure with `-DWALLET_REMOTE_RPC_ONLY=OFF` so the embedded node and Python wallet bridge are included.
+`wallet-qt/` ships a bundled desktop wallet with:
 
-The bundled runtime is validated against:
+- the Qt GUI
+- the embedded Python/node runtime
+- runtime assets required outside the repo checkout
+- platform-native packaging scripts for Linux, macOS, and Windows
 
-- `rpc`
-- `animica.qt_wallet_bridge`
-- `omni_sdk`
-- `core`
+All native release scripts build with `-DWALLET_REMOTE_RPC_ONLY=OFF`.
 
-## Verified Runtime Layout
+## Runtime Layout
 
 ### Linux install tree
 
-Verified locally:
+- executable: `bin/animica-wallet`
+- embedded node: `lib/animica-wallet/node/venv/bin/python`
+- bundled chain params: `lib/animica-wallet/node/assets/spec/params.yaml`
+- bundled genesis files: `lib/animica-wallet/node/assets/genesis/*.json`
 
-- executable: `/tmp/walletqt-bundled-install/bin/animica-wallet`
-- embedded node: `/tmp/walletqt-bundled-install/lib/animica-wallet/node/venv/bin/python`
+### Linux AppImage
 
-Equivalent packaged layout:
+- executable: `usr/bin/animica-wallet`
+- embedded node: `usr/lib/node/venv/bin/python`
+- bundled chain params: `usr/lib/node/assets/spec/params.yaml`
 
-- `/usr/bin/animica-wallet`
-- `/usr/lib/animica-wallet/node/venv/bin/python`
+### macOS app bundle
 
-### AppImage
+- executable: `AnimicaWallet.app/Contents/MacOS/AnimicaWallet`
+- embedded node: `AnimicaWallet.app/Contents/Resources/node/venv/bin/python`
+- bundled chain params: `AnimicaWallet.app/Contents/Resources/node/assets/spec/params.yaml`
+- Qt platform plugin: `AnimicaWallet.app/Contents/PlugIns/platforms/libqcocoa.dylib`
 
-Expected runtime path inside AppImage:
+### Windows staged/install tree
 
-- `usr/bin/animica-wallet`
-- `usr/lib/node/venv/bin/python`
-
-### macOS
-
-Expected runtime path:
-
-- `AnimicaWallet.app/Contents/MacOS/AnimicaWallet`
-- `AnimicaWallet.app/Contents/Resources/node/venv/bin/python`
-
-### Windows
-
-Expected runtime path:
-
-- `animica-wallet.exe`
-- `node\venv\Scripts\python.exe`
+- executable: `animica-wallet.exe`
+- embedded node: `node\venv\Scripts\python.exe`
+- bundled chain params: `node\assets\spec\params.yaml`
+- Qt platform plugin: `platforms\qwindows.dll`
 
 ## Prerequisites
 
@@ -53,8 +47,8 @@ Expected runtime path:
 - Qt 6
 - CMake 3.16+
 - Python 3.10+
-- `linuxdeployqt` for AppImage
-- `dpkg-deb` for `.deb`
+- `linuxdeployqt` for AppImage generation
+- `dpkg-deb` / CPack tooling for `.deb`
 
 ### macOS
 
@@ -62,42 +56,70 @@ Expected runtime path:
 - CMake 3.16+
 - Python 3.10+
 - Xcode command line tools
-- `create-dmg` for DMG generation
+- `create-dmg` for polished DMG generation
+- Apple signing credentials only if you are doing Developer ID signing/notarization
 
 ### Windows
 
 - Qt 6 for MSVC
 - CMake 3.16+
 - Python 3.10+
-- Visual Studio 2019 or newer
-- WiX Toolset for MSI
-- `windeployqt.exe` recommended for ZIP staging and Qt runtime deployment
+- Visual Studio 2022 or newer with C++ tools
+- WiX Toolset v3 (`candle.exe`, `light.exe`) for MSI generation through CPack
+- `signtool.exe` only if you are code signing
 
-## Exact Build Commands
+## QR Dependency Note
 
-### Linux AppImage
+The receive screen uses the bundled Python runtime to render QR PNGs via the `animica.wallet_qr` helper. The packaged node build must therefore include the `animica[wallet_qt]` extra, which pulls in:
+
+- `segno`
+- `pypng`
+
+If those dependencies are missing, the UI shows an explicit actionable failure state instead of a fake QR placeholder.
+
+## Linux Commands
+
+### Build a bundled runtime
 
 ```bash
 cd wallet-qt
-./scripts/release-linux.sh --appimage-only
+cmake -S . -B build/linux-bundled -DCMAKE_BUILD_TYPE=Release -DWALLET_REMOTE_RPC_ONLY=OFF -DBUILD_TESTING=OFF
+cmake --build build/linux-bundled -j"$(nproc)"
 ```
 
-Artifact:
+### Build release artifacts
+
+```bash
+cd wallet-qt
+./scripts/release-linux.sh
+```
+
+Artifacts:
 
 - `dist/wallet-qt/<version>/linux/AnimicaWallet-<version>-linux-<arch>.AppImage`
+- `dist/wallet-qt/<version>/linux/animica-wallet_<version>_<arch>.deb`
+- `dist/wallet-qt/<version>/linux/SHA256SUMS`
 
-### Linux DEB
+### Validate Linux artifacts
+
+```bash
+./wallet-qt/scripts/smoke-test-linux.sh <path-to-AppImage-or-wallet-executable>
+```
+
+## macOS Commands
+
+### Build a staged `.app`
 
 ```bash
 cd wallet-qt
-./scripts/release-linux.sh --deb-only
+./scripts/build-mac.sh --clean
 ```
 
-Artifact:
+Expected staged output:
 
-- `dist/wallet-qt/<version>/linux/animica-wallet_<version-without-v>_<deb-arch>.deb`
+- `wallet-qt/build/mac/stage/AnimicaWallet.app`
 
-### macOS app bundle / DMG
+### Build release `.app` and `.dmg`
 
 ```bash
 cd wallet-qt
@@ -108,77 +130,148 @@ Artifacts:
 
 - `dist/wallet-qt/<version>/macos/AnimicaWallet-<version>-macos-<arch>.app`
 - `dist/wallet-qt/<version>/macos/AnimicaWallet-<version>-macos-<arch>.dmg`
+- `dist/wallet-qt/<version>/macos/SHA256SUMS`
 
-### Windows MSI / ZIP fallback
+### macOS signing flows
+
+Ad-hoc validation signing:
+
+```bash
+cd wallet-qt
+./scripts/release-mac.sh --adhoc-sign --dmg
+```
+
+Developer ID signing:
+
+```bash
+export CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+./scripts/release-mac.sh --sign --dmg
+```
+
+Notarization placeholder:
+
+```bash
+export CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export APPLE_ID="you@example.com"
+export APPLE_TEAM_ID="TEAMID"
+./scripts/release-mac.sh --sign --notarize --dmg
+```
+
+### Validate a staged or release macOS bundle
+
+```bash
+./wallet-qt/scripts/smoke-test-mac.sh /path/to/AnimicaWallet.app
+```
+
+### Native macOS validation checklist
+
+- run `python3 wallet-qt/scripts/verify-bundle-layout.py --platform macos --path <app>`
+- confirm `Contents/PlugIns/platforms/libqcocoa.dylib` exists
+- run `otool -L <app>/Contents/MacOS/AnimicaWallet`
+- launch the app with `open <app>`
+- confirm the receive tab renders a real QR and can save PNG
+- if distributing publicly, verify signing with `codesign --verify --verbose=2 <app>`
+- if notarized, verify with `spctl --assess --type execute --verbose=2 <app>`
+
+## Windows Commands
+
+### Build a staged runtime
+
+```powershell
+cd wallet-qt
+.\scripts\build-windows.ps1
+```
+
+Expected staged output:
+
+- `wallet-qt\build\windows\stage\`
+
+### Build release ZIP and MSI
+
+Per-user MSI/ZIP:
 
 ```powershell
 cd wallet-qt
 .\scripts\release-windows.ps1
 ```
 
+Per-machine MSI/ZIP:
+
+```powershell
+cd wallet-qt
+.\scripts\release-windows.ps1 -PerMachine
+```
+
 Artifacts:
 
-- MSI when WiX is installed:
-  `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-<arch>.msi`
-- ZIP fallback otherwise:
-  `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-<arch>.zip`
+- `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-x64.zip`
+- `dist\wallet-qt\<version>\windows\AnimicaWallet-<version>-windows-x64.msi` when WiX v3 is installed
+- `dist\wallet-qt\<version>\windows\SHA256SUMS`
 
-## What the Release Scripts Do
+### Windows signing flow
 
-- build the Qt wallet with `WALLET_REMOTE_RPC_ONLY=OFF`
-- build the embedded Python node environment
-- verify the bridge/runtime imports
-- stage platform-specific runtime files
-- produce checksums in `SHA256SUMS`
+```powershell
+$env:CODESIGN_CERT = "thumbprint-or-path-to-pfx"
+.\scripts\release-windows.ps1 -Sign
+```
 
-On Windows, the fallback ZIP path now prefers `windeployqt` so the stage contains Qt runtime DLLs instead of only the executable.
+### Validate a staged or installed Windows runtime
 
-## Troubleshooting
+```powershell
+.\scripts\smoke-test-windows.ps1 -WalletPath .\build\windows-release\stage
+```
 
-### `pip` or dependency install fails during bundled configure
+### Native Windows validation checklist
 
-Cause:
+- run `python .\wallet-qt\scripts\verify-bundle-layout.py --platform windows --path <stage-or-install-dir>`
+- confirm `platforms\qwindows.dll` exists
+- run the packaged executable outside the repo checkout
+- confirm the receive tab renders a real QR and can save PNG
+- confirm Add/Remove Programs metadata is correct after MSI install
+- test uninstall from Apps & Features or `msiexec /x <product-code-or-msi>`
+- if signing is enabled, verify with `signtool verify /pa <artifact>`
 
-- no network access while building the embedded venv
+## Common Failure Points
 
-Fix:
-
-- rerun the configure/build outside a restricted sandbox
-- or pre-populate the build host with the required Python dependencies
-
-### AppImage starts but embedded node cannot be found
-
-Check:
-
-- `usr/lib/node/venv/bin/python` exists inside the extracted AppImage
-
-The runtime search path now explicitly includes the AppImage layout.
-
-### Linux package install works but wallet cannot find embedded node
+### QR generation fails in the receive tab
 
 Check:
 
-- `/usr/lib/animica-wallet/node/venv/bin/python`
+- the bundled Python can import `animica.wallet_qr`
+- `segno` and `pypng` are present in the staged runtime
 
-The wallet and node manager now look in the installed package path, not only in the build tree.
-
-### Windows MSI missing Qt runtime
-
-Check:
-
-- build with Qt 6
-- ensure WiX and Qt deployment tools are available
-- verify `cmake --install` includes the deployed Qt runtime during MSI creation
-
-### macOS bundle opens but node will not start
+### macOS app starts but fails with a Qt platform plugin error
 
 Check:
 
-- `AnimicaWallet.app/Contents/Resources/node/venv/bin/python`
-- code signing/notarization if distributing publicly
+- the build/release flow used `cmake --install`
+- `Contents/PlugIns/platforms/libqcocoa.dylib` exists
+- `python3 wallet-qt/scripts/verify-bundle-layout.py --platform macos --path <app>` passes
 
-## Reproducibility Notes
+### Windows package starts but fails with `qwindows.dll` missing
 
-- Build on the native target OS for DMG/MSI/AppImage generation.
-- Keep the same Python major/minor version across release machines where possible.
-- Preserve the generated `SHA256SUMS` file with release artifacts.
+Check:
+
+- the build/release flow used `cmake --install`
+- `platforms\qwindows.dll` exists in the staged runtime
+- `windeployqt.exe` is available if you need the fallback deployment step
+
+### Packaged app still depends on the repo checkout
+
+Check:
+
+- `AnimicaNode.cmake` did not use editable installs
+- the staged runtime includes `node/assets/spec/params.yaml`
+- the staged runtime includes `node/assets/genesis/*.json`
+
+## Release Verification Checklist
+
+Use this after each native build:
+
+- wallet opens
+- balances load
+- receive address shows a real QR
+- QR saves as PNG
+- send form opens
+- history loads
+- packaged app launches on the target OS without the repo checkout

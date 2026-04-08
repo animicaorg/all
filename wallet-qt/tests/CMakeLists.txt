@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 enable_testing()
 
 # Find Qt6 Test module
-find_package(Qt6 COMPONENTS Test REQUIRED)
+find_package(Qt6 COMPONENTS Test Widgets Concurrent REQUIRED)
 
 # Common include directories
 set(TEST_INCLUDE_DIRS
@@ -26,8 +26,10 @@ function(add_wallet_test TEST_NAME TEST_SOURCE)
         Qt6::Test
         Qt6::Core
         Qt6::Gui
+        Qt6::Widgets
         Qt6::Network
         Qt6::Sql
+        Qt6::Concurrent
         OpenSSL::SSL
         OpenSSL::Crypto
     )
@@ -50,6 +52,8 @@ add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 add_wallet_test(test_datadirmanager test_datadirmanager.cpp)
 add_wallet_test(test_walletimporter test_walletimporter.cpp)
 add_wallet_test(test_node_manager test_node_manager.cpp)
+add_wallet_test(test_receive_qr test_receive_qr.cpp)
+add_wallet_test(test_packaging_config test_packaging_config.cpp)
 
 # Add RPC MOC syntax test (verifies AnimicaRpcClient.h compiles with AUTOMOC)
 add_wallet_test(test_rpc_moc_syntax test_rpc_moc_syntax.cpp)
@@ -81,8 +85,31 @@ target_compile_definitions(test_wallet_engine PRIVATE
     ANIMICA_REPO_ROOT_PATH="${ANIMICA_REPO_ROOT}"
 )
 
+target_compile_definitions(test_receive_qr PRIVATE
+    ANIMICA_REPO_ROOT_PATH="${ANIMICA_REPO_ROOT}"
+)
+
+target_compile_definitions(test_packaging_config PRIVATE
+    WALLET_QT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
 target_sources(test_walletdatabase PRIVATE
     ${CMAKE_SOURCE_DIR}/src/wallet/WalletDatabase.cpp
+)
+
+target_sources(test_receive_qr PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/ReceiveWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/ReceiveQrService.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletEngine.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AnimicaWalletBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletAccount.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AccountManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AddressBook.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/BalanceTracker.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
 )
 
 # Link diagnostics sources to tests

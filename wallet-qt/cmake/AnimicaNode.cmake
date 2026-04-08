@@ -128,7 +128,7 @@ function(animica_build_node OUT_VAR)
     if(EXISTS "${SDK_PATH}/pyproject.toml")
         message(STATUS "Installing omni-sdk from ${SDK_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install -e "${SDK_PATH}"
+            COMMAND ${NODE_PIP} install "${SDK_PATH}"
             RESULT_VARIABLE SDK_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE SDK_ERROR
@@ -141,12 +141,12 @@ function(animica_build_node OUT_VAR)
         message(WARNING "omni-sdk not found at ${SDK_PATH}")
     endif()
     
-    # Install animica package (CLI + node)
+    # Install animica package (CLI + node + wallet QR helper)
     set(ANIMICA_PATH "${ANIMICA_REPO_ROOT}/python")
     if(EXISTS "${ANIMICA_PATH}/pyproject.toml")
         message(STATUS "Installing animica package from ${ANIMICA_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install -e "${ANIMICA_PATH}"
+            COMMAND ${NODE_PIP} install "${ANIMICA_PATH}[wallet_qt]"
             RESULT_VARIABLE ANIMICA_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE ANIMICA_ERROR
@@ -168,7 +168,7 @@ function(animica_build_node OUT_VAR)
     if(EXISTS "${PQ_PATH}/pyproject.toml")
         message(STATUS "Installing pq package from ${PQ_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install -e "${PQ_PATH}"
+            COMMAND ${NODE_PIP} install "${PQ_PATH}"
             RESULT_VARIABLE PQ_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE PQ_ERROR
@@ -200,6 +200,7 @@ function(animica_build_node OUT_VAR)
         queue
         chains
         genesis
+        spec
         services
         billing
         relayer
@@ -235,7 +236,7 @@ function(animica_build_node OUT_VAR)
     # Verify installation
     message(STATUS "Verifying node installation")
     execute_process(
-        COMMAND ${NODE_PYTHON} -c "import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core"
+        COMMAND ${NODE_PYTHON} -c "import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core"
         RESULT_VARIABLE VERIFY_RESULT
         ERROR_VARIABLE VERIFY_ERROR
     )

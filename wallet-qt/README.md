@@ -7,7 +7,7 @@
 - Wallet creation, import, rename, default selection, removal, public export, and guarded secret export
 - Real balance refresh with per-wallet totals, connection state, and periodic polling
 - Send flow with canonical address validation, balance/fee preflight, confirmation, submission, and pending tracking
-- Receive flow with wallet selector, copy address, and local receive note
+- Receive flow with wallet selector, copy address, live QR generation, optional amount/message fields, and PNG export
 - Transaction history with filters, details, and CSV/JSON export
 - Address book with add/edit/delete, merge-or-replace import, JSON/CSV export, duplicate prevention, and own-address tagging
 - Contract interaction for ABI-driven read/write calls plus raw-call fallback
@@ -73,12 +73,13 @@ ctest --output-on-failure -R 'test_keystore_security|test_wallet_engine|test_wal
 
 ## Packaging
 
-See [docs/packaging.md](docs/packaging.md) and [docs/RELEASING.md](docs/RELEASING.md).
+See [docs/receive_qr.md](docs/receive_qr.md), [docs/packaging.md](docs/packaging.md), and [docs/RELEASING.md](docs/RELEASING.md).
 
 Quick commands:
 
 ```bash
 ./wallet-qt/scripts/release-linux.sh --appimage-only
+./wallet-qt/scripts/release-mac.sh --adhoc-sign --dmg
 ./wallet-qt/scripts/release-mac.sh --dmg
 pwsh ./wallet-qt/scripts/release-windows.ps1
 ```
@@ -87,6 +88,6 @@ pwsh ./wallet-qt/scripts/release-windows.ps1
 
 Use [docs/operator-checklist.md](docs/operator-checklist.md) after each build.
 
-## Known Limitation
+## Native Validation Boundary
 
-The receive screen currently shows a clear "QR unavailable in this build" notice instead of generating a QR image. The wallet does not ship a QR dependency yet, so the UI does not fake one.
+Linux build and packaging verification can be exercised in this environment. DMG creation/signing/notarization and MSI installation validation still require native macOS and Windows hosts even though the scripts and staged-runtime checks are now wired in-tree.

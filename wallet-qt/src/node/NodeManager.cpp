@@ -169,6 +169,16 @@ bool NodeManager::startNode(const QString& network)
     env.insert("ANIMICA_CHAIN_ID", QString::number(chainId));
     env.insert("ANIMICA_LOG_LEVEL", "INFO");
     env.insert("PYTHONUNBUFFERED", "1");  // Disable Python output buffering
+
+    const QString bundledParams = AppPaths::bundledParamsPath();
+    if (!bundledParams.isEmpty()) {
+        env.insert("ANIMICA_PARAMS", bundledParams);
+    }
+
+    const QString bundledGenesis = AppPaths::bundledGenesisPath(network);
+    if (!bundledGenesis.isEmpty()) {
+        env.insert("ANIMICA_GENESIS_PATH", bundledGenesis);
+    }
     
     m_process->setProcessEnvironment(env);
     
@@ -570,27 +580,10 @@ void NodeManager::stopSyncMonitoring()
 
 QString NodeManager::findBundledPython()
 {
-    // Get the application directory
-    QString appDir = QCoreApplication::applicationDirPath();
-    QStringList candidates;
-
-#ifdef Q_OS_MACOS
-    candidates << appDir + "/../Resources/node/venv/bin/python";
-#elif defined(Q_OS_WIN)
-    candidates << appDir + "/node/venv/Scripts/python.exe";
-#else
-    candidates << appDir + "/node/venv/bin/python";
-    candidates << appDir + "/../lib/node/venv/bin/python";
-    candidates << appDir + "/../lib/animica-wallet/node/venv/bin/python";
-    candidates << "/usr/lib/animica-wallet/node/venv/bin/python";
-#endif
-
-    for (const QString& candidate : candidates) {
-        QFileInfo bundledInfo(candidate);
-        if (bundledInfo.exists() && bundledInfo.isExecutable()) {
-            qDebug() << "Found bundled Python:" << candidate;
-            return bundledInfo.absoluteFilePath();
-        }
+    const QString bundled = AppPaths::bundledPythonPath();
+    if (!bundled.isEmpty()) {
+        qDebug() << "Found bundled Python:" << bundled;
+        return bundled;
     }
 
     qDebug() << "Bundled Python not found in any known runtime location";

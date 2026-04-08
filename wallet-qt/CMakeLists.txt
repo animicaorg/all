@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.16)
 
 project(AnimicaWallet VERSION 0.1.0 LANGUAGES CXX)
 
+set(WALLET_DISPLAY_NAME "Animica Wallet")
+set(WALLET_BUNDLE_NAME "AnimicaWallet")
+set(WALLET_GUI_IDENTIFIER "org.animica.wallet")
+set(WALLET_COPYRIGHT "Copyright (c) 2026 Animica")
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Info.plist.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+    @ONLY
+)
+
 option(WALLET_REMOTE_RPC_ONLY "Disable embedded node and use remote RPC only" ON)
 
 # Set C++ standard
@@ -66,6 +77,7 @@ endif()
 # Source files
 set(SOURCES
     src/main.cpp
+    resources/wallet-qt.qrc
     src/platform/AppPaths.cpp
     src/platform/DataDirManager.cpp
     src/rpc/AnimicaRpcClient.cpp
@@ -91,6 +103,7 @@ set(SOURCES
     src/wallet/SendWidget.cpp
     src/wallet/ReconciliationJob.cpp
     src/wallet/ReceiveWidget.cpp
+    src/wallet/ReceiveQrService.cpp
     src/wallet/ContractInteractionWidget.cpp
     src/wallet/SettingsWidget.cpp
     src/wallet/WalletImporter.cpp
@@ -147,6 +160,7 @@ set(HEADERS
     src/wallet/SendWidget.h
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
+    src/wallet/ReceiveQrService.h
     src/wallet/ContractInteractionWidget.h
     src/wallet/SettingsWidget.h
     src/wallet/WalletImporter.h
@@ -221,12 +235,13 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
         # macOS: Create app bundle with node inside Resources
         set_target_properties(animica-wallet PROPERTIES
             MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_GUI_IDENTIFIER "org.animica.wallet"
-            MACOSX_BUNDLE_BUNDLE_NAME "AnimicaWallet"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${WALLET_GUI_IDENTIFIER}"
+            MACOSX_BUNDLE_BUNDLE_NAME "${WALLET_BUNDLE_NAME}"
             MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
             MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
             MACOSX_BUNDLE_ICON_FILE "animica.icns"
-            OUTPUT_NAME "AnimicaWallet"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+            OUTPUT_NAME "${WALLET_BUNDLE_NAME}"
         )
         
         # Copy icon into app bundle Resources
@@ -258,15 +273,15 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
         )
         
     elseif(WIN32)
-        # Windows: Set icon via RC file
+        # Windows: Set icon and version metadata via RC file
         set(WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")
         if(EXISTS "${WINDOWS_ICON}")
-            # Create RC file for Windows icon
             set(RC_FILE "${CMAKE_BINARY_DIR}/animica-wallet.rc")
-            file(WRITE "${RC_FILE}" 
-"#include <windows.h>
-IDI_ICON1 ICON \"${WINDOWS_ICON}\"
-")
+            configure_file(
+                "${CMAKE_CURRENT_SOURCE_DIR}/resources/windows/animica-wallet.rc.in"
+                "${RC_FILE}"
+                @ONLY
+            )
             target_sources(animica-wallet PRIVATE "${RC_FILE}")
         endif()
         
@@ -309,6 +324,17 @@ IDI_ICON1 ICON \"${WINDOWS_ICON}\"
             COMMENT "Creating node wrapper script"
         )
     endif()
+
+    # Copy deterministic runtime assets that some Python modules resolve relative to the repo root.
+    set(BUNDLE_NODE_ASSET_DIR "${BUNDLE_NODE_DIR}/assets")
+    add_custom_command(TARGET animica-wallet POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${BUNDLE_NODE_ASSET_DIR}/spec"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${BUNDLE_NODE_ASSET_DIR}/genesis"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_NODE_ASSET_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ANIMICA_REPO_ROOT}/spec" "${BUNDLE_NODE_ASSET_DIR}/spec"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ANIMICA_REPO_ROOT}/core/genesis" "${BUNDLE_NODE_ASSET_DIR}/genesis"
+        COMMENT "Bundling node runtime assets"
+    )
     
     # Store bundle info for runtime
     add_compile_definitions(
@@ -336,10 +362,29 @@ else()
     )
 endif()
 
+if(UNIX AND NOT APPLE)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/linux/animica-wallet.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+    )
+    foreach(ICON_SIZE 16 32 48 64 128 256 512)
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/hicolor/${ICON_SIZE}x${ICON_SIZE}/apps/animica-wallet.png"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${ICON_SIZE}x${ICON_SIZE}/apps"
+        )
+    endforeach()
+endif()
+
 if(NOT WALLET_REMOTE_RPC_ONLY)
     if(APPLE)
         install(DIRECTORY "${ANIMICA_NODE_VENV}"
             DESTINATION "AnimicaWallet.app/Contents/Resources/node"
+            USE_SOURCE_PERMISSIONS
+        )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/spec"
+            DESTINATION "AnimicaWallet.app/Contents/Resources/node/assets"
+            USE_SOURCE_PERMISSIONS
+        )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/core/genesis"
+            DESTINATION "AnimicaWallet.app/Contents/Resources/node/assets"
             USE_SOURCE_PERMISSIONS
         )
     elseif(WIN32)
@@ -347,9 +392,25 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
             DESTINATION "node"
             USE_SOURCE_PERMISSIONS
         )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/spec"
+            DESTINATION "node/assets"
+            USE_SOURCE_PERMISSIONS
+        )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/core/genesis"
+            DESTINATION "node/assets"
+            USE_SOURCE_PERMISSIONS
+        )
     else()
         install(DIRECTORY "${ANIMICA_NODE_VENV}"
             DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node"
+            USE_SOURCE_PERMISSIONS
+        )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/spec"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node/assets"
+            USE_SOURCE_PERMISSIONS
+        )
+        install(DIRECTORY "${ANIMICA_REPO_ROOT}/core/genesis"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node/assets"
             USE_SOURCE_PERMISSIONS
         )
     endif()
@@ -366,6 +427,26 @@ if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+set(CPACK_PACKAGE_NAME "AnimicaWallet")
+set(CPACK_PACKAGE_VENDOR "Animica")
+set(CPACK_PACKAGE_CONTACT "support@animica.org")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Animica blockchain wallet with embedded node")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "${WALLET_DISPLAY_NAME}")
+set(CPACK_PACKAGE_EXECUTABLES "animica-wallet" "${WALLET_DISPLAY_NAME}")
+set(CPACK_CREATE_DESKTOP_LINKS "animica-wallet")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "AnimicaWallet-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+
+if(WIN32)
+    set(CPACK_WIX_UPGRADE_GUID "B17B9AE5-6D27-4D7F-95E7-9D1C98E76E2F")
+    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")
+    set(CPACK_WIX_PROGRAM_MENU_FOLDER "${WALLET_DISPLAY_NAME}")
+    set(CPACK_WIX_UI_REF "WixUI_InstallDir")
+endif()
+
+include(CPack)
 
 message(STATUS "")
 message(STATUS "========================================")

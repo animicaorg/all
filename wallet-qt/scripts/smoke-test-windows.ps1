@@ -22,6 +22,9 @@ Write-Host "======================================" -ForegroundColor Cyan
 Write-Host "Wallet: $WalletPath"
 Write-Host ""
 
+$PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
+& $PythonCmd "$(Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'verify-bundle-layout.py')" --platform windows --path $WalletPath
+
 # Determine if this is an exe or a directory
 $IsDirectory = Test-Path -Path $WalletPath -PathType Container
 
@@ -77,7 +80,7 @@ try {
 }
 
 try {
-    $ImportOutput = & $NodePython -c "import sys; import rpc; import animica; import core; print('All imports OK')" 2>&1
+    $ImportOutput = & $NodePython -c "import sys; import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import core; print('All imports OK')" 2>&1
     Write-Host $ImportOutput
 } catch {
     Write-Host "❌ FAIL: Node imports failed" -ForegroundColor Red
@@ -246,6 +249,17 @@ if (-not $script:NodeProcess.HasExited) {
 
 $script:NodeProcess = $null  # Prevent cleanup from trying again
 Write-Host "✓ Node shutdown successful" -ForegroundColor Green
+
+# Final Qt runtime check
+Write-Host ""
+Write-Host "[6/6] Checking deployed Qt platform plugin..." -ForegroundColor Yellow
+$QtPlatform = Join-Path $WalletDir "platforms\qwindows.dll"
+if (-not (Test-Path $QtPlatform)) {
+    Write-Host "❌ FAIL: qwindows.dll not found at $QtPlatform" -ForegroundColor Red
+    Cleanup
+    exit 1
+}
+Write-Host "✓ qwindows.dll present" -ForegroundColor Green
 
 # Final cleanup
 Cleanup

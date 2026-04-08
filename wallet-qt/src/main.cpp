@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QDesktopServices>
+#include <QIcon>
 #include <QPushButton>
 #include <QUrl>
 #include "platform/AppPaths.h"
@@ -34,9 +35,10 @@ int main(int argc, char *argv[])
     
     // Set application metadata
     app.setApplicationName("AnimicaWallet");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion(QStringLiteral(WALLET_VERSION));
     app.setOrganizationName("Animica");
     app.setOrganizationDomain("animica.org");
+    app.setWindowIcon(QIcon(":/icons/animica-wallet.png"));
     
     // Ensure directories exist
     if (!AppPaths::ensureDirectoriesExist()) {
@@ -52,6 +54,7 @@ int main(int argc, char *argv[])
     // Create main window
     QMainWindow window;
     window.setWindowTitle("Animica Wallet");
+    window.setWindowIcon(QIcon(":/icons/animica-wallet.png"));
     window.setMinimumSize(800, 600);
     
     // Load RPC settings

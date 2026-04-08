@@ -158,7 +158,7 @@ echo "✓ Architecture: $NODE_ARCH"
 
 # Check node imports
 echo "Checking node imports..."
-if ! "$NODE_PYTHON" -c "import rpc; import animica.qt_wallet_bridge; import omni_sdk; import core" 2>/dev/null; then
+if ! "$NODE_PYTHON" -c "import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core" 2>/dev/null; then
     echo "Error: Node imports failed"
     exit 1
 fi
@@ -190,6 +190,7 @@ if [ "$BUILD_APPIMAGE" = true ]; then
     # Copy node into AppDir
     mkdir -p "$APPDIR/usr/lib/node"
     cp -r "$BUILD_DIR/bin/node/venv" "$APPDIR/usr/lib/node/"
+    cp -r "$BUILD_DIR/bin/node/assets" "$APPDIR/usr/lib/node/"
     
     # Create desktop file
     DESKTOP_FILE="$APPDIR/animica-wallet.desktop"
@@ -226,6 +227,8 @@ EOF
         -no-translations \
         -verbose=1
     
+    python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$APPDIR"
+
     # Find generated AppImage
     APPIMAGE=$(find "$BUILD_DIR" -maxdepth 1 -name "*.AppImage" | head -1)
     

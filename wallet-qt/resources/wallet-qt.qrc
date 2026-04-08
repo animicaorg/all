@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="icons/animica-wallet.png">icons/hicolor/256x256/apps/animica-wallet.png</file>
+  </qresource>
+</RCC>

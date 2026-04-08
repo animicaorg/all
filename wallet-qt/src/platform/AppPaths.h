@@ -114,6 +114,31 @@ public:
     static QString getBundledNodePath();
 
     /**
+     * @brief Get the bundled Python interpreter inside the node runtime.
+     * @return Bundled Python path, or empty if unavailable
+     */
+    static QString bundledPythonPath();
+
+    /**
+     * @brief Get the bundled runtime assets directory.
+     * @return Bundled node assets directory, or empty if unavailable
+     */
+    static QString bundledAssetsDir();
+
+    /**
+     * @brief Get the bundled chain params file used by the embedded node.
+     * @return Path to params.yaml, or empty if unavailable
+     */
+    static QString bundledParamsPath();
+
+    /**
+     * @brief Get the bundled genesis file for a network.
+     * @param network Network name (mainnet, testnet, devnet)
+     * @return Path to the bundled genesis file, or empty if unavailable
+     */
+    static QString bundledGenesisPath(const QString& network);
+
+    /**
      * @brief Ensure all required directories exist.
      * @return true if successful, false on error
      */
