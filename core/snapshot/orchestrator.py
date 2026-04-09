@@ -173,10 +173,13 @@ class SnapshotOrchestrator:
     
     def _get_current_height(self) -> Optional[int]:
         try:
-            return int(self.block_db.get_canonical_height())
+            height = self.block_db.get_canonical_height()
         except Exception as exc:
             _log.warning(f"Failed to read canonical height: {exc}")
             return None
+        if height is None:
+            return None
+        return int(height)
 
     def _latest_snapshot_height(self, snapshots: list[dict[str, Any]]) -> int:
         return snapshots[0]["height"] if snapshots else 0
@@ -396,25 +399,25 @@ class SnapshotOrchestrator:
                 await self.cleanup_old_snapshots()
             
             # Get current chain height
-            try:
-                current_height = self.block_db.get_canonical_height()
-                
+            current_height = self._get_current_height()
+            if current_height is not None:
                 # Check if we're behind on snapshots
                 if snapshots:
                     last_snapshot_height = snapshots[0]["height"]
-                    expected_next = ((last_snapshot_height // self.config.interval) + 1) * self.config.interval
-                    
+                    expected_next = (
+                        ((last_snapshot_height // self.config.interval) + 1)
+                        * self.config.interval
+                    )
+
                     if current_height >= expected_next + self.config.interval:
                         self.status.warnings.append(
                             f"Behind on snapshots: current={current_height}, "
                             f"last_snapshot={last_snapshot_height}"
                         )
                 elif current_height >= self.config.interval:
-                    self.status.warnings.append(f"No snapshots exist yet (height={current_height})")
-                    
-            except Exception as e:
-                _log.warning(f"Failed to check chain height: {e}")
-                self.status.warnings.append(f"Cannot check chain height: {e}")
+                    self.status.warnings.append(
+                        f"No snapshots exist yet (height={current_height})"
+                    )
             
             self.status.last_health_check = time.time()
             self.status.healthy = len(self.status.errors) == 0

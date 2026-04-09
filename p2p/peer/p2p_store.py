@@ -35,15 +35,34 @@ def apply_umask_from_env() -> Optional[int]:
 def _try_chmod(path: Path, mode: int) -> None:
     try:
         path.chmod(mode)
-    except (OSError, PermissionError):
+    except OSError as exc:
+        log.debug("Skipping optional mode update for %s: %s", path, exc)
         return
 
 
+def _supports_group_ownership() -> bool:
+    return (
+        os.name != "nt"
+        and callable(getattr(os, "getgid", None))
+        and callable(getattr(os, "chown", None))
+    )
+
+
 def _try_chgrp(path: Path) -> None:
+    if not _supports_group_ownership():
+        return
     try:
         gid = os.getgid()
         os.chown(path, -1, gid)
-    except (OSError, PermissionError):
+    except NotImplementedError:
+        log.debug("Skipping optional peerstore group ownership update for %s", path)
+        return
+    except OSError as exc:
+        log.debug(
+            "Skipping optional peerstore group ownership update for %s: %s",
+            path,
+            exc,
+        )
         return
 
 
@@ -75,8 +94,8 @@ def ensure_writable(path: Path) -> WritablePath:
     target_dir = path if path.suffix == "" else path.parent
     try:
         target_dir.mkdir(mode=0o775, parents=True, exist_ok=True)
-    except Exception:
-        pass
+    except OSError as exc:
+        log.debug("Failed to create requested peerstore directory %s: %s", target_dir, exc)
     _try_chgrp(target_dir)
     _try_chmod(target_dir, 0o775)
 
@@ -89,8 +108,8 @@ def ensure_writable(path: Path) -> WritablePath:
     fallback_dir = fallback_root / rel
     try:
         fallback_dir.mkdir(mode=0o775, parents=True, exist_ok=True)
-    except Exception:
-        pass
+    except OSError as exc:
+        log.debug("Failed to create fallback peerstore directory %s: %s", fallback_dir, exc)
     _try_chgrp(fallback_dir)
     _try_chmod(fallback_dir, 0o775)
     fallback_path = fallback_dir / path.name if path.suffix else fallback_dir
