@@ -24,10 +24,11 @@ class PoolShareValidator:
             header=job.header,
             theta_micro=job.theta_micro,
             share_target=job.share_target,
-            height=submit_params.get("height") or 0,
+            height=submit_params.get("height") or job.height or 0,
             hints=job.hints,
             target=job.target,
             sign_bytes=job.sign_bytes,
+            raw=job.raw or {},
         )
         try:
             return await self._adapter.validate_and_submit_share(
@@ -90,6 +91,7 @@ class StratumPoolServer:
             target=job.target,
             sign_bytes=job.sign_bytes or header.get("signBytes"),
             height=job.height,
+            raw=job.raw if isinstance(job.raw, dict) else None,
         )
         await self._server.set_global_difficulty(
             stratum_job.share_target,
