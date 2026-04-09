@@ -12,6 +12,8 @@ from core.types.block import Block
 from core.utils.hash import ZERO32
 from p2p.deps import P2PDeps
 from p2p.node.p2p_service import (
+    STALL_BLOCK_PEER_UNRESPONSIVE,
+    STALL_BLOCK_TIMEOUT,
     STALL_CACHE_SHORT_CIRCUIT,
     P2PService,
     _PeerState,
@@ -486,7 +488,7 @@ async def test_watchdog_recovers_when_blocks_stop(tmp_path: Path) -> None:
     block_hash = b"\x05" * 32
     node._sync_block_queue.append(block_hash)
     node._sync_block_queue_set.add(block_hash)
-    node._sync_watchdog_timeout = 0.05
+    node._sync_watchdog_timeout = 1.0
     node._sync_watchdog_last_progress_at = time.time() - 1
 
     async def _noop_sync_once(*_args, **_kwargs):
@@ -502,17 +504,47 @@ async def test_watchdog_recovers_when_blocks_stop(tmp_path: Path) -> None:
     node._running = True
     task = asyncio.create_task(node._sync_loop())
     try:
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
         assert node._sync_last_recovery_action in {
-            "watchdog_requeue",
             "retry_blocks_new_peer",
+            "watchdog_requeue",
         }
-        assert node._sync_requested
+        assert node._sync_last_recovery_at > 0
     finally:
         node._running = False
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+def test_watchdog_recovery_waits_for_timeout_window(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "watchdog-rate-limit")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "watchdog-rate-limit" / "p2p"),
+    )
+    _register_peer(node, "peer:3004")
+
+    now = time.time()
+    node._sync_watchdog_timeout = 1.0
+    node._sync_watchdog_last_height = 0
+    node._sync_watchdog_last_hash = node._genesis_hash().hex()
+    node._sync_watchdog_last_progress_at = now - 10.0
+
+    node._sync_watchdog_check(now=now, head_height=0, head_hash=node._genesis_hash().hex())
+    assert node._sync_watchdog_attempts == 1
+    assert node._sync_last_recovery_action == "watchdog_requeue"
+
+    node._sync_watchdog_check(
+        now=now + 0.1,
+        head_height=0,
+        head_hash=node._genesis_hash().hex(),
+    )
+    assert node._sync_watchdog_attempts == 1
+    assert node._sync_last_recovery_action == "watchdog_requeue"
 
 
 @pytest.mark.asyncio
@@ -693,6 +725,7 @@ async def test_block_requests_skip_zero_height_peer(tmp_path: Path) -> None:
     )
     peer = _register_peer(node, "peer:1100")
     peer.hello["head_height"] = 0
+    node._sync_peer_heads.pop(peer.remote, None)
 
     genesis = deps_sync.header_by_number(0)
     assert genesis is not None
@@ -721,6 +754,8 @@ async def test_block_requests_prefer_height_peer(tmp_path: Path, monkeypatch: py
     high_peer = _register_peer(node, "peer:1201")
     low_peer.hello["head_height"] = 0
     high_peer.hello["head_height"] = 500
+    node._update_peer_head_table(low_peer, height=0, source="test", head_hash=None)
+    node._update_peer_head_table(high_peer, height=500, source="test", head_hash=None)
 
     genesis = deps_sync.header_by_number(0)
     assert genesis is not None
@@ -804,6 +839,51 @@ async def test_cache_failure_does_not_set_peer(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_drop_peer_requeues_blocks_and_clears_target_tip(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "drop-peer-requeue")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "drop-peer-requeue" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1399")
+    peer.peer_id = "peer-1399"
+    target_hash = b"\x44" * 32
+    peer.hello["head_height"] = 25
+    peer.hello["head_hash"] = target_hash
+    node._update_peer_head_table(peer, height=25, source="test", head_hash=target_hash)
+    block_hash = b"\x55" * 32
+    started_at = time.time()
+    node._sync_inflight_blocks[block_hash] = started_at
+    node._sync_inflight_peers[block_hash] = peer.remote
+    node._sync_inflight_block_requests[block_hash] = _SyncRequest(
+        request_id="drop-peer-block",
+        peer_id=peer.remote,
+        kind="blocks",
+        started_at=started_at,
+        deadline_at=started_at + 30.0,
+        retry_count=0,
+        item_hash=block_hash,
+    )
+    node._sync_active_header_peer = peer.remote
+    node._sync_active_block_peer = peer.remote
+
+    assert node._update_sync_target_tip(time.time()) is not None
+
+    await node._drop_peer(peer, reason="test_disconnect")
+
+    assert block_hash in node._sync_block_queue_set
+    assert block_hash not in node._sync_inflight_blocks
+    assert peer.remote not in node._sync_peer_heads
+    assert node._sync_active_header_peer is None
+    assert node._sync_active_block_peer is None
+    assert node._sync_target_tip is None
+    assert node._sync_last_block_error == STALL_BLOCK_PEER_UNRESPONSIVE
+
+
+@pytest.mark.asyncio
 async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "block-stall-recovery")
     node = P2PService(
@@ -817,6 +897,8 @@ async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
     peer_b = _register_peer(node, "peer:1401")
     peer_a.hello["head_height"] = 5
     peer_b.hello["head_height"] = 10
+    node._update_peer_head_table(peer_a, height=5, source="test", head_hash=None)
+    node._update_peer_head_table(peer_b, height=10, source="test", head_hash=None)
 
     genesis = deps_sync.header_by_number(0)
     assert genesis is not None
@@ -832,9 +914,9 @@ async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
     node._sync_last_progress_at = node._sync_last_progress_at - 1.0
 
     node._maybe_mark_block_stalled(time.time())
-    assert node._sync_block_stalled_reason == "blocks stalled"
+    assert node._sync_block_stalled_reason == STALL_BLOCK_TIMEOUT
 
-    node._handle_sync_stall(reason="blocks stalled")
+    node._handle_sync_stall(reason=STALL_BLOCK_TIMEOUT)
     assert node._sync_last_recovery_action == "retry_blocks_new_peer"
     assert node._sync_active_block_peer == peer_b.remote
 

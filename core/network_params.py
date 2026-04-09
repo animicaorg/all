@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -91,6 +92,10 @@ def get_pinned_genesis_hash(
     params = get_network_params(chain_id=chain_id, network_name=network_name)
     if params is None:
         return None
+    if params.name == "devnet":
+        pin_devnet = os.getenv("ANIMICA_PIN_DEVNET_GENESIS", "").strip().lower()
+        if pin_devnet not in {"1", "true", "yes", "on"}:
+            return None
     return PINNED_GENESIS_BY_NETWORK.get((params.name, params.chain_id))
 
 
@@ -162,16 +167,27 @@ def enforce_pinned_genesis(
     expected_path_resolved = expected_path.resolve() if expected_path else None
 
     if expected_path_resolved and resolved_path and resolved_path != expected_path_resolved:
-        raise GenesisError(
-            "genesis path does not match canonical network genesis",
-            expected_path=str(expected_path_resolved),
-            genesis_path=str(resolved_path),
-            chain_id=chain_id,
-            network=params.name,
-            hint=(
-                "Set ANIMICA_GENESIS_PATH/GENESIS_PATH to the canonical file or update"
-                " the network configuration to point at the correct genesis file."
-            ),
+        strict_path_check = os.getenv("ANIMICA_STRICT_GENESIS_PATH", "").strip().lower()
+        if strict_path_check in {"1", "true", "yes", "on"}:
+            raise GenesisError(
+                "genesis path does not match canonical network genesis",
+                expected_path=str(expected_path_resolved),
+                genesis_path=str(resolved_path),
+                chain_id=chain_id,
+                network=params.name,
+                hint=(
+                    "Set ANIMICA_GENESIS_PATH/GENESIS_PATH to the canonical file or update"
+                    " the network configuration to point at the correct genesis file."
+                ),
+            )
+        logger.warning(
+            "Selected genesis path differs from canonical network path; continuing because pinned hash validation still applies",
+            extra={
+                "chain_id": chain_id,
+                "network": params.name,
+                "expected_path": str(expected_path_resolved),
+                "genesis_path": str(resolved_path),
+            },
         )
 
     expected_hex = "0x" + expected.hex()

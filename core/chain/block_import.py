@@ -2520,6 +2520,13 @@ def _get_importer(
     return importer
 
 
+def reset_importer_cache(block_db=None) -> None:
+    if block_db is None:
+        _IMPORTER_CACHE.clear()
+        return
+    _IMPORTER_CACHE.pop(id(block_db), None)
+
+
 def import_block(
     block_db,
     state_db,  # unused but kept for signature compatibility

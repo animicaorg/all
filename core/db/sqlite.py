@@ -24,6 +24,7 @@ Python stdlib `sqlite3` on Ubuntu 22.04 is 3.37+ (supports UPSERT).
 
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable, Iterator, List, Optional, Tuple, Union
@@ -94,19 +95,25 @@ def _prefix_hi(prefix: bytes) -> Optional[bytes]:
 
 
 class SQLiteBatch(Batch):
-    __slots__ = ("_conn", "_open")
+    __slots__ = ("_conn", "_lock", "_open")
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock) -> None:
         self._conn = conn
+        self._lock = lock
         self._open = False
 
     def __enter__(self) -> "SQLiteBatch":
         if self._open:
             raise RuntimeError("batch already open (nested batches not supported)")
         # BEGIN IMMEDIATE prevents writer starvation, still allows concurrent readers
-        self._conn.execute("BEGIN IMMEDIATE")
-        self._open = True
-        return self
+        self._lock.acquire()
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._open = True
+            return self
+        except Exception:
+            self._lock.release()
+            raise
 
     def put(self, key: bytes, value: bytes) -> None:
         if not self._open:
@@ -124,14 +131,20 @@ class SQLiteBatch(Batch):
     def commit(self) -> None:
         if not self._open:
             return
-        self._conn.execute("COMMIT")
-        self._open = False
+        try:
+            self._conn.execute("COMMIT")
+        finally:
+            self._open = False
+            self._lock.release()
 
     def rollback(self) -> None:
         if not self._open:
             return
-        self._conn.execute("ROLLBACK")
-        self._open = False
+        try:
+            self._conn.execute("ROLLBACK")
+        finally:
+            self._open = False
+            self._lock.release()
 
     def __exit__(self, exc_type, exc, tb) -> Optional[bool]:
         try:
@@ -209,7 +222,7 @@ class SQLiteKV(KV):
     Use `open_sqlite_kv(path)` to construct.
     """
 
-    __slots__ = ("_conn",)
+    __slots__ = ("_conn", "_lock")
 
     def __init__(
         self,
@@ -227,22 +240,27 @@ class SQLiteKV(KV):
             self._conn = _open_connection(
                 conn_or_path, pragmas=pragmas, create=create, readonly=readonly
             )
+        self._lock = threading.RLock()
         # `row_factory` left default; we fetch blobs as bytes.
 
     # --- ReadOnlyKV ---
 
     def get(self, key: bytes) -> Optional[bytes]:
-        cur = self._conn.execute("SELECT v FROM kv WHERE k = ?", (memoryview(key),))
-        row = cur.fetchone()
-        cur.close()
-        return bytes(row[0]) if row is not None else None
+        with self._lock:
+            cur = self._conn.execute("SELECT v FROM kv WHERE k = ?", (memoryview(key),))
+            row = cur.fetchone()
+            cur.close()
+        if row is None or len(row) == 0:
+            return None
+        return bytes(row[0])
 
     def has(self, key: bytes) -> bool:
-        cur = self._conn.execute(
-            "SELECT 1 FROM kv WHERE k = ? LIMIT 1", (memoryview(key),)
-        )
-        row = cur.fetchone()
-        cur.close()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT 1 FROM kv WHERE k = ? LIMIT 1", (memoryview(key),)
+            )
+            row = cur.fetchone()
+            cur.close()
         return row is not None
 
     def get_batch(self, keys: list[bytes]) -> list[Optional[bytes]]:
@@ -283,14 +301,16 @@ class SQLiteKV(KV):
             placeholders = ','.join('?' * len(chunk_keys))
             sql = f"SELECT k, v FROM kv WHERE k IN ({placeholders})"
             
-            cur = self._conn.execute(sql, [memoryview(k) for k in chunk_keys])
-            for k, v in cur:
+            with self._lock:
+                cur = self._conn.execute(sql, [memoryview(k) for k in chunk_keys])
+                rows = cur.fetchall()
+                cur.close()
+            for k, v in rows:
                 k_bytes = bytes(k)
                 v_bytes = bytes(v)
                 # Fill all indices for this key (handles duplicates)
                 for idx in key_to_indices[k_bytes]:
                     results[idx] = v_bytes
-            cur.close()
         
         return results
 
@@ -314,32 +334,35 @@ class SQLiteKV(KV):
             sql = "SELECT k, v FROM kv WHERE substr(k,1,?) = ? ORDER BY k"
             args = (len(prefix), memoryview(prefix))
 
-        cur = self._conn.execute(sql, args)
-        try:
-            for k, v in cur:
-                yield bytes(k), bytes(v)
-        finally:
+        with self._lock:
+            cur = self._conn.execute(sql, args)
+            rows = cur.fetchall()
             cur.close()
+        for k, v in rows:
+            yield bytes(k), bytes(v)
 
     def close(self) -> None:
-        try:
-            self._conn.close()
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
 
     # --- KV ---
 
     def put(self, key: bytes, value: bytes) -> None:
-        self._conn.execute(
-            "INSERT INTO kv(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-            (memoryview(key), memoryview(value)),
-        )
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (memoryview(key), memoryview(value)),
+            )
 
     def delete(self, key: bytes) -> None:
-        self._conn.execute("DELETE FROM kv WHERE k = ?", (memoryview(key),))
+        with self._lock:
+            self._conn.execute("DELETE FROM kv WHERE k = ?", (memoryview(key),))
 
     def batch(self) -> Batch:
-        return SQLiteBatch(self._conn)
+        return SQLiteBatch(self._conn, self._lock)
 
 
 def open_sqlite_kv(
