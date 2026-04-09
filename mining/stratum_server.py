@@ -65,6 +65,7 @@ class StratumJob:
     script_hash: Optional[str] = None
     inputs_commit: Optional[str] = None
     outputs_commit: Optional[str] = None
+    raw: Optional[JSON] = None
     created_ts: float = field(default_factory=lambda: time.time())
 
 
