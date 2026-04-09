@@ -1,9 +1,20 @@
 import sys
+import asyncio
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from animica.stratum_pool.reference_cpu_miner import _normalize_job_payload
+from animica.stratum_pool.reference_cpu_miner import (
+    MinerConfig,
+    ShareResult,
+    StratumCpuMiner,
+    SubmitOutcome,
+    _is_stale_job_reason,
+    _normalize_job_payload,
+    _should_stop_job,
+)
 
 
 def test_normalize_job_payload_accepts_live_pool_snake_case_theta():
@@ -49,3 +60,140 @@ def test_normalize_job_payload_accepts_header_template_shape():
     assert sign_hex == "0xabcd"
     assert theta_micro == 5_400_000
     assert share_target == 0.25
+
+
+def test_is_stale_job_reason_matches_pool_rpc_error():
+    assert _is_stale_job_reason(
+        "rpc:-32602:RPC error -32602: unknown or stale jobId"
+    )
+
+
+def test_is_stale_job_reason_ignores_low_difficulty():
+    assert not _is_stale_job_reason("low difficulty share")
+
+
+def test_should_stop_job_after_accepted_block():
+    assert _should_stop_job(SubmitOutcome(True, True, None, False))
+
+
+@pytest.mark.asyncio
+async def test_mine_job_stops_after_stale_submit(monkeypatch: pytest.MonkeyPatch):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            log_level="INFO",
+        )
+    )
+    scans: list[int] = []
+
+    def fake_scan(*_args, **_kwargs):
+        scans.append(1)
+        return ShareResult(nonce=2, h_micro=1_000_000, d_ratio=1.0)
+
+    async def fake_submit(_job_id: str, _share: ShareResult) -> SubmitOutcome:
+        return SubmitOutcome(
+            False,
+            True,
+            "rpc:-32602:RPC error -32602: unknown or stale jobId",
+            True,
+        )
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(miner, "_scan_parallel", fake_scan)
+    monkeypatch.setattr(miner, "_submit_share", fake_submit)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    try:
+        await asyncio.wait_for(
+            miner._mine_job(
+                0,
+                {
+                    "jobId": "job-stale",
+                    "signBytes": "0x1234",
+                    "thetaMicro": 1_000_000,
+                    "shareTarget": 1.0,
+                },
+            ),
+            timeout=0.5,
+        )
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert len(scans) == 1
+
+
+@pytest.mark.asyncio
+async def test_mine_job_accepts_full_header_template_without_signbytes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            log_level="INFO",
+        )
+    )
+    scans: list[int] = []
+
+    def fake_scan(*_args, **_kwargs):
+        scans.append(1)
+        return ShareResult(nonce=7, h_micro=1_000_000, d_ratio=1.0)
+
+    async def fake_submit(_job_id: str, _share: ShareResult) -> SubmitOutcome:
+        return SubmitOutcome(True, True, None, False)
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(miner, "_scan_header_parallel", fake_scan)
+    monkeypatch.setattr(miner, "_submit_share", fake_submit)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    try:
+        await asyncio.wait_for(
+            miner._mine_job(
+                0,
+                {
+                    "jobId": "job-header-template",
+                    "header": {
+                        "v": 1,
+                        "chainId": 1,
+                        "height": 1,
+                        "parentHash": "0x" + "11" * 32,
+                        "timestamp": 1_800_000_000,
+                        "stateRoot": "0x" + "22" * 32,
+                        "txsRoot": "0x" + "33" * 32,
+                        "receiptsRoot": "0x" + "44" * 32,
+                        "proofsRoot": "0x" + "55" * 32,
+                        "daRoot": "0x" + "66" * 32,
+                        "mixSeed": "0x" + "77" * 32,
+                        "poiesPolicyRoot": "0x" + "88" * 32,
+                        "pqAlgPolicyRoot": "0x" + "99" * 32,
+                        "thetaMicro": 1_000_000,
+                        "workType": 0,
+                        "extra": "0x",
+                    },
+                    "shareTarget": 1.0,
+                },
+            ),
+            timeout=0.5,
+        )
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert len(scans) == 1

@@ -105,9 +105,10 @@ class PoolMetrics:
             or job.header.get("number")
             or job.header.get("height"),
         }
+        accepted_block = bool(ok and is_block)
         self._share_events.append(event)
-        self._persist_share(event, is_block=is_block, tx_count=tx_count)
-        if is_block:
+        self._persist_share(event, is_block=accepted_block, tx_count=tx_count)
+        if accepted_block:
             self._block_events.appendleft(
                 {
                     "found_by_pool": True,
@@ -117,6 +118,9 @@ class PoolMetrics:
                     "tx_count": tx_count,
                 }
             )
+            request_refresh = getattr(self._job_manager, "request_refresh", None)
+            if callable(request_refresh):
+                request_refresh()
 
     def _persist_share(
         self, event: ShareEvent, *, is_block: bool, tx_count: int

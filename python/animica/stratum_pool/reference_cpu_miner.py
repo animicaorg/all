@@ -13,10 +13,13 @@ import signal
 import socket
 import ssl
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import Path
 from typing import Any, Optional
+
+from core.types.header import Header, serialize_header
+from core.utils.hash import sha3_256
 
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
@@ -82,6 +85,14 @@ class ShareResult:
     nonce: int
     h_micro: int
     d_ratio: float
+
+
+@dataclass(frozen=True)
+class SubmitOutcome:
+    accepted: bool
+    is_block: bool
+    reason: Optional[str]
+    stale_job: bool
 
 
 def _first_present(mapping: Any, *keys: str) -> Any:
@@ -167,6 +178,112 @@ def _normalize_job_payload(
     theta_micro = _extract_theta_micro(job, header) or max(0, int(default_theta_micro))
     share_target = _extract_share_target(job, fallback=default_share_target) or 1.0
     return job_id, header, sign_hex, theta_micro, share_target
+
+
+def _parse_hex_bytes(value: Any, *, default: bytes) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str) and value.startswith("0x"):
+        try:
+            return bytes.fromhex(value[2:])
+        except Exception:
+            return default
+    return default
+
+
+def _int_from_value(value: Any, *, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        if isinstance(value, str) and value.startswith("0x"):
+            return int(value, 16)
+        return int(value)
+    except Exception:
+        return default
+
+
+def _header_template_from_job(header: dict[str, Any]) -> Optional[Header]:
+    if not isinstance(header, dict):
+        return None
+    required = (
+        "parentHash",
+        "stateRoot",
+        "txsRoot",
+        "receiptsRoot",
+        "proofsRoot",
+        "daRoot",
+        "mixSeed",
+        "poiesPolicyRoot",
+        "pqAlgPolicyRoot",
+        "timestamp",
+    )
+    if not all(key in header for key in required):
+        return None
+    try:
+        return Header(
+            v=_int_from_value(header.get("v"), default=1),
+            chainId=_int_from_value(header.get("chainId") or header.get("chain_id")),
+            height=_int_from_value(header.get("height") or header.get("number")),
+            parentHash=_parse_hex_bytes(header.get("parentHash"), default=b"\x00" * 32),
+            timestamp=_int_from_value(header.get("timestamp")),
+            stateRoot=_parse_hex_bytes(header.get("stateRoot"), default=b"\x00" * 32),
+            txsRoot=_parse_hex_bytes(header.get("txsRoot"), default=b"\x00" * 32),
+            receiptsRoot=_parse_hex_bytes(
+                header.get("receiptsRoot"), default=b"\x00" * 32
+            ),
+            proofsRoot=_parse_hex_bytes(
+                header.get("proofsRoot"), default=b"\x00" * 32
+            ),
+            daRoot=_parse_hex_bytes(header.get("daRoot"), default=b"\x00" * 32),
+            mixSeed=_parse_hex_bytes(header.get("mixSeed"), default=b"\x00" * 32),
+            poiesPolicyRoot=_parse_hex_bytes(
+                header.get("poiesPolicyRoot"), default=b"\x00" * 32
+            ),
+            pqAlgPolicyRoot=_parse_hex_bytes(
+                header.get("pqAlgPolicyRoot"), default=b"\x00" * 32
+            ),
+            thetaMicro=_int_from_value(
+                header.get("thetaMicro")
+                or header.get("thetaTargetMicro")
+                or header.get("theta_target_micro")
+                or header.get("theta_micro")
+            ),
+            workType=_int_from_value(header.get("workType"), default=0),
+            nonce=0,
+            extra=_parse_hex_bytes(header.get("extra"), default=b""),
+        )
+    except Exception:
+        return None
+
+
+def _response_reason(response: dict[str, Any]) -> Optional[str]:
+    error = response.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        message = error.get("message") or error.get("data")
+        if code is not None and message:
+            return f"rpc:{code}:{message}"
+        if code is not None:
+            return f"rpc:{code}"
+        if message:
+            return str(message)
+    result = response.get("result")
+    if isinstance(result, dict):
+        reason = result.get("reason")
+        if reason is not None:
+            return str(reason)
+    return None
+
+
+def _is_stale_job_reason(reason: Optional[str]) -> bool:
+    if not reason:
+        return False
+    lowered = str(reason).lower()
+    return "stale job" in lowered or "stale jobid" in lowered
+
+
+def _should_stop_job(outcome: SubmitOutcome) -> bool:
+    return (outcome.accepted and outcome.is_block) or outcome.stale_job
 
 
 def load_json_config(path: Path) -> dict[str, Any]:
@@ -366,15 +483,19 @@ class StratumCpuMiner:
             default_theta_micro=self._theta_micro,
             default_share_target=self._share_target,
         )
-        if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-            self.log.warning("Job %s missing signBytes; skipping", job_id)
-            return
-
         if theta_micro <= 0:
             self.log.warning("Job %s missing thetaMicro; skipping", job_id)
             return
+
+        header_template = _header_template_from_job(header)
+        prefix = None
+        if header_template is None:
+            if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
+                self.log.warning("Job %s missing usable header template; skipping", job_id)
+                return
+            prefix = bytes.fromhex(sign_hex[2:])
+
         target_micro = max(1, int(theta_micro * max(share_target, 1e-9)))
-        prefix = bytes.fromhex(sign_hex[2:])
         nonce_start = secrets.randbelow(2**32)
         self.log.info(
             "New job job_id=%s theta_micro=%s share_target=%.6f",
@@ -385,17 +506,39 @@ class StratumCpuMiner:
 
         try:
             while token == self._job_token and not self._stop.is_set():
-                share = await asyncio.to_thread(
-                    self._scan_parallel,
-                    prefix,
-                    target_micro,
-                    theta_micro,
-                    nonce_start,
-                )
+                if header_template is not None:
+                    share = await asyncio.to_thread(
+                        self._scan_header_parallel,
+                        header_template,
+                        target_micro,
+                        theta_micro,
+                        nonce_start,
+                    )
+                else:
+                    share = await asyncio.to_thread(
+                        self._scan_parallel,
+                        prefix,
+                        target_micro,
+                        theta_micro,
+                        nonce_start,
+                    )
                 nonce_start = (nonce_start + self.config.scan_window) & 0xFFFFFFFFFFFFFFFF
                 if share is None:
                     continue
-                await self._submit_share(job_id, share)
+                outcome = await self._submit_share(job_id, share)
+                if outcome.accepted and outcome.is_block:
+                    self.log.info(
+                        "Accepted block share for job %s; waiting for next job",
+                        job_id,
+                    )
+                elif outcome.stale_job:
+                    self.log.info(
+                        "Stopping stale job %s after submit response: %s",
+                        job_id,
+                        outcome.reason,
+                    )
+                if _should_stop_job(outcome):
+                    return
         except asyncio.CancelledError:
             return
 
@@ -415,6 +558,40 @@ class StratumCpuMiner:
                 self._scan_executor.submit(
                     self._scan_range,
                     prefix,
+                    target,
+                    theta_micro,
+                    start,
+                    per_worker,
+                )
+            )
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                share = future.result()
+                if share is not None:
+                    for other in futures:
+                        other.cancel()
+                    return share
+        finally:
+            for future in futures:
+                future.cancel()
+        return None
+
+    def _scan_header_parallel(
+        self,
+        header_template: Header,
+        target_micro: int,
+        theta_micro: int,
+        nonce_start: int,
+    ) -> Optional[ShareResult]:
+        per_worker = max(25_000, self.config.scan_window // max(1, self.config.threads))
+        target = micro_threshold_to_target256(target_micro)
+        futures = []
+        for index in range(self.config.threads):
+            start = (nonce_start + (index * per_worker)) & 0xFFFFFFFFFFFFFFFF
+            futures.append(
+                self._scan_executor.submit(
+                    self._scan_header_range,
+                    header_template,
                     target,
                     theta_micro,
                     start,
@@ -455,7 +632,25 @@ class StratumCpuMiner:
             nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
         return None
 
-    async def _submit_share(self, job_id: str, share: ShareResult) -> None:
+    @staticmethod
+    def _scan_header_range(
+        header_template: Header,
+        target: int,
+        theta_micro: int,
+        start_nonce: int,
+        iterations: int,
+    ) -> Optional[ShareResult]:
+        nonce = start_nonce
+        for _ in range(iterations):
+            digest = sha3_256(serialize_header(replace(header_template, nonce=nonce)))
+            if int.from_bytes(digest, "big", signed=False) <= target:
+                h_micro = h_micro_from_digest(digest)
+                d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
+                return ShareResult(nonce=nonce, h_micro=h_micro, d_ratio=d_ratio)
+            nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
+        return None
+
+    async def _submit_share(self, job_id: str, share: ShareResult) -> SubmitOutcome:
         response = await self._call(
             "mining.submit",
             {
@@ -471,15 +666,30 @@ class StratumCpuMiner:
                 },
             },
         )
+        reason = _response_reason(response)
+        stale_job = _is_stale_job_reason(reason)
         if response.get("error"):
-            self.log.warning("Share rejected: %s", response["error"])
-            return
+            self.log.warning("Share rejected: %s", reason or response["error"])
+            return SubmitOutcome(
+                accepted=False,
+                is_block=False,
+                reason=reason,
+                stale_job=stale_job,
+            )
         result = response.get("result") or {}
+        accepted = bool(result.get("accepted"))
+        is_block = bool(result.get("isBlock"))
         self.log.info(
             "Share submitted accepted=%s is_block=%s reason=%s",
-            result.get("accepted"),
-            result.get("isBlock"),
-            result.get("reason"),
+            accepted,
+            is_block,
+            reason,
+        )
+        return SubmitOutcome(
+            accepted=accepted,
+            is_block=is_block,
+            reason=reason,
+            stale_job=stale_job,
         )
 
 
