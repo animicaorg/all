@@ -348,6 +348,8 @@ class StratumServer:
     ) -> None:
         if theta_micro is None:
             theta_micro = self._default_theta_micro
+        self._default_share_target = float(share_target)
+        self._default_theta_micro = int(theta_micro)
         difficulty = share_target_to_difficulty(theta_micro, share_target)
         msg = push_set_difficulty(share_target=share_target, theta_micro=theta_micro)
         for s in self._sessions.values():
