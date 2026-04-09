@@ -612,3 +612,8 @@ void WalletEngine::setExplorerUrl(const QString& explorerUrl)
 {
     m_backend->setExplorerUrl(explorerUrl);
 }
+
+QString WalletEngine::lastBackendError() const
+{
+    return m_backend ? m_backend->lastError() : QString();
+}

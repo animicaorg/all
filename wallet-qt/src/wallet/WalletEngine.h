@@ -73,6 +73,7 @@ public:
     void setExplorerUrl(const QString& explorerUrl);
     QString walletFilePath() const { return m_walletFilePath; }
     QString dataDir() const { return m_dataDir; }
+    QString lastBackendError() const;
 
 signals:
     void walletLocked();

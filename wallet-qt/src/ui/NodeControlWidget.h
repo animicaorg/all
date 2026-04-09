@@ -38,6 +38,18 @@ private slots:
     void onNodeReady();
     void onNodeError(const QString& message);
     void onSyncProgress(int currentBlock, int highestBlock, bool syncing);
+    void onHealthTelemetryUpdated(
+        int peerCount,
+        int localHeight,
+        int networkHeight,
+        const QString& syncPhase,
+        const QString& lastError,
+        const QString& lastBootstrapContact,
+        bool rpcReady,
+        bool p2pReady,
+        bool syncing,
+        bool synced
+    );
     void onLogLinesAvailable(const QStringList& lines);
     void onNodeDegraded(const QString& reason);
 
@@ -64,6 +76,10 @@ private:
     QLabel* m_stateLabel;
     QLabel* m_blockHeightLabel;
     QLabel* m_syncStatusLabel;
+    QLabel* m_peerCountLabel;
+    QLabel* m_syncPhaseLabel;
+    QLabel* m_lastErrorLabel;
+    QLabel* m_lastBootstrapLabel;
     
     QTextEdit* m_logViewer;
 };
