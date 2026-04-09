@@ -26,13 +26,168 @@ code.
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Optional, Tuple
 
+from core.types.header import Header, serialize_header
+from core.utils.hash import sha3_256
 from mining.share_submitter import JsonRpcClient, RpcError
 from mining.stratum_server import ShareValidator, StratumJob
+from mining.templates import HeaderTemplate
 
 Json = Dict[str, Any]
+ZERO32 = b"\x00" * 32
+
+
+def _parse_hex_bytes(value: Any, *, default: bytes = ZERO32) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str) and value.startswith("0x"):
+        try:
+            return bytes.fromhex(value[2:])
+        except Exception:
+            return default
+    return default
+
+
+def _int_from_value(value: Any, *, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        if isinstance(value, str) and value.startswith("0x"):
+            return int(value, 16)
+        return int(value)
+    except Exception:
+        return default
+
+
+def _build_sign_bytes_from_header(header_view: Json) -> Optional[str]:
+    try:
+        header_tpl = HeaderTemplate(
+            parent_hash=_parse_hex_bytes(header_view.get("parentHash")),
+            number=_int_from_value(
+                header_view.get("height") or header_view.get("number")
+            ),
+            chain_id=_int_from_value(
+                header_view.get("chainId") or header_view.get("chain_id")
+            ),
+            state_root=_parse_hex_bytes(header_view.get("stateRoot")),
+            txs_root=_parse_hex_bytes(header_view.get("txsRoot")),
+            receipts_root=_parse_hex_bytes(header_view.get("receiptsRoot")),
+            proofs_root=_parse_hex_bytes(header_view.get("proofsRoot")),
+            da_root=_parse_hex_bytes(header_view.get("daRoot")),
+            theta_target_micro=_int_from_value(
+                header_view.get("thetaMicro")
+                or header_view.get("thetaTargetMicro")
+                or header_view.get("theta_micro")
+            ),
+            mix_seed=_parse_hex_bytes(header_view.get("mixSeed")),
+            pq_alg_policy_root=_parse_hex_bytes(header_view.get("pqAlgPolicyRoot")),
+            poies_policy_root=_parse_hex_bytes(header_view.get("poiesPolicyRoot")),
+            timestamp=_int_from_value(header_view.get("timestamp")),
+            work_type=_int_from_value(header_view.get("workType"), default=0),
+        )
+    except Exception:
+        return None
+    return "0x" + header_tpl.to_sign_bytes().hex()
+
+
+def _header_from_template(header_view: Json, *, nonce: int = 0) -> Header:
+    return Header(
+        v=_int_from_value(header_view.get("v"), default=1),
+        chainId=_int_from_value(
+            header_view.get("chainId") or header_view.get("chain_id")
+        ),
+        height=_int_from_value(header_view.get("height") or header_view.get("number")),
+        parentHash=_parse_hex_bytes(header_view.get("parentHash")),
+        timestamp=_int_from_value(header_view.get("timestamp")),
+        stateRoot=_parse_hex_bytes(header_view.get("stateRoot")),
+        txsRoot=_parse_hex_bytes(header_view.get("txsRoot")),
+        receiptsRoot=_parse_hex_bytes(header_view.get("receiptsRoot")),
+        proofsRoot=_parse_hex_bytes(header_view.get("proofsRoot")),
+        daRoot=_parse_hex_bytes(header_view.get("daRoot")),
+        mixSeed=_parse_hex_bytes(header_view.get("mixSeed")),
+        poiesPolicyRoot=_parse_hex_bytes(header_view.get("poiesPolicyRoot")),
+        pqAlgPolicyRoot=_parse_hex_bytes(header_view.get("pqAlgPolicyRoot")),
+        thetaMicro=_int_from_value(
+            header_view.get("thetaMicro")
+            or header_view.get("thetaTargetMicro")
+            or header_view.get("theta_micro")
+        ),
+        workType=_int_from_value(header_view.get("workType"), default=0),
+        nonce=nonce,
+        extra=_parse_hex_bytes(header_view.get("extra"), default=b""),
+    )
+
+
+def _extract_submit_nonce(params: Json) -> int:
+    hashshare = params.get("hashshare") or {}
+    nonce = (
+        hashshare.get("nonce")
+        or hashshare.get("n")
+        or params.get("nonce")
+        or params.get("nonce64")
+        or params.get("n")
+    )
+    if nonce is None:
+        raise ValueError("hashshare.nonce is required")
+    return _int_from_value(nonce, default=-1)
+
+
+def _block_template_payload(template: Json, *, nonce: int) -> Json:
+    header_payload = dict(template.get("header") or {})
+    header_payload["nonce"] = int(nonce)
+
+    txs_raw = []
+    for entry in template.get("txs") or []:
+        if isinstance(entry, dict):
+            raw = entry.get("raw")
+            if raw is not None:
+                txs_raw.append(raw)
+        else:
+            txs_raw.append(entry)
+
+    proofs = template.get("proofs")
+    if not isinstance(proofs, list):
+        proofs = []
+
+    payload: Json = {
+        "header": header_payload,
+        "txs": txs_raw,
+        "proofs": proofs,
+    }
+    template_id = template.get("templateId") or template.get("template_id")
+    if template_id:
+        payload["templateId"] = template_id
+    parent = template.get("parent") if isinstance(template.get("parent"), dict) else {}
+    parent_hash = (
+        template.get("parentHash")
+        or parent.get("hash")
+        or header_payload.get("parentHash")
+    )
+    if parent_hash:
+        payload["parentHash"] = parent_hash
+    return payload
+
+
+def _template_tx_count(template: Json) -> int:
+    txs = template.get("txs")
+    return len(txs) if isinstance(txs, list) else 0
+
+
+def _looks_like_block_template(work: Json) -> bool:
+    header = work.get("header")
+    return (
+        isinstance(header, dict)
+        and bool(work.get("target"))
+        and (
+            work.get("templateId")
+            or work.get("template_id")
+            or work.get("parentHash")
+            or work.get("parent")
+            or isinstance(work.get("txs"), list)
+        )
+    )
 
 
 @dataclass
@@ -71,6 +226,33 @@ class MiningCoreAdapter:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
 
+        if self._pool_address:
+            try:
+                template = await self._rpc_call(
+                    "miner.getBlockTemplate",
+                    {
+                        "address": self._pool_address,
+                        "include_mempool": True,
+                    },
+                )
+                if isinstance(template, dict):
+                    if template.get("enabled") is False:
+                        reason = str(template.get("reason") or "disabled")
+                        raise RuntimeError(
+                            f"unable to fetch block template: mining disabled ({reason})"
+                        )
+                    if _looks_like_block_template(template):
+                        work = template
+            except RpcError as exc:
+                last_exc = exc
+                if exc.code not in (-32601, -32602):
+                    raise RuntimeError(
+                        f"unable to fetch block template: {exc}"
+                    ) from exc
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                raise
+
         metadata = {"chainId": self._chain_id}
         if self._pool_address:
             metadata["address"] = self._pool_address
@@ -78,27 +260,30 @@ class MiningCoreAdapter:
         params_variants = [[metadata], []]
         method_variants = ("miner.getWork", "miner_getWork")
 
-        for method in method_variants:
-            for params in params_variants:
-                try:
-                    work = await self._rpc_call(method, params)
-                    if work:
-                        break
-                except RpcError as exc:
-                    last_exc = exc
-                    if exc.code == -32601:
-                        break
-                except Exception as exc:  # noqa: BLE001
-                    last_exc = exc
-            if work:
-                break
+        if work is None:
+            for method in method_variants:
+                for params in params_variants:
+                    try:
+                        work = await self._rpc_call(method, params)
+                        if work:
+                            break
+                    except RpcError as exc:
+                        last_exc = exc
+                        if exc.code == -32601:
+                            break
+                    except Exception as exc:  # noqa: BLE001
+                        last_exc = exc
+                if work:
+                    break
 
         if work is None:
             raise RuntimeError(f"unable to fetch work: {last_exc}")
 
         header = work.get("header") or {}
         job_id = str(
-            work.get("jobId")
+            work.get("templateId")
+            or work.get("template_id")
+            or work.get("jobId")
             or work.get("job_id")
             or work.get("headerHash")
             or header.get("hash")
@@ -121,7 +306,11 @@ class MiningCoreAdapter:
         )
         target = work.get("target")
         sign_bytes = work.get("signBytes")
+        if sign_bytes is None and isinstance(header, dict):
+            sign_bytes = _build_sign_bytes_from_header(header)
         hints = work.get("hints") or {}
+        if not hints and isinstance(header, dict) and header.get("mixSeed"):
+            hints = {"mixSeed": header.get("mixSeed")}
 
         return MiningJob(
             job_id=job_id,
@@ -134,6 +323,79 @@ class MiningCoreAdapter:
             hints=hints,
             raw=work,
         )
+
+    async def _validate_and_submit_template_block(
+        self, job: MiningJob, submit_params: Json
+    ) -> Tuple[bool, Optional[str], bool, int]:
+        template = job.raw if isinstance(job.raw, dict) else {}
+        header_view = template.get("header") or job.header
+        if not isinstance(header_view, dict):
+            return False, "missing header template", False, 0
+
+        nonce_int = _extract_submit_nonce(submit_params)
+        if nonce_int < 0:
+            return False, "invalid nonce", False, 0
+
+        try:
+            header = _header_from_template(header_view)
+            candidate = replace(header, nonce=nonce_int)
+            digest = sha3_256(serialize_header(candidate))
+        except Exception as exc:  # noqa: BLE001
+            return False, f"invalid header template: {exc}", False, 0
+
+        digest_int = int.from_bytes(digest, "big", signed=False)
+        theta_micro = int(
+            template.get("thetaMicro")
+            or header_view.get("thetaMicro")
+            or header_view.get("thetaTargetMicro")
+            or job.theta_micro
+            or 0
+        )
+        if theta_micro <= 0:
+            return False, "missing thetaMicro", False, 0
+
+        share_ratio = float(job.share_target or 0.0)
+        if share_ratio <= 0.0:
+            share_ratio = 1.0
+        share_target_int = 0
+        try:
+            from core.utils.pow import micro_threshold_to_target256
+
+            share_target_int = micro_threshold_to_target256(
+                max(1, int(theta_micro * share_ratio))
+            )
+        except Exception:
+            share_target_int = 0
+
+        if share_target_int and digest_int > int(share_target_int):
+            return False, "low difficulty share", False, 0
+
+        block_target = _int_from_value(job.target or template.get("target"))
+        is_block = block_target > 0 and digest_int <= block_target
+        tx_count = _template_tx_count(template)
+        if not is_block:
+            return True, None, False, 0
+
+        payload = _block_template_payload(template, nonce=nonce_int)
+        try:
+            result: Json = await self._rpc_call("miner.submitBlock", payload)
+        except RpcError as exc:
+            return False, f"rpc:{exc.code}:{exc}", is_block, tx_count
+
+        accepted = False
+        updated_reason: Optional[str] = None
+        is_duplicate = False
+        if isinstance(result, dict):
+            accepted = bool(result.get("accepted", False))
+            is_duplicate = bool(result.get("duplicate", False))
+            updated_reason = result.get("reason")
+        elif isinstance(result, bool):
+            accepted = result
+
+        if is_block and is_duplicate:
+            is_block = False
+
+        return accepted, updated_reason, is_block, tx_count
 
     def _encode_share_payload(self, job: MiningJob, params: Json) -> Json:
         hs = params.get("hashshare") or {}
@@ -160,6 +422,9 @@ class MiningCoreAdapter:
     async def validate_and_submit_share(
         self, job: MiningJob, submit_params: Json
     ) -> Tuple[bool, Optional[str], bool, int]:
+        if _looks_like_block_template(job.raw):
+            return await self._validate_and_submit_template_block(job, submit_params)
+
         stratum_job = StratumJob(
             job_id=job.job_id,
             header=job.header,

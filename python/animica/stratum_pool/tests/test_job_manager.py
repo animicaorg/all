@@ -58,6 +58,31 @@ async def test_job_manager_publishes_updates():
     assert seen[1] == "2"
 
 
+@pytest.mark.asyncio
+async def test_job_manager_request_refresh_wakes_poll_loop():
+    adapter = DummyAdapter()
+    cfg = PoolConfig(poll_interval=10.0)
+    manager = JobManager(adapter, cfg)
+
+    seen: list[str] = []
+    second_job = asyncio.Event()
+
+    async def on_job(job):
+        seen.append(job.job_id)
+        if job.job_id == "2":
+            second_job.set()
+
+    manager.subscribe(on_job)
+    manager.start()
+
+    await asyncio.sleep(0.05)
+    manager.request_refresh()
+    await asyncio.wait_for(second_job.wait(), timeout=0.5)
+    await manager.stop()
+
+    assert seen[:2] == ["1", "2"]
+
+
 def test_job_manager_backoff_resets_after_success():
     cfg = PoolConfig(poll_interval=0.1)
     manager = JobManager(DummyAdapter(), cfg)

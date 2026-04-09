@@ -21,6 +21,7 @@ class JobManager:
         self._callbacks: List[Callable[[MiningJob], Awaitable[None]]] = []
         self._current: Optional[MiningJob] = None
         self._stop = asyncio.Event()
+        self._refresh = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._failure_streak = 0
         self._log = logger or logging.getLogger("animica.stratum_pool.jobs")
@@ -30,6 +31,9 @@ class JobManager:
 
     def current_job(self) -> Optional[MiningJob]:
         return self._current
+
+    def request_refresh(self) -> None:
+        self._refresh.set()
 
     def _next_wait(self, *, success: bool) -> float:
         """Calculate the next sleep duration with simple exponential backoff."""
@@ -41,6 +45,26 @@ class JobManager:
         self._failure_streak += 1
         backoff = self._config.poll_interval * (2**self._failure_streak)
         return min(backoff, 30.0)
+
+    async def _wait_until_next_poll(self, timeout: float) -> None:
+        if self._stop.is_set():
+            return
+        if self._refresh.is_set():
+            self._refresh.clear()
+            return
+        stop_task = asyncio.create_task(self._stop.wait())
+        refresh_task = asyncio.create_task(self._refresh.wait())
+        done, pending = await asyncio.wait(
+            {stop_task, refresh_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if refresh_task in done or self._refresh.is_set():
+            self._refresh.clear()
 
     async def _poll_loop(self) -> None:
         while not self._stop.is_set():
@@ -54,12 +78,7 @@ class JobManager:
             except Exception:  # noqa: BLE001
                 self._log.warning("job poll failed", exc_info=True)
                 success = False
-            try:
-                await asyncio.wait_for(
-                    self._stop.wait(), timeout=self._next_wait(success=success)
-                )
-            except asyncio.TimeoutError:
-                continue
+            await self._wait_until_next_poll(self._next_wait(success=success))
 
     def start(self) -> None:
         if self._task is None:
@@ -67,6 +86,7 @@ class JobManager:
 
     async def stop(self) -> None:
         self._stop.set()
+        self._refresh.set()
         if self._task is not None:
             await self._task
             self._task = None
