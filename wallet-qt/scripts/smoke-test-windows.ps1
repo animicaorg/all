@@ -252,14 +252,26 @@ Write-Host "✓ Node shutdown successful" -ForegroundColor Green
 
 # Final Qt runtime check
 Write-Host ""
-Write-Host "[6/6] Checking deployed Qt platform plugin..." -ForegroundColor Yellow
-$QtPlatform = Join-Path $WalletDir "platforms\qwindows.dll"
-if (-not (Test-Path $QtPlatform)) {
-    Write-Host "❌ FAIL: qwindows.dll not found at $QtPlatform" -ForegroundColor Red
+Write-Host "[6/6] Checking deployed Qt runtime layout..." -ForegroundColor Yellow
+$QtPlatformCandidates = @(
+    (Join-Path $WalletDir "plugins\platforms\qwindows.dll"),
+    (Join-Path $WalletDir "platforms\qwindows.dll")
+)
+$QtPlatform = $QtPlatformCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $QtPlatform) {
+    Write-Host "❌ FAIL: qwindows.dll not found in plugins\\platforms or platforms under $WalletDir" -ForegroundColor Red
     Cleanup
     exit 1
 }
-Write-Host "✓ qwindows.dll present" -ForegroundColor Green
+
+$QtConf = Join-Path $WalletDir "qt.conf"
+if (-not (Test-Path $QtConf)) {
+    Write-Host "❌ FAIL: qt.conf not found at $QtConf" -ForegroundColor Red
+    Cleanup
+    exit 1
+}
+Write-Host "✓ qwindows.dll present: $QtPlatform" -ForegroundColor Green
+Write-Host "✓ qt.conf present" -ForegroundColor Green
 
 # Final cleanup
 Cleanup

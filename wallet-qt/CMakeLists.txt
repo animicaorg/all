@@ -26,6 +26,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Include GNUInstallDirs for standard install directories
 include(GNUInstallDirs)
 
+if(WIN32)
+    # Keep the installed Windows runtime flat at the app root so the executable
+    # and Qt DLLs live side-by-side, matching the installer layout.
+    set(CMAKE_INSTALL_BINDIR ".")
+endif()
+
 # Find Qt6 packages (Qt5 fallback for older systems)
 find_package(Qt6 COMPONENTS Core Widgets Network Sql Concurrent)
 if(NOT Qt6_FOUND)
@@ -188,6 +194,13 @@ if(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT AND QT_VERSION_MAJOR EQUAL 6 AND (WIN32 O
         TARGET animica-wallet
         OUTPUT_SCRIPT qt_deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+endif()
+
+if(WIN32)
+    file(GENERATE
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        CONTENT "[Paths]\nPrefix = .\nPlugins = plugins\nTranslations = translations\n"
     )
 endif()
 
@@ -359,7 +372,7 @@ if(APPLE)
     )
 elseif(WIN32)
     install(TARGETS animica-wallet
-        RUNTIME DESTINATION "."
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
 else()
     install(TARGETS animica-wallet
@@ -423,6 +436,14 @@ endif()
 
 if(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT AND QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE) AND qt_deploy_script)
     install(SCRIPT "${qt_deploy_script}")
+endif()
+
+if(WIN32)
+    # Install an explicit qt.conf next to the executable so Program Files
+    # installs keep using the staged plugins/translations layout.
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        DESTINATION "."
+    )
 endif()
 
 # Print build information

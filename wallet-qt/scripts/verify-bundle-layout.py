@@ -17,6 +17,13 @@ def _assert_exists(path: Path, errors: list[str], label: str) -> None:
         errors.append(f"missing {label}: {path}")
 
 
+def _first_existing(paths: list[Path]) -> Path | None:
+    for path in paths:
+        if path.exists():
+            return path
+    return None
+
+
 def verify_macos(path: Path, require_embedded_node: bool = True) -> list[str]:
     errors: list[str] = []
     _assert_exists(path, errors, "app bundle")
@@ -40,7 +47,18 @@ def verify_windows(path: Path, require_embedded_node: bool = True) -> list[str]:
         _assert_exists(root / "node" / "assets" / "spec" / "params.yaml", errors, "bundled params")
         _assert_exists(root / "node" / "assets" / "genesis" / "devnet.json", errors, "bundled devnet genesis")
     _assert_exists(root / "Qt6Core.dll", errors, "Qt6Core runtime")
-    _assert_exists(root / "platforms" / "qwindows.dll", errors, "Qt windows platform plugin")
+    platform_plugin = _first_existing([
+        root / "plugins" / "platforms" / "qwindows.dll",
+        root / "platforms" / "qwindows.dll",
+    ])
+    if platform_plugin is None:
+        errors.append(
+            "missing Qt windows platform plugin: "
+            f"{root / 'plugins' / 'platforms' / 'qwindows.dll'} "
+            f"or {root / 'platforms' / 'qwindows.dll'}"
+        )
+    elif platform_plugin == root / "plugins" / "platforms" / "qwindows.dll":
+        _assert_exists(root / "qt.conf", errors, "qt.conf")
     return errors
 
 

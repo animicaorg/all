@@ -176,7 +176,8 @@ if (-not (Test-Path $StageDir -PathType Container)) {
 
 Assert-StageFile -Root $StageDir -RelativePath "animica-wallet.exe"
 Assert-StageFile -Root $StageDir -RelativePath "Qt6Core.dll"
-Assert-StageFile -Root $StageDir -RelativePath "platforms\qwindows.dll"
+Assert-StageFile -Root $StageDir -RelativePath "plugins\platforms\qwindows.dll"
+Assert-StageFile -Root $StageDir -RelativePath "qt.conf"
 
 if (-not (Test-Path $InnoScriptPath -PathType Leaf)) {
     throw "Inno Setup script not found: $InnoScriptPath"
