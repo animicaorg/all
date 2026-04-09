@@ -55,7 +55,7 @@ NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     m_networkCombo->addItem("Devnet (Local Development)", "devnet");
     m_networkCombo->addItem("Testnet (Public Test Network)", "testnet");
     m_networkCombo->addItem("Mainnet (Production)", "mainnet");
-    m_networkCombo->setCurrentIndex(0);  // Default to devnet
+    m_networkCombo->setCurrentIndex(2);  // Default to mainnet for end-user builds
     
     networkLayout->addWidget(new QLabel("Select Network:", this));
     networkLayout->addWidget(m_networkCombo);
@@ -91,6 +91,10 @@ NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     m_stateLabel = new QLabel("State: <b>Stopped</b>", this);
     m_blockHeightLabel = new QLabel("Block Height: <b>N/A</b>", this);
     m_syncStatusLabel = new QLabel("Sync Status: <b>N/A</b>", this);
+    m_peerCountLabel = new QLabel("Peers: <b>N/A</b>", this);
+    m_syncPhaseLabel = new QLabel("Sync Phase: <b>N/A</b>", this);
+    m_lastErrorLabel = new QLabel("Last Error: <b>None</b>", this);
+    m_lastBootstrapLabel = new QLabel("Last Bootstrap Contact: <b>N/A</b>", this);
     
     m_stateLabel->setTextFormat(Qt::RichText);
     m_blockHeightLabel->setTextFormat(Qt::RichText);
@@ -99,6 +103,10 @@ NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     statusLayout->addWidget(m_stateLabel);
     statusLayout->addWidget(m_blockHeightLabel);
     statusLayout->addWidget(m_syncStatusLabel);
+    statusLayout->addWidget(m_peerCountLabel);
+    statusLayout->addWidget(m_syncPhaseLabel);
+    statusLayout->addWidget(m_lastErrorLabel);
+    statusLayout->addWidget(m_lastBootstrapLabel);
     
     mainLayout->addWidget(statusGroup);
     
@@ -131,6 +139,7 @@ NodeControlWidget::NodeControlWidget(NodeManager* nodeManager, QWidget* parent)
     connect(m_nodeManager, &NodeManager::nodeReady, this, &NodeControlWidget::onNodeReady);
     connect(m_nodeManager, &NodeManager::error, this, &NodeControlWidget::onNodeError);
     connect(m_nodeManager, &NodeManager::syncProgress, this, &NodeControlWidget::onSyncProgress);
+    connect(m_nodeManager, &NodeManager::healthTelemetryUpdated, this, &NodeControlWidget::onHealthTelemetryUpdated);
     connect(m_nodeManager, &NodeManager::logLinesAvailable, this, &NodeControlWidget::onLogLinesAvailable);
     connect(m_nodeManager, &NodeManager::nodeDegraded, this, &NodeControlWidget::onNodeDegraded);
     
@@ -259,6 +268,40 @@ void NodeControlWidget::onSyncProgress(int currentBlock, int highestBlock, bool 
     }
 }
 
+void NodeControlWidget::onHealthTelemetryUpdated(
+    int peerCount,
+    int localHeight,
+    int networkHeight,
+    const QString& syncPhase,
+    const QString& lastError,
+    const QString& lastBootstrapContact,
+    bool rpcReady,
+    bool p2pReady,
+    bool syncing,
+    bool synced
+)
+{
+    m_peerCountLabel->setText(QString("Peers: <b>%1</b>").arg(peerCount));
+    m_blockHeightLabel->setText(QString("Block Height: <b>%1 / %2</b>").arg(localHeight).arg(networkHeight));
+    m_syncPhaseLabel->setText(QString("Sync Phase: <b>%1</b>").arg(syncPhase.isEmpty() ? "N/A" : syncPhase));
+    m_lastErrorLabel->setText(QString("Last Error: <b>%1</b>").arg(lastError.isEmpty() ? "None" : lastError.toHtmlEscaped()));
+    m_lastBootstrapLabel->setText(QString("Last Bootstrap Contact: <b>%1</b>").arg(lastBootstrapContact.isEmpty() ? "N/A" : lastBootstrapContact));
+
+    QString status;
+    if (!rpcReady) {
+        status = "Process running, RPC not ready";
+    } else if (!p2pReady) {
+        status = "RPC ready, waiting for peers";
+    } else if (syncing) {
+        status = "Syncing";
+    } else if (synced) {
+        status = "Synced ✓";
+    } else {
+        status = "P2P ready";
+    }
+    m_syncStatusLabel->setText(QString("Sync Status: <b>%1</b>").arg(status));
+}
+
 void NodeControlWidget::onLogLinesAvailable(const QStringList& lines)
 {
     QScrollBar* scrollBar = m_logViewer->verticalScrollBar();
@@ -293,11 +336,19 @@ void NodeControlWidget::updateUI()
     
     // Enable/disable controls based on state
     bool canStart = (state == NodeManager::State::Stopped || state == NodeManager::State::Error);
-    bool canStop = (state == NodeManager::State::RpcReady || 
+    bool canStop = (state == NodeManager::State::ProcessRunning ||
+                    state == NodeManager::State::RpcReady || 
+                    state == NodeManager::State::P2PReady ||
+                    state == NodeManager::State::Syncing ||
+                    state == NodeManager::State::Synced ||
                     state == NodeManager::State::Healthy || 
                     state == NodeManager::State::Degraded || 
                     state == NodeManager::State::Starting);
-    bool canRestart = (state == NodeManager::State::RpcReady || 
+    bool canRestart = (state == NodeManager::State::ProcessRunning ||
+                       state == NodeManager::State::RpcReady ||
+                       state == NodeManager::State::P2PReady ||
+                       state == NodeManager::State::Syncing ||
+                       state == NodeManager::State::Synced ||
                        state == NodeManager::State::Healthy || 
                        state == NodeManager::State::Degraded);
     
@@ -310,6 +361,12 @@ void NodeControlWidget::updateUI()
     if (state == NodeManager::State::Stopped || state == NodeManager::State::Error) {
         m_blockHeightLabel->setText("Block Height: <b>N/A</b>");
         m_syncStatusLabel->setText("Sync Status: <b>N/A</b>");
+        m_peerCountLabel->setText("Peers: <b>N/A</b>");
+        m_syncPhaseLabel->setText("Sync Phase: <b>N/A</b>");
+        if (state == NodeManager::State::Stopped) {
+            m_lastErrorLabel->setText("Last Error: <b>None</b>");
+            m_lastBootstrapLabel->setText("Last Bootstrap Contact: <b>N/A</b>");
+        }
     }
 }
 
@@ -318,7 +375,11 @@ QString NodeControlWidget::stateToString(NodeManager::State state)
     switch (state) {
         case NodeManager::State::Stopped: return "Stopped";
         case NodeManager::State::Starting: return "Starting...";
+        case NodeManager::State::ProcessRunning: return "Process Running";
         case NodeManager::State::RpcReady: return "RPC Ready";
+        case NodeManager::State::P2PReady: return "P2P Ready";
+        case NodeManager::State::Syncing: return "Syncing";
+        case NodeManager::State::Synced: return "Synced";
         case NodeManager::State::Healthy: return "Running (Healthy)";
         case NodeManager::State::Degraded: return "Running (Degraded)";
         case NodeManager::State::Stopping: return "Stopping...";
@@ -332,7 +393,11 @@ QString NodeControlWidget::stateColor(NodeManager::State state)
     switch (state) {
         case NodeManager::State::Stopped: return "#757575";  // Gray
         case NodeManager::State::Starting: return "#FF9800";  // Orange
+        case NodeManager::State::ProcessRunning: return "#4A5568";
         case NodeManager::State::RpcReady: return "#2196F3";  // Blue
+        case NodeManager::State::P2PReady: return "#0EA5E9";
+        case NodeManager::State::Syncing: return "#F59E0B";
+        case NodeManager::State::Synced: return "#4CAF50";
         case NodeManager::State::Healthy: return "#4CAF50";  // Green
         case NodeManager::State::Degraded: return "#FFC107";  // Amber/Warning
         case NodeManager::State::Stopping: return "#FF9800";  // Orange

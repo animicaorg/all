@@ -169,7 +169,14 @@ void CreateAccountDialog::onAccountCreated()
         m_labelEdit->setEnabled(true);
         m_algorithmCombo->setEnabled(true);
         m_createButton->setEnabled(true);
-        QMessageBox::critical(this, "Error", "Failed to create account.");
+        const QString backendError = m_engine ? m_engine->lastBackendError() : QString();
+        QMessageBox::critical(
+            this,
+            "Account Creation Failed",
+            backendError.isEmpty()
+                ? "Failed to create account."
+                : QString("Failed to create account.\n\n%1").arg(backendError)
+        );
         return;
     }
     

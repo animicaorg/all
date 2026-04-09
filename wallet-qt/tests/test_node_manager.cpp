@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include "../src/node/NodeManager.h"
+#include "../src/platform/AppPaths.h"
 
 /**
  * Test suite for NodeManager enhancements
@@ -24,6 +25,8 @@ private slots:
     void testRestartBackoffCalculation();
     void testStateTransitions();
     void testIsRunningStates();
+    void testMainnetBootstrapSeedsIncludePreferredHost();
+    void testStaleLockFileIsRecovered();
     void testLocalLogWritesToFile();
     void testRecoverySignalsRequireEscalationThreshold();
     void testRecoverySignalsScheduleEmbeddedReset();
@@ -113,7 +116,11 @@ void TestNodeManager::testStateTransitions()
     // Verify state enum values exist
     QVERIFY(static_cast<int>(NodeManager::State::Stopped) >= 0);
     QVERIFY(static_cast<int>(NodeManager::State::Starting) >= 0);
+    QVERIFY(static_cast<int>(NodeManager::State::ProcessRunning) >= 0);
     QVERIFY(static_cast<int>(NodeManager::State::RpcReady) >= 0);
+    QVERIFY(static_cast<int>(NodeManager::State::P2PReady) >= 0);
+    QVERIFY(static_cast<int>(NodeManager::State::Syncing) >= 0);
+    QVERIFY(static_cast<int>(NodeManager::State::Synced) >= 0);
     QVERIFY(static_cast<int>(NodeManager::State::Healthy) >= 0);
     QVERIFY(static_cast<int>(NodeManager::State::Degraded) >= 0);
     QVERIFY(static_cast<int>(NodeManager::State::Stopping) >= 0);
@@ -140,6 +147,29 @@ void TestNodeManager::testIsRunningStates()
     // Since we can't easily transition states without starting a real node,
     // we verify the logic exists
     QVERIFY(true);
+}
+
+void TestNodeManager::testMainnetBootstrapSeedsIncludePreferredHost()
+{
+    const QStringList seeds = NodeManager::defaultBootstrapSeeds("mainnet");
+    QVERIFY(!seeds.isEmpty());
+    QVERIFY(seeds.first().contains("144.126.133.21"));
+    QVERIFY(seeds.join(",").contains("144.126.133.21"));
+}
+
+void TestNodeManager::testStaleLockFileIsRecovered()
+{
+    NodeManager manager;
+    const QString lockPath = AppPaths::nodeLockFile();
+    QFile::remove(lockPath);
+    QFile stale(lockPath);
+    QVERIFY(stale.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    stale.write("PID=999999\n");
+    stale.close();
+
+    QVERIFY(manager.acquireLock());
+    QVERIFY(QFile::exists(lockPath));
+    manager.releaseLock();
 }
 
 void TestNodeManager::testLocalLogWritesToFile()

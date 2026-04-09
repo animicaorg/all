@@ -46,8 +46,12 @@ public:
     enum class State {
         Stopped,
         Starting,
+        ProcessRunning, // Embedded node process launched, RPC may still be booting
         RpcReady,      // RPC is responding but may not be fully synced
-        Healthy,       // RPC + P2P working normally
+        P2PReady,      // RPC responding and at least one peer connected
+        Syncing,       // P2P connected and chain sync in progress
+        Synced,        // P2P connected and local chain caught up
+        Healthy,       // Backwards-compatible alias for fully healthy state
         Degraded,      // RPC works but P2P/sync issues detected
         Stopping,
         Error
@@ -103,7 +107,11 @@ public:
      * @brief Check if node is running (any active state).
      */
     bool isRunning() const { 
-        return m_state == State::RpcReady || 
+        return m_state == State::ProcessRunning ||
+               m_state == State::RpcReady || 
+               m_state == State::P2PReady ||
+               m_state == State::Syncing ||
+               m_state == State::Synced ||
                m_state == State::Healthy || 
                m_state == State::Degraded; 
     }
@@ -154,6 +162,13 @@ public:
      * @return Deduplicated log lines
      */
     QStringList getDeduplicatedLogs(int maxLines = 100);
+
+    /**
+     * @brief Default bootstrap seeds used by wallet-managed embedded node.
+     * @param network Network name (mainnet/testnet/devnet)
+     * @return ordered seed list, highest-priority first
+     */
+    static QStringList defaultBootstrapSeeds(const QString& network);
     
     /**
      * @brief Check if node is in degraded state.
@@ -205,6 +220,22 @@ signals:
      * @param reason Reason for degradation
      */
     void nodeDegraded(const QString& reason);
+
+    /**
+     * @brief Emitted with layered health/sync telemetry suitable for UI diagnostics.
+     */
+    void healthTelemetryUpdated(
+        int peerCount,
+        int localHeight,
+        int networkHeight,
+        const QString& syncPhase,
+        const QString& lastError,
+        const QString& lastBootstrapContact,
+        bool rpcReady,
+        bool p2pReady,
+        bool syncing,
+        bool synced
+    );
 
 private slots:
     void onProcessStarted();
@@ -359,6 +390,10 @@ private:
      * @brief Perform enhanced health check.
      */
     void performHealthCheck();
+    bool tryAttachToExistingNode();
+    bool isProcessAlive(qint64 pid) const;
+    qint64 lockFilePid(const QString& lockPath) const;
+    void updateOperationalStateFromSync(int peerCount, int currentBlock, int highestBlock, bool syncing, const QString& phase);
     
     /**
      * @brief Ensure data directory exists and is valid.
@@ -382,6 +417,7 @@ private:
     QTimer* m_restartTimer;
     int m_healthCheckAttempts;
     int m_restartAttempts;
+    bool m_attachedToExistingNode;
     
     QFile* m_lockFile;
     
@@ -392,6 +428,12 @@ private:
     // Degradation tracking
     bool m_degradationDetected;
     QString m_degradationReason;
+    int m_lastPeerCount;
+    int m_lastLocalHeight;
+    int m_lastNetworkHeight;
+    QString m_lastSyncPhase;
+    QDateTime m_lastBootstrapContactAt;
+    QDateTime m_rpcReadySince;
 
     // Wallet-side sync watchdog tracking
     QDateTime m_syncWatchdogLastProgressAt;

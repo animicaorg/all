@@ -12,6 +12,11 @@
 #include <QTcpSocket>
 #include <QRandomGenerator>
 #include <QDebug>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <signal.h>
+#endif
 
 namespace {
 int chainIdForNetwork(const QString& network)
@@ -73,8 +78,12 @@ NodeManager::NodeManager(QObject* parent)
     , m_restartTimer(new QTimer(this))
     , m_healthCheckAttempts(0)
     , m_restartAttempts(0)
+    , m_attachedToExistingNode(false)
     , m_lockFile(nullptr)
     , m_degradationDetected(false)
+    , m_lastPeerCount(0)
+    , m_lastLocalHeight(0)
+    , m_lastNetworkHeight(0)
     , m_syncWatchdogLastCurrentBlock(0)
     , m_syncWatchdogLastTargetBlock(0)
     , m_syncWatchdogForceAttempts(0)
@@ -111,6 +120,17 @@ NodeManager::NodeManager(QObject* parent)
     AppPaths::ensureDirectoriesExist();
 }
 
+QStringList NodeManager::defaultBootstrapSeeds(const QString& network)
+{
+    Q_UNUSED(network);
+    // Keep 144.126.133.21 first to ensure preferred bootstrap ordering.
+    return {
+        QStringLiteral("/ip4/144.126.133.21/tcp/30333"),
+        QStringLiteral("/ip4/144.126.133.21/udp/443/quic-v1"),
+        QStringLiteral("144.126.133.21:30333")
+    };
+}
+
 NodeManager::NodeManager(DataDirManager* dataDirManager, QObject* parent)
     : NodeManager(parent)
 {
@@ -135,6 +155,13 @@ bool NodeManager::startNode(const QString& network)
     m_currentNetwork = network;
     m_degradationDetected = false;
     m_degradationReason.clear();
+    m_lastError.clear();
+    m_lastPeerCount = 0;
+    m_lastLocalHeight = 0;
+    m_lastNetworkHeight = 0;
+    m_lastSyncPhase.clear();
+    m_lastBootstrapContactAt = QDateTime();
+    m_rpcReadySince = QDateTime();
     resetRecoveryState();
     setState(State::Starting);
     
@@ -162,6 +189,12 @@ bool NodeManager::startNode(const QString& network)
         setError("Failed to initialize data directory");
         setState(State::Error);
         return false;
+    }
+
+    if (tryAttachToExistingNode()) {
+        emitLocalLogLine("[wallet-qt] Attached to already-running managed node instance");
+        startHealthCheck();
+        return true;
     }
     
     // Check for existing lock
@@ -226,6 +259,12 @@ bool NodeManager::startNode(const QString& network)
     env.insert("ANIMICA_CHAIN_ID", QString::number(chainId));
     env.insert("ANIMICA_LOG_LEVEL", "INFO");
     env.insert("PYTHONUNBUFFERED", "1");  // Disable Python output buffering
+    if (network == "mainnet") {
+        const QStringList seeds = defaultBootstrapSeeds(network);
+        env.insert("ANIMICA_P2P_SEEDS", seeds.join(','));
+        env.insert("ANIMICA_BOOTSTRAP_RPC_URL", "http://144.126.133.21:30337/rpc");
+        emitLocalLogLine(QString("[wallet-qt] Mainnet bootstrap seeds: %1").arg(seeds.join(", ")));
+    }
 
     const QString bundledParams = AppPaths::bundledParamsPath();
     if (!bundledParams.isEmpty()) {
@@ -348,7 +387,11 @@ QString NodeManager::collectDiagnostics()
     switch (m_state) {
         case State::Stopped: out << "Stopped"; break;
         case State::Starting: out << "Starting"; break;
+        case State::ProcessRunning: out << "ProcessRunning"; break;
         case State::RpcReady: out << "RpcReady"; break;
+        case State::P2PReady: out << "P2PReady"; break;
+        case State::Syncing: out << "Syncing"; break;
+        case State::Synced: out << "Synced"; break;
         case State::Healthy: out << "Healthy"; break;
         case State::Degraded: out << "Degraded"; break;
         case State::Stopping: out << "Stopping"; break;
@@ -399,6 +442,7 @@ void NodeManager::onProcessStarted()
     // Write node info to file
     writeNodeInfo();
     
+    setState(State::ProcessRunning);
     // Start health check
     m_healthCheckAttempts = 0;
     startHealthCheck();
@@ -478,7 +522,7 @@ void NodeManager::onProcessOutput()
         // Check for degradation patterns
         if (detectDegradationPattern(line) && !m_degradationDetected) {
             m_degradationDetected = true;
-            if (m_state == State::RpcReady || m_state == State::Healthy) {
+            if (m_state == State::RpcReady || m_state == State::P2PReady || m_state == State::Syncing || m_state == State::Synced || m_state == State::Healthy) {
                 setState(State::Degraded);
                 emit nodeDegraded(m_degradationReason);
                 
@@ -505,6 +549,17 @@ void NodeManager::onHealthCheckTimeout()
 
 void NodeManager::onSyncCheckTimeout()
 {
+    RpcReply* peerReply = m_rpcClient->getPeerCount();
+    connect(peerReply, &RpcReply::finished, this, [this, peerReply]() {
+        peerReply->deleteLater();
+
+        if (peerReply->error() == QNetworkReply::NoError) {
+            QJsonDocument peerDoc = QJsonDocument::fromJson(peerReply->readAll());
+            QJsonObject peerResult = peerDoc.object().value("result").toObject();
+            m_lastPeerCount = jsonIntValue(peerResult, {"peer_count", "count", "totalPeers"}, m_lastPeerCount);
+        }
+    });
+
     // Query sync status
     RpcReply* reply = m_rpcClient->getSyncStatus();
     connect(reply, &RpcReply::finished, this, [this, reply]() {
@@ -530,6 +585,7 @@ void NodeManager::onSyncCheckTimeout()
             }
 
             bool syncing = false;
+            const QString phase = result.value("phase").toString().trimmed().toUpper();
             const QJsonValue syncingValue = result.value("syncing");
             if (syncingValue.isBool()) {
                 syncing = syncingValue.toBool();
@@ -540,6 +596,7 @@ void NodeManager::onSyncCheckTimeout()
             }
 
             emit syncProgress(currentBlock, highestBlock, syncing);
+            updateOperationalStateFromSync(m_lastPeerCount, currentBlock, highestBlock, syncing, phase);
             evaluateSyncWatchdog(currentBlock, highestBlock, syncing);
         }
     });
@@ -601,8 +658,13 @@ bool NodeManager::acquireLock()
             QString content = QString::fromUtf8(lockFile.readAll());
             lockFile.close();
             
-            qWarning() << "Lock file exists with content:" << content;
-            return false;
+            const qint64 pid = lockFilePid(lockPath);
+            if (pid > 0 && isProcessAlive(pid)) {
+                qWarning() << "Lock file belongs to active process:" << pid;
+                return false;
+            }
+            qWarning() << "Removing stale lock file at" << lockPath;
+            QFile::remove(lockPath);
         }
     }
     
@@ -908,6 +970,11 @@ void NodeManager::noteRecoverySignals(const QString& line)
         ++m_nodeWatchdogWindowCount;
     }
 
+    const QString lower = line.toLower();
+    if (lower.contains("bootstrap") || lower.contains("seed") || lower.contains("peer connected")) {
+        m_lastBootstrapContactAt = QDateTime::currentDateTimeUtc();
+    }
+
     maybeScheduleEmbeddedResetRecovery("node_watchdog_loop");
 }
 
@@ -981,7 +1048,7 @@ void NodeManager::triggerWalletSyncForceRecovery(const QString& reason)
     if (!m_degradationDetected) {
         m_degradationDetected = true;
         m_degradationReason = "Embedded node sync stalled; forcing recovery";
-        if (m_state == State::RpcReady || m_state == State::Healthy) {
+        if (m_state == State::RpcReady || m_state == State::P2PReady || m_state == State::Syncing || m_state == State::Synced || m_state == State::Healthy) {
             setState(State::Degraded);
             emit nodeDegraded(m_degradationReason);
             m_syncCheckTimer->setInterval(SYNC_CHECK_DEGRADED_INTERVAL);
@@ -1113,15 +1180,10 @@ void NodeManager::performHealthCheck()
                     qDebug() << "Node RPC is ready (chain head accessible)";
                     stopHealthCheck();
                     
-                    // Transition to RpcReady, then check if fully healthy
+                    // RPC is available; wait for peer/sync telemetry before claiming full health.
                     setState(State::RpcReady);
+                    m_rpcReadySince = QDateTime::currentDateTimeUtc();
                     emit nodeReady();
-                    
-                    // If no degradation detected, move to Healthy
-                    if (!m_degradationDetected) {
-                        setState(State::Healthy);
-                    }
-                    
                     // Start sync monitoring
                     startSyncMonitoring();
                     return;
@@ -1148,6 +1210,119 @@ void NodeManager::performHealthCheck()
             m_healthCheckTimer->setInterval(HEALTH_CHECK_BACKOFF_INTERVAL);
         }
     });
+}
+
+bool NodeManager::tryAttachToExistingNode()
+{
+    const QString lockPath = AppPaths::nodeLockFile();
+    if (!QFile::exists(lockPath)) {
+        return false;
+    }
+
+    const qint64 pid = lockFilePid(lockPath);
+    if (pid <= 0 || !isProcessAlive(pid)) {
+        return false;
+    }
+
+    NodeInfo info;
+    info.pid = pid;
+    info.rpcPort = DEFAULT_RPC_PORT;
+    info.p2pPort = DEFAULT_P2P_PORT;
+    info.network = m_currentNetwork;
+    info.pythonPath = QStringLiteral("attached");
+    info.startTime = QDateTime::currentDateTime();
+    m_nodeInfo = info;
+    m_rpcClient->setEndpoint(QString("http://127.0.0.1:%1/rpc").arg(info.rpcPort));
+    m_attachedToExistingNode = true;
+    setState(State::ProcessRunning);
+    return true;
+}
+
+qint64 NodeManager::lockFilePid(const QString& lockPath) const
+{
+    QFile lockFile(lockPath);
+    if (!lockFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return -1;
+    }
+    const QString content = QString::fromUtf8(lockFile.readAll());
+    const QStringList lines = content.split('\n');
+    for (const QString& line : lines) {
+        if (line.startsWith("PID=")) {
+            bool ok = false;
+            const qint64 pid = line.mid(4).trimmed().toLongLong(&ok);
+            if (ok) {
+                return pid;
+            }
+        }
+    }
+    return -1;
+}
+
+bool NodeManager::isProcessAlive(qint64 pid) const
+{
+    if (pid <= 0) {
+        return false;
+    }
+#ifdef Q_OS_WIN
+    HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+    if (!hProcess) {
+        return false;
+    }
+    const DWORD waitResult = WaitForSingleObject(hProcess, 0);
+    CloseHandle(hProcess);
+    return waitResult == WAIT_TIMEOUT;
+#else
+    return ::kill(static_cast<pid_t>(pid), 0) == 0;
+#endif
+}
+
+void NodeManager::updateOperationalStateFromSync(
+    int peerCount,
+    int currentBlock,
+    int highestBlock,
+    bool syncing,
+    const QString& phase
+)
+{
+    m_lastLocalHeight = currentBlock;
+    m_lastNetworkHeight = highestBlock;
+    m_lastSyncPhase = phase;
+
+    const bool rpcReady = true;
+    const bool p2pReady = peerCount > 0;
+    const bool synced = p2pReady && !syncing && highestBlock <= currentBlock;
+
+    if (!m_degradationDetected) {
+        if (p2pReady) {
+            if (syncing || highestBlock > currentBlock) {
+                setState(State::Syncing);
+            } else {
+                setState(State::Synced);
+            }
+        } else {
+            setState(State::RpcReady);
+            if (m_rpcReadySince.isValid() &&
+                m_rpcReadySince.msecsTo(QDateTime::currentDateTimeUtc()) > 45000) {
+                m_degradationDetected = true;
+                m_degradationReason = "RPC ready but no peers connected";
+                setState(State::Degraded);
+                emit nodeDegraded(m_degradationReason);
+            }
+        }
+    }
+
+    emit healthTelemetryUpdated(
+        peerCount,
+        currentBlock,
+        highestBlock,
+        phase,
+        m_lastError,
+        m_lastBootstrapContactAt.isValid() ? m_lastBootstrapContactAt.toString(Qt::ISODate) : QString(),
+        rpcReady,
+        p2pReady,
+        syncing,
+        synced
+    );
 }
 
 bool NodeManager::ensureDataDirValid(int chainId)
