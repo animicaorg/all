@@ -20,6 +20,7 @@ import itertools
 import importlib
 import os
 import socket
+import threading
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional
 
@@ -41,20 +42,48 @@ except Exception:
 # --------------------------------------------------------------------------------------
 # Networking helpers
 # --------------------------------------------------------------------------------------
-_FALLBACK_PORTS = itertools.count(39000)
+_CANDIDATE_PORTS = itertools.count(39000)
+_ALLOCATED_PORTS: set[int] = set()
+_ALLOCATED_PORTS_LOCK = threading.Lock()
 
 
 def free_port() -> int:
-    """Return an available TCP port on 127.0.0.1 (best-effort, race-free in practice)."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            return int(s.getsockname()[1])
-    except PermissionError:
-        # Restricted sandboxes can forbid opening loopback sockets during tests.
-        # These helpers only need stable, unique-looking ports for object setup.
-        return next(_FALLBACK_PORTS)
+    """Return a unique test TCP port on 127.0.0.1.
+
+    The allocator walks a stable high-port range and probes availability when
+    loopback sockets are permitted. This avoids rare duplicate ephemeral-port
+    allocation races that can make integration tests self-dial.
+    """
+    probe_supported = True
+    for _ in range(512):
+        port = next(_CANDIDATE_PORTS)
+        with _ALLOCATED_PORTS_LOCK:
+            if port in _ALLOCATED_PORTS:
+                continue
+        if probe_supported:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("127.0.0.1", port))
+            except PermissionError:
+                probe_supported = False
+            except OSError:
+                continue
+        with _ALLOCATED_PORTS_LOCK:
+            if port in _ALLOCATED_PORTS:
+                continue
+            _ALLOCATED_PORTS.add(port)
+            return port
+
+    # Restricted sandboxes can forbid opening loopback sockets during tests.
+    # These helpers only need stable, unique-looking ports for object setup.
+    while True:
+        port = next(_CANDIDATE_PORTS)
+        with _ALLOCATED_PORTS_LOCK:
+            if port in _ALLOCATED_PORTS:
+                continue
+            _ALLOCATED_PORTS.add(port)
+            return port
 
 
 def tcp_multiaddr(port: int) -> str:

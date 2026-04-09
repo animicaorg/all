@@ -28,7 +28,7 @@ from p2p.node.p2p_service import (
     _SyncBlock,
     _SyncHeader,
 )
-from p2p.tests import tcp_multiaddr
+from p2p.tests import free_port, tcp_multiaddr
 from p2p.wire.frames import Framer
 from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import Blocks, HeaderCompact, Headers, Hello
@@ -154,6 +154,16 @@ def _make_child_block_from_header_with_offset(parent, *, ts_offset: int) -> Bloc
     return Block(header=child, txs=(), proofs=(), receipts=None)
 
 
+def _compact_header(block: Block) -> HeaderCompact:
+    return HeaderCompact(
+        hash=block.header.hash(),
+        height=int(block.header.height),
+        parent=bytes(block.header.parentHash),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+
+
 def _make_peer() -> _PeerState:
     peer = _PeerState(
         session_id="peer-1",
@@ -231,6 +241,30 @@ async def test_sync_missing_parent_recovers(tmp_path: Path) -> None:
     assert head_hash == block2.header.hash().hex()
 
 
+def test_update_peer_head_preserves_tip_hash_when_lower_block_arrives(
+    tmp_path: Path,
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "peer-head-tip-hash")
+    peer = _register_peer(node, "peer-tip-hash:0")
+
+    block1 = _make_child_block(deps_sync)
+    accepted, _reason = deps_sync.import_block(block1)
+    assert accepted
+    block2 = _make_child_block_from_header(block1.header)
+    accepted, _reason = deps_sync.import_block(block2)
+    assert accepted
+
+    _setup_peer_hello(node, peer, head_height=2, head_hash=block2.header.hash())
+    node._update_peer_head(peer, height=2, head_hash=block2.header.hash())
+
+    node._update_peer_head(peer, height=1, head_hash=block1.header.hash())
+
+    info = node._sync_peer_heads[peer.remote]
+    assert info.height == 2
+    assert info.head_hash == block2.header.hash()
+    assert bytes(peer.hello.get("head_hash") or b"") == block2.header.hash()
+
+
 @pytest.mark.asyncio
 async def test_sync_same_height_hash_reorgs(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "same-height-reorg")
@@ -291,6 +325,11 @@ def test_phase_not_idle_when_headers_ahead(tmp_path: Path) -> None:
 
     snap = node.sync_status_snapshot()
     assert snap.phase != "IDLE"
+
+
+def test_free_port_returns_distinct_values() -> None:
+    ports = {free_port() for _ in range(8)}
+    assert len(ports) == 8
 
 
 def test_mainnet_genesis_is_enforced_on_startup(tmp_path: Path) -> None:
@@ -427,7 +466,7 @@ def test_header_batch_must_anchor(tmp_path: Path) -> None:
     )
     peer = _make_peer()
 
-    accepted_hashes, reason = node._process_headers(peer, [header])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -486,7 +525,7 @@ def test_unanchored_peer_headers_not_committed(tmp_path: Path) -> None:
         head_hash=block2.header.hash(),
     )
 
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -517,7 +556,7 @@ def test_headers_anchor_off_by_one_inclusive_response_ok(tmp_path: Path) -> None
     )
 
     peer = _make_peer()
-    accepted_hashes, reason = node._process_headers(peer, [header1, header2])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [header1, header2])
 
     assert reason is None
     assert accepted_hashes == [block2.header.hash()]
@@ -541,7 +580,7 @@ def test_headers_anchor_exclusive_response_ok(tmp_path: Path) -> None:
     )
 
     peer = _make_peer()
-    accepted_hashes, reason = node._process_headers(peer, [header2])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [header2])
 
     assert reason is None
     assert accepted_hashes == [block2.header.hash()]
@@ -567,7 +606,7 @@ def test_headers_accept_marks_peer_anchored(tmp_path: Path) -> None:
     peer = _make_peer()
     assert peer.anchored is False
 
-    accepted_hashes, reason = node._process_headers(peer, [header2])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [header2])
 
     assert reason is None
     assert accepted_hashes == [block2.header.hash()]
@@ -597,7 +636,7 @@ def test_header_sync_advances_from_height_one(tmp_path: Path) -> None:
         )
 
     peer = _make_peer()
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert reason is None
     assert accepted_hashes == [hdr.hash for hdr in headers]
@@ -621,7 +660,7 @@ def test_not_anchored_sets_probe_without_penalty(tmp_path: Path) -> None:
     )
     peer = _make_peer()
 
-    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -666,19 +705,99 @@ def test_not_anchored_resets_small_chain_and_advances(tmp_path: Path) -> None:
         "genesis_block_hash": node._genesis_block_hash(),
     }
 
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
     height, _ = deps_sync.head()
     assert height == 0
 
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert reason is None
     assert accepted_hashes == [hdr.hash for hdr in headers]
     assert node._sync_best_header is not None
     assert node._sync_best_header.height == alt_block2.header.height
+
+
+def test_process_headers_trims_canonical_overlap_and_accepts_extension(
+    tmp_path: Path,
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "canonical-overlap")
+    block1 = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block1)
+    assert accepted, reason
+    block2 = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block2)
+    assert accepted, reason
+    block3 = _make_child_block_from_header(block2.header)
+
+    peer = _make_peer()
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block3.header.height),
+        head_hash=block3.header.hash(),
+    )
+    headers = [_compact_header(block1), _compact_header(block2), _compact_header(block3)]
+
+    accepted_hashes, reason, discarded = node._process_headers(peer, headers)
+
+    assert reason is None
+    assert discarded == {}
+    assert accepted_hashes == [block3.header.hash()]
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.hash == block3.header.hash()
+    assert block3.header.hash() in node._sync_block_queue_set
+
+
+@pytest.mark.asyncio
+async def test_known_headers_replay_local_blocks_after_reset(tmp_path: Path) -> None:
+    node, deps_sync = _make_service(tmp_path, "replay-after-reset")
+    node._broadcast_inv = AsyncMock(return_value=None)
+    node._broadcast_block_announce = AsyncMock(return_value=None)
+
+    block1 = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block1)
+    assert accepted, reason
+    block2 = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block2)
+    assert accepted, reason
+
+    peer = _register_peer(node, "peer-replay:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block2.header.height),
+        head_hash=block2.header.hash(),
+    )
+    node._update_peer_head_table(
+        peer,
+        height=int(block2.header.height),
+        source="test",
+        head_hash=block2.header.hash(),
+    )
+
+    assert node._reset_chain_to_genesis(reason="test_replay_reset")
+
+    accepted_hashes, reason, discarded = node._process_headers(
+        peer, [_compact_header(block1), _compact_header(block2)]
+    )
+
+    assert reason is None
+    assert discarded == {}
+    assert accepted_hashes == [block1.header.hash(), block2.header.hash()]
+    assert list(node._sync_block_queue) == [block1.header.hash(), block2.header.hash()]
+
+    for _ in range(3):
+        await node._schedule_block_requests(peer)
+        if deps_sync.head()[0] >= 2:
+            break
+
+    height, head_hash = deps_sync.head()
+    assert height == 2
+    assert head_hash == block2.header.hash()
+    assert not node._sync_block_queue
 
 
 def test_checkpoint_anchor_advances_headers(tmp_path: Path) -> None:
@@ -734,14 +853,14 @@ def test_checkpoint_anchor_advances_headers(tmp_path: Path) -> None:
         head_height=int(main_block4.header.height),
         head_hash=main_block4.header.hash(),
     )
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
 
     node._mark_peer_anchored(peer, reason="test_checkpoint_probe")
 
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert reason is None
     assert accepted_hashes == [hdr.hash for hdr in headers]
@@ -795,7 +914,7 @@ def test_checkpoint_mismatch_disables_checkpoint_mode(tmp_path: Path) -> None:
         head_hash=main_block2.header.hash(),
     )
     node._mark_peer_anchored(peer, reason="test_checkpoint_probe")
-    accepted_hashes, reason = node._process_headers(peer, headers)
+    accepted_hashes, reason, _discarded = node._process_headers(peer, headers)
 
     assert reason is None
     assert accepted_hashes == [hdr.hash for hdr in headers]
@@ -819,7 +938,7 @@ def test_not_anchored_cooldown_allows_other_peers(tmp_path: Path) -> None:
         timestamp=1,
     )
 
-    accepted_hashes, reason = node._process_headers(peer_a, [bad_header])
+    accepted_hashes, reason, _discarded = node._process_headers(peer_a, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -975,7 +1094,7 @@ def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> No
     )
     peer = _make_peer()
 
-    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -985,7 +1104,7 @@ def test_do_not_mark_wrong_chain_on_single_invalid_headers(tmp_path: Path) -> No
     )
     assert node._sync_peer_penalties == {}
 
-    accepted_hashes, reason = node._process_headers(peer, [bad_header])
+    accepted_hashes, reason, _discarded = node._process_headers(peer, [bad_header])
 
     assert accepted_hashes == []
     assert reason == "not_anchored"
@@ -1031,6 +1150,46 @@ async def test_self_peer_filtered(tmp_path: Path) -> None:
     payload = encode_payload(hello)
     with pytest.raises(PeerMisbehavior, match="self_peer"):
         await node._handle_hello(peer, payload)
+
+
+@pytest.mark.asyncio
+async def test_self_like_advertised_addr_is_ignored_not_dropped(tmp_path: Path) -> None:
+    deps_sync = _make_deps(tmp_path, "self-like-peer-addr")
+    node = P2PService(
+        listen_addrs=["/ip4/127.0.0.1/tcp/30333"],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps_sync,
+        peerstore_path=str(tmp_path / "self-like-peer-addr" / "p2p"),
+    )
+    peer = _register_peer(node, "127.0.0.1:40444")
+    peer.stream = AsyncMock()
+    hello = Hello(
+        version="2",
+        agent="animica-p2p/test",
+        chain_id=node.chain_id,
+        listen_port=40444,
+        listen_addrs=["/ip4/127.0.0.1/tcp/30333", "/ip4/127.0.0.1/tcp/40444"],
+        genesis_hash=node._genesis_hash(),
+        fork_id=node._fork_id(),
+        consensus_id=node._consensus_id(),
+        protocol_version=node._protocol_version(),
+        genesis_identity=node._genesis_identity(),
+        network_params_hash=node._network_params_hash(),
+        peer_id=b"\x22" * 32,
+        head_height=7,
+        head_hash=b"\x33" * 32,
+        alg_policy_root=b"",
+        capabilities=["sync"],
+        timestamp=0,
+    )
+
+    await node._handle_hello(peer, encode_payload(hello))
+
+    assert peer.hello_done.is_set()
+    assert peer.remote in node._peers
+    assert peer.remote in node._sync_peer_heads
+    assert peer.peer_id == (b"\x22" * 32).hex()
 
 
 def test_sync_status_head_hash_matches_chain_head(tmp_path: Path) -> None:
