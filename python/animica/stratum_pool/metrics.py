@@ -69,12 +69,26 @@ class PoolMetrics:
                 height INTEGER,
                 ts REAL,
                 found_by_pool INTEGER,
-                tx_count INTEGER
+                tx_count INTEGER,
+                worker TEXT,
+                address TEXT
             )
             """
         )
+        self._ensure_column(conn, "blocks", "worker", "TEXT")
+        self._ensure_column(conn, "blocks", "address", "TEXT")
         conn.commit()
         return conn
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection, table: str, column: str, column_type: str
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {str(row[1]) for row in rows}
+        if column in existing:
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     async def record_share(
         self,
@@ -116,6 +130,8 @@ class PoolMetrics:
                     "job_id": job.job_id,
                     "height": event["height"],
                     "tx_count": tx_count,
+                    "worker": session.worker or session.session_id,
+                    "address": session.address or "unknown",
                 }
             )
             request_refresh = getattr(self._job_manager, "request_refresh", None)
@@ -149,8 +165,10 @@ class PoolMetrics:
             if is_block:
                 self._db.execute(
                     """
-                    INSERT OR REPLACE INTO blocks (job_id, height, ts, found_by_pool, tx_count)
-                    VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO blocks (
+                    job_id, height, ts, found_by_pool, tx_count, worker, address
+                )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event.get("job_id"),
@@ -158,6 +176,8 @@ class PoolMetrics:
                         event.get("timestamp"),
                         1,
                         tx_count,
+                        event.get("worker"),
+                        event.get("address"),
                     ),
                 )
             self._db.commit()
@@ -246,10 +266,15 @@ class PoolMetrics:
         if self._db is not None:
             with self._db_lock:
                 row = self._db.execute(
-                    "SELECT height, job_id, ts, found_by_pool FROM blocks ORDER BY ts DESC LIMIT 1"
+                    """
+                    SELECT height, job_id, ts, found_by_pool, worker, address
+                    FROM blocks
+                    ORDER BY ts DESC
+                    LIMIT 1
+                    """
                 ).fetchone()
             if row:
-                height, job_id, ts, found = row
+                height, job_id, ts, found, worker, address = row
                 return {
                     "height": height,
                     "hash": job_id,
@@ -259,6 +284,8 @@ class PoolMetrics:
                         else None
                     ),
                     "found_by_pool": bool(found),
+                    "worker": worker or "",
+                    "address": address or "",
                 }
 
         if self._block_events:
@@ -274,6 +301,8 @@ class PoolMetrics:
                     else None
                 ),
                 "found_by_pool": blk.get("found_by_pool", False),
+                "worker": blk.get("worker") or "",
+                "address": blk.get("address") or "",
             }
 
         job = self._job_manager.current_job()
@@ -298,6 +327,7 @@ class PoolMetrics:
             "height": (job.height if job else None) or 0,
             "last_block_hash": latest_block.get("hash") or "0x0",
             "pool_hashrate": pool_hashrate,
+            "blocks_found_total": self._blocks_found_total(),
             "hashrate_series": self._hashrate_series(60),
             "hashrate_1m": self._hashrate_from_db(60)
             or self._hashrate_from_events(share_events, 60),
@@ -316,6 +346,25 @@ class PoolMetrics:
             "latest_block": latest_block,
         }
 
+    def _blocks_found_total(self) -> int:
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute("SELECT COUNT(*) FROM blocks").fetchone()
+            return int(row[0] or 0) if row else 0
+        return len(self._block_events)
+
+    def _blocks_found_by_worker(self, worker_id: str) -> int:
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    "SELECT COUNT(*) FROM blocks WHERE worker = ?",
+                    (worker_id,),
+                ).fetchone()
+            return int(row[0] or 0) if row else 0
+        return sum(
+            1 for blk in self._block_events if str(blk.get("worker") or "") == worker_id
+        )
+
     def miners(self) -> Dict[str, object]:
         sessions = self._server.session_snapshots()
         session_map = {str(s.get("worker") or s.get("session_id")): s for s in sessions}
@@ -326,6 +375,7 @@ class PoolMetrics:
         cutoff_max = min(cutoff_1m, cutoff_15m, cutoff_1h)
 
         aggregates: Dict[str, Dict[str, object]] = {}
+        block_counts: Dict[str, int] = {}
         if self._db is not None:
             with self._db_lock:
                 rows = self._db.execute(
@@ -343,6 +393,14 @@ class PoolMetrics:
                     GROUP BY worker
                     """,
                     (cutoff_1m, cutoff_15m, cutoff_1h, cutoff_max),
+                ).fetchall()
+                block_rows = self._db.execute(
+                    """
+                    SELECT worker, COUNT(*)
+                    FROM blocks
+                    WHERE worker IS NOT NULL AND worker != ''
+                    GROUP BY worker
+                    """
                 ).fetchall()
             for row in rows:
                 (
@@ -364,10 +422,17 @@ class PoolMetrics:
                     "hashrate_1h": float(diff60 or 0.0) / 3600,
                     "last_share_at": last_ts,
                 }
+            for worker_id, blocks_found in block_rows:
+                block_counts[str(worker_id)] = int(blocks_found or 0)
 
         events_by_worker: Dict[str, List[ShareEvent]] = defaultdict(list)
         for ev in self._share_events:
             events_by_worker[str(ev.get("worker"))].append(ev)
+        if not block_counts:
+            for blk in self._block_events:
+                worker_id = str(blk.get("worker") or "")
+                if worker_id:
+                    block_counts[worker_id] = block_counts.get(worker_id, 0) + 1
 
         items: List[Dict[str, object]] = []
         seen_workers = set()
@@ -393,6 +458,7 @@ class PoolMetrics:
                     or session.get("shares_accepted", 0),
                     "shares_rejected": agg.get("shares_rejected")
                     or session.get("shares_rejected", 0),
+                    "blocks_found": block_counts.get(worker_id, 0),
                 }
             )
             seen_workers.add(worker_id)
@@ -417,6 +483,7 @@ class PoolMetrics:
                     "difficulty": None,
                     "shares_accepted": agg.get("shares_accepted") or 0,
                     "shares_rejected": agg.get("shares_rejected") or 0,
+                    "blocks_found": block_counts.get(worker_id, 0),
                 }
             )
 
@@ -483,6 +550,7 @@ class PoolMetrics:
         accepted = sum(1 for ev in events if ev.get("status") == "accepted")
         rejected = sum(1 for ev in events if ev.get("status") == "rejected")
         latest = events[-1] if events else None
+        blocks_found = self._blocks_found_by_worker(worker_id)
         return {
             "address": latest.get("address") if latest else "",
             "worker_name": worker_id,
@@ -500,6 +568,7 @@ class PoolMetrics:
             },
             "shares_accepted": accepted,
             "shares_rejected": rejected,
+            "blocks_found": blocks_found,
             "current_difficulty": (latest.get("difficulty") if latest else 0) or 0,
             "connected_since": (
                 datetime.fromtimestamp(
@@ -515,9 +584,14 @@ class PoolMetrics:
         if self._db is not None:
             with self._db_lock:
                 rows = self._db.execute(
-                    "SELECT height, job_id, ts, found_by_pool, tx_count FROM blocks ORDER BY ts DESC LIMIT 50"
+                    """
+                    SELECT height, job_id, ts, found_by_pool, tx_count, worker, address
+                    FROM blocks
+                    ORDER BY ts DESC
+                    LIMIT 50
+                    """
                 ).fetchall()
-            for height, job_id, ts, found, tx_count in rows:
+            for height, job_id, ts, found, tx_count, worker, address in rows:
                 items.append(
                     {
                         "height": height,
@@ -532,6 +606,8 @@ class PoolMetrics:
                         "found_by_pool": bool(found),
                         "reward": "0",
                         "tx_count": tx_count,
+                        "worker": worker or "",
+                        "address": address or "",
                     }
                 )
 
@@ -551,11 +627,17 @@ class PoolMetrics:
                     "found_by_pool": blk.get("found_by_pool", False),
                     "reward": "0",
                     "tx_count": blk.get("tx_count"),
+                    "worker": blk.get("worker") or "",
+                    "address": blk.get("address") or "",
                 }
                 for blk in blocks
             ]
 
-        return {"items": items, "total": len(items)}
+        return {
+            "items": items,
+            "total": len(items),
+            "blocks_found_total": self._blocks_found_total(),
+        }
 
     def health(self) -> Dict[str, object]:
         return {"status": "ok", "uptime": int(time.time() - self._started)}

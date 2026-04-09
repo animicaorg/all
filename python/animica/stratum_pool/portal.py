@@ -151,6 +151,7 @@ class ResolvedMiningConfig:
     host_source: str
     api_base_url: str
     profile: str
+    pool_mode: str
     algorithm: str
     device_type: str
     fee_percent: Optional[float]
@@ -245,6 +246,9 @@ def resolve_public_mining_config(
     download_base_url = _read_env("ANIMICA_MINING_DOWNLOAD_BASE_URL") or api_base_url
 
     pool_enabled = _env_bool("ANIMICA_POOL_ENABLED", default=True)
+    pool_mode = (_read_env("ANIMICA_POOL_MODE") or ("solo" if not pool_enabled else "pps")).strip().lower()
+    if pool_mode not in {"pps", "solo"}:
+        pool_mode = "pps"
     fee_percent = _env_float("ANIMICA_POOL_FEE_PERCENT")
     payout_minimum = _read_env("ANIMICA_POOL_PAYOUT_MINIMUM")
 
@@ -284,6 +288,7 @@ def resolve_public_mining_config(
         host_source=host_source,
         api_base_url=api_base_url.rstrip("/"),
         profile=config.profile,
+        pool_mode=pool_mode,
         algorithm=algorithm,
         device_type=device_type,
         fee_percent=fee_percent,
@@ -321,6 +326,9 @@ def build_config_document(resolved: ResolvedMiningConfig, bundle: BundleInput) -
         f'  "worker": "{bundle.worker}",\n'
         f'  "threads": {bundle.threads},\n'
         f'  "scan_window": {bundle.scan_window},\n'
+        f'  "api_base_url": "{resolved.api_base_url}",\n'
+        f'  "pool_mode": "{resolved.pool_mode}",\n'
+        '  "stats_interval_sec": 20,\n'
         f'  "log_level": "{bundle.log_level}"\n'
         "}\n"
     )
@@ -431,6 +439,7 @@ def build_bundle_readme(
 Version: {version}
 Network: {resolved.network}
 Pool profile: {resolved.profile}
+Pool mode: {resolved.pool_mode.upper()}
 Algorithm: {resolved.algorithm}
 Recommended device: {resolved.device_type}
 Detected endpoint: {resolved.stratum_url}
@@ -505,9 +514,11 @@ class MiningPortalService:
             "network": resolved.network,
             "chain_id": resolved.chain_id,
             "profile": resolved.profile,
+            "pool_mode": resolved.pool_mode,
             "algorithm": resolved.algorithm,
             "device_type": resolved.device_type,
             "pool_hashrate": summary.get("pool_hashrate", 0),
+            "blocks_found_total": summary.get("blocks_found_total", 0),
             "miners": summary.get("num_miners", 0),
             "workers": summary.get("num_workers", 0),
             "height": summary.get("height", 0),
@@ -529,6 +540,7 @@ class MiningPortalService:
             "chain_id": resolved.chain_id,
             "pool_enabled": resolved.pool_enabled,
             "profile": resolved.profile,
+            "pool_mode": resolved.pool_mode,
             "algorithm": resolved.algorithm,
             "device_type": resolved.device_type,
             "stratum_host": resolved.public_host,

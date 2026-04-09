@@ -13,6 +13,11 @@ import signal
 import socket
 import ssl
 import struct
+import threading
+import time
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import Path
@@ -24,6 +29,7 @@ from core.utils.hash import sha3_256
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
 PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
+DEFAULT_STATS_INTERVAL_SEC = 20.0
 
 
 def micro_threshold_to_target256(t_micro: int) -> int:
@@ -63,6 +69,111 @@ def sanitize_worker_name(value: Optional[str]) -> str:
     return result or "animica-cpu"
 
 
+def _normalize_pool_mode(value: Optional[str]) -> str:
+    lowered = str(value or "").strip().lower()
+    return lowered if lowered in {"pps", "solo"} else "pps"
+
+
+def _default_api_base_url(host: str, tls: bool) -> str:
+    scheme = "https" if tls else "http"
+    return f"{scheme}://{host}:8550"
+
+
+def _join_url(base: str, path: str) -> str:
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _format_hashrate(hashrate_hps: float) -> str:
+    units = ("H/s", "KH/s", "MH/s", "GH/s", "TH/s")
+    value = max(0.0, float(hashrate_hps))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if value < 1000.0 or candidate == units[-1]:
+            break
+        value /= 1000.0
+    return f"{value:.2f} {unit}"
+
+
+def _format_power(power_w: Optional[float]) -> str:
+    if power_w is None or power_w < 0:
+        return "n/a"
+    return f"{power_w:.1f} W"
+
+
+def _format_counter(value: Optional[int]) -> str:
+    if value is None or value < 0:
+        return "n/a"
+    return str(int(value))
+
+
+def _fetch_json(url: str, *, timeout: float = 3.0) -> dict[str, Any]:
+    req = urllib_request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "animica-cpu-miner/0.1",
+        },
+    )
+    with urllib_request.urlopen(req, timeout=timeout) as resp:
+        payload = resp.read().decode("utf-8")
+    data = json.loads(payload)
+    return data if isinstance(data, dict) else {}
+
+
+class _RaplPowerSampler:
+    def __init__(self) -> None:
+        self._channels: list[tuple[Path, int]] = []
+        self._last_values: dict[Path, int] = {}
+        self._last_ts: Optional[float] = None
+        root = Path("/sys/class/powercap")
+        if not root.exists():
+            return
+        for channel_dir in sorted(root.glob("intel-rapl:*")):
+            if channel_dir.name.count(":") != 1:
+                continue
+            energy_path = channel_dir / "energy_uj"
+            max_path = channel_dir / "max_energy_range_uj"
+            if not energy_path.exists():
+                continue
+            max_uj = 0
+            try:
+                if max_path.exists():
+                    max_uj = int(max_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                max_uj = 0
+            self._channels.append((energy_path, max_uj))
+
+    def sample(self) -> Optional[float]:
+        if not self._channels:
+            return None
+        now = time.monotonic()
+        total_delta_uj = 0
+        initialized = False
+        for energy_path, max_uj in self._channels:
+            try:
+                current = int(energy_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                return None
+            previous = self._last_values.get(energy_path)
+            self._last_values[energy_path] = current
+            if previous is None:
+                initialized = True
+                continue
+            delta = current - previous
+            if delta < 0 and max_uj > 0:
+                delta += max_uj
+            total_delta_uj += max(0, delta)
+        if self._last_ts is None or initialized:
+            self._last_ts = now
+            return None
+        elapsed = now - self._last_ts
+        self._last_ts = now
+        if elapsed <= 0:
+            return None
+        return (total_delta_uj / 1_000_000.0) / elapsed
+
+
 @dataclass(frozen=True)
 class MinerConfig:
     host: str
@@ -73,7 +184,10 @@ class MinerConfig:
     worker: str
     threads: int
     scan_window: int
-    log_level: str
+    api_base_url: str = ""
+    pool_mode: str = "pps"
+    stats_interval_sec: float = DEFAULT_STATS_INTERVAL_SEC
+    log_level: str = "INFO"
 
     @property
     def stratum_url(self) -> str:
@@ -85,6 +199,7 @@ class ShareResult:
     nonce: int
     h_micro: int
     d_ratio: float
+    hashes_tried: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,6 +208,13 @@ class SubmitOutcome:
     is_block: bool
     reason: Optional[str]
     stale_job: bool
+
+
+@dataclass(frozen=True)
+class PoolStatusSnapshot:
+    global_height: int = 0
+    pool_blocks_found: int = 0
+    worker_blocks_found: int = 0
 
 
 def _first_present(mapping: Any, *keys: str) -> Any:
@@ -279,7 +401,12 @@ def _is_stale_job_reason(reason: Optional[str]) -> bool:
     if not reason:
         return False
     lowered = str(reason).lower()
-    return "stale job" in lowered or "stale jobid" in lowered
+    return (
+        "stale job" in lowered
+        or "stale jobid" in lowered
+        or "stale template" in lowered
+        or "stale_template" in lowered
+    )
 
 
 def _should_stop_job(outcome: SubmitOutcome) -> bool:
@@ -307,6 +434,20 @@ def resolve_config(args: argparse.Namespace) -> MinerConfig:
     worker = sanitize_worker_name(args.worker or file_data.get("worker"))
     threads = max(1, int(args.threads or file_data.get("threads") or 4))
     scan_window = max(25_000, int(args.scan_window or file_data.get("scan_window") or 200_000))
+    api_base_url = str(
+        args.api_base_url
+        or file_data.get("api_base_url")
+        or _default_api_base_url(host, tls)
+    ).rstrip("/")
+    pool_mode = _normalize_pool_mode(args.pool_mode or file_data.get("pool_mode"))
+    stats_interval_raw = (
+        args.stats_interval
+        if getattr(args, "stats_interval", None) is not None
+        else file_data.get("stats_interval_sec")
+    )
+    stats_interval_sec = max(
+        5.0, _float_value(stats_interval_raw) or DEFAULT_STATS_INTERVAL_SEC
+    )
     log_level = str(args.log_level or file_data.get("log_level") or "INFO").upper()
     return MinerConfig(
         host=host,
@@ -317,6 +458,9 @@ def resolve_config(args: argparse.Namespace) -> MinerConfig:
         worker=worker,
         threads=threads,
         scan_window=scan_window,
+        api_base_url=api_base_url,
+        pool_mode=pool_mode,
+        stats_interval_sec=stats_interval_sec,
         log_level=log_level,
     )
 
@@ -331,12 +475,21 @@ class StratumCpuMiner:
         self._next_id = 1
         self._reader_task: Optional[asyncio.Task[None]] = None
         self._mining_task: Optional[asyncio.Task[None]] = None
+        self._status_task: Optional[asyncio.Task[None]] = None
         self._closed = False
         self._stop = asyncio.Event()
         self._job_token = 0
         self._session_id = ""
         self._share_target = 1.0
         self._theta_micro = 0
+        self._local_blocks_found = 0
+        self._last_pool_snapshot = PoolStatusSnapshot()
+        self._stats_lock = threading.Lock()
+        self._hashes_since_report = 0
+        self._last_report_ts = time.monotonic()
+        self._last_hashrate_hps = 0.0
+        self._last_power_w: Optional[float] = None
+        self._power_sampler = _RaplPowerSampler()
         self._scan_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=self.config.threads,
             thread_name_prefix="animica-cpu-scan",
@@ -353,13 +506,7 @@ class StratumCpuMiner:
         self._reader_task = asyncio.create_task(self._reader_loop())
         await self._subscribe()
         await self._authorize()
-        self.log.info(
-            "Connected to %s as worker=%s address=%s threads=%s",
-            self.config.stratum_url,
-            self.config.worker,
-            self.config.address,
-            self.config.threads,
-        )
+        self._status_task = asyncio.create_task(self._status_loop())
 
     async def wait_forever(self) -> None:
         await self._stop.wait()
@@ -375,6 +522,9 @@ class StratumCpuMiner:
         if self._reader_task:
             self._reader_task.cancel()
             await asyncio.gather(self._reader_task, return_exceptions=True)
+        if self._status_task:
+            self._status_task.cancel()
+            await asyncio.gather(self._status_task, return_exceptions=True)
         for future in self._pending.values():
             if not future.done():
                 future.cancel()
@@ -382,6 +532,110 @@ class StratumCpuMiner:
         self.writer.close()
         await self.writer.wait_closed()
         self._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _record_hashes(self, hashes_tried: int) -> None:
+        if hashes_tried <= 0:
+            return
+        with self._stats_lock:
+            self._hashes_since_report += int(hashes_tried)
+
+    def _drain_hashrate(self) -> float:
+        now = time.monotonic()
+        with self._stats_lock:
+            elapsed = max(now - self._last_report_ts, 1e-6)
+            hashes = self._hashes_since_report
+            self._hashes_since_report = 0
+            self._last_report_ts = now
+        if hashes > 0:
+            self._last_hashrate_hps = float(hashes) / elapsed
+        return self._last_hashrate_hps
+
+    def _emit_status_line(
+        self,
+        *,
+        hashrate_hps: float,
+        power_w: Optional[float],
+        snapshot: PoolStatusSnapshot,
+    ) -> None:
+        ts = time.strftime("%H:%M:%S")
+        print(
+            f"[{ts}] mode={self.config.pool_mode} | "
+            f"hashrate={_format_hashrate(hashrate_hps)} | "
+            f"power={_format_power(power_w)} | "
+            f"blocks global={_format_counter(snapshot.global_height)} "
+            f"pool={_format_counter(snapshot.pool_blocks_found)} "
+            f"you={_format_counter(snapshot.worker_blocks_found)}"
+        )
+
+    def _emit_block_update(self, label: str, snapshot: PoolStatusSnapshot) -> None:
+        ts = time.strftime("%H:%M:%S")
+        print(
+            f"[{ts}] {label} | "
+            f"global={_format_counter(snapshot.global_height)} "
+            f"pool={_format_counter(snapshot.pool_blocks_found)} "
+            f"you={_format_counter(snapshot.worker_blocks_found)}"
+        )
+
+    async def _fetch_pool_snapshot(self) -> PoolStatusSnapshot:
+        status_url = _join_url(self.config.api_base_url, "/api/mining/status")
+        worker_url = _join_url(
+            self.config.api_base_url,
+            f"/api/miners/{urllib_parse.quote(self.config.worker, safe='')}",
+        )
+        try:
+            status = await asyncio.to_thread(_fetch_json, status_url)
+        except Exception:
+            return PoolStatusSnapshot(
+                global_height=-1,
+                pool_blocks_found=-1,
+                worker_blocks_found=self._local_blocks_found,
+            )
+        try:
+            worker_detail = await asyncio.to_thread(_fetch_json, worker_url)
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                worker_detail = {}
+            else:
+                worker_detail = {}
+        except Exception:
+            worker_detail = {}
+        return PoolStatusSnapshot(
+            global_height=_int_value(status.get("height")),
+            pool_blocks_found=_int_value(status.get("blocks_found_total")),
+            worker_blocks_found=max(
+                self._local_blocks_found,
+                _int_value(worker_detail.get("blocks_found")),
+            ),
+        )
+
+    async def _status_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self.config.stats_interval_sec
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            snapshot = await self._fetch_pool_snapshot()
+            if snapshot.worker_blocks_found > self._last_pool_snapshot.worker_blocks_found:
+                self._emit_block_update("Block found by this miner", snapshot)
+            elif snapshot.pool_blocks_found > self._last_pool_snapshot.pool_blocks_found:
+                self._emit_block_update("Pool found a block", snapshot)
+            elif snapshot.global_height > self._last_pool_snapshot.global_height:
+                self._emit_block_update("Network found a block", snapshot)
+            self._last_pool_snapshot = snapshot
+
+            hashrate_hps = self._drain_hashrate()
+            power_w = self._power_sampler.sample()
+            if power_w is not None:
+                self._last_power_w = power_w
+            self._emit_status_line(
+                hashrate_hps=hashrate_hps,
+                power_w=self._last_power_w,
+                snapshot=snapshot,
+            )
 
     async def _send(self, payload: dict[str, Any]) -> None:
         self.writer.write((json.dumps(payload) + "\n").encode("utf-8"))
@@ -456,11 +710,6 @@ class StratumCpuMiner:
                         self._share_target = share_target
                     if theta_micro > 0:
                         self._theta_micro = theta_micro
-                    self.log.info(
-                        "Difficulty update share_target=%.6f theta_micro=%s",
-                        self._share_target,
-                        self._theta_micro,
-                    )
                 elif method == "mining.notify":
                     await self._handle_notify(params)
         except asyncio.CancelledError:
@@ -497,12 +746,6 @@ class StratumCpuMiner:
 
         target_micro = max(1, int(theta_micro * max(share_target, 1e-9)))
         nonce_start = secrets.randbelow(2**32)
-        self.log.info(
-            "New job job_id=%s theta_micro=%s share_target=%.6f",
-            job_id,
-            theta_micro,
-            share_target,
-        )
 
         try:
             while token == self._job_token and not self._stop.is_set():
@@ -527,16 +770,17 @@ class StratumCpuMiner:
                     continue
                 outcome = await self._submit_share(job_id, share)
                 if outcome.accepted and outcome.is_block:
-                    self.log.info(
-                        "Accepted block share for job %s; waiting for next job",
-                        job_id,
+                    self._local_blocks_found += 1
+                    snapshot = PoolStatusSnapshot(
+                        global_height=self._last_pool_snapshot.global_height,
+                        pool_blocks_found=max(
+                            self._last_pool_snapshot.pool_blocks_found,
+                            self._local_blocks_found,
+                        ),
+                        worker_blocks_found=self._local_blocks_found,
                     )
-                elif outcome.stale_job:
-                    self.log.info(
-                        "Stopping stale job %s after submit response: %s",
-                        job_id,
-                        outcome.reason,
-                    )
+                    self._emit_block_update("Block found by this miner", snapshot)
+                    self._last_pool_snapshot = snapshot
                 if _should_stop_job(outcome):
                     return
         except asyncio.CancelledError:
@@ -551,6 +795,7 @@ class StratumCpuMiner:
     ) -> Optional[ShareResult]:
         per_worker = max(25_000, self.config.scan_window // max(1, self.config.threads))
         target = micro_threshold_to_target256(target_micro)
+        estimated_hashes = per_worker * self.config.threads
         futures = []
         for index in range(self.config.threads):
             start = (nonce_start + (index * per_worker)) & 0xFFFFFFFFFFFFFFFF
@@ -568,12 +813,19 @@ class StratumCpuMiner:
             for future in concurrent.futures.as_completed(futures):
                 share = future.result()
                 if share is not None:
+                    estimated_hashes = max(
+                        self.config.threads,
+                        min(per_worker, max(1, share.hashes_tried)) * self.config.threads,
+                    )
                     for other in futures:
                         other.cancel()
+                    share = replace(share, hashes_tried=estimated_hashes)
+                    self._record_hashes(estimated_hashes)
                     return share
         finally:
             for future in futures:
                 future.cancel()
+        self._record_hashes(estimated_hashes)
         return None
 
     def _scan_header_parallel(
@@ -585,6 +837,7 @@ class StratumCpuMiner:
     ) -> Optional[ShareResult]:
         per_worker = max(25_000, self.config.scan_window // max(1, self.config.threads))
         target = micro_threshold_to_target256(target_micro)
+        estimated_hashes = per_worker * self.config.threads
         futures = []
         for index in range(self.config.threads):
             start = (nonce_start + (index * per_worker)) & 0xFFFFFFFFFFFFFFFF
@@ -602,12 +855,19 @@ class StratumCpuMiner:
             for future in concurrent.futures.as_completed(futures):
                 share = future.result()
                 if share is not None:
+                    estimated_hashes = max(
+                        self.config.threads,
+                        min(per_worker, max(1, share.hashes_tried)) * self.config.threads,
+                    )
                     for other in futures:
                         other.cancel()
+                    share = replace(share, hashes_tried=estimated_hashes)
+                    self._record_hashes(estimated_hashes)
                     return share
         finally:
             for future in futures:
                 future.cancel()
+        self._record_hashes(estimated_hashes)
         return None
 
     @staticmethod
@@ -621,14 +881,19 @@ class StratumCpuMiner:
         base = hashlib.sha3_256()
         base.update(prefix)
         nonce = start_nonce
-        for _ in range(iterations):
+        for attempt in range(1, iterations + 1):
             hasher = base.copy()
             hasher.update(struct.pack("<Q", nonce))
             digest = hasher.digest()
             if int.from_bytes(digest, "big", signed=False) <= target:
                 h_micro = h_micro_from_digest(digest)
                 d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
-                return ShareResult(nonce=nonce, h_micro=h_micro, d_ratio=d_ratio)
+                return ShareResult(
+                    nonce=nonce,
+                    h_micro=h_micro,
+                    d_ratio=d_ratio,
+                    hashes_tried=attempt,
+                )
             nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
         return None
 
@@ -641,12 +906,17 @@ class StratumCpuMiner:
         iterations: int,
     ) -> Optional[ShareResult]:
         nonce = start_nonce
-        for _ in range(iterations):
+        for attempt in range(1, iterations + 1):
             digest = sha3_256(serialize_header(replace(header_template, nonce=nonce)))
             if int.from_bytes(digest, "big", signed=False) <= target:
                 h_micro = h_micro_from_digest(digest)
                 d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
-                return ShareResult(nonce=nonce, h_micro=h_micro, d_ratio=d_ratio)
+                return ShareResult(
+                    nonce=nonce,
+                    h_micro=h_micro,
+                    d_ratio=d_ratio,
+                    hashes_tried=attempt,
+                )
             nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
         return None
 
@@ -669,7 +939,8 @@ class StratumCpuMiner:
         reason = _response_reason(response)
         stale_job = _is_stale_job_reason(reason)
         if response.get("error"):
-            self.log.warning("Share rejected: %s", reason or response["error"])
+            if not stale_job:
+                self.log.warning("Share rejected: %s", reason or response["error"])
             return SubmitOutcome(
                 accepted=False,
                 is_block=False,
@@ -679,12 +950,6 @@ class StratumCpuMiner:
         result = response.get("result") or {}
         accepted = bool(result.get("accepted"))
         is_block = bool(result.get("isBlock"))
-        self.log.info(
-            "Share submitted accepted=%s is_block=%s reason=%s",
-            accepted,
-            is_block,
-            reason,
-        )
         return SubmitOutcome(
             accepted=accepted,
             is_block=is_block,
@@ -700,10 +965,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int)
     parser.add_argument("--scheme")
     parser.add_argument("--tls", action="store_true")
+    parser.add_argument("--api-base-url")
     parser.add_argument("--address")
     parser.add_argument("--worker")
+    parser.add_argument("--pool-mode")
     parser.add_argument("--threads", type=int)
     parser.add_argument("--scan-window", type=int)
+    parser.add_argument("--stats-interval", type=float)
     parser.add_argument("--log-level")
     return parser
 
@@ -727,11 +995,13 @@ async def async_main(args: argparse.Namespace) -> int:
             except NotImplementedError:
                 pass
 
-    print(f"Animica CPU Miner")
-    print(f"Endpoint: {config.stratum_url}")
-    print(f"Worker:   {config.worker}")
-    print(f"Address:  {config.address}")
-    print(f"Threads:  {config.threads}")
+    print(
+        "Animica CPU Miner | "
+        f"endpoint={config.stratum_url} | "
+        f"mode={config.pool_mode} | "
+        f"worker={config.worker} | "
+        f"threads={config.threads}"
+    )
 
     await miner.start()
     try:
