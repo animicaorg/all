@@ -1,5 +1,7 @@
 import sys
 import asyncio
+import argparse
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from animica.stratum_pool.reference_cpu_miner import (
     _is_stale_job_reason,
     _normalize_job_payload,
     _should_stop_job,
+    resolve_config,
 )
 
 
@@ -68,12 +71,60 @@ def test_is_stale_job_reason_matches_pool_rpc_error():
     )
 
 
+def test_is_stale_job_reason_matches_stale_template():
+    assert _is_stale_job_reason(
+        "rpc:-32063:RPC error -32063: stale template"
+    )
+
+
 def test_is_stale_job_reason_ignores_low_difficulty():
     assert not _is_stale_job_reason("low difficulty share")
 
 
 def test_should_stop_job_after_accepted_block():
     assert _should_stop_job(SubmitOutcome(True, True, None, False))
+
+
+def test_resolve_config_reads_api_and_mode_from_file(tmp_path: Path):
+    config_path = tmp_path / "miner.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "host": "pool.animica.test",
+                "port": 3333,
+                "scheme": "stratum+tcp",
+                "address": "anim1qqq",
+                "worker": "office-rig",
+                "threads": 2,
+                "api_base_url": "https://mine.animica.test",
+                "pool_mode": "solo",
+                "stats_interval_sec": 12,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_config(
+        argparse.Namespace(
+            config=str(config_path),
+            host=None,
+            port=None,
+            scheme=None,
+            tls=False,
+            api_base_url=None,
+            address=None,
+            worker=None,
+            pool_mode=None,
+            threads=None,
+            scan_window=None,
+            stats_interval=None,
+            log_level=None,
+        )
+    )
+
+    assert resolved.api_base_url == "https://mine.animica.test"
+    assert resolved.pool_mode == "solo"
+    assert resolved.stats_interval_sec == 12.0
 
 
 @pytest.mark.asyncio
@@ -118,6 +169,63 @@ async def test_mine_job_stops_after_stale_submit(monkeypatch: pytest.MonkeyPatch
                 0,
                 {
                     "jobId": "job-stale",
+                    "signBytes": "0x1234",
+                    "thetaMicro": 1_000_000,
+                    "shareTarget": 1.0,
+                },
+            ),
+            timeout=0.5,
+        )
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert len(scans) == 1
+
+
+@pytest.mark.asyncio
+async def test_mine_job_stops_after_stale_template_submit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            log_level="INFO",
+        )
+    )
+    scans: list[int] = []
+
+    def fake_scan(*_args, **_kwargs):
+        scans.append(1)
+        return ShareResult(nonce=3, h_micro=1_000_000, d_ratio=1.0)
+
+    async def fake_submit(_job_id: str, _share: ShareResult) -> SubmitOutcome:
+        return SubmitOutcome(
+            False,
+            True,
+            "rpc:-32063:RPC error -32063: stale template",
+            _is_stale_job_reason("rpc:-32063:RPC error -32063: stale template"),
+        )
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(miner, "_scan_parallel", fake_scan)
+    monkeypatch.setattr(miner, "_submit_share", fake_submit)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    try:
+        await asyncio.wait_for(
+            miner._mine_job(
+                0,
+                {
+                    "jobId": "job-stale-template",
                     "signBytes": "0x1234",
                     "thetaMicro": 1_000_000,
                     "shareTarget": 1.0,

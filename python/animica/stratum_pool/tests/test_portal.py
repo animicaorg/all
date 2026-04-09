@@ -26,6 +26,7 @@ RELEVANT_ENV_VARS = [
     "ANIMICA_PUBLIC_POOL_API_URL",
     "ANIMICA_MINING_DOWNLOAD_BASE_URL",
     "ANIMICA_POOL_ENABLED",
+    "ANIMICA_POOL_MODE",
     "ANIMICA_POOL_FEE_PERCENT",
     "ANIMICA_POOL_PAYOUT_MINIMUM",
     "ANIMICA_MINING_DOWNLOAD_DIR",
@@ -78,6 +79,7 @@ def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("ANIMICA_PUBLIC_STRATUM_PORT", "4444")
     monkeypatch.setenv("ANIMICA_PUBLIC_STRATUM_SCHEME", "stratum+tls")
     monkeypatch.setenv("ANIMICA_PUBLIC_STRATUM_TLS_ENABLED", "1")
+    monkeypatch.setenv("ANIMICA_POOL_MODE", "solo")
     monkeypatch.setenv("ANIMICA_POOL_FEE_PERCENT", "1.25")
     monkeypatch.setenv("ANIMICA_POOL_PAYOUT_MINIMUM", "10 ANM")
 
@@ -90,6 +92,7 @@ def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPa
     assert resolved.public_scheme == "stratum+tls"
     assert resolved.tls_enabled is True
     assert resolved.host_source == "public_stratum_host"
+    assert resolved.pool_mode == "solo"
     assert resolved.fee_percent == pytest.approx(1.25)
     assert resolved.payout_minimum == "10 ANM"
 
@@ -113,6 +116,7 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert config_payload["stratum_port"] == 3333
         assert config_payload["host_source"] == "request_host"
         assert config_payload["status"]["network"] == "devnet"
+        assert config_payload["pool_mode"] == "pps"
         assert any("Devnet" in warning for warning in config_payload["warnings"])
 
         manifest_res = await client.get("/api/mining/downloads")
@@ -132,7 +136,8 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert generated["commands"]["windows"].startswith("py -3 animica_cpu_miner.py --host mine.animica.test")
         assert generated["worker"] == "office-rig"
         assert generated["threads"] == 6
-        assert generated["config"]["content"].count("mine.animica.test") == 1
+        assert '"api_base_url": "https://mine.animica.test"' in generated["config"]["content"]
+        assert '"pool_mode": "pps"' in generated["config"]["content"]
         assert generated["download_urls"]["linux"].startswith(
             "https://mine.animica.test/api/mining/downloads/linux?"
         )

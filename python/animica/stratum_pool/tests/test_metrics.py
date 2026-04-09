@@ -64,4 +64,9 @@ async def test_record_share_only_tracks_accepted_blocks():
     )
     assert len(metrics._block_events) == 1
     assert metrics._block_events[0]["job_id"] == "job-1"
+    assert metrics._block_events[0]["worker"] == "worker-1"
+    assert metrics._block_events[0]["address"] == "anim1qqq"
     assert job_manager.refresh_calls == 1
+    assert metrics.pool_summary()["blocks_found_total"] == 1
+    assert metrics.miner_detail("worker-1")["blocks_found"] == 1
+    assert metrics.recent_blocks()["items"][0]["worker"] == "worker-1"
