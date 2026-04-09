@@ -808,8 +808,17 @@ class P2PService:
                 peerstore_path = base_dir / f"chain-{self.chain_id}" / "p2p"
 
         peerstore_path = Path(peerstore_path).expanduser()
+        requested_peerstore_path = peerstore_path
         writable_peerstore = ensure_writable(peerstore_path)
         peerstore_path = writable_peerstore.path
+        if writable_peerstore.used_fallback:
+            self._log.warning(
+                "P2P peerstore path not writable; using fallback",
+                extra={
+                    "requested": str(requested_peerstore_path),
+                    "effective": str(peerstore_path),
+                },
+            )
         peerstore_dir = (
             peerstore_path if not peerstore_path.suffix else peerstore_path.parent
         )
@@ -825,13 +834,14 @@ class P2PService:
         if not identity_path:
             identity_path = peerstore_dir / "identity.json"
         identity_path = Path(identity_path).expanduser()
+        requested_identity_path = identity_path
         writable_identity = ensure_writable(identity_path)
         identity_path = writable_identity.path
         if writable_identity.used_fallback:
-            log.warning(
+            self._log.warning(
                 "P2P identity path not writable; using fallback",
                 extra={
-                    "requested": str(writable_identity.fallback_path),
+                    "requested": str(requested_identity_path),
                     "effective": str(identity_path),
                 },
             )
