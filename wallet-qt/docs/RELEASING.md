@@ -198,12 +198,29 @@ If you bundled a prebuilt Windows node venv:
 ./scripts/verify-bundle-layout.py --platform windows --path ./build/windows-cross/stage
 ```
 
-The native Windows PowerShell flow now emits an NSIS installer `.exe`, a portable `.zip`, and an optional WiX `.msi` when WiX is installed:
+The native Windows PowerShell flow builds the staged runtime first and then wraps that exact staged tree into a real Inno Setup installer:
+
+```powershell
+cd wallet-qt
+.\scripts\build-windows.ps1
+.\scripts\package-windows-installer.ps1
+```
+
+Or run the combined flow:
 
 ```powershell
 cd wallet-qt
 .\scripts\release-windows.ps1
 ```
+
+Prerequisite for the native Windows installer step:
+
+- Inno Setup 6 with `ISCC.exe` on `PATH`, or pass `-IsccPath`
+
+Outputs:
+
+- `wallet-qt\build\windows\stage\`
+- `wallet-qt\build\windows\installer\AnimicaWallet-Setup.exe`
 
 ## 5. Release Verification Checklist
 
@@ -231,5 +248,5 @@ Ship the artifacts together with:
 - the bundled node build host cannot install Python dependencies
 - Qt deployment did not run because the workflow skipped `cmake --install`
 - the Linux host does not have a Windows-target Qt SDK or Windows-target OpenSSL prefix configured
-- WiX Toolset v3 is missing on Windows when you use the native PowerShell MSI flow
+- Inno Setup 6 is missing on Windows when you use the native PowerShell installer flow
 - Apple signing or notarization credentials are missing on macOS

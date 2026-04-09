@@ -12,7 +12,11 @@ param(
     [int]$Jobs = 0
 )
 
-$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -25,13 +29,38 @@ function Write-Log {
     Write-Host "[BUILD] $Message" -ForegroundColor Green
 }
 
+function Find-PythonCommand {
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        return "py"
+    }
+
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        return "python"
+    }
+
+    throw "Python 3 is required."
+}
+
+function Invoke-ExternalCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
+    )
+
+    & $FilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (exit code $LASTEXITCODE)"
+    }
+}
+
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
     throw "CMake not found."
 }
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
-    throw "Python 3 is required."
-}
+$PythonCmd = Find-PythonCommand
 
 if ($QtPath) {
     $env:CMAKE_PREFIX_PATH = $QtPath
@@ -64,28 +93,41 @@ if ($Jobs -le 0) {
 Push-Location $BuildDir
 try {
     Write-Log "Configuring Windows build in $BuildDir"
-    & cmake $ProjectRoot `
-        -DCMAKE_BUILD_TYPE="$BuildType" `
-        -DWALLET_REMOTE_RPC_ONLY=OFF `
-        -DBUILD_TESTING=OFF `
-        -G "Visual Studio 17 2022" `
-        -A x64
+    Invoke-ExternalCommand `
+        -FilePath "cmake" `
+        -ArgumentList @(
+            $ProjectRoot,
+            "-DCMAKE_BUILD_TYPE=$BuildType",
+            "-DWALLET_REMOTE_RPC_ONLY=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-G", "Visual Studio 17 2022",
+            "-A", "x64"
+        ) `
+        -FailureMessage "CMake configuration failed"
 
     Write-Log "Building wallet"
-    & cmake --build . --config $BuildType -j $Jobs
+    Invoke-ExternalCommand `
+        -FilePath "cmake" `
+        -ArgumentList @("--build", ".", "--config", $BuildType, "-j", $Jobs) `
+        -FailureMessage "Build failed"
 
     Write-Log "Installing staged runtime"
     if (Test-Path $InstallDir) {
         Remove-Item -Recurse -Force $InstallDir
     }
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    & cmake --install . --config $BuildType --prefix $InstallDir
+    Invoke-ExternalCommand `
+        -FilePath "cmake" `
+        -ArgumentList @("--install", ".", "--config", $BuildType, "--prefix", $InstallDir) `
+        -FailureMessage "Install staging failed"
 } finally {
     Pop-Location
 }
 
-$PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
-& $PythonCmd "$ScriptDir\verify-bundle-layout.py" --platform windows --path $InstallDir
+Invoke-ExternalCommand `
+    -FilePath $PythonCmd `
+    -ArgumentList @((Join-Path $ScriptDir "verify-bundle-layout.py"), "--platform", "windows", "--path", $InstallDir) `
+    -FailureMessage "Bundle layout verification failed"
 
 Write-Log ""
 Write-Log "Build completed successfully"
