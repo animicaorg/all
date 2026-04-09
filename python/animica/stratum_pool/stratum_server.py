@@ -77,6 +77,10 @@ class StratumPoolServer:
             header.setdefault("target", job.target)
         if job.height:
             header.setdefault("number", job.height)
+        if job.theta_micro:
+            header.setdefault("thetaMicro", job.theta_micro)
+            header.setdefault("thetaTargetMicro", job.theta_micro)
+            header.setdefault("theta_target_micro", job.theta_micro)
         stratum_job = StratumJob(
             job_id=job.job_id,
             header=header,
@@ -86,6 +90,10 @@ class StratumPoolServer:
             target=job.target,
             sign_bytes=job.sign_bytes or header.get("signBytes"),
             height=job.height,
+        )
+        await self._server.set_global_difficulty(
+            stratum_job.share_target,
+            stratum_job.theta_micro,
         )
         await self._server.publish_job(stratum_job)
 

@@ -84,6 +84,91 @@ class ShareResult:
     d_ratio: float
 
 
+def _first_present(mapping: Any, *keys: str) -> Any:
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _dict_value(mapping: Any, *keys: str) -> dict[str, Any]:
+    value = _first_present(mapping, *keys)
+    return value if isinstance(value, dict) else {}
+
+
+def _int_value(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: Any) -> float:
+    if value in (None, ""):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _extract_theta_micro(*mappings: Any) -> int:
+    for mapping in mappings:
+        theta_micro = _int_value(
+            _first_present(
+                mapping,
+                "thetaMicro",
+                "thetaTargetMicro",
+                "theta_target_micro",
+                "theta_micro",
+            )
+        )
+        if theta_micro > 0:
+            return theta_micro
+    return 0
+
+
+def _extract_share_target(*mappings: Any, fallback: float = 0.0) -> float:
+    for mapping in mappings:
+        share_target = _float_value(
+            _first_present(
+                mapping,
+                "shareTarget",
+                "share_target",
+                "shareRatio",
+                "share_ratio",
+            )
+        )
+        if share_target > 0:
+            return share_target
+    return fallback if fallback > 0 else 0.0
+
+
+def _normalize_job_payload(
+    job: dict[str, Any],
+    *,
+    default_theta_micro: int,
+    default_share_target: float,
+) -> tuple[str, dict[str, Any], Optional[str], int, float]:
+    header = _dict_value(job, "header", "headerTemplate")
+    job_id = str(
+        _first_present(job, "jobId", "job_id")
+        or _first_present(header, "hash", "headerHash", "header_hash")
+        or "unknown"
+    )
+    sign_hex = _first_present(job, "signBytes", "sign_bytes") or _first_present(
+        header, "signBytes", "sign_bytes"
+    )
+    theta_micro = _extract_theta_micro(job, header) or max(0, int(default_theta_micro))
+    share_target = _extract_share_target(job, fallback=default_share_target) or 1.0
+    return job_id, header, sign_hex, theta_micro, share_target
+
+
 def load_json_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -211,6 +296,13 @@ class StratumCpuMiner:
         )
         result = response.get("result") or {}
         self._session_id = str(result.get("sessionId") or result.get("session_id") or "")
+        target_hint = _dict_value(result, "targetHint", "target_hint")
+        theta_micro = _extract_theta_micro(result, target_hint)
+        if theta_micro > 0:
+            self._theta_micro = theta_micro
+        share_target = _extract_share_target(result, target_hint, fallback=self._share_target)
+        if share_target > 0:
+            self._share_target = share_target
 
     async def _authorize(self) -> None:
         response = await self._call(
@@ -238,9 +330,15 @@ class StratumCpuMiner:
                     continue
                 method = payload.get("method")
                 params = payload.get("params") or {}
+                if not isinstance(params, dict):
+                    continue
                 if method == "mining.set_difficulty":
-                    self._share_target = float(params.get("shareTarget") or 1.0)
-                    self._theta_micro = int(params.get("thetaMicro") or 0)
+                    share_target = _extract_share_target(params, fallback=self._share_target)
+                    theta_micro = _extract_theta_micro(params)
+                    if share_target > 0:
+                        self._share_target = share_target
+                    if theta_micro > 0:
+                        self._theta_micro = theta_micro
                     self.log.info(
                         "Difficulty update share_target=%.6f theta_micro=%s",
                         self._share_target,
@@ -263,21 +361,21 @@ class StratumCpuMiner:
         self._mining_task = asyncio.create_task(self._mine_job(token, job))
 
     async def _mine_job(self, token: int, job: dict[str, Any]) -> None:
-        header = job.get("header") or {}
-        sign_hex = job.get("signBytes") or header.get("signBytes")
+        job_id, header, sign_hex, theta_micro, share_target = _normalize_job_payload(
+            job,
+            default_theta_micro=self._theta_micro,
+            default_share_target=self._share_target,
+        )
         if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-            self.log.warning("Job %s missing signBytes; skipping", job.get("jobId"))
+            self.log.warning("Job %s missing signBytes; skipping", job_id)
             return
 
-        theta_micro = int(job.get("thetaMicro") or header.get("thetaMicro") or self._theta_micro)
-        share_target = float(job.get("shareTarget") or self._share_target or 1.0)
         if theta_micro <= 0:
-            self.log.warning("Job %s missing thetaMicro; skipping", job.get("jobId"))
+            self.log.warning("Job %s missing thetaMicro; skipping", job_id)
             return
         target_micro = max(1, int(theta_micro * max(share_target, 1e-9)))
         prefix = bytes.fromhex(sign_hex[2:])
         nonce_start = secrets.randbelow(2**32)
-        job_id = str(job.get("jobId") or header.get("hash") or "unknown")
         self.log.info(
             "New job job_id=%s theta_micro=%s share_target=%.6f",
             job_id,
