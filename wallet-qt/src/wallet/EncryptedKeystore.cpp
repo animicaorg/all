@@ -11,6 +11,12 @@
 #include <openssl/rand.h>
 #include <cstring>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <string.h>
+#endif
+
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #endif

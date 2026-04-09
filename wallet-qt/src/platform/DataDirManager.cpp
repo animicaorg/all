@@ -70,7 +70,11 @@ QString DataDirManager::getDefaultDataDir()
     return QDir::home().filePath("Library/Application Support/Animica");
     
 #elif defined(Q_OS_WIN)
-    // Windows: %APPDATA%\Animica\
+    // Windows: %APPDATA%/Animica
+    const QString appDataDir = qEnvironmentVariable("APPDATA");
+    if (!appDataDir.isEmpty()) {
+        return QDir(appDataDir).filePath("Animica");
+    }
     return QDir::home().filePath("AppData/Roaming/Animica");
     
 #else

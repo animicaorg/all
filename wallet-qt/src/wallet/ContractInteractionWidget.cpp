@@ -22,6 +22,12 @@
 
 namespace {
 constexpr const char* kRecentContractsKey = "WalletQt/recentContracts";
+
+QByteArray argsJsonInput(const QPlainTextEdit* edit)
+{
+    const QString text = edit->toPlainText();
+    return text.isEmpty() ? QByteArray("[]") : text.toUtf8();
+}
 }
 
 ContractInteractionWidget::ContractInteractionWidget(WalletEngine* engine, QWidget* parent)
@@ -156,7 +162,7 @@ void ContractInteractionWidget::updatePreview()
     QJsonParseError abiError;
     const QJsonDocument abiDoc = QJsonDocument::fromJson(m_abiEdit->toPlainText().toUtf8(), &abiError);
     QJsonParseError argsError;
-    const QJsonDocument argsDoc = QJsonDocument::fromJson(m_argsEdit->toPlainText().isEmpty() ? "[]" : m_argsEdit->toPlainText().toUtf8(), &argsError);
+    const QJsonDocument argsDoc = QJsonDocument::fromJson(argsJsonInput(m_argsEdit), &argsError);
     if (abiError.error != QJsonParseError::NoError || argsError.error != QJsonParseError::NoError || m_methodCombo->currentText().isEmpty()) {
         return;
     }
@@ -199,7 +205,7 @@ void ContractInteractionWidget::onReadClicked()
         return;
     }
     QJsonParseError argsError;
-    const QJsonDocument argsDoc = QJsonDocument::fromJson(m_argsEdit->toPlainText().isEmpty() ? "[]" : m_argsEdit->toPlainText().toUtf8(), &argsError);
+    const QJsonDocument argsDoc = QJsonDocument::fromJson(argsJsonInput(m_argsEdit), &argsError);
     if (argsError.error != QJsonParseError::NoError) {
         QMessageBox::warning(this, "Invalid Arguments", "Arguments must be valid JSON.");
         return;
@@ -247,7 +253,7 @@ void ContractInteractionWidget::onWriteClicked()
         return;
     }
     QJsonParseError argsError;
-    const QJsonDocument argsDoc = QJsonDocument::fromJson(m_argsEdit->toPlainText().isEmpty() ? "[]" : m_argsEdit->toPlainText().toUtf8(), &argsError);
+    const QJsonDocument argsDoc = QJsonDocument::fromJson(argsJsonInput(m_argsEdit), &argsError);
     if (argsError.error != QJsonParseError::NoError) {
         QMessageBox::warning(this, "Invalid Arguments", "Arguments must be valid JSON.");
         return;
