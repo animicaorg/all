@@ -8,14 +8,17 @@ from rpc.methods import miner as miner_methods
 from rpc.tests import new_test_client, rpc_call
 
 
-def _find_nonce(sign_bytes_hex: str, target_hex: str) -> str:
+def _find_nonce(sign_bytes_hex: str, target_hex: str, mix_seed_hex: str) -> str:
     sign_bytes = bytes.fromhex(
         sign_bytes_hex[2:] if sign_bytes_hex.startswith("0x") else sign_bytes_hex
     )
+    mix_seed = bytes.fromhex(
+        mix_seed_hex[2:] if mix_seed_hex.startswith("0x") else mix_seed_hex
+    )
     target = int(target_hex, 16)
     for i in range(10000):
-        candidate = i.to_bytes(8, "big")
-        digest = hashlib.sha3_256(sign_bytes + candidate).digest()
+        candidate = i.to_bytes(8, "little")
+        digest = hashlib.sha3_256(sign_bytes + mix_seed + candidate).digest()
         if int.from_bytes(digest, "big") <= target:
             return "0x" + candidate.hex()
     pytest.skip("could not find a satisfying nonce within search space")
@@ -158,7 +161,7 @@ def test_submit_work_accepts_valid_solution_and_updates_head():
     client, _, _ = new_test_client()
     job = rpc_call(client, "miner.getWork")["result"]
 
-    nonce_hex = _find_nonce(job["signBytes"], job["target"])
+    nonce_hex = _find_nonce(job["signBytes"], job["target"], job["hints"]["mixSeed"])
     res = rpc_call(
         client, "miner.submitWork", {"jobId": job["jobId"], "nonce": nonce_hex}
     )
@@ -175,7 +178,7 @@ def test_submit_work_accepts_positional_params():
     client, _, _ = new_test_client()
     job = rpc_call(client, "miner.getWork", ["asic_sha256"])["result"]
 
-    nonce_hex = _find_nonce(job["signBytes"], job["target"])
+    nonce_hex = _find_nonce(job["signBytes"], job["target"], job["hints"]["mixSeed"])
     res = rpc_call(client, "miner.submitWork", [job["jobId"], nonce_hex])
 
     result = res["result"]
