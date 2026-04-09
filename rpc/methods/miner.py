@@ -1926,6 +1926,56 @@ def _parse_nonce(nonce: Any) -> bytes:
     raise ValueError("nonce must be hex string, int, or bytes")
 
 
+def _parse_nonce_int(nonce: Any) -> int:
+    if isinstance(nonce, int):
+        value = nonce
+    elif isinstance(nonce, (bytes, bytearray)):
+        raw = bytes(nonce)
+        if len(raw) > 8:
+            raise ValueError("nonce must fit in 8 bytes")
+        value = int.from_bytes(raw, "big", signed=False)
+    elif isinstance(nonce, str):
+        raw = _hex_to_bytes(nonce)
+        if len(raw) > 8:
+            raise ValueError("nonce must fit in 8 bytes")
+        value = int.from_bytes(raw, "big", signed=False)
+    else:
+        raise ValueError("nonce must be hex string, int, or bytes")
+
+    if value < 0:
+        raise ValueError("nonce must be non-negative")
+    if value > 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("nonce must fit in 64 bits")
+    return value
+
+
+def _resolve_submit_work_mix_seed(
+    payload: dict[str, Any], cached_job: dict[str, Any]
+) -> bytes:
+    mix_seed = payload.get("mixSeed") or payload.get("mix_seed")
+    if mix_seed is None:
+        hints = payload.get("hints")
+        if isinstance(hints, dict):
+            mix_seed = hints.get("mixSeed") or hints.get("mix_seed")
+    if mix_seed is None:
+        mix_seed = cached_job.get("mix_seed")
+    if mix_seed is None:
+        job_obj = cached_job.get("job")
+        try:
+            mix_seed = job_obj.header.mix_seed  # type: ignore[union-attr]
+        except Exception:
+            mix_seed = None
+
+    if isinstance(mix_seed, (bytes, bytearray)):
+        return bytes(mix_seed)
+    if isinstance(mix_seed, str):
+        try:
+            return _hex_to_bytes(mix_seed)
+        except Exception:
+            return b""
+    return b""
+
+
 def _record_local_block(
     height: int, block_hash: str, header: dict[str, Any] | None = None
 ) -> None:
@@ -4051,6 +4101,7 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     _JOB_CACHE[job_id] = {
         "job": job,
         "sign_bytes": sign_bytes,
+        "mix_seed": job.header.mix_seed,
         "block_target": block_target,
         "share_target": share_target,
         "height": int(job.header.number),
@@ -4208,9 +4259,11 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
                     "head": {"height": head_height, "hash": head_hash_hex},
                 }
 
-    nonce = _parse_nonce(nonce_val)
+    nonce_int = _parse_nonce_int(nonce_val)
+    nonce = nonce_int.to_bytes(8, "little", signed=False)
     sign_bytes: bytes = job["sign_bytes"]
-    digest = hashlib.sha3_256(sign_bytes + nonce).digest()
+    mix_seed_bytes = _resolve_submit_work_mix_seed(payload, job)
+    digest = hashlib.sha3_256(sign_bytes + mix_seed_bytes + nonce).digest()
     digest_int = int.from_bytes(digest, "big")
 
     accepted = digest_int <= int(job["block_target"])
