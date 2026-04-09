@@ -253,13 +253,13 @@ Embedded-node verification:
 
 ### Native Windows validation checklist
 
-- `.\scripts\release-windows.ps1` should produce `animica-wallet-setup-x64.exe`
+- `.\scripts\build-windows.ps1` should produce `build\windows\stage\`
+- `.\scripts\package-windows-installer.ps1` should produce `build\windows\installer\AnimicaWallet-Setup.exe`
 - verify `platforms\qwindows.dll` exists
 - run the packaged executable outside the repo checkout
 - confirm the receive tab renders a real QR and can save PNG
-- confirm the NSIS installer writes Add/Remove Programs metadata correctly
+- confirm the Inno Setup installer writes Apps & Features metadata correctly
 - confirm uninstall works from Apps & Features or the generated uninstaller
-- if you opted into the native PowerShell/WiX path, validate MSI install/uninstall separately
 
 ## Common Failure Points
 
