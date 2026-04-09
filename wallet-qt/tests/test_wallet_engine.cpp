@@ -224,6 +224,25 @@ private slots:
         QVERIFY(engine.isLoaded());
         QVERIFY(!engine.isLocked());
     }
+
+    void testOpenWalletBootstrapsMissingStore()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+
+        const QString walletPath = QDir(tmpDir.path()).filePath("wallets.json");
+        QVERIFY(!QFileInfo::exists(walletPath));
+
+        AnimicaRpcClient rpcClient;
+        WalletEngine engine(&rpcClient);
+        configureBackendEnvironment();
+
+        QVERIFY(engine.openWallet(walletPath));
+        QVERIFY(engine.isLoaded());
+        QVERIFY(!engine.isLocked());
+        QVERIFY(QFileInfo::exists(walletPath));
+        QCOMPARE(engine.listAccounts().size(), 0);
+    }
 };
 
 QTEST_MAIN(TestWalletEngine)

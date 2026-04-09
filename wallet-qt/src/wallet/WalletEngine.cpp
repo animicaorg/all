@@ -3,10 +3,68 @@
 #include "AnimicaWalletBackend.h"
 #include "../rpc/AnimicaRpcClient.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QSaveFile>
 #include <QSet>
+
+namespace {
+
+bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& errorMessage)
+{
+    const QFileInfo walletInfo(walletFilePath);
+    QDir walletDir(walletInfo.absolutePath());
+    if (!walletDir.exists() && !walletDir.mkpath(".")) {
+        errorMessage = QString("Failed to create wallet data directory: %1").arg(walletInfo.absolutePath());
+        return false;
+    }
+
+    if (walletInfo.exists()) {
+        return true;
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    QJsonObject store;
+    store["format"] = QStringLiteral("animica.wallets");
+    store["version"] = 2;
+    store["created_at"] = timestamp;
+    store["updated_at"] = timestamp;
+    store["wallets"] = QJsonArray();
+    store["default"] = QJsonValue::Null;
+
+    QSaveFile walletFile(walletInfo.absoluteFilePath());
+    if (!walletFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        errorMessage = QString("Failed to create wallets.json: %1").arg(walletFile.errorString());
+        return false;
+    }
+
+    QByteArray payload = QJsonDocument(store).toJson(QJsonDocument::Indented);
+    if (!payload.endsWith('\n')) {
+        payload.append('\n');
+    }
+
+    if (walletFile.write(payload) != payload.size()) {
+        errorMessage = QString("Failed to write wallets.json: %1").arg(walletFile.errorString());
+        walletFile.cancelWriting();
+        return false;
+    }
+
+    if (!walletFile.commit()) {
+        errorMessage = QString("Failed to finalize wallets.json: %1").arg(walletFile.errorString());
+        return false;
+    }
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(walletInfo.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);
+#endif
+
+    return true;
+}
+
+} // namespace
 
 WalletEngine::WalletEngine(AnimicaRpcClient* rpcClient, QObject* parent)
     : QObject(parent)
@@ -138,6 +196,17 @@ bool WalletEngine::createWallet(const QString& password, const QString& dataDir)
 
 bool WalletEngine::openWallet(const QString& walletFilePath)
 {
+    QFileInfo info(walletFilePath);
+    const QString nextWalletFilePath = info.absoluteFilePath();
+    const QString nextDataDir = info.absolutePath();
+    const QString nextAddressBookPath = QDir(nextDataDir).filePath("address_book.json");
+
+    QString errorMessage;
+    if (!ensureCanonicalWalletStoreExists(nextWalletFilePath, errorMessage)) {
+        emit error(errorMessage);
+        return false;
+    }
+
     const QString previousBackendWalletFile = m_backend->walletFile();
     const QString previousWalletFilePath = m_walletFilePath;
     const QString previousDataDir = m_dataDir;
@@ -145,11 +214,6 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
     const bool previousLoaded = m_loaded;
     const bool previousLocked = m_locked;
     const QList<WalletAccount> previousAccounts = m_accounts;
-
-    QFileInfo info(walletFilePath);
-    const QString nextWalletFilePath = info.absoluteFilePath();
-    const QString nextDataDir = info.absolutePath();
-    const QString nextAddressBookPath = QDir(nextDataDir).filePath("address_book.json");
 
     m_backend->setWalletFile(nextWalletFilePath);
 
