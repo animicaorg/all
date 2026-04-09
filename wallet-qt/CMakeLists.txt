@@ -177,7 +177,11 @@ if(NOT WALLET_REMOTE_RPC_ONLY)
 endif()
 
 # Create executable
-add_executable(animica-wallet ${SOURCES} ${HEADERS})
+if(WIN32)
+    add_executable(animica-wallet WIN32 ${SOURCES} ${HEADERS})
+else()
+    add_executable(animica-wallet ${SOURCES} ${HEADERS})
+endif()
 
 if(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT AND QT_VERSION_MAJOR EQUAL 6 AND (WIN32 OR APPLE))
     qt_generate_deploy_app_script(
