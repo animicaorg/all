@@ -158,19 +158,23 @@ def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Option
     """
     Try to derive a bech32m address from alg_id and public key.
 
-    Prefer omni_sdk.address if available; fall back to pq.py.address.
+    Prefer a canonical result. If omni_sdk.address and pq.py.address disagree,
+    prefer pq.py.address (node/CLI compatibility surface).
     """
+    sdk_addr: Optional[str] = None
+    pq_addr: Optional[str] = None
+
     # Path A: omni_sdk.address (preferred)
     try:
         from omni_sdk import address as sdk_address  # type: ignore
 
         # Try common helper shapes
         if hasattr(sdk_address, "from_pubkey"):
-            return sdk_address.from_pubkey(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[attr-defined]
-        if hasattr(sdk_address, "derive"):
-            return sdk_address.derive(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[attr-defined]
-        if hasattr(sdk_address, "encode"):
-            return sdk_address.encode(public_key, alg_id, hrp)  # type: ignore[attr-defined]
+            sdk_addr = sdk_address.from_pubkey(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[attr-defined]
+        elif hasattr(sdk_address, "derive"):
+            sdk_addr = sdk_address.derive(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[attr-defined]
+        elif hasattr(sdk_address, "encode"):
+            sdk_addr = sdk_address.encode(public_key, alg_id, hrp)  # type: ignore[attr-defined]
     except Exception:
         pass  # fall through
 
@@ -178,19 +182,30 @@ def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Option
     try:
         from pq.py import address as pq_address  # type: ignore
 
+        address_from_pubkey = getattr(pq_address, "address_from_pubkey", None)
+        if callable(address_from_pubkey):
+            try:
+                pq_addr = address_from_pubkey(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[misc]
+            except TypeError:
+                pq_addr = address_from_pubkey(public_key, alg_id, hrp)  # type: ignore[misc]
+
         # Common helpers in crypto libs:
         for fn_name in ("from_pubkey", "encode", "pubkey_to_address"):
             fn = getattr(pq_address, fn_name, None)
             if callable(fn):
                 try:
-                    return fn(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[misc]
+                    pq_addr = fn(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[misc]
+                    break
                 except TypeError:
                     # Try positional (pk, alg_id, hrp)
-                    return fn(public_key, alg_id, hrp)  # type: ignore[misc]
+                    pq_addr = fn(public_key, alg_id, hrp)  # type: ignore[misc]
+                    break
     except Exception:
         pass
 
-    return None
+    if sdk_addr and pq_addr and sdk_addr.lower() != pq_addr.lower():
+        return pq_addr
+    return pq_addr or sdk_addr
 
 
 def _call_uniform_sign(
@@ -289,6 +304,23 @@ def _as_bytes(value: Any) -> Optional[bytes]:
     if isinstance(value, (bytearray, memoryview)):
         return bytes(value)
     return None
+
+
+def _validate_seed(seed: Optional[bytes]) -> Optional[bytes]:
+    """
+    Validate seed material for deterministic key generation.
+
+    Current SDK/PQ deterministic keygen paths expect exactly 32 bytes.
+    """
+    if seed is None:
+        return None
+    if isinstance(seed, (bytearray, memoryview)):
+        seed = bytes(seed)
+    if not isinstance(seed, bytes):
+        raise TypeError(f"seed must be bytes-like; got {type(seed).__name__}")
+    if len(seed) != 32:
+        raise ValueError(f"expected 32-byte seed; got {len(seed)} bytes")
+    return seed
 
 
 def _extract_keypair(
@@ -433,6 +465,8 @@ def _uniform_keygen(alg_name: AlgName, seed: Optional[bytes]) -> Tuple[bytes, by
     Use pq.py.keygen to derive a keypair for a signature algorithm, optionally
     seeded (deterministic).
     """
+    seed = _validate_seed(seed)
+
     pq_keygen = None
     try:
         _, pq_keygen, _, _ = _import_pq()
@@ -574,7 +608,8 @@ class PQSigner:
         PQSigner
         """
         name = _normalize_alg_name(alg_name)
-        sk, pk = _uniform_keygen(name, seed)
+        normalized_seed = _validate_seed(seed)
+        sk, pk = _uniform_keygen(name, normalized_seed)
         return cls(alg_name=name, secret_key=sk, public_key=pk)
 
     @classmethod

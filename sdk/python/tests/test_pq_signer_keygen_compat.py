@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import types
 
+import pytest
+
 from omni_sdk.wallet import signer as signer_mod
 from omni_sdk.wallet.signer import PQSigner
 
@@ -59,3 +61,8 @@ def test_pq_signer_from_seed_sphincs_shake_128s(monkeypatch) -> None:
     assert isinstance(signer.public_key, bytes) and len(signer.public_key) > 0
     assert isinstance(signer.secret_key, bytes) and len(signer.secret_key) > 0
     assert isinstance(sig, bytes) and len(sig) > 0
+
+
+def test_pq_signer_from_seed_rejects_non_32_byte_seed() -> None:
+    with pytest.raises(ValueError, match=r"expected 32-byte seed; got 64 bytes"):
+        PQSigner.from_seed("sphincs_shake_128s", seed=b"\x01" * 64)
