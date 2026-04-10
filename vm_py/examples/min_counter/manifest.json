@@ -1,0 +1,17 @@
+{
+  "name": "MinCounter",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "source": "contract.py",
+  "abi": {
+    "functions": [
+      { "name": "inc", "inputs": [], "outputs": [] },
+      { "name": "get", "inputs": [], "outputs": [ { "type": "int" } ] },
+      { "name": "set", "inputs": [ { "name": "n", "type": "int" } ], "outputs": [] }
+    ]
+  },
+  "deploy": {
+    "initStorage": {}
+  }
+}

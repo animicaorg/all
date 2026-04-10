@@ -18,13 +18,18 @@
         "name": "get",
         "inputs": [],
         "outputs": [
-          { "type": "int" }
+          {
+            "type": "int"
+          }
         ]
       },
       {
         "name": "set",
         "inputs": [
-          { "name": "n", "type": "int" }
+          {
+            "name": "n",
+            "type": "int"
+          }
         ],
         "outputs": []
       }
@@ -33,20 +38,32 @@
       {
         "name": "Counter.Incremented",
         "inputs": [
-          { "name": "new", "type": "int" }
+          {
+            "name": "new",
+            "type": "int"
+          }
         ]
       },
       {
         "name": "Counter.Set",
         "inputs": [
-          { "name": "value", "type": "int" }
+          {
+            "name": "value",
+            "type": "int"
+          }
         ]
       }
     ],
     "errors": [
-      { "name": "counter: negative" },
-      { "name": "counter: overflow u64" },
-      { "name": "counter: bad type" }
+      {
+        "name": "counter: negative"
+      },
+      {
+        "name": "counter: overflow u64"
+      },
+      {
+        "name": "counter: bad type"
+      }
     ]
   },
   "deploy": {
@@ -57,5 +74,6 @@
   },
   "resources": {
     "maxCodeBytes": 16384
-  }
+  },
+  "source": "contract.py"
 }
