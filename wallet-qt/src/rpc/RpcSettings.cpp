@@ -15,7 +15,7 @@ RpcEndpointSettings RpcSettings::defaultSettings()
     settings.scheme = QString::fromLatin1(kCanonicalScheme);
     settings.host = QString::fromLatin1(kCanonicalHost);
     settings.port = kCanonicalPort;
-    settings.path.clear();
+    settings.path = QStringLiteral("/rpc");
     return settings;
 }
 

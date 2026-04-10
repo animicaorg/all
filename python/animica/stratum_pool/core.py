@@ -27,7 +27,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from mining.share_submitter import JsonRpcClient, RpcError
 from mining.stratum_server import ShareValidator, StratumJob
@@ -87,36 +87,52 @@ class MiningCoreAdapter:
     async def _rpc_call(self, method: str, params: Any) -> Any:
         return await asyncio.to_thread(self._rpc.call, method, params)
 
+    @staticmethod
+    def _block_template_param_variants(pool_address: str) -> Iterable[Any]:
+        address = str(pool_address).strip()
+        if not address:
+            return ()
+        return (
+            {"address": address, "include_mempool": True},
+            {"payout_address": address, "include_mempool": True},
+            [address],
+        )
+
     async def get_new_job(self) -> MiningJob:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
 
         if self._pool_address:
-            try:
-                template = await self._rpc_call(
-                    "miner.getBlockTemplate",
-                    {
-                        "address": self._pool_address,
-                        "include_mempool": True,
-                    },
-                )
-                if isinstance(template, dict):
-                    if template.get("enabled") is False:
-                        reason = str(template.get("reason") or "disabled")
-                        raise RuntimeError(
-                            f"unable to fetch block template: mining disabled ({reason})"
-                        )
-                    if looks_like_block_template(template):
-                        work = template
-            except RpcError as exc:
-                last_exc = exc
-                if exc.code not in (-32601, -32602):
+            for template_params in self._block_template_param_variants(self._pool_address):
+                try:
+                    template = await self._rpc_call(
+                        "miner.getBlockTemplate",
+                        template_params,
+                    )
+                    if isinstance(template, dict):
+                        if template.get("enabled") is False:
+                            reason = str(template.get("reason") or "disabled")
+                            raise RuntimeError(
+                                f"unable to fetch block template: mining disabled ({reason})"
+                            )
+                        if looks_like_block_template(template):
+                            work = template
+                            break
+                        last_exc = RuntimeError("block template payload missing header/target")
+                except RpcError as exc:
+                    last_exc = exc
+                    if exc.code == -32602:
+                        continue
                     raise RuntimeError(
                         f"unable to fetch block template: {exc}"
                     ) from exc
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                raise
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    raise
+            if work is None:
+                raise RuntimeError(
+                    f"unable to fetch block template for pool mining: {last_exc}"
+                )
 
         metadata = {"chainId": self._chain_id}
         if self._pool_address:
