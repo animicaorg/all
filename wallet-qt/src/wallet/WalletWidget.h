@@ -64,6 +64,8 @@ signals:
     void settingsRequested();
 
 private slots:
+    void onLockWalletAction();
+    void onUnlockWalletAction();
     void onCreateAccountAction();
     void onRefreshAction();
     void handleWalletLocked();
@@ -103,8 +105,10 @@ private:
     QLabel* m_rpcStatusLabel;
     QLabel* m_rpcEndpointLabel;
     QAction* m_retryConnectionAction;
-    
+
     // Actions
+    QAction* m_lockWalletAction;
+    QAction* m_unlockWalletAction;
     QAction* m_createAccountAction;
     QAction* m_refreshAction;
     

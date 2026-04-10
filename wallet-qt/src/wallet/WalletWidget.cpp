@@ -26,6 +26,30 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+namespace {
+
+bool isHostedRpcOutageMessage(const QString& message)
+{
+    return message.startsWith(QStringLiteral("Hosted RPC unavailable"), Qt::CaseInsensitive);
+}
+
+QString rpcFailureDetails(const QString& message)
+{
+    if (isHostedRpcOutageMessage(message)) {
+        return QString(
+            "%1\n\n"
+            "The wallet reached https://rpc.animica.org/rpc, but the service behind it failed. "
+            "This is a server-side outage; retry again shortly."
+        ).arg(message);
+    }
+
+    return QString(
+        "The wallet could not complete a request to https://rpc.animica.org/rpc.\n\n%1"
+    ).arg(message);
+}
+
+} // namespace
+
 WalletWidget::WalletWidget(
     WalletEngine* engine,
     AnimicaRpcClient* rpcClient,
@@ -39,6 +63,8 @@ WalletWidget::WalletWidget(
     , m_database(database)
     , m_monitor(monitor)
     , m_retryConnectionAction(nullptr)
+    , m_lockWalletAction(nullptr)
+    , m_unlockWalletAction(nullptr)
 {
     setupUi();
 
@@ -73,6 +99,16 @@ void WalletWidget::setupUi()
 
     m_toolbar = new QToolBar("Wallet Toolbar", this);
     m_toolbar->setMovable(false);
+
+    m_unlockWalletAction = m_toolbar->addAction("Unlock Wallet");
+    m_unlockWalletAction->setToolTip("Unlock the wallet store for account management");
+    connect(m_unlockWalletAction, &QAction::triggered, this, &WalletWidget::onUnlockWalletAction);
+
+    m_lockWalletAction = m_toolbar->addAction("Lock Wallet");
+    m_lockWalletAction->setToolTip("Lock the wallet store for this session");
+    connect(m_lockWalletAction, &QAction::triggered, this, &WalletWidget::onLockWalletAction);
+
+    m_toolbar->addSeparator();
 
     m_createAccountAction = m_toolbar->addAction("Create Account");
     m_createAccountAction->setToolTip("Create a new wallet entry");
@@ -217,8 +253,15 @@ void WalletWidget::refresh()
 
 void WalletWidget::updateToolbarState()
 {
-    const bool createEnabled = m_engine->isLoaded() && !m_engine->isLocked();
-    m_createAccountAction->setEnabled(createEnabled);
+    const bool loaded = m_engine->isLoaded();
+    const bool locked = loaded && m_engine->isLocked();
+    const bool unlocked = loaded && !locked;
+
+    m_createAccountAction->setEnabled(unlocked);
+    m_lockWalletAction->setEnabled(unlocked);
+    m_unlockWalletAction->setEnabled(locked);
+    m_lockWalletAction->setVisible(unlocked);
+    m_unlockWalletAction->setVisible(locked);
 }
 
 void WalletWidget::updateStatus()
@@ -259,6 +302,41 @@ QString WalletWidget::formatTotalBalance() const
 void WalletWidget::onCreateAccountAction()
 {
     handleCreateAccountRequested();
+}
+
+void WalletWidget::onLockWalletAction()
+{
+    if (m_engine->isLoaded() && !m_engine->isLocked()) {
+        m_engine->lockWallet();
+    }
+}
+
+void WalletWidget::onUnlockWalletAction()
+{
+    if (!m_engine->isLoaded()) {
+        const QString detail = m_engine->lastError().trimmed();
+        QMessageBox::warning(
+            this,
+            "Wallet Unavailable",
+            detail.isEmpty()
+                ? QStringLiteral("The wallet store is unavailable.")
+                : QString("The wallet store is unavailable.\n\n%1").arg(detail)
+        );
+        return;
+    }
+
+    if (m_engine->unlockWallet(QString())) {
+        return;
+    }
+
+    const QString detail = m_engine->lastError().trimmed();
+    QMessageBox::warning(
+        this,
+        "Unlock Failed",
+        detail.isEmpty()
+            ? QStringLiteral("The wallet store could not be unlocked.")
+            : QString("The wallet store could not be unlocked.\n\n%1").arg(detail)
+    );
 }
 
 void WalletWidget::onRefreshAction()
@@ -320,8 +398,10 @@ void WalletWidget::handleRpcError(const QString& message)
     m_lastRpcError = message;
     updateRpcStatusLabel("RPC: Error", "#b91c1c");
     setConnectionBanner(
-        "Cannot reach the Animica network.",
-        QString("Hosted RPC request failed.\n\n%1").arg(message)
+        isHostedRpcOutageMessage(message)
+            ? QStringLiteral("Hosted RPC temporarily unavailable.")
+            : QStringLiteral("Cannot reach the Animica network."),
+        rpcFailureDetails(message)
     );
 }
 
@@ -421,13 +501,22 @@ void WalletWidget::handleCreateAccountRequested()
         QMessageBox::warning(
             this,
             "Wallet Unavailable",
-            "The wallet store is unavailable. The application could not open or create wallets.json."
+            m_engine->lastError().trimmed().isEmpty()
+                ? QStringLiteral("The wallet store is unavailable. The application could not open or create wallets.json.")
+                : QString("The wallet store is unavailable.\n\n%1").arg(m_engine->lastError().trimmed())
         );
         return;
     }
 
-    if (m_engine->isLocked()) {
-        QMessageBox::information(this, "Wallet Locked", "Please unlock the wallet first to create an account.");
+    if (m_engine->isLocked() && !m_engine->unlockWallet(QString())) {
+        const QString detail = m_engine->lastError().trimmed();
+        QMessageBox::warning(
+            this,
+            "Unlock Failed",
+            detail.isEmpty()
+                ? QStringLiteral("The wallet store could not be unlocked for account creation.")
+                : QString("The wallet store could not be unlocked for account creation.\n\n%1").arg(detail)
+        );
         return;
     }
 

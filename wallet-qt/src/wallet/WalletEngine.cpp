@@ -106,7 +106,10 @@ QJsonObject WalletEngine::backendResult(const QString& operation, const QJsonObj
     const QJsonObject response = m_backend->call(operation, args, timeoutMs);
     if (!response.value("ok").toBool()) {
         const QString message = response.value("error").toObject().value("message").toString("Wallet backend operation failed.");
+        m_lastError = message;
         emit const_cast<WalletEngine*>(this)->error(message);
+    } else {
+        m_lastError.clear();
     }
     return response;
 }
@@ -192,6 +195,7 @@ bool WalletEngine::createWallet(const QString& password, const QString& dataDir)
 
     QDir dir(dataDir);
     if (!dir.exists() && !dir.mkpath(".")) {
+        m_lastError = "Failed to create wallet data directory.";
         emit error("Failed to create wallet data directory.");
         return false;
     }
@@ -207,6 +211,7 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
 
     QString errorMessage;
     if (!ensureCanonicalWalletStoreExists(nextWalletFilePath, errorMessage)) {
+        m_lastError = errorMessage;
         emit error(errorMessage);
         return false;
     }
@@ -251,9 +256,11 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
     }
 
     if (!m_addressBook->load(m_addressBookPath)) {
+        m_lastError = "Failed to load address book.";
         emit error("Failed to load address book.");
     }
 
+    m_lastError.clear();
     emit walletUnlocked();
     resetAutoLock();
     return true;
@@ -263,10 +270,12 @@ bool WalletEngine::unlockWallet(const QString& password)
 {
     Q_UNUSED(password);
     if (!m_loaded) {
+        m_lastError = "No wallet store is loaded.";
         emit error("No wallet store is loaded.");
         return false;
     }
     if (!m_locked) {
+        m_lastError.clear();
         return true;
     }
     m_locked = false;
@@ -274,6 +283,7 @@ bool WalletEngine::unlockWallet(const QString& password)
         m_locked = true;
         return false;
     }
+    m_lastError.clear();
     emit walletUnlocked();
     resetAutoLock();
     return true;
@@ -299,6 +309,7 @@ bool WalletEngine::changePassword(const QString& oldPassword, const QString& new
 {
     Q_UNUSED(oldPassword);
     Q_UNUSED(newPassword);
+    m_lastError = "Wallet encryption is not supported by the canonical Animica wallets.json store.";
     emit error("Wallet encryption is not supported by the canonical Animica wallets.json store.");
     return false;
 }
@@ -335,10 +346,12 @@ QJsonArray WalletEngine::supportedAlgorithms() const
 WalletAccount WalletEngine::createAccount(const QString& label, int algId)
 {
     if (!m_loaded) {
+        m_lastError = "No wallet store is loaded.";
         emit error("No wallet store is loaded.");
         return WalletAccount();
     }
     if (m_locked) {
+        m_lastError = "Wallet store is locked.";
         emit error("Wallet store is locked.");
         return WalletAccount();
     }
@@ -357,6 +370,7 @@ WalletAccount WalletEngine::createAccount(const QString& label, int algId)
 WalletAccount WalletEngine::importAccount(const QJsonObject& json)
 {
     Q_UNUSED(json);
+    m_lastError = "Single-account import is not supported; import a canonical wallets.json file instead.";
     emit error("Single-account import is not supported; import a canonical wallets.json file instead.");
     return WalletAccount();
 }
@@ -376,6 +390,7 @@ bool WalletEngine::importWalletsFile(const QString& sourcePath, bool merge)
 bool WalletEngine::removeAccount(const QString& accountId)
 {
     if (m_locked) {
+        m_lastError = "Wallet store is locked.";
         emit error("Wallet store is locked.");
         return false;
     }
@@ -391,6 +406,7 @@ bool WalletEngine::removeAccount(const QString& accountId)
 bool WalletEngine::renameAccount(const QString& accountId, const QString& newLabel)
 {
     if (m_locked) {
+        m_lastError = "Wallet store is locked.";
         emit error("Wallet store is locked.");
         return false;
     }
@@ -407,6 +423,7 @@ bool WalletEngine::renameAccount(const QString& accountId, const QString& newLab
 WalletAccount WalletEngine::setDefaultAccount(const QString& accountId)
 {
     if (m_locked) {
+        m_lastError = "Wallet store is locked.";
         emit error("Wallet store is locked.");
         return WalletAccount();
     }
@@ -457,6 +474,7 @@ bool WalletEngine::exportSecretMaterial(const QString& accountId, const QString&
 bool WalletEngine::addContact(const QString& label, const QString& address, const QString& note)
 {
     if (!validateAddress(address)) {
+        m_lastError = "Invalid Animica address.";
         emit error("Invalid Animica address.");
         return false;
     }
@@ -466,6 +484,7 @@ bool WalletEngine::addContact(const QString& label, const QString& address, cons
 bool WalletEngine::updateContact(const QString& address, const QString& label, const QString& note)
 {
     if (!validateAddress(address)) {
+        m_lastError = "Invalid Animica address.";
         emit error("Invalid Animica address.");
         return false;
     }
@@ -551,6 +570,7 @@ QString WalletEngine::signTransaction(const QJsonObject& txJson, const QString& 
 {
     Q_UNUSED(txJson);
     Q_UNUSED(fromAccountId);
+    m_lastError = "Direct transaction signing is not exposed; use the canonical send flow.";
     emit error("Direct transaction signing is not exposed; use the canonical send flow.");
     return QString();
 }

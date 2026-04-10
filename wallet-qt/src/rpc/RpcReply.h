@@ -29,6 +29,15 @@ public:
     QString errorString() const { return m_errorString; }
     QByteArray readAll() const { return m_response; }
     bool isFinished() const { return m_finished; }
+    int httpStatusCode() const { return m_httpStatusCode; }
+    QString httpReasonPhrase() const { return m_httpReasonPhrase; }
+
+    static QString describeNetworkError(
+        QNetworkReply::NetworkError error,
+        const QString& fallback,
+        int httpStatusCode = 0,
+        const QString& httpReasonPhrase = QString()
+    );
 
 signals:
     void finished();
@@ -48,6 +57,8 @@ private:
     QString m_errorString;
     QByteArray m_response;
     bool m_finished;
+    int m_httpStatusCode;
+    QString m_httpReasonPhrase;
     QPointer<QNetworkReply> m_reply;
 };
 

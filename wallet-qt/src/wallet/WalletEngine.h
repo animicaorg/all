@@ -27,6 +27,7 @@ public:
     void lockWallet();
     bool isLocked() const { return m_locked; }
     bool isLoaded() const;
+    QString lastError() const { return m_lastError; }
     bool changePassword(const QString& oldPassword, const QString& newPassword);
 
     void setAutoLockTimeout(int minutes);
@@ -110,6 +111,7 @@ private:
     QString m_walletFilePath;
     QString m_dataDir;
     QString m_addressBookPath;
+    mutable QString m_lastError;
 };
 
 #endif // WALLETENGINE_H

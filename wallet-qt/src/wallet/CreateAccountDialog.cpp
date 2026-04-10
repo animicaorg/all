@@ -120,13 +120,20 @@ void CreateAccountDialog::onCreateClicked()
 {
     if (!m_engine->isLoaded()) {
         QMessageBox::warning(this, "Wallet Unavailable",
-                             "The wallet store is unavailable. The application could not open or create wallets.json.");
+                             m_engine->lastError().trimmed().isEmpty()
+                                 ? QStringLiteral("The wallet store is unavailable. The application could not open or create wallets.json.")
+                                 : QString("The wallet store is unavailable.\n\n%1").arg(m_engine->lastError().trimmed()));
         return;
     }
 
-    if (m_engine->isLocked()) {
-        QMessageBox::information(this, "Wallet Locked",
-                                 "Please unlock the wallet first to create an account.");
+    if (m_engine->isLocked() && !m_engine->unlockWallet(QString())) {
+        QMessageBox::warning(
+            this,
+            "Unlock Failed",
+            m_engine->lastError().trimmed().isEmpty()
+                ? QStringLiteral("The wallet store could not be unlocked.")
+                : QString("The wallet store could not be unlocked.\n\n%1").arg(m_engine->lastError().trimmed())
+        );
         return;
     }
 
@@ -169,7 +176,13 @@ void CreateAccountDialog::onAccountCreated()
         m_labelEdit->setEnabled(true);
         m_algorithmCombo->setEnabled(true);
         m_createButton->setEnabled(true);
-        QMessageBox::critical(this, "Error", "Failed to create account.");
+        QMessageBox::critical(
+            this,
+            "Error",
+            m_engine->lastError().trimmed().isEmpty()
+                ? QStringLiteral("Failed to create account.")
+                : QString("Failed to create account.\n\n%1").arg(m_engine->lastError().trimmed())
+        );
         return;
     }
     

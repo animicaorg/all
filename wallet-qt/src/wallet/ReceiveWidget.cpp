@@ -262,6 +262,16 @@ void ReceiveWidget::updateAccounts()
     QSignalBlocker blocker(m_accountCombo);
     m_accountCombo->clear();
 
+    if (!m_walletEngine || !m_walletEngine->isLoaded()) {
+        m_accountCombo->addItem("(Wallet Unavailable)");
+        m_accountCombo->setEnabled(false);
+        m_addressLabel->clear();
+        m_balanceLabel->clear();
+        blocker.unblock();
+        scheduleQrGeneration();
+        return;
+    }
+
     if (m_walletEngine->isLocked()) {
         m_accountCombo->addItem("(Wallet Locked)");
         m_accountCombo->setEnabled(false);
