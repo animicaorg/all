@@ -54,11 +54,23 @@ Current packaging/release flows:
 
 - `scripts/build-linux.sh`
 - `scripts/build-mac.sh`
+- `scripts/package-mac.sh`
 - `scripts/build-windows-cross.sh`
 - `scripts/build-windows.ps1`
 - `scripts/release-linux.sh`
 - `scripts/release-mac.sh`
 - `scripts/release-windows-cross.sh`
+- `scripts/sign-macos-bundle.sh`
+- `scripts/verify-macos-bundle.sh`
+
+## macOS signing order
+
+The macOS release flow signs in deterministic order and avoids `codesign --deep`:
+
+1. Sign nested Mach-O files and nested bundles first.
+2. Sign top-level `AnimicaWallet.app`.
+3. Verify with strict `codesign` (and `spctl` for Developer ID builds).
+4. Build DMG from a copied staging directory so the signed source app is not mutated.
 
 ## Limitation
 

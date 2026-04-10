@@ -21,8 +21,32 @@ Before shipping, verify:
 ## macOS
 
 ```bash
-./wallet-qt/scripts/build-mac.sh
-./wallet-qt/scripts/release-mac.sh
+./wallet-qt/scripts/build-mac.sh --arch arm64
+./wallet-qt/scripts/package-mac.sh --adhoc-sign --dmg --arch arm64
+```
+
+Developer ID release flow:
+
+```bash
+export CODESIGN_IDENTITY="Developer ID Application: Example Corp (TEAMID)"
+./wallet-qt/scripts/package-mac.sh --sign --dmg --arch arm64
+```
+
+Optional notarization (Developer ID required):
+
+```bash
+export APPLE_ID="dev@example.com"
+export APPLE_TEAM_ID="TEAMID"
+export NOTARY_KEYCHAIN_PROFILE="AC_PASSWORD"  # optional, defaults to AC_PASSWORD
+./wallet-qt/scripts/package-mac.sh --sign --notarize --dmg --arch arm64
+```
+
+Manual signature checks:
+
+```bash
+./wallet-qt/scripts/verify-macos-bundle.sh --app "/path/to/AnimicaWallet.app" --require-arch arm64
+codesign --verify --deep --strict --verbose=4 "/path/to/AnimicaWallet.app"
+spctl --assess --type execute --verbose=4 "/path/to/AnimicaWallet.app"
 ```
 
 ## Windows cross-build
