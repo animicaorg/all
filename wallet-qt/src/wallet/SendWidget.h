@@ -94,6 +94,7 @@ private slots:
     
 private:
     void setupUI();
+    void refreshAccounts();
     void updateFeeDisplay();
     void updateBalanceLabel();
     void updateRecipientCompleter();

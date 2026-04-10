@@ -96,7 +96,6 @@ fi
 log "Configuring macOS build in $BUILD_DIR"
 cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -DBUILD_TESTING=OFF
 
 log "Building wallet bundle"

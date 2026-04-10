@@ -1,93 +1,90 @@
-# Animica Wallet (Qt Desktop)
+# Animica Wallet Qt
 
-`wallet-qt/` is the desktop wallet for Animica. It now uses the canonical Animica Python wallet/transaction stack through a hardened JSON bridge instead of ad hoc subprocess calls and placeholder signing code.
+Animica Wallet Qt is now a hosted-RPC desktop wallet.
 
-## Implemented Features
+The application:
 
-- Wallet creation, import, rename, default selection, removal, public export, and guarded secret export
-- Real balance refresh with per-wallet totals, connection state, and periodic polling
-- Send flow with canonical address validation, balance/fee preflight, confirmation, submission, and pending tracking
-- Receive flow with wallet selector, copy address, live QR generation, optional amount/message fields, and PNG export
-- Transaction history with filters, details, and CSV/JSON export
-- Address book with add/edit/delete, merge-or-replace import, JSON/CSV export, duplicate prevention, and own-address tagging
-- Contract interaction for ABI-driven read/write calls plus raw-call fallback
-- Advanced settings for RPC/network/explorer/polling/timeouts plus import/export/default reset
-- Bundled-node packaging scripts for Linux AppImage/deb/tarball, macOS DMG, and Windows MSI build flows
+- always targets Animica mainnet
+- always connects to `https://rpc.animica.org`
+- never starts or manages a local node
+- never bundles node assets, genesis files, or a Python node runtime inside the app
 
-## Architecture
+This repo target is intentionally opinionated. If you need node lifecycle control, chain storage, or operator tooling, use the Animica node/CLI stack outside `wallet-qt`.
 
-See [docs/architecture.md](docs/architecture.md).
+## Product model
 
-The important runtime path is:
+At runtime the wallet is a Qt desktop UI with:
 
-`Qt widgets -> WalletEngine -> AnimicaWalletBackend -> python -m animica.qt_wallet_bridge -> canonical Animica Python modules`
+- wallet/account management
+- send and receive flows
+- balance and history retrieval over hosted RPC
+- a simplified settings surface for wallet preferences
+- remote connectivity feedback instead of local-node controls
 
-That bridge reuses:
+There is no embedded-node mode and no supported localhost mode.
 
-- `python/animica/wallet/...` for wallet storage and serialization
-- `python/animica/cli/wallet.py` helpers for canonical wallet behavior
-- repo RPC/explorer endpoints for balances, transaction status, and history
-- `sdk/python/omni_sdk/...` for contract ABI encoding/decoding and contract calls
+## Canonical network settings
 
-## Storage Layout
+- Network: `mainnet`
+- RPC endpoint: `https://rpc.animica.org`
+- Chain ID: `1`
 
-By default the wallet stores user data under the app data directory chosen by `DataDirManager`.
+## Build
 
-- Canonical wallet store: `wallets.json`
-- Local address book: `address_book.json`
-- Wallet activity cache/database: `wallet.db`
-- User UI/network preferences: Qt `QSettings`
+Requirements for developer builds:
 
-`wallets.json` is the canonical Animica wallet store. It is not currently encrypted by the upstream wallet format, so the UI does not pretend otherwise.
+- CMake 3.24+
+- Qt 6 Widgets, Network, Svg
+- C++17 compiler
+- Python available in the developer environment for the wallet bridge and QR helper used by source builds
 
-## Development
-
-### Remote-RPC wallet build
+Configure and build:
 
 ```bash
-cmake -S wallet-qt -B build/wallet-qt -DBUILD_TESTING=ON
-cmake --build build/wallet-qt -j4 --target animica-wallet
-./build/wallet-qt/bin/animica-wallet
+cmake -S wallet-qt -B /tmp/wallet-qt-build -DBUILD_TESTING=ON
+cmake --build /tmp/wallet-qt-build -j
 ```
 
-### Bundled-node wallet build
+The build no longer creates or stages a bundled node runtime.
+
+## Run
 
 ```bash
-cmake -S wallet-qt -B build/wallet-qt-bundled -DWALLET_REMOTE_RPC_ONLY=OFF -DBUILD_TESTING=OFF
-cmake --build build/wallet-qt-bundled -j4 --target animica-wallet
-./build/wallet-qt-bundled/bin/animica-wallet
+/tmp/wallet-qt-build/bin/animica-wallet
 ```
 
-### Python bridge tests
+Optional data-dir override:
 
 ```bash
-PYTHONPATH=python:sdk/python pytest -q python/animica/tests/test_qt_wallet_bridge.py
+ANIMICA_WALLET_DATA_DIR=/path/to/wallet-data /tmp/wallet-qt-build/bin/animica-wallet
 ```
 
-### Qt/C++ regression subset
-
-```bash
-cd build/wallet-qt
-ctest --output-on-failure -R 'test_keystore_security|test_wallet_engine|test_walletdatabase|test_datadirmanager|test_redactor'
-```
+On launch the wallet uses `https://rpc.animica.org` automatically.
 
 ## Packaging
 
-See [docs/receive_qr.md](docs/receive_qr.md), [docs/packaging.md](docs/packaging.md), and [docs/RELEASING.md](docs/RELEASING.md).
+Packaging scripts stage a Qt desktop app only. They do not:
 
-Quick commands:
+- build a bundled node
+- create a bundled venv
+- copy genesis/spec assets
+- install node wrapper scripts
 
-```bash
-./wallet-qt/scripts/release-linux.sh
-./wallet-qt/scripts/release-mac.sh --adhoc-sign --dmg
-./wallet-qt/scripts/release-mac.sh --dmg
-pwsh ./wallet-qt/scripts/release-windows.ps1
-```
+See:
 
-## Manual Verification
+- `docs/build_and_bundle.md`
+- `docs/packaging.md`
+- `docs/RELEASING.md`
 
-Use [docs/operator-checklist.md](docs/operator-checklist.md) after each build.
+## Testing
 
-## Native Validation Boundary
+Focused regression coverage lives under `wallet-qt/tests` and validates:
 
-Linux build and packaging verification can be exercised in this environment. DMG creation/signing/notarization and MSI installation validation still require native macOS and Windows hosts even though the scripts and staged-runtime checks are now wired in-tree.
+- canonical RPC defaults
+- remote-only packaging expectations
+- wallet/account surfaces initializing without embedded-node components
+- remote receive/send widget behavior
+
+## Current limitation
+
+The wallet no longer bundles Python or node assets. Source builds still rely on a developer-available Python environment for the wallet bridge and QR helper. That runtime is external to the packaged app and is not an embedded node dependency.

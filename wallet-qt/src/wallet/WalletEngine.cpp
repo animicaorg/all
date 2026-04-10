@@ -2,6 +2,7 @@
 
 #include "AnimicaWalletBackend.h"
 #include "../rpc/AnimicaRpcClient.h"
+#include "../rpc/RpcSettings.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -88,7 +89,10 @@ WalletEngine::WalletEngine(AnimicaRpcClient* rpcClient, QObject* parent)
     connect(m_balanceTracker, &BalanceTracker::error, this, &WalletEngine::error);
 
     if (m_rpcClient) {
-        setRpcEndpoint(m_rpcClient->endpoint());
+        const QString endpoint = m_rpcClient->endpoint().trimmed().isEmpty()
+            ? RpcSettings::canonicalRpcUrl()
+            : m_rpcClient->endpoint();
+        setRpcEndpoint(endpoint);
     }
 }
 
@@ -605,6 +609,9 @@ QJsonObject WalletEngine::contractWrite(const QJsonObject& request)
 
 void WalletEngine::setRpcEndpoint(const QString& rpcUrl)
 {
+    if (m_rpcClient && m_rpcClient->endpoint() != rpcUrl) {
+        m_rpcClient->setEndpoint(rpcUrl);
+    }
     m_backend->setRpcUrl(rpcUrl);
 }
 

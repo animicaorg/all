@@ -351,9 +351,17 @@ def _load_chain_params(
             "Ensure the file exists or update paramsRef.path in genesis.json."
         )
 
-    params = ChainParams.load_yaml(
-        params_path, chain_id_hint=int(genesis.get("chainId", 0) or 0)
-    )
+    genesis_chain_id = int(genesis.get("chainId", 0) or 0)
+    params = ChainParams.load_yaml(params_path, chain_id_hint=genesis_chain_id)
+    if genesis_chain_id and params.chain_id != genesis_chain_id:
+        fallback_path = default_params_path()
+        if fallback_path != params_path and fallback_path.exists():
+            fallback = ChainParams.load_yaml(
+                fallback_path,
+                chain_id_hint=genesis_chain_id,
+            )
+            if fallback.chain_id == genesis_chain_id:
+                params = fallback
 
     if params_override:
         # Only override fields that exist on the dataclass; ignore extras.

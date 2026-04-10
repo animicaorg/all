@@ -180,6 +180,7 @@ app.add_typer(gui.app, name="gui")
 app.add_typer(debug.app, name="debug")
 app.add_typer(ena.app, name="ena")
 app.add_typer(stratum.app, name="stratum")
+app.add_typer(stratum.app, name="pool")
 app.add_typer(quantum.app, name="quantum")
 
 

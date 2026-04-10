@@ -1,126 +1,101 @@
-# Qt Wallet Architecture
+# Wallet Qt Architecture
 
-## Overview
+## Summary
 
-The wallet is split into UI, controller/service, persistence, and background execution layers. Qt widgets do not directly shell out to CLI commands or construct raw wallet files.
+`wallet-qt` is a remote-only desktop wallet.
 
-```text
-Qt Widgets
-  ├─ AccountsWidget / SendWidget / ReceiveWidget / TransactionHistoryWidget
-  ├─ AddressBookWidget / ContractInteractionWidget / SettingsWidget
-  └─ NodeControlWidget
+The application always assumes:
 
-Wallet Services
-  ├─ WalletEngine
-  ├─ BalanceTracker
-  ├─ TransactionMonitor
-  ├─ WalletDatabase
-  └─ AnimicaRpcClient
+- Animica mainnet
+- hosted RPC at `https://rpc.animica.org`
+- no embedded node process
+- no bundled chain data, genesis files, or node runtime
 
-Bridge Layer
-  └─ AnimicaWalletBackend
-       -> python -m animica.qt_wallet_bridge
+## Runtime components
 
-Canonical Python
-  ├─ python/animica/wallet/*
-  ├─ python/animica/cli/wallet.py
-  ├─ repo RPC / explorer endpoints
-  └─ sdk/python/omni_sdk/*
-```
+### Qt UI
 
-## Canonical Wallet Integration
+Primary UI surfaces:
 
-`WalletEngine` no longer owns a private wallet format. It opens the canonical `wallets.json` store and delegates wallet lifecycle operations to `python/animica/qt_wallet_bridge.py`.
+- accounts
+- address book
+- send
+- receive
+- history
+- contracts
+- settings
 
-That bridge provides:
+### Hosted RPC client
 
-- supported algorithm discovery
-- wallet creation/import/export/default-wallet management
-- canonical address validation
-- transaction submission and status lookup
-- history aggregation from explorer/indexer sources plus local pending state
-- contract read/write and payload preview
+`src/rpc/AnimicaRpcClient.*` is the HTTP JSON-RPC client used for:
 
-The bridge is invoked through `AnimicaWalletBackend`, which centralizes Python lookup, `PYTHONPATH` wiring in the repo, timeout handling, JSON parsing, and safe error propagation.
+- connectivity checks
+- balances
+- sync/health signals
+- chain queries
+- transaction submission helpers
 
-## Wallet Storage
+The canonical endpoint is defined in `src/rpc/RpcSettings.*` and resolves to:
 
-Wallet-related data is split by responsibility:
+- `https://rpc.animica.org`
 
-- `wallets.json`: canonical Animica wallet store
-- `address_book.json`: local contacts, JSON versioned and CSV/JSON importable
-- `wallet.db`: local cache for pending ledger effects, history decoration, and reconciliation state
-- `QSettings`: UI/network preferences and recent recipients/contracts
+### Wallet backend bridge
 
-The wallet deliberately does not claim encryption support because the canonical upstream `wallets.json` format is currently plaintext.
+Wallet/account operations still use the wallet bridge helper invoked by `AnimicaWalletBackend`.
 
-## Send / Receive Flow
+That layer is responsible for:
 
-### Send
+- canonical wallet store operations
+- account import/export helpers
+- transaction/history helper calls
+- contract helper calls
 
-1. `SendWidget` collects user input and performs local validation.
-2. `WalletEngine::validateAddress()` checks the recipient through the canonical Python path.
-3. `BalanceTracker` and `WalletDatabase` provide confirmed and reserved balance context.
-4. `WalletEngine::submitTransaction()` calls the bridge, which uses the canonical Animica transaction path.
-5. On success the wallet stores the pending transaction locally, reserves fee/amount in the ledger cache, and starts `TransactionMonitor`.
-6. `TransactionMonitor` reconciles pending, confirmed, and rejected states back into the UI.
+This is not an embedded node. It does not launch or manage a local chain process.
 
-### Receive
+## Startup flow
 
-The receive view is derived from the selected wallet in `wallets.json`. It shows the canonical address, current balance, copy action, optional amount/message request fields, and a QR generated from the `animica:` payment URI for the selected wallet.
+1. Create the Qt application.
+2. Create the hosted RPC client pointed at `https://rpc.animica.org`.
+3. Open or create the wallet store in the wallet data directory.
+4. Show `WalletWidget`.
+5. Refresh balances and remote connectivity once the event loop starts.
 
-The QR flow is split deliberately:
+There is no node bootstrap, subprocess supervision, readiness loop, or bundled-genesis lookup.
 
-- `ReceiveWidget` owns Qt-only UI state and async refresh behavior
-- `ReceiveQrService` builds the payment URI and asks the bundled Python helper for a PNG
-- `python -m animica.wallet_qr` renders the actual QR image inside the packaged runtime
+## Data model
 
-## Transaction History Strategy
+The wallet data directory contains wallet-local state only:
 
-There is no single monolithic history source inside the repo, so the wallet uses a resilient adapter:
+- `wallets.json`
+- `address_book.json`
+- `wallet.db`
+- `logs/`
 
-- explorer/indexer API for canonical transaction history and detail lookups
-- direct transaction status/detail calls for confirmation updates
-- local `wallet.db` pending entries for transactions submitted by this UI before the explorer catches up
+It does not contain:
 
-The history tab supports combined and per-wallet views, filters, exports, and details. Pending entries can transition to confirmed/rejected without forcing a restart.
+- chain databases
+- node PID files
+- embedded-node logs
+- bundled network metadata
 
-## Address Book
+## Removed architecture
 
-The address book is a local persistence feature, not part of the canonical wallet store.
+The Qt wallet no longer includes:
 
-- Validation: canonical Animica address validation through `WalletEngine`
-- Persistence: versioned JSON store with CSV/JSON import/export
-- Duplicate handling: address-based duplicate prevention on add/import
-- Own-address tagging: computed dynamically from current wallet accounts
+- `NodeManager`
+- `NodeControlWidget`
+- local RPC settings dialogs
+- diagnostics windows for local process state
+- embedded-node packaging/runtime branches
 
-## Contract Interaction
+## Design intent
 
-The contract tab supports two modes:
+The desktop wallet is now intentionally narrow:
 
-- ABI/schema mode for method discovery, payload preview, read calls, and signed writes
-- raw mode for direct payload calls when no ABI is available
+- wallet UX
+- remote mainnet access
+- smaller packaging surface
+- faster startup
+- fewer crash paths
 
-ABI parsing/encoding/decoding is handled through the updated `sdk/python/omni_sdk/types/abi.py` helpers. Read calls surface RPC errors directly. Signed writes go through the same canonical wallet bridge used for normal sends.
-
-## Settings and Node Control
-
-The wallet separates:
-
-- user/UI settings in `QSettings`
-- network/RPC/explorer settings consumed by `AnimicaRpcClient`, `WalletEngine`, and polling jobs
-- bundled-node lifecycle control in `NodeControlWidget` when the app is built with `WALLET_REMOTE_RPC_ONLY=OFF`
-
-Disruptive actions such as endpoint changes trigger explicit reconfiguration rather than silent success states.
-
-## Packaging Runtime Layout
-
-The runtime lookup logic supports these embedded-node locations:
-
-- Linux build tree: `bin/node/venv/bin/python`
-- Linux installed package: `../lib/<multiarch>/animica-wallet/node/venv/bin/python` or `../lib/animica-wallet/node/venv/bin/python`
-- Linux AppImage/tarball: `../lib/<multiarch>/animica-wallet/node/venv/bin/python` or `../lib/animica-wallet/node/venv/bin/python`
-- macOS bundle: `Contents/Resources/node/venv/bin/python`
-- Windows package: `node/venv/Scripts/python.exe`
-
-The runtime also bundles deterministic node assets under `node/assets/` so packaged builds do not need the repo checkout to locate `spec/params.yaml` or network genesis files.
+Node operation belongs to separate Animica tooling, not `wallet-qt`.

@@ -100,6 +100,18 @@ ReceiveWidget::ReceiveWidget(WalletEngine* walletEngine,
 
 ReceiveWidget::~ReceiveWidget()
 {
+    m_qrGenerationPending = false;
+    m_qrUpdateTimer->stop();
+    disconnect(m_qrWatcher, nullptr, this, nullptr);
+}
+
+void ReceiveWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+
+    if (m_qrGenerationPending && !m_qrWatcher->isRunning()) {
+        m_qrUpdateTimer->start();
+    }
 }
 
 void ReceiveWidget::setupUi()
@@ -437,6 +449,10 @@ void ReceiveWidget::scheduleQrGeneration()
     m_qrGenerationPending = true;
     m_saveQrButton->setEnabled(false);
 
+    if (!isVisible()) {
+        return;
+    }
+
     if (m_qrWatcher->isRunning()) {
         return;
     }
@@ -445,7 +461,7 @@ void ReceiveWidget::scheduleQrGeneration()
 
 void ReceiveWidget::startQrGeneration()
 {
-    if (m_qrWatcher->isRunning() || !m_qrGenerationPending) {
+    if (m_qrWatcher->isRunning() || !m_qrGenerationPending || !isVisible()) {
         return;
     }
 

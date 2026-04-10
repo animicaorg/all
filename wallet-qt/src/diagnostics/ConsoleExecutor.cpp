@@ -1,7 +1,6 @@
 #include "ConsoleExecutor.h"
 #include "Redactor.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include "../platform/AppPaths.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -62,10 +61,8 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::execute(const QString& command
         return executeRpc(method, params, timeoutMs);
     }
 
-    // Otherwise execute as CLI command
-    result = executeCli(parts, timeoutMs > 0 ? timeoutMs : getDefaultTimeout(trimmed));
+    result.error = "Local node CLI commands are no longer supported in the Qt wallet. Use 'rpc call <method>' instead.";
     result.durationMs = timer.elapsed();
-    
     return result;
 }
 
@@ -140,64 +137,6 @@ ConsoleExecutor::ExecutionResult ConsoleExecutor::executeRpc(const QString& meth
     result.success = true;
     result.exitCode = 0;
     result.durationMs = timer.elapsed();
-
-    return result;
-}
-
-QString ConsoleExecutor::getAnimicaCliPath() const
-{
-#ifdef Q_OS_WIN
-    QDir nodeDir(AppPaths::getBundledNodePath());
-    return nodeDir.filePath("animica-node.bat");
-#else
-    QDir nodeDir(AppPaths::getBundledNodePath());
-    return nodeDir.filePath("animica-node");
-#endif
-}
-
-ConsoleExecutor::ExecutionResult ConsoleExecutor::executeCli(const QStringList& args, int timeoutMs)
-{
-    ExecutionResult result;
-    result.success = false;
-    result.exitCode = -1;
-    result.timedOut = false;
-    result.truncated = false;
-
-    QString program = getAnimicaCliPath();
-    
-    QProcess process;
-    process.setProgram(program);
-    process.setArguments(args);
-    process.setProcessChannelMode(QProcess::MergedChannels);
-
-    // Start process
-    process.start();
-    if (!process.waitForStarted(5000)) {
-        result.error = "Failed to start process: " + process.errorString();
-        return result;
-    }
-
-    // Wait for completion with timeout
-    if (!process.waitForFinished(timeoutMs)) {
-        result.timedOut = true;
-        result.error = QString("Process timed out after %1ms").arg(timeoutMs);
-        process.kill();
-        process.waitForFinished(1000);
-        return result;
-    }
-
-    // Read output
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
-    output = applyOutputLimits(output, result.truncated);
-    
-    // Apply redaction
-    result.output = Redactor::redact(output);
-    result.exitCode = process.exitCode();
-    result.success = (result.exitCode == 0);
-
-    if (!result.success && result.output.isEmpty()) {
-        result.error = "Command failed with exit code " + QString::number(result.exitCode);
-    }
 
     return result;
 }

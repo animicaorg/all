@@ -79,9 +79,15 @@ The mining process:
 6. Removes included transactions from the mempool
 
 ### Stratum Pool Operations
-- `animica stratum up` starts the Stratum + metrics API with pid/log tracking.
-- `animica stratum status` reports process state and probes `/healthz` + `/summary`.
-- `animica stratum down` stops the managed pool.
+- `animica pool up` starts the Stratum + metrics API with pid/log tracking.
+- `animica pool status` reports process state and probes `/healthz` + `/summary`.
+- `animica pool down` stops the managed pool.
+- `animica pool init` writes a starter env file for local operation.
+- `animica pool doctor` validates node RPC connectivity, payout address, template generation, and pool API health.
+- `animica pool test-job` fetches a real `miner.getBlockTemplate` payload and verifies the header is submit-ready.
+- `animica pool list-workers` prints worker stats from the managed pool API.
+- `animica pool show-config` prints the resolved pool configuration.
+- `animica stratum ...` remains supported as a compatibility alias for the same managed pool commands.
 - `run-pool` remains available as the lower-level direct launcher and still uses
   `ANIMICA_RPC_URL`, `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`, and
   `ANIMICA_MINING_POOL_DB_URL` (CLI flags override env vars).
@@ -91,8 +97,9 @@ The mining process:
 Example matching the devnet profile:
 
 ```sh
-animica stratum up --daemon --profile hashshare --rpc-url $ANIMICA_RPC_URL
-animica stratum status
+animica pool up --daemon --profile hashshare --rpc-url $ANIMICA_RPC_URL
+animica pool doctor
+animica pool status
 ```
 
 Smoke validation:

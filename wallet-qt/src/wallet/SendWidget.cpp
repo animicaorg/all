@@ -5,6 +5,7 @@
 #include "WalletEngine.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include "../rpc/RpcReply.h"
+#include "../rpc/RpcSettings.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -17,6 +18,7 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QStringListModel>
 #include <QVBoxLayout>
@@ -35,43 +37,20 @@ SendWidget::SendWidget(
     , m_monitor(monitor)
     , m_feeEstimator(new FeeEstimator(rpcClient, this))
     , m_sendWatcher(new QFutureWatcher<QJsonObject>(this))
-    , m_chainId(1337)
+    , m_chainId(RpcSettings::canonicalChainId())
 {
     setupUI();
 
     connect(m_sendWatcher, &QFutureWatcher<QJsonObject>::finished, this, &SendWidget::handleSendFinished);
     connect(m_walletEngine, &WalletEngine::balanceUpdated, this, &SendWidget::onBalanceUpdated);
-    connect(m_walletEngine, &WalletEngine::accountAdded, this, [this](const WalletAccount&) { onAccountChanged(0); });
-    connect(m_walletEngine, &WalletEngine::accountRemoved, this, [this](const QString&) { onAccountChanged(0); });
-    connect(m_walletEngine, &WalletEngine::accountUpdated, this, [this](const WalletAccount&) { onAccountChanged(m_fromAccountCombo->currentIndex()); });
+    connect(m_walletEngine, &WalletEngine::accountAdded, this, [this](const WalletAccount&) { refreshAccounts(); });
+    connect(m_walletEngine, &WalletEngine::accountRemoved, this, [this](const QString&) { refreshAccounts(); });
+    connect(m_walletEngine, &WalletEngine::accountUpdated, this, [this](const WalletAccount&) { refreshAccounts(); });
     connect(m_walletEngine, &WalletEngine::contactAdded, this, [this](const Contact&) { updateRecipientCompleter(); });
     connect(m_walletEngine, &WalletEngine::contactUpdated, this, [this](const Contact&) { updateRecipientCompleter(); });
     connect(m_walletEngine, &WalletEngine::contactRemoved, this, [this](const QString&) { updateRecipientCompleter(); });
 
-    if (m_rpcClient) {
-        RpcReply* reply = m_rpcClient->getChainId();
-        connect(reply, &RpcReply::finished, [this, reply]() {
-            if (reply->error() == QNetworkReply::NoError) {
-                const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-                if (doc.isObject()) {
-                    const QJsonObject obj = doc.object();
-                    const QJsonValue result = obj.value("result");
-                    if (result.isDouble()) {
-                        m_chainId = static_cast<qint64>(result.toDouble(1337));
-                    } else if (result.isString()) {
-                        bool ok = false;
-                        m_chainId = result.toString().toLongLong(&ok);
-                        if (!ok) {
-                            m_chainId = 1337;
-                        }
-                    }
-                }
-            }
-            reply->deleteLater();
-        });
-    }
-
-    onAccountChanged(0);
+    refreshAccounts();
 }
 
 SendWidget::~SendWidget() = default;
@@ -266,8 +245,9 @@ void SendWidget::onSendClicked()
     m_statusLabel->setText("Submitting transaction...");
     m_sendButton->setEnabled(false);
 
-    m_sendWatcher->setFuture(QtConcurrent::run([this, request]() {
-        return m_walletEngine->submitTransaction(request);
+    WalletEngine* engine = m_walletEngine;
+    m_sendWatcher->setFuture(QtConcurrent::run([engine, request]() {
+        return engine->submitTransaction(request);
     }));
 }
 
@@ -382,21 +362,55 @@ void SendWidget::onAmountChanged()
     validateInputs();
 }
 
-void SendWidget::onAccountChanged(int)
+void SendWidget::refreshAccounts()
 {
+    const QString previousAccountId = getCurrentAccountId();
+    QSignalBlocker blocker(m_fromAccountCombo);
     m_fromAccountCombo->clear();
+
     if (!m_walletEngine || m_walletEngine->isLocked()) {
+        blocker.unblock();
         m_balanceLabel->setText("Balance: unavailable");
         m_sendButton->setEnabled(false);
         return;
     }
+
     const auto accounts = m_walletEngine->listAccounts();
+    int selectedIndex = -1;
+    int defaultIndex = -1;
     for (const WalletAccount& account : accounts) {
         const QString label = account.isDefault
             ? QString("%1 (Default)").arg(account.label)
             : account.label;
         m_fromAccountCombo->addItem(QString("%1 | %2").arg(label, account.address), account.accountId);
+        const int row = m_fromAccountCombo->count() - 1;
+        if (!previousAccountId.isEmpty() && account.accountId == previousAccountId) {
+            selectedIndex = row;
+        }
+        if (account.isDefault) {
+            defaultIndex = row;
+        }
     }
+
+    if (selectedIndex < 0) {
+        selectedIndex = defaultIndex >= 0 ? defaultIndex : (m_fromAccountCombo->count() > 0 ? 0 : -1);
+    }
+    if (selectedIndex >= 0) {
+        m_fromAccountCombo->setCurrentIndex(selectedIndex);
+    }
+
+    blocker.unblock();
+    onAccountChanged(m_fromAccountCombo->currentIndex());
+}
+
+void SendWidget::onAccountChanged(int)
+{
+    if (!m_walletEngine || m_walletEngine->isLocked() || getCurrentAccountId().isEmpty()) {
+        m_balanceLabel->setText("Balance: unavailable");
+        m_sendButton->setEnabled(false);
+        return;
+    }
+
     m_walletEngine->refreshBalances();
     updateBalanceLabel();
     updateFeeDisplay();

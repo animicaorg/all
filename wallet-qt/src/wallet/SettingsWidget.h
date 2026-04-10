@@ -1,17 +1,13 @@
 #ifndef SETTINGSWIDGET_H
 #define SETTINGSWIDGET_H
 
-#include "../rpc/RpcSettings.h"
-
 #include <QWidget>
 
-class AnimicaRpcClient;
-class QComboBox;
+class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
-class QSpinBox;
 class QPushButton;
-class QLabel;
+class QSpinBox;
 
 class SettingsWidget : public QWidget
 {
@@ -21,7 +17,7 @@ public:
     explicit SettingsWidget(const QString& walletFilePath, const QString& dataDir, QWidget* parent = nullptr);
 
 signals:
-    void rpcSettingsApplied(const RpcEndpointSettings& settings, const QString& explorerUrl, int pollIntervalMs, int timeoutMs);
+    void settingsApplied(const QString& explorerUrl, int pollIntervalMs, int timeoutMs);
 
 private slots:
     void onSaveClicked();
@@ -36,14 +32,11 @@ private:
 
     QString m_walletFilePath;
     QString m_dataDir;
-    QComboBox* m_networkCombo;
-    QLineEdit* m_rpcUrlEdit;
-    QSpinBox* m_chainIdSpin;
+    QLabel* m_networkValueLabel;
+    QLabel* m_rpcUrlValueLabel;
     QLineEdit* m_explorerUrlEdit;
-    QPlainTextEdit* m_fallbackRpcEdit;
     QSpinBox* m_pollIntervalSpin;
     QSpinBox* m_timeoutSpin;
-    QComboBox* m_logLevelCombo;
     QLabel* m_walletFileLabel;
     QLabel* m_dataDirLabel;
     QPlainTextEdit* m_effectiveConfigEdit;

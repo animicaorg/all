@@ -6,12 +6,12 @@ class TestPackagingConfig : public QObject
     Q_OBJECT
 
 private slots:
-    void testAnimicaNodeBuildAvoidsEditableInstalls();
+    void testBuildScriptsUseSingleRemoteWalletMode();
     void testLinuxReleaseStagesInstalledTreeAndPortableArtifacts();
-    void testLinuxLayoutResolverIsSharedAcrossScripts();
     void testMacReleaseStagesInstalledBundle();
     void testWindowsReleaseStagesInstalledTree();
     void testWindowsCrossReleaseScripts();
+    void testBundleVerifierChecksQtAppLayoutOnly();
     void testCMakeIncludesPackagingMetadata();
 
 private:
@@ -25,18 +25,23 @@ private:
     }
 };
 
-void TestPackagingConfig::testAnimicaNodeBuildAvoidsEditableInstalls()
+void TestPackagingConfig::testBuildScriptsUseSingleRemoteWalletMode()
 {
-    const QString content = readFile("cmake/AnimicaNode.cmake");
-    const QString pyproject = readFile("../python/pyproject.toml");
-    QVERIFY(!content.isEmpty());
-    QVERIFY(!content.contains(" install -e "));
-    QVERIFY(content.contains("[wallet_qt]"));
-    QVERIFY(pyproject.contains("segno"));
-    QVERIFY(content.contains("spec"));
-    QVERIFY(content.contains("coretx"));
-    QVERIFY(content.contains("mempool2"));
-    QVERIFY(content.contains("import rpc.mempool2_service"));
+    const QString cmakeContent = readFile("CMakeLists.txt");
+    const QString linuxBuild = readFile("scripts/build-linux.sh");
+    const QString macBuild = readFile("scripts/build-mac.sh");
+    const QString windowsBuild = readFile("scripts/build-windows.ps1");
+
+    QVERIFY(!cmakeContent.isEmpty());
+    QVERIFY(!linuxBuild.isEmpty());
+    QVERIFY(!macBuild.isEmpty());
+    QVERIFY(!windowsBuild.isEmpty());
+
+    QVERIFY(!cmakeContent.contains("WALLET_REMOTE_RPC_ONLY"));
+    QVERIFY(!linuxBuild.contains("WALLET_REMOTE_RPC_ONLY"));
+    QVERIFY(!macBuild.contains("WALLET_REMOTE_RPC_ONLY"));
+    QVERIFY(!windowsBuild.contains("WALLET_REMOTE_RPC_ONLY"));
+    QVERIFY(cmakeContent.contains("https://rpc.animica.org"));
 }
 
 void TestPackagingConfig::testLinuxReleaseStagesInstalledTreeAndPortableArtifacts()
@@ -45,26 +50,11 @@ void TestPackagingConfig::testLinuxReleaseStagesInstalledTreeAndPortableArtifact
     QVERIFY(!content.isEmpty());
     QVERIFY(content.contains("cmake --install"));
     QVERIFY(content.contains("verify-bundle-layout.py"));
-    QVERIFY(content.contains("linux-layout.sh"));
+    QVERIFY(content.contains("linuxdeployqt"));
     QVERIFY(content.contains("tar -czf"));
     QVERIFY(content.contains("animica-wallet_${PACKAGE_VERSION}_${DEB_ARCH}.deb"));
-}
-
-void TestPackagingConfig::testLinuxLayoutResolverIsSharedAcrossScripts()
-{
-    const QString helper = readFile("scripts/linux_layout.py");
-    const QString smoke = readFile("scripts/smoke-test-linux.sh");
-    const QString verifyInstall = readFile("scripts/verify_install.sh");
-    const QString verifier = readFile("scripts/verify-bundle-layout.py");
-    const QString runtime = readFile("src/platform/AppPaths.cpp");
-
-    QVERIFY(!helper.isEmpty());
-    QVERIFY(helper.contains("x86_64-linux-gnu"));
-    QVERIFY(helper.contains("\"animica-wallet\" / \"node\""));
-    QVERIFY(smoke.contains("resolve_linux_node_root_from_root"));
-    QVERIFY(verifyInstall.contains("resolve_linux_node_root_from_root"));
-    QVERIFY(verifier.contains("resolve_linux_node_root_from_root"));
-    QVERIFY(runtime.contains("x86_64-linux-gnu"));
+    QVERIFY(content.contains("https://rpc.animica.org"));
+    QVERIFY(!content.contains("resolve_linux_node_root"));
 }
 
 void TestPackagingConfig::testMacReleaseStagesInstalledBundle()
@@ -74,23 +64,27 @@ void TestPackagingConfig::testMacReleaseStagesInstalledBundle()
     QVERIFY(content.contains("cmake --install"));
     QVERIFY(content.contains("verify-bundle-layout.py"));
     QVERIFY(content.contains("adhoc", Qt::CaseInsensitive));
+    QVERIFY(!content.contains("Contents/Resources/node"));
 }
 
 void TestPackagingConfig::testWindowsReleaseStagesInstalledTree()
 {
     const QString content = readFile("scripts/release-windows.ps1");
+    const QString packageContent = readFile("scripts/package-windows-installer.ps1");
     QVERIFY(!content.isEmpty());
-    QVERIFY(content.contains("cmake --install"));
-    QVERIFY(content.contains("makensis", Qt::CaseInsensitive));
-    QVERIFY(content.contains("animica-wallet-setup-x64.exe"));
-    QVERIFY(content.contains("cpack -G WIX"));
-    QVERIFY(content.contains("verify-bundle-layout.py"));
-    QVERIFY(content.contains("per-user", Qt::CaseInsensitive));
+    QVERIFY(!packageContent.isEmpty());
+    QVERIFY(content.contains("build-windows.ps1"));
+    QVERIFY(content.contains("package-windows-installer.ps1"));
+    QVERIFY(content.contains("PerMachine", Qt::CaseInsensitive));
+    QVERIFY(packageContent.contains("Inno Setup", Qt::CaseInsensitive));
+    QVERIFY(packageContent.contains("Qt6Core.dll"));
+    QVERIFY(packageContent.contains("plugins\\platforms\\qwindows.dll"));
 }
 
 void TestPackagingConfig::testWindowsCrossReleaseScripts()
 {
     const QString buildContent = readFile("scripts/build-windows-cross.sh");
+    const QString releaseContent = readFile("scripts/release-windows-cross.sh");
     const QString publishContent = readFile("scripts/publish-wallet-downloads.sh");
     const QString toolchainContent = readFile("cmake/toolchains/mingw64.cmake");
 
@@ -99,7 +93,11 @@ void TestPackagingConfig::testWindowsCrossReleaseScripts()
     QVERIFY(buildContent.contains("CMAKE_TOOLCHAIN_FILE"));
     QVERIFY(buildContent.contains("SHA256SUMS.txt"));
     QVERIFY(buildContent.contains("animica-wallet-setup-x64.exe"));
-    QVERIFY(buildContent.contains("--remote-rpc-only"));
+    QVERIFY(buildContent.contains("hosted-rpc"));
+    QVERIFY(!buildContent.contains("--node-venv"));
+
+    QVERIFY(!releaseContent.isEmpty());
+    QVERIFY(!releaseContent.contains("--node-venv"));
 
     QVERIFY(!publishContent.isEmpty());
     QVERIFY(publishContent.contains("manifest.json"));
@@ -108,6 +106,16 @@ void TestPackagingConfig::testWindowsCrossReleaseScripts()
     QVERIFY(!toolchainContent.isEmpty());
     QVERIFY(toolchainContent.contains("CMAKE_SYSTEM_NAME Windows"));
     QVERIFY(toolchainContent.contains("CMAKE_RC_COMPILER"));
+}
+
+void TestPackagingConfig::testBundleVerifierChecksQtAppLayoutOnly()
+{
+    const QString verifier = readFile("scripts/verify-bundle-layout.py");
+    QVERIFY(!verifier.isEmpty());
+    QVERIFY(verifier.contains("Qt6Core.dll"));
+    QVERIFY(verifier.contains("libqcocoa.dylib"));
+    QVERIFY(!verifier.contains("assets/genesis"));
+    QVERIFY(!verifier.contains("venv"));
 }
 
 void TestPackagingConfig::testCMakeIncludesPackagingMetadata()
@@ -119,6 +127,7 @@ void TestPackagingConfig::testCMakeIncludesPackagingMetadata()
     QVERIFY(content.contains("CPACK_PACKAGE_EXECUTABLES"));
     QVERIFY(content.contains("resources/wallet-qt.qrc"));
     QVERIFY(content.contains("WALLET_ENABLE_QT_INSTALL_DEPLOYMENT"));
+    QVERIFY(content.contains("https://rpc.animica.org"));
 }
 
 QTEST_MAIN(TestPackagingConfig)

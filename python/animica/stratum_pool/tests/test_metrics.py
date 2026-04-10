@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,9 +14,10 @@ from mining.stratum_server import Session, StratumJob
 class DummyJobManager:
     def __init__(self) -> None:
         self.refresh_calls = 0
+        self.current = None
 
     def current_job(self):
-        return None
+        return self.current
 
     def request_refresh(self) -> None:
         self.refresh_calls += 1
@@ -39,6 +41,12 @@ async def test_record_share_only_tracks_accepted_blocks():
         header={"number": 7},
         share_target=1.0,
         theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 123456789}},
+    )
+    job_manager.current = SimpleNamespace(
+        height=7,
+        header={"hash": "0xabc"},
+        raw={"coinbase": {"amount": 123456789}},
     )
 
     await metrics.record_share(
@@ -68,5 +76,7 @@ async def test_record_share_only_tracks_accepted_blocks():
     assert metrics._block_events[0]["address"] == "anim1qqq"
     assert job_manager.refresh_calls == 1
     assert metrics.pool_summary()["blocks_found_total"] == 1
+    assert metrics.pool_summary()["round_estimated_reward"] == "123456789"
     assert metrics.miner_detail("worker-1")["blocks_found"] == 1
     assert metrics.recent_blocks()["items"][0]["worker"] == "worker-1"
+    assert metrics.recent_blocks()["items"][0]["reward"] == "123456789"

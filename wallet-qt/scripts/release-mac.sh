@@ -94,7 +94,6 @@ fi
 cmake -S "$WALLET_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
-    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -DBUILD_TESTING=OFF
 
 cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" -j"$(sysctl -n hw.ncpu)"
@@ -129,9 +128,6 @@ sign_app() {
             exit 1
         fi
 
-        find "$app_bundle/Contents/Resources/node" -type f \( -name "*.so" -o -name "*.dylib" \) \
-            -exec codesign --force --sign "$CODESIGN_IDENTITY" {} \;
-        codesign --force --sign "$CODESIGN_IDENTITY" "$app_bundle/Contents/Resources/node/venv/bin/python"
         codesign --force --deep --sign "$CODESIGN_IDENTITY" \
             --options runtime \
             --entitlements "$WALLET_ROOT/resources/macos/entitlements.plist" \

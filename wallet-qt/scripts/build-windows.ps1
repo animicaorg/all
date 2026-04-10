@@ -98,7 +98,6 @@ try {
         -ArgumentList @(
             $ProjectRoot,
             "-DCMAKE_BUILD_TYPE=$BuildType",
-            "-DWALLET_REMOTE_RPC_ONLY=OFF",
             "-DBUILD_TESTING=OFF",
             "-G", "Visual Studio 17 2022",
             "-A", "x64"

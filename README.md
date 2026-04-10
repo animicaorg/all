@@ -640,8 +640,14 @@ export ANIMICA_MINER_THREADS=4             # CPU mining threads
 ### Stratum Mining Pool (Advanced)
 
 ```bash
+# Generate pool payout address
+animica miner generate-payout-address --label pool-operator
+
+# Write a starter pool env file
+animica pool init --path animica-pool.env
+
 # Run a managed Stratum pool
-animica stratum up --daemon \
+animica pool up --daemon \
   --profile asic_sha256 \
   --rpc-url http://localhost:8545/rpc \
   --host 0.0.0.0 \
@@ -649,13 +655,17 @@ animica stratum up --daemon \
   --api-host 127.0.0.1 \
   --api-port 8550
 
-# Generate pool payout address
-animica miner generate-payout-address --label pool-operator
+# Diagnose the node/pool/template path
+animica pool doctor
+animica pool test-job
+animica pool list-workers
 
 # Show status / stop
-animica stratum status
-animica stratum down
+animica pool status
+animica pool down
 ```
+
+`animica stratum ...` remains available as a compatibility alias for the same managed pool commands.
 
 ## 💸 Transactions
 

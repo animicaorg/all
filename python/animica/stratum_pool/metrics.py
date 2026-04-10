@@ -69,6 +69,7 @@ class PoolMetrics:
                 height INTEGER,
                 ts REAL,
                 found_by_pool INTEGER,
+                reward INTEGER,
                 tx_count INTEGER,
                 worker TEXT,
                 address TEXT
@@ -77,6 +78,7 @@ class PoolMetrics:
         )
         self._ensure_column(conn, "blocks", "worker", "TEXT")
         self._ensure_column(conn, "blocks", "address", "TEXT")
+        self._ensure_column(conn, "blocks", "reward", "INTEGER")
         conn.commit()
         return conn
 
@@ -101,6 +103,7 @@ class PoolMetrics:
         tx_count: int,
     ) -> None:
         now = time.time()
+        reward = self._expected_reward(job)
         difficulty = float(
             submit_params.get("d_ratio")
             or submit_params.get("shareTarget")
@@ -121,7 +124,12 @@ class PoolMetrics:
         }
         accepted_block = bool(ok and is_block)
         self._share_events.append(event)
-        self._persist_share(event, is_block=accepted_block, tx_count=tx_count)
+        self._persist_share(
+            event,
+            is_block=accepted_block,
+            tx_count=tx_count,
+            reward=reward,
+        )
         if accepted_block:
             self._block_events.appendleft(
                 {
@@ -129,6 +137,7 @@ class PoolMetrics:
                     "timestamp": now,
                     "job_id": job.job_id,
                     "height": event["height"],
+                    "reward": reward,
                     "tx_count": tx_count,
                     "worker": session.worker or session.session_id,
                     "address": session.address or "unknown",
@@ -139,7 +148,12 @@ class PoolMetrics:
                 request_refresh()
 
     def _persist_share(
-        self, event: ShareEvent, *, is_block: bool, tx_count: int
+        self,
+        event: ShareEvent,
+        *,
+        is_block: bool,
+        tx_count: int,
+        reward: int,
     ) -> None:
         if self._db is None:
             return
@@ -166,15 +180,16 @@ class PoolMetrics:
                 self._db.execute(
                     """
                 INSERT OR REPLACE INTO blocks (
-                    job_id, height, ts, found_by_pool, tx_count, worker, address
+                    job_id, height, ts, found_by_pool, reward, tx_count, worker, address
                 )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event.get("job_id"),
                         event.get("height"),
                         event.get("timestamp"),
                         1,
+                        reward,
                         tx_count,
                         event.get("worker"),
                         event.get("address"),
@@ -205,6 +220,33 @@ class PoolMetrics:
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _int_value(value: object) -> int:
+        if value in (None, ""):
+            return 0
+        if isinstance(value, str):
+            try:
+                return int(value, 16) if value.startswith("0x") else int(value)
+            except Exception:
+                return 0
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    def _reward_from_raw(self, raw: object) -> int:
+        if not isinstance(raw, dict):
+            return 0
+        coinbase = raw.get("coinbase")
+        if isinstance(coinbase, dict):
+            amount = self._int_value(coinbase.get("amount"))
+            if amount > 0:
+                return amount
+        return self._int_value(raw.get("reward") or raw.get("blockReward"))
+
+    def _expected_reward(self, job: StratumJob) -> int:
+        return self._reward_from_raw(job.raw)
 
     def _hashrate_from_events(
         self, events: List[ShareEvent], window_seconds: float
@@ -267,14 +309,14 @@ class PoolMetrics:
             with self._db_lock:
                 row = self._db.execute(
                     """
-                    SELECT height, job_id, ts, found_by_pool, worker, address
+                    SELECT height, job_id, ts, found_by_pool, reward, worker, address
                     FROM blocks
                     ORDER BY ts DESC
                     LIMIT 1
                     """
                 ).fetchone()
             if row:
-                height, job_id, ts, found, worker, address = row
+                height, job_id, ts, found, reward, worker, address = row
                 return {
                     "height": height,
                     "hash": job_id,
@@ -284,6 +326,7 @@ class PoolMetrics:
                         else None
                     ),
                     "found_by_pool": bool(found),
+                    "reward": str(int(reward or 0)),
                     "worker": worker or "",
                     "address": address or "",
                 }
@@ -301,6 +344,7 @@ class PoolMetrics:
                     else None
                 ),
                 "found_by_pool": blk.get("found_by_pool", False),
+                "reward": str(int(blk.get("reward") or 0)),
                 "worker": blk.get("worker") or "",
                 "address": blk.get("address") or "",
             }
@@ -321,6 +365,7 @@ class PoolMetrics:
             share_events, 600
         )
         latest_block = self._latest_block()
+        current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         return {
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
@@ -339,7 +384,7 @@ class PoolMetrics:
             "num_workers": stats.get("clients", 0),
             "round_duration_seconds": self._config.poll_interval,
             "round_shares": len(share_events),
-            "round_estimated_reward": "0",
+            "round_estimated_reward": current_reward,
             "uptime_seconds": stats.get("uptime_sec", int(time.time() - self._started)),
             "stratum_endpoint": f"stratum+tcp://{self._config.host}:{self._config.port}",
             "last_update": self._now_iso(),
@@ -585,13 +630,13 @@ class PoolMetrics:
             with self._db_lock:
                 rows = self._db.execute(
                     """
-                    SELECT height, job_id, ts, found_by_pool, tx_count, worker, address
+                    SELECT height, job_id, ts, found_by_pool, reward, tx_count, worker, address
                     FROM blocks
                     ORDER BY ts DESC
                     LIMIT 50
                     """
                 ).fetchall()
-            for height, job_id, ts, found, tx_count, worker, address in rows:
+            for height, job_id, ts, found, reward, tx_count, worker, address in rows:
                 items.append(
                     {
                         "height": height,
@@ -604,7 +649,7 @@ class PoolMetrics:
                             else None
                         ),
                         "found_by_pool": bool(found),
-                        "reward": "0",
+                        "reward": str(int(reward or 0)),
                         "tx_count": tx_count,
                         "worker": worker or "",
                         "address": address or "",
@@ -625,7 +670,7 @@ class PoolMetrics:
                         else None
                     ),
                     "found_by_pool": blk.get("found_by_pool", False),
-                    "reward": "0",
+                    "reward": str(int(blk.get("reward") or 0)),
                     "tx_count": blk.get("tx_count"),
                     "worker": blk.get("worker") or "",
                     "address": blk.get("address") or "",

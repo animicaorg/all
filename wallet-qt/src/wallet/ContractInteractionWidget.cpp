@@ -1,6 +1,7 @@
 #include "ContractInteractionWidget.h"
 
 #include "WalletEngine.h"
+#include "../rpc/RpcSettings.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -74,7 +75,7 @@ ContractInteractionWidget::ContractInteractionWidget(WalletEngine* engine, QWidg
     form->addRow("Signing Wallet:", m_walletCombo);
 
     m_chainIdEdit = new QLineEdit(this);
-    m_chainIdEdit->setText("1337");
+    m_chainIdEdit->setText(QString::number(RpcSettings::canonicalChainId()));
     form->addRow("Chain ID:", m_chainIdEdit);
 
     m_maxFeeEdit = new QLineEdit(this);
@@ -189,11 +190,12 @@ void ContractInteractionWidget::onReadClicked()
     }
     QJsonObject request;
     request["contract_address"] = address;
+    WalletEngine* engine = m_engine;
     if (m_rawModeCheck->isChecked()) {
         request["data_hex"] = m_rawPayloadEdit->text().trimmed();
         request["sender"] = m_walletCombo->currentData().toString();
-        m_readWatcher->setFuture(QtConcurrent::run([this, request]() {
-            return m_engine->rawContractRead(request);
+        m_readWatcher->setFuture(QtConcurrent::run([engine, request]() {
+            return engine->rawContractRead(request);
         }));
         return;
     }
@@ -216,8 +218,8 @@ void ContractInteractionWidget::onReadClicked()
     request["method"] = m_methodCombo->currentText();
     request["args"] = argsDoc.isObject() ? QJsonValue(argsDoc.object()) : QJsonValue(argsDoc.array());
     request["sender"] = m_walletCombo->currentData().toString();
-    m_readWatcher->setFuture(QtConcurrent::run([this, request]() {
-        return m_engine->contractRead(request);
+    m_readWatcher->setFuture(QtConcurrent::run([engine, request]() {
+        return engine->contractRead(request);
     }));
 }
 
@@ -232,6 +234,7 @@ void ContractInteractionWidget::onWriteClicked()
         return;
     }
     QJsonObject request;
+    WalletEngine* engine = m_engine;
     if (m_rawModeCheck->isChecked()) {
         request["from_address"] = m_walletCombo->currentData().toString();
         request["to_address"] = address;
@@ -241,8 +244,8 @@ void ContractInteractionWidget::onWriteClicked()
         if (!m_maxFeeEdit->text().trimmed().isEmpty()) {
             request["max_fee"] = m_maxFeeEdit->text().trimmed().toLongLong();
         }
-        m_writeWatcher->setFuture(QtConcurrent::run([this, request]() {
-            return m_engine->submitTransaction(request);
+        m_writeWatcher->setFuture(QtConcurrent::run([engine, request]() {
+            return engine->submitTransaction(request);
         }));
         return;
     }
@@ -268,8 +271,8 @@ void ContractInteractionWidget::onWriteClicked()
     if (!m_maxFeeEdit->text().trimmed().isEmpty()) {
         request["max_fee"] = m_maxFeeEdit->text().trimmed().toLongLong();
     }
-    m_writeWatcher->setFuture(QtConcurrent::run([this, request]() {
-        return m_engine->contractWrite(request);
+    m_writeWatcher->setFuture(QtConcurrent::run([engine, request]() {
+        return engine->contractWrite(request);
     }));
 }
 
