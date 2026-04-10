@@ -26,6 +26,23 @@ from omni_sdk.tx import send as tx_send
 from omni_sdk.types.abi import decode_return, encode_call
 from omni_sdk.wallet.signer import PQSigner
 
+ALG_BY_ID = {
+    0x1001: "dilithium3",
+    0x1002: "sphincs_shake_128s",
+}
+
+ALG_ALIASES = {
+    "dilithium": "dilithium3",
+    "dilithium-3": "dilithium3",
+    "dilithium3": "dilithium3",
+    "ml-dsa-65": "dilithium3",
+    "mldsa65": "dilithium3",
+    "sphincs": "sphincs_shake_128s",
+    "sphincs+": "sphincs_shake_128s",
+    "sphincs+-shake-128s": "sphincs_shake_128s",
+    "sphincs_shake_128s": "sphincs_shake_128s",
+}
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -79,20 +96,211 @@ def _coerce_abi_for_calls(abi_value: Any) -> Any:
     return entries
 
 
-def _make_signer(alg: str, seed_hex: Optional[str]) -> PQSigner:
-    seed_input = seed_hex or os.getenv("OMNI_SDK_SEED_HEX")
-    if not seed_input:
-        sys.exit(
-            "error: signer seed missing; pass --seed-hex or set OMNI_SDK_SEED_HEX (dev/test only)"
-        )
+def _address_from_pubkey_canonical(public_key: bytes, alg_id: int) -> str:
     try:
-        seed = bytes.fromhex(seed_input.strip().removeprefix("0x"))
+        from pq.py.address import address_from_pubkey
+
+        return address_from_pubkey(public_key, int(alg_id), hrp="anim")
+    except Exception:
+        return from_pubkey(public_key, alg_id=int(alg_id), hrp="anim")
+
+
+def _sender_from_signer(signer: PQSigner) -> str:
+    return signer.address or _address_from_pubkey_canonical(
+        signer.public_key, signer.alg_id
+    )
+
+
+def _normalize_hex(value: str, *, field: str) -> str:
+    raw = value.strip()
+    if raw.startswith(("0x", "0X")):
+        raw = raw[2:]
+    if not raw:
+        sys.exit(f"error: {field} cannot be empty")
+    if len(raw) % 2 != 0:
+        sys.exit(f"error: {field} must contain an even number of hex characters")
+    try:
+        bytes.fromhex(raw)
     except Exception:  # noqa: BLE001
-        sys.exit("error: --seed-hex must be hex (with or without 0x)")
+        sys.exit(f"error: {field} must be valid hex")
+    return raw
+
+
+def _parse_seed_hex(seed_input: str) -> bytes:
+    raw = _normalize_hex(seed_input, field="--seed-hex")
+    seed = bytes.fromhex(raw)
+    if len(seed) != 32:
+        hint = ""
+        if len(seed) == 64:
+            hint = (
+                "; this looks like 64-byte key material, not a 32-byte seed. "
+                "Use --wallet-label/--wallet-file for existing wallets."
+            )
+        sys.exit(
+            f"error: --seed-hex expects a 32-byte seed (64 hex chars); got {len(seed)} bytes{hint}"
+        )
+    return seed
+
+
+def _normalize_alg_name(raw_name: str) -> str:
+    normalized = ALG_ALIASES.get(raw_name.strip().lower(), raw_name.strip().lower())
+    if normalized not in ("dilithium3", "sphincs_shake_128s"):
+        sys.exit(
+            f"error: unsupported algorithm '{raw_name}' "
+            "(supported: dilithium3, sphincs_shake_128s)"
+        )
+    return normalized
+
+
+def _parse_alg_id(raw_value: Any) -> Optional[int]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        value = raw_value.strip().lower()
+        if not value:
+            return None
+        try:
+            return int(value, 16) if value.startswith("0x") else int(value)
+        except Exception:  # noqa: BLE001
+            sys.exit(f"error: invalid wallet alg_id '{raw_value}'")
+    try:
+        return int(raw_value)
+    except Exception:  # noqa: BLE001
+        sys.exit(f"error: invalid wallet alg_id '{raw_value}'")
+
+
+def _wallet_file_path(path_arg: Optional[Path]) -> Path:
+    if path_arg is not None:
+        return path_arg.expanduser()
+    env_path = os.getenv("ANIMICA_WALLETS_FILE")
+    if env_path:
+        return Path(env_path).expanduser()
+    return Path.home() / ".animica" / "wallets.json"
+
+
+def _wallet_entries(path: Path) -> List[Dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        sys.exit(f"error: wallet file not found: {path}")
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"error: invalid JSON in wallet file {path}: {exc}")
+
+    if isinstance(raw, dict) and isinstance(raw.get("wallets"), list):
+        entries = raw["wallets"]
+    elif isinstance(raw, list):
+        entries = raw
+    elif isinstance(raw, dict):
+        entries = []
+        for label, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            item = dict(value)
+            item.setdefault("label", str(label))
+            entries.append(item)
+    else:
+        sys.exit(
+            f"error: unsupported wallet file format in {path}; expected an object with 'wallets' list"
+        )
+
+    return [item for item in entries if isinstance(item, dict)]
+
+
+def _find_wallet_by_label(path: Path, label: str) -> Dict[str, Any]:
+    needle = label.strip().lower()
+    if not needle:
+        sys.exit("error: --wallet-label cannot be empty")
+    for item in _wallet_entries(path):
+        item_label = str(item.get("label") or "").strip().lower()
+        if item_label == needle:
+            return item
+    sys.exit(f"error: wallet label '{label}' not found in {path}")
+
+
+def _wallet_alg_name(entry: Dict[str, Any]) -> str:
+    name_raw = entry.get("alg_name") or entry.get("algName")
+    alg_id = _parse_alg_id(entry.get("alg_id", entry.get("algId", entry.get("alg"))))
+    name_from_id = ALG_BY_ID.get(int(alg_id)) if alg_id is not None else None
+    if isinstance(name_raw, str) and name_raw.strip():
+        normalized_name = _normalize_alg_name(name_raw)
+        if name_from_id and name_from_id != normalized_name:
+            sys.exit(
+                "error: wallet algorithm mismatch: "
+                f"alg_id {alg_id} maps to {name_from_id}, but alg_name is {name_raw!r}"
+            )
+        return normalized_name
+    if name_from_id:
+        return name_from_id
+    sys.exit(
+        "error: wallet entry missing supported alg_id/alg_name "
+        "(expected dilithium3 or sphincs_shake_128s)"
+    )
+
+
+def _wallet_key_bytes(
+    entry: Dict[str, Any], *, field_name: str, aliases: tuple[str, ...]
+) -> bytes:
+    for key in aliases:
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return bytes.fromhex(_normalize_hex(value, field=f"wallet.{field_name}"))
+    sys.exit(f"error: wallet entry missing {field_name}")
+
+
+def _make_signer_from_seed(alg: str, seed_hex: str) -> PQSigner:
+    seed = _parse_seed_hex(seed_hex)
     try:
         signer = PQSigner.from_seed(alg, seed=seed)
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
     except Exception as exc:  # noqa: BLE001
         sys.exit(f"error: failed to create signer: {exc}")
+    return signer
+
+
+def _make_signer_from_wallet(path: Path, label: str) -> PQSigner:
+    entry = _find_wallet_by_label(path, label)
+    alg_name = _wallet_alg_name(entry)
+    public_key = _wallet_key_bytes(
+        entry,
+        field_name="public_key_hex",
+        aliases=("public_key_hex", "publicKeyHex", "pubkey", "pk"),
+    )
+    secret_key = _wallet_key_bytes(
+        entry,
+        field_name="secret_key_hex",
+        aliases=("secret_key_hex", "secretKeyHex"),
+    )
+
+    try:
+        signer = PQSigner.from_keypair(
+            alg_name=alg_name,
+            secret_key=secret_key,
+            public_key=public_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"error: failed to create signer from wallet '{label}': {exc}")
+
+    derived = _sender_from_signer(signer)
+    wallet_address = str(entry.get("address") or "").strip()
+    if not wallet_address:
+        sys.exit(
+            f"error: wallet '{label}' in {path} is missing address; cannot verify derived address"
+        )
+    if derived.lower() != wallet_address.lower():
+        sys.exit(
+            "error: wallet address mismatch: "
+            f"wallet '{label}' has {wallet_address}, derived signer address is {derived}"
+        )
+
+    wallet_alg_id = _parse_alg_id(
+        entry.get("alg_id", entry.get("algId", entry.get("alg")))
+    )
+    if wallet_alg_id is not None and int(wallet_alg_id) != int(signer.alg_id):
+        sys.exit(
+            "error: wallet algorithm ID mismatch: "
+            f"wallet '{label}' has alg_id={wallet_alg_id}, derived signer has alg_id={signer.alg_id}"
+        )
     return signer
 
 
@@ -143,9 +351,7 @@ def _send_inc(
     gas_limit: Optional[int],
     abi: Any,
 ) -> Dict[str, Any]:
-    sender = signer.address or from_pubkey(
-        signer.public_key, alg_id=signer.alg_id, hrp="anim"
-    )
+    sender = _sender_from_signer(signer)
     calldata = encode_call(abi, "inc", [])
     tx = tx_build.call(
         from_addr=sender,
@@ -195,7 +401,22 @@ def main() -> None:
     )
     parser.add_argument("--manifest", type=Path, default=defaults["manifest"])
     parser.add_argument("--code", type=Path, default=defaults["code"])
-    parser.add_argument("--seed-hex", default=os.getenv("OMNI_SDK_SEED_HEX"))
+    parser.add_argument(
+        "--seed-hex",
+        default=None,
+        help="Signer seed as hex; expects exactly 32 bytes (64 hex chars)",
+    )
+    parser.add_argument(
+        "--wallet-file",
+        type=Path,
+        default=None,
+        help="Path to wallets.json (default: $ANIMICA_WALLETS_FILE or ~/.animica/wallets.json)",
+    )
+    parser.add_argument(
+        "--wallet-label",
+        default=None,
+        help="Use signer from an existing wallet label in wallets.json",
+    )
     parser.add_argument(
         "--sender",
         default=None,
@@ -235,15 +456,45 @@ def main() -> None:
     code = _load_code_bytes(args.code)
     abi = _coerce_abi_for_calls(manifest.get("abi", []))
 
-    signer: Optional[PQSigner]
-    if args.dry_run and args.sender:
-        signer = None
+    if args.sender and not args.dry_run:
+        sys.exit("error: --sender is only valid with --dry-run")
+    if args.seed_hex and args.wallet_label:
+        sys.exit("error: choose exactly one signer source: --seed-hex or --wallet-label")
+    if args.sender and (args.seed_hex or args.wallet_label):
+        sys.exit("error: --sender cannot be combined with --seed-hex or --wallet-label")
+
+    signer: Optional[PQSigner] = None
+    signer_source = "unknown"
+    env_seed = os.getenv("OMNI_SDK_SEED_HEX")
+
+    if args.wallet_label:
+        wallet_file = _wallet_file_path(args.wallet_file)
+        signer = _make_signer_from_wallet(wallet_file, args.wallet_label)
+        signer_source = f"wallet:{args.wallet_label}@{wallet_file}"
+        sender = _sender_from_signer(signer)
+    elif args.seed_hex:
+        signer = _make_signer_from_seed(args.alg, args.seed_hex)
+        signer_source = "seed"
+        sender = _sender_from_signer(signer)
+    elif args.dry_run and args.sender:
+        signer_source = "sender-override"
         sender = args.sender
+    elif env_seed:
+        signer = _make_signer_from_seed(args.alg, env_seed)
+        signer_source = "seed:OMNI_SDK_SEED_HEX"
+        sender = _sender_from_signer(signer)
     else:
-        signer = _make_signer(args.alg, args.seed_hex)
-        sender = signer.address or from_pubkey(
-            signer.public_key, alg_id=signer.alg_id, hrp="anim"
+        sys.exit(
+            "error: signer material missing; use --seed-hex (32-byte seed) "
+            "or --wallet-label/--wallet-file for an existing wallet"
         )
+
+    if signer is not None:
+        print(
+            f"signer source={signer_source} alg={signer.alg_name} alg_id={signer.alg_id} sender={sender}"
+        )
+    else:
+        print(f"signer source={signer_source} sender={sender}")
 
     if args.dry_run:
         dry_nonce = int(args.nonce if args.nonce is not None else 0)
@@ -261,11 +512,14 @@ def main() -> None:
             json.dumps(
                 {
                     "dryRun": True,
+                    "signerSource": signer_source,
                     "sender": sender,
                     "chainId": int(args.chain_id),
                     "nonce": dry_nonce,
                     "packageBytes": len(package),
                     "signBytesLen": len(sign_bytes),
+                    "algName": signer.alg_name if signer is not None else None,
+                    "algId": signer.alg_id if signer is not None else None,
                 },
                 indent=2,
             )
@@ -297,6 +551,9 @@ def main() -> None:
         )
 
     summary: Dict[str, Any] = {
+        "signerSource": signer_source,
+        "algName": signer.alg_name,
+        "algId": signer.alg_id,
         "sender": sender,
         "deploy": {
             "txHash": deploy_receipt.get("txHash"),
