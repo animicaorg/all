@@ -61,7 +61,14 @@ int main(int argc, char* argv[])
 
     const QString walletFilePath = dataDirManager.getWalletsFilePath();
     if (!walletEngine.openWallet(walletFilePath)) {
-        QMessageBox::warning(&window, "Wallet Error", "Failed to initialize the canonical wallets.json store.");
+        const QString detail = walletEngine.lastError().trimmed();
+        QMessageBox::warning(
+            &window,
+            "Wallet Error",
+            detail.isEmpty()
+                ? QStringLiteral("Failed to initialize the canonical wallets.json store.")
+                : QString("Failed to initialize the canonical wallets.json store.\n\n%1").arg(detail)
+        );
     }
 
     auto* walletWidget = new WalletWidget(&walletEngine, &rpcClient, &walletDb, &txMonitor, &window);

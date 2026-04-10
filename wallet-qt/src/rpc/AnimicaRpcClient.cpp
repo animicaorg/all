@@ -165,9 +165,8 @@ RpcReply* AnimicaRpcClient::call(const QString& method, const QJsonValue& params
         }
 
         updateConnectionState(false);
-        QString errorMsg = QString("RPC error for %1: %2").arg(method, reply->errorString());
-        qWarning() << errorMsg;
-        emit error(errorMsg);
+        qWarning() << "RPC error for" << method << ":" << reply->errorString();
+        emit error(reply->errorString());
     });
 
     reply->start();
@@ -205,8 +204,7 @@ QJsonValue AnimicaRpcClient::rpcCallSync(const QString& method, const QJsonValue
     
     // Check for network error
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("RPC error for %1: %2").arg(method, reply->errorString());
-        qWarning() << errorMsg;
+        qWarning() << "RPC error for" << method << ":" << reply->errorString();
         reply->deleteLater();
         updateConnectionState(false);
         return QJsonValue();
