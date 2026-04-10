@@ -64,6 +64,37 @@ bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& er
     return true;
 }
 
+bool backupAndResetWalletStore(const QString& walletFilePath, QString& errorMessage, QString& backupPath)
+{
+    const QFileInfo walletInfo(walletFilePath);
+    if (!walletInfo.exists()) {
+        return ensureCanonicalWalletStoreExists(walletFilePath, errorMessage);
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString("yyyyMMdd-hhmmss");
+    backupPath = QString("%1.corrupt-%2.bak").arg(walletInfo.absoluteFilePath(), timestamp);
+
+    if (QFile::exists(backupPath) && !QFile::remove(backupPath)) {
+        errorMessage = QString("Failed to remove stale backup file: %1").arg(backupPath);
+        return false;
+    }
+
+    if (!QFile::copy(walletInfo.absoluteFilePath(), backupPath)) {
+        errorMessage = QString("Failed to backup invalid wallets.json to %1").arg(backupPath);
+        return false;
+    }
+
+    if (!QFile::remove(walletInfo.absoluteFilePath())) {
+        errorMessage = QString("Failed to remove invalid wallets.json before reset: %1").arg(walletInfo.absoluteFilePath());
+        return false;
+    }
+
+    if (!ensureCanonicalWalletStoreExists(walletInfo.absoluteFilePath(), errorMessage)) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 WalletEngine::WalletEngine(AnimicaRpcClient* rpcClient, QObject* parent)
@@ -217,7 +248,22 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
 
     m_backend->setWalletFile(nextWalletFilePath);
 
-    const QJsonObject response = backendResult("init_store");
+    QJsonObject response = backendResult("init_store");
+    if (!response.value("ok").toBool()) {
+        QString resetError;
+        QString backupPath;
+        if (backupAndResetWalletStore(nextWalletFilePath, resetError, backupPath)) {
+            response = backendResult("init_store");
+            if (!response.value("ok").toBool()) {
+                emit error("Wallet store reset was attempted but initialization still failed.");
+            } else if (!backupPath.isEmpty()) {
+                emit error(QString("Recovered from invalid wallets.json. A backup was saved to: %1").arg(backupPath));
+            }
+        } else if (!resetError.isEmpty()) {
+            emit error(QString("Wallet store recovery failed: %1").arg(resetError));
+        }
+    }
+
     if (!response.value("ok").toBool()) {
         m_backend->setWalletFile(previousBackendWalletFile);
         m_walletFilePath = previousWalletFilePath;
