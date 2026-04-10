@@ -12,7 +12,6 @@
 #include <QPushButton>
 #include <QUrl>
 
-#include "platform/AppPaths.h"
 #include "platform/DataDirManager.h"
 #include "rpc/AnimicaRpcClient.h"
 #include "rpc/RpcSettings.h"
@@ -32,15 +31,6 @@ int main(int argc, char* argv[])
     app.setOrganizationName("Animica");
     app.setOrganizationDomain("animica.org");
     app.setWindowIcon(QIcon(":/icons/animica-wallet.png"));
-
-    if (!AppPaths::ensureDirectoriesExist()) {
-        QMessageBox::critical(
-            nullptr,
-            "Startup Error",
-            "Failed to create the Animica Wallet data directories. Check filesystem permissions."
-        );
-        return 1;
-    }
 
     DataDirManager dataDirManager;
     if (!dataDirManager.ensureDirectoriesExist()) {
