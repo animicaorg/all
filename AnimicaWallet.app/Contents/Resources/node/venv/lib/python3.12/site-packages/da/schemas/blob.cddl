@@ -1,0 +1,111 @@
+; Animica DA — Blob envelope & chunk layout
+; ----------------------------------------
+; Deterministic CBOR schema for posting, storing, and retrieving data blobs
+; that contribute to the Data Availability (DA) root in block headers.
+;
+; Notes
+; - All maps use integer keys to guarantee canonical CBOR ordering.
+; - Byte strings (bstr) are raw bytes (hex rendering is for UIs only).
+; - Namespace identifiers are small unsigned integers (typically 2-byte range).
+; - The NMT (namespaced Merkle tree) encoding of leaves is specified in
+;   da/schemas/nmt.cddl — this file only covers the *blob envelope* and
+;   the *pre-erasure chunk layout* used for ingestion and storage.
+;
+; Terminology
+; - "commitment": SHA3-256 NMT root over the namespaced, erasure-encoded shares
+;   derived from this blob (see da/nmt/*.py and da/erasure/*.py).
+; - "sha3_256": SHA3-256 digest of the *original* blob bytes (pre-encoding).
+; - "layout": parameters that were used for chunking/erasure at ingestion time.
+;
+; Canonical top-level union
+; ------------------------
+; Two wire shapes are permitted for portability:
+;   • Inline data form (used by POST /da/blob): embeds the raw bytes directly.
+;   • Chunked form (used in internal stores / streaming): an ordered list of
+;     sized chunks covering the original byte stream (no gaps, no overlaps).
+;
+; Implementations SHOULD accept either form and MAY convert between them when
+; persisting, as long as the fields needed to recompute the commitment remain
+; stable (namespace, layout, sha3_256, commitment).
+;
+;---------------------------------- Types -------------------------------------
+
+uint16 = uint .size 2
+
+; 32-byte digest (SHA3-256)
+sha3_256 = bstr .size 32
+
+; 32-byte NMT root commitment (SHA3-256)
+commitment = bstr .size 32
+
+; Blob namespace identifier (see da/constants.py for reserved ranges)
+namespace = uint
+
+; Erasure/chunking parameters used at ingestion time.
+; k = data shards, n = total shards, share_size in bytes.
+layout = {
+  0: k: uint,             ; data shards (e.g., 64)
+  1: n: uint,             ; total shards (e.g., 128)
+  2: share_size: uint     ; size per share (e.g., 4096)
+}
+
+; A contiguous slice of the original blob (pre-encoding), starting at byte
+; offset `off` and containing `data`. Chunks MUST be non-overlapping and, when
+; concatenated by ascending `off`, reproduce the original bytes exactly.
+chunk = {
+  0: off: uint,           ; byte offset in original blob
+  1: data: bstr           ; payload (length > 0). Final chunk may be shorter.
+}
+
+; Inline payload (original blob bytes).
+inline_bytes = bstr
+
+; Content union discriminated by leading small int for forward compatibility.
+;  - [0, inline_bytes]  : inline payload (preferred for ingestion)
+;  - [1, [+ chunk]]     : chunked payload (for stores/streams)
+content = [ 0, inline_bytes ] / [ 1, [ + chunk ] ]
+
+;-------------------------------- Envelope ------------------------------------
+
+; Blob envelope: immutable metadata + content (inline or chunked).
+; Required fields are present in both forms. Optional fields are allowed for
+; UX (timestamps, names) but MUST NOT affect the commitment.
+blob = {
+  0: ns: namespace,       ; namespace id (e.g., 0x0100 for user data)
+  1: size: uint,          ; original blob length in bytes
+  2: mime: tstr / nil,    ; optional media type (e.g., "application/octet-stream")
+  3: sha3_256: sha3_256,  ; digest of original bytes
+  4: commitment: commitment, ; NMT root over namespaced, erasure-encoded shares
+  5: layout: layout,      ; erasure/share parameters used for this blob
+  6: id: sha3_256 / nil,  ; optional content-address id (e.g., hash of envelope/core fields)
+  7: created: uint / nil, ; optional unix timestamp (seconds)
+  8: name: tstr / nil,    ; optional display name (not part of commitment)
+  9: content: content     ; inline or chunked payload
+}
+
+;-------------------------------- API Notes -----------------------------------
+
+; POST /da/blob accepts `blob` where `content` SHOULD be the inline form.
+; The server verifies schema, size limits, namespace policy, recomputes the
+; commitment from the provided bytes using `layout`, and MAY persist in a
+; chunked form internally.
+;
+; GET /da/blob/{commitment} returns a `blob` object where `content` MAY be
+; inline (small blobs) or chunked (large blobs); clients MUST handle both.
+
+;-------------------------------- Constraints ---------------------------------
+
+; Additional semantic constraints (not expressible in pure CDDL) that MUST hold:
+;
+; 1) For inline form: size == len(content[1]), sha3_256 == SHA3-256(content[1]).
+; 2) For chunked form: chunks sorted by `off`, contiguous, first `off` == 0,
+;    sum(len(data_i)) == size, and sha3_256 == SHA3-256(concat(data_i)).
+; 3) `commitment` MUST equal the NMT root computed from the erasure-encoded
+;    shares derived from the original bytes under `layout` (see da/erasure/*).
+; 4) Implementations MUST enforce namespace range/policy out-of-band.
+;
+; These constraints are covered by test vectors in da/test_vectors/*.json.
+
+;-------------------------------- Root ----------------------------------------
+
+$root = blob

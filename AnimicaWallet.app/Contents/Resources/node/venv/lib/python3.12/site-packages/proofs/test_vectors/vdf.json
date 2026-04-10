@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "scheme": "wesolowski",
+  "hash_to_prime": "test-vector-provided (fixed l)",
+  "vectors": [
+    {
+      "id": "wes-01",
+      "name": "wesolowski_valid_small_N_55_t10_l3",
+      "params": { "N": "0x37", "x": "0x2", "t": 10, "challengePrime_l": 3 },
+      "expected": { "y": "0x10", "proof_pi": "0x2", "q": "341", "r": 1 },
+      "valid": true,
+      "notes": "Small composite N for dev; verification checks y ≡ π^l · x^r (mod N)."
+    },
+    {
+      "id": "wes-02",
+      "name": "wesolowski_valid_small_N_55_t16_l3",
+      "params": { "N": "0x37", "x": "0x2", "t": 16, "challengePrime_l": 3 },
+      "expected": { "y": "0x1f", "proof_pi": "0x20", "q": "21845", "r": 1 },
+      "valid": true,
+      "notes": "Higher delay t; same N and l."
+    },
+    {
+      "id": "wes-03",
+      "name": "wesolowski_valid_small_N_77_t10_l3",
+      "params": { "N": "0x4d", "x": "0x2", "t": 10, "challengePrime_l": 3 },
+      "expected": { "y": "0x4", "proof_pi": "0x40", "q": "341", "r": 1 },
+      "valid": true,
+      "notes": "N = 77 = 7·11."
+    },
+    {
+      "id": "wes-04",
+      "name": "wesolowski_valid_small_N_77_t16_l3",
+      "params": { "N": "0x4d", "x": "0x2", "t": 16, "challengePrime_l": 3 },
+      "expected": { "y": "0x10", "proof_pi": "0x3e", "q": "21845", "r": 1 },
+      "valid": true,
+      "notes": "Same N, larger t."
+    },
+    {
+      "id": "wes-05",
+      "name": "wesolowski_valid_small_N_91_t10_l3",
+      "params": { "N": "0x5b", "x": "0x2", "t": 10, "challengePrime_l": 3 },
+      "expected": { "y": "0x1", "proof_pi": "0x40", "q": "341", "r": 1 },
+      "valid": true,
+      "notes": "N = 91 = 7·13."
+    },
+    {
+      "id": "wes-06",
+      "name": "wesolowski_valid_small_N_91_t16_l3",
+      "params": { "N": "0x5b", "x": "0x2", "t": 16, "challengePrime_l": 3 },
+      "expected": { "y": "0x40", "proof_pi": "0x3e", "q": "21845", "r": 1 },
+      "valid": true,
+      "notes": "Same N, larger t."
+    },
+
+    /* Negative cases */
+    {
+      "id": "wes-bad-01",
+      "name": "wesolowski_invalid_y_mismatch",
+      "params": { "N": "0x37", "x": "0x2", "t": 10, "challengePrime_l": 3 },
+      "expected": { "y": "0x11", "proof_pi": "0x2", "q": "341", "r": 1 },
+      "valid": false,
+      "notes": "y is wrong (should be 0x10). Verifier must fail."
+    },
+    {
+      "id": "wes-bad-02",
+      "name": "wesolowski_invalid_pi_mismatch",
+      "params": { "N": "0x37", "x": "0x2", "t": 16, "challengePrime_l": 3 },
+      "expected": { "y": "0x1f", "proof_pi": "0x21", "q": "21845", "r": 1 },
+      "valid": false,
+      "notes": "π is wrong (should be 0x20). Verifier must fail."
+    },
+
+    /* Edge case (implementation policy) */
+    {
+      "id": "wes-edge-01",
+      "name": "wesolowski_edge_t0",
+      "params": { "N": "0x37", "x": "0x2", "t": 0, "challengePrime_l": 3 },
+      "expected": { "y": "0x2", "proof_pi": "0x1", "q": "0", "r": 1 },
+      "valid": false,
+      "notes": "Degenerate delay (t=0). Recommended to reject as invalid (no time delay)."
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "notes": [
+    "Address payload = alg_id (1 byte) || SHA3-256(pubkey) (32 bytes).",
+    "Bech32m HRP per chain: mainnet='anim', testnet='animt', devnet='animd'.",
+    "Vectors cover bech32m encoding and round-trip payload decode. Implementations must verify HRP matches chainId before accepting an address."
+  ],
+  "cases": [
+    {
+      "name": "sphincs_shake_128s_mainnet_roundtrip",
+      "alg": "sphincs_shake_128s",
+      "chainId": 1,
+      "hrp": "anim",
+      "alg_id_hex": "0x02",
+      "pubkey_hex": "0x000102030405060708090a0b0c0d0e0f",
+      "sha3_256_pubkey_hex": "0x39462d2a2320f8da572a97b0b39473d4312e0228b23e2c2fe0ae9b6c67f2343c",
+      "payload_hex": "0x0239462d2a2320f8da572a97b0b39473d4312e0228b23e2c2fe0ae9b6c67f2343c",
+      "address": "anim1qgu5vtf2yvs03kjh92tmpvu5w02rztsz9zerutp0uzhfkmr87g6rcklx8yn"
+    },
+    {
+      "name": "dilithium3_testnet_roundtrip",
+      "alg": "dilithium3",
+      "chainId": 2,
+      "hrp": "animt",
+      "alg_id_hex": "0x01",
+      "pubkey_hex": "0x0102030405060708090a0b0c0d0e0f10",
+      "sha3_256_pubkey_hex": "0x8d9ef5e1443f0286e4fa45c5205ed2584cbc1b19ecde4adb2ef7e60ea6e780ca",
+      "payload_hex": "0x018d9ef5e1443f0286e4fa45c5205ed2584cbc1b19ecde4adb2ef7e60ea6e780ca",
+      "address": "animt1qxxeaa0pgsls9phylfzu2gz76fvye0qmr8kdujkm9mm7vr4xu7qv5v568gj"
+    },
+    {
+      "name": "kyber768_devnet_roundtrip",
+      "alg": "kyber768",
+      "chainId": 1337,
+      "hrp": "animd",
+      "alg_id_hex": "0x20",
+      "pubkey_hex": "0xf0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "sha3_256_pubkey_hex": "0x300f8660e7f42fa10f6bc25a36333ae9bf3c87595ee14ae4905863267682766c",
+      "payload_hex": "0x20300f8660e7f42fa10f6bc25a36333ae9bf3c87595ee14ae4905863267682766c",
+      "address": "animd1yqcqlpnqul6zlgg0d0p95d3n8t5m70y8t90wzjhyjpvxxfnksfmxckn6f96"
+    },
+    {
+      "name": "hrp_mismatch_should_be_rejected",
+      "alg": "sphincs_shake_128s",
+      "context": "Re-encode the 'sphincs_shake_128s_mainnet_roundtrip' payload with HRP='animt'. Implementations must reject due to HRP/chain mismatch.",
+      "based_on": "sphincs_shake_128s_mainnet_roundtrip",
+      "hrp": "animt",
+      "payload_hex": "0x0239462d2a2320f8da572a97b0b39473d4312e0228b23e2c2fe0ae9b6c67f2343c",
+      "bad_address": "animt1qgu5vtf2yvs03kjh92tmpvu5w02rztsz9zerutp0uzhfkmr87g6rc7tm9dc"
+    }
+  ]
+}

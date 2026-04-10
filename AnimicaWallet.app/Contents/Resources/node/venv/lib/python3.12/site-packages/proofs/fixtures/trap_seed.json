@@ -1,0 +1,40 @@
+{
+  "$schema": "animica://proofs/traps-seed.schema.json#v1",
+  "version": 1,
+  "description": "Deterministic seed & knobs for Quantum trap-circuit sampling (dev fixture).",
+  "family": "rigetti-xeb-v1",
+  "params": {
+    "alpha": 0.02,
+    "k_traps": 128,
+    "shots_per_trap": 1000,
+    "depth_range": [8, 24],
+    "width_range": [8, 20]
+  },
+  "rng": {
+    "prf": "HKDF-SHA3-256",
+    "info": "ANIMICA_TRAPS_V1",
+    "salt_hex": "9f6c5d8a3b1ed4e7a0c2f1b4739205aa"
+  },
+  "seed": {
+    "format": "hex",
+    "seed_hex": "b39f2f8c3f4e4c7f7f3a4f6e8c8d2a1c57dfaf1b45b1aa8a6c1b9d7e3e6a5c2d"
+  },
+  "nonces": {
+    "default": "0001",
+    "per_provider": {
+      "quantinuum:h2-1:dev": "0001",
+      "rigetti:aspen-m-dev": "0002",
+      "ionq:11q-dev": "0003",
+      "oxford:qdot-dev": "0004"
+    }
+  },
+  "binding": {
+    "chain_id": 1,
+    "alg_policy_root": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "notes": [
+    "Traps are derived deterministically via HKDF(info, salt, seed || provider_id || nonce).",
+    "Depth/width are sampled uniformly within ranges; exact gate patterns depend on family.",
+    "Keep this file stable across test runs to obtain reproducible trap sets."
+  ]
+}

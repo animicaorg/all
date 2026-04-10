@@ -1,0 +1,52 @@
+{
+  "algorithm": "sphincs_shake_128s",
+  "parameter_set": "SHAKE-128s",
+  "domain": "Animica:TxSign:v1",
+  "notes": "SPHINCS+ signatures are randomized (per-message randomness). Implementations should verify validity but NOT compare signature bytes. Use 'skipExact': true.",
+  "cases": [
+    {
+      "name": "sph_basic_hello",
+      "seed": "0x0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff00",
+      "msg": "0x48656c6c6f2c20416e696d69636121",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "sph_empty_message",
+      "seed": "0xaabbccddeeff0011223344556677889900112233445566778899aabbccddeeff",
+      "msg": "0x",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "sph_longish_message",
+      "seed": "0x11223344556677889900aabbccddeeffffeeddccbbaa00998877665544332211",
+      "msg": "0x546869732069732061206c6f6e676572206d65737361676520746f20746573742070616464696e6720616e642067617320636f7374732e",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "sph_unicode_like_bytes",
+      "seed": "0x55aa55aa55aa55aa55aa55aa55aa55aa0102030405060708090a0b0c0d0e0f10",
+      "msg": "0xF09F8C8D20F09F9A80E29AA120F09F9A80", 
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "sph_corrupted_signature",
+      "seed": "0xdeadc0de000102030405060708090a0b0c0d0e0f101112131415161718191a1b",
+      "msg": "0x74616d7065722d6d65",
+      "valid": false,
+      "skipExact": true,
+      "corrupt": "sig_flip_bit_0"
+    },
+    {
+      "name": "sph_wrong_public_key",
+      "seed": "0x999999999999999999999999999999990123456789abcdef0123456789abcdef",
+      "msg": "0x616e696d6963612d746573742d706b2d6d69736d61746368",
+      "valid": false,
+      "skipExact": true,
+      "corrupt": "wrong_pubkey_seed"
+    }
+  ]
+}

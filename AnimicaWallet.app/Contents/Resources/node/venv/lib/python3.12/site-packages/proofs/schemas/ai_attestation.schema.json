@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/spec/proofs/ai_attestation.schema.json",
+  "title": "Animica — AI TEE Attestation Bundle (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ver", "tee_type", "bindings", "evidence"],
+  "properties": {
+    "ver": {
+      "description": "Schema version. Must be 1 for this document.",
+      "const": 1
+    },
+    "tee_type": {
+      "description": "Which TEE produced the attestation evidence.",
+      "type": "string",
+      "enum": ["intel_sgx", "amd_sev_snp", "arm_cca", "tpm_dice"]
+    },
+    "bindings": {
+      "description": "Deterministic bindings that tie this attestation to Animica consensus domains and to the specific job/output.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_digest", "output_digest", "header_template_hash"],
+      "properties": {
+        "alg_policy_root": {
+          "description": "Optional PQ alg-policy Merkle root expected by this node/network.",
+          "$ref": "#/$defs/hex64"
+        },
+        "job_digest": {
+          "description": "Digest of the normalized job payload (model+prompt+caps). Domain-separated per spec.",
+          "$ref": "#/$defs/hex32"
+        },
+        "output_digest": {
+          "description": "Digest of the provider's output bytes (or canonical hash thereof).",
+          "$ref": "#/$defs/hex32"
+        },
+        "trap_seed": {
+          "description": "Optional deterministic trap-seed (if traps used in validation).",
+          "$ref": "#/$defs/hex32"
+        },
+        "header_template_hash": {
+          "description": "Hash of the header SignBytes (with nonce=0) that this proof binds to.",
+          "$ref": "#/$defs/hex32"
+        },
+        "nonce": {
+          "description": "Optional provider nonce included in the transcript.",
+          "$ref": "#/$defs/hexBytes"
+        },
+        "timestamp": {
+          "description": "Provider-local UTC timestamp when the quote/report was produced.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "evidence": {
+      "description": "Attestation evidence specific to the chosen TEE.",
+      "oneOf": [
+        { "$ref": "#/$defs/sgxEvidence" },
+        { "$ref": "#/$defs/sevSnpEvidence" },
+        { "$ref": "#/$defs/ccaEvidence" },
+        { "$ref": "#/$defs/tpmDiceEvidence" }
+      ]
+    },
+    "cert_chains": {
+      "description": "Optional detached x509 PEM chains accompanying the evidence (if not embedded).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sgx_pck_chain": { "$ref": "#/$defs/pemChain" },
+        "intel_issuer_chain": { "$ref": "#/$defs/pemChain" },
+        "amd_ask_ark_chain": { "$ref": "#/$defs/pemChain" },
+        "arm_cca_chain": { "$ref": "#/$defs/pemChain" },
+        "tpm_ak_chain": { "$ref": "#/$defs/pemChain" }
+      }
+    },
+    "collateral": {
+      "description": "Optional references or blobs for collateral used during verification (TCBInfo, QEIdentity, CRLs, OCSP, etc.).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intel_tcbinfo_json": { "type": "string" },
+        "intel_qe_identity_json": { "type": "string" },
+        "crls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/url" }
+        },
+        "ocsp": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/url" }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "tee_type": { "const": "intel_sgx" } } },
+      "then": {
+        "properties": { "evidence": { "$ref": "#/$defs/sgxEvidence" } }
+      }
+    },
+    {
+      "if": { "properties": { "tee_type": { "const": "amd_sev_snp" } } },
+      "then": {
+        "properties": { "evidence": { "$ref": "#/$defs/sevSnpEvidence" } }
+      }
+    },
+    {
+      "if": { "properties": { "tee_type": { "const": "arm_cca" } } },
+      "then": {
+        "properties": { "evidence": { "$ref": "#/$defs/ccaEvidence" } }
+      }
+    },
+    {
+      "if": { "properties": { "tee_type": { "const": "tpm_dice" } } },
+      "then": {
+        "properties": { "evidence": { "$ref": "#/$defs/tpmDiceEvidence" } }
+      }
+    }
+  ],
+
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]{64}$",
+      "examples": ["0x0123abcd..."]
+    },
+    "hex64": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]{128}$"
+    },
+    "hexBytes": {
+      "type": "string",
+      "pattern": "^0x[a-f0-9]+$"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "pemCert": {
+      "type": "string",
+      "pattern": "-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----\\s*$"
+    },
+    "pemChain": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/pemCert" }
+    },
+
+    "sgxEvidence": {
+      "title": "Intel SGX/TDX Evidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "quote", "report_data"],
+      "properties": {
+        "kind": { "const": "sgx_quote_v4" },
+        "quote": {
+          "description": "SGX ECDSA Quote V4 as raw bytes (base64).",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "report_data": {
+          "description": "REPORTDATA (64 bytes) expected to contain domain-separated binding (e.g., H(job|output|header_template_hash)).",
+          "$ref": "#/$defs/hex64"
+        },
+        "pck_certificate": {
+          "description": "Optional embedded PCK cert if not supplied via cert_chains.",
+          "$ref": "#/$defs/pemCert"
+        },
+        "qe_identity_json": {
+          "description": "Optional cached QE Identity JSON if offline verification.",
+          "type": "string"
+        },
+        "tcbinfo_json": {
+          "description": "Optional cached TCBInfo JSON if offline verification.",
+          "type": "string"
+        },
+        "measurements": {
+          "description": "Optional measurements extracted from the quote for prechecks.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mr_enclave": { "$ref": "#/$defs/hex32" },
+            "mr_signer": { "$ref": "#/$defs/hex32" },
+            "isv_prod_id": { "type": "integer", "minimum": 0, "maximum": 65535 },
+            "isv_svn": { "type": "integer", "minimum": 0, "maximum": 65535 }
+          }
+        }
+      }
+    },
+
+    "sevSnpEvidence": {
+      "title": "AMD SEV-SNP Evidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "report"],
+      "properties": {
+        "kind": { "const": "sev_snp_report" },
+        "report": {
+          "description": "SEV-SNP attestation report (raw bytes, base64).",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "host_data": {
+          "description": "Expected HOST_DATA field (32 bytes) domain-binding.",
+          "$ref": "#/$defs/hex64"
+        },
+        "vcek_cert": { "$ref": "#/$defs/pemCert" },
+        "ask_cert": { "$ref": "#/$defs/pemCert" },
+        "ark_cert": { "$ref": "#/$defs/pemCert" },
+        "chip_id": {
+          "description": "Optional Chip ID (16 bytes).",
+          "type": "string",
+          "pattern": "^[A-F0-9]{32}$"
+        },
+        "reported_tcb": {
+          "description": "Optional reported TCB hex string (8 bytes).",
+          "type": "string",
+          "pattern": "^[A-F0-9]{16}$"
+        }
+      }
+    },
+
+    "ccaEvidence": {
+      "title": "Arm CCA Realm Evidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "realm_token"],
+      "properties": {
+        "kind": { "const": "arm_cca_token" },
+        "realm_token": {
+          "description": "CCA Realm attestation token (COSE_Sign1, CBOR; base64).",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "platform_token": {
+          "description": "Optional platform token (COSE_Sign1, CBOR; base64).",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "cca_root_chain": {
+          "description": "Optional Arm CCA root chain if not bundled by verifier.",
+          "$ref": "#/$defs/pemChain"
+        }
+      }
+    },
+
+    "tpmDiceEvidence": {
+      "title": "TPM/DICE Evidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "event_log"],
+      "properties": {
+        "kind": { "const": "tpm_dice" },
+        "event_log": {
+          "description": "TPM event log (binary, base64).",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "quotes": {
+          "description": "One or more TPM2_Quote blobs (binary, base64).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "contentEncoding": "base64" }
+        },
+        "ak_cert": {
+          "description": "Attestation Key certificate in PEM.",
+          "$ref": "#/$defs/pemCert"
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "ver": 1,
+      "tee_type": "intel_sgx",
+      "bindings": {
+        "job_digest": "0x6f0f4a0c6c8c0e8d6db4f0d1d4a7e2d6d8bf9a0a0b6f3d1c5a6b1f2e3d4c5b6a",
+        "output_digest": "0x8a9b0c1d2e3f4a5b6c7d8e9f00112233445566778899aabbccddeeff00112233",
+        "header_template_hash": "0x5e2f4d7c9b1a3c5e7f9d0b2a4c6e8f0a1b3c5d7e9f0a1b2c3d4e5f60718293a4",
+        "timestamp": "2025-01-01T00:00:00Z"
+      },
+      "evidence": {
+        "kind": "sgx_quote_v4",
+        "quote": "BASE64==",
+        "report_data": "0x" 
+      }
+    }
+  ]
+}

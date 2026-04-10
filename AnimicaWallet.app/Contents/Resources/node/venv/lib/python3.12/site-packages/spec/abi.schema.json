@@ -1,0 +1,432 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/spec/abi.schema.json",
+  "title": "Animica Python-VM ABI",
+  "description": "Canonical ABI shape for Animica's deterministic Python VM (encoding: animica-abi/1). Used by SDKs, RPC, Studio, and on-chain verification tooling.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["abiVersion", "encoding", "contract", "functions"],
+  "properties": {
+    "abiVersion": {
+      "description": "Semantic version of this ABI schema that the contract targets.",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:[-+].*)?$",
+      "examples": ["1.0.0"]
+    },
+    "encoding": {
+      "description": "ABI wire encoding identifier. Must be 'animica-abi/1' for this schema.",
+      "type": "string",
+      "const": "animica-abi/1"
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "version": {
+          "description": "Optional semantic version for the contract itself (author-specified).",
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:[-+].*)?$"
+        },
+        "author": { "type": "string" },
+        "license": { "type": "string" },
+        "capabilities": {
+          "description": "Declares which syscalls/capability families may be used by this contract.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Capability" },
+          "default": []
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "functions": {
+      "description": "Public callable functions (constructor is modeled as a function with kind='deploy').",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Function" }
+    },
+    "events": {
+      "description": "Log/event declarations (emitted via stdlib.events).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Event" },
+      "default": []
+    },
+    "errors": {
+      "description": "Typed error declarations that may be raised (e.g., revert with data).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Error" },
+      "default": []
+    }
+  },
+
+  "$defs": {
+    "UintSizes": {
+      "description": "Allowed unsigned integer bit-widths.",
+      "enum": [8, 16, 32, 64, 128, 256]
+    },
+    "IntSizes": {
+      "description": "Allowed signed integer bit-widths.",
+      "enum": [8, 16, 32, 64, 128, 256]
+    },
+    "FixedBytesSizes": {
+      "description": "Allowed fixed-length byte arrays.",
+      "enum": [4, 8, 16, 20, 24, 28, 32, 33, 48]
+    },
+
+    "ScalarType": {
+      "oneOf": [
+        { "const": "bool" },
+        { "const": "address" },
+        { "const": "string" },
+        { "const": "bytes" },
+        {
+          "type": "string",
+          "pattern": "^bytes([0-9]+)$",
+          "description": "Fixed-length bytesN where N ∈ FixedBytesSizes."
+        },
+        {
+          "type": "string",
+          "pattern": "^u(8|16|32|64|128|256)$",
+          "description": "Unsigned integers."
+        },
+        {
+          "type": "string",
+          "pattern": "^i(8|16|32|64|128|256)$",
+          "description": "Signed integers."
+        }
+      ],
+      "description": "Scalar/primitive type identifiers."
+    },
+
+    "TypeRef": {
+      "description": "Type reference (scalar, array, tuple, or struct).",
+      "oneOf": [
+        { "$ref": "#/$defs/Scalar" },
+        { "$ref": "#/$defs/ArrayType" },
+        { "$ref": "#/$defs/TupleType" },
+        { "$ref": "#/$defs/StructType" }
+      ]
+    },
+
+    "Scalar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "const": "scalar" },
+        "name": { "$ref": "#/$defs/ScalarType" },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min": { "type": ["integer", "string"] },
+            "max": { "type": ["integer", "string"] },
+            "maxLen": { "type": "integer", "minimum": 0, "description": "For string/bytes only (soft cap validated pre-exec)." }
+          }
+        },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "ArrayType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "items"],
+      "properties": {
+        "kind": { "const": "array" },
+        "items": { "$ref": "#/$defs/TypeRef" },
+        "maxLen": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Max elements allowed by ABI validation (prevents pathological inputs)."
+        },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "TupleType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "items"],
+      "properties": {
+        "kind": { "const": "tuple" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TypeRef" }
+        },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "StructField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "maxLength": 64
+        },
+        "type": { "$ref": "#/$defs/TypeRef" },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "StructType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "fields"],
+      "properties": {
+        "kind": { "const": "struct" },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "maxLength": 128
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/StructField" }
+        },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "Parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "maxLength": 64
+        },
+        "type": { "$ref": "#/$defs/TypeRef" },
+        "doc": { "type": "string" }
+      }
+    },
+
+    "StateMutability": {
+      "description": "Execution intent (enforced by runtime policy).",
+      "enum": ["pure", "view", "nonpayable", "payable"]
+    },
+
+    "GasBounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["staticUpperBound"],
+      "properties": {
+        "staticUpperBound": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Static gas upper bound from compiler analysis (best effort)."
+        },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "Capability": {
+      "description": "Syscall capability families.",
+      "enum": [
+        "blob.pin",
+        "compute.ai.enqueue",
+        "compute.quantum.enqueue",
+        "compute.read_result",
+        "zk.verify",
+        "random.read_beacon",
+        "treasury.transfer"
+      ]
+    },
+
+    "FunctionKind": {
+      "enum": ["deploy", "call"]
+    },
+
+    "Selector": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{8}$",
+      "description": "4-byte selector (hex). Default: sha3_256(name '(' canonicalTypes ')')[0..4]."
+    },
+
+    "Function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "stateMutability", "inputs"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "kind": { "$ref": "#/$defs/FunctionKind" },
+        "selector": {
+          "$ref": "#/$defs/Selector",
+          "description": "Optional explicit selector override; otherwise tooling derives it deterministically."
+        },
+        "stateMutability": { "$ref": "#/$defs/StateMutability" },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Parameter" },
+          "default": []
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Parameter" },
+          "default": []
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Capability" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "gas": { "$ref": "#/$defs/GasBounds" },
+        "doc": { "type": "string" },
+        "deprecated": { "type": "boolean", "default": false }
+      }
+    },
+
+    "Indexed": {
+      "type": "boolean",
+      "description": "If true, field contributes to event topics (enables efficient filtering)."
+    },
+
+    "EventField": {
+      "allOf": [
+        { "$ref": "#/$defs/Parameter" },
+        {
+          "type": "object",
+          "properties": {
+            "indexed": { "$ref": "#/$defs/Indexed" }
+          }
+        }
+      ]
+    },
+
+    "Event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "fields"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "$ref": "#/$defs/EventField" }
+        },
+        "topic": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Optional explicit event topic (sha3-256(name '(' canonicalTypes ')')) if precomputed."
+        },
+        "doc": { "type": "string" },
+        "deprecated": { "type": "boolean", "default": false }
+      }
+    },
+
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Parameter" },
+          "default": []
+        },
+        "selector": {
+          "$ref": "#/$defs/Selector",
+          "description": "Optional explicit error selector; default is sha3_256 signature truncated to 4 bytes."
+        },
+        "doc": { "type": "string" }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "abiVersion": "1.0.0",
+      "encoding": "animica-abi/1",
+      "contract": {
+        "name": "Counter",
+        "version": "0.1.0",
+        "capabilities": []
+      },
+      "functions": [
+        {
+          "name": "deploy",
+          "kind": "deploy",
+          "stateMutability": "nonpayable",
+          "inputs": [
+            { "name": "initial", "type": { "kind": "scalar", "name": "u64" } }
+          ],
+          "outputs": [],
+          "gas": { "staticUpperBound": 20000 }
+        },
+        {
+          "name": "inc",
+          "kind": "call",
+          "stateMutability": "nonpayable",
+          "inputs": [],
+          "outputs": [
+            { "name": "newValue", "type": { "kind": "scalar", "name": "u64" } }
+          ],
+          "gas": { "staticUpperBound": 12000 }
+        },
+        {
+          "name": "get",
+          "kind": "call",
+          "stateMutability": "view",
+          "inputs": [],
+          "outputs": [
+            { "name": "value", "type": { "kind": "scalar", "name": "u64" } }
+          ],
+          "gas": { "staticUpperBound": 4000 }
+        }
+      ],
+      "events": [
+        {
+          "name": "Incremented",
+          "fields": [
+            { "name": "by", "type": { "kind": "scalar", "name": "u64" }, "indexed": true },
+            { "name": "value", "type": { "kind": "scalar", "name": "u64" } }
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "name": "Overflow",
+          "params": [
+            { "name": "attempted", "type": { "kind": "scalar", "name": "u64" } }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "unevaluatedProperties": false,
+
+  "description_addendum": "NOTES:\n- address encodes the 33-byte address payload (alg_id || sha3-256(pubkey)) in ABI bytes; bech32m rendering is an SDK concern.\n- bytesN supports N ∈ {4,8,16,20,24,28,32,33,48}. Use 33 for Animica addresses.\n- Function selectors default to sha3_256 of the canonical signature (name + '(' + canonical type list + ')'), truncated to 4 bytes; the ABI includes an optional explicit selector to lock in values if desired.\n- Canonical type strings for scalars: bool, address, string, bytes, bytesN, u{8|16|32|64|128|256}, i{8|16|32|64|128|256}.\n- Arrays are length-prefixed; tuples/structs are ordered product types; the precise byte layout is defined in vm_py/specs/ABI.md and enforced by vm_py/abi/encoding.py."
+}

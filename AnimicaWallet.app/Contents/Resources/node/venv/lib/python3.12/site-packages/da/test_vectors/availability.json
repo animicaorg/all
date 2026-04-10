@@ -1,0 +1,48 @@
+{
+  "namespace_bytes": 8,
+  "hash": "sha3_256",
+  "matrix": { "k": 16, "n": 32, "share_bytes": 1024 },
+
+  "root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+
+  "samples": [
+    {
+      "name": "uniform-4",
+      "indices": [0, 7, 19, 31],
+      "proofs": [
+        { "index": 0,  "branches": ["0x00", "0x00"], "positions": ["L", "R"] },
+        { "index": 7,  "branches": ["0x00", "0x00"], "positions": ["R", "L"] },
+        { "index": 19, "branches": ["0x00", "0x00"], "positions": ["L", "L"] },
+        { "index": 31, "branches": ["0x00", "0x00"], "positions": ["R", "R"] }
+      ],
+      "valid": true
+    },
+
+    {
+      "name": "stratified-8",
+      "indices": [1, 5, 8, 12, 16, 20, 24, 28],
+      "proofs": [
+        { "index": 1,  "branches": ["0x00","0x00","0x00"], "positions": ["R","L","R"] },
+        { "index": 5,  "branches": ["0x00","0x00","0x00"], "positions": ["L","R","L"] },
+        { "index": 8,  "branches": ["0x00","0x00","0x00"], "positions": ["R","R","L"] },
+        { "index": 12, "branches": ["0x00","0x00","0x00"], "positions": ["L","L","R"] },
+        { "index": 16, "branches": ["0x00","0x00","0x00"], "positions": ["R","L","L"] },
+        { "index": 20, "branches": ["0x00","0x00","0x00"], "positions": ["L","R","R"] },
+        { "index": 24, "branches": ["0x00","0x00","0x00"], "positions": ["R","R","R"] },
+        { "index": 28, "branches": ["0x00","0x00","0x00"], "positions": ["L","L","L"] }
+      ],
+      "valid": true
+    },
+
+    {
+      "name": "adjacent-2-invalid",
+      "indices": [5, 6],
+      "proofs": [
+        { "index": 5, "branches": ["0xdeadbeef"], "positions": ["L"] },
+        { "index": 6, "branches": ["0xdeadbeef"], "positions": ["R"] }
+      ],
+      "valid": false,
+      "reason": "mismatched branches/positions or wrong sibling ordering"
+    }
+  ]
+}

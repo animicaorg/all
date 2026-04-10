@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "scheme": "wesolowski",
+    "encoding": "hex-lower, 0x-prefixed",
+    "notes": [
+      "These are SMALL, toy RSA moduli for deterministic testing.",
+      "Security is NOT the goal here; do not use in production.",
+      "Vectors include the Wesolowski proof prime l explicitly for reproducibility."
+    ],
+    "fields": {
+      "N": "RSA modulus",
+      "x": "base/input element",
+      "T": "iterations (compute x^(2^T) mod N)",
+      "l": "Wesolowski prime",
+      "y": "claimed output x^(2^T) mod N",
+      "pi": "proof such that y == pi^l * x^(2^T mod l) (mod N)",
+      "expected": "true if the tuple should verify"
+    }
+  },
+  "vectors": [
+    {
+      "name": "toy-3233-ok",
+      "N": "0x0ca1",
+      "x": "0x2a",
+      "T": 20,
+      "l": "0x61",
+      "y": "0x0844",
+      "pi": "0x0aab",
+      "expected": true
+    },
+    {
+      "name": "toy-100160063-ok",
+      "N": "0x05f8523f",
+      "x": "0x12d687",
+      "T": 18,
+      "l": "0x65",
+      "y": "0x034c2ec5",
+      "pi": "0x000f8264",
+      "expected": true
+    },
+    {
+      "name": "toy-3233-bad-proof",
+      "N": "0x0ca1",
+      "x": "0x2a",
+      "T": 20,
+      "l": "0x61",
+      "y": "0x0844",
+      "pi": "0x0aac",
+      "expected": false
+    }
+  ]
+}

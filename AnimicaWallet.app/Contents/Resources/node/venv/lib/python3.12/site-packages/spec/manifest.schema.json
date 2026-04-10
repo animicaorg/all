@@ -1,0 +1,524 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/spec/manifest.schema.json",
+  "title": "Animica Contract Deploy Manifest",
+  "description": "Deterministic deploy bundle manifest for Animica's Python VM contracts. A manifest packages source and/or IR, ABI, declared capabilities, resource limits, integrity hashes, and provenance signatures. Tooling compiles sources to IR or accepts prebuilt IR and verifies code/ABI hashes before building a deploy transaction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifestVersion", "encoding", "package", "target", "entrypoint", "code", "abi", "capabilities", "integrity"],
+  "properties": {
+    "manifestVersion": {
+      "description": "Semantic version of the manifest format.",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:[-+].*)?$",
+      "examples": ["1.0.0"]
+    },
+    "encoding": {
+      "description": "Manifest encoding identifier.",
+      "type": "string",
+      "const": "animica-manifest/1"
+    },
+    "createdAt": {
+      "description": "Creation timestamp (UTC, RFC 3339).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "package": {
+      "description": "Human-facing package metadata.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:[-+].*)?$"
+        },
+        "description": { "type": "string" },
+        "authors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "license": { "type": "string" },
+        "homepage": { "type": "string", "format": "uri" },
+        "repository": { "type": "string", "format": "uri" },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "default": []
+        }
+      }
+    },
+    "target": {
+      "description": "Execution target and compatibility.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vm", "vmVersion", "abiVersion"],
+      "properties": {
+        "vm": { "type": "string", "const": "python" },
+        "vmVersion": {
+          "description": "Semantic version constraint for vm_py.",
+          "type": "string",
+          "examples": [">=1.0.0 <2.0.0"]
+        },
+        "abiVersion": {
+          "description": "ABI schema version the contract targets.",
+          "type": "string",
+          "examples": ["1.0.0"]
+        },
+        "protocolMin": {
+          "description": "Minimum node protocol version required (if any).",
+          "type": "string"
+        },
+        "chainCompatibility": {
+          "description": "Explicitly supported chain IDs (CAIP-2 numeric ids). Empty ⇒ any Animica-compatible chain.",
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "default": []
+        }
+      }
+    },
+    "entrypoint": {
+      "description": "Primary contract module path within the source pack (Python) or symbolic module name in IR metadata.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "code": {
+      "description": "Code material. Provide sources (to be compiled deterministically), and/or precompiled IR. At least one must be present.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "Canonical source pack. Tools must use exact bytes & order to produce reproducible IR and code hash.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["files", "order"],
+          "properties": {
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/SourceFile" }
+            },
+            "order": {
+              "description": "Deterministic path order used to compute sourceRootHash.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "sourceRootHash": { "$ref": "#/$defs/Hash256" },
+            "totalBytes": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "ir": {
+          "description": "Precompiled IR blob(s) for the VM.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "blobs"],
+          "properties": {
+            "format": { "type": "string", "const": "animica-ir/1" },
+            "blobs": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/IrBlob" }
+            },
+            "irRootHash": { "$ref": "#/$defs/Hash256" }
+          }
+        },
+        "toolchain": {
+          "description": "Provenance of compilation/build used to produce IR (if source provided).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vmPyVersion": { "type": "string" },
+            "compilerCommit": { "type": "string" },
+            "abiEncoderVersion": { "type": "string" },
+            "dockerImage": { "type": "string" },
+            "reproducible": { "type": "boolean", "default": true },
+            "opts": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "optLevel": { "type": "integer", "minimum": 0, "maximum": 3 },
+                "strictDeterminism": { "type": "boolean", "default": true },
+                "maxInlineDepth": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            { "required": ["source"] },
+            { "required": ["ir"] },
+            { "required": ["source", "ir"] }
+          ]
+        }
+      ]
+    },
+    "abi": {
+      "description": "ABI object or a URI reference to a JSON file conforming to abi.schema.json.",
+      "oneOf": [
+        { "$ref": "./abi.schema.json" },
+        { "$ref": "#/$defs/AbiRef" }
+      ]
+    },
+    "capabilities": {
+      "description": "Capabilities the contract declares (must be a superset of ABI.contract.capabilities).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "optional"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Capability" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "optional": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Capability" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "resourceLimits": {
+          "description": "Declarative ceilings for potentially expensive operations (enforced during deployment or by runtime policy).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "gasUpperBound": { "type": "integer", "minimum": 0 },
+            "blobPinMaxBytes": { "type": "integer", "minimum": 0 },
+            "computeAiMaxUnits": { "type": "integer", "minimum": 0 },
+            "computeQuantumMaxUnits": { "type": "integer", "minimum": 0 },
+            "zkVerifyMaxUnits": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "deploy": {
+      "description": "Optional constructor/deploy arguments packaged with the bundle for convenience. Nodes/SDKs may ignore or override at send time.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function"],
+      "properties": {
+        "function": { "type": "string", "const": "deploy" },
+        "args": {
+          "description": "Constructor arguments aligned with ABI.deploy inputs.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/AbiValue" },
+          "default": []
+        }
+      }
+    },
+    "attachments": {
+      "description": "Optional content-addressed blobs to be pinned via DA at deploy time (e.g., models, metadata).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Attachment" },
+      "default": []
+    },
+    "dependencies": {
+      "description": "Optional dependencies on other deployed contracts/packages.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Dependency" },
+      "default": []
+    },
+    "integrity": {
+      "description": "Integrity hashes and (optionally) maintainers' signatures over the manifest.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codeHash", "abiHash"],
+      "properties": {
+        "codeHash": {
+          "description": "sha3-256 of canonical code material. If both source and IR are present, this is the hash of IR root; sourceRootHash is recorded under code.source.sourceRootHash.",
+          "$ref": "#/$defs/Hash256"
+        },
+        "abiHash": {
+          "description": "sha3-256 of the canonical ABI JSON (after deterministic canonicalization).",
+          "$ref": "#/$defs/Hash256"
+        },
+        "manifestHash": {
+          "description": "sha3-256 of the manifest with signatures elided (canonical form).",
+          "$ref": "#/$defs/Hash256"
+        },
+        "signatures": {
+          "description": "Optional maintainer/provenance signatures over manifestHash using PQ algs per policy.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Signature" },
+          "default": []
+        }
+      }
+    },
+    "links": {
+      "description": "Optional external references.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "docs": { "type": "string", "format": "uri" },
+        "audit": { "type": "string", "format": "uri" },
+        "changelog": { "type": "string", "format": "uri" }
+      }
+    },
+    "notes": { "type": "string" }
+  },
+
+  "$defs": {
+    "Hash256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "sha3-256 hex string."
+    },
+    "Hash512": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{128}$",
+      "description": "sha3-512 hex string."
+    },
+    "Address": {
+      "type": "string",
+      "pattern": "^anim1[ac-hj-np-z02-9]{10,}$",
+      "description": "Bech32m-encoded Animica address."
+    },
+    "Capability": {
+      "enum": [
+        "blob.pin",
+        "compute.ai.enqueue",
+        "compute.quantum.enqueue",
+        "compute.read_result",
+        "zk.verify",
+        "random.read_beacon",
+        "treasury.transfer"
+      ]
+    },
+    "SourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha3_256", "size", "mime"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sha3_256": { "$ref": "#/$defs/Hash256" },
+        "sha256": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Optional secondary digest for cross-tooling."
+        },
+        "size": { "type": "integer", "minimum": 0 },
+        "mime": { "type": "string", "examples": ["text/x-python", "application/json"] },
+        "executable": { "type": "boolean", "default": false }
+      }
+    },
+    "IrBlob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "bytes", "sha3_256", "size"],
+      "properties": {
+        "module": {
+          "description": "Symbolic module name contained in this IR blob.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "bytes": {
+          "description": "IR bytes (hex or base64).",
+          "oneOf": [
+            { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+            { "type": "string", "contentEncoding": "base64" }
+          ]
+        },
+        "sha3_256": { "$ref": "#/$defs/Hash256" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "AbiRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha3_256"],
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "sha3_256": { "$ref": "#/$defs/Hash256" }
+      }
+    },
+    "Attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mime", "size", "sha3_256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "mime": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0 },
+        "sha3_256": { "$ref": "#/$defs/Hash256" },
+        "da": {
+          "description": "Optional DA commitment (if already pinned).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "commitment", "nmtRoot"],
+          "properties": {
+            "namespace": { "type": "integer", "minimum": 0 },
+            "commitment": { "$ref": "#/$defs/Hash256" },
+            "nmtRoot": { "$ref": "#/$defs/Hash256" }
+          }
+        }
+      }
+    },
+    "Dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "address", "chainId", "abiHash"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "address": { "$ref": "#/$defs/Address" },
+        "chainId": { "type": "integer", "minimum": 1 },
+        "abiHash": { "$ref": "#/$defs/Hash256" },
+        "notes": { "type": "string" }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algId", "publicKey", "signature", "domain", "signedAt"],
+      "properties": {
+        "algId": {
+          "type": "string",
+          "enum": ["dilithium3", "sphincs_shake_128s"]
+        },
+        "publicKey": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]+$"
+        },
+        "address": {
+          "description": "Optional Animica address derived from the public key.",
+          "$ref": "#/$defs/Address"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]+$"
+        },
+        "domain": {
+          "type": "string",
+          "const": "ANIMICA/MANIFEST_SIGN/1"
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "AbiValue": {
+      "description": "Generic JSON value compatible with ABI types. Tooling validates against ABI at compile/deploy time.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "integer" },
+        { "type": "string" },
+        { "type": "array", "items": { "$ref": "#/$defs/AbiValue" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/$defs/AbiValue" } }
+      ]
+    }
+  },
+
+  "examples": [
+    {
+      "manifestVersion": "1.0.0",
+      "encoding": "animica-manifest/1",
+      "createdAt": "2025-01-01T00:00:00Z",
+      "package": {
+        "name": "Counter",
+        "version": "0.1.0",
+        "description": "Deterministic counter example.",
+        "license": "Apache-2.0",
+        "authors": ["Animica Labs <dev@animica.org>"]
+      },
+      "target": {
+        "vm": "python",
+        "vmVersion": ">=1.0.0 <2.0.0",
+        "abiVersion": "1.0.0",
+        "chainCompatibility": [1, 2, 1337]
+      },
+      "entrypoint": "contracts/counter/contract.py",
+      "code": {
+        "source": {
+          "files": [
+            {
+              "path": "contracts/counter/contract.py",
+              "sha3_256": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size": 512,
+              "mime": "text/x-python"
+            },
+            {
+              "path": "contracts/counter/manifest.json",
+              "sha3_256": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "size": 420,
+              "mime": "application/json"
+            }
+          ],
+          "order": ["contracts/counter/contract.py", "contracts/counter/manifest.json"],
+          "sourceRootHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "totalBytes": 932
+        },
+        "toolchain": {
+          "vmPyVersion": "1.0.0",
+          "compilerCommit": "abcd1234",
+          "abiEncoderVersion": "1.0.0",
+          "reproducible": true,
+          "opts": { "optLevel": 2, "strictDeterminism": true }
+        }
+      },
+      "abi": {
+        "abiVersion": "1.0.0",
+        "encoding": "animica-abi/1",
+        "contract": { "name": "Counter", "capabilities": [] },
+        "functions": [
+          {
+            "name": "deploy",
+            "kind": "deploy",
+            "stateMutability": "nonpayable",
+            "inputs": [{ "name": "initial", "type": { "kind": "scalar", "name": "u64" } }],
+            "outputs": []
+          },
+          {
+            "name": "inc",
+            "kind": "call",
+            "stateMutability": "nonpayable",
+            "inputs": [],
+            "outputs": [{ "name": "newValue", "type": { "kind": "scalar", "name": "u64" } }]
+          }
+        ]
+      },
+      "capabilities": {
+        "required": [],
+        "optional": [],
+        "resourceLimits": { "gasUpperBound": 40000 }
+      },
+      "deploy": {
+        "function": "deploy",
+        "args": [0]
+      },
+      "attachments": [],
+      "dependencies": [],
+      "integrity": {
+        "codeHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "abiHash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "manifestHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "signatures": [
+          {
+            "algId": "dilithium3",
+            "publicKey": "0x0123",
+            "signature": "0xdeadbeef",
+            "domain": "ANIMICA/MANIFEST_SIGN/1",
+            "signedAt": "2025-01-01T00:00:00Z"
+          }
+        ]
+      }
+    }
+  ],
+
+  "unevaluatedProperties": false
+}

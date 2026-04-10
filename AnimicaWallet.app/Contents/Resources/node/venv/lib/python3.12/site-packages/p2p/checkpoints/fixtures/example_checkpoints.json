@@ -1,0 +1,19 @@
+{
+  "checkpoints": [
+    {
+      "height": 1000,
+      "hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    },
+    {
+      "height": 5000,
+      "hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    },
+    {
+      "height": 10000,
+      "hash": "0x567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234"
+    }
+  ],
+  "timestamp": 1702934400,
+  "network": "mainnet",
+  "description": "Example checkpoint file for Animica mainnet. Replace with actual block hashes at specified heights."
+}
