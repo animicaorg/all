@@ -5,6 +5,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from linux_layout import LINUX_NODE_REQUIRED_PATHS, resolve_linux_node_root_from_root
+
 
 def _assert_exists(path: Path, errors: list[str], label: str) -> None:
     if not path.exists():
@@ -25,6 +27,9 @@ def verify_macos(path: Path) -> list[str]:
     _assert_exists(path / "Contents" / "Info.plist", errors, "Info.plist")
     _assert_exists(path / "Contents" / "Resources" / "animica.icns", errors, "bundle icon")
     _assert_exists(path / "Contents" / "PlugIns" / "platforms" / "libqcocoa.dylib", errors, "Qt cocoa platform plugin")
+    _assert_exists(path / "Contents" / "Resources" / "node" / "venv" / "bin" / "python", errors, "bundled Python runtime")
+    _assert_exists(path / "Contents" / "Resources" / "node" / "assets" / "spec" / "params.yaml", errors, "bundled spec asset")
+    _assert_exists(path / "Contents" / "Resources" / "node" / "assets" / "genesis" / "devnet.json", errors, "bundled genesis asset")
     return errors
 
 
@@ -45,6 +50,9 @@ def verify_windows(path: Path) -> list[str]:
         )
     elif platform_plugin == root / "plugins" / "platforms" / "qwindows.dll":
         _assert_exists(root / "qt.conf", errors, "qt.conf")
+    _assert_exists(root / "node" / "venv" / "Scripts" / "python.exe", errors, "bundled Python runtime")
+    _assert_exists(root / "node" / "assets" / "spec" / "params.yaml", errors, "bundled spec asset")
+    _assert_exists(root / "node" / "assets" / "genesis" / "devnet.json", errors, "bundled genesis asset")
     return errors
 
 
@@ -62,6 +70,16 @@ def verify_linux(path: Path) -> list[str]:
             "missing Linux wallet executable: "
             + ", ".join(str(candidate) for candidate in candidates)
         )
+
+    node_root = resolve_linux_node_root_from_root(root)
+    if node_root is None and root.name == "usr":
+        node_root = resolve_linux_node_root_from_root(root.parent)
+    if node_root is None:
+        errors.append(f"missing bundled node root under {root}")
+        return errors
+
+    for rel in LINUX_NODE_REQUIRED_PATHS:
+        _assert_exists(node_root / rel, errors, f"bundled node runtime file ({rel})")
     return errors
 
 

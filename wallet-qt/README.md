@@ -7,7 +7,7 @@ The application:
 - always targets Animica mainnet
 - always connects to `https://rpc.animica.org/rpc`
 - never starts or manages a local node
-- never bundles node assets, genesis files, or a Python node runtime inside the app
+- bundles a dedicated Python runtime for wallet bridge and QR operations
 
 This repo target is intentionally opinionated. If you need node lifecycle control, chain storage, or operator tooling, use the Animica node/CLI stack outside `wallet-qt`.
 
@@ -36,16 +36,16 @@ Requirements for developer builds:
 - CMake 3.24+
 - Qt 6 Widgets, Network, Svg
 - C++17 compiler
-- Python available in the developer environment for the wallet bridge and QR helper used by source builds
+- Python 3.10+ in the developer environment when building with bundled runtime support
 
 Configure and build:
 
 ```bash
-cmake -S wallet-qt -B /tmp/wallet-qt-build -DBUILD_TESTING=ON
+cmake -S wallet-qt -B /tmp/wallet-qt-build -DBUILD_TESTING=ON -DWALLET_BUNDLE_PYTHON_RUNTIME=ON
 cmake --build /tmp/wallet-qt-build -j
 ```
 
-The build no longer creates or stages a bundled node runtime.
+To skip bundled runtime creation in local development, pass `-DWALLET_BUNDLE_PYTHON_RUNTIME=OFF`.
 
 ## Run
 
@@ -63,12 +63,10 @@ On launch the wallet uses `https://rpc.animica.org/rpc` automatically.
 
 ## Packaging
 
-Packaging scripts stage a Qt desktop app only. They do not:
+Packaging scripts stage a Qt desktop app plus bundled wallet runtime assets:
 
-- build a bundled node
-- create a bundled venv
-- copy genesis/spec assets
-- install node wrapper scripts
+- bundled Python venv for wallet backend and QR helper
+- bundled wallet runtime assets (`spec/params.yaml`, `genesis/devnet.json`)
 
 See:
 
@@ -87,4 +85,4 @@ Focused regression coverage lives under `wallet-qt/tests` and validates:
 
 ## Current limitation
 
-The wallet no longer bundles Python or node assets. Source builds still rely on a developer-available Python environment for the wallet bridge and QR helper. That runtime is external to the packaged app and is not an embedded node dependency.
+The wallet still does not run or manage a local node. The bundled runtime is used for wallet backend and QR helper operations only.

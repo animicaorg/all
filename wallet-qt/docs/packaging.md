@@ -9,7 +9,7 @@ Every release artifact should reflect these truths:
 - mainnet only
 - hosted RPC only
 - endpoint fixed to `https://rpc.animica.org/rpc`
-- no embedded node payload
+- no embedded node daemon payload
 
 ## What ships
 
@@ -17,13 +17,13 @@ Release artifacts should include:
 
 - the Qt wallet executable or app bundle
 - Qt runtime dependencies
+- bundled wallet Python runtime (`node/venv`)
+- bundled wallet runtime assets (`node/assets/spec/params.yaml`, `node/assets/genesis/devnet.json`)
 - icons, desktop metadata, and app resources
 
 ## What must not ship
 
-- `node/venv`
-- node wrapper scripts
-- embedded genesis/spec assets
+- node startup wrapper scripts
 - node logs or node data directories
 - operator-facing node configuration
 
@@ -31,20 +31,20 @@ Release artifacts should include:
 
 ### Linux
 
-Artifacts may include installed-tree, tarball, or AppImage-style layouts, but they should only stage the Qt app and its desktop assets.
+Artifacts may include installed-tree, tarball, or AppImage-style layouts. They should stage the Qt app, bundled wallet runtime, and desktop assets.
 
 ### macOS
 
-The `.app` bundle should contain the wallet app resources only. There is no `Contents/Resources/node`.
+The `.app` bundle should include `Contents/Resources/node` with a bundled Python runtime and wallet assets.
 
 ### Windows
 
-The staged tree should contain the wallet executable and Qt/runtime assets only. There is no `node\\venv`.
+The staged tree should include `node\\venv\\Scripts\\python.exe` and bundled wallet assets under `node\\assets`.
 
 ## Verification checklist
 
 - the binary starts without spawning a subprocess for node startup
-- no packaged file tree contains `node/assets` or `node/venv`
+- packaged file tree contains `node/venv` and `node/assets` for wallet backend/QR operations
 - the runtime settings surface still shows `https://rpc.animica.org/rpc`
 - remote-connectivity failure shows a wallet-facing error state instead of node diagnostics
 
@@ -62,4 +62,4 @@ Current packaging/release flows:
 
 ## Limitation
 
-The wallet no longer bundles Python. Source/runtime environments that rely on the wallet bridge and QR helper still need an external Python environment available outside the packaged app.
+The wallet bundles Python runtime components for wallet backend and QR helper operations, but still does not bundle or run a local full node daemon.

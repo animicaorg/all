@@ -67,14 +67,14 @@ def linux_node_root_candidates_from_wallet(wallet_path: Path) -> list[Path]:
 
 def resolve_linux_node_root_from_root(root: Path) -> Path | None:
     for candidate in linux_node_root_candidates_from_root(root):
-        if candidate.is_dir():
+        if candidate.is_dir() and all((candidate / rel).exists() for rel in LINUX_NODE_REQUIRED_PATHS):
             return candidate
     return None
 
 
 def resolve_linux_node_root_from_wallet(wallet_path: Path) -> Path | None:
     for candidate in linux_node_root_candidates_from_wallet(wallet_path):
-        if candidate.is_dir():
+        if candidate.is_dir() and all((candidate / rel).exists() for rel in LINUX_NODE_REQUIRED_PATHS):
             return candidate
     return None
 

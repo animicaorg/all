@@ -16,6 +16,7 @@ configure_file(
 )
 
 option(WALLET_ENABLE_QT_INSTALL_DEPLOYMENT "Use Qt's install-time deployment script when supported" ON)
+option(WALLET_BUNDLE_PYTHON_RUNTIME "Bundle a dedicated Python runtime for wallet backend and QR services" ON)
 option(BUILD_TESTING "Build tests" ON)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -25,6 +26,13 @@ include(GNUInstallDirs)
 
 if(WIN32)
     set(CMAKE_INSTALL_BINDIR ".")
+endif()
+
+get_filename_component(ANIMICA_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
+if(WALLET_BUNDLE_PYTHON_RUNTIME)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AnimicaNode.cmake")
+    animica_build_node(ANIMICA_NODE_PYTHON)
 endif()
 
 find_package(Qt6 COMPONENTS Core Widgets Network Sql Concurrent)
@@ -230,6 +238,46 @@ else()
     install(TARGETS animica-wallet
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
+endif()
+
+if(WALLET_BUNDLE_PYTHON_RUNTIME)
+    get_filename_component(ANIMICA_NODE_BIN_DIR "${ANIMICA_NODE_PYTHON}" DIRECTORY)
+    get_filename_component(ANIMICA_NODE_VENV_DIR "${ANIMICA_NODE_BIN_DIR}" DIRECTORY)
+
+    if(APPLE)
+        set(WALLET_NODE_INSTALL_DESTINATION "${WALLET_BUNDLE_NAME}.app/Contents/Resources/node")
+    elseif(WIN32)
+        set(WALLET_NODE_INSTALL_DESTINATION "node")
+    else()
+        set(WALLET_NODE_INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node")
+    endif()
+
+    install(
+        DIRECTORY "${ANIMICA_NODE_VENV_DIR}/"
+        DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/venv"
+        USE_SOURCE_PERMISSIONS
+    )
+
+    install(
+        FILES "${ANIMICA_REPO_ROOT}/spec/params.yaml"
+        DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/spec"
+    )
+
+    if(EXISTS "${ANIMICA_REPO_ROOT}/genesis/devnet.json")
+        install(
+            FILES "${ANIMICA_REPO_ROOT}/genesis/devnet.json"
+            DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/genesis"
+            RENAME "devnet.json"
+        )
+    elseif(EXISTS "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json")
+        install(
+            FILES "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json"
+            DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/genesis"
+            RENAME "devnet.json"
+        )
+    else()
+        message(FATAL_ERROR "No devnet genesis asset found for bundled wallet runtime.")
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)

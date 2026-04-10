@@ -146,7 +146,7 @@ Version: $PACKAGE_VERSION
 Section: net
 Priority: optional
 Architecture: $DEB_ARCH
-Depends: libc6, libqt6core6, libqt6gui6, libqt6widgets6, libqt6network6, libqt6sql6, libssl3, python3 (>= 3.10)
+Depends: libc6, libqt6core6, libqt6gui6, libqt6widgets6, libqt6network6, libqt6sql6, libssl3
 Installed-Size: $installed_size
 Maintainer: Animica Team <support@animica.org>
 Description: Animica remote desktop wallet
@@ -296,6 +296,7 @@ cd "$BUILD_DIR"
 cmake "$WALLET_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_INSTALL_PREFIX=/usr \
+    -DWALLET_BUNDLE_PYTHON_RUNTIME=ON \
     -DBUILD_TESTING=OFF
 
 log_section "Building Wallet"

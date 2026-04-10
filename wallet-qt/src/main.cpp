@@ -67,7 +67,7 @@ int main(int argc, char* argv[])
             "Wallet Error",
             detail.isEmpty()
                 ? QStringLiteral("Failed to initialize the canonical wallets.json store.")
-                : QString("Failed to initialize the canonical wallets.json store.\n\n%1").arg(detail)
+                : detail
         );
     }
 
