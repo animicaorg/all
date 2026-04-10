@@ -486,11 +486,13 @@ def _submit_signed_tx(
     quote_limit, quote_price = tx_cli._estimate_fee_quote(rpc)
     resolved_gas_limit = int(gas_limit or quote_limit or 21000)
     resolved_max_fee = int(max_fee or quote_price or tx_cli._get_default_max_fee(rpc))
-    fee_reserve = resolved_max_fee
+    fee_reserve = int(resolved_gas_limit) * int(resolved_max_fee)
     total_required = int(value_base) + fee_reserve
     if available < total_required:
         raise RuntimeError(
-            f"insufficient available balance: required={total_required} available={available}"
+            "insufficient available balance: "
+            f"required={total_required} available={available} "
+            f"(value={int(value_base)} gas_limit={resolved_gas_limit} max_fee={resolved_max_fee})"
         )
     if nonce is None:
         resolved_nonce = tx_cli._next_nonce(rpc, from_address, refresh=False, verbose=False, nonce_source="pending")
@@ -547,7 +549,7 @@ def _submit_signed_tx(
         to_addr=to_address,
         tx_hash=tx_hash,
         value_base=value_base,
-        fee_base=resolved_max_fee,
+        fee_base=fee_reserve,
         chain_id=resolved_chain_id,
         nonce=resolved_nonce,
         status="mempool_accepted" if in_mempool else "broadcast",
@@ -558,6 +560,7 @@ def _submit_signed_tx(
         "chain_id": resolved_chain_id,
         "gas_limit": resolved_gas_limit,
         "max_fee": resolved_max_fee,
+        "fee_reserve": fee_reserve,
         "mempool_admitted": in_mempool,
         "mempool_status": mempool_status,
         "valid_after": resolved_valid_after,

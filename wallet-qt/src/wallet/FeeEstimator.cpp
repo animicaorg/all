@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QMutexLocker>
 #include <QDebug>
+#include <limits>
 
 FeeEstimator::FeeEstimator(AnimicaRpcClient* rpcClient, QObject* parent)
     : QObject(parent)
@@ -25,7 +26,7 @@ FeeEstimator::~FeeEstimator()
 
 qint64 FeeEstimator::getGasPrice(FeeTier tier)
 {
-    qint64 baseFee = getBaseFee();
+    const qint64 baseFee = qMax<qint64>(1, getBaseFee());
     
     switch (tier) {
         case Slow:
@@ -56,8 +57,14 @@ qint64 FeeEstimator::getBaseFee()
 
 qint64 FeeEstimator::calculateFee(FeeTier tier, qint64 gasLimit)
 {
-    Q_UNUSED(gasLimit);
-    return getGasPrice(tier);
+    const qint64 gasPrice = getGasPrice(tier);
+    if (gasLimit <= 0) {
+        return gasPrice;
+    }
+    if (gasPrice > std::numeric_limits<qint64>::max() / gasLimit) {
+        return std::numeric_limits<qint64>::max();
+    }
+    return gasPrice * gasLimit;
 }
 
 QString FeeEstimator::formatFee(qint64 feeWei)
@@ -88,11 +95,13 @@ void FeeEstimator::setCacheDuration(int seconds)
 
 void FeeEstimator::refreshBaseFee()
 {
+    constexpr qint64 kFallbackGasPrice = 1;
+
     if (!m_rpcClient) {
         m_lastError = "RPC client not available";
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000; // Conservative default: 1M wei
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         return;
     }
@@ -104,7 +113,7 @@ void FeeEstimator::refreshBaseFee()
         m_lastError = "Failed to create RPC request";
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000; // Conservative default
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         return;
     }
@@ -125,7 +134,7 @@ void FeeEstimator::refreshBaseFee()
         m_lastError = "RPC request timed out";
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000;
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         reply->deleteLater();
         return;
@@ -137,7 +146,7 @@ void FeeEstimator::refreshBaseFee()
         m_lastError = "RPC error: " + reply->errorString();
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000;
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         reply->deleteLater();
         return;
@@ -151,7 +160,7 @@ void FeeEstimator::refreshBaseFee()
         m_lastError = "Invalid JSON response";
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000;
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         return;
     }
@@ -164,27 +173,59 @@ void FeeEstimator::refreshBaseFee()
         m_lastError = "RPC error: " + errorObj["message"].toString();
         emit error(m_lastError);
         QMutexLocker locker(&m_mutex);
-        m_cachedBaseFee = 1000000;
+        m_cachedBaseFee = kFallbackGasPrice;
         m_cacheTimestamp = getCurrentTimestamp();
         return;
     }
     
-    // Try to extract min_gas_price from result
-    qint64 minGasPrice = 1000000; // Default
-    
+    // Try to extract min_gas_price from result, with nested fallbacks.
+    qint64 minGasPrice = kFallbackGasPrice;
+    auto parseInt = [](const QJsonValue& value, bool* okOut = nullptr) -> qint64 {
+        bool ok = false;
+        qint64 parsed = 0;
+        if (value.isDouble()) {
+            parsed = static_cast<qint64>(value.toDouble());
+            ok = true;
+        } else if (value.isString()) {
+            const QString text = value.toString().trimmed();
+            if (text.startsWith("0x") || text.startsWith("0X")) {
+                parsed = text.mid(2).toLongLong(&ok, 16);
+            } else {
+                parsed = text.toLongLong(&ok);
+            }
+        }
+        if (okOut) {
+            *okOut = ok;
+        }
+        return parsed;
+    };
+    auto maybeReadGasPrice = [&parseInt](const QJsonObject& source, qint64* out) -> bool {
+        if (!out) {
+            return false;
+        }
+        for (const QString& key : {QStringLiteral("min_gas_price"), QStringLiteral("minGasPrice")}) {
+            if (!source.contains(key)) {
+                continue;
+            }
+            bool ok = false;
+            const qint64 value = parseInt(source.value(key), &ok);
+            if (ok && value > 0) {
+                *out = value;
+                return true;
+            }
+        }
+        return false;
+    };
+
     if (obj.contains("result")) {
-        QJsonValue result = obj["result"];
+        const QJsonValue result = obj["result"];
         if (result.isObject()) {
-            QJsonObject params = result.toObject();
-            if (params.contains("min_gas_price")) {
-                QJsonValue minGasPriceVal = params["min_gas_price"];
-                if (minGasPriceVal.isDouble()) {
-                    minGasPrice = static_cast<qint64>(minGasPriceVal.toDouble());
-                } else if (minGasPriceVal.isString()) {
-                    bool ok;
-                    minGasPrice = minGasPriceVal.toString().toLongLong(&ok);
-                    if (!ok) {
-                        minGasPrice = 1000000;
+            const QJsonObject params = result.toObject();
+            if (!maybeReadGasPrice(params, &minGasPrice)) {
+                for (const QString& nested : {QStringLiteral("block"), QStringLiteral("mempool"), QStringLiteral("fees")}) {
+                    const QJsonValue nestedValue = params.value(nested);
+                    if (nestedValue.isObject() && maybeReadGasPrice(nestedValue.toObject(), &minGasPrice)) {
+                        break;
                     }
                 }
             }
@@ -192,7 +233,7 @@ void FeeEstimator::refreshBaseFee()
     }
     
     QMutexLocker locker(&m_mutex);
-    m_cachedBaseFee = minGasPrice;
+    m_cachedBaseFee = qMax<qint64>(1, minGasPrice);
     m_cacheTimestamp = getCurrentTimestamp();
     m_lastError.clear();
     

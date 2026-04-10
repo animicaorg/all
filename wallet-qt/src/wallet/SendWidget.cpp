@@ -22,11 +22,46 @@
 #include <QSettings>
 #include <QStringListModel>
 #include <QVBoxLayout>
+#include <limits>
 
 namespace {
 constexpr const char* kCustomFeeEnabledKey = "WalletQt/sendCustomFeeEnabled";
 constexpr const char* kCustomFeeAnmKey = "WalletQt/sendCustomFeeAnm";
 constexpr double kDefaultCustomFeeAnm = 0.001;
+constexpr double kBaseUnitsPerAnmDouble = 1e9;
+constexpr qint64 kBaseUnitsPerAnm = 1000000000LL;
+
+qint64 toBaseUnits(double amountAnm)
+{
+    return static_cast<qint64>(amountAnm * kBaseUnitsPerAnmDouble);
+}
+
+qint64 safeMul(qint64 lhs, qint64 rhs)
+{
+    if (lhs <= 0 || rhs <= 0) {
+        return 0;
+    }
+    if (lhs > std::numeric_limits<qint64>::max() / rhs) {
+        return std::numeric_limits<qint64>::max();
+    }
+    return lhs * rhs;
+}
+
+qint64 safeAdd(qint64 lhs, qint64 rhs)
+{
+    if (rhs > 0 && lhs > std::numeric_limits<qint64>::max() - rhs) {
+        return std::numeric_limits<qint64>::max();
+    }
+    if (rhs < 0 && lhs < std::numeric_limits<qint64>::min() - rhs) {
+        return std::numeric_limits<qint64>::min();
+    }
+    return lhs + rhs;
+}
+
+qint64 feeReserveForTransfer(qint64 gasLimit, qint64 maxFeePerGas)
+{
+    return safeMul(gasLimit, maxFeePerGas);
+}
 }
 
 SendWidget::SendWidget(
@@ -127,7 +162,7 @@ void SendWidget::setupUI()
     customFeeLayout->addStretch();
     formLayout->addRow("Custom Fee:", customFeeLayout);
 
-    m_feeLabel = new QLabel("Max Fee: --", this);
+    m_feeLabel = new QLabel("Max Fee/Gas: --", this);
     m_feeLabel->setStyleSheet("color: #666;");
     formLayout->addRow("", m_feeLabel);
 
@@ -240,17 +275,23 @@ void SendWidget::onSendClicked()
     const QString toAddress = normalizedRecipientAddress();
     const QString amountText = QString::number(m_amountSpinBox->value(), 'f', 9);
     const qint64 gasLimit = FeeEstimator::standardTransferGas();
-    const qint64 maxFee = selectedMaxFee();
-    const qint64 totalBase = static_cast<qint64>(m_amountSpinBox->value() * 1e9) + maxFee;
+    const qint64 maxFeePerGas = selectedMaxFee();
+    const qint64 amountBase = toBaseUnits(m_amountSpinBox->value());
+    const qint64 feeReserve = feeReserveForTransfer(gasLimit, maxFeePerGas);
+    const qint64 totalBase = safeAdd(amountBase, feeReserve);
 
     const QString confirmation = QString(
-        "Send %1 ANM from\n%2\n\nto\n%3\n\nMax fee: %4 ANM\nTotal reserved: %5 ANM"
+        "Send %1 ANM from\n%2\n\nto\n%3\n\n"
+        "Max fee per gas: %4 ANM\n"
+        "Fee reserve (gasLimit × price): %5 ANM\n"
+        "Total required: %6 ANM"
     )
         .arg(amountText)
         .arg(fromAddress)
         .arg(toAddress)
-        .arg(maxFee / 1e9, 0, 'f', 9)
-        .arg(totalBase / 1e9, 0, 'f', 9);
+        .arg(static_cast<double>(maxFeePerGas) / kBaseUnitsPerAnmDouble, 0, 'f', 9)
+        .arg(static_cast<double>(feeReserve) / kBaseUnitsPerAnmDouble, 0, 'f', 9)
+        .arg(static_cast<double>(totalBase) / kBaseUnitsPerAnmDouble, 0, 'f', 9);
     if (QMessageBox::question(this, "Confirm Transaction", confirmation, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
         return;
     }
@@ -260,7 +301,7 @@ void SendWidget::onSendClicked()
     request["to_address"] = toAddress;
     request["amount"] = amountText;
     request["gas_limit"] = static_cast<qint64>(gasLimit);
-    request["max_fee"] = maxFee;
+    request["max_fee"] = maxFeePerGas;
     request["chain_id"] = m_chainId;
     if (!m_nonceEdit->text().trimmed().isEmpty()) {
         request["nonce"] = m_nonceEdit->text().trimmed().toLongLong();
@@ -277,8 +318,8 @@ void SendWidget::onSendClicked()
 
     m_sendWatcher->setProperty("accountId", accountId);
     m_sendWatcher->setProperty("toAddress", toAddress);
-    m_sendWatcher->setProperty("amountBase", static_cast<qlonglong>(m_amountSpinBox->value() * 1e9));
-    m_sendWatcher->setProperty("maxFee", static_cast<qlonglong>(maxFee));
+    m_sendWatcher->setProperty("amountBase", static_cast<qlonglong>(amountBase));
+    m_sendWatcher->setProperty("feeReserve", static_cast<qlonglong>(feeReserve));
 
     m_statusLabel->setText("Submitting transaction...");
     m_sendButton->setEnabled(false);
@@ -314,7 +355,7 @@ void SendWidget::handleSendFinished()
     const QString accountId = m_sendWatcher->property("accountId").toString();
     const QString toAddress = m_sendWatcher->property("toAddress").toString();
     const qint64 amountBase = m_sendWatcher->property("amountBase").toLongLong();
-    const qint64 maxFee = m_sendWatcher->property("maxFee").toLongLong();
+    const qint64 feeReserve = m_sendWatcher->property("feeReserve").toLongLong();
 
     if (m_database) {
         WalletTx tx;
@@ -323,7 +364,7 @@ void SendWidget::handleSendFinished()
         tx.fromAccountId = accountId;
         tx.toAddress = toAddress;
         tx.amount = amountBase;
-        tx.fee = maxFee;
+        tx.fee = feeReserve;
         tx.state = result.value("mempool_admitted").toBool() ? "MEMPOOL" : "BROADCAST";
         tx.firstSeenAt = QDateTime::currentMSecsSinceEpoch();
         tx.lastUpdateAt = tx.firstSeenAt;
@@ -343,7 +384,7 @@ void SendWidget::handleSendFinished()
 
         LedgerEntry feeReserved = pendingOut;
         feeReserved.type = "FEE_RESERVED";
-        feeReserved.delta = -maxFee;
+        feeReserved.delta = -feeReserve;
         feeReserved.stateVersion = m_database->nextStateVersion();
         m_database->addLedgerEntry(feeReserved);
     }
@@ -372,9 +413,9 @@ void SendWidget::handleSendFinished()
 void SendWidget::onMaxClicked()
 {
     const qint64 available = getAvailableBalance();
-    const qint64 fee = selectedMaxFee();
-    const qint64 maxAmount = qMax<qint64>(0, available - fee);
-    m_amountSpinBox->setValue(maxAmount / 1e9);
+    const qint64 feeReserve = feeReserveForTransfer(FeeEstimator::standardTransferGas(), selectedMaxFee());
+    const qint64 maxAmount = qMax<qint64>(0, available - feeReserve);
+    m_amountSpinBox->setValue(static_cast<double>(maxAmount) / kBaseUnitsPerAnmDouble);
 }
 
 void SendWidget::onFeeTierChanged(int)
@@ -469,10 +510,16 @@ void SendWidget::onBalanceUpdated(const QString& address, const Balance&)
 
 void SendWidget::updateFeeDisplay()
 {
-    const qint64 fee = selectedMaxFee();
-    const QString prefix = m_customFeeCheck->isChecked() ? "Custom Max Fee: " : "Max Fee: ";
-    m_feeLabel->setText(prefix + m_feeEstimator->formatFeeANM(fee));
-    if (m_amountSpinBox->value() > 0 && (fee / 1e9) > (m_amountSpinBox->value() * 0.01)) {
+    const qint64 maxFeePerGas = selectedMaxFee();
+    const qint64 feeReserve = feeReserveForTransfer(FeeEstimator::standardTransferGas(), maxFeePerGas);
+    const QString prefix = m_customFeeCheck->isChecked() ? "Custom Max Fee/Gas: " : "Max Fee/Gas: ";
+    m_feeLabel->setText(
+        QString("%1%2 | Reserve: %3")
+            .arg(prefix)
+            .arg(m_feeEstimator->formatFeeANM(maxFeePerGas))
+            .arg(m_feeEstimator->formatFeeANM(feeReserve))
+    );
+    if (m_amountSpinBox->value() > 0 && (static_cast<double>(feeReserve) / kBaseUnitsPerAnmDouble) > (m_amountSpinBox->value() * 0.01)) {
         m_feeWarningLabel->setText("Fee reserve is more than 1% of the transfer amount.");
     } else {
         m_feeWarningLabel->clear();
@@ -486,8 +533,8 @@ void SendWidget::updateBalanceLabel()
     const Balance balance = m_walletEngine->getBalance(address);
     m_balanceLabel->setText(
         QString("Confirmed: %1 ANM | Available: %2 ANM")
-            .arg(balance.confirmed / 1e9, 0, 'f', 9)
-            .arg(available / 1e9, 0, 'f', 9)
+            .arg(static_cast<double>(balance.confirmed) / kBaseUnitsPerAnmDouble, 0, 'f', 9)
+            .arg(static_cast<double>(available) / kBaseUnitsPerAnmDouble, 0, 'f', 9)
     );
 }
 
@@ -544,16 +591,17 @@ bool SendWidget::validateInputs()
     }
 
     bool ok = true;
-    const qint64 amountBase = static_cast<qint64>(amountAnm * 1e9);
-    const qint64 fee = selectedMaxFee();
-    if (fee <= 0) {
+    const qint64 amountBase = toBaseUnits(amountAnm);
+    const qint64 maxFeePerGas = selectedMaxFee();
+    if (maxFeePerGas <= 0) {
         ok = false;
-        showValidationError("amount", "Max fee must be greater than zero.");
+        showValidationError("amount", "Max fee per gas must be greater than zero.");
     }
+    const qint64 feeReserve = feeReserveForTransfer(FeeEstimator::standardTransferGas(), maxFeePerGas);
     const qint64 available = getAvailableBalance();
-    if (available < amountBase + fee) {
+    if (available < safeAdd(amountBase, feeReserve)) {
         ok = false;
-        showValidationError("amount", "Insufficient available balance for amount plus fee.");
+        showValidationError("amount", "Insufficient available balance for amount plus fee reserve.");
     }
 
     auto parseOptionalInt = [&ok, this](QLineEdit* edit, const QString& label) -> qint64 {
@@ -668,7 +716,7 @@ qint64 SendWidget::getAvailableBalance() const
 qint64 SendWidget::selectedMaxFee() const
 {
     if (m_customFeeCheck->isChecked()) {
-        const qint64 customFeeWei = static_cast<qint64>(m_customFeeSpinBox->value() * 1e9);
+        const qint64 customFeeWei = toBaseUnits(m_customFeeSpinBox->value());
         return qMax<qint64>(1, customFeeWei);
     }
     return m_feeEstimator->getGasPrice(currentFeeTier());
