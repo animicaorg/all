@@ -121,7 +121,7 @@ function(animica_build_node OUT_VAR)
     if(NOT EXISTS "${NODE_PYTHON}")
         message(STATUS "Creating Python virtual environment at ${NODE_VENV_DIR}")
         execute_process(
-            COMMAND ${PYTHON_EXE} -m venv "${NODE_VENV_DIR}"
+            COMMAND ${PYTHON_EXE} -m venv --copies "${NODE_VENV_DIR}"
             RESULT_VARIABLE VENV_RESULT
             OUTPUT_VARIABLE VENV_OUTPUT
             ERROR_VARIABLE VENV_ERROR
@@ -130,7 +130,7 @@ function(animica_build_node OUT_VAR)
         if(NOT VENV_RESULT EQUAL 0)
             message(FATAL_ERROR 
                 "Failed to create Python virtual environment:\n"
-                "Command: ${PYTHON_EXE} -m venv ${NODE_VENV_DIR}\n"
+                "Command: ${PYTHON_EXE} -m venv --copies ${NODE_VENV_DIR}\n"
                 "Output: ${VENV_OUTPUT}\n"
                 "Error: ${VENV_ERROR}\n"
             )

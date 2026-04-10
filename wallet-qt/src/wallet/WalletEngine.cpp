@@ -279,6 +279,16 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
         return false;
     }
 
+    if (AnimicaWalletBackend::findPythonInterpreter().trimmed().isEmpty()) {
+        m_lastError = QString(
+            "Bundled Python runtime was not found for the Animica wallet backend.\n\n"
+            "The canonical wallets.json store exists at:\n%1\n\n"
+            "Reinstall the wallet package, or set ANIMICA_WALLET_PYTHON to a valid Python 3.10+ interpreter."
+        ).arg(nextWalletFilePath);
+        emit error(m_lastError);
+        return false;
+    }
+
     const QString previousBackendWalletFile = m_backend->walletFile();
     const QString previousWalletFilePath = m_walletFilePath;
     const QString previousDataDir = m_dataDir;

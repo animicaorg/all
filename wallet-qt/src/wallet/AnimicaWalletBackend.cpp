@@ -9,6 +9,44 @@
 #include <QStandardPaths>
 
 namespace {
+QStringList bundledPythonCandidates()
+{
+    QStringList candidates;
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (appDir.isEmpty()) {
+        return candidates;
+    }
+
+#ifdef Q_OS_WIN
+    candidates << QDir(appDir).filePath("node/venv/Scripts/python.exe");
+    candidates << QDir(appDir).absoluteFilePath("../node/venv/Scripts/python.exe");
+#elif defined(Q_OS_MACOS)
+    candidates << QDir(appDir).absoluteFilePath("../Resources/node/venv/bin/python");
+    candidates << QDir(appDir).filePath("node/venv/bin/python");
+    candidates << QDir(appDir).absoluteFilePath("../animica-node/venv/bin/python");
+#else
+    candidates << QDir(appDir).filePath("node/venv/bin/python");
+    candidates << QDir(appDir).absoluteFilePath("../animica-node/venv/bin/python");
+    candidates << QDir(appDir).absoluteFilePath("../lib/animica-wallet/node/venv/bin/python");
+    candidates << QDir(appDir).absoluteFilePath("../lib/node/venv/bin/python");
+
+    const QDir libRoot(QDir(appDir).absoluteFilePath("../lib"));
+    if (libRoot.exists()) {
+        const QFileInfoList entries = libRoot.entryInfoList(
+            QDir::Dirs | QDir::NoDotAndDotDot,
+            QDir::Name
+        );
+        for (const QFileInfo& entry : entries) {
+            if (entry.fileName().endsWith("-linux-gnu")) {
+                candidates << QDir(entry.absoluteFilePath()).filePath("animica-wallet/node/venv/bin/python");
+            }
+        }
+    }
+#endif
+
+    return candidates;
+}
+
 QStringList repoPythonCandidates()
 {
     QStringList candidates;
@@ -114,6 +152,13 @@ QString AnimicaWalletBackend::findPythonInterpreter()
     const QString override = qEnvironmentVariable("ANIMICA_WALLET_PYTHON");
     if (!override.isEmpty()) {
         QFileInfo info(override);
+        if (info.exists() && info.isExecutable()) {
+            return info.absoluteFilePath();
+        }
+    }
+
+    for (const QString& candidate : bundledPythonCandidates()) {
+        QFileInfo info(candidate);
         if (info.exists() && info.isExecutable()) {
             return info.absoluteFilePath();
         }

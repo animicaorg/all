@@ -94,6 +94,7 @@ fi
 cmake -S "$WALLET_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+    -DWALLET_BUNDLE_PYTHON_RUNTIME=ON \
     -DBUILD_TESTING=OFF
 
 cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" -j"$(sysctl -n hw.ncpu)"

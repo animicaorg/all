@@ -122,7 +122,7 @@ void CreateAccountDialog::onCreateClicked()
         QMessageBox::warning(this, "Wallet Unavailable",
                              m_engine->lastError().trimmed().isEmpty()
                                  ? QStringLiteral("The wallet store is unavailable. The application could not open or create wallets.json.")
-                                 : QString("The wallet store is unavailable.\n\n%1").arg(m_engine->lastError().trimmed()));
+                                 : m_engine->lastError().trimmed());
         return;
     }
 

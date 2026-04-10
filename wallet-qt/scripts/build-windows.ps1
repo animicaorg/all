@@ -98,6 +98,7 @@ try {
         -ArgumentList @(
             $ProjectRoot,
             "-DCMAKE_BUILD_TYPE=$BuildType",
+            "-DWALLET_BUNDLE_PYTHON_RUNTIME=ON",
             "-DBUILD_TESTING=OFF",
             "-G", "Visual Studio 17 2022",
             "-A", "x64"
