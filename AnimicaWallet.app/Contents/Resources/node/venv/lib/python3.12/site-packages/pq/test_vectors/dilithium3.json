@@ -1,0 +1,35 @@
+{
+  "algorithm": "dilithium3",
+  "domain": "Animica:TxSign:v1",
+  "cases": [
+    {
+      "name": "d3_basic_hello",
+      "seed": "0x9f2c9a6d7e1f4c5b2a0d3e8c1b7a6f5e11223344556677889900aabbccddeeff",
+      "msg": "0x48656c6c6f2c20416e696d69636121",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "d3_empty_message",
+      "seed": "0x00112233445566778899aabbccddeeff112233445566778899aabbccddeeff00",
+      "msg": "0x",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "d3_longish_message",
+      "seed": "0xa1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff10",
+      "msg": "0x546869732069732061206c6f6e676572206d65737361676520746f20746573742070616464696e6720616e642067617320636f7374732e",
+      "valid": true,
+      "skipExact": true
+    },
+    {
+      "name": "d3_corrupted_signature",
+      "seed": "0x55aa55aa55aa55aa55aa55aa55aa55aa11223344556677889900aabbccddeeff",
+      "msg": "0x74616d7065722d6d65",
+      "valid": false,
+      "skipExact": true,
+      "corrupt": "sig_flip_bit_0"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+[
+  /* Populate before launch with strings like:
+     "enr:-IS4QK...kA", 
+     "/ip4/203.0.113.10/tcp/30303/p2p/16Uiu2HAmExamplePeerId",
+     "/dns4/boot1.mainnet.animica.dev/tcp/30303/p2p/16Uiu2HAmExamplePeerId"
+  */
+]

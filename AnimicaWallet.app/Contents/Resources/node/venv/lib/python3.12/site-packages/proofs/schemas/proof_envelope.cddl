@@ -1,0 +1,76 @@
+; Animica — Proof Envelope CDDL
+; -----------------------------
+; Canonical, type-agnostic wrapper for all proof kinds verified by the chain.
+; The envelope binds:
+;   - type_id: identifies the concrete proof body schema
+;   - body: CBOR-encoded bytes of the proof body for that type
+;   - nullifier: 32-byte domain-separated hash preventing reuse within TTL windows
+;
+; Encoding notes:
+;   • The envelope is a CBOR map with small integer keys (1..3), encoded
+;     deterministically (canonical CBOR: sorted keys, definite lengths).
+;   • `body` is *embedded CBOR* as raw bytes. The inner object MUST itself be
+;     encoded canonically according to that type’s schema (e.g., hashshare.cddl).
+;   • `nullifier` is a 32-byte digest as defined in proofs/nullifiers.py
+;     (domain-separated by proof type and body fields).
+;
+; Proof type ids (must match consensus/proofs registry):
+;   0 = HashShare
+;   1 = AIProof
+;   2 = QuantumProof
+;   3 = StorageHeartbeat
+;   4 = VDFProof
+;
+; This file specifies only the outer envelope. Per-type bodies live in:
+;   - proofs/schemas/hashshare.cddl
+;   - proofs/schemas/storage.cddl
+;   - proofs/schemas/vdf.cddl
+;   - proofs/schemas/ai_attestation.schema.json
+;   - proofs/schemas/quantum_attestation.schema.json
+;
+;-----------------------------------------
+; Scalar aliases
+;-----------------------------------------
+
+Nullifier = bstr .size 32
+; ProofType is a small unsigned integer. We enumerate known values for clarity.
+ProofType = 0 / 1 / 2 / 3 / 4 / uint ; allow forward-compat (reserved future ids)
+
+;-----------------------------------------
+; Envelope
+;-----------------------------------------
+
+; The generic proof envelope as a CBOR map with fixed integer keys:
+;   1: type_id     -> ProofType
+;   2: body        -> bstr (embedded CBOR of the concrete proof body)
+;   3: nullifier   -> 32-byte digest preventing replay/reuse
+ProofEnvelope = {
+  1: ProofType,   ; type_id
+  2: bstr,        ; body (embedded CBOR, canonical-encoded for the concrete type)
+  3: Nullifier,   ; nullifier
+}
+
+; Optional convenience aggregates (not consensus-critical):
+ProofEnvelopeList = [* ProofEnvelope]
+
+;-----------------------------------------
+; Reference (non-normative) mapping
+;-----------------------------------------
+; For reference only; the envelope does not import these schemas directly.
+; Implementations MAY use this mapping table to dispatch validation of `body`.
+;
+;   type_id = 0 (HashShare)         -> proofs/schemas/hashshare.cddl#HashShare
+;   type_id = 1 (AIProof)           -> proofs/schemas/ai_attestation.schema.json (JSON-Schema)
+;   type_id = 2 (QuantumProof)      -> proofs/schemas/quantum_attestation.schema.json (JSON-Schema)
+;   type_id = 3 (StorageHeartbeat)  -> proofs/schemas/storage.cddl#StorageHeartbeat
+;   type_id = 4 (VDFProof)          -> proofs/schemas/vdf.cddl#VDFProof
+;
+; Validation steps (informative):
+;   1) Decode ProofEnvelope canonically.
+;   2) Dispatch by `type_id` and validate `body` bytes as embedded CBOR (or JSON)
+;      according to the mapped schema for that type.
+;   3) Recompute the domain-separated nullifier from the decoded body and compare
+;      to field 3. Reject on mismatch.
+;   4) Pass decoded metrics to the PoIES scorer (consensus/scorer.py).
+;
+; End of file.

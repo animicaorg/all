@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/da/retrieval_api.schema.json",
+  "title": "Animica DA – Retrieval API Schemas (OpenAPI-ish payloads)",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/Blob" },
+    { "$ref": "#/$defs/ProofSimple" },
+    { "$ref": "#/$defs/ProofCompact" },
+    { "$ref": "#/$defs/ProofNamespace" },
+    { "$ref": "#/$defs/ProofRequestSamples" },
+    { "$ref": "#/$defs/ProofRequestNamespace" },
+    { "$ref": "#/$defs/Health" }
+  ],
+  "$defs": {
+    "Hex32": {
+      "type": "string",
+      "description": "0x-prefixed, lowercase hex for 32-byte digests",
+      "pattern": "^0x[0-9a-f]{64}$"
+    },
+    "HexAny": {
+      "type": "string",
+      "description": "0x-prefixed, lowercase hex (any length >= 0 bytes)",
+      "pattern": "^0x[0-9a-f]*$"
+    },
+    "Namespace": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "NsRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/Namespace" },
+        "max": { "$ref": "#/$defs/Namespace" }
+      }
+    },
+    "Layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["k", "n", "share_size"],
+      "properties": {
+        "k": { "type": "integer", "minimum": 1 },
+        "n": { "type": "integer", "minimum": 1 },
+        "share_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "Chunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["off", "data"],
+      "properties": {
+        "off": { "type": "integer", "minimum": 0 },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Raw bytes of this chunk (base64)"
+        }
+      }
+    },
+
+    "ContentInline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inline"],
+      "properties": {
+        "inline": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Entire original blob bytes (base64)"
+        }
+      }
+    },
+
+    "ContentChunked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunks"],
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Chunk" }
+        }
+      }
+    },
+
+    "Blob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ns",
+        "size",
+        "sha3_256",
+        "commitment",
+        "layout",
+        "content"
+      ],
+      "properties": {
+        "ns": { "$ref": "#/$defs/Namespace" },
+        "size": { "type": "integer", "minimum": 0 },
+        "mime": { "type": ["string", "null"], "minLength": 1 },
+        "sha3_256": { "$ref": "#/$defs/Hex32" },
+        "commitment": { "$ref": "#/$defs/Hex32" },
+        "layout": { "$ref": "#/$defs/Layout" },
+        "id": { "anyOf": [ { "$ref": "#/$defs/Hex32" }, { "type": "null" } ] },
+        "created": { "type": ["integer", "null"], "minimum": 0 },
+        "name": { "type": ["string", "null"] },
+        "content": {
+          "oneOf": [
+            { "$ref": "#/$defs/ContentInline" },
+            { "$ref": "#/$defs/ContentChunked" }
+          ]
+        }
+      },
+      "description": "Blob envelope for POST/GET. Content is inline (preferred for ingest) or chunked (for large blobs)."
+    },
+
+    "BranchStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "sibling", "range"],
+      "properties": {
+        "dir": { "type": "integer", "enum": [0, 1], "description": "0=current is left, 1=current is right" },
+        "sibling": { "$ref": "#/$defs/Hex32" },
+        "range": { "$ref": "#/$defs/NsRange" }
+      }
+    },
+
+    "Leaf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ns", "size", "hash"],
+      "properties": {
+        "ns": { "$ref": "#/$defs/Namespace" },
+        "size": { "type": "integer", "minimum": 0 },
+        "hash": { "$ref": "#/$defs/Hex32" },
+        "data": {
+          "type": ["string", "null"],
+          "contentEncoding": "base64",
+          "description": "Optional: inlined leaf payload (base64) for carrying proofs"
+        }
+      }
+    },
+
+    "SampleProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaf_index", "leaf", "branch"],
+      "properties": {
+        "leaf_index": { "type": "integer", "minimum": 0 },
+        "leaf": { "$ref": "#/$defs/Leaf" },
+        "branch": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/BranchStep" }
+        }
+      }
+    },
+
+    "ProofSimple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "root", "total_leaves", "samples"],
+      "properties": {
+        "type": { "const": 0 },
+        "root": { "$ref": "#/$defs/Hex32" },
+        "total_leaves": { "type": "integer", "minimum": 1 },
+        "layout": { "anyOf": [ { "$ref": "#/$defs/Layout" }, { "type": "null" } ] },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SampleProof" }
+        }
+      },
+      "description": "Per-sample inclusion proofs under a single root."
+    },
+
+    "BranchNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sibling", "range"],
+      "properties": {
+        "sibling": { "$ref": "#/$defs/Hex32" },
+        "range": { "$ref": "#/$defs/NsRange" }
+      }
+    },
+
+    "PathStepRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "ref"],
+      "properties": {
+        "dir": { "type": "integer", "enum": [0, 1] },
+        "ref": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "CompactSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaf_index", "leaf", "path"],
+      "properties": {
+        "leaf_index": { "type": "integer", "minimum": 0 },
+        "leaf": { "$ref": "#/$defs/Leaf" },
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/PathStepRef" }
+        }
+      }
+    },
+
+    "ProofCompact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "root", "total_leaves", "nodes", "samples"],
+      "properties": {
+        "type": { "const": 1 },
+        "root": { "$ref": "#/$defs/Hex32" },
+        "total_leaves": { "type": "integer", "minimum": 1 },
+        "layout": { "anyOf": [ { "$ref": "#/$defs/Layout" }, { "type": "null" } ] },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/BranchNode" }
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/CompactSample" }
+        }
+      },
+      "description": "Deduplicated multi-sample inclusion proof."
+    },
+
+    "NsCover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["range", "hash"],
+      "properties": {
+        "range": { "$ref": "#/$defs/NsRange" },
+        "hash": { "$ref": "#/$defs/Hex32" }
+      }
+    },
+
+    "NsCoverWithBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cover", "branch"],
+      "properties": {
+        "cover": { "$ref": "#/$defs/NsCover" },
+        "branch": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/BranchStep" }
+        }
+      }
+    },
+
+    "ProofNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "root", "target", "covers"],
+      "properties": {
+        "type": { "const": 2 },
+        "root": { "$ref": "#/$defs/Hex32" },
+        "target": { "$ref": "#/$defs/NsRange" },
+        "covers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/NsCoverWithBranch" }
+        }
+      },
+      "description": "Namespace-range availability proof."
+    },
+
+    "ProofRequestSamples": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "commitment", "indices"],
+      "properties": {
+        "type": { "const": "samples" },
+        "commitment": { "$ref": "#/$defs/Hex32" },
+        "indices": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "layout": { "anyOf": [ { "$ref": "#/$defs/Layout" }, { "type": "null" } ] },
+        "total_leaves": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "description": "JSON form (e.g., POST body) to request inclusion proofs for given sample indices."
+    },
+
+    "ProofRequestNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "commitment", "target"],
+      "properties": {
+        "type": { "const": "namespace" },
+        "commitment": { "$ref": "#/$defs/Hex32" },
+        "target": { "$ref": "#/$defs/NsRange" }
+      },
+      "description": "JSON form (e.g., POST body) to request a namespace-range proof."
+    },
+
+    "Health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "version": { "type": "string" },
+        "uptime_s": { "type": "number", "minimum": 0 }
+      },
+      "description": "Shape used by /healthz and /readyz endpoints."
+    }
+  }
+}

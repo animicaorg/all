@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "vm_spec": "animica-vm-py/1",
+  "abi_spec": "abi/1",
+  "notes": "Python-VM sample contracts with manifests, source, and call/expectation sequences. These vectors are deterministic and engine-independent. Gas figures are ranges, not goldens, to allow different interpreters as long as semantics match. ABI byte-level goldens live with the VM package fixtures.",
+  "programs": [
+    {
+      "name": "counter",
+      "manifest": {
+        "name": "counter",
+        "version": "0.1.0",
+        "abi": {
+          "functions": [
+            { "name": "inc", "inputs": [{ "name": "delta", "type": "int" }], "outputs": [{ "type": "int" }], "mutates": true },
+            { "name": "get", "inputs": [], "outputs": [{ "type": "int" }], "mutates": false }
+          ],
+          "events": [
+            { "name": "Inc", "args": [{ "name": "delta", "type": "int" }, { "name": "value", "type": "int" }] }
+          ],
+          "errors": []
+        },
+        "caps": [],
+        "resources": { "storage_keys": ["ctr"] },
+        "encoding": "abi/1"
+      },
+      "source_py": "from stdlib import storage, events\n\nCTR_KEY = b'ctr'\n\ndef _load() -> int:\n    raw = storage.get(CTR_KEY)\n    return 0 if raw is None else int.from_bytes(raw, 'big')\n\ndef _store(v: int) -> None:\n    storage.set(CTR_KEY, v.to_bytes(32, 'big'))\n\ndef inc(delta: int) -> int:\n    v = _load() + int(delta)\n    _store(v)\n    events.emit(b'Inc', {b'delta': delta, b'value': v})\n    return v\n\ndef get() -> int:\n    return _load()\n",
+      "deploy": {
+        "init_calls": []
+      },
+      "calls": [
+        {
+          "seq": 1,
+          "fn": "get",
+          "args": [],
+          "expect_return": { "int": 0 },
+          "expect_events": [],
+          "expect_storage_hex": { "ctr": null },
+          "gas_range": [600, 6000]
+        },
+        {
+          "seq": 2,
+          "fn": "inc",
+          "args": [1],
+          "expect_return": { "int": 1 },
+          "expect_events": [
+            { "name": "Inc", "args": { "delta": 1, "value": 1 } }
+          ],
+          "expect_storage_hex": {
+            "ctr": "0x0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "gas_range": [1200, 12000]
+        },
+        {
+          "seq": 3,
+          "fn": "inc",
+          "args": [7],
+          "expect_return": { "int": 8 },
+          "expect_events": [
+            { "name": "Inc", "args": { "delta": 7, "value": 8 } }
+          ],
+          "expect_storage_hex": {
+            "ctr": "0x0000000000000000000000000000000000000000000000000000000000000008"
+          },
+          "gas_range": [1200, 14000]
+        },
+        {
+          "seq": 4,
+          "fn": "get",
+          "args": [],
+          "expect_return": { "int": 8 },
+          "expect_events": [],
+          "expect_storage_hex": {
+            "ctr": "0x0000000000000000000000000000000000000000000000000000000000000008"
+          },
+          "gas_range": [600, 6000]
+        }
+      ],
+      "determinism": {
+        "forbidden_imports": false,
+        "recursion_depth_ok": true
+      }
+    },
+
+    {
+      "name": "escrow_min",
+      "manifest": {
+        "name": "escrow_min",
+        "version": "0.1.0",
+        "abi": {
+          "functions": [
+            { "name": "deposit", "inputs": [{ "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }], "mutates": true },
+            { "name": "withdraw", "inputs": [{ "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }], "mutates": true },
+            { "name": "balance", "inputs": [], "outputs": [{ "type": "int" }], "mutates": false }
+          ],
+          "events": [
+            { "name": "Deposit", "args": [{ "name": "amount", "type": "int" }, { "name": "after", "type": "int" }] },
+            { "name": "Withdraw", "args": [{ "name": "amount", "type": "int" }, { "name": "after", "type": "int" }] }
+          ],
+          "errors": [
+            { "name": "Insufficient" }
+          ]
+        },
+        "caps": [],
+        "resources": { "storage_keys": ["bal"] },
+        "encoding": "abi/1"
+      },
+      "source_py": "from stdlib import storage, events, abi\n\nBAL = b'bal'\n\ndef _load() -> int:\n    raw = storage.get(BAL)\n    return 0 if raw is None else int.from_bytes(raw, 'big')\n\ndef _store(v: int) -> None:\n    storage.set(BAL, v.to_bytes(32, 'big'))\n\ndef deposit(amount: int) -> bool:\n    amt = int(amount)\n    assert amt >= 0\n    new = _load() + amt\n    _store(new)\n    events.emit(b'Deposit', {b'amount': amt, b'after': new})\n    return True\n\ndef withdraw(amount: int) -> bool:\n    amt = int(amount)\n    cur = _load()\n    if amt > cur:\n        abi.revert(b'Insufficient')\n    new = cur - amt\n    _store(new)\n    events.emit(b'Withdraw', {b'amount': amt, b'after': new})\n    return True\n\ndef balance() -> int:\n    return _load()\n",
+      "deploy": { "init_calls": [] },
+      "calls": [
+        {
+          "seq": 1,
+          "fn": "balance",
+          "args": [],
+          "expect_return": { "int": 0 },
+          "expect_events": [],
+          "expect_storage_hex": { "bal": null },
+          "gas_range": [600, 6000]
+        },
+        {
+          "seq": 2,
+          "fn": "deposit",
+          "args": [500],
+          "expect_return": { "bool": true },
+          "expect_events": [
+            { "name": "Deposit", "args": { "amount": 500, "after": 500 } }
+          ],
+          "expect_storage_hex": {
+            "bal": "0x00000000000000000000000000000000000000000000000000000000000001f4"
+          },
+          "gas_range": [1400, 15000]
+        },
+        {
+          "seq": 3,
+          "fn": "balance",
+          "args": [],
+          "expect_return": { "int": 500 },
+          "expect_events": [],
+          "expect_storage_hex": {
+            "bal": "0x00000000000000000000000000000000000000000000000000000000000001f4"
+          },
+          "gas_range": [600, 6000]
+        },
+        {
+          "seq": 4,
+          "fn": "withdraw",
+          "args": [200],
+          "expect_return": { "bool": true },
+          "expect_events": [
+            { "name": "Withdraw", "args": { "amount": 200, "after": 300 } }
+          ],
+          "expect_storage_hex": {
+            "bal": "0x000000000000000000000000000000000000000000000000000000000000012c"
+          },
+          "gas_range": [1400, 16000]
+        },
+        {
+          "seq": 5,
+          "fn": "balance",
+          "args": [],
+          "expect_return": { "int": 300 },
+          "expect_events": [],
+          "expect_storage_hex": {
+            "bal": "0x000000000000000000000000000000000000000000000000000000000000012c"
+          },
+          "gas_range": [600, 6000]
+        }
+      ],
+      "determinism": {
+        "forbidden_imports": false,
+        "recursion_depth_ok": true
+      }
+    },
+
+    {
+      "name": "hash_and_prng",
+      "manifest": {
+        "name": "hash_and_prng",
+        "version": "0.1.0",
+        "abi": {
+          "functions": [
+            { "name": "sha3_256_of_empty", "inputs": [], "outputs": [{ "type": "bytes" }], "mutates": false },
+            { "name": "prng", "inputs": [{ "name": "n", "type": "int" }], "outputs": [{ "type": "bytes" }], "mutates": false }
+          ],
+          "events": [],
+          "errors": []
+        },
+        "caps": [],
+        "resources": { "storage_keys": [] },
+        "encoding": "abi/1"
+      },
+      "source_py": "from stdlib import hash as _hash, random_api\n\ndef sha3_256_of_empty() -> bytes:\n    return _hash.sha3_256(b'')\n\ndef prng(n: int) -> bytes:\n    # Deterministic bytes seeded from tx-hash by the runtime; stable within a call.\n    return random_api.bytes(int(n))\n",
+      "deploy": { "init_calls": [] },
+      "calls": [
+        {
+          "seq": 1,
+          "fn": "sha3_256_of_empty",
+          "args": [],
+          "expect_return_hex": "0xa7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+          "expect_events": [],
+          "gas_range": [700, 7000]
+        },
+        {
+          "seq": 2,
+          "fn": "prng",
+          "args": [8],
+          "expect_return_note": "Exact bytes are deterministic for a given tx but unspecified here; engine must return a bytes value of length 8.",
+          "expect_return_len": 8,
+          "expect_events": [],
+          "gas_range": [600, 6000]
+        }
+      ],
+      "determinism": {
+        "forbidden_imports": false,
+        "recursion_depth_ok": true
+      }
+    },
+
+    {
+      "name": "forbidden_imports_rejected",
+      "manifest": {
+        "name": "bad_contract",
+        "version": "0.0.1",
+        "abi": {
+          "functions": [{ "name": "x", "inputs": [], "outputs": [{ "type": "int" }], "mutates": false }],
+          "events": [],
+          "errors": []
+        },
+        "caps": [],
+        "resources": { "storage_keys": [] },
+        "encoding": "abi/1"
+      },
+      "source_py": "from os import urandom  # forbidden\n\ndef x() -> int:\n    return 1\n",
+      "deploy": { "init_calls": [] },
+      "compile_expect_error": {
+        "kind": "ForbiddenImport",
+        "message_contains": "os"
+      }
+    }
+  ]
+}

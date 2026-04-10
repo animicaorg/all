@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "notes": "Header test vectors for Animica PoIES. Includes: genesis, u-draw domain checks, accept/reject around Θ, and fractional retarget examples. Numbers are illustrative but internally consistent. Units: times in Unix seconds; Θ shown both in natural nats and micro-nats (uNats = nats * 1e6).",
+  "common": {
+    "chainId": 1,
+    "targetIntervalSec": 6,
+    "theta": {
+      "initial_nats": 1.386294, 
+      "initial_uNats": 1386294,
+      "comment": "≈ ln(4). With Σψ ≈ 0, this gives P(−ln(u) ≥ Θ) ≈ e^(−Θ) ≈ 0.25 ⇒ ~1 in 4 u-draws win absent useful proofs, which combined with share micro-targets yields ~6s block time for configured miner set in devnet."
+    },
+    "retarget": {
+      "window": 60,
+      "ema_alpha": 0.25,
+      "clamp": [0.5, 2.0]
+    },
+    "fields": "Each header has: parentHash, height, timestamp, stateRoot, txRoot, receiptsRoot, proofsRoot, daRoot, mixSeed, nonce, theta_uNats, policyRoots {poies, pq}, aux {u_hash, u_float, H_u_nats} for vectors only."
+  },
+  "cases": [
+    {
+      "id": "GENESIS-1",
+      "desc": "Genesis header — fixed nonce/mixSeed; Θ = Θ0; all roots predetermined.",
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "height": 0,
+        "timestamp": 1735689600,
+        "stateRoot": "0x8c7f0f0ebf9fd7f9d9a6f4c5c0d7b2e9f1a3e5c7d9b2a1846d0c5b3a29181716",
+        "txRoot": "0x39c4a2f1a7b09e5d0f86b6d1e1b0a5d7f9c3a2b1e4d5c6f7a8090b1c2d3e4f50",
+        "receiptsRoot": "0x0c1d2e3f4a5b6c7d8e9f00112233445566778899aabbccddeeff001122334455",
+        "proofsRoot": "0x7f6e5d4c3b2a19080706050403020100ffeeddccbbaa99887766554433221100",
+        "daRoot": "0x5a4b3c2d1e0f0102030405060708090a0b0c0d0e0f1a2b3c4d5e6f708192a3b4",
+        "mixSeed": "0x616e696d6963612d67656e657369732d6d69782d73656564",
+        "nonce": "0x67656e657369732d6e6f6e6365",
+        "theta_uNats": 1386294,
+        "policyRoots": {
+          "poies": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+          "pq": "0x22223333444455556666777788889999aaaabbbbccccddddeeeeffff00001111"
+        }
+      },
+      "expect": {
+        "isGenesis": true,
+        "validStructure": true,
+        "H_u_nats": null,
+        "S_nats": null
+      }
+    },
+    {
+      "id": "U-DRAW-ACCEPT-1",
+      "desc": "u-draw alone clears Θ (no attached useful proofs).",
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x5f5e1000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "height": 101,
+        "timestamp": 1735689700,
+        "stateRoot": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "txRoot": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "receiptsRoot": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "proofsRoot": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "daRoot": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "mixSeed": "0x1234000000000000000000000000000000000000000000000000000000000000",
+        "nonce": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "theta_uNats": 1200000,
+        "policyRoots": {
+          "poies": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+          "pq": "0x22223333444455556666777788889999aaaabbbbccccddddeeeeffff00001111"
+        },
+        "aux": {
+          "u_hash": "0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "u_float": 0.00390624,
+          "H_u_nats": 5.545177
+        }
+      },
+      "proofsPsi_uNats": 0,
+      "expect": {
+        "H_u_nats": 5.545177,
+        "Theta_nats": 1.2,
+        "S_nats": 5.545177,
+        "accepted": true,
+        "reason": "−ln(u) well above Θ; Σψ = 0."
+      }
+    },
+    {
+      "id": "U-DRAW-REJECT-1",
+      "desc": "u-draw below Θ; rejected without useful proofs.",
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x5f5e2000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "height": 102,
+        "timestamp": 1735689706,
+        "stateRoot": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "txRoot": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "receiptsRoot": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "proofsRoot": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "daRoot": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "mixSeed": "0x2234000000000000000000000000000000000000000000000000000000000000",
+        "nonce": "0x0101010101010101010101010101010101010101010101010101010101010101",
+        "theta_uNats": 1386294,
+        "policyRoots": {
+          "poies": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+          "pq": "0x22223333444455556666777788889999aaaabbbbccccddddeeeeffff00001111"
+        },
+        "aux": {
+          "u_hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "u_float": 0.9999999999999999,
+          "H_u_nats": 1.0e-16
+        }
+      },
+      "proofsPsi_uNats": 0,
+      "expect": {
+        "H_u_nats": 0.0,
+        "Theta_nats": 1.386294,
+        "S_nats": 0.0,
+        "accepted": false,
+        "reason": "−ln(u) ≈ 0 < Θ and no useful proofs attached."
+      }
+    },
+    {
+      "id": "U-DRAW+PROOFS-ACCEPT-1",
+      "desc": "u-draw below Θ but Σψ from useful proofs lifts S across threshold.",
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x5f5e3000cccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "height": 103,
+        "timestamp": 1735689712,
+        "stateRoot": "0xaaaa…0001",
+        "txRoot": "0xbbbb…0002",
+        "receiptsRoot": "0xcccc…0003",
+        "proofsRoot": "0xdddd…0004",
+        "daRoot": "0xeeee…0005",
+        "mixSeed": "0x3334000000000000000000000000000000000000000000000000000000000000",
+        "nonce": "0xf0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "theta_uNats": 1386294,
+        "policyRoots": {
+          "poies": "0x1111…ff00",
+          "pq": "0x2222…0011"
+        },
+        "aux": {
+          "u_hash": "0x3fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "u_float": 0.25,
+          "H_u_nats": 1.386294
+        }
+      },
+      "proofsPsi_uNats": 200000, 
+      "expect": {
+        "H_u_nats": 1.386294,
+        "SigmaPsi_nats": 0.2,
+        "Theta_nats": 1.386294,
+        "S_nats": 1.586294,
+        "accepted": true,
+        "reason": "Exactly at Θ from u-draw, plus Σψ > 0 ⇒ accept."
+      }
+    },
+    {
+      "id": "RETARGET-SLOW-EMA-1",
+      "desc": "Observed blocks too slow (avg 9s vs 6s target) ⇒ Θ decreases (easier) under clamps.",
+      "windowSample": {
+        "startHeight": 200,
+        "endHeight": 259,
+        "avgIntervalSec": 9.0,
+        "targetIntervalSec": 6.0
+      },
+      "retarget": {
+        "before_theta_uNats": 1386294,
+        "after_theta_uNats": 1109035,
+        "ema_alpha": 0.25,
+        "clamp": [0.5, 2.0],
+        "formula": "Θ' = clamp(Θ * (avg/target)^(-α), clamp) ; here (9/6)^(-0.25) ≈ 0.8 ⇒ Θ' ≈ 0.8 * Θ"
+      },
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x4444…",
+        "height": 260,
+        "timestamp": 1735690300,
+        "stateRoot": "0xaaaa…260",
+        "txRoot": "0xbbbb…260",
+        "receiptsRoot": "0xcccc…260",
+        "proofsRoot": "0xdddd…260",
+        "daRoot": "0xeeee…260",
+        "mixSeed": "0xabcdef0000000000000000000000000000000000000000000000000000000260",
+        "nonce": "0x2600260026002600260026002600260026002600260026002600260026002600",
+        "theta_uNats": 1109035,
+        "policyRoots": {
+          "poies": "0x1111…ff00",
+          "pq": "0x2222…0011"
+        }
+      },
+      "expect": {
+        "retargetApplied": true,
+        "thetaDrop": true
+      }
+    },
+    {
+      "id": "RETARGET-FAST-EMA-1",
+      "desc": "Observed blocks too fast (avg 4s vs 6s) ⇒ Θ increases (harder) under clamps.",
+      "windowSample": {
+        "startHeight": 320,
+        "endHeight": 379,
+        "avgIntervalSec": 4.0,
+        "targetIntervalSec": 6.0
+      },
+      "retarget": {
+        "before_theta_uNats": 1109035,
+        "after_theta_uNats": 1312991,
+        "ema_alpha": 0.25,
+        "clamp": [0.5, 2.0],
+        "formula": "Θ' = Θ * (avg/target)^(-α) ; (4/6)^(-0.25) ≈ 1.184 ⇒ Θ' ≈ 1.184 * Θ"
+      },
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x5555…",
+        "height": 380,
+        "timestamp": 1735691000,
+        "stateRoot": "0xaaaa…380",
+        "txRoot": "0xbbbb…380",
+        "receiptsRoot": "0xcccc…380",
+        "proofsRoot": "0xdddd…380",
+        "daRoot": "0xeeee…380",
+        "mixSeed": "0xabcdef0000000000000000000000000000000000000000000000000000000380",
+        "nonce": "0x3800380038003800380038003800380038003800380038003800380038003800",
+        "theta_uNats": 1312991,
+        "policyRoots": {
+          "poies": "0x1111…ff00",
+          "pq": "0x2222…0011"
+        }
+      },
+      "expect": {
+        "retargetApplied": true,
+        "thetaRise": true
+      }
+    },
+    {
+      "id": "MIX-SEED-DOMAIN-1",
+      "desc": "Mix-seed domain separation — change in mixSeed alters u-hash even with same nonce.",
+      "headers": [
+        {
+          "height": 401,
+          "mixSeed": "0x0101010101010101010101010101010101010101010101010101010101010101",
+          "nonce": "0x9999…",
+          "aux": {
+            "u_hash": "0x1d2c7b…(A)…",
+            "u_float": 0.12345001,
+            "H_u_nats": 2.091851
+          }
+        },
+        {
+          "height": 402,
+          "mixSeed": "0x0202020202020202020202020202020202020202020202020202020202020202",
+          "nonce": "0x9999…",
+          "aux": {
+            "u_hash": "0x9a77e1…(B)…",
+            "u_float": 0.58700012,
+            "H_u_nats": 0.532724
+          }
+        }
+      ],
+      "expect": {
+        "different_u_hash": true,
+        "different_H_u": true,
+        "reason": "Domain separation: u = H(mixSeed || nonce || headerSignBytes) as per spec/domains.yaml."
+      }
+    },
+    {
+      "id": "POLICY-ROOT-PIN-1",
+      "desc": "Headers must pin PoIES policy root and PQ alg-policy root; mismatch ⇒ invalid.",
+      "header": {
+        "chainId": 1,
+        "parentHash": "0x7777…",
+        "height": 450,
+        "timestamp": 1735691400,
+        "stateRoot": "0xaaaa…450",
+        "txRoot": "0xbbbb…450",
+        "receiptsRoot": "0xcccc…450",
+        "proofsRoot": "0xdddd…450",
+        "daRoot": "0xeeee…450",
+        "mixSeed": "0x0badc0de00000000000000000000000000000000000000000000000000000450",
+        "nonce": "0x45004500…",
+        "theta_uNats": 1312991,
+        "policyRoots": {
+          "poies": "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
+          "pq": "0xcafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe"
+        }
+      },
+      "expect": {
+        "validStructure": true,
+        "policyRootMismatch": true,
+        "accepted": false,
+        "reason": "policyRoots differ from spec/policy roots configured for this height/epoch."
+      }
+    }
+  ]
+}

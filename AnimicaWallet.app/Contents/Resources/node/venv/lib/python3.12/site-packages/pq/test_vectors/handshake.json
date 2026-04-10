@@ -1,0 +1,182 @@
+{
+  "protocol": "animica-pq-handshake-1",
+  "kem": "kyber768",
+  "kdf": "hkdf-sha3-256",
+  "aead": ["chacha20poly1305", "aes-128-gcm"],
+  "notes": [
+    "These are *behavioral* vectors. They constrain transcript structure, sizes, and equality relations between initiator/responder outputs without pinning concrete Kyber ciphertext bytes.",
+    "Tests must plug a deterministic RNG seeded from the provided hex hints so both parties reproduce the same ephemeral/static KEM keys per case.",
+    "Key schedule: ss_concat = ss_ir || ss_ri (lexicographic order by role tag). prk = HKDF-Extract(zeros32, ss_concat).",
+    "info = SHA3-256( 'animica/p2p' || chainId || algPolicyRoot || sessionNonce || initiatorPeerId || responderPeerId ).",
+    "Expand: OKM = HKDF-Expand(prk, info, 96). Derive three 32-byte secrets: k_i2r = OKM[0..31], k_r2i = OKM[32..63], k_binding = OKM[64..95].",
+    "Transcript hash th = SHA3-256( hello_i || hello_r || ct_ir || ct_ri || info ).",
+    "HELLO frames carry: (peerId, kemAlgId, sigAlgId, algPolicyRoot, chainId, sessionNonce).",
+    "All lengths must match Kyber768 constants: pk=1184, sk=2400, ct=1088, ss=32."
+  ],
+  "expected_lengths": {
+    "public_key": 1184,
+    "secret_key": 2400,
+    "ciphertext": 1088,
+    "shared_secret": 32,
+    "derived_key": 32,
+    "transcript_hash": 32
+  },
+  "harness_steps": {
+    "hello_i": "Initiator sends HELLO_I with its peerId, chainId, algPolicyRoot, kemAlgId=kyber768, sigAlgId=dilithium3 (or sphincs), sessionNonce.",
+    "hello_r": "Responder replies with HELLO_R mirroring params and including its peerId.",
+    "kem_i_to_r": "Initiator encapsulates to responder.static_kem_pk → (ct_ir, ss_ir).",
+    "kem_r_to_i": "Responder encapsulates to initiator.static_kem_pk → (ct_ri, ss_ri).",
+    "kdf": "Both sides compute info, prk, OKM and derive (k_i2r, k_r2i, k_binding), and th.",
+    "checks": "Assert lengths; assert k_i2r at initiator equals k_i2r_rx at responder, and k_r2i likewise; assert th equal on both sides."
+  },
+  "cases": [
+    {
+      "name": "basic_mutual_kem_roundtrip",
+      "rng_seeds": {
+        "initiator_static_kem": "0x000102030405060708090a0b0c0d0e0f",
+        "responder_static_kem": "0x101112131415161718191a1b1c1d1e1f",
+        "initiator_ephemeral": "0x202122232425262728292a2b2c2d2e2f",
+        "responder_ephemeral": "0x303132333435363738393a3b3c3d3e3f"
+      },
+      "context": {
+        "chainId": 1,
+        "algPolicyRoot": "0x7f3eac0a9f3b7b0b3f9e2b1c5a0d4e6f7a8b9c0ddeedccbbaa99887766554433",
+        "sessionNonce": "0xabababababababababababababababab",
+        "initiatorPeerId_hint": "sha3(dilithium3_pk_i)",
+        "responderPeerId_hint": "sha3(dilithium3_pk_r)"
+      },
+      "expected": {
+        "lengths": {
+          "ct_ir": 1088,
+          "ct_ri": 1088,
+          "ss_ir": 32,
+          "ss_ri": 32,
+          "k_i2r": 32,
+          "k_r2i": 32,
+          "k_binding": 32,
+          "th": 32
+        },
+        "equality_relations": [
+          "initiator.k_i2r == responder.k_i2r_rx",
+          "initiator.k_r2i_rx == responder.k_r2i",
+          "initiator.k_binding == responder.k_binding",
+          "initiator.th == responder.th"
+        ],
+        "inequality_relations": [
+          "initiator.k_i2r != initiator.k_r2i",
+          "responder.k_i2r != responder.k_r2i"
+        ]
+      }
+    },
+    {
+      "name": "changed_session_nonce_changes_keys",
+      "rng_seeds": {
+        "initiator_static_kem": "0x000102030405060708090a0b0c0d0e0f",
+        "responder_static_kem": "0x101112131415161718191a1b1c1d1e1f",
+        "initiator_ephemeral": "0x202122232425262728292a2b2c2d2e2f",
+        "responder_ephemeral": "0x303132333435363738393a3b3c3d3e3f"
+      },
+      "context": {
+        "chainId": 1,
+        "algPolicyRoot": "0x7f3eac0a9f3b7b0b3f9e2b1c5a0d4e6f7a8b9c0ddeedccbbaa99887766554433",
+        "sessionNonce_1": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "sessionNonce_2": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdc0de",
+        "initiatorPeerId_hint": "sha3(dilithium3_pk_i)",
+        "responderPeerId_hint": "sha3(dilithium3_pk_r)"
+      },
+      "expected": {
+        "relations": [
+          "k_i2r(sessionNonce_1) != k_i2r(sessionNonce_2)",
+          "k_r2i(sessionNonce_1) != k_r2i(sessionNonce_2)",
+          "th(sessionNonce_1) != th(sessionNonce_2)"
+        ]
+      }
+    },
+    {
+      "name": "alg_policy_root_mismatch_rejected",
+      "rng_seeds": {
+        "initiator_static_kem": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "responder_static_kem": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "initiator_ephemeral": "0xcccccccccccccccccccccccccccccccc",
+        "responder_ephemeral": "0xdddddddddddddddddddddddddddddddd"
+      },
+      "context": {
+        "chainId": 1,
+        "initiator_algPolicyRoot": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "responder_algPolicyRoot": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "sessionNonce": "0x0102030405060708090a0b0c0d0e0f00"
+      },
+      "expected": {
+        "result": "reject",
+        "reason_contains": "algPolicyRoot"
+      }
+    },
+    {
+      "name": "chain_id_mismatch_rejected",
+      "rng_seeds": {
+        "initiator_static_kem": "0x1234567890abcdef1234567890abcdef",
+        "responder_static_kem": "0xfedcba0987654321fedcba0987654321",
+        "initiator_ephemeral": "0x00112233445566778899aabbccddeeff",
+        "responder_ephemeral": "0xffeeddccbbaa99887766554433221100"
+      },
+      "context": {
+        "initiator_chainId": 1,
+        "responder_chainId": 2,
+        "algPolicyRoot": "0x7f3eac0a9f3b7b0b3f9e2b1c5a0d4e6f7a8b9c0ddeedccbbaa99887766554433",
+        "sessionNonce": "0x90909090909090909090909090909090"
+      },
+      "expected": {
+        "result": "reject",
+        "reason_contains": "chainId"
+      }
+    },
+    {
+      "name": "wrong_responder_pk_breaks_key_agreement",
+      "rng_seeds": {
+        "initiator_static_kem": "0x31415926535897932384626433832795",
+        "responder_static_kem": "0x27182818284590452353602874713526",
+        "initiator_ephemeral": "0xdeadbeefdeadbeefdeadbeefdeadbeef",
+        "responder_ephemeral": "0xcafebabecafebabecafebabecafebabe"
+      },
+      "context": {
+        "chainId": 1,
+        "algPolicyRoot": "0x7f3eac0a9f3b7b0b3f9e2b1c5a0d4e6f7a8b9c0ddeedccbbaa99887766554433",
+        "sessionNonce": "0x55555555555555555555555555555555"
+      },
+      "mutation": {
+        "replace_responder_pk_with_random": true
+      },
+      "expected": {
+        "result": "mismatch",
+        "assertions": [
+          "initiator.k_i2r != responder.k_i2r_rx",
+          "initiator.k_r2i_rx != responder.k_r2i"
+        ],
+        "allow_error_instead_of_mismatch": true,
+        "comment": "Either explicit verify failure or silent KEM mismatch leading to divergent keys is acceptable. Transcript hash th must also diverge if protocol continues."
+      }
+    },
+    {
+      "name": "deterministic_replay_same_context_same_keys",
+      "rng_seeds": {
+        "initiator_static_kem": "0xabababababababababababababababab",
+        "responder_static_kem": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "initiator_ephemeral": "0xefefefefefefefefefefefefefefefef",
+        "responder_ephemeral": "0x01010101010101010101010101010101"
+      },
+      "context": {
+        "chainId": 1337,
+        "algPolicyRoot": "0x0f0e0d0c0b0a09080706050403020100ffeeddccbbaa99887766554433221100",
+        "sessionNonce": "0x42424242424242424242424242424242",
+        "initiatorPeerId_hint": "sha3(dilithium3_pk_i)",
+        "responderPeerId_hint": "sha3(dilithium3_pk_r)"
+      },
+      "expected": {
+        "relations": [
+          "re-running the handshake with the *same* seeds and context yields byte-identical (ct_ir, ct_ri, k_i2r, k_r2i, k_binding, th)",
+          "changing only initiator_ephemeral seed changes (ct_ir, k_i2r, th) but not (ct_ri) generated by responder"
+        ]
+      }
+    }
+  ]
+}

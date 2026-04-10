@@ -1,0 +1,212 @@
+# Animica Post-Quantum (PQ) Cryptography Policy
+# - Canonical algorithm IDs
+# - Signature and KEM acceptance rules
+# - Address format rules (bech32m over alg_id||sha3_256(pubkey))
+# - P2P handshake key schedule (Kyber768 + HKDF-SHA3-256 → AEAD)
+# - Activation/deprecation/retirement schedules per network
+# - Canonical Merkle layout for hashing this policy into headers
+
+policy:
+  version: "0.1.0"
+  last_updated: "2025-09-19"
+  description: >
+    Animica is PQ-first. Accounts use PQ signatures; the P2P layer derives
+    transport keys via a PQ KEM. This document enumerates allowed algorithms,
+    sizes, network rollouts, and the acceptance/threshold rules enforced by
+    nodes, wallets, RPC, and the VM toolchain.
+
+# ------------------------------------------------------------------------------
+# CANONICAL ALGORITHM REGISTRY
+# IDs MUST MATCH pq/alg_ids.yaml EXACTLY.
+# ------------------------------------------------------------------------------
+algorithms:
+  signatures:
+    - id_hex: "0x0103"
+      name: "dilithium3"
+      nist_level: 3
+      pubkey_bytes: 1952
+      secretkey_bytes: 4000
+      signature_bytes: 3293
+      digest: "sha3_256"      # address hashing
+      status: "preferred"     # preferred for new addresses & txs
+      notes: "CRYSTALS-Dilithium3 per NIST round-3; fast verify."
+
+    - id_hex: "0x0201"
+      name: "sphincs_shake_128s"
+      nist_level: 1
+      pubkey_bytes: 32
+      secretkey_bytes: 64
+      signature_bytes: 7856
+      digest: "sha3_256"
+      status: "allowed"       # allowed for long-term stateless/hardening needs
+      notes: "SPHINCS+ (SHAKE-128s); stateless hash-based signatures."
+
+  kems:
+    - id_hex: "0x1103"
+      name: "kyber768"
+      nist_level: 3
+      pubkey_bytes: 1184
+      secretkey_bytes: 2400
+      ciphertext_bytes: 1088
+      shared_secret_bytes: 32
+      status: "required"
+      notes: "CRYSTALS-Kyber768 for P2P handshake; AEAD keys via HKDF-SHA3-256."
+
+# ------------------------------------------------------------------------------
+# ADDRESS RULES
+# ------------------------------------------------------------------------------
+address_rules:
+  bech32m_hrp:
+    animica_mainnet: "anim"
+    animica_testnet: "ant"
+    animica_devnet: "anv"
+  payload: "alg_id (2B) || sha3_256(pubkey)"
+  allowed_sig_algs:
+    - "dilithium3"
+    - "sphincs_shake_128s"
+  default_sig_alg:
+    animica:1: "dilithium3"
+    animica:2: "dilithium3"
+    animica:1337: "dilithium3"
+  # Back-compat / migration:
+  legacy_hybrid_classical_optional: true   # wallets MAY attach a classical cosignature for bridges
+  legacy_classical_algs: ["secp256k1", "ed25519"]  # NOT required for consensus; ignored by validators
+
+# ------------------------------------------------------------------------------
+# TRANSACTION SIGNING ACCEPTANCE RULES
+# ------------------------------------------------------------------------------
+tx_signing:
+  require_pq: true
+  acceptance:
+    mode: "any_of_allowed"   # 1-of the allowed PQ algorithms above
+    min_nist_level: 1        # floor (SPHINCS+-128s is level 1; Dilithium3 is level 3)
+    preferred_min_nist_level: 3
+  multisig:
+    # Script-level M-of-N is handled at the account/contract layer;
+    # validators enforce that each presented signature complies with this PQ policy.
+    max_signers: 16
+    allow_mixed_pq_algs: true
+  domains:
+    sign_bytes_domain: "ANIMICA-TX-SIGN-V1"
+    header_sign_domain: "ANIMICA-HEADER-SIGN-V1"
+
+# ------------------------------------------------------------------------------
+# P2P HANDSHAKE / TRANSPORT CRYPTO
+# ------------------------------------------------------------------------------
+p2p_transport:
+  kem: "kyber768"
+  kdf: "hkdf_sha3_256"
+  aead:
+    default: "chacha20_poly1305"
+    alternatives: ["aes_256_gcm"]
+  transcript_binding:
+    include:
+      - "handshake_version"
+      - "chain_id"
+      - "local_peer_id"
+      - "remote_peer_id"
+      - "alg_policy_root"     # from merkle policy hashing below
+      - "time_nonce"
+  rekey:
+    interval_blocks: 600
+    max_messages_per_key: 100000
+  handshake_domains:
+    initiator: "ANIMICA-P2P-HANDSHAKE-CLIENT-V1"
+    responder: "ANIMICA-P2P-HANDSHAKE-SERVER-V1"
+
+# ------------------------------------------------------------------------------
+# ROLLOUT / DEPRECATION SCHEDULES (PER NETWORK)
+# Times are block-height based to preserve determinism.
+# ------------------------------------------------------------------------------
+rollout:
+  defaults:
+    # Global defaults used unless overridden by a network stanza
+    dilithium3:
+      activate_height: 0
+      deprecate_height: null
+      retire_height: null
+    sphincs_shake_128s:
+      activate_height: 0
+      deprecate_height: null
+      retire_height: null
+    kyber768:
+      activate_height: 0
+      deprecate_height: null
+      retire_height: null
+
+  networks:
+    "animica:1":   # Mainnet
+      dilithium3:  { activate_height: 0,     deprecate_height: null, retire_height: null }
+      sphincs_shake_128s: { activate_height: 0, deprecate_height: null, retire_height: null }
+      kyber768:    { activate_height: 0,     deprecate_height: null, retire_height: null }
+
+    "animica:2":   # Testnet (room for experiments)
+      dilithium3:  { activate_height: 0,     deprecate_height: null, retire_height: null }
+      sphincs_shake_128s: { activate_height: 0, deprecate_height: null, retire_height: null }
+      kyber768:    { activate_height: 0,     deprecate_height: null, retire_height: null }
+
+    "animica:1337": # Devnet (allow testing of alternates if added later)
+      dilithium3:  { activate_height: 0,     deprecate_height: null, retire_height: null }
+      sphincs_shake_128s: { activate_height: 0, deprecate_height: null, retire_height: null }
+      kyber768:    { activate_height: 0,     deprecate_height: null, retire_height: null }
+
+# ------------------------------------------------------------------------------
+# CONSTRAINTS & VALIDATION
+# ------------------------------------------------------------------------------
+constraints:
+  signature_size_bounds:
+    min: 32
+    max: 16384
+  pubkey_size_bounds:
+    min: 32
+    max: 8192
+  kem_bounds:
+    pubkey_max: 4096
+    ciphertext_max: 4096
+    ss_bytes: 32
+  required_ids:
+    signatures: ["0x0103", "0x0201"]
+    kems: ["0x1103"]
+
+# ------------------------------------------------------------------------------
+# MERKLE HASHING OF THE PQ POLICY (INTO HEADERS)
+# ------------------------------------------------------------------------------
+hashing:
+  root_domain: "ANIMICA-ALG-POLICY-V1"
+  hash_alg: "sha3_512"
+  leaf_encoding: "canonical_json_pointer"    # path → canonical JSON → hash
+  # Leaves included in the Merkle tree (sorted lexicographically by (path,hash))
+  include_paths:
+    - "/algorithms/signatures"
+    - "/algorithms/kems"
+    - "/address_rules"
+    - "/tx_signing"
+    - "/p2p_transport"
+    - "/rollout"
+    - "/constraints"
+  header_field: "algPolicyRoot"               # 64-byte root placed in header
+  notes: >
+    The canonicalization uses UTF-8, sorted map keys, and numbers encoded
+    as integers where possible (no floats). Arrays are position-significant.
+
+# ------------------------------------------------------------------------------
+# WALLET & SDK HINTS (NON-CONSENSUS)
+# ------------------------------------------------------------------------------
+wallet_hints:
+  default_new_account_alg: "dilithium3"
+  prefer_short_sig: true         # choose lower on-chain footprint if multiple available
+  p2p_cipher_preference: "chacha20_poly1305"
+  bip39_like_mnemonic: "PBKDF2-HMAC-SHA3-256 + HKDF-SHA3-256"  # for seed derivation (see pq module)
+
+# ------------------------------------------------------------------------------
+# INTEROP / BRIDGING (NON-CONSENSUS GUIDANCE)
+# ------------------------------------------------------------------------------
+interop_guidance:
+  # Bridges may request hybrid (PQ + classical) signatures at their boundary.
+  # Nodes ignore classical cosignatures for consensus, but tooling can carry them.
+  allow_hybrid_cosignature_in_extrameta: true
+  recommended_classical_set: ["secp256k1", "ed25519"]
+  warning: >
+    Hybrid/classical material MUST NOT influence consensus validity. It is carried
+    as extra metadata for bridges/wrappers only.
+

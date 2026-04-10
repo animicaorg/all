@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "version": 1,
+    "module": "aicf.economics.settlement",
+    "description": "Epoch settlement & split vectors covering pricing, splits, fund cap scaling, and slashing/clawbacks.",
+    "currency": "atom",
+    "rounding": "For each claim, compute provider/miner shares as floor(total * bps / 10000); treasury receives the remainder so shares sum to the (possibly scaled) total.",
+    "notes": [
+      "Unless overridden per-vector, pricing = { AI: 1000 atom/unit, QUANTUM: 5000 atom/unit }.",
+      "Default splits: AI = {provider: 8000 bps, miner: 1500 bps, treasury: 500 bps}; QUANTUM = {provider: 7000, miner: 2500, treasury: 500}.",
+      "Fund cap: if epoch_total_base > epoch_cap, all claim totals are scaled by the same rational factor before splits.",
+      "Slashing: a provider's gross share may be reduced by a slash amount. If the slash exceeds gross share, the excess is taken from provider stake and reported as provider_debits; treasury receives the full slash."
+    ]
+  },
+  "defaults": {
+    "pricing": { "AI": { "per_unit": 1000 }, "QUANTUM": { "per_unit": 5000 } },
+    "splits_bps": {
+      "AI":      { "provider": 8000, "miner": 1500, "treasury": 500 },
+      "QUANTUM": { "provider": 7000, "miner": 2500, "treasury": 500 }
+    }
+  },
+  "vectors": [
+    {
+      "name": "basic-mixed-no-slash-no-cap",
+      "epoch": { "id": 42, "start_height": 1000, "end_height": 1099 },
+      "input": {
+        "claims": [
+          { "task_id": "0xT1", "provider_id": "provA", "miner_id": "m1", "kind": "AI",      "units": 1200 },
+          { "task_id": "0xT2", "provider_id": "provB", "miner_id": "m2", "kind": "QUANTUM", "units": 150  },
+          { "task_id": "0xT3", "provider_id": "provA", "miner_id": "m1", "kind": "AI",      "units": 500  }
+        ]
+      },
+      "expect": {
+        "epoch_total_base": 2450000,
+        "claim_splits": [
+          {
+            "task_id": "0xT1",
+            "base": 1200000,
+            "shares": { "provider": 960000, "miner": 180000, "treasury": 60000 }
+          },
+          {
+            "task_id": "0xT2",
+            "base": 750000,
+            "shares": { "provider": 525000, "miner": 187500, "treasury": 37500 }
+          },
+          {
+            "task_id": "0xT3",
+            "base": 500000,
+            "shares": { "provider": 400000, "miner": 75000, "treasury": 25000 }
+          }
+        ],
+        "provider_totals": { "provA": 1360000, "provB": 525000 },
+        "miner_totals":    { "m1": 255000,    "m2": 187500 },
+        "treasury_total": 122500,
+        "scale": { "numerator": 1, "denominator": 1 }
+      }
+    },
+    {
+      "name": "rounding-residual-to-treasury",
+      "epoch": { "id": 43, "start_height": 1100, "end_height": 1199 },
+      "overrides": {
+        "pricing": { "AI": { "per_unit": 5 } },
+        "splits_bps": { "AI": { "provider": 3333, "miner": 3333, "treasury": 3334 } }
+      },
+      "input": {
+        "claims": [
+          { "task_id": "0xR1", "provider_id": "provR", "miner_id": "m9", "kind": "AI", "units": 3 }
+        ]
+      },
+      "expect": {
+        "epoch_total_base": 15,
+        "claim_splits": [
+          {
+            "task_id": "0xR1",
+            "base": 15,
+            "shares": { "provider": 4, "miner": 4, "treasury": 7 }
+          }
+        ],
+        "provider_totals": { "provR": 4 },
+        "miner_totals":    { "m9": 4 },
+        "treasury_total": 7,
+        "scale": { "numerator": 1, "denominator": 1 }
+      }
+    },
+    {
+      "name": "slash-less-than-earnings",
+      "epoch": { "id": 44, "start_height": 1200, "end_height": 1299 },
+      "input": {
+        "claims": [
+          { "task_id": "0xS1", "provider_id": "provS", "miner_id": "m3", "kind": "AI", "units": 100 }
+        ],
+        "slashes": [
+          { "provider_id": "provS", "amount": 30000, "reason": "QoS_violation" }
+        ]
+      },
+      "expect": {
+        "epoch_total_base": 100000,
+        "claim_splits": [
+          {
+            "task_id": "0xS1",
+            "base": 100000,
+            "gross_shares": { "provider": 80000, "miner": 15000, "treasury": 5000 },
+            "slash_applied": { "provider": 30000, "to_treasury": 30000 },
+            "net_shares": { "provider": 50000, "miner": 15000, "treasury": 35000 }
+          }
+        ],
+        "provider_totals": { "provS": 50000 },
+        "miner_totals":    { "m3": 15000 },
+        "treasury_total": 35000,
+        "provider_debits": {},
+        "scale": { "numerator": 1, "denominator": 1 }
+      }
+    },
+    {
+      "name": "slash-exceeds-earnings-provider-debit",
+      "epoch": { "id": 45, "start_height": 1300, "end_height": 1399 },
+      "input": {
+        "claims": [
+          { "task_id": "0xS2", "provider_id": "provT", "miner_id": "m4", "kind": "AI", "units": 20 }
+        ],
+        "slashes": [
+          { "provider_id": "provT", "amount": 30000, "reason": "Trap_failure" }
+        ]
+      },
+      "expect": {
+        "epoch_total_base": 20000,
+        "claim_splits": [
+          {
+            "task_id": "0xS2",
+            "base": 20000,
+            "gross_shares": { "provider": 16000, "miner": 3000, "treasury": 1000 },
+            "slash_applied": { "provider": 30000, "to_treasury": 30000 },
+            "net_shares": { "provider": 0, "miner": 3000, "treasury": 31000 }
+          }
+        ],
+        "provider_totals": { "provT": 0 },
+        "miner_totals":    { "m4": 3000 },
+        "treasury_total": 31000,
+        "provider_debits": { "provT": 14000 },
+        "scale": { "numerator": 1, "denominator": 1 },
+        "notes": [
+          "Slash exceeds gross provider share by 14,000 atom; this is debited from provider stake."
+        ]
+      }
+    },
+    {
+      "name": "fund-cap-proportional-scale",
+      "epoch": { "id": 46, "start_height": 1400, "end_height": 1499, "epoch_cap": 600000 },
+      "input": {
+        "claims": [
+          { "task_id": "0xC1", "provider_id": "provA", "miner_id": "m1", "kind": "AI",      "units": 400 },
+          { "task_id": "0xC2", "provider_id": "provB", "miner_id": "m2", "kind": "QUANTUM", "units": 120 }
+        ]
+      },
+      "expect": {
+        "epoch_total_base": 1000000,
+        "epoch_total_scaled": 600000,
+        "scale": { "numerator": 3, "denominator": 5 },
+        "claim_splits": [
+          {
+            "task_id": "0xC1",
+            "base": 400000,
+            "scaled_base": 240000,
+            "shares": { "provider": 192000, "miner": 36000, "treasury": 12000 }
+          },
+          {
+            "task_id": "0xC2",
+            "base": 600000,
+            "scaled_base": 360000,
+            "shares": { "provider": 252000, "miner": 90000, "treasury": 18000 }
+          }
+        ],
+        "provider_totals": { "provA": 192000, "provB": 252000 },
+        "miner_totals":    { "m1": 36000,    "m2": 90000  },
+        "treasury_total": 30000
+      }
+    }
+  ]
+}

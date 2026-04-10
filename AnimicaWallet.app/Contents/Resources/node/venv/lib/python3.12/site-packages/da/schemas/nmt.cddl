@@ -1,0 +1,96 @@
+; Animica DA — Namespaced Merkle Tree (NMT) encodings
+; ---------------------------------------------------
+; Deterministic CBOR schema for NMT leaves and internal nodes used to derive
+; the DA commitment (NMT root). This file specifies the *wire shape* for
+; node/leaf descriptors referenced by proofs and tools. The hashing preimages
+; and invariants are stated as normative comments.
+;
+; See also:
+;   - da/schemas/blob.cddl                 : blob envelope & chunk layout
+;   - da/schemas/availability_proof.cddl   : DAS proof objects that carry branches
+;
+; Canonical rules:
+; - All maps use small integer keys to guarantee canonical CBOR ordering.
+; - Hash function is SHA3-256 over domain-separated preimages.
+; - Namespaces are unsigned integers; policy/range validation is out-of-band.
+
+; ---------------------------------- Types ------------------------------------
+
+; 32-byte SHA3-256 digest
+sha3_256 = bstr .size 32
+
+; Namespace identifier (policy/range constraints enforced elsewhere)
+namespace = uint
+
+; Closed namespace range covered by a node's subtree: [min, max]
+ns_range = {
+  0: min: namespace,
+  1: max: namespace,
+}
+
+; -------------------------------- Leaf Node ----------------------------------
+
+; Leaf descriptor used in proofs or tools. The actual leaf *preimage* used for
+; hashing is not CBOR but a byte-string concatenation:
+;
+;   leaf_preimage = 0x00 | enc_uvarint(ns) | enc_uvarint(len(data)) | data
+;
+; where:
+;   - 0x00 is the domain tag for leaves
+;   - enc_uvarint is unsigned LEB128 / varuint encoding (deterministic)
+;   - data is the original leaf payload (a contiguous slice produced by the
+;     blob encoder / erasure pipeline)
+;
+; The leaf hash is:
+;   leaf_hash = SHA3-256(leaf_preimage)
+;
+; This CBOR shape exposes (ns, size) and carries the resulting hash for use
+; inside proofs; it MAY also include `data` when a compact proof wishes to
+; inline the matched leaf (e.g., for inclusion tests).
+leaf = {
+  0: ns: namespace,
+  1: size: uint,          ; len(data) if data present, otherwise the expected size
+  2: hash: sha3_256,      ; == SHA3-256(0x00 || varint(ns) || varint(size) || data?)
+  3: data: bstr / nil,    ; OPTIONAL: present in "carrying" proofs; omitted in light proofs
+}
+
+; ------------------------------- Inner Node ----------------------------------
+
+; Internal node descriptor. Hash preimage is:
+;
+;   inner_preimage = 0x01 | left_hash | right_hash
+;                    | enc_uvarint(range.min) | enc_uvarint(range.max)
+;
+; inner_hash = SHA3-256(inner_preimage)
+;
+; Invariants:
+;   - range.min = min(left.range.min, right.range.min)
+;   - range.max = max(left.range.max, right.range.max)
+;   - Namespaces are non-decreasing left-to-right over leaves.
+inner = {
+  0: left: sha3_256,
+  1: right: sha3_256,
+  2: range: ns_range,
+  3: hash: sha3_256,      ; == SHA3-256(0x01 || left || right || varint(min) || varint(max))
+}
+
+; --------------------------------- Node Sum ----------------------------------
+
+; Union used when a branch needs to embed either form (rare — most branches
+; carry only sibling hashes). Present for completeness / tooling.
+node = { 0: 0, 1: leaf } / { 0: 1, 1: inner }
+
+; --------------------------------- Notes -------------------------------------
+
+; 1) The *commitment* (DA NMT root) is the `hash` of the tree's root `inner`
+;    node (or a `leaf` if the tree has a single leaf).
+; 2) Implementations MUST use the exact domain tags (0x00 for leaf, 0x01 for
+;    inner) and varint encoding described above when computing hashes.
+; 3) Namespace policies (reserved ranges, maxima) are defined in code and
+;    config (see da/constants.py) and are not encoded here.
+; 4) Proof shapes (branches, sample paths, namespace-range proofs) are defined
+;    in da/schemas/availability_proof.cddl.
+
+; --------------------------------- Root --------------------------------------
+
+$root = node
