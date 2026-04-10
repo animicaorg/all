@@ -14,6 +14,7 @@ logic.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from typing import Protocol, runtime_checkable
 
 from omni_sdk.tx.encode import pack_signed, sign_bytes
@@ -41,6 +42,45 @@ class SignedTx:
     raw_tx: bytes
 
 
+def _supports_fork_id(sign_tx: object) -> bool:
+    try:
+        sig = inspect.signature(sign_tx)
+    except (TypeError, ValueError):
+        # Builtins / dynamic callables: optimistically try fork_id first.
+        return True
+
+    for param in sig.parameters.values():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == "fork_id" and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
+
+
+def _call_sign_tx_compat(
+    sign_tx: object, message: bytes, chain_id: int, fork_id: int | None
+) -> bytes:
+    if not callable(sign_tx):  # pragma: no cover - protocol/runtime guard
+        raise TypeError("signer.sign_tx is not callable")
+
+    if _supports_fork_id(sign_tx):
+        try:
+            return sign_tx(message, chain_id, fork_id=fork_id)  # type: ignore[misc]
+        except TypeError as exc:
+            # Some wrappers obscure signatures; fall back only for fork_id arg mismatch.
+            err = str(exc)
+            if "fork_id" not in err:
+                raise
+            if "unexpected keyword" not in err and "positional arguments" not in err:
+                raise
+            return sign_tx(message, chain_id)  # type: ignore[misc]
+
+    return sign_tx(message, chain_id)  # type: ignore[misc]
+
+
 def sign_transaction(
     tx: object, signer: TxSigner, chain_id: int, fork_id: int | None = None
 ) -> SignedTx:
@@ -65,7 +105,7 @@ def sign_transaction(
     """
 
     msg = sign_bytes(tx)
-    sig = signer.sign_tx(msg, chain_id, fork_id=fork_id)
+    sig = _call_sign_tx_compat(signer.sign_tx, msg, chain_id, fork_id)
     raw = pack_signed(
         tx,
         signature=sig,

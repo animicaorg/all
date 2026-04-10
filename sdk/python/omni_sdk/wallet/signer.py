@@ -30,6 +30,7 @@ Notes
 from __future__ import annotations
 
 import hmac
+import importlib
 import logging
 import os
 from dataclasses import dataclass
@@ -282,49 +283,249 @@ def _call_uniform_verify(
     )
 
 
+def _as_bytes(value: Any) -> Optional[bytes]:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    return None
+
+
+def _extract_keypair(
+    value: Any, *, order_hint: Optional[Literal["sk_pk", "pk_sk"]] = None
+) -> Optional[Tuple[bytes, bytes]]:
+    """
+    Normalize keypair outputs to (secret_key, public_key).
+
+    Supported shapes:
+    - object with secret_key/public_key (or sk/pk) attributes
+    - dict with common key names
+    - 2-tuple/list in either order (with optional hint)
+    """
+
+    def _ordered(a: Any, b: Any) -> Optional[Tuple[bytes, bytes]]:
+        left = _as_bytes(a)
+        right = _as_bytes(b)
+        if left is None or right is None:
+            return None
+        if order_hint == "sk_pk":
+            return left, right
+        if order_hint == "pk_sk":
+            return right, left
+        # Heuristic for unknown tuple order:
+        # secret keys are usually >= public keys for supported PQ signatures.
+        if len(left) < len(right):
+            return right, left
+        return left, right
+
+    # Structured object/dataclass
+    for sk_attr, pk_attr in (("secret_key", "public_key"), ("sk", "pk")):
+        if hasattr(value, sk_attr) and hasattr(value, pk_attr):
+            pair = _ordered(getattr(value, sk_attr), getattr(value, pk_attr))
+            if pair is not None:
+                return pair
+
+    # Mapping-like
+    if isinstance(value, dict):
+        for sk_key, pk_key in (("secret_key", "public_key"), ("sk", "pk")):
+            if sk_key in value and pk_key in value:
+                pair = _ordered(value[sk_key], value[pk_key])
+                if pair is not None:
+                    return pair
+
+    # Raw tuple/list
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        pair = _ordered(value[0], value[1])
+        if pair is not None:
+            return pair
+
+    return None
+
+
+def _call_keygen_fn(
+    fn: Any,
+    *,
+    alg_name: AlgName,
+    seed: Optional[bytes],
+    allow_seedless_fallback: bool,
+    order_hint: Optional[Literal["sk_pk", "pk_sk"]] = None,
+) -> Optional[Tuple[bytes, bytes]]:
+    if not callable(fn):
+        return None
+
+    alg_variants: list[Any] = [alg_name, alg_name.replace("_", "-")]
+    try:
+        alg_variants.append(_lookup_alg_id(alg_name))
+    except Exception:
+        pass
+
+    # Keep ordering stable while removing duplicates.
+    seen: set[Tuple[type, Any]] = set()
+    deduped: list[Any] = []
+    for item in alg_variants:
+        key = (type(item), item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    calls: list[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
+
+    for alg in deduped:
+        if seed is not None:
+            calls.extend(
+                [
+                    ((), {"alg": alg, "seed": seed}),
+                    ((), {"name": alg, "seed": seed}),
+                    ((), {"algorithm": alg, "seed": seed}),
+                    ((), {"kind": "sig", "alg": alg, "seed": seed}),
+                    ((alg, seed), {}),
+                ]
+            )
+            if allow_seedless_fallback:
+                calls.extend(
+                    [
+                        ((), {"alg": alg}),
+                        ((), {"name": alg}),
+                        ((), {"algorithm": alg}),
+                        ((), {"kind": "sig", "alg": alg}),
+                        ((alg,), {}),
+                    ]
+                )
+        else:
+            calls.extend(
+                [
+                    ((), {"alg": alg}),
+                    ((), {"name": alg}),
+                    ((), {"algorithm": alg}),
+                    ((), {"kind": "sig", "alg": alg}),
+                    ((alg,), {}),
+                ]
+            )
+
+    if seed is not None:
+        calls.extend([((), {"seed": seed}), ((seed,), {})])
+    if allow_seedless_fallback:
+        calls.append(((), {}))
+
+    for args, kwargs in calls:
+        try:
+            out = fn(*args, **kwargs)  # type: ignore[misc]
+        except TypeError:
+            continue
+        except Exception:
+            continue
+        pair = _extract_keypair(out, order_hint=order_hint)
+        if pair is not None:
+            return pair
+    return None
+
+
+def _load_module(name: str) -> Optional[Any]:
+    try:
+        return importlib.import_module(name)
+    except Exception:
+        return None
+
+
 def _uniform_keygen(alg_name: AlgName, seed: Optional[bytes]) -> Tuple[bytes, bytes]:
     """
     Use pq.py.keygen to derive a keypair for a signature algorithm, optionally
     seeded (deterministic).
     """
-    _, pq_keygen, _, _ = _import_pq()
+    pq_keygen = None
+    try:
+        _, pq_keygen, _, _ = _import_pq()
+    except Exception:
+        pq_keygen = _load_module("pq.py.keygen")
 
-    # Preferred forms to try:
-    candidates = [
-        # keypair_sig(alg=..., seed=...) -> (sk, pk)
-        ("keypair_sig", dict(alg=alg_name, seed=seed)),
-        # keypair(kind='sig', alg=..., seed=...)
-        ("keypair", dict(kind="sig", alg=alg_name, seed=seed)),
-        # keypair(alg=..., seed=...)
-        ("keypair", dict(alg=alg_name, seed=seed)),
-        # keypair_sig(name=..., seed=...)
-        ("keypair_sig", dict(name=alg_name, seed=seed)),
-    ]
-    for func_name, kwargs in candidates:
-        fn = getattr(pq_keygen, func_name, None)
-        if callable(fn):
-            try:
-                sk, pk = fn(**kwargs)  # type: ignore[misc]
-                if isinstance(sk, (bytes, bytearray)) and isinstance(
-                    pk, (bytes, bytearray)
-                ):
-                    return bytes(sk), bytes(pk)
-            except TypeError:
-                continue
+    # 1) Preferred pq.py keygen helpers (tuple/object result in either order).
+    if pq_keygen is not None:
+        for func_name in ("keypair_sig", "keypair", "keygen"):
+            pair = _call_keygen_fn(
+                getattr(pq_keygen, func_name, None),
+                alg_name=alg_name,
+                seed=seed,
+                allow_seedless_fallback=(seed is None),
+                order_hint="sk_pk",
+            )
+            if pair is not None:
+                return pair
 
-    # Positional fallbacks
-    for func_name in ("keypair_sig", "keypair"):
-        fn = getattr(pq_keygen, func_name, None)
-        if callable(fn):
-            for args in ((alg_name, seed), (alg_name,), (None, alg_name)):
+        # keygen_sig may return a structured object (KeyPair with .secret_key/.public_key).
+        pair = _call_keygen_fn(
+            getattr(pq_keygen, "keygen_sig", None),
+            alg_name=alg_name,
+            seed=seed,
+            allow_seedless_fallback=(seed is None),
+            order_hint=None,
+        )
+        if pair is not None:
+            return pair
+
+    # 2) pq.py backend selector (select_sig(...).backend.keypair(seed)).
+    pq_algs = _load_module("pq.py.algs")
+    if pq_algs is not None and hasattr(pq_algs, "select_sig"):
+        try:
+            selected = pq_algs.select_sig(alg_name)  # type: ignore[attr-defined]
+            pair = _call_keygen_fn(
+                getattr(selected.backend, "keypair", None),
+                alg_name=alg_name,
+                seed=seed,
+                allow_seedless_fallback=(seed is None),
+                order_hint="sk_pk",
+            )
+            if pair is not None:
+                return pair
+        except Exception:
+            pass
+
+    # 3) animica.pq compatibility surface.
+    animica_pq = _load_module("animica.pq")
+    if animica_pq is not None:
+        for func_name in ("keygen_sig", "keygen"):
+            pair = _call_keygen_fn(
+                getattr(animica_pq, func_name, None),
+                alg_name=alg_name,
+                seed=seed,
+                allow_seedless_fallback=(seed is None),
+                order_hint=None,
+            )
+            if pair is not None:
+                return pair
+
+        # Legacy animica.pq signature surface is dilithium-only and returns (pk, sk).
+        if alg_name == "dilithium3":
+            pair = _call_keygen_fn(
+                getattr(animica_pq, "sig_keygen", None),
+                alg_name=alg_name,
+                seed=seed,
+                allow_seedless_fallback=(seed is None),
+                order_hint="pk_sk",
+            )
+            if pair is not None:
+                return pair
+
+            get_backend = getattr(animica_pq, "get_backend", None)
+            if callable(get_backend):
                 try:
-                    sk, pk = fn(*[a for a in args if a is not None])  # type: ignore[misc]
-                    if isinstance(sk, (bytes, bytearray)) and isinstance(
-                        pk, (bytes, bytearray)
-                    ):
-                        return bytes(sk), bytes(pk)
-                except TypeError:
-                    continue
+                    backend_or_tuple = get_backend()
+                    backend = (
+                        backend_or_tuple[0]
+                        if isinstance(backend_or_tuple, (tuple, list))
+                        else backend_or_tuple
+                    )
+                    pair = _call_keygen_fn(
+                        getattr(backend, "keygen", None),
+                        alg_name=alg_name,
+                        seed=seed,
+                        allow_seedless_fallback=(seed is None),
+                        order_hint="pk_sk",
+                    )
+                    if pair is not None:
+                        return pair
+                except Exception:
+                    pass
 
     raise RuntimeError(
         "pq.keygen API not recognized; please update the SDK or pq module."

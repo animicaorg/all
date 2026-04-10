@@ -65,6 +65,37 @@ def test_deploy_counter_example_dry_run() -> None:
     assert '"dryRun": true' in res.stdout
 
 
+def test_deploy_counter_example_dry_run_with_seed_creates_signer() -> None:
+    root = _repo_root()
+    env = os.environ.copy()
+    env["ANIMICA_UNSAFE_PQ_FAKE"] = "1"
+    env["ANIMICA_ALLOW_PQ_PURE_FALLBACK"] = "1"
+    cmd = [
+        sys.executable,
+        "sdk/python/examples/deploy_counter.py",
+        "--manifest",
+        "vm_py/examples/counter/manifest.json",
+        "--code",
+        "vm_py/examples/counter/contract.py",
+        "--alg",
+        "sphincs_shake_128s",
+        "--seed-hex",
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        "--dry-run",
+    ]
+    res = subprocess.run(
+        cmd,
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    assert '"dryRun": true' in res.stdout
+    assert '"sender": "anim1' in res.stdout
+
+
 def test_omni_sdk_deploy_cli_dry_run() -> None:
     root = _repo_root()
     env = os.environ.copy()
