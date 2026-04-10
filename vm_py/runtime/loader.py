@@ -30,12 +30,14 @@ Optional fields we accept but do not require:
 
 from __future__ import annotations
 
-import io
+import ast
 import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+
+from . import manifest as manifest_utils
 
 # --- Errors -----------------------------------------------------------------
 
@@ -126,7 +128,7 @@ def _call_first(obj: Any, names: Iterable[str], *args, **kwargs):
                 return fn(*args, **kwargs)
             except BaseException as e:  # surface first failure
                 last_err = e
-                break
+                continue
     if last_err:
         raise last_err
     raise AttributeError(f"none of {tuple(names)} found on {obj}")
@@ -293,67 +295,33 @@ class ContractRuntime:
 
 # --- Loading & compiling -----------------------------------------------------
 
-ManifestLike = Union[str, Path, Dict[str, Any]]
+ManifestLike = manifest_utils.ManifestLike
 
 
 def load_manifest(m: ManifestLike) -> Dict[str, Any]:
-    """Load a manifest from path or return a shallow-copied dict."""
-    if isinstance(m, (str, Path)):
-        p = Path(m)
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except FileNotFoundError as e:
-            raise ValidationError(f"manifest not found: {p}") from e
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"invalid JSON in manifest {p}: {e}") from e
-        if not isinstance(data, dict):
-            raise ValidationError("manifest root must be an object")
-        return dict(data)
-    if isinstance(m, dict):
-        return dict(m)
-    raise ValidationError(f"unsupported manifest input: {type(m).__name__}")
+    """Load a manifest from path or mapping (compat wrapper)."""
+    try:
+        man, _path = manifest_utils.load_manifest_input(m)
+        return man
+    except Exception as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 def _read_sources(
-    manifest: Dict[str, Any], base: Optional[Path]
+    manifest: Dict[str, Any],
+    *,
+    base: Optional[Path],
+    manifest_path: Optional[Path],
 ) -> Tuple[str, List[Path]]:
-    """
-    Returns (concatenated_source, file_list). If multiple files are provided,
-    they are concatenated in the given order with file markers (non-semantic).
-    """
-    base = Path(base or ".").resolve()
-    srcs: List[str] = []
-    paths: List[Path] = []
-
-    if "code" in manifest and isinstance(manifest["code"], str):
-        # Inline source string (tests/demos)
-        srcs.append(str(manifest["code"]))
-    elif "source" in manifest and isinstance(manifest["source"], str):
-        p = (base / manifest["source"]).resolve()
-        paths.append(p)
-        srcs.append(p.read_text(encoding="utf-8"))
-    elif "sources" in manifest and isinstance(manifest["sources"], list):
-        for item in manifest["sources"]:
-            if not isinstance(item, str):
-                raise ValidationError("manifest.sources must be a list of strings")
-            p = (base / item).resolve()
-            paths.append(p)
-            srcs.append(p.read_text(encoding="utf-8"))
-    else:
-        raise ValidationError(
-            "manifest must contain 'source' (str) or 'sources' (list) or 'code' (str)"
+    try:
+        resolved = manifest_utils.resolve_contract_source(
+            manifest,
+            manifest_path=manifest_path,
+            base_dir=base,
         )
-
-    if len(srcs) == 1:
-        return srcs[0], paths
-
-    # Concatenate with simple filename banners to help diagnostics (comments).
-    out = io.StringIO()
-    for i, (p, s) in enumerate(zip(paths, srcs), 1):
-        out.write(f"# ---- file[{i}]: {p} ----\n")
-        out.write(s)
-        out.write("\n")
-    return out.getvalue(), paths
+    except Exception as exc:
+        raise ValidationError(str(exc)) from exc
+    return resolved.source_text, list(resolved.source_paths)
 
 
 def _sha3_256_hex(data: bytes) -> str:
@@ -383,6 +351,87 @@ def _best_effort_exports(manifest: Dict[str, Any], ir_module: Any) -> List[str]:
     return []
 
 
+def _lower_to_ir_module(source: str, *, name_hint: str) -> Any:
+    if _lower is None:
+        raise CompileError("vm_py.compiler.ast_lower is not available")
+
+    parsed = ast.parse(source, filename=name_hint)
+    errors: List[str] = []
+
+    ast_candidates = (
+        "lower_to_ir",
+        "lower_from_ast",
+        "lower_ast",
+        "lower_module",
+        "lower",
+        "compile",
+    )
+    for nm in ast_candidates:
+        fn = getattr(_lower, nm, None)
+        if not callable(fn):
+            continue
+        attempts = (
+            lambda: fn(parsed, filename=name_hint),  # type: ignore[misc]
+            lambda: fn(parsed, name=name_hint),  # type: ignore[misc]
+            lambda: fn(parsed, name_hint),  # type: ignore[misc]
+            lambda: fn(parsed),  # type: ignore[misc]
+        )
+        for attempt in attempts:
+            try:
+                return attempt()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{nm}(ast): {exc}")
+
+    source_candidates = (
+        "lower_source",
+        "compile_source",
+        "lower",
+        "compile",
+    )
+    for nm in source_candidates:
+        fn = getattr(_lower, nm, None)
+        if not callable(fn):
+            continue
+        attempts = (
+            lambda: fn(source, name=name_hint),  # type: ignore[misc]
+            lambda: fn(source, filename=name_hint),  # type: ignore[misc]
+            lambda: fn(source),  # type: ignore[misc]
+        )
+        for attempt in attempts:
+            try:
+                return attempt()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{nm}(source): {exc}")
+
+    raise CompileError(
+        "unable to lower source to IR; attempted helpers: "
+        + "; ".join(errors[:8] or ["<none>"])
+    )
+
+
+def build_source_bundle_bytes(
+    *,
+    source: str,
+    name_hint: str,
+    manifest: Optional[Dict[str, Any]] = None,
+    reason: Optional[str] = None,
+) -> bytes:
+    """
+    Deterministic final fallback bytes when compiler paths are unavailable.
+    """
+    payload: Dict[str, Any] = {
+        "format": "animica.pyexec.bundle.v1",
+        "name": name_hint,
+        "source": source,
+    }
+    if manifest is not None:
+        payload["manifest_name"] = manifest.get("name")
+        payload["manifest_version"] = manifest.get("version")
+    if reason:
+        payload["reason"] = reason
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 def compile_source_to_ir(
     source: str, name_hint: str = "contract"
 ) -> Tuple[bytes, Any, int]:
@@ -399,9 +448,7 @@ def compile_source_to_ir(
                 fn(source)  # may raise ValidationError
                 break
     # 2) Lower to IR
-    ir_mod = _call_first(
-        _lower, ("lower", "lower_ast", "compile"), source, name=name_hint
-    )
+    ir_mod = _lower_to_ir_module(source, name_hint=name_hint)
     # 3) Typecheck (if present)
     if _typecheck is not None:
         _call_first(_typecheck, ("typecheck", "check", "validate"), ir_mod)
@@ -431,15 +478,15 @@ def compile_from_manifest(
     """
     High-level compile: manifest → CompileResult
     """
-    man = load_manifest(manifest)
+    man, manifest_path = manifest_utils.load_manifest_input(manifest)
     base_path = (
         Path(base_dir)
         if base_dir is not None
         else (
-            Path(manifest).parent if isinstance(manifest, (str, Path)) else Path.cwd()
+            manifest_path.parent if manifest_path is not None else Path.cwd()
         )
     )
-    source, files = _read_sources(man, base_path)
+    source, files = _read_sources(man, base=base_path, manifest_path=manifest_path)
 
     _activate_sandbox()
 
@@ -457,6 +504,96 @@ def compile_from_manifest(
         exports=exports,
         abi=abi,
     )
+
+
+def compile_manifest(
+    manifest: ManifestLike, base_dir: Optional[Union[str, Path]] = None
+) -> Tuple[bytes, Dict[str, Any], Dict[str, Any]]:
+    """
+    Compatibility helper used by vm_py CLI paths.
+    Returns (ir_bytes, abi, meta).
+    """
+    man, manifest_path = manifest_utils.load_manifest_input(manifest)
+    resolved = manifest_utils.resolve_contract_source(
+        man,
+        manifest_path=manifest_path,
+        base_dir=base_dir,
+    )
+    name_hint = str(man.get("name") or (resolved.entry or "contract"))
+    abi = man.get("abi") if isinstance(man.get("abi"), dict) else {}
+
+    try:
+        compiled = compile_from_manifest(
+            manifest_path if manifest_path is not None else man,
+            base_dir=base_dir,
+        )
+        return (
+            compiled.ir_bytes,
+            abi,
+            {
+                "pipeline": "loader.compile_from_manifest",
+                "code_hash": compiled.code_hash,
+                "gas_upper_bound": compiled.gas_upper_bound,
+                "exports": list(compiled.exports),
+            },
+        )
+    except Exception as exc:
+        # Deterministic source-bundle fallback keeps CLI workflows usable even
+        # when lower-level compiler APIs drift.
+        fallback = build_source_bundle_bytes(
+            source=resolved.source_text,
+            name_hint=name_hint,
+            manifest=man,
+            reason=str(exc),
+        )
+        return (
+            fallback,
+            abi,
+            {
+                "pipeline": "loader.source_bundle_fallback",
+                "fallback": True,
+                "compile_error": str(exc),
+                "source_field": resolved.selected_field,
+                "source_path": str(resolved.source_paths[0])
+                if resolved.source_paths
+                else None,
+            },
+        )
+
+
+def run_call(
+    manifest: ManifestLike,
+    method: str,
+    args: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Execute a contract call directly from resolved source (pyexec fallback path).
+    Returns {"result": ..., "meta": {...}}.
+    """
+    call_args = list(args or [])
+    man, manifest_path = manifest_utils.load_manifest_input(manifest)
+    resolved = manifest_utils.resolve_contract_source(man, manifest_path=manifest_path)
+
+    _activate_sandbox()
+    scope: Dict[str, Any] = {"__name__": "__animica_vm_contract__"}
+    exec(resolved.source_text, scope)  # noqa: S102
+    fn = scope.get(method)
+    if not callable(fn):
+        raise ValidationError(
+            f"method '{method}' not found in contract source (resolved via {resolved.selected_field})"
+        )
+
+    out = fn(*call_args)
+    return {
+        "result": out,
+        "meta": {
+            "pipeline": "loader.run_call.pyexec",
+            "source_field": resolved.selected_field,
+            "source_path": str(resolved.source_paths[0])
+            if resolved.source_paths
+            else None,
+        },
+    }
 
 
 def make_runtime(compiled: CompileResult) -> ContractRuntime:
@@ -477,9 +614,12 @@ def load_from_manifest(
 __all__ = [
     "CompileResult",
     "ContractRuntime",
+    "build_source_bundle_bytes",
+    "compile_manifest",
     "compile_source_to_ir",
     "compile_from_manifest",
     "make_runtime",
     "load_manifest",
     "load_from_manifest",
+    "run_call",
 ]

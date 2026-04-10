@@ -90,6 +90,35 @@ JsonDict = Dict[str, Any]
 # --- Manifest helpers ---------------------------------------------------------
 
 
+def _coerce_abi_input(abi_value: Any) -> Any:
+    """
+    Accept both SDK ABI list format and manifest-style ABI dict:
+      {"functions":[...], "events":[...], ...}
+    """
+    if not isinstance(abi_value, dict):
+        return abi_value
+    if {"entries", "functions", "events"} <= set(abi_value.keys()):
+        return abi_value
+
+    funcs = abi_value.get("functions", [])
+    events = abi_value.get("events", [])
+    if not isinstance(funcs, list) or not isinstance(events, list):
+        return abi_value
+
+    entries = []
+    for fn in funcs:
+        if isinstance(fn, Mapping):
+            item = dict(fn)
+            item.setdefault("type", "function")
+            entries.append(item)
+    for ev in events:
+        if isinstance(ev, Mapping):
+            item = dict(ev)
+            item.setdefault("type", "event")
+            entries.append(item)
+    return entries
+
+
 def normalize_manifest(manifest: Mapping[str, Any]) -> JsonDict:
     """
     Basic manifest normalization:
@@ -105,7 +134,7 @@ def normalize_manifest(manifest: Mapping[str, Any]) -> JsonDict:
     if "abi" not in m:
         raise AbiError("manifest missing required 'abi' field")
     try:
-        m["abi"] = normalize_abi(m["abi"])
+        m["abi"] = normalize_abi(_coerce_abi_input(m["abi"]))
     except Exception as e:
         raise AbiError(f"manifest.abi normalization failed: {e}") from e
 
@@ -181,19 +210,19 @@ def build_deploy_tx(
             gas_limit=int(gl),
             max_fee=int(max_fee),
             chain_id=int(chain_id),
-            package=package_bytes,  # expected param name in our builder
+            deploy_data=package_bytes,
         )
 
-    # Fallback: use call() with to=None, data=package
-    return tx_build.call(
+    # Fallback: construct tx explicitly (contract creation => to=None).
+    return tx_build.make_tx(
         from_addr=from_addr,
-        to_addr=None,
-        data=package_bytes,
+        to=None,
         nonce=int(nonce),
+        value=0,
+        data=package_bytes,
         gas_limit=int(gl),
         max_fee=int(max_fee),
         chain_id=int(chain_id),
-        value=0,
     )
 
 

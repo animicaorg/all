@@ -56,9 +56,9 @@ pip install -e .
 ls vm_py/examples/counter/
 # contract.py, manifest.json
 
-# 3) (Optional) Compile to IR and inspect it
-python -m vm_py.cli.compile vm_py/examples/counter/contract.py --out /tmp/counter.ir
-python -m vm_py.cli.inspect_ir /tmp/counter.ir
+# 3) (Optional) Compile from manifest and inspect it
+python -m vm_py.cli.compile --manifest vm_py/examples/counter/manifest.json --out /tmp/counter.ir
+python -m vm_py.cli.inspect_ir --ir /tmp/counter.ir
 
 # 4) Run a read-only call (no state write)
 python -m vm_py.cli.run \
@@ -66,20 +66,20 @@ python -m vm_py.cli.run \
   --call get
 # → prints JSON result: {"ok": true, "return": 0, "gasUsed": ...}
 
-# 5) Run a state-changing call (increment), then read again
+# 5) Run state-changing calls
 python -m vm_py.cli.run \
   --manifest vm_py/examples/counter/manifest.json \
-  --call inc \
-  --args '{}'
+  --call set \
+  --args '[5]'
 
 python -m vm_py.cli.run \
   --manifest vm_py/examples/counter/manifest.json \
-  --call get
-# → returns 1 (and increases deterministically if run repeatedly in same ephemeral state)
+  --call inc
 
 Notes
-	•	The CLI maintains an in-process ephemeral state for convenience in quickstarts; node integration uses the execution adapter and persisted state DB.
-	•	--args expects JSON that matches the contract ABI schema in the manifest. For byte strings, pass hex like "0xdeadbeef".
+	•	Relative source paths in manifests are resolved relative to the manifest file directory.
+	•	Supported manifest source fields are source, entry, sources, code, and path.
+	•	--args expects a JSON array matching the function signature. For byte strings, pass hex like "0xdeadbeef".
 
 ⸻
 

@@ -1,150 +1,74 @@
-"""
-omni_sdk.cli.deploy
-===================
-
-Typer sub-commands to deploy a Python-VM contract package to an Animica node.
-
-Typical usage
--------------
-    $ omni-sdk deploy package \
-        --manifest ./examples/counter/manifest.json \
-        --code ./examples/counter/contract.py \
-        --seed-hex 0123456789abcdef... \
-        --alg dilithium3 \
-        --wait
-
-This command:
-1) Loads the manifest JSON and contract source,
-2) Builds a deploy transaction (estimating gas if needed),
-3) Signs it with a PQ signer (Dilithium3 or SPHINCS+),
-4) Submits it via JSON-RPC and optionally waits for the receipt.
-
-The command inherits global flags from the root CLI (see `omni-sdk --help`):
-- --rpc / OMNI_SDK_RPC_URL
-- --chain-id / OMNI_CHAIN_ID
-- --timeout / OMNI_SDK_HTTP_TIMEOUT
-"""
-
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import typer
 
-from ..address import Address
-from ..rpc.http import RpcClient  # required
-from ..tx.build import build_deploy_tx  # helpers for deploy construction
-from ..tx.build import estimate_deploy_gas
-from ..tx.encode import encode_tx_cbor  # CBOR encoder for raw tx submission
-from ..tx.send import await_receipt, send_raw_transaction
-from ..wallet.signer import Signer  # PQ signer interface
+from ..address import from_pubkey
+from ..contracts.deployer import build_deploy_tx, deploy_package, make_package_bytes
+from ..rpc.http import RpcClient
+from ..tx import encode as tx_encode
+from ..wallet.signer import PQSigner
 
-# Optional: content-addressed artifact writes
-try:
-    from ..filestore import atomic_write, ensure_dir, write_blob_ca
-except Exception:  # pragma: no cover
-    ensure_dir = None
-    atomic_write = None
-    write_blob_ca = None
-
-# For access to root context (rpc/chain_id/timeout) set by main callback.
 try:
     from .main import Ctx  # type: ignore
 except Exception:  # pragma: no cover
-    Ctx = object  # fallback for type hints only
+    Ctx = object
 
 app = typer.Typer(help="Deploy contracts and packages")
 
 __all__ = ["app"]
 
 
-# ------------------------------ helpers --------------------------------------
-
-
 def _load_manifest(path: Path) -> Dict[str, Any]:
     try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError as e:
-        raise typer.BadParameter(f"Manifest not found: {path}") from e
-    try:
-        return json.loads(text)
-    except Exception as e:
-        raise typer.BadParameter(f"Manifest is not valid JSON: {path}") from e
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(f"manifest not found: {path}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise typer.BadParameter(f"invalid JSON in manifest: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise typer.BadParameter("manifest must be a JSON object")
+    return data
 
 
 def _load_code(path: Path) -> bytes:
     try:
         return path.read_bytes()
-    except FileNotFoundError as e:
-        raise typer.BadParameter(f"Code file not found: {path}") from e
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(f"code file not found: {path}") from exc
 
 
-def _make_signer(alg: str, seed_hex: Optional[str]) -> Signer:
-    if not seed_hex:
-        # Allow env var as a safer default than interactive prompt for automation
-        seed_hex = os.environ.get("OMNI_SDK_SEED_HEX")
-    if not seed_hex:
-        seed_hex = typer.prompt(
-            "Enter signer seed as hex (dev/test only!)",
-            hide_input=True,
-            confirmation_prompt=False,
-        )
-    try:
-        seed = bytes.fromhex(seed_hex.strip().replace("0x", ""))
-    except Exception as e:
+def _parse_seed_hex(seed_hex: Optional[str]) -> bytes:
+    resolved = seed_hex or os.environ.get("OMNI_SDK_SEED_HEX")
+    if not resolved:
         raise typer.BadParameter(
-            "seed-hex must be raw hex bytes (with or without 0x prefix)"
-        ) from e
-    return Signer.from_seed(seed, alg=alg)  # type: ignore[attr-defined]
-
-
-def _store_artifacts(
-    out_dir: Optional[Path], *, tx_cbor: bytes, receipt: Optional[Dict[str, Any]] = None
-) -> None:
-    if not out_dir:
-        return
-    if ensure_dir is None or atomic_write is None:
-        # filestore not available; write minimal files
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "tx.cbor").write_bytes(tx_cbor)
-        if receipt is not None:
-            (out_dir / "receipt.json").write_text(
-                json.dumps(receipt, indent=2), encoding="utf-8"
-            )
-        return
-
-    ensure_dir(out_dir)
-    atomic_write(out_dir / "tx.cbor", tx_cbor)
-    if receipt is not None:
-        atomic_write(
-            out_dir / "receipt.json", json.dumps(receipt, indent=2).encode("utf-8")
+            "missing seed: pass --seed-hex or set OMNI_SDK_SEED_HEX (dev/test only)"
         )
-    # Also store CBOR under a content-addressed path for reproducibility (best-effort)
     try:
-        write_blob_ca(out_dir / "ca", tx_cbor, algo="sha3-256", ext="cbor")
-    except Exception:
-        pass  # optional
+        return bytes.fromhex(resolved.strip().removeprefix("0x"))
+    except Exception as exc:  # noqa: BLE001
+        raise typer.BadParameter("--seed-hex must be hex (with or without 0x)") from exc
 
 
-def _summarize(receipt: Optional[Dict[str, Any]], tx_hash: str) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {"txHash": tx_hash}
-    if receipt:
-        summary["status"] = receipt.get("status")
-        summary["blockNumber"] = receipt.get("blockNumber")
-        summary["gasUsed"] = receipt.get("gasUsed")
-        if "contractAddress" in receipt and receipt["contractAddress"]:
-            summary["contractAddress"] = receipt["contractAddress"]
-    return summary
-
-
-# ------------------------------ CLI command ----------------------------------
+def _resolve_nonce(
+    rpc: RpcClient,
+    sender: str,
+    override: Optional[int],
+) -> int:
+    if override is not None:
+        return int(override)
+    try:
+        return int(rpc.request("state.getNonce", [sender]))
+    except Exception as exc:  # noqa: BLE001
+        raise typer.BadParameter(f"failed to fetch sender nonce: {exc}") from exc
 
 
 @app.command("package")
-def deploy_package(
+def deploy_package_cmd(
     ctx: typer.Context,
     manifest: Path = typer.Option(
         ...,
@@ -164,93 +88,120 @@ def deploy_package(
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Path to contract source (e.g., contract.py) or IR bytes",
+        help="Path to contract source or IR blob",
     ),
     seed_hex: Optional[str] = typer.Option(
         None,
         "--seed-hex",
-        help="Signer seed as hex (dev/test only; can use OMNI_SDK_SEED_HEX)",
+        help="Signer seed as hex (dev/test only; fallback OMNI_SDK_SEED_HEX)",
+    ),
+    sender: Optional[str] = typer.Option(
+        None,
+        "--sender",
+        help="Optional sender address override (dry-run mode only)",
     ),
     alg: str = typer.Option(
         "dilithium3",
         "--alg",
         help="PQ signature algorithm: dilithium3 | sphincs_shake_128s",
     ),
-    gas_price: Optional[int] = typer.Option(
-        None, "--gas-price", help="Optional gas price override"
-    ),
-    gas_limit: Optional[int] = typer.Option(
-        None, "--gas-limit", help="Optional gas limit override"
-    ),
-    nonce: Optional[int] = typer.Option(
-        None, "--nonce", help="Optional sender nonce override"
-    ),
+    max_fee: int = typer.Option(1, "--max-fee", help="Transaction max_fee"),
+    gas_limit: Optional[int] = typer.Option(None, "--gas-limit"),
+    nonce: Optional[int] = typer.Option(None, "--nonce"),
     wait: bool = typer.Option(
-        True, "--wait/--no-wait", help="Wait for transaction receipt."
+        True,
+        "--wait/--no-wait",
+        help="Wait for receipt before returning",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Build deploy transaction locally without submitting to RPC",
+    ),
+    timeout_s: float = typer.Option(
+        120.0,
+        "--wait-seconds",
+        help="Receipt wait timeout (seconds)",
     ),
     out_dir: Optional[Path] = typer.Option(
-        None, "--out-dir", help="Directory to store tx/receipt artifacts"
+        None,
+        "--out-dir",
+        help="Optional output dir for deploy_result.json",
     ),
 ) -> None:
     """
-    Deploy a contract package (manifest + code). Prints a JSON summary with
-    txHash and (when available) contractAddress.
+    Deploy a manifest+code contract package and print a JSON summary.
     """
-    # Resolve environment from root callback
     c: Ctx = ctx.obj  # type: ignore[assignment]
-    client = RpcClient(c.rpc, timeout=c.timeout)
-
-    # Load inputs
     manifest_obj = _load_manifest(manifest)
     code_bytes = _load_code(code)
 
-    # Build signer
-    signer = _make_signer(alg, seed_hex)
-    sender_addr = Address.from_public_key(signer.public_key_bytes(), alg=signer.alg_id).bech32  # type: ignore
+    signer: Optional[PQSigner]
+    if dry_run and sender:
+        signer = None
+        sender_addr = sender
+    else:
+        seed = _parse_seed_hex(seed_hex)
+        signer = PQSigner.from_seed(alg, seed=seed)
+        sender_addr = signer.address or from_pubkey(
+            signer.public_key, alg_id=signer.alg_id, hrp="anim"
+        )
 
-    # Construct deploy tx (estimate gas if not provided)
-    if gas_limit is None:
-        try:
-            gas_est = estimate_deploy_gas(
-                client, manifest_obj, code_bytes, sender=sender_addr
-            )
-            gas_limit = (
-                int(gas_est["gasLimit"])
-                if isinstance(gas_est, dict) and "gasLimit" in gas_est
-                else int(gas_est)
-            )
-        except Exception:
-            # Fallback to a conservative default if estimate path is unavailable
-            gas_limit = 1_000_000
+    if dry_run:
+        nonce_value = int(nonce if nonce is not None else 0)
+        package = make_package_bytes(manifest=manifest_obj, code=code_bytes)
+        tx = build_deploy_tx(
+            from_addr=sender_addr,
+            chain_id=int(c.chain_id),
+            nonce=nonce_value,
+            max_fee=int(max_fee),
+            package_bytes=package,
+            gas_limit=gas_limit,
+        )
+        sign_bytes = tx_encode.sign_bytes(tx)
+        summary = {
+            "dryRun": True,
+            "sender": sender_addr,
+            "nonce": nonce_value,
+            "chainId": int(c.chain_id),
+            "packageBytes": len(package),
+            "signBytesLen": len(sign_bytes),
+        }
+        typer.echo(json.dumps(summary, indent=2))
+        return
 
-    tx = build_deploy_tx(
-        chain_id=c.chain_id,
-        sender=sender_addr,
+    rpc = RpcClient(c.rpc, timeout=c.timeout)
+    nonce_value = _resolve_nonce(rpc, sender_addr, nonce)
+
+    if signer is None:
+        raise typer.BadParameter("signer is required unless --dry-run is used")
+
+    contract_address, receipt = deploy_package(
+        rpc=rpc,
+        signer=signer,
         manifest=manifest_obj,
         code=code_bytes,
-        gas_price=gas_price,
+        chain_id=int(c.chain_id),
+        nonce=nonce_value,
+        max_fee=int(max_fee),
         gas_limit=gas_limit,
-        nonce=nonce,
+        await_receipt=wait,
+        timeout_s=float(timeout_s),
     )
 
-    # Sign & encode
-    sign_bytes = tx.sign_bytes  # provided by build_deploy_tx dataclass
-    sig = signer.sign(sign_bytes, domain="tx")  # domain-separated signing
-    tx.attach_signature(alg_id=signer.alg_id, signature=sig)  # mutate/return self
-    raw = encode_tx_cbor(tx)
+    summary: Dict[str, Any] = {
+        "sender": sender_addr,
+        "txHash": receipt.get("txHash"),
+        "status": receipt.get("status"),
+        "gasUsed": receipt.get("gasUsed"),
+        "blockNumber": receipt.get("blockNumber"),
+        "contractAddress": contract_address or receipt.get("contractAddress"),
+    }
 
-    # Submit
-    tx_hash = send_raw_transaction(client, raw)
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "deploy_result.json").write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
 
-    receipt: Optional[Dict[str, Any]] = None
-    if wait:
-        receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 3600.0))
-
-    # Persist artifacts if requested
-    _store_artifacts(out_dir, tx_cbor=raw, receipt=receipt)
-
-    # Print summary JSON
-    typer.echo(json.dumps(_summarize(receipt, tx_hash), indent=2))
-
-
-# ------------------------------ module end -----------------------------------
+    typer.echo(json.dumps(summary, indent=2))

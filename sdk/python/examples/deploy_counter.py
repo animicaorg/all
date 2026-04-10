@@ -1,25 +1,11 @@
 #!/usr/bin/env python3
 """
-deploy_counter.py — End-to-end example using omni_sdk (Python)
+Deploy the canonical counter example and optionally call it.
 
-What this script does:
-1) Loads the canonical Counter example (manifest + contract.py).
-2) Builds and signs a *deploy* transaction with a PQ signer (Dilithium3 by default).
-3) Submits it via JSON-RPC and waits for the receipt.
-4) Calls `get` (read/simulate), then sends a signed `inc` transaction, waits for the receipt,
-   and calls `get` again to show the increment.
-
-Requirements
-------------
-- A node exposing JSON-RPC over HTTP and WebSocket (devnet/testnet is fine).
-- The SDK installed (editable is OK): `python -m pip install -e ./sdk/python`
-
-Defaults can be overridden via flags or environment:
-
-  OMNI_SDK_RPC_URL        (default: http://127.0.0.1:8545)
-  OMNI_CHAIN_ID           (default: 1)
-  OMNI_SDK_HTTP_TIMEOUT   (default: 30)
-  OMNI_SDK_SEED_HEX       (dev/test only; hex seed for signer)
+This script demonstrates the current SDK surface:
+  - deploy via `omni_sdk.contracts.deployer.deploy_package`
+  - send state-changing calls via tx build/encode/send helpers
+  - read via simulate RPC methods when available
 """
 
 from __future__ import annotations
@@ -29,242 +15,327 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from omni_sdk.address import Address
-from omni_sdk.contracts.client import ContractClient
-# SDK imports
+from omni_sdk.address import from_pubkey
+from omni_sdk.contracts.deployer import build_deploy_tx, deploy_package, make_package_bytes
 from omni_sdk.rpc.http import RpcClient
-from omni_sdk.tx.build import build_deploy_tx, estimate_deploy_gas
-from omni_sdk.tx.encode import encode_tx_cbor
-from omni_sdk.tx.send import await_receipt, send_raw_transaction
-from omni_sdk.wallet.signer import Signer
+from omni_sdk.tx import build as tx_build
+from omni_sdk.tx import encode as tx_encode
+from omni_sdk.tx import send as tx_send
+from omni_sdk.types.abi import decode_return, encode_call
+from omni_sdk.wallet.signer import PQSigner
 
 
 def _repo_root() -> Path:
-    # Resolve to repository root (assumes this file lives at sdk/python/examples/)
     return Path(__file__).resolve().parents[3]
 
 
 def _default_paths() -> Dict[str, Path]:
     root = _repo_root()
-    manifest = root / "vm_py" / "examples" / "counter" / "manifest.json"
-    code = root / "vm_py" / "examples" / "counter" / "contract.py"
-    return {"manifest": manifest, "code": code}
+    return {
+        "manifest": root / "vm_py" / "examples" / "counter" / "manifest.json",
+        "code": root / "vm_py" / "examples" / "counter" / "contract.py",
+    }
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as e:
-        sys.exit(f"error: manifest not found: {path}")
-    except Exception as e:
-        sys.exit(f"error: invalid JSON manifest at {path}: {e}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        sys.exit(f"error: file not found: {path}")
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"error: invalid JSON in {path}: {exc}")
+    if not isinstance(data, dict):
+        sys.exit(f"error: expected JSON object in {path}")
+    return data
 
 
-def _load_bytes(path: Path) -> bytes:
+def _load_code_bytes(path: Path) -> bytes:
     try:
         return path.read_bytes()
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         sys.exit(f"error: code file not found: {path}")
 
 
-def _make_signer(alg: str, seed_hex: Optional[str]) -> Signer:
-    if not seed_hex:
-        seed_hex = os.getenv("OMNI_SDK_SEED_HEX")
-    if not seed_hex:
+def _coerce_abi_for_calls(abi_value: Any) -> Any:
+    if not isinstance(abi_value, dict):
+        return abi_value
+    funcs = abi_value.get("functions", [])
+    events = abi_value.get("events", [])
+    if not isinstance(funcs, list) or not isinstance(events, list):
+        return abi_value
+    entries = []
+    for fn in funcs:
+        if isinstance(fn, dict):
+            item = dict(fn)
+            item.setdefault("type", "function")
+            entries.append(item)
+    for ev in events:
+        if isinstance(ev, dict):
+            item = dict(ev)
+            item.setdefault("type", "event")
+            entries.append(item)
+    return entries
+
+
+def _make_signer(alg: str, seed_hex: Optional[str]) -> PQSigner:
+    seed_input = seed_hex or os.getenv("OMNI_SDK_SEED_HEX")
+    if not seed_input:
         sys.exit(
-            "error: signer seed missing. Pass --seed-hex or set OMNI_SDK_SEED_HEX "
-            "(dev/test only; never use real keys here)."
+            "error: signer seed missing; pass --seed-hex or set OMNI_SDK_SEED_HEX (dev/test only)"
         )
     try:
-        seed = bytes.fromhex(seed_hex.strip().removeprefix("0x"))
-    except Exception:
-        sys.exit("error: --seed-hex must be hex (with or without 0x prefix)")
-    return Signer.from_seed(seed, alg=alg)  # type: ignore[attr-defined]
+        seed = bytes.fromhex(seed_input.strip().removeprefix("0x"))
+    except Exception:  # noqa: BLE001
+        sys.exit("error: --seed-hex must be hex (with or without 0x)")
+    try:
+        signer = PQSigner.from_seed(alg, seed=seed)
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"error: failed to create signer: {exc}")
+    return signer
+
+
+def _rpc_nonce(rpc: RpcClient, sender: str, override: Optional[int]) -> int:
+    if override is not None:
+        return int(override)
+    try:
+        return int(rpc.request("state.getNonce", [sender]))
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"error: failed to fetch nonce for {sender}: {exc}")
+
+
+def _rpc_simulate(
+    rpc: RpcClient, *, to: str, data: bytes, sender: Optional[str] = None
+) -> Optional[bytes]:
+    payload = {"to": to, "data": "0x" + data.hex()}
+    if sender:
+        payload["from"] = sender
+
+    candidates = (
+        ("execution.simulateCall", [payload]),
+        ("state.call", [payload]),
+        ("vm.simulateCall", [to, "0x" + data.hex(), sender, None]),
+    )
+    for method, params in candidates:
+        try:
+            out = rpc.request(method, params)
+        except Exception:
+            continue
+        if isinstance(out, str) and out.startswith("0x"):
+            try:
+                return bytes.fromhex(out[2:])
+            except Exception:
+                return None
+        if isinstance(out, (bytes, bytearray)):
+            return bytes(out)
+    return None
+
+
+def _send_inc(
+    *,
+    rpc: RpcClient,
+    signer: PQSigner,
+    contract_address: str,
+    chain_id: int,
+    nonce: int,
+    max_fee: int,
+    gas_limit: Optional[int],
+    abi: Any,
+) -> Dict[str, Any]:
+    sender = signer.address or from_pubkey(
+        signer.public_key, alg_id=signer.alg_id, hrp="anim"
+    )
+    calldata = encode_call(abi, "inc", [])
+    tx = tx_build.call(
+        from_addr=sender,
+        to_addr=contract_address,
+        data=calldata,
+        nonce=nonce,
+        gas_limit=gas_limit,
+        max_fee=max_fee,
+        chain_id=chain_id,
+        value=0,
+    )
+    sign_bytes = tx_encode.sign_bytes(tx)
+    sig = signer.sign(sign_bytes)
+    raw = tx_encode.pack_signed(
+        tx,
+        signature=sig,
+        alg_id=signer.alg_id,
+        public_key=signer.public_key,
+    )
+    tx_hash = tx_send.submit_raw(rpc, raw)
+    receipt = tx_send.wait_for_receipt(rpc, tx_hash, timeout_s=120.0)
+    return {"txHash": tx_hash, "receipt": receipt}
 
 
 def main() -> None:
     defaults = _default_paths()
 
-    ap = argparse.ArgumentParser(
-        description="Deploy the Counter contract and call inc/get"
+    parser = argparse.ArgumentParser(
+        description="Deploy vm_py/examples/counter and call inc()"
     )
-    ap.add_argument(
+    parser.add_argument(
         "--rpc",
         default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"),
-        help="RPC HTTP URL",
+        help="RPC URL",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--chain-id",
         type=int,
         default=int(os.getenv("OMNI_CHAIN_ID", "1")),
         help="Chain ID",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--timeout",
         type=float,
         default=float(os.getenv("OMNI_SDK_HTTP_TIMEOUT", "30")),
-        help="HTTP timeout (s)",
+        help="RPC timeout seconds",
     )
-    ap.add_argument(
-        "--manifest",
-        type=Path,
-        default=defaults["manifest"],
-        help="Path to manifest.json",
+    parser.add_argument("--manifest", type=Path, default=defaults["manifest"])
+    parser.add_argument("--code", type=Path, default=defaults["code"])
+    parser.add_argument("--seed-hex", default=os.getenv("OMNI_SDK_SEED_HEX"))
+    parser.add_argument(
+        "--sender",
+        default=None,
+        help="Optional sender address override (useful for --dry-run without PQ keys)",
     )
-    ap.add_argument(
-        "--code",
-        type=Path,
-        default=defaults["code"],
-        help="Path to contract.py (or IR bytes)",
-    )
-    ap.add_argument(
-        "--seed-hex",
-        default=os.getenv("OMNI_SDK_SEED_HEX"),
-        help="Signer seed as hex (dev/test only)",
-    )
-    ap.add_argument(
+    parser.add_argument(
         "--alg",
         default="dilithium3",
-        choices=["dilithium3", "sphincs_shake_128s"],
-        help="PQ signature algorithm",
+        choices=("dilithium3", "sphincs_shake_128s"),
     )
-    ap.add_argument(
-        "--gas-price", type=int, default=None, help="Optional gas price override"
+    parser.add_argument(
+        "--max-fee",
+        type=int,
+        default=1,
+        help="Transaction max_fee to use for deploy/call",
     )
-    ap.add_argument(
-        "--gas-limit", type=int, default=None, help="Optional gas limit override"
+    parser.add_argument("--gas-limit", type=int, default=None)
+    parser.add_argument(
+        "--nonce",
+        type=int,
+        default=None,
+        help="Optional deploy nonce override (call nonce will use deploy nonce+1)",
     )
-    ap.add_argument(
-        "--nonce", type=int, default=None, help="Optional sender nonce override"
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build deploy transaction locally without sending to RPC",
     )
-    ap.add_argument(
-        "--wait-seconds",
-        type=float,
-        default=120.0,
-        help="Max seconds to wait for each receipt",
+    parser.add_argument(
+        "--skip-call",
+        action="store_true",
+        help="Only deploy; skip post-deploy read/inc/read flow",
     )
-    args = ap.parse_args()
+    args = parser.parse_args()
 
-    # RPC client
+    manifest = _load_json(args.manifest)
+    code = _load_code_bytes(args.code)
+    abi = _coerce_abi_for_calls(manifest.get("abi", []))
+
+    signer: Optional[PQSigner]
+    if args.dry_run and args.sender:
+        signer = None
+        sender = args.sender
+    else:
+        signer = _make_signer(args.alg, args.seed_hex)
+        sender = signer.address or from_pubkey(
+            signer.public_key, alg_id=signer.alg_id, hrp="anim"
+        )
+
+    if args.dry_run:
+        dry_nonce = int(args.nonce if args.nonce is not None else 0)
+        package = make_package_bytes(manifest=manifest, code=code)
+        tx = build_deploy_tx(
+            from_addr=sender,
+            chain_id=int(args.chain_id),
+            nonce=dry_nonce,
+            max_fee=int(args.max_fee),
+            package_bytes=package,
+            gas_limit=args.gas_limit,
+        )
+        sign_bytes = tx_encode.sign_bytes(tx)
+        print(
+            json.dumps(
+                {
+                    "dryRun": True,
+                    "sender": sender,
+                    "chainId": int(args.chain_id),
+                    "nonce": dry_nonce,
+                    "packageBytes": len(package),
+                    "signBytesLen": len(sign_bytes),
+                },
+                indent=2,
+            )
+        )
+        return
+
     rpc = RpcClient(args.rpc, timeout=args.timeout)
 
-    # Inputs
-    manifest = _load_json(args.manifest)
-    code_bytes = _load_bytes(args.code)
+    if signer is None:
+        sys.exit("error: signer is required for non-dry-run deployment")
 
-    # Signer & sender address
-    signer = _make_signer(args.alg, args.seed_hex)
-    sender = Address.from_public_key(signer.public_key_bytes(), alg=signer.alg_id).bech32  # type: ignore
-
-    print("== Deploying Counter ==")
-    print(f"rpc={args.rpc} chainId={args.chain_id} sender={sender} alg={signer.alg_id}")
-
-    # Estimate gas if not provided
-    gas_limit = args.gas_limit
-    if gas_limit is None:
-        try:
-            ge = estimate_deploy_gas(rpc, manifest, code_bytes, sender=sender)
-            gas_limit = (
-                int(ge["gasLimit"])
-                if isinstance(ge, dict) and "gasLimit" in ge
-                else int(ge)
-            )
-        except Exception:
-            gas_limit = 1_000_000  # conservative fallback
-
-    # Build deploy tx
-    tx = build_deploy_tx(
-        chain_id=args.chain_id,
-        sender=sender,
+    deploy_nonce = _rpc_nonce(rpc, sender, args.nonce)
+    contract_addr, deploy_receipt = deploy_package(
+        rpc=rpc,
+        signer=signer,
         manifest=manifest,
-        code=code_bytes,
-        gas_price=args.gas_price,
-        gas_limit=gas_limit,
-        nonce=args.nonce,
-    )
-
-    # Sign & submit
-    sig = signer.sign(tx.sign_bytes, domain="tx")  # domain separation handled by Signer
-    tx.attach_signature(alg_id=signer.alg_id, signature=sig)
-    raw = encode_tx_cbor(tx)
-    tx_hash = send_raw_transaction(rpc, raw)
-    print(f"submitted deploy tx: {tx_hash}")
-
-    # Await receipt
-    receipt = await_receipt(rpc, tx_hash, timeout_seconds=args.wait_seconds)
-    status = receipt.get("status")
-    contract_addr = receipt.get("contractAddress")
-    print(
-        "deploy receipt:",
-        json.dumps(
-            {
-                "status": status,
-                "contractAddress": contract_addr,
-                "gasUsed": receipt.get("gasUsed"),
-            },
-            indent=2,
-        ),
+        code=code,
+        chain_id=args.chain_id,
+        nonce=deploy_nonce,
+        max_fee=int(args.max_fee),
+        gas_limit=args.gas_limit,
+        await_receipt=True,
+        timeout_s=120.0,
     )
 
     if not contract_addr:
         sys.exit(
-            "error: deploy succeeded but no contractAddress in receipt; cannot continue"
+            "error: deploy completed but receipt did not include a contract address"
         )
 
-    # Contract client
-    abi = manifest.get("abi", [])
-    cc = ContractClient(rpc, address=contract_addr, abi=abi, chain_id=args.chain_id)
+    summary: Dict[str, Any] = {
+        "sender": sender,
+        "deploy": {
+            "txHash": deploy_receipt.get("txHash"),
+            "status": deploy_receipt.get("status"),
+            "gasUsed": deploy_receipt.get("gasUsed"),
+            "contractAddress": contract_addr,
+        },
+    }
 
-    # Read current value
-    before = cc.read("get")
-    print("counter before:", before)
+    if not args.skip_call:
+        get_data = encode_call(abi, "get", [])
+        before_raw = _rpc_simulate(rpc, to=contract_addr, data=get_data, sender=sender)
+        before = decode_return(abi, "get", before_raw) if before_raw is not None else None
 
-    # Estimate gas for inc
-    call_gas = 200_000
-    try:
-        call_gas = int(cc.estimate_gas("inc", sender=sender))  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-    # Build + sign + send inc()
-    call_tx = cc.build_tx("inc", sender=sender, gas_limit=call_gas)  # type: ignore[attr-defined]
-    sig2 = signer.sign(call_tx.sign_bytes, domain="tx")
-    call_tx.attach_signature(alg_id=signer.alg_id, signature=sig2)
-    call_raw = encode_tx_cbor(call_tx)
-    call_hash = send_raw_transaction(rpc, call_raw)
-    print(f"submitted inc() tx: {call_hash}")
-
-    call_receipt = await_receipt(rpc, call_hash, timeout_seconds=args.wait_seconds)
-    print(
-        "inc receipt:",
-        json.dumps(
-            {
-                "status": call_receipt.get("status"),
-                "gasUsed": call_receipt.get("gasUsed"),
-            },
-            indent=2,
-        ),
-    )
-
-    # Read new value
-    after = cc.read("get")
-    print("counter after:", after)
-
-    print("\n== Summary ==")
-    print(
-        json.dumps(
-            {
-                "deployTx": tx_hash,
-                "contract": contract_addr,
-                "incTx": call_hash,
-                "valueBefore": before,
-                "valueAfter": after,
-            },
-            indent=2,
+        call_nonce = deploy_nonce + 1
+        call_out = _send_inc(
+            rpc=rpc,
+            signer=signer,
+            contract_address=contract_addr,
+            chain_id=args.chain_id,
+            nonce=call_nonce,
+            max_fee=int(args.max_fee),
+            gas_limit=args.gas_limit,
+            abi=abi,
         )
-    )
+
+        after_raw = _rpc_simulate(rpc, to=contract_addr, data=get_data, sender=sender)
+        after = decode_return(abi, "get", after_raw) if after_raw is not None else None
+
+        summary["call"] = {
+            "incTxHash": call_out["txHash"],
+            "incStatus": call_out["receipt"].get("status"),
+            "incGasUsed": call_out["receipt"].get("gasUsed"),
+            "getBefore": before,
+            "getAfter": after,
+            "simulateAvailable": before_raw is not None or after_raw is not None,
+        }
+
+    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":
