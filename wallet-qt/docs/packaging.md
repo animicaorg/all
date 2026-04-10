@@ -8,7 +8,7 @@ Every release artifact should reflect these truths:
 
 - mainnet only
 - hosted RPC only
-- endpoint fixed to `https://rpc.animica.org`
+- endpoint fixed to `https://rpc.animica.org/rpc`
 - no embedded node payload
 
 ## What ships
@@ -45,7 +45,7 @@ The staged tree should contain the wallet executable and Qt/runtime assets only.
 
 - the binary starts without spawning a subprocess for node startup
 - no packaged file tree contains `node/assets` or `node/venv`
-- the runtime settings surface still shows `https://rpc.animica.org`
+- the runtime settings surface still shows `https://rpc.animica.org/rpc`
 - remote-connectivity failure shows a wallet-facing error state instead of node diagnostics
 
 ## Scripts

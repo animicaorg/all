@@ -3,7 +3,7 @@
 ## Product checks
 
 - The app launches without starting a local node.
-- Settings show Animica mainnet and `https://rpc.animica.org`.
+- Settings show Animica mainnet and `https://rpc.animica.org/rpc`.
 - There is no Node tab or local-node control surface.
 - Send, receive, history, and account screens initialize normally.
 

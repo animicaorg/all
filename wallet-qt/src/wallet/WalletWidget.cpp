@@ -311,7 +311,7 @@ void WalletWidget::handleRpcDisconnected()
     updateRpcStatusLabel("RPC: Unreachable", "#b91c1c");
     setConnectionBanner(
         "Cannot reach the Animica network.",
-        "The wallet could not contact https://rpc.animica.org. Check internet access and retry."
+        "The wallet could not contact https://rpc.animica.org/rpc. Check internet access and retry."
     );
 }
 

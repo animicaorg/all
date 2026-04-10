@@ -7,7 +7,7 @@
 The application always assumes:
 
 - Animica mainnet
-- hosted RPC at `https://rpc.animica.org`
+- hosted RPC at `https://rpc.animica.org/rpc`
 - no embedded node process
 - no bundled chain data, genesis files, or node runtime
 
@@ -37,7 +37,7 @@ Primary UI surfaces:
 
 The canonical endpoint is defined in `src/rpc/RpcSettings.*` and resolves to:
 
-- `https://rpc.animica.org`
+- `https://rpc.animica.org/rpc`
 
 ### Wallet backend bridge
 
@@ -55,7 +55,7 @@ This is not an embedded node. It does not launch or manage a local chain process
 ## Startup flow
 
 1. Create the Qt application.
-2. Create the hosted RPC client pointed at `https://rpc.animica.org`.
+2. Create the hosted RPC client pointed at `https://rpc.animica.org/rpc`.
 3. Open or create the wallet store in the wallet data directory.
 4. Show `WalletWidget`.
 5. Refresh balances and remote connectivity once the event loop starts.

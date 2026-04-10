@@ -41,7 +41,7 @@ void TestPackagingConfig::testBuildScriptsUseSingleRemoteWalletMode()
     QVERIFY(!linuxBuild.contains("WALLET_REMOTE_RPC_ONLY"));
     QVERIFY(!macBuild.contains("WALLET_REMOTE_RPC_ONLY"));
     QVERIFY(!windowsBuild.contains("WALLET_REMOTE_RPC_ONLY"));
-    QVERIFY(cmakeContent.contains("https://rpc.animica.org"));
+    QVERIFY(cmakeContent.contains("https://rpc.animica.org/rpc"));
 }
 
 void TestPackagingConfig::testLinuxReleaseStagesInstalledTreeAndPortableArtifacts()
@@ -53,7 +53,7 @@ void TestPackagingConfig::testLinuxReleaseStagesInstalledTreeAndPortableArtifact
     QVERIFY(content.contains("linuxdeployqt"));
     QVERIFY(content.contains("tar -czf"));
     QVERIFY(content.contains("animica-wallet_${PACKAGE_VERSION}_${DEB_ARCH}.deb"));
-    QVERIFY(content.contains("https://rpc.animica.org"));
+    QVERIFY(content.contains("https://rpc.animica.org/rpc"));
     QVERIFY(!content.contains("resolve_linux_node_root"));
 }
 
@@ -127,7 +127,7 @@ void TestPackagingConfig::testCMakeIncludesPackagingMetadata()
     QVERIFY(content.contains("CPACK_PACKAGE_EXECUTABLES"));
     QVERIFY(content.contains("resources/wallet-qt.qrc"));
     QVERIFY(content.contains("WALLET_ENABLE_QT_INSTALL_DEPLOYMENT"));
-    QVERIFY(content.contains("https://rpc.animica.org"));
+    QVERIFY(content.contains("https://rpc.animica.org/rpc"));
 }
 
 QTEST_MAIN(TestPackagingConfig)

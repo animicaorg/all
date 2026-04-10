@@ -22,7 +22,7 @@ private slots:
 
         QCOMPARE(RpcSettings::canonicalNetwork(), QString("mainnet"));
         QCOMPARE(RpcSettings::canonicalChainId(), 1);
-        QCOMPARE(RpcSettings::toDisplayUrl(endpoint), QString("https://rpc.animica.org"));
+        QCOMPARE(RpcSettings::toDisplayUrl(endpoint), QString("https://rpc.animica.org/rpc"));
         QVERIFY(RpcSettings::isDefault(endpoint));
     }
 
@@ -38,7 +38,7 @@ private slots:
         settings.sync();
 
         RpcSettings rpcSettings;
-        QCOMPARE(RpcSettings::toDisplayUrl(rpcSettings.load()), QString("https://rpc.animica.org"));
+        QCOMPARE(RpcSettings::toDisplayUrl(rpcSettings.load()), QString("https://rpc.animica.org/rpc"));
     }
 };
 

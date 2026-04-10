@@ -9,7 +9,7 @@ Do not test it as an embedded-node product. That architecture has been removed.
 ## Manual checks
 
 1. Launch the app.
-2. Confirm settings show Animica mainnet and `https://rpc.animica.org`.
+2. Confirm settings show Animica mainnet and `https://rpc.animica.org/rpc`.
 3. Confirm there is no Node tab or local-node control surface.
 4. Create or open a wallet store.
 5. Verify accounts, send, receive, and history screens initialize.
@@ -32,6 +32,6 @@ QT_QPA_PLATFORM=offscreen /tmp/wallet-qt-build/tests/test_packaging_config
 
 ## Troubleshooting
 
-- connection failures should be investigated as access issues to `https://rpc.animica.org`
+- connection failures should be investigated as access issues to `https://rpc.animica.org/rpc`
 - wallet data issues should be investigated in the wallet data directory
 - node/operator issues belong to separate Animica tooling, not this app

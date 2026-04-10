@@ -40,4 +40,4 @@ The exact location is resolved through Qt standard paths plus the wallet app nam
 
 - back up `wallets.json`, `address_book.json`, and `wallet.db`
 - do not expect this directory to contain chain state
-- if remote RPC is unavailable, troubleshooting should focus on network access to `https://rpc.animica.org`, not local node files
+- if remote RPC is unavailable, troubleshooting should focus on network access to `https://rpc.animica.org/rpc`, not local node files

@@ -283,7 +283,7 @@ int main(int argc, char* argv[])
             "About Animica Wallet",
             "<h2>Animica Wallet v0.1.0</h2>"
             "<p>A remote Animica desktop wallet for mainnet accounts.</p>"
-            "<p><b>Default endpoint:</b> https://rpc.animica.org</p>"
+            "<p><b>Default endpoint:</b> https://rpc.animica.org/rpc</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
             "<li>Canonical wallets.json account management</li>"

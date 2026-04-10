@@ -4,7 +4,7 @@
 
 The Qt wallet uses hosted JSON-RPC over HTTPS:
 
-- Base URL: `https://rpc.animica.org`
+- Base URL: `https://rpc.animica.org/rpc`
 - Network: `mainnet`
 - Chain ID: `1`
 

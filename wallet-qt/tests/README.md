@@ -4,7 +4,7 @@ The Qt wallet test suite now targets the hosted-RPC product model.
 
 ## What the tests cover
 
-- canonical RPC defaults resolve to `https://rpc.animica.org`
+- canonical RPC defaults resolve to `https://rpc.animica.org/rpc`
 - the wallet assumes Animica mainnet
 - remote-only widget surfaces initialize without embedded-node components
 - receive/send flows stay usable without local node management
