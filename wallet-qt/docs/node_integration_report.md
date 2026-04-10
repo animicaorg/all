@@ -7,7 +7,7 @@ This document is retained only as a historical placeholder.
 Current product direction:
 
 - remote-RPC wallet only
-- hosted endpoint `https://rpc.animica.org`
+- hosted endpoint `https://rpc.animica.org/rpc`
 - no node lifecycle management in the Qt wallet
 
 If you need node/operator workflows, use the dedicated Animica node tooling outside `wallet-qt`.

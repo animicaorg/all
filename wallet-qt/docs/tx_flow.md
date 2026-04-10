@@ -6,7 +6,7 @@ Transactions are prepared by the wallet and submitted against the hosted Animica
 
 Canonical assumptions:
 
-- endpoint: `https://rpc.animica.org`
+- endpoint: `https://rpc.animica.org/rpc`
 - network: mainnet
 - chain ID: `1`
 

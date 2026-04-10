@@ -152,7 +152,7 @@ Maintainer: Animica Team <support@animica.org>
 Description: Animica remote desktop wallet
  A cross-platform desktop wallet for Animica mainnet accounts.
  The Qt wallet connects directly to the hosted RPC endpoint
- https://rpc.animica.org and does not run a local node.
+ https://rpc.animica.org/rpc and does not run a local node.
 EOF
 
     deb_name="animica-wallet_${PACKAGE_VERSION}_${DEB_ARCH}.deb"

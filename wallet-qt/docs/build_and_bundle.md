@@ -43,7 +43,7 @@ Main binary:
 /tmp/wallet-qt-build/bin/animica-wallet
 ```
 
-The wallet will connect to `https://rpc.animica.org` automatically.
+The wallet will connect to `https://rpc.animica.org/rpc` automatically.
 
 ## Build outputs
 

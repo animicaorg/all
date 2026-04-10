@@ -5,7 +5,7 @@ Animica Wallet Qt is now a hosted-RPC desktop wallet.
 The application:
 
 - always targets Animica mainnet
-- always connects to `https://rpc.animica.org`
+- always connects to `https://rpc.animica.org/rpc`
 - never starts or manages a local node
 - never bundles node assets, genesis files, or a Python node runtime inside the app
 
@@ -26,7 +26,7 @@ There is no embedded-node mode and no supported localhost mode.
 ## Canonical network settings
 
 - Network: `mainnet`
-- RPC endpoint: `https://rpc.animica.org`
+- RPC endpoint: `https://rpc.animica.org/rpc`
 - Chain ID: `1`
 
 ## Build
@@ -59,7 +59,7 @@ Optional data-dir override:
 ANIMICA_WALLET_DATA_DIR=/path/to/wallet-data /tmp/wallet-qt-build/bin/animica-wallet
 ```
 
-On launch the wallet uses `https://rpc.animica.org` automatically.
+On launch the wallet uses `https://rpc.animica.org/rpc` automatically.
 
 ## Packaging
 

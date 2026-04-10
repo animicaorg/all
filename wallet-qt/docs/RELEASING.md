@@ -6,7 +6,7 @@ The Qt wallet release is a hosted-RPC wallet release.
 
 Before shipping, verify:
 
-- the app targets `https://rpc.animica.org`
+- the app targets `https://rpc.animica.org/rpc`
 - the app assumes mainnet
 - no embedded-node files are present in the artifact
 - docs and release notes do not mention bundled node behavior
@@ -54,6 +54,6 @@ timeout 6 /tmp/wallet-qt-build/bin/animica-wallet -platform offscreen
 State clearly that:
 
 - the wallet is now remote-RPC only
-- it connects to `https://rpc.animica.org`
+- it connects to `https://rpc.animica.org/rpc`
 - local node control is no longer part of the Qt wallet
 - operator workflows belong to other Animica tooling

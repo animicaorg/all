@@ -7,7 +7,7 @@ Diagnostics in the Qt wallet are now limited to remote-wallet concerns.
 Relevant diagnostics include:
 
 - current hosted endpoint
-- whether `https://rpc.animica.org` is reachable
+- whether `https://rpc.animica.org/rpc` is reachable
 - last RPC/network error message
 - wallet-local file locations when useful
 

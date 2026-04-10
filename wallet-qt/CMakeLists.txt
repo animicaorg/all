@@ -6,7 +6,7 @@ set(WALLET_DISPLAY_NAME "Animica Wallet")
 set(WALLET_BUNDLE_NAME "AnimicaWallet")
 set(WALLET_GUI_IDENTIFIER "org.animica.wallet")
 set(WALLET_COPYRIGHT "Copyright (c) 2026 Animica")
-set(WALLET_CANONICAL_RPC_URL "https://rpc.animica.org")
+set(WALLET_CANONICAL_RPC_URL "https://rpc.animica.org/rpc")
 set(WALLET_CANONICAL_NETWORK "mainnet")
 
 configure_file(

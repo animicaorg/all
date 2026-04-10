@@ -14,7 +14,7 @@ It is responsible for:
 
 ## Remote-only assumptions
 
-- RPC base URL is `https://rpc.animica.org`
+- RPC base URL is `https://rpc.animica.org/rpc`
 - network is mainnet
 - no local node process is available
 
