@@ -59,7 +59,7 @@ from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional,
 
 # Tx lifecycle
 from omni_sdk.tx import build as tx_build
-from omni_sdk.tx import encode as tx_encode
+from omni_sdk.tx import signing as tx_signing
 from omni_sdk.tx import send as tx_send
 # PQ signer
 from omni_sdk.wallet.signer import PQSigner  # type: ignore
@@ -381,18 +381,16 @@ class ContractClient:
             value=value,
         )
 
-        # 2) Prepare sign-bytes and sign with PQ
-        signbytes = tx_encode.sign_bytes(tx)
-        signature = signer.sign(signbytes)  # domain separation handled inside signer
-        raw = tx_encode.pack_signed(
+        # 2) Build node-compatible preimage bytes and sign with PQ
+        signed = tx_signing.sign_transaction_with_rpc_context(
             tx,
-            signature=signature,
-            alg_id=signer.alg_id,
-            public_key=signer.public_key,
+            signer,
+            chain_id=int(self._chain_id),
+            rpc=self._rpc,
         )
 
         # 3) Submit raw & optionally await receipt
-        tx_hash = tx_send.submit_raw(self._rpc, raw)
+        tx_hash = tx_send.submit_raw(self._rpc, signed.raw_tx)
         if not await_receipt:
             return {"txHash": tx_hash}
 

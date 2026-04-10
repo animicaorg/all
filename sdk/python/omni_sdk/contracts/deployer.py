@@ -64,7 +64,7 @@ except Exception as _e:  # pragma: no cover
 
 # Tx lifecycle
 from omni_sdk.tx import build as tx_build
-from omni_sdk.tx import encode as tx_encode
+from omni_sdk.tx import signing as tx_signing
 from omni_sdk.tx import send as tx_send
 # PQ signer
 from omni_sdk.wallet.signer import PQSigner  # type: ignore
@@ -286,14 +286,13 @@ def deploy_package(
         gas_limit=gas_limit,
     )
 
-    signbytes = tx_encode.sign_bytes(tx_obj)
-    signature = signer.sign(signbytes)
-    raw = tx_encode.pack_signed(
+    signed = tx_signing.sign_transaction_with_rpc_context(
         tx_obj,
-        signature=signature,
-        alg_id=signer.alg_id,
-        public_key=signer.public_key,
+        signer,
+        chain_id=int(chain_id),
+        rpc=rpc,
     )
+    raw = signed.raw_tx
 
     if not await_receipt:
         tx_hash = tx_send.submit_raw(rpc, raw)

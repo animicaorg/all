@@ -10,8 +10,8 @@ import typer
 from ..address import from_pubkey
 from ..rpc.http import RpcClient
 from ..tx import build as tx_build
-from ..tx import encode as tx_encode
 from ..tx import send as tx_send
+from ..tx import signing as tx_signing
 from ..types.abi import decode_return, encode_call, normalize_abi
 from ..wallet.signer import PQSigner
 
@@ -214,15 +214,13 @@ def call_write(
         chain_id=int(c.chain_id),
         value=0,
     )
-    sign_bytes = tx_encode.sign_bytes(tx)
-    signature = signer.sign(sign_bytes)
-    raw = tx_encode.pack_signed(
+    signed = tx_signing.sign_transaction_with_rpc_context(
         tx,
-        signature=signature,
-        alg_id=signer.alg_id,
-        public_key=signer.public_key,
+        signer,
+        chain_id=int(c.chain_id),
+        rpc=rpc,
     )
-    tx_hash = tx_send.submit_raw(rpc, raw)
+    tx_hash = tx_send.submit_raw(rpc, signed.raw_tx)
 
     summary: Dict[str, Any] = {"txHash": tx_hash, "from": sender, "to": address, "func": func}
     if wait:
