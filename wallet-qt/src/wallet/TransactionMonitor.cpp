@@ -59,7 +59,6 @@ void TransactionMonitor::start() {
             
             // Add to fast poll if pending or recently mined
             if (tx.state == "MEMPOOL" || 
-                (tx.state == "MINED" && tx.confirmations < m_confirmationThreshold) ||
                 tx.state == "CONFIRMED") {
                 m_fastPollTxs.insert(tx.txid);
             }
@@ -309,21 +308,33 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
                 QMutexLocker locker(&m_mutex);
                 switchToFastPolling(txHash);
             }
+
+            if (tx.direction == "out") {
+                ensureOutgoingReservation(txHash, tx.fromAccountId, tx.amount, tx.fee);
+            }
         } else if (status == "mined" || status == "included") {
             qint64 blockHeight = txInfo["blockNumber"].toVariant().toLongLong();
             QString blockHash = txInfo["blockHash"].toString();
             
-            if (tx.state == "MEMPOOL" || tx.state == "PENDING") {
-                // Newly mined
+            if (tx.state == "MEMPOOL" || tx.state == "BROADCAST" || tx.state == "REORGED") {
+                // Newly included on chain (1+ confirmations)
                 WalletTx updated = tx;
-                updated.state = "MINED";
+                updated.state = "CONFIRMED";
                 updated.blockHash = blockHash;
                 updated.blockHeight = blockHeight;
-                updated.confirmations = 1;
+                int confirmations = txInfo["confirmations"].toVariant().toInt();
+                if (confirmations <= 0) {
+                    confirmations = 1;
+                }
+                updated.confirmations = confirmations;
                 updated.lastUpdateAt = QDateTime::currentMSecsSinceEpoch();
                 m_database->updateTransaction(txHash, updated);
                 
                 emit transactionMined(txHash, blockHeight, blockHash);
+
+                if (tx.direction == "out") {
+                    clearOutgoingReservation(txHash, tx.fromAccountId);
+                }
                 
                 // Track this block for reorg detection
                 QMutexLocker locker(&m_mutex);
@@ -353,6 +364,12 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
                 m_database->updateTransaction(txHash, updated);
                 
                 emit transactionDropped(txHash, updated.failureReason);
+
+                if (tx.direction == "in") {
+                    revertCredit(txHash, tx.fromAccountId);
+                } else if (tx.direction == "out") {
+                    clearOutgoingReservation(txHash, tx.fromAccountId);
+                }
                 
                 QMutexLocker locker(&m_mutex);
                 m_fastPollTxs.remove(txHash);
@@ -384,7 +401,7 @@ void TransactionMonitor::updateConfirmations() {
         
         QList<WalletTx> txs = m_database->listTransactions();
         for (const WalletTx& tx : txs) {
-            if (tx.state != "MINED" && tx.state != "CONFIRMED") {
+            if (tx.state != "CONFIRMED") {
                 continue;
             }
             
@@ -393,49 +410,46 @@ void TransactionMonitor::updateConfirmations() {
             }
             
             int confirmations = static_cast<int>(currentHeight - tx.blockHeight + 1);
-            
-            if (confirmations != tx.confirmations) {
-                WalletTx updated = tx;
-                updated.confirmations = confirmations;
-                updated.lastUpdateAt = QDateTime::currentMSecsSinceEpoch();
-                
-                if (confirmations >= m_confirmationThreshold && tx.state == "CONFIRMED") {
-                    // Transition to FINAL
-                    updated.state = "FINAL";
-                    m_database->updateTransaction(tx.txid, updated);
-                    
-                    qDebug() << "Transaction finalized:" << tx.txid 
-                             << "confirmations:" << confirmations;
-                    emit transactionFinalized(tx.txid);
-                    
-                    // Move balance from pending to available
-                    if (tx.direction == "in") {
-                        creditConfirmed(tx.txid, tx.fromAccountId, tx.amount);
-                    }
-                    
-                    // Stop fast polling
-                    locker.relock();
-                    m_fastPollTxs.remove(tx.txid);
-                    locker.unlock();
-                    
-                } else if (confirmations >= m_confirmationThreshold && tx.state == "MINED") {
-                    // Transition to CONFIRMED
-                    updated.state = "CONFIRMED";
-                    m_database->updateTransaction(tx.txid, updated);
-                    
-                    qDebug() << "Transaction confirmed:" << tx.txid 
+
+            const bool shouldFinalize = confirmations >= m_confirmationThreshold;
+            if (!shouldFinalize && confirmations == tx.confirmations) {
+                continue;
+            }
+
+            WalletTx updated = tx;
+            updated.confirmations = confirmations;
+            updated.lastUpdateAt = QDateTime::currentMSecsSinceEpoch();
+
+            if (shouldFinalize) {
+                // Transition to FINAL
+                updated.state = "FINAL";
+                m_database->updateTransaction(tx.txid, updated);
+
+                qDebug() << "Transaction finalized:" << tx.txid
+                         << "confirmations:" << confirmations;
+                emit transactionFinalized(tx.txid);
+
+                // Move balance from pending to available
+                if (tx.direction == "in") {
+                    creditConfirmed(tx.txid, tx.fromAccountId, tx.amount);
+                } else if (tx.direction == "out") {
+                    // Ensure any stale reservation entries are removed once finalized.
+                    clearOutgoingReservation(tx.txid, tx.fromAccountId);
+                }
+
+                // Stop fast polling
+                locker.relock();
+                m_fastPollTxs.remove(tx.txid);
+                locker.unlock();
+
+            } else {
+                // Just update confirmation count
+                m_database->updateTransaction(tx.txid, updated);
+
+                if (confirmations % 5 == 0) {
+                    qDebug() << "Transaction" << tx.txid
                              << "confirmations:" << confirmations;
                     emit transactionConfirmed(tx.txid, confirmations);
-                    
-                } else {
-                    // Just update confirmation count
-                    m_database->updateTransaction(tx.txid, updated);
-                    
-                    if (confirmations % 5 == 0) {
-                        qDebug() << "Transaction" << tx.txid 
-                                 << "confirmations:" << confirmations;
-                        emit transactionConfirmed(tx.txid, confirmations);
-                    }
                 }
             }
         }
@@ -524,6 +538,8 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
     // Revert balance changes
     if (tx.direction == "in") {
         revertCredit(txHash, tx.fromAccountId);
+    } else if (tx.direction == "out") {
+        clearOutgoingReservation(txHash, tx.fromAccountId);
     }
     
     // Check current status
@@ -541,9 +557,11 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 updated.blockHeight = -1;
                 updated.confirmations = 0;
                 m_database->updateTransaction(txHash, updated);
-                
+
                 if (tx.direction == "in") {
                     creditPending(txHash, tx.fromAccountId, tx.amount);
+                } else if (tx.direction == "out") {
+                    ensureOutgoingReservation(txHash, tx.fromAccountId, tx.amount, tx.fee);
                 }
                 
                 QMutexLocker locker(&m_mutex);
@@ -557,16 +575,22 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 qDebug() << "Transaction mined in new block:" << txHash 
                         << "height:" << newHeight << "hash:" << newHash;
                 
-                updated.state = "MINED";
+                updated.state = "CONFIRMED";
                 updated.blockHash = newHash;
                 updated.blockHeight = newHeight;
-                updated.confirmations = 1;
+                int confirmations = txInfo["confirmations"].toVariant().toInt();
+                if (confirmations <= 0) {
+                    confirmations = 1;
+                }
+                updated.confirmations = confirmations;
                 m_database->updateTransaction(txHash, updated);
                 
                 emit transactionMined(txHash, newHeight, newHash);
                 
                 if (tx.direction == "in") {
                     creditPending(txHash, tx.fromAccountId, tx.amount);
+                } else if (tx.direction == "out") {
+                    clearOutgoingReservation(txHash, tx.fromAccountId);
                 }
                 
                 QMutexLocker locker(&m_mutex);
@@ -679,17 +703,80 @@ void TransactionMonitor::creditConfirmed(const QString& txHash, const QString& a
     }
 }
 
-void TransactionMonitor::revertCredit(const QString& txHash, const QString& accountId) {
+void TransactionMonitor::ensureOutgoingReservation(
+    const QString& txHash,
+    const QString& accountId,
+    qint64 amount,
+    qint64 feeReserve
+) {
     if (accountId.isEmpty()) {
         return;
     }
-    
+
+    bool hasPendingOut = false;
+    bool hasFeeReserve = false;
+    const QList<LedgerEntry> entries = m_database->getLedgerEntries(txHash);
+    for (const LedgerEntry& entry : entries) {
+        if (entry.accountId != accountId) {
+            continue;
+        }
+        if (entry.type == "PENDING_OUT") {
+            hasPendingOut = true;
+        } else if (entry.type == "FEE_RESERVED") {
+            hasFeeReserve = true;
+        }
+    }
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!hasPendingOut && amount > 0) {
+        LedgerEntry pendingOut;
+        pendingOut.entryId = 0;
+        pendingOut.txid = txHash;
+        pendingOut.accountId = accountId;
+        pendingOut.asset = "ANM";
+        pendingOut.type = "PENDING_OUT";
+        pendingOut.delta = -amount;
+        pendingOut.stateVersion = m_database->nextStateVersion();
+        pendingOut.createdAt = now;
+        m_database->addLedgerEntry(pendingOut);
+    }
+
+    if (!hasFeeReserve && feeReserve > 0) {
+        LedgerEntry feeEntry;
+        feeEntry.entryId = 0;
+        feeEntry.txid = txHash;
+        feeEntry.accountId = accountId;
+        feeEntry.asset = "ANM";
+        feeEntry.type = "FEE_RESERVED";
+        feeEntry.delta = -feeReserve;
+        feeEntry.stateVersion = m_database->nextStateVersion();
+        feeEntry.createdAt = now;
+        m_database->addLedgerEntry(feeEntry);
+    }
+}
+
+void TransactionMonitor::clearOutgoingReservation(const QString& txHash, const QString& accountId) {
+    const QList<LedgerEntry> entries = m_database->getLedgerEntries(txHash);
+    for (const LedgerEntry& entry : entries) {
+        if (entry.type == "PENDING_OUT" || entry.type == "FEE_RESERVED") {
+            if (!accountId.isEmpty() && entry.accountId != accountId) {
+                continue;
+            }
+            m_database->deleteLedgerEntry(entry.entryId);
+        }
+    }
+}
+
+void TransactionMonitor::revertCredit(const QString& txHash, const QString& accountId) {
     qDebug() << "Reverting credit for tx:" << txHash << "account:" << accountId;
     
     // Remove all ledger entries for this transaction
     QList<LedgerEntry> entries = m_database->listLedgerEntries();
     for (const LedgerEntry& entry : entries) {
         if (entry.txid == txHash) {
+            if (!accountId.isEmpty() && entry.accountId != accountId) {
+                continue;
+            }
             qDebug() << "Removing ledger entry:" << entry.entryId 
                      << "type:" << entry.type << "delta:" << entry.delta;
             m_database->deleteLedgerEntry(entry.entryId);

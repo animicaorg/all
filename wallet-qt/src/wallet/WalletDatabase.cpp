@@ -196,7 +196,7 @@ bool WalletDatabase::isValidStateTransition(const QString& oldState, const QStri
         {"CONFIRMED", {"FINAL", "REORGED"}},
         {"FINAL", {}},  // Terminal state
         {"DROPPED", {}},  // Terminal state
-        {"REORGED", {"MEMPOOL", "DROPPED"}},  // Can return to mempool after reorg
+        {"REORGED", {"MEMPOOL", "CONFIRMED", "DROPPED"}},  // Can return to mempool or be re-included directly
         {"FAILED", {}}  // Terminal state
     };
     

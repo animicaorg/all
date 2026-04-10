@@ -701,12 +701,30 @@ qint64 SendWidget::getAvailableBalance() const
     qint64 reserved = 0;
     if (m_database && !accountId.isEmpty()) {
         const QList<LedgerEntry> entries = m_database->listLedgerEntries();
+        QMap<QString, QString> txStateCache;
+        auto countsAsPendingReservation = [this, &txStateCache](const QString& txid) {
+            if (txid.isEmpty()) {
+                return true;
+            }
+            if (!txStateCache.contains(txid)) {
+                const WalletTx tx = m_database->getTransaction(txid);
+                txStateCache.insert(txid, tx.state);
+            }
+            const QString state = txStateCache.value(txid);
+            return state == "CREATED"
+                || state == "SIGNED"
+                || state == "BROADCAST"
+                || state == "MEMPOOL"
+                || state == "REORGED";
+        };
         for (const LedgerEntry& entry : entries) {
             if (entry.accountId != accountId) {
                 continue;
             }
             if ((entry.type == "PENDING_OUT" || entry.type == "FEE_RESERVED") && entry.delta < 0) {
-                reserved += -entry.delta;
+                if (countsAsPendingReservation(entry.txid)) {
+                    reserved += -entry.delta;
+                }
             }
         }
     }

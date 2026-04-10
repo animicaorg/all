@@ -91,6 +91,8 @@ private:
     void updateTransactionState(const QString& txHash, const QString& newState);
     void creditPending(const QString& txHash, const QString& accountId, qint64 amount);
     void creditConfirmed(const QString& txHash, const QString& accountId, qint64 amount);
+    void ensureOutgoingReservation(const QString& txHash, const QString& accountId, qint64 amount, qint64 feeReserve);
+    void clearOutgoingReservation(const QString& txHash, const QString& accountId);
     void revertCredit(const QString& txHash, const QString& accountId);
     
     // Error handling
