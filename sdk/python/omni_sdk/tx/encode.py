@@ -104,6 +104,35 @@ def _get(tx: TxLike, key: str) -> Any:
     raise KeyError(f"Tx field '{key}' not found")
 
 
+def _get_optional(tx: TxLike, *keys: str) -> Any:
+    for key in keys:
+        try:
+            return _get(tx, key)
+        except KeyError:
+            continue
+    return None
+
+
+def _coerce_optional_bytes(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.startswith(("0x", "0X")):
+            raw = raw[2:]
+        if not raw:
+            return b""
+        if len(raw) % 2:
+            raw = "0" + raw
+        try:
+            return bytes.fromhex(raw)
+        except Exception:
+            return raw.encode("utf-8")
+    return bytes(value)
+
+
 def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
     """
     Build the canonical, signable body dictionary for a transaction.
@@ -140,6 +169,22 @@ def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
         body["to"] = None
     else:
         body["to"] = str(body["to"])
+
+    valid_after = _get_optional(tx, "validAfter", "valid_after")
+    if valid_after is not None:
+        body["validAfter"] = int(valid_after)
+
+    valid_until = _get_optional(tx, "validUntil", "valid_until")
+    if valid_until is not None:
+        body["validUntil"] = int(valid_until)
+
+    salt = _coerce_optional_bytes(_get_optional(tx, "salt"))
+    if salt is not None:
+        body["salt"] = salt
+
+    fork_id = _get_optional(tx, "forkId", "fork_id")
+    if fork_id is not None:
+        body["forkId"] = int(fork_id)
 
     return body
 

@@ -23,6 +23,7 @@ from omni_sdk.rpc.http import RpcClient
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import encode as tx_encode
 from omni_sdk.tx import send as tx_send
+from omni_sdk.tx import signing as tx_signing
 from omni_sdk.types.abi import decode_return, encode_call
 from omni_sdk.wallet.signer import PQSigner
 
@@ -363,15 +364,13 @@ def _send_inc(
         chain_id=chain_id,
         value=0,
     )
-    sign_bytes = tx_encode.sign_bytes(tx)
-    sig = signer.sign(sign_bytes)
-    raw = tx_encode.pack_signed(
+    signed = tx_signing.sign_transaction_with_rpc_context(
         tx,
-        signature=sig,
-        alg_id=signer.alg_id,
-        public_key=signer.public_key,
+        signer,
+        chain_id=int(chain_id),
+        rpc=rpc,
     )
-    tx_hash = tx_send.submit_raw(rpc, raw)
+    tx_hash = tx_send.submit_raw(rpc, signed.raw_tx)
     receipt = tx_send.wait_for_receipt(rpc, tx_hash, timeout_s=120.0)
     return {"txHash": tx_hash, "receipt": receipt}
 
