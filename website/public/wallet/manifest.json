@@ -1,6 +1,28 @@
 {
   "version": "v0.1.0-4cc000c7e",
   "generated_at": "2026-04-10T15:21:23Z",
+  "windows": {
+    "architecture": "x86_64",
+    "build_label": "v0.1.0-4cc000c7e",
+    "installer_url": "/wallet/animicawallersetup.exe",
+    "installer_filename": "animicawallersetup.exe",
+    "installer_sha256": "afe6f3579bc917fc8e26df673caa2f7f9ff93991b68db5c2516ceedb117ef6ff",
+    "installer_size_bytes": 64220654,
+    "checksum_url": "/wallet/animicawallersetup.sha256",
+    "checksum_filename": "animicawallersetup.sha256",
+    "checksum_size_bytes": 89
+  },
+  "macos": {
+    "architecture": "universal",
+    "build_label": "v0.1.0-4cc000c7e",
+    "installer_url": "/wallet/animicawallet.dmg",
+    "installer_filename": "animicawallet.dmg",
+    "installer_sha256": "1f7678dcc79442d85437145dc33e3baa4fd7a12993718f4481a589f077079e43",
+    "installer_size_bytes": 103917703,
+    "checksum_url": "/wallet/animicawallet.sha256",
+    "checksum_filename": "animicawallet.sha256",
+    "checksum_size_bytes": 84
+  },
   "linux": {
     "architecture": "x86_64",
     "build_label": "v0.1.0-4cc000c7e",

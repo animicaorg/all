@@ -5,7 +5,7 @@
 # Produces an installed, self-contained .app bundle in build/mac/stage.
 #
 # Usage:
-#   ./scripts/build-mac.sh [--debug] [--clean] [--qt <path>] [--jobs <n>]
+#   ./scripts/build-mac.sh [--debug] [--clean] [--qt <path>] [--jobs <n>] [--arch <arm64|x86_64|universal2>]
 
 set -euo pipefail
 
@@ -17,6 +17,7 @@ BUILD_TYPE="Release"
 CLEAN_BUILD=false
 QT_PATH=""
 JOBS=""
+ARCH_LABEL="$(uname -m)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -54,6 +55,10 @@ while [[ $# -gt 0 ]]; do
             JOBS="$2"
             shift 2
             ;;
+        --arch)
+            ARCH_LABEL="$2"
+            shift 2
+            ;;
         --help)
             sed -n '2,8p' "$0" | sed 's/^# \?//'
             exit 0
@@ -83,6 +88,21 @@ BUILD_DIR="$PROJECT_ROOT/build/mac"
 INSTALL_DIR="$BUILD_DIR/stage"
 APP_BUNDLE="$INSTALL_DIR/AnimicaWallet.app"
 
+case "$ARCH_LABEL" in
+    arm64)
+        CMAKE_ARCHES="arm64"
+        ;;
+    x86_64)
+        CMAKE_ARCHES="x86_64"
+        ;;
+    universal2)
+        CMAKE_ARCHES="arm64;x86_64"
+        ;;
+    *)
+        die "Unsupported --arch value: $ARCH_LABEL (expected arm64, x86_64, or universal2)"
+        ;;
+esac
+
 if [[ "$CLEAN_BUILD" == "true" ]]; then
     rm -rf "$BUILD_DIR"
 fi
@@ -96,6 +116,7 @@ fi
 log "Configuring macOS build in $BUILD_DIR"
 cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    -DCMAKE_OSX_ARCHITECTURES="$CMAKE_ARCHES" \
     -DBUILD_TESTING=OFF
 
 log "Building wallet bundle"
@@ -112,5 +133,6 @@ python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform macos --path "$APP_BUND
 log ""
 log "Build completed successfully"
 log "  Staged app:  $APP_BUNDLE"
+log "  Architectures: $CMAKE_ARCHES"
 log "  Smoke test:  $SCRIPT_DIR/smoke-test-mac.sh \"$APP_BUNDLE\""
 log "  Launch:      open \"$APP_BUNDLE\""

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 export interface WalletManifestPlatform {
   architecture?: string;
@@ -42,6 +43,7 @@ export interface WalletManifest {
   version?: string;
   generated_at?: string;
   windows?: WalletManifestPlatform;
+  macos?: WalletManifestPlatform;
   linux?: WalletManifestPlatform;
 }
 
@@ -61,7 +63,7 @@ export interface WalletChecksumLink {
 }
 
 export interface WalletPlatformCard {
-  key: 'windows' | 'linux';
+  key: 'windows' | 'macos' | 'linux';
   title: string;
   description: string;
   architecture?: string;
@@ -77,8 +79,21 @@ export interface WalletDownloadPageData {
   platformCards: WalletPlatformCard[];
 }
 
-const walletPublicDir = new URL('../../../public/wallet/', import.meta.url);
-const walletManifestPath = new URL('../../../public/wallet/manifest.json', import.meta.url);
+const walletPublicDirCandidates: Array<string | URL> = [
+  new URL('../../../public/wallet/', import.meta.url),
+  resolve(process.cwd(), 'public', 'wallet'),
+];
+const walletManifestCandidates: Array<string | URL> = [
+  new URL('../../../public/wallet/manifest.json', import.meta.url),
+  resolve(process.cwd(), 'public', 'wallet', 'manifest.json'),
+];
+
+function hasPublicWalletFile(filename: string): boolean {
+  return walletPublicDirCandidates.some((basePath) => {
+    const candidate = basePath instanceof URL ? new URL(filename, basePath) : resolve(basePath, filename);
+    return existsSync(candidate);
+  });
+}
 
 function formatBytes(bytes?: number): string | undefined {
   if (!bytes || bytes <= 0) return undefined;
@@ -94,15 +109,17 @@ function formatBytes(bytes?: number): string | undefined {
 }
 
 function readManifestFile(): WalletManifest | null {
-  if (!existsSync(walletManifestPath)) {
-    return null;
+  for (const manifestPath of walletManifestCandidates) {
+    if (!existsSync(manifestPath)) {
+      continue;
+    }
+    try {
+      return JSON.parse(readFileSync(manifestPath, 'utf-8')) as WalletManifest;
+    } catch {
+      continue;
+    }
   }
-
-  try {
-    return JSON.parse(readFileSync(walletManifestPath, 'utf-8')) as WalletManifest;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function normalizeDownload(
@@ -180,6 +197,51 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
     }
   }
 
+  if (manifest.macos) {
+    const macDownloads = [
+      normalizeDownload(
+        manifest.macos.installer_url,
+        manifest.macos.installer_filename,
+        'macOS Disk Image (.dmg)',
+        manifest.macos.installer_size_bytes,
+        manifest.macos.installer_sha256,
+        true,
+      ),
+      normalizeDownload(
+        manifest.macos.zip_url,
+        manifest.macos.zip_filename,
+        'Portable ZIP',
+        manifest.macos.zip_size_bytes,
+        manifest.macos.zip_sha256,
+      ),
+    ].filter((entry): entry is WalletDownloadEntry => entry !== null);
+
+    if (macDownloads.length > 0) {
+      const checksums: WalletChecksumLink[] = [];
+      if (manifest.macos.checksum_url) {
+        checksums.push({
+          href: manifest.macos.checksum_url,
+          label: 'SHA-256 checksum',
+        });
+      }
+
+      cards.push({
+        key: 'macos',
+        title: 'macOS',
+        description: 'Native macOS desktop builds for Intel and Apple Silicon when available.',
+        architecture: manifest.macos.architecture,
+        buildLabel: manifest.macos.build_label ?? manifest.version,
+        downloads: macDownloads,
+        checksums,
+        instructions: [
+          'Download the .dmg, open it, and drag Animica Wallet into Applications.',
+          'If Gatekeeper warns, verify the SHA-256 checksum before first launch.',
+          'Use the portable ZIP only when you need a non-installed copy.',
+        ],
+      });
+    }
+  }
+
   if (manifest.linux) {
     const linuxDownloads = [
       normalizeDownload(
@@ -249,24 +311,17 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
 }
 
 function buildLegacyLinuxCard(): WalletPlatformCard | null {
-  const appImagePath = new URL('animica-wallet-linux.AppImage', walletPublicDir);
-  const debPath = new URL('animica-wallet-linux.deb', walletPublicDir);
-  const tarballPath = new URL('animica-wallet-linux.tar.gz', walletPublicDir);
-  const rawPath = new URL('animica-wallet', walletPublicDir);
-  const packageChecksumPath = new URL('animica-wallet-linux.sha256', walletPublicDir);
-  const rawChecksumPath = new URL('animica-wallet.sha256', walletPublicDir);
-
   const downloads = [
-    existsSync(appImagePath)
+    hasPublicWalletFile('animica-wallet-linux.AppImage')
       ? normalizeDownload('/wallet/animica-wallet-linux.AppImage', 'animica-wallet-linux.AppImage', 'AppImage', undefined, undefined, true)
       : null,
-    existsSync(debPath)
+    hasPublicWalletFile('animica-wallet-linux.deb')
       ? normalizeDownload('/wallet/animica-wallet-linux.deb', 'animica-wallet-linux.deb', '.deb Package')
       : null,
-    existsSync(tarballPath)
+    hasPublicWalletFile('animica-wallet-linux.tar.gz')
       ? normalizeDownload('/wallet/animica-wallet-linux.tar.gz', 'animica-wallet-linux.tar.gz', 'Portable tar.gz')
       : null,
-    existsSync(rawPath)
+    hasPublicWalletFile('animica-wallet')
       ? normalizeDownload('/wallet/animica-wallet', 'animica-wallet', 'Raw executable')
       : null,
   ].filter((entry): entry is WalletDownloadEntry => entry !== null);
@@ -276,10 +331,10 @@ function buildLegacyLinuxCard(): WalletPlatformCard | null {
   }
 
   const checksums: WalletChecksumLink[] = [];
-  if (existsSync(packageChecksumPath)) {
+  if (hasPublicWalletFile('animica-wallet-linux.sha256')) {
     checksums.push({ href: '/wallet/animica-wallet-linux.sha256', label: 'Package SHA-256 checksums' });
   }
-  if (existsSync(rawChecksumPath)) {
+  if (hasPublicWalletFile('animica-wallet.sha256')) {
     checksums.push({ href: '/wallet/animica-wallet.sha256', label: 'Raw executable SHA-256 checksum' });
   }
 
