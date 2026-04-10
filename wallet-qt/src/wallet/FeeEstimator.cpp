@@ -56,7 +56,8 @@ qint64 FeeEstimator::getBaseFee()
 
 qint64 FeeEstimator::calculateFee(FeeTier tier, qint64 gasLimit)
 {
-    return getGasPrice(tier) * gasLimit;
+    Q_UNUSED(gasLimit);
+    return getGasPrice(tier);
 }
 
 QString FeeEstimator::formatFee(qint64 feeWei)

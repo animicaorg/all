@@ -14,9 +14,9 @@ class AnimicaRpcClient;
  * Caches base fee to reduce RPC calls while maintaining reasonable freshness.
  * 
  * Fee tiers:
- * - Slow: Minimum fee (base fee)
- * - Normal: 2x base fee (default)
- * - Fast: 5x base fee (priority)
+ * - Slow: Base fee (minimum)
+ * - Normal: 2x base fee
+ * - Fast: 5x base fee
  */
 class FeeEstimator : public QObject
 {
@@ -34,9 +34,9 @@ public:
     ~FeeEstimator();
     
     /**
-     * @brief Get gas price for tier.
+     * @brief Get max-fee scalar for a tier.
      * @param tier Fee tier
-     * @return Gas price in wei
+     * @return Fee in wei
      */
     qint64 getGasPrice(FeeTier tier);
     
@@ -47,10 +47,10 @@ public:
     qint64 getBaseFee();
     
     /**
-     * @brief Calculate total fee.
+     * @brief Calculate fee from a tier.
      * @param tier Fee tier
-     * @param gasLimit Gas limit
-     * @return Total fee in wei
+     * @param gasLimit Ignored for the current flat fee-reserve model.
+     * @return Fee in wei
      */
     qint64 calculateFee(FeeTier tier, qint64 gasLimit);
     

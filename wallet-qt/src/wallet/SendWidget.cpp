@@ -23,6 +23,12 @@
 #include <QStringListModel>
 #include <QVBoxLayout>
 
+namespace {
+constexpr const char* kCustomFeeEnabledKey = "WalletQt/sendCustomFeeEnabled";
+constexpr const char* kCustomFeeAnmKey = "WalletQt/sendCustomFeeAnm";
+constexpr double kDefaultCustomFeeAnm = 0.001;
+}
+
 SendWidget::SendWidget(
     WalletEngine* walletEngine,
     AnimicaRpcClient* rpcClient,
@@ -105,8 +111,21 @@ void SendWidget::setupUI()
     m_feeTierCombo->addItem("Slow", FeeEstimator::Slow);
     m_feeTierCombo->addItem("Normal", FeeEstimator::Normal);
     m_feeTierCombo->addItem("Fast", FeeEstimator::Fast);
-    m_feeTierCombo->setCurrentIndex(1);
+    m_feeTierCombo->setCurrentIndex(0);
     formLayout->addRow("Fee Tier:", m_feeTierCombo);
+
+    auto* customFeeLayout = new QHBoxLayout();
+    m_customFeeCheck = new QCheckBox("Use custom max fee", this);
+    customFeeLayout->addWidget(m_customFeeCheck);
+    m_customFeeSpinBox = new QDoubleSpinBox(this);
+    m_customFeeSpinBox->setDecimals(9);
+    m_customFeeSpinBox->setMinimum(0.000000001);
+    m_customFeeSpinBox->setMaximum(1000000000.0);
+    m_customFeeSpinBox->setSuffix(" ANM");
+    m_customFeeSpinBox->setMinimumWidth(180);
+    customFeeLayout->addWidget(m_customFeeSpinBox);
+    customFeeLayout->addStretch();
+    formLayout->addRow("Custom Fee:", customFeeLayout);
 
     m_feeLabel = new QLabel("Max Fee: --", this);
     m_feeLabel->setStyleSheet("color: #666;");
@@ -157,12 +176,31 @@ void SendWidget::setupUI()
     connect(m_toAddressEdit, &QLineEdit::textChanged, this, &SendWidget::onAddressChanged);
     connect(m_amountSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this]() { onAmountChanged(); });
     connect(m_feeTierCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SendWidget::onFeeTierChanged);
+    connect(m_customFeeCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings settings;
+        settings.setValue(kCustomFeeEnabledKey, checked);
+        updateFeeControls();
+        updateFeeDisplay();
+        validateInputs();
+    });
+    connect(m_customFeeSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        QSettings settings;
+        settings.setValue(kCustomFeeAnmKey, value);
+        updateFeeDisplay();
+        validateInputs();
+    });
     connect(m_maxButton, &QPushButton::clicked, this, &SendWidget::onMaxClicked);
     connect(m_sendButton, &QPushButton::clicked, this, &SendWidget::onSendClicked);
     connect(m_nonceEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
     connect(m_validAfterEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
     connect(m_validUntilEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
     connect(m_dataPayloadEdit, &QLineEdit::textChanged, this, [this]() { validateInputs(); });
+
+    QSettings settings;
+    const double customFeeAnm = settings.value(kCustomFeeAnmKey, kDefaultCustomFeeAnm).toDouble();
+    m_customFeeSpinBox->setValue(customFeeAnm > 0.0 ? customFeeAnm : kDefaultCustomFeeAnm);
+    m_customFeeCheck->setChecked(settings.value(kCustomFeeEnabledKey, false).toBool());
+    updateFeeControls();
 
     updateRecipientCompleter();
 }
@@ -176,7 +214,7 @@ void SendWidget::clearForm()
     m_validAfterEdit->clear();
     m_validUntilEdit->clear();
     m_dataPayloadEdit->clear();
-    m_feeTierCombo->setCurrentIndex(1);
+    m_feeTierCombo->setCurrentIndex(0);
     clearValidationErrors();
     m_statusLabel->clear();
 }
@@ -202,7 +240,7 @@ void SendWidget::onSendClicked()
     const QString toAddress = normalizedRecipientAddress();
     const QString amountText = QString::number(m_amountSpinBox->value(), 'f', 9);
     const qint64 gasLimit = FeeEstimator::standardTransferGas();
-    const qint64 maxFee = m_feeEstimator->getGasPrice(currentFeeTier());
+    const qint64 maxFee = selectedMaxFee();
     const qint64 totalBase = static_cast<qint64>(m_amountSpinBox->value() * 1e9) + maxFee;
 
     const QString confirmation = QString(
@@ -330,7 +368,7 @@ void SendWidget::handleSendFinished()
 void SendWidget::onMaxClicked()
 {
     const qint64 available = getAvailableBalance();
-    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
+    const qint64 fee = selectedMaxFee();
     const qint64 maxAmount = qMax<qint64>(0, available - fee);
     m_amountSpinBox->setValue(maxAmount / 1e9);
 }
@@ -427,8 +465,9 @@ void SendWidget::onBalanceUpdated(const QString& address, const Balance&)
 
 void SendWidget::updateFeeDisplay()
 {
-    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
-    m_feeLabel->setText("Max Fee: " + m_feeEstimator->formatFeeANM(fee));
+    const qint64 fee = selectedMaxFee();
+    const QString prefix = m_customFeeCheck->isChecked() ? "Custom Max Fee: " : "Max Fee: ";
+    m_feeLabel->setText(prefix + m_feeEstimator->formatFeeANM(fee));
     if (m_amountSpinBox->value() > 0 && (fee / 1e9) > (m_amountSpinBox->value() * 0.01)) {
         m_feeWarningLabel->setText("Fee reserve is more than 1% of the transfer amount.");
     } else {
@@ -502,7 +541,11 @@ bool SendWidget::validateInputs()
 
     bool ok = true;
     const qint64 amountBase = static_cast<qint64>(amountAnm * 1e9);
-    const qint64 fee = m_feeEstimator->calculateFee(currentFeeTier(), FeeEstimator::standardTransferGas());
+    const qint64 fee = selectedMaxFee();
+    if (fee <= 0) {
+        ok = false;
+        showValidationError("amount", "Max fee must be greater than zero.");
+    }
     const qint64 available = getAvailableBalance();
     if (available < amountBase + fee) {
         ok = false;
@@ -616,6 +659,22 @@ qint64 SendWidget::getAvailableBalance() const
         }
     }
     return qMax<qint64>(0, confirmed - reserved);
+}
+
+qint64 SendWidget::selectedMaxFee() const
+{
+    if (m_customFeeCheck->isChecked()) {
+        const qint64 customFeeWei = static_cast<qint64>(m_customFeeSpinBox->value() * 1e9);
+        return qMax<qint64>(1, customFeeWei);
+    }
+    return m_feeEstimator->getGasPrice(currentFeeTier());
+}
+
+void SendWidget::updateFeeControls()
+{
+    const bool customEnabled = m_customFeeCheck->isChecked();
+    m_feeTierCombo->setEnabled(!customEnabled);
+    m_customFeeSpinBox->setEnabled(customEnabled);
 }
 
 FeeEstimator::FeeTier SendWidget::currentFeeTier() const
