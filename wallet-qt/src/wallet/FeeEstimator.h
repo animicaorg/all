@@ -34,9 +34,9 @@ public:
     ~FeeEstimator();
     
     /**
-     * @brief Get max-fee scalar for a tier.
+     * @brief Get max-fee-per-gas scalar for a tier.
      * @param tier Fee tier
-     * @return Fee in wei
+     * @return Gas price in base units per gas
      */
     qint64 getGasPrice(FeeTier tier);
     
@@ -49,8 +49,8 @@ public:
     /**
      * @brief Calculate fee from a tier.
      * @param tier Fee tier
-     * @param gasLimit Ignored for the current flat fee-reserve model.
-     * @return Fee in wei
+     * @param gasLimit Gas limit used to compute reserve (gasLimit * price).
+     * @return Fee reserve in base units
      */
     qint64 calculateFee(FeeTier tier, qint64 gasLimit);
     
