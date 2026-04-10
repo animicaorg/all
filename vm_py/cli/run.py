@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import asdict, is_dataclass
 from hashlib import sha3_256
@@ -74,10 +73,6 @@ def _maybe_hex_to_bytes(x: Any) -> Any:
     return x
 
 
-def _manifest_dir(path: str) -> str:
-    return os.path.dirname(os.path.abspath(path)) or "."
-
-
 # ---------------------- loader-first path ---------------------- #
 
 
@@ -125,7 +120,11 @@ def _normalize_loader_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
     if isinstance(out, tuple) and len(out) == 2:
         return out[0], dict(out[1])
     if isinstance(out, dict) and "result" in out:
-        return out["result"], out
+        if isinstance(out.get("meta"), dict):
+            return out["result"], dict(out["meta"])
+        meta = dict(out)
+        meta.pop("result", None)
+        return out["result"], meta
     return out, {}
 
 
@@ -139,96 +138,90 @@ def compile_manifest_to_ir(
     Return (ir_bytes, abi_dict, meta)
     Tries runtime.loader.compile_manifest or equivalent; falls back to reading source and compiling.
     """
-    mdir = _manifest_dir(manifest_path)
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+    diagnostics: List[str] = []
 
-    # Normalize ABI: allow 'abi' directly or nested
-    abi = manifest.get("abi") or manifest.get("ABI") or {}
-
-    # Prefer loader.compile_manifest if present
+    # Prefer loader.compile_manifest (shared manifest model + fallback handling)
     try:
         from vm_py.runtime import loader
 
-        for name in (
-            "compile_manifest",
-            "compile_from_manifest",
-            "build_ir_from_manifest",
-        ):
-            fn = getattr(loader, name, None)
-            if callable(fn):
-                out = fn(manifest) if fn.__code__.co_argcount >= 1 else fn()  # type: ignore[misc]
-                # Accept flexible returns
-                if isinstance(out, tuple):
-                    if (
-                        len(out) == 3
-                        and isinstance(out[0], (bytes, bytearray))
-                        and isinstance(out[1], dict)
-                    ):
-                        return (
-                            bytes(out[0]),
-                            dict(out[1]),
-                            dict(out[2]) if isinstance(out[2], dict) else {},
-                        )
-                    if len(out) == 2 and isinstance(out[0], (bytes, bytearray)):
-                        if isinstance(out[1], dict) and "abi" in out[1] and not abi:
-                            abi = out[1]["abi"]
-                        return bytes(out[0]), abi if isinstance(abi, dict) else {}, {}
-                if isinstance(out, (bytes, bytearray)):
-                    return bytes(out), abi if isinstance(abi, dict) else {}, {}
-    except Exception as e:
-        eprint(f"[vm-run] loader compile path unavailable: {e}")
+        compile_manifest = getattr(loader, "compile_manifest", None)
+        if callable(compile_manifest):
+            out = compile_manifest(manifest_path)  # type: ignore[misc]
+            if (
+                isinstance(out, tuple)
+                and len(out) == 3
+                and isinstance(out[0], (bytes, bytearray))
+                and isinstance(out[1], dict)
+            ):
+                return bytes(out[0]), dict(out[1]), dict(out[2]) if isinstance(out[2], dict) else {}
+            if isinstance(out, (bytes, bytearray)):
+                return bytes(out), {}, {"pipeline": "loader.compile_manifest.bytes"}
+            diagnostics.append(
+                "loader.compile_manifest returned unsupported shape "
+                f"({type(out).__name__})"
+            )
+    except Exception as exc:
+        diagnostics.append(f"loader.compile_manifest failed: {exc}")
 
-    # Else: compile from 'source' field
-    source_rel = manifest.get("source") or manifest.get("code") or manifest.get("path")
-    if not source_rel:
-        raise RuntimeError(
-            "Manifest missing 'source' (path to .py) and no loader.compile path available."
+    # Fallback: resolve source and compile directly.
+    try:
+        from vm_py.runtime import loader
+        from vm_py.runtime import manifest as manifest_utils
+
+        manifest, manifest_abs = manifest_utils.load_manifest_input(manifest_path)
+        resolved = manifest_utils.resolve_contract_source(
+            manifest,
+            manifest_path=manifest_abs,
         )
-    source_path = os.path.join(mdir, source_rel)
+        abi = manifest.get("abi") if isinstance(manifest.get("abi"), dict) else {}
 
-    with open(source_path, "r", encoding="utf-8") as f:
-        src = f.read()
-
-    # Try high-level loader text compile first
-    try:
-        from vm_py.runtime import loader as rloader
-
-        for name in ("compile_source", "compile_text"):
-            fn = getattr(rloader, name, None)
-            if callable(fn):
-                res = fn(src) if fn.__code__.co_argcount <= 1 else fn(src, filename=source_path)  # type: ignore[misc]
-                if (
-                    isinstance(res, tuple)
-                    and len(res) == 2
-                    and isinstance(res[0], (bytes, bytearray))
-                ):
-                    return (
-                        bytes(res[0]),
-                        abi if isinstance(abi, dict) else {},
-                        dict(res[1]) if isinstance(res[1], dict) else {},
-                    )
-                if isinstance(res, (bytes, bytearray)):
-                    return bytes(res), abi if isinstance(abi, dict) else {}, {}
-                # If object, try to encode below
-                ir_obj = res
-                ir_bytes = _encode_ir_bytes(ir_obj)
-                return ir_bytes, abi if isinstance(abi, dict) else {}, {}
-    except Exception:
-        pass
-
-    # Next, try the omni-vm-compile helper for consistent fallbacks
-    try:
-        from vm_py.cli import compile as cli_compile
-
-        ir_bytes, meta = cli_compile.compile_source_to_ir(src, filename=source_path)
-        return ir_bytes, abi if isinstance(abi, dict) else {}, meta
-    except Exception:
-        pass
-
-    # Fallback: lower pipeline encode
-    ir_bytes = _compile_lower_pipeline(src, source_path)
-    return ir_bytes, abi if isinstance(abi, dict) else {}, {}
+        try:
+            ir_bytes, _ir_mod, gas_ub = loader.compile_source_to_ir(
+                resolved.source_text,
+                name_hint=str(
+                    manifest.get("name")
+                    or (resolved.source_paths[0].name if resolved.source_paths else "contract")
+                ),
+            )
+            return (
+                ir_bytes,
+                abi,
+                {
+                    "pipeline": "loader.compile_source_to_ir",
+                    "gas_upper_bound": gas_ub,
+                    "source_field": resolved.selected_field,
+                    "source_path": str(resolved.source_paths[0])
+                    if resolved.source_paths
+                    else None,
+                    "diagnostics": diagnostics,
+                },
+            )
+        except Exception as lower_exc:
+            diagnostics.append(f"loader.compile_source_to_ir failed: {lower_exc}")
+            fallback = loader.build_source_bundle_bytes(
+                source=resolved.source_text,
+                name_hint=str(manifest.get("name") or "contract"),
+                manifest=manifest,
+                reason=str(lower_exc),
+            )
+            return (
+                fallback,
+                abi,
+                {
+                    "pipeline": "loader.source_bundle_fallback",
+                    "fallback": True,
+                    "source_field": resolved.selected_field,
+                    "source_path": str(resolved.source_paths[0])
+                    if resolved.source_paths
+                    else None,
+                    "diagnostics": diagnostics,
+                },
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            "failed to compile manifest via loader-compatible paths: "
+            + "; ".join(diagnostics + [str(exc)])
+        ) from exc
 
 
 def _encode_ir_bytes(ir_obj: Any) -> bytes:
@@ -280,9 +273,12 @@ def _compile_lower_pipeline(src: str, filename: str) -> bytes:
     mod_ast = ast.parse(src, filename=filename)
 
     try:
-        ir = ir_mod(mod_ast, filename)  # type: ignore[misc]
+        ir = ir_mod(mod_ast, filename=filename)  # type: ignore[misc]
     except TypeError:
-        ir = ir_mod(mod_ast)  # type: ignore[misc]
+        try:
+            ir = ir_mod(mod_ast, name=filename)  # type: ignore[misc]
+        except TypeError:
+            ir = ir_mod(mod_ast)  # type: ignore[misc]
 
     return _encode_ir_bytes(ir)
 
@@ -362,34 +358,13 @@ def run_via_pyexec(
     manifest_path: str, func: str, args: List[Any]
 ) -> Tuple[Any, Dict[str, Any]]:
     """Last-resort fallback: exec the contract source and call the function directly."""
+    try:
+        from vm_py.runtime import loader
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
-
-    mdir = _manifest_dir(manifest_path)
-    source_rel = (
-        manifest.get("source")
-        or manifest.get("code")
-        or manifest.get("path")
-        or manifest.get("entry")
-    )
-    if not source_rel:
-        raise RuntimeError(
-            "Manifest missing 'source' and 'entry'; cannot exec contract source"
-        )
-    source_path = os.path.join(mdir, source_rel)
-
-    with open(source_path, "r", encoding="utf-8") as f:
-        src = f.read()
-
-    scope: Dict[str, Any] = {}
-    exec(src, scope)
-    fn = scope.get(func)
-    if not callable(fn):
-        raise RuntimeError(f"Function {func!r} not found in contract source")
-
-    result = fn(*args)
-    return result, {"executed_via": "pyexec", "source": os.path.abspath(source_path)}
+        out = loader.run_call(manifest_path, func, args)
+        return _normalize_loader_result(out)
+    except Exception as exc:
+        raise RuntimeError(f"pyexec fallback failed: {exc}") from exc
 
 
 def _normalize_engine_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
@@ -462,19 +437,26 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e_loader:
         eprint(f"[vm-run] loader path failed: {e_loader}")
         # 2) Compile + run via engine
-        eprint("[vm-run] compiling manifest → IR …")
-        ir_bytes, abi, cmeta = compile_manifest_to_ir(args.manifest)
-        code_hash = "0x" + sha3_256(ir_bytes).hexdigest()
-        eprint(f"[vm-run] code hash: {code_hash}")
-        eprint("[vm-run] executing via vm_py.runtime.engine …")
         try:
-            result, emeta = run_via_engine(ir_bytes, abi, args.call, call_args)
-        except Exception as e_engine:
+            eprint("[vm-run] compiling manifest → IR …")
+            ir_bytes, abi, cmeta = compile_manifest_to_ir(args.manifest)
+            code_hash = "0x" + sha3_256(ir_bytes).hexdigest()
+            eprint(f"[vm-run] code hash: {code_hash}")
+            eprint("[vm-run] executing via vm_py.runtime.engine …")
+            try:
+                result, emeta = run_via_engine(ir_bytes, abi, args.call, call_args)
+            except Exception as e_engine:
+                eprint(
+                    f"[vm-run] engine path failed: {e_engine}; falling back to direct exec …"
+                )
+                result, emeta = run_via_pyexec(args.manifest, args.call, call_args)
+            meta = {"code_hash": code_hash, **cmeta, **emeta}
+        except Exception as e_compile:
             eprint(
-                f"[vm-run] engine path failed: {e_engine}; falling back to direct exec …"
+                "[vm-run] compile path failed: "
+                f"{e_compile}; falling back to direct exec …"
             )
-            result, emeta = run_via_pyexec(args.manifest, args.call, call_args)
-        meta = {"code_hash": code_hash, **cmeta, **emeta}
+            result, meta = run_via_pyexec(args.manifest, args.call, call_args)
 
     # Output
     out = {"ok": True, "result": _safe_json(result), "meta": _safe_json(meta)}

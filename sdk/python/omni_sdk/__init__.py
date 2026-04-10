@@ -4,7 +4,7 @@ Convenience exports for the most common client APIs.
 """
 
 # Addresses
-from .address import bech32_decode, bech32_encode  # noqa: F401
+from .address import bech32_decode, bech32_encode, from_pubkey  # noqa: F401
 # AICF (AI/Quantum)
 # from .aicf.client import AICFClient  # noqa: F401
 # Core config & errors
@@ -39,42 +39,16 @@ from .version import __version__  # noqa: F401
 
 __all__ = [
     "__version__",
-    # Core
     "Config",
     "RpcError",
     "TxError",
     "AbiError",
     "VerifyError",
-    # RPC
     "RpcClient",
     "WsClient",
-    # Address
     "bech32_encode",
     "bech32_decode",
-    # Wallet
-    "create_mnemonic",
-    "mnemonic_to_seed",
-    "Keystore",
-    "Dilithium3Signer",
-    "SphincsShake128sSigner",
-    # Tx
-    "build_transfer",
-    "build_call",
-    "build_deploy",
-    "build_sign_bytes",
-    "send_and_wait",
-    # Contracts
-    "ContractClient",
-    "deploy_package",
-    "EventDecoder",
-    "generate_client",
-    # DA / AICF / Randomness
-    "DAClient",
-    "AICFClient",
-    "RandomnessClient",
-    # Light client
-    "verify_light_proof",
-    # Utils
+    "from_pubkey",
     "to_hex",
     "hex_to_bytes",
 ]

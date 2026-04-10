@@ -28,7 +28,7 @@ import os
 import sys
 from dataclasses import asdict, is_dataclass
 from hashlib import sha3_256
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 # ---------------------- small utils ---------------------- #
 
@@ -89,16 +89,31 @@ def compile_via_runtime_loader(
         raise ImportError(f"runtime.loader not available: {e}") from e
 
     # Try text-based compile first
-    for names in (("compile_source",), ("compile_text",)):
-        fn = getattr(loader, names[0], None)
+    for fn_name in ("compile_source_to_ir", "compile_source", "compile_text"):
+        fn = getattr(loader, fn_name, None)
         if callable(fn):
-            res = fn(src) if fn.__code__.co_argcount <= 1 else fn(src, filename=filename)  # type: ignore[arg-type]
+            try:
+                res = fn(src, name_hint=filename)  # type: ignore[arg-type]
+            except TypeError:
+                try:
+                    res = fn(src, filename=filename)  # type: ignore[arg-type]
+                except TypeError:
+                    res = fn(src)  # type: ignore[arg-type]
             if (
                 isinstance(res, tuple)
                 and len(res) == 2
                 and isinstance(res[0], (bytes, bytearray))
             ):
                 return bytes(res[0]), dict(res[1])
+            if (
+                isinstance(res, tuple)
+                and len(res) >= 3
+                and isinstance(res[0], (bytes, bytearray))
+            ):
+                meta: Dict[str, Any] = {"pipeline": f"loader.{fn_name}"}
+                if len(res) >= 3:
+                    meta["gas_upper_bound"] = _safe_json(res[2])
+                return bytes(res[0]), meta
             if isinstance(res, (bytes, bytearray)):
                 return bytes(res), {}
             # Fallback: maybe it returned (ir_obj, meta) and we need to encode
@@ -166,11 +181,38 @@ def compile_via_lower_pipeline(
     mod_ast = ast.parse(src, filename=filename)
 
     lower = import_module("vm_py.compiler.ast_lower")
-    ir_mod = _call_first(
-        lower,
-        ("lower", "lower_module", "lower_from_ast", "lower_from_source", "lower_to_ir"),
-        mod_ast,
-    )
+    ir_mod = None
+    errors: List[str] = []
+    for name in (
+        "lower_to_ir",
+        "lower_from_ast",
+        "lower_ast",
+        "lower_module",
+        "lower",
+        "lower_from_source",
+    ):
+        fn = getattr(lower, name, None)
+        if not callable(fn):
+            continue
+        attempts = (
+            lambda: fn(mod_ast, filename=filename),  # type: ignore[misc]
+            lambda: fn(mod_ast, name=filename),  # type: ignore[misc]
+            lambda: fn(mod_ast, filename),  # type: ignore[misc]
+            lambda: fn(mod_ast),  # type: ignore[misc]
+        )
+        for attempt in attempts:
+            try:
+                ir_mod = attempt()
+                break
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{name}: {exc}")
+        if ir_mod is not None:
+            break
+    if ir_mod is None:
+        raise RuntimeError(
+            "No compatible lower() function found in vm_py.compiler.ast_lower: "
+            + "; ".join(errors[:8] or ["<none>"])
+        )
 
     # Optional typecheck step
     try:

@@ -12,6 +12,14 @@ High-level client for Animica nodes:
 
 > Tested on Python 3.9+.
 
+Canonical contract workflow (current):
+
+- Deploy: `PYTHONPATH=sdk/python python -m omni_sdk.cli.main deploy package ...`
+- Call: `PYTHONPATH=sdk/python python -m omni_sdk.cli.main call read|write ...`
+- End-to-end example: `python sdk/python/examples/deploy_counter.py`
+
+See `sdk/python/examples/README.md` for maintained command lines.
+
 ---
 
 ## Install
@@ -276,4 +284,3 @@ Notes
 	•	PQ signatures: Dilithium3 (default) and SPHINCS+ are supported; both apply strict domain separation over SignBytes(chainId, tx).
 	•	Determinism: CBOR encoding matches node rules; avoid third-party CBOR libs for tx/signing unless you validate canonical output.
 	•	Chain IDs: Always sign with the intended chain_id; mismatches are rejected by nodes.
-
