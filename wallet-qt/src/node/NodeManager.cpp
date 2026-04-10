@@ -48,6 +48,28 @@ int jsonIntValue(const QJsonObject& object, const QStringList& keys, int fallbac
     return fallback;
 }
 
+int jsonIntValue(const QJsonValue& value, int fallback = 0)
+{
+    if (value.isDouble()) {
+        return value.toInt(fallback);
+    }
+    if (value.isString()) {
+        bool ok = false;
+        const int parsed = value.toString().toInt(&ok);
+        if (ok) {
+            return parsed;
+        }
+    }
+    if (value.isObject()) {
+        return jsonIntValue(
+            value.toObject(),
+            {"peer_count", "count", "totalPeers", "peerCount", "value"},
+            fallback
+        );
+    }
+    return fallback;
+}
+
 bool syncPhaseImpliesSyncing(const QString& phase)
 {
     const QString normalized = phase.trimmed().toUpper();
@@ -555,8 +577,8 @@ void NodeManager::onSyncCheckTimeout()
 
         if (peerReply->error() == QNetworkReply::NoError) {
             QJsonDocument peerDoc = QJsonDocument::fromJson(peerReply->readAll());
-            QJsonObject peerResult = peerDoc.object().value("result").toObject();
-            m_lastPeerCount = jsonIntValue(peerResult, {"peer_count", "count", "totalPeers"}, m_lastPeerCount);
+            const QJsonValue peerResult = peerDoc.object().value("result");
+            m_lastPeerCount = jsonIntValue(peerResult, m_lastPeerCount);
         }
     });
 
@@ -981,6 +1003,13 @@ void NodeManager::noteRecoverySignals(const QString& line)
 void NodeManager::evaluateSyncWatchdog(int currentBlock, int highestBlock, bool syncing)
 {
     const QDateTime now = QDateTime::currentDateTimeUtc();
+
+    // No recovery action is possible without peers.
+    if (m_lastPeerCount <= 0) {
+        m_syncWatchdogLastProgressAt = now;
+        m_syncWatchdogForceAttempts = 0;
+        return;
+    }
 
     if (currentBlock > m_syncWatchdogLastCurrentBlock) {
         m_syncWatchdogLastProgressAt = now;
