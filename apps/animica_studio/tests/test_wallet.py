@@ -484,6 +484,22 @@ class TestWalletServiceCreateWallet:
         assert account.address == "anim1acdefghjklmnpqrstuvwxyz0234567890"
         assert account.sig_scheme == "dilithium3"
 
+    def test_resolve_created_wallet_address_falls_back_to_cli_output(self):
+        from animica_studio.storage.config import Config
+        from animica_studio.services.wallet_service import WalletService
+
+        ws = WalletService(Config())
+        known_addresses = {"anim1existingaddr000000000000000"}
+        ws._load_wallet_store_addresses = lambda: {"anim1existingaddr000000000000000"}
+        output = """
+=== Wallet created ===
+Label:   Wallet1
+Address: anim1acdefghjklmnpqrstuvwxyz0234567890
+Alg:     dilithium3 (0x1001)
+"""
+        address = ws.resolve_created_wallet_address(known_addresses, output)
+        assert address == "anim1acdefghjklmnpqrstuvwxyz0234567890"
+
 
 class TestWalletServiceExplorerUrls:
     def _make_service(self):

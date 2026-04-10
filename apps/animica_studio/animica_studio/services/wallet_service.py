@@ -52,6 +52,7 @@ _WALLET_LABEL_RE = re.compile(r"^[A-Za-z0-9 _-]{1,32}$")
 _TX_HASH_RE = re.compile(r"0x[a-fA-F0-9]{64}")
 _ANM_BALANCE_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*ANM", re.IGNORECASE)
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_ADDRESS_RE = re.compile(r"\banim1[0-9a-z]{20,120}\b")
 _SCHEME_ALIASES = {
     "dilithium3": "dilithium3",
     "sphincs128s": "sphincs_shake_128s",
@@ -168,13 +169,17 @@ class WalletService:
             log.warning("WalletService: failed to load wallet store path=%s error=%s", path, exc)
             return set()
 
-    def resolve_created_wallet_address(self, known_addresses: set[str]) -> str:
+    def resolve_created_wallet_address(self, known_addresses: set[str], cli_output: str = "") -> str:
         current = self._load_wallet_store_addresses()
         new_addresses = current - known_addresses
         if len(new_addresses) == 1:
             return next(iter(new_addresses))
         if len(new_addresses) > 1:
             return sorted(new_addresses)[-1]
+        if cli_output:
+            matches = _ADDRESS_RE.findall(cli_output)
+            if matches:
+                return matches[-1]
         raise RuntimeError("Wallet was created but Studio could not resolve a new address from wallet store.")
 
     def start_create_wallet(
@@ -237,7 +242,8 @@ class WalletService:
             log.warning("WalletService: create wallet CLI failed label=%s scheme=%s duration_ms=%s error=%s", clean_label, scheme, elapsed, details)
             raise RuntimeError(details)
 
-        address = self.resolve_created_wallet_address(known_addresses)
+        combined_output = "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+        address = self.resolve_created_wallet_address(known_addresses, combined_output)
         account = self.store_created_wallet(clean_label, address, scheme)
         elapsed = int((time.perf_counter() - started) * 1000)
         log.info("WalletService: create wallet success label=%s scheme=%s address=%s duration_ms=%s", clean_label, scheme, address, elapsed)

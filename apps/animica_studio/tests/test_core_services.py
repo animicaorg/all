@@ -635,6 +635,24 @@ def test_process_manager_status_stale_pid(tmp_path):
     assert not (tmp_path / "node.pid").exists()
 
 
+def test_process_manager_stop_rpc_running_without_pid(tmp_path):
+    from animica_studio.services.process_manager import ProcessManager
+
+    pm = ProcessManager(
+        start_cmd=["animica", "node", "start"],
+        rpc_url="http://127.0.0.1:8545/rpc",
+        data_dir=tmp_path,
+    )
+
+    with patch.object(pm, "_read_pid", return_value=None), \
+         patch.object(pm, "_ping_rpc", side_effect=[True, False]), \
+         patch.object(pm, "_try_rpc_shutdown", return_value=True):
+        status = pm.stop()
+
+    assert status["stopped"] is True
+    assert status["running"] is False
+
+
 # ---------------------------------------------------------------------------
 # New services
 # ---------------------------------------------------------------------------
