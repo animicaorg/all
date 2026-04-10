@@ -7,6 +7,14 @@ operations tooling.
 
 from __future__ import annotations
 
-from .main import app, main
+from importlib import import_module
+from typing import Any
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"app", "main"}:
+        module = import_module(".main", __name__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = ["app", "main", "wallet", "node", "mining"]
