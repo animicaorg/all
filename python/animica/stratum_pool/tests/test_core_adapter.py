@@ -97,7 +97,7 @@ async def test_get_new_job_prefers_first_success(monkeypatch):
     async def _to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
-    adapter = MiningCoreAdapter("http://example", 1, "0xpool")
+    adapter = MiningCoreAdapter("http://example", 1, "")
     monkeypatch.setattr(adapter, "_rpc", rpc)
     monkeypatch.setattr(asyncio, "to_thread", _to_thread)
 
@@ -105,20 +105,20 @@ async def test_get_new_job_prefers_first_success(monkeypatch):
 
     assert job.job_id == "abc"
     assert job.height == 7
-    assert rpc.calls[0][0] == "miner.getBlockTemplate"
-    assert rpc.calls[1][0] == "miner.getWork"
-    assert rpc.calls[1][1][0]["chainId"] == 1
+    assert rpc.calls[0][0] == "miner.getWork"
+    assert rpc.calls[0][1][0]["chainId"] == 1
     assert job.target == "0x1234"
     assert job.sign_bytes == "0x99"
 
 
 @pytest.mark.asyncio
-async def test_get_new_job_retries_without_params(monkeypatch):
+async def test_get_new_job_retries_block_template_param_variants(monkeypatch):
     payload = {
-        "jobId": "abc",
-        "header": {"number": 7},
-        "thetaMicro": 123,
-        "shareTarget": 0.5,
+        "templateId": "tpl-1",
+        "header": _full_header_template(),
+        "target": "0x" + "ff" * 32,
+        "parent": {"height": 6, "hash": "0x" + "aa" * 32},
+        "txs": [],
         "height": 7,
     }
 
@@ -129,27 +129,30 @@ async def test_get_new_job_retries_without_params(monkeypatch):
         def call(self, method, params):
             self.calls.append((method, params))
             if method == "miner.getBlockTemplate":
-                raise RpcError(-32602, "invalid params")
-            if params:
-                raise RpcError(-32602, "invalid params")
-            return payload
+                if params == {"address": "anim1pool", "include_mempool": True}:
+                    raise RpcError(-32602, "invalid params")
+                if params == {"payout_address": "anim1pool", "include_mempool": True}:
+                    return payload
+            raise AssertionError(f"unexpected RPC call: {method} {params}")
 
     async def _to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
-    adapter = MiningCoreAdapter("http://example", 1, "0xpool")
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
     rpc = DummyRpc()
     monkeypatch.setattr(adapter, "_rpc", rpc)
     monkeypatch.setattr(asyncio, "to_thread", _to_thread)
 
     job = await adapter.get_new_job()
 
-    assert job.job_id == "abc"
+    assert job.job_id == "tpl-1"
     assert job.height == 7
     assert rpc.calls[0][0] == "miner.getBlockTemplate"
-    assert rpc.calls[1][0] == "miner.getWork"
-    assert rpc.calls[1][1]  # first getWork attempt uses params with address
-    assert rpc.calls[2][1] == []  # final fallback drops params entirely
+    assert rpc.calls[0][1] == {"address": "anim1pool", "include_mempool": True}
+    assert rpc.calls[1][1] == {
+        "payout_address": "anim1pool",
+        "include_mempool": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -191,15 +194,7 @@ async def test_get_new_job_omits_empty_pool_address(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_new_job_fallbacks_without_pool_address(monkeypatch):
-    payload = {
-        "jobId": "abc",
-        "header": {"number": 7},
-        "thetaMicro": 123,
-        "shareTarget": 0.5,
-        "height": 7,
-    }
-
+async def test_get_new_job_requires_block_template_for_pool_address(monkeypatch):
     class DummyRpc:
         def __init__(self):
             self.calls = []
@@ -208,9 +203,7 @@ async def test_get_new_job_fallbacks_without_pool_address(monkeypatch):
             self.calls.append((method, params))
             if method == "miner.getBlockTemplate":
                 raise RpcError(-32602, "unexpected address field")
-            if params and isinstance(params[0], dict) and "address" in params[0]:
-                raise RpcError(-32602, "unexpected address field")
-            return payload
+            raise AssertionError(f"unexpected RPC call: {method} {params}")
 
     async def _to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -220,14 +213,13 @@ async def test_get_new_job_fallbacks_without_pool_address(monkeypatch):
     monkeypatch.setattr(adapter, "_rpc", rpc)
     monkeypatch.setattr(asyncio, "to_thread", _to_thread)
 
-    job = await adapter.get_new_job()
+    with pytest.raises(
+        RuntimeError,
+        match="unable to fetch block template for pool mining",
+    ):
+        await adapter.get_new_job()
 
-    assert job.job_id == "abc"
-    assert job.height == 7
-    # First getWork attempt includes pool address, then retries without it
-    assert rpc.calls[0][0] == "miner.getBlockTemplate"
-    assert rpc.calls[1][1][0]["address"] == "0xpool"
-    assert rpc.calls[2][1] == []
+    assert all(call[0] == "miner.getBlockTemplate" for call in rpc.calls)
 
 
 @pytest.mark.asyncio
