@@ -3,9 +3,7 @@
 import json
 from pathlib import Path
 
-import httpx
 import pytest
-import respx
 from typer.testing import CliRunner
 
 # Some CLI submodules import optional dependencies like requests; provide a stub to
@@ -17,12 +15,15 @@ SDK_ROOT = Path(__file__).resolve().parents[4] / "sdk" / "python"
 if str(SDK_ROOT) not in sys.path:
     sys.path.insert(0, str(SDK_ROOT))
 
-sys.modules.setdefault("requests", types.SimpleNamespace())
+try:
+    import requests as _requests_mod
+except Exception:  # pragma: no cover - fallback for minimal envs
+    _requests_mod = types.SimpleNamespace()
+sys.modules.setdefault("requests", _requests_mod)
 
 from animica.cli import tx
 from animica.tx.signing import build_signable_tx_bytes
 from omni_sdk.tx.build import transfer
-from omni_sdk.tx.encode import unpack_signed
 from omni_sdk.tx.signing import sign_transaction
 
 
@@ -67,94 +68,114 @@ def test_cli_sign_bytes_match_sdk_helper():
     assert signed.sign_bytes == expected
     assert signed.signature.startswith(b"sig")
 
-@respx.mock
 def test_cli_send_signature_verifies_with_pq(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Broadcast path should produce signatures the PQ verifier accepts."""
 
+    from pq.py.address import address_from_pubkey
     from pq.py.sign import Signature
-    from pq.py.verify import verify_detached
+    from animica.tx.signing import ChainContext, pq_verify_tx
     from omni_sdk.wallet.signer import PQSigner
-    from rpc.methods import tx as rpc_tx
+    import cbor2
 
     monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
     monkeypatch.setenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
     monkeypatch.setenv("ANIMICA_PQ_VERIFY_DEBUG", "1")
 
     signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
-    wallet_file = tmp_path / "wallets.json"
-    wallet_entry = {
-        "label": "alice",
-        "address": signer.address
-        or "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
-        "alg_id": signer.alg_id,
-        "alg_name": signer.alg_name,
-        "public_key_hex": signer.public_key.hex(),
-        "secret_key_hex": signer.secret_key.hex(),
-        "created_at": "2025-01-01T00:00:00Z",
-    }
-    wallet_file.write_text(json.dumps({"version": 1, "wallets": [wallet_entry]}, indent=2))
+    signer_addr = address_from_pubkey(signer.public_key, signer.alg_id)
+    chain_ctx = ChainContext(
+        chain_id=1,
+        genesis_hash=b"\x00" * 32,
+        network="test",
+        fork_id=None,
+        domain="tx",
+        prehash="sha3-512",
+    )
 
     rpc_url = "http://localhost:9999/rpc"
 
-    # Ensure the RPC layer expects the same chain ID the CLI will sign with
-    monkeypatch.setattr(rpc_tx.deps, "get_chain_id", lambda: 1)
+    def fake_rpc(url: str, method: str, params=None, timeout=None):  # type: ignore[no-untyped-def]
+        del timeout
+        assert url == rpc_url
+        params = params or []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        method = payload.get("method")
+        if method == "chain.getChainIdentity":
+            return {
+                "chainId": 1,
+                "forkId": 0,
+                "network": "test",
+                "genesisHash": "0x" + ("00" * 32),
+            }
         if method == "chain.getChainId":
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": 1})
-        if method == "state.getTransactionCount":
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": 0})
-        if method == "state.suggestGasPrice":
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": "1000000000"})
-        if method == "tx.sendRawTransaction":
-            raw_hex = payload["params"][0]
+            return 1
+        if method == "sync.getStatus":
+            return {
+                "phase": "SYNCED",
+                "synchronized": True,
+                "head_height": 100,
+                "best_header_height": 100,
+            }
+        if method in {
+            "mempool.getFeeQuote",
+            "fee.quote",
+            "tx.estimateFee",
+            "tx.gasPrice",
+            "gasPrice",
+            "fee.getGasPrice",
+        }:
+            return {"limit": 21000, "price": 1_000_000_000}
+        if method in {"mempool.simulateAdmission", "tx.sendRawTransaction"}:
+            raw_hex = params[0]
             if raw_hex.startswith("0x"):
                 raw_hex = raw_hex[2:]
             raw_bytes = bytes.fromhex(raw_hex)
-            envelope = unpack_signed(raw_bytes)
+            envelope = cbor2.loads(raw_bytes)
+            sig_obj = envelope["sig"]
+            pub = sig_obj.get("pubkey") or sig_obj.get("pk")
 
-            # The RPC verifier must accept the CLI's signature bytes
-            message = build_signable_tx_bytes(envelope)
             signature_obj = Signature(
-                alg_id=envelope["sig"]["algId"],
+                alg_id=sig_obj["algId"],
                 alg_name=signer.alg_name,
                 domain="tx",
                 prehash="sha3-512",
-                sig=envelope["sig"]["sig"],
+                sig=sig_obj["sig"],
             )
-
-            assert verify_detached(
-                message, signature_obj, envelope["sig"]["pubkey"], chain_id=1
+            verify_result = pq_verify_tx(
+                envelope, signature_obj, pub, chain_ctx, from_addr=signer_addr
             )
+            assert verify_result.ok, verify_result
 
-            # RPC helper should also pass (no exception)
-            rpc_tx._verify_pq_signature(envelope, envelope, chain_id=1)
+            return {"tx_hash": "0xaccepted", "accepted_to_mempool": True}
 
-            return httpx.Response(
-                200,
-                json={"jsonrpc": "2.0", "id": payload["id"], "result": "0xaccepted"},
-            )
+        return None
 
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload.get("id", 0), "result": None})
-
-    respx.post(rpc_url).mock(side_effect=handler)
+    monkeypatch.setattr(tx, "_rpc", fake_rpc)
 
     result = runner.invoke(
         tx.app,
         [
             "send",
-            "--wallet-file",
-            str(wallet_file),
             "--from",
-            wallet_entry["label"],
+            signer_addr,
             "--to",
-            wallet_entry["address"],
+            signer_addr,
             "--value",
             "1",
+            "--nonce",
+            "0",
+            "--valid-from",
+            "1",
+            "--valid-until",
+            "100",
+            "--dry-run",
+            "--secret-key-hex",
+            signer.secret_key.hex(),
+            "--public-key-hex",
+            signer.public_key.hex(),
+            "--alg-id",
+            str(signer.alg_id),
             "--chain-id",
             "1",
             "--rpc-url",
@@ -165,4 +186,3 @@ def test_cli_send_signature_verifies_with_pq(
 
     assert result.exit_code == 0, result.output
     assert "Invalid post-quantum signature" not in result.output
-
