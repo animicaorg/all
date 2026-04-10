@@ -52,7 +52,7 @@ const actionsUrl = `${links.github.root}/actions`;
         <div>
           <h3 class="font-medium">macOS (Universal)</h3>
           <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Wallet.dmg</InlineLink></li>
+            <li><InlineLink href="/animicawallet.dmg" underline>animicawallet.dmg</InlineLink></li>
             <li class="opacity-75">Alt: <InlineLink href={releasesUrl} underline>Animica-Wallet.pkg</InlineLink></li>
             <li class="opacity-70 text-xs">Requires macOS 12+</li>
           </ul>
@@ -120,8 +120,8 @@ const actionsUrl = `${links.github.root}/actions`;
         Always verify checksums and signatures before installing. Release notes include SHA-256 hashes.
       </p>
       <CodeBlock lang="bash" title="Verify SHA256">
-{`shasum -a 256 Animica-Wallet.dmg
-# Compare with the checksum in ${releasesUrl}`}
+{`shasum -a 256 animicawallet.dmg
+# Compare with /animicawallet.sha256`}
       </CodeBlock>
     </div>
   </section>

@@ -42,11 +42,11 @@ describe('wallet download manifest normalization', () => {
       macos: {
         architecture: 'universal',
         build_label: 'v1.2.3-test',
-        installer_url: '/wallet/animicawallet.dmg',
+        installer_url: '/animicawallet.dmg',
         installer_filename: 'animicawallet.dmg',
         installer_sha256: 'deadbeef',
         installer_size_bytes: 4096,
-        checksum_url: '/wallet/animicawallet.sha256',
+        checksum_url: '/animicawallet.sha256',
         checksum_filename: 'animicawallet.sha256',
       },
     };
@@ -57,7 +57,7 @@ describe('wallet download manifest normalization', () => {
     expect(cards[0]?.key).toBe('macos');
     expect(cards[0]?.downloads).toHaveLength(1);
     expect(cards[0]?.downloads[0]?.label).toBe('macOS Disk Image (.dmg)');
-    expect(cards[0]?.checksums[0]?.href).toBe('/wallet/animicawallet.sha256');
+    expect(cards[0]?.checksums[0]?.href).toBe('/animicawallet.sha256');
   });
 
   it('renders Linux files without requiring every optional artifact', () => {

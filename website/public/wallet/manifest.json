@@ -15,11 +15,11 @@
   "macos": {
     "architecture": "universal",
     "build_label": "v0.1.0-4cc000c7e",
-    "installer_url": "/wallet/animicawallet.dmg",
+    "installer_url": "/animicawallet.dmg",
     "installer_filename": "animicawallet.dmg",
-    "installer_sha256": "1f7678dcc79442d85437145dc33e3baa4fd7a12993718f4481a589f077079e43",
-    "installer_size_bytes": 103917703,
-    "checksum_url": "/wallet/animicawallet.sha256",
+    "installer_sha256": "fcb4d56a1351e6cd28ab45b8027084a1587754acd4f25918c5e3bc6873b0d1c8",
+    "installer_size_bytes": 122900834,
+    "checksum_url": "/animicawallet.sha256",
     "checksum_filename": "animicawallet.sha256",
     "checksum_size_bytes": 84
   },
