@@ -313,7 +313,12 @@ class StudioStatusService:
         if sync_payload:
             summary.rpc_reachable = bool(sync_payload.get("rpc_reachable", summary.rpc_reachable))
             summary.chain_id = _safe_int(sync_payload.get("chain_id"))
-            summary.head_number = _safe_int(sync_payload.get("height"))
+            summary.head_number = _safe_int(
+                sync_payload.get("head_number")
+                or sync_payload.get("head_height")
+                or sync_payload.get("best_block_height")
+                or sync_payload.get("height")
+            )
             summary.head_hash = str(sync_payload.get("head_hash") or "")
             summary.peer_count = _safe_int(sync_payload.get("peer_count"))
             summary.sync = self._build_sync_summary(sync_payload)
@@ -321,11 +326,10 @@ class StudioStatusService:
         try:
             client = RpcClient(profile.effective_rpc_url(), connect_timeout=3.0, read_timeout=8.0, max_retries=1)
             try:
-                if summary.head_number is None:
-                    head = client.get_head()
-                    summary.head_number = head.number
-                    summary.head_hash = head.hash or summary.head_hash
-                    summary.rpc_reachable = True
+                head = client.get_head()
+                summary.head_number = max(summary.head_number or 0, head.number)
+                summary.head_hash = head.hash or summary.head_hash
+                summary.rpc_reachable = True
                 if summary.chain_id is None:
                     try:
                         summary.chain_id = client.get_chain_id()

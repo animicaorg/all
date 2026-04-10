@@ -132,3 +132,18 @@ def test_studio_status_service_extracts_json_from_mixed_output() -> None:
     service = StudioStatusService(Config(), SettingsService(Config()))
     payload = service._extract_json_output("warning: stale cache\n{\"height\": 10, \"peer_count\": 2}\n")  # noqa: SLF001
     assert payload == {"height": 10, "peer_count": 2}
+
+
+def test_studio_status_prefers_rpc_head_when_sync_height_is_stale(monkeypatch) -> None:
+    cfg = Config()
+    profile = _local_profile()
+    cfg.rpc_profiles = [profile.to_dict()]
+    cfg.active_profile_id = profile.id
+    service = StudioStatusService(cfg, SettingsService(cfg))
+
+    monkeypatch.setattr(service, "_process_manager", lambda _profile: _FakeProcessManager())
+    monkeypatch.setattr(service, "_load_cli_sync_payload", lambda _rpc_url: {"height": 0, "rpc_reachable": True})
+    monkeypatch.setattr("animica_studio.services.studio_status_service.RpcClient", _FakeRpcClient)
+
+    snapshot = service.collect_snapshot()
+    assert snapshot.node.head_number == 120

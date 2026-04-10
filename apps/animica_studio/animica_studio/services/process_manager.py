@@ -207,10 +207,26 @@ class ProcessManager:
         Returns a status dict.
         """
         pid = self._read_pid()
-        if pid is None or not _is_pid_alive(pid):
+        pid_alive = pid is not None and _is_pid_alive(pid)
+        rpc_reachable = self._ping_rpc()
+
+        if not pid_alive and not rpc_reachable:
             log.info("ProcessManager: node not running")
             self._remove_pid()
             return {"running": False, "stopped": True, "pid": None}
+
+        if not pid_alive and rpc_reachable:
+            log.info("ProcessManager: node reachable via RPC but PID file is missing/stale; attempting RPC shutdown")
+            stopped = False
+            if self._try_rpc_shutdown():
+                deadline = time.time() + _SHUTDOWN_GRACE_S
+                while time.time() < deadline:
+                    if not self._ping_rpc():
+                        stopped = True
+                        break
+                    time.sleep(0.2)
+            self._remove_pid()
+            return {"running": not stopped, "stopped": stopped, "pid": None}
 
         # Try graceful RPC shutdown first
         if self._try_rpc_shutdown():
