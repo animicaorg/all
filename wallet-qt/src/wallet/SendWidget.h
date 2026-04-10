@@ -2,6 +2,7 @@
 #define SENDWIDGET_H
 
 #include <QWidget>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QDoubleSpinBox>
@@ -108,6 +109,8 @@ private:
     QString getCurrentAccountId() const;
     QString getCurrentAccountAddress() const;
     qint64 getAvailableBalance() const;
+    qint64 selectedMaxFee() const;
+    void updateFeeControls();
     FeeEstimator::FeeTier currentFeeTier() const;
     
     WalletEngine* m_walletEngine;
@@ -121,6 +124,8 @@ private:
     QLineEdit* m_toAddressEdit;
     QDoubleSpinBox* m_amountSpinBox;
     QComboBox* m_feeTierCombo;
+    QCheckBox* m_customFeeCheck;
+    QDoubleSpinBox* m_customFeeSpinBox;
     QLabel* m_feeLabel;
     QLineEdit* m_memoEdit;
     QLineEdit* m_nonceEdit;

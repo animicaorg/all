@@ -2,6 +2,7 @@
 #include "../src/rpc/RpcSettings.h"
 #include "../src/wallet/AccountsWidget.h"
 #include "../src/wallet/ContractInteractionWidget.h"
+#include "../src/wallet/FeeEstimator.h"
 #include "../src/wallet/ReceiveWidget.h"
 #include "../src/wallet/SendWidget.h"
 #include "../src/wallet/SettingsWidget.h"
@@ -76,6 +77,14 @@ private slots:
         SendWidget send(&ctx.engine, &ctx.rpcClient, nullptr, nullptr);
         QVERIFY(send.findChild<QComboBox*>());
         QVERIFY(send.findChild<QLineEdit*>());
+    }
+
+    void testFeeEstimatorUsesScalarMaxFeeReserve()
+    {
+        FeeEstimator estimator(nullptr);
+        const qint64 slowTierFee = estimator.getGasPrice(FeeEstimator::Slow);
+        const qint64 reserve = estimator.calculateFee(FeeEstimator::Slow, FeeEstimator::standardTransferGas());
+        QCOMPARE(reserve, slowTierFee);
     }
 
     void testHistoryWidgetInitializes()
