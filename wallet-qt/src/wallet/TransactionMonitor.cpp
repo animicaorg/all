@@ -5,6 +5,80 @@
 #include <QMutexLocker>
 #include <QJsonArray>
 
+namespace {
+qint64 parseStatusIntField(const QJsonObject& status, const char* key, qint64 fallback = -1)
+{
+    const QJsonValue value = status.value(QLatin1String(key));
+    if (value.isUndefined() || value.isNull()) {
+        return fallback;
+    }
+    if (value.isDouble()) {
+        return static_cast<qint64>(value.toDouble());
+    }
+    if (value.isString()) {
+        QString text = value.toString().trimmed();
+        int base = 10;
+        if (text.startsWith("0x")) {
+            text = text.mid(2);
+            base = 16;
+        }
+        bool ok = false;
+        const qint64 parsed = text.toLongLong(&ok, base);
+        if (ok) {
+            return parsed;
+        }
+        return fallback;
+    }
+    return value.toVariant().toLongLong();
+}
+
+QString normalizedStatus(const QJsonObject& status)
+{
+    return status.value("status").toString().trimmed().toLower();
+}
+
+qint64 statusBlockHeight(const QJsonObject& status)
+{
+    qint64 height = parseStatusIntField(status, "included_height");
+    if (height < 0) {
+        height = parseStatusIntField(status, "includedHeight");
+    }
+    if (height < 0) {
+        height = parseStatusIntField(status, "blockNumber");
+    }
+    return height;
+}
+
+QString statusBlockHash(const QJsonObject& status)
+{
+    QString blockHash = status.value("included_in_block_hash").toString();
+    if (blockHash.isEmpty()) {
+        blockHash = status.value("includedInBlockHash").toString();
+    }
+    if (blockHash.isEmpty()) {
+        blockHash = status.value("blockHash").toString();
+    }
+    return blockHash;
+}
+
+int statusConfirmations(const QJsonObject& status)
+{
+    return static_cast<int>(parseStatusIntField(status, "confirmations", 0));
+}
+
+QString statusFailureReason(const QJsonObject& status)
+{
+    QString reason = status.value("reason").toString();
+    if (reason.isEmpty()) {
+        reason = status.value("error").toString();
+    }
+    if (reason.isEmpty()) {
+        reason = status.value("details").toString();
+    }
+    return reason;
+}
+}
+
 TransactionMonitor::TransactionMonitor(
     AnimicaRpcClient* rpcClient,
     WalletDatabase* database,
@@ -268,7 +342,7 @@ void TransactionMonitor::onPendingTx(const QJsonObject& tx) {
 
 void TransactionMonitor::checkTransaction(const QString& txHash) {
     try {
-        QJsonObject txInfo = m_rpcClient->getTransactionByHash(txHash);
+        QJsonObject txInfo = m_rpcClient->getTransactionStatusByHash(txHash);
         
         if (txInfo.isEmpty()) {
             qWarning() << "Transaction not found:" << txHash;
@@ -292,7 +366,7 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
             return;
         }
         
-        QString status = txInfo["status"].toString();
+        const QString status = normalizedStatus(txInfo);
         qDebug() << "Transaction" << txHash << "status:" << status;
         
         if (status == "pending") {
@@ -312,9 +386,9 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
             if (tx.direction == "out") {
                 ensureOutgoingReservation(txHash, tx.fromAccountId, tx.amount, tx.fee);
             }
-        } else if (status == "mined" || status == "included") {
-            qint64 blockHeight = txInfo["blockNumber"].toVariant().toLongLong();
-            QString blockHash = txInfo["blockHash"].toString();
+        } else if (status == "confirmed" || status == "instant_confirmed" || status == "mined" || status == "included") {
+            const qint64 blockHeight = statusBlockHeight(txInfo);
+            const QString blockHash = statusBlockHash(txInfo);
             
             if (tx.state == "MEMPOOL" || tx.state == "BROADCAST" || tx.state == "REORGED") {
                 // Newly included on chain (1+ confirmations)
@@ -322,7 +396,7 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
                 updated.state = "CONFIRMED";
                 updated.blockHash = blockHash;
                 updated.blockHeight = blockHeight;
-                int confirmations = txInfo["confirmations"].toVariant().toInt();
+                int confirmations = statusConfirmations(txInfo);
                 if (confirmations <= 0) {
                     confirmations = 1;
                 }
@@ -338,10 +412,12 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
                 
                 // Track this block for reorg detection
                 QMutexLocker locker(&m_mutex);
-                BlockInfo info;
-                info.height = blockHeight;
-                info.hash = blockHash;
-                m_knownBlocks[blockHeight] = info;
+                if (blockHeight >= 0 && !blockHash.isEmpty()) {
+                    BlockInfo info;
+                    info.height = blockHeight;
+                    info.hash = blockHash;
+                    m_knownBlocks[blockHeight] = info;
+                }
                 switchToFastPolling(txHash);
                 m_lastActivityTime = QDateTime::currentMSecsSinceEpoch();
                 
@@ -352,11 +428,15 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
                           << "new:" << blockHash << "@" << blockHeight;
                 handleReorg(txHash, tx);
             }
+        } else if (status == "reorged_out") {
+            if (tx.state != "REORGED") {
+                handleReorg(txHash, tx);
+            }
         } else if (status == "failed" || status == "rejected") {
             if (tx.state != "DROPPED") {
                 WalletTx updated = tx;
                 updated.state = "DROPPED";
-                updated.failureReason = txInfo["error"].toString();
+                updated.failureReason = statusFailureReason(txInfo);
                 if (updated.failureReason.isEmpty()) {
                     updated.failureReason = "Transaction " + status;
                 }
@@ -544,10 +624,10 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
     
     // Check current status
     try {
-        QJsonObject txInfo = m_rpcClient->getTransactionByHash(txHash);
+        QJsonObject txInfo = m_rpcClient->getTransactionStatusByHash(txHash);
         
         if (!txInfo.isEmpty()) {
-            QString status = txInfo["status"].toString();
+            const QString status = normalizedStatus(txInfo);
             
             if (status == "pending") {
                 // Back to mempool
@@ -567,10 +647,10 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 QMutexLocker locker(&m_mutex);
                 switchToFastPolling(txHash);
                 
-            } else if (status == "mined" || status == "included") {
+            } else if (status == "confirmed" || status == "instant_confirmed" || status == "mined" || status == "included") {
                 // Mined in different block
-                qint64 newHeight = txInfo["blockNumber"].toVariant().toLongLong();
-                QString newHash = txInfo["blockHash"].toString();
+                const qint64 newHeight = statusBlockHeight(txInfo);
+                const QString newHash = statusBlockHash(txInfo);
                 
                 qDebug() << "Transaction mined in new block:" << txHash 
                         << "height:" << newHeight << "hash:" << newHash;
@@ -578,7 +658,7 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 updated.state = "CONFIRMED";
                 updated.blockHash = newHash;
                 updated.blockHeight = newHeight;
-                int confirmations = txInfo["confirmations"].toVariant().toInt();
+                int confirmations = statusConfirmations(txInfo);
                 if (confirmations <= 0) {
                     confirmations = 1;
                 }
@@ -594,11 +674,24 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 }
                 
                 QMutexLocker locker(&m_mutex);
-                BlockInfo info;
-                info.height = newHeight;
-                info.hash = newHash;
-                m_knownBlocks[newHeight] = info;
+                if (newHeight >= 0 && !newHash.isEmpty()) {
+                    BlockInfo info;
+                    info.height = newHeight;
+                    info.hash = newHash;
+                    m_knownBlocks[newHeight] = info;
+                }
                 switchToFastPolling(txHash);
+            } else if (status == "not_found") {
+                // Dropped completely
+                qWarning() << "Transaction not found after reorg:" << txHash;
+                updated.state = "DROPPED";
+                updated.failureReason = "Reorg: transaction not in new chain";
+                m_database->updateTransaction(txHash, updated);
+                
+                emit transactionDropped(txHash, updated.failureReason);
+                
+                QMutexLocker locker(&m_mutex);
+                m_fastPollTxs.remove(txHash);
             }
         } else {
             // Dropped completely
