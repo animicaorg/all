@@ -188,6 +188,18 @@ void TestWalletDatabase::testStateTransitionValidation()
     // Invalid transition: SIGNED -> CONFIRMED (should be SIGNED -> BROADCAST first)
     tx.state = "CONFIRMED";
     QVERIFY(!db->updateTransaction(tx.txid, tx));
+
+    // Walk a valid lifecycle to REORGED and ensure direct re-inclusion is accepted.
+    tx.state = "BROADCAST";
+    QVERIFY(db->updateTransaction(tx.txid, tx));
+    tx.state = "MEMPOOL";
+    QVERIFY(db->updateTransaction(tx.txid, tx));
+    tx.state = "CONFIRMED";
+    QVERIFY(db->updateTransaction(tx.txid, tx));
+    tx.state = "REORGED";
+    QVERIFY(db->updateTransaction(tx.txid, tx));
+    tx.state = "CONFIRMED";
+    QVERIFY(db->updateTransaction(tx.txid, tx));
 }
 
 void TestWalletDatabase::testAddLedgerEntry()
