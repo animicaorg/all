@@ -1,7 +1,6 @@
 #ifndef RPCSETTINGS_H
 #define RPCSETTINGS_H
 
-#include <QSettings>
 #include <QUrl>
 
 struct RpcEndpointSettings {
@@ -19,15 +18,16 @@ public:
     RpcSettings();
 
     RpcEndpointSettings load() const;
-    void save(const RpcEndpointSettings& settings);
     RpcEndpointSettings defaults() const;
 
     static QUrl toUrl(const RpcEndpointSettings& settings);
     static QString toDisplayUrl(const RpcEndpointSettings& settings);
     static bool isDefault(const RpcEndpointSettings& settings);
+    static QString canonicalRpcUrl();
+    static QString canonicalNetwork();
+    static int canonicalChainId();
 
 private:
-    mutable QSettings m_settings;
     static RpcEndpointSettings defaultSettings();
 };
 

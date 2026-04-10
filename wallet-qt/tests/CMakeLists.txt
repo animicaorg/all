@@ -13,7 +13,6 @@ set(TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/src/wallet
     ${CMAKE_SOURCE_DIR}/src/platform
     ${CMAKE_SOURCE_DIR}/src/rpc
-    ${CMAKE_SOURCE_DIR}/src/node
     ${CMAKE_SOURCE_DIR}/src/diagnostics
 )
 
@@ -52,18 +51,10 @@ add_wallet_test(test_wallet_engine test_wallet_engine.cpp)
 add_wallet_test(test_walletdatabase test_walletdatabase.cpp)
 add_wallet_test(test_datadirmanager test_datadirmanager.cpp)
 add_wallet_test(test_walletimporter test_walletimporter.cpp)
-add_wallet_test(test_node_manager test_node_manager.cpp)
-add_wallet_test(test_app_paths test_app_paths.cpp)
 add_wallet_test(test_receive_qr test_receive_qr.cpp)
 add_wallet_test(test_packaging_config test_packaging_config.cpp)
-
-add_test(
-    NAME test_linux_layout_resolver
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_linux_layout_resolver.py
-)
-set_tests_properties(test_linux_layout_resolver PROPERTIES
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+add_wallet_test(test_rpc_settings test_rpc_settings.cpp)
+add_wallet_test(test_wallet_widget test_wallet_widget.cpp)
 
 add_test(
     NAME test_wallet_manifest_generator
@@ -105,6 +96,7 @@ target_sources(test_wallet_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcSettings.cpp
 )
 
 target_compile_definitions(test_wallet_engine PRIVATE
@@ -136,6 +128,44 @@ target_sources(test_receive_qr PRIVATE
     ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcSettings.cpp
+)
+
+target_sources(test_rpc_settings PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcSettings.cpp
+)
+
+target_sources(test_wallet_widget PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletEngine.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AnimicaWalletBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletAccount.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/EncryptedKeystore.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AccountManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AddressBook.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/BalanceTracker.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AccountsWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/AddressBookWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/CreateAccountDialog.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/WalletDatabase.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/TransactionMonitor.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/TransactionHistoryWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/FeeEstimator.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/SendWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/ReconciliationJob.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/ReceiveWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/ReceiveQrService.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/ContractInteractionWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallet/SettingsWidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcSettings.cpp
+)
+
+target_compile_definitions(test_wallet_widget PRIVATE
+    ANIMICA_REPO_ROOT_PATH="${ANIMICA_REPO_ROOT}"
 )
 
 # Link diagnostics sources to tests
@@ -153,7 +183,7 @@ target_sources(test_executor PRIVATE
     ${CMAKE_SOURCE_DIR}/src/diagnostics/Redactor.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
-    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/rpc/RpcSettings.cpp
 )
 
 # Test discovery for CTest
@@ -164,6 +194,7 @@ message(STATUS "Wallet tests configured - use 'make test' or 'ctest' to run")
 # Link new test sources
 target_sources(test_datadirmanager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
 )
 
 target_sources(test_walletimporter PRIVATE
@@ -174,17 +205,4 @@ target_sources(test_walletimporter PRIVATE
 target_sources(test_rpc_moc_syntax PRIVATE
     ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
     ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
-)
-
-# Link node manager sources to test
-target_sources(test_node_manager PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/node/NodeManager.cpp
-    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
-    ${CMAKE_SOURCE_DIR}/src/platform/DataDirManager.cpp
-    ${CMAKE_SOURCE_DIR}/src/rpc/AnimicaRpcClient.cpp
-    ${CMAKE_SOURCE_DIR}/src/rpc/RpcReply.cpp
-)
-
-target_sources(test_app_paths PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/platform/AppPaths.cpp
 )

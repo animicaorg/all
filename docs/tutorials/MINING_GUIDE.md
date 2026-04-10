@@ -119,25 +119,37 @@ Output is a JSON object containing `parentHash`, `thetaMicro`, `gammaCap`, `nonc
 
 ⸻
 
-## 5) Expose Stratum for external miners
+## 5) Run the managed Stratum pool
 
-Bridge the node’s getWork API to Stratum v1 so third-party miners can connect:
-
-```bash
-python -m mining.cli.stratum_proxy start \
-  --rpc-url http://127.0.0.1:8545 \
-  --ws-url ws://127.0.0.1:8546/ws \
-  --listen 0.0.0.0:3333 \
-  --poll-interval 1.5
-```
-
-Point a Stratum miner at the proxy (example URI; adjust worker/address):
+Start the built-in pool against the local node:
 
 ```bash
-miner --url stratum+tcp://127.0.0.1:3333 --worker rig-1 --address anim1...
+animica pool up --daemon \
+  --rpc-url http://127.0.0.1:8545/rpc \
+  --pool-address anim1... \
+  --host 0.0.0.0 \
+  --port 3333
 ```
 
-The proxy subscribes to new work over WS (with HTTP polling as a fallback) and forwards submitted shares back to the node.
+Validate that the node and pool are issuing real templates:
+
+```bash
+animica pool doctor
+animica pool test-job
+animica pool status
+```
+
+Connect the reference Stratum miner:
+
+```bash
+python -m animica.stratum_pool.reference_cpu_miner \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --address anim1... \
+  --worker rig-1
+```
+
+The managed pool uses `miner.getBlockTemplate` and `miner.submitBlock`, so full-target shares map back to real submit-ready Animica blocks instead of fake share-only jobs.
 
 ⸻
 

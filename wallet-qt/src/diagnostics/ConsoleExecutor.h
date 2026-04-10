@@ -4,7 +4,6 @@
 #include <QObject>
 #include <QString>
 #include <QJsonValue>
-#include <QProcess>
 
 class AnimicaRpcClient;
 
@@ -54,12 +53,6 @@ public:
     ExecutionResult executeRpc(const QString& method, const QJsonValue& params = QJsonValue(), int timeoutMs = 0);
 
     /**
-     * @brief Get animica CLI executable path.
-     * @return Path to animica executable
-     */
-    QString getAnimicaCliPath() const;
-
-    /**
      * @brief Set maximum output size (bytes).
      */
     void setMaxOutputSize(qint64 bytes) { m_maxOutputSize = bytes; }
@@ -70,7 +63,6 @@ public:
     void setMaxOutputLines(int lines) { m_maxOutputLines = lines; }
 
 private:
-    ExecutionResult executeCli(const QStringList& args, int timeoutMs);
     QString formatJsonOutput(const QString& jsonText);
     QString applyOutputLimits(const QString& output, bool& truncated);
     int getDefaultTimeout(const QString& command);

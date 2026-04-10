@@ -1,7 +1,5 @@
 #include "AnimicaWalletBackend.h"
 
-#include "../platform/AppPaths.h"
-
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -11,11 +9,6 @@
 #include <QStandardPaths>
 
 namespace {
-QString bundledPythonPath()
-{
-    return AppPaths::bundledPythonPath();
-}
-
 QStringList repoPythonCandidates()
 {
     QStringList candidates;
@@ -124,11 +117,6 @@ QString AnimicaWalletBackend::findPythonInterpreter()
         if (info.exists() && info.isExecutable()) {
             return info.absoluteFilePath();
         }
-    }
-
-    const QString bundled = bundledPythonPath();
-    if (!bundled.isEmpty()) {
-        return bundled;
     }
 
     for (const QString& candidate : repoPythonCandidates()) {

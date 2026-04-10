@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 #include "diagnostics/ConsoleExecutor.h"
 #include "rpc/AnimicaRpcClient.h"
+#include "rpc/RpcSettings.h"
 
 class TestExecutor : public QObject
 {
@@ -11,7 +12,7 @@ private slots:
     {
         // Setup: create RPC client (may not be connected, just for structure)
         m_rpcClient = new AnimicaRpcClient(this);
-        m_rpcClient->setEndpoint("http://127.0.0.1:8545/rpc");
+        m_rpcClient->setEndpoint(RpcSettings::canonicalRpcUrl());
         
         m_executor = new ConsoleExecutor(m_rpcClient, this);
     }

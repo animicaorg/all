@@ -25,7 +25,6 @@ Options:
   --qt-host-path <path>     Host Qt prefix used for moc/rcc/uic
   --openssl-root <path>     Windows-target OpenSSL prefix
   --compiler-prefix <name>  MinGW compiler prefix (default: x86_64-w64-mingw32)
-  --node-venv <path>        Bundle a prebuilt Windows node venv instead of remote-RPC-only mode
   --per-machine             Generate a per-machine installer (admin/UAC)
   --website-dir <path>      Override website/public/wallet destination
   --version <label>         Override the website build label (default: git describe)
@@ -71,9 +70,9 @@ parse_args() {
                 usage
                 exit 0
                 ;;
-            --clean|--debug|--check|--jobs|--qt-root|--qt-host-path|--openssl-root|--compiler-prefix|--node-venv|--per-machine)
+            --clean|--debug|--check|--jobs|--qt-root|--qt-host-path|--openssl-root|--compiler-prefix|--per-machine)
                 BUILD_ARGS+=("$1")
-                if [ "$1" = "--jobs" ] || [ "$1" = "--qt-root" ] || [ "$1" = "--qt-host-path" ] || [ "$1" = "--openssl-root" ] || [ "$1" = "--compiler-prefix" ] || [ "$1" = "--node-venv" ]; then
+                if [ "$1" = "--jobs" ] || [ "$1" = "--qt-root" ] || [ "$1" = "--qt-host-path" ] || [ "$1" = "--openssl-root" ] || [ "$1" = "--compiler-prefix" ]; then
                     [ "$#" -ge 2 ] || fail "$1 requires a value"
                     BUILD_ARGS+=("$2")
                     shift 2

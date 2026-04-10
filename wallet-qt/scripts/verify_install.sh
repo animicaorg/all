@@ -7,7 +7,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-. "$SCRIPT_DIR/linux-layout.sh"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -25,13 +24,6 @@ log_error() {
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_linux_root_candidates() {
-    local root="$1"
-    while IFS= read -r candidate; do
-        log_info "  $candidate"
-    done < <(list_linux_node_root_candidates_from_root "$root")
 }
 
 # Determine platform
@@ -68,7 +60,7 @@ trap cleanup EXIT
 # Step 1: Configure
 log_info "Step 1: Configuring CMake..."
 cd "$BUILD_DIR"
-if ! cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DWALLET_REMOTE_RPC_ONLY=OFF -DBUILD_TESTING=OFF; then
+if ! cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" -DBUILD_TESTING=OFF; then
     log_error "CMake configuration failed"
     exit 1
 fi
@@ -108,14 +100,7 @@ if $IS_MACOS; then
             exit 1
         fi
         
-        # Check for bundled node
-        NODE_DIR="$BUNDLE_PATH/Contents/Resources/node"
-        if [ -d "$NODE_DIR" ]; then
-            log_info "✓ Found bundled node at: $NODE_DIR"
-            python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform macos --path "$BUNDLE_PATH"
-        else
-            log_warn "Bundled node not found at: $NODE_DIR (may require full build)"
-        fi
+        python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform macos --path "$BUNDLE_PATH"
     else
         log_error "macOS bundle not found at: $BUNDLE_PATH"
         log_info "Checking install directory contents:"
@@ -140,15 +125,6 @@ else
         find "$INSTALL_PREFIX" -maxdepth 3 | head -20
         exit 1
     fi
-    
-    if ! NODE_DIR="$(resolve_linux_node_root_from_root "$INSTALL_PREFIX")"; then
-        log_error "Installed bundled node root not found under: $INSTALL_PREFIX"
-        log_info "Checked candidate node roots:"
-        log_linux_root_candidates "$INSTALL_PREFIX"
-        exit 1
-    fi
-
-    log_info "✓ Found installed bundled node at: $NODE_DIR"
     python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$INSTALL_PREFIX"
 fi
 

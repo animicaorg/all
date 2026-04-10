@@ -90,7 +90,6 @@ TransactionHistoryWidget::TransactionHistoryWidget(WalletEngine* engine, QWidget
     connect(m_engine, &WalletEngine::accountRemoved, this, [this](const QString&) { populateWalletFilter(); });
 
     populateWalletFilter();
-    refresh();
 }
 
 void TransactionHistoryWidget::populateWalletFilter()
@@ -124,8 +123,9 @@ void TransactionHistoryWidget::refresh()
         filters["end_time"] = QDateTime(m_toDateEdit->date(), QTime(23, 59, 59), Qt::UTC).toString(Qt::ISODate);
     }
     m_refreshButton->setEnabled(false);
-    m_refreshWatcher->setFuture(QtConcurrent::run([this, filters]() {
-        return m_engine->fetchTransactionHistory(filters);
+    WalletEngine* engine = m_engine;
+    m_refreshWatcher->setFuture(QtConcurrent::run([engine, filters]() {
+        return engine->fetchTransactionHistory(filters);
     }));
 }
 
@@ -170,8 +170,9 @@ void TransactionHistoryWidget::onDetailsRequested()
         return;
     }
     const QString txHash = m_table->item(selected.first()->row(), 1)->data(Qt::UserRole).toString();
-    m_detailsWatcher->setFuture(QtConcurrent::run([this, txHash]() {
-        return m_engine->transactionDetails(txHash);
+    WalletEngine* engine = m_engine;
+    m_detailsWatcher->setFuture(QtConcurrent::run([engine, txHash]() {
+        return engine->transactionDetails(txHash);
     }));
 }
 

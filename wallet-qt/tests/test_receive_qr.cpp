@@ -13,6 +13,7 @@
 #include <QTest>
 
 #include "../src/rpc/AnimicaRpcClient.h"
+#include "../src/rpc/RpcSettings.h"
 #include "../src/wallet/ReceiveQrService.h"
 #include "../src/wallet/ReceiveWidget.h"
 #include "../src/wallet/WalletEngine.h"
@@ -197,6 +198,9 @@ void TestReceiveQr::testReceiveWidgetRefreshesQrOnInputChanges()
     QVERIFY(tempDir.isValid());
 
     AnimicaRpcClient rpcClient;
+    rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+    rpcClient.setTimeout(250);
+    rpcClient.setRetryPolicy(0, 0);
     WalletEngine engine(&rpcClient);
     QVERIFY(engine.createWallet(QString(), tempDir.path()));
 
@@ -248,6 +252,9 @@ void TestReceiveQr::testReceiveWidgetShowsDependencyFailure()
     QVERIFY(tempDir.isValid());
 
     AnimicaRpcClient rpcClient;
+    rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+    rpcClient.setTimeout(250);
+    rpcClient.setRetryPolicy(0, 0);
     WalletEngine engine(&rpcClient);
     QVERIFY(engine.createWallet(QString(), tempDir.path()));
     const WalletAccount first = engine.createAccount("Primary", 0x1001);

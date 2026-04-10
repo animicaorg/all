@@ -14,7 +14,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WALLET_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$WALLET_ROOT/.." && pwd)"
-. "$SCRIPT_DIR/linux-layout.sh"
 
 BUILD_TYPE="Release"
 BUILD_APPIMAGE=true
@@ -47,20 +46,6 @@ log_section() {
     echo "======================================"
     echo "$1"
     echo "======================================"
-}
-
-print_linux_root_candidates() {
-    local root="$1"
-    while IFS= read -r candidate; do
-        echo "  - $candidate" >&2
-    done < <(list_linux_node_root_candidates_from_root "$root")
-}
-
-print_linux_wallet_candidates() {
-    local wallet_bin="$1"
-    while IFS= read -r candidate; do
-        echo "  - $candidate" >&2
-    done < <(list_linux_node_root_candidates_from_wallet "$wallet_bin")
 }
 
 find_qmake() {
@@ -96,8 +81,6 @@ prepare_portable_stage() {
     local root_icon="$appdir/animica-wallet.png"
     local qt_plugin_path=""
     local qmake_bin=""
-    local portable_node_root=""
-
     rm -rf "$appdir"
     mkdir -p "$appdir"
     cp -a "$INSTALL_STAGE/." "$appdir/"
@@ -139,12 +122,6 @@ EOF
     fi
 
     python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$appdir"
-    if ! portable_node_root="$(resolve_linux_node_root_from_root "$appdir")"; then
-        echo "Failed to resolve portable bundled node root under $appdir" >&2
-        print_linux_root_candidates "$appdir"
-        exit 1
-    fi
-    echo "✓ Portable bundled node root: $portable_node_root"
 }
 
 build_deb_package() {
@@ -153,19 +130,12 @@ build_deb_package() {
     local installed_size
     local deb_name
     local deb_path
-    local deb_node_root
 
     rm -rf "$deb_stage"
     mkdir -p "$deb_stage"
     cp -a "$INSTALL_STAGE/." "$deb_stage/"
 
     python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$deb_stage/usr"
-    if ! deb_node_root="$(resolve_linux_node_root_from_root "$deb_stage")"; then
-        echo "Failed to resolve DEB bundled node root under $deb_stage" >&2
-        print_linux_root_candidates "$deb_stage"
-        exit 1
-    fi
-    echo "✓ DEB bundled node root: $deb_node_root"
 
     mkdir -p "$debian_dir"
     installed_size="$(du -sk "$deb_stage/usr" | cut -f1)"
@@ -179,10 +149,10 @@ Architecture: $DEB_ARCH
 Depends: libc6, libqt6core6, libqt6gui6, libqt6widgets6, libqt6network6, libqt6sql6, libssl3, python3 (>= 3.10)
 Installed-Size: $installed_size
 Maintainer: Animica Team <support@animica.org>
-Description: Animica blockchain wallet with embedded node
- A cross-platform desktop wallet for Animica blockchain with embedded
- node support. Provides a seamless experience without requiring users
- to manually manage the node.
+Description: Animica remote desktop wallet
+ A cross-platform desktop wallet for Animica mainnet accounts.
+ The Qt wallet connects directly to the hosted RPC endpoint
+ https://rpc.animica.org and does not run a local node.
 EOF
 
     deb_name="animica-wallet_${PACKAGE_VERSION}_${DEB_ARCH}.deb"
@@ -326,34 +296,16 @@ cd "$BUILD_DIR"
 cmake "$WALLET_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -DBUILD_TESTING=OFF
 
 log_section "Building Wallet"
 cmake --build . --config "$BUILD_TYPE" -j"$JOBS"
 
 WALLET_EXE="$BUILD_DIR/bin/animica-wallet"
-if ! NODE_ROOT="$(resolve_linux_node_root_from_wallet "$WALLET_EXE")"; then
-    echo "Bundled node root not found relative to $WALLET_EXE" >&2
-    print_linux_wallet_candidates "$WALLET_EXE"
-    exit 1
-fi
-NODE_PYTHON="$NODE_ROOT/venv/bin/python"
-
 [ -f "$WALLET_EXE" ] || { echo "Executable not found at $WALLET_EXE" >&2; exit 1; }
-[ -f "$NODE_PYTHON" ] || { echo "Node Python not found at $NODE_PYTHON" >&2; exit 1; }
-[ -x "$NODE_PYTHON" ] || { echo "Node Python is not executable" >&2; exit 1; }
 
 log_section "Validating Build"
-NODE_ARCH="$(file "$NODE_PYTHON" | grep -o "ARM aarch64\|x86-64\|x86_64" || true)"
 echo "✓ Executable created: $WALLET_EXE"
-echo "✓ Bundled node root: $NODE_ROOT"
-echo "✓ Node Python found: $NODE_PYTHON"
-echo "✓ Architecture: ${NODE_ARCH:-unknown}"
-
-echo "Checking node imports..."
-"$NODE_PYTHON" -c "import rpc; import animica.qt_wallet_bridge; import animica.wallet_qr; import omni_sdk; import core"
-echo "✓ Node imports successful"
 
 echo "Checking dynamic libraries of wallet binary..."
 ldd "$WALLET_EXE" | grep -E "Qt|libssl|liboqs" || true
@@ -363,13 +315,7 @@ rm -rf "$INSTALL_STAGE"
 mkdir -p "$INSTALL_STAGE"
 DESTDIR="$INSTALL_STAGE" cmake --install "$BUILD_DIR"
 python3 "$SCRIPT_DIR/verify-bundle-layout.py" --platform linux --path "$INSTALL_STAGE/usr"
-if ! STAGED_NODE_ROOT="$(resolve_linux_node_root_from_root "$INSTALL_STAGE")"; then
-    echo "Installed bundled node root not found under $INSTALL_STAGE" >&2
-    print_linux_root_candidates "$INSTALL_STAGE"
-    exit 1
-fi
 echo "✓ Installed runtime staged at $INSTALL_STAGE/usr"
-echo "✓ Installed bundled node root: $STAGED_NODE_ROOT"
 
 if [ "$BUILD_PORTABLE" = true ]; then
     log_section "Creating Portable Runtime"

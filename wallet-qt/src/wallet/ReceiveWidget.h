@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QShowEvent>
 #include <QString>
 #include <QTimer>
 
@@ -95,6 +96,7 @@ private slots:
     void onQrGenerationFinished();
     
 private:
+    void showEvent(QShowEvent* event) override;
     void setupUi();
     void updateAccounts();
     void updateAddress();

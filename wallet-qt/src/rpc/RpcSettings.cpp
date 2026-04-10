@@ -1,21 +1,21 @@
 #include "RpcSettings.h"
 
 namespace {
-const char kGroupName[] = "RpcEndpoint";
+constexpr const char* kCanonicalScheme = "https";
+constexpr const char* kCanonicalHost = "rpc.animica.org";
+constexpr int kCanonicalPort = 443;
+constexpr int kCanonicalChainId = 1;
 }
 
-RpcSettings::RpcSettings()
-    : m_settings()
-{
-}
+RpcSettings::RpcSettings() = default;
 
 RpcEndpointSettings RpcSettings::defaultSettings()
 {
     RpcEndpointSettings settings;
-    settings.scheme = "http";
-    settings.host = "127.0.0.1";
-    settings.port = 8545;
-    settings.path = "/rpc";
+    settings.scheme = QString::fromLatin1(kCanonicalScheme);
+    settings.host = QString::fromLatin1(kCanonicalHost);
+    settings.port = kCanonicalPort;
+    settings.path.clear();
     return settings;
 }
 
@@ -26,31 +26,7 @@ RpcEndpointSettings RpcSettings::defaults() const
 
 RpcEndpointSettings RpcSettings::load() const
 {
-    RpcEndpointSettings settings = defaultSettings();
-
-    m_settings.beginGroup(kGroupName);
-    settings.scheme = m_settings.value("scheme", settings.scheme).toString();
-    settings.host = m_settings.value("host", settings.host).toString();
-    settings.port = m_settings.value("port", settings.port).toInt();
-    settings.path = m_settings.value("path", settings.path).toString();
-    settings.username = m_settings.value("username", settings.username).toString();
-    settings.password = m_settings.value("password", settings.password).toString();
-    m_settings.endGroup();
-
-    return settings;
-}
-
-void RpcSettings::save(const RpcEndpointSettings& settings)
-{
-    m_settings.beginGroup(kGroupName);
-    m_settings.setValue("scheme", settings.scheme);
-    m_settings.setValue("host", settings.host);
-    m_settings.setValue("port", settings.port);
-    m_settings.setValue("path", settings.path);
-    m_settings.setValue("username", settings.username);
-    m_settings.setValue("password", settings.password);
-    m_settings.endGroup();
-    m_settings.sync();
+    return defaultSettings();
 }
 
 QUrl RpcSettings::toUrl(const RpcEndpointSettings& settings)
@@ -58,8 +34,18 @@ QUrl RpcSettings::toUrl(const RpcEndpointSettings& settings)
     QUrl url;
     url.setScheme(settings.scheme);
     url.setHost(settings.host);
-    url.setPort(settings.port);
-    url.setPath(settings.path.startsWith('/') ? settings.path : "/" + settings.path);
+
+    const bool useDefaultHttpsPort =
+        settings.scheme.compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0 && settings.port == 443;
+    const bool useDefaultHttpPort =
+        settings.scheme.compare(QStringLiteral("http"), Qt::CaseInsensitive) == 0 && settings.port == 80;
+    if (settings.port > 0 && !useDefaultHttpsPort && !useDefaultHttpPort) {
+        url.setPort(settings.port);
+    }
+
+    if (!settings.path.trimmed().isEmpty() && settings.path != QStringLiteral("/")) {
+        url.setPath(settings.path.startsWith('/') ? settings.path : QStringLiteral("/") + settings.path);
+    }
 
     if (!settings.username.isEmpty()) {
         url.setUserName(settings.username);
@@ -71,12 +57,7 @@ QUrl RpcSettings::toUrl(const RpcEndpointSettings& settings)
 
 QString RpcSettings::toDisplayUrl(const RpcEndpointSettings& settings)
 {
-    QUrl url;
-    url.setScheme(settings.scheme);
-    url.setHost(settings.host);
-    url.setPort(settings.port);
-    url.setPath(settings.path.startsWith('/') ? settings.path : "/" + settings.path);
-    return url.toString(QUrl::FullyDecoded);
+    return toUrl(settings).toString();
 }
 
 bool RpcSettings::isDefault(const RpcEndpointSettings& settings)
@@ -88,4 +69,19 @@ bool RpcSettings::isDefault(const RpcEndpointSettings& settings)
         && settings.path == defaults.path
         && settings.username.isEmpty()
         && settings.password.isEmpty();
+}
+
+QString RpcSettings::canonicalRpcUrl()
+{
+    return toDisplayUrl(defaultSettings());
+}
+
+QString RpcSettings::canonicalNetwork()
+{
+    return QStringLiteral("mainnet");
+}
+
+int RpcSettings::canonicalChainId()
+{
+    return kCanonicalChainId;
 }

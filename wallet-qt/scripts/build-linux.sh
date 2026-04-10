@@ -2,7 +2,7 @@
 #
 # build-linux.sh - Cross-platform deterministic build script for Animica Wallet (Linux)
 #
-# This script builds the Animica Qt wallet and bundles the node for Linux.
+# This script builds the Animica Qt wallet for Linux.
 # It performs strict prerequisite checking and provides actionable error messages.
 #
 # Usage:
@@ -171,42 +171,6 @@ else
     fi
 fi
 
-# Check Python
-log "Checking Python installation..."
-
-PYTHON=""
-for py in python3.12 python3.11 python3.10 python3 python; do
-    if command -v "$py" &> /dev/null; then
-        PY_VERSION=$($py -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "")
-        if [[ -n "$PY_VERSION" ]]; then
-            PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
-            PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
-            if [[ $PY_MAJOR -eq 3 && $PY_MINOR -ge 10 ]]; then
-                PYTHON="$py"
-                log "✓ Python $PY_VERSION found"
-                break
-            fi
-        fi
-    fi
-done
-
-if [[ -z "$PYTHON" ]]; then
-    error "Python 3.10+ not found."
-    error ""
-    error "Install Python with:"
-    error "  Ubuntu/Debian: sudo apt-get install python3.11 python3.11-venv python3-pip"
-    die "Python not found"
-fi
-
-# Check if venv module is available
-if ! $PYTHON -m venv --help &> /dev/null; then
-    error "Python venv module not available."
-    error ""
-    error "Install with:"
-    error "  Ubuntu/Debian: sudo apt-get install python3-venv"
-    die "Python venv module not found"
-fi
-
 # Determine number of jobs
 if [[ -z "$JOBS" ]]; then
     JOBS=$(nproc 2>/dev/null || echo 4)
@@ -235,11 +199,10 @@ cd "$BUILD_DIR"
 
 cmake "$PROJECT_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DWALLET_REMOTE_RPC_ONLY=OFF \
     -G "Unix Makefiles" \
     || die "CMake configuration failed"
 
-log "Building wallet and node..."
+log "Building wallet..."
 cmake --build . -j "$JOBS" \
     || die "Build failed"
 
@@ -250,7 +213,6 @@ log "=========================================="
 log ""
 log "Artifacts:"
 log "  Wallet executable: $BUILD_DIR/bin/animica-wallet"
-log "  Bundled node:      $BUILD_DIR/bin/node/"
 log ""
 log "To run the wallet:"
 log "  $BUILD_DIR/bin/animica-wallet"

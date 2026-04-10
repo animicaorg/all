@@ -23,8 +23,8 @@ from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import Path
 from typing import Any, Optional
 
-from core.types.header import Header, serialize_header
-from core.utils.hash import sha3_256
+from core.types.header import Header
+from mining.template_block import hash_candidate_header, header_from_template_view
 
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
@@ -302,28 +302,6 @@ def _normalize_job_payload(
     return job_id, header, sign_hex, theta_micro, share_target
 
 
-def _parse_hex_bytes(value: Any, *, default: bytes) -> bytes:
-    if isinstance(value, (bytes, bytearray)):
-        return bytes(value)
-    if isinstance(value, str) and value.startswith("0x"):
-        try:
-            return bytes.fromhex(value[2:])
-        except Exception:
-            return default
-    return default
-
-
-def _int_from_value(value: Any, *, default: int = 0) -> int:
-    if value in (None, ""):
-        return default
-    try:
-        if isinstance(value, str) and value.startswith("0x"):
-            return int(value, 16)
-        return int(value)
-    except Exception:
-        return default
-
-
 def _header_template_from_job(header: dict[str, Any]) -> Optional[Header]:
     if not isinstance(header, dict):
         return None
@@ -342,38 +320,7 @@ def _header_template_from_job(header: dict[str, Any]) -> Optional[Header]:
     if not all(key in header for key in required):
         return None
     try:
-        return Header(
-            v=_int_from_value(header.get("v"), default=1),
-            chainId=_int_from_value(header.get("chainId") or header.get("chain_id")),
-            height=_int_from_value(header.get("height") or header.get("number")),
-            parentHash=_parse_hex_bytes(header.get("parentHash"), default=b"\x00" * 32),
-            timestamp=_int_from_value(header.get("timestamp")),
-            stateRoot=_parse_hex_bytes(header.get("stateRoot"), default=b"\x00" * 32),
-            txsRoot=_parse_hex_bytes(header.get("txsRoot"), default=b"\x00" * 32),
-            receiptsRoot=_parse_hex_bytes(
-                header.get("receiptsRoot"), default=b"\x00" * 32
-            ),
-            proofsRoot=_parse_hex_bytes(
-                header.get("proofsRoot"), default=b"\x00" * 32
-            ),
-            daRoot=_parse_hex_bytes(header.get("daRoot"), default=b"\x00" * 32),
-            mixSeed=_parse_hex_bytes(header.get("mixSeed"), default=b"\x00" * 32),
-            poiesPolicyRoot=_parse_hex_bytes(
-                header.get("poiesPolicyRoot"), default=b"\x00" * 32
-            ),
-            pqAlgPolicyRoot=_parse_hex_bytes(
-                header.get("pqAlgPolicyRoot"), default=b"\x00" * 32
-            ),
-            thetaMicro=_int_from_value(
-                header.get("thetaMicro")
-                or header.get("thetaTargetMicro")
-                or header.get("theta_target_micro")
-                or header.get("theta_micro")
-            ),
-            workType=_int_from_value(header.get("workType"), default=0),
-            nonce=0,
-            extra=_parse_hex_bytes(header.get("extra"), default=b""),
-        )
+        return header_from_template_view(header, nonce=0)
     except Exception:
         return None
 
@@ -907,9 +854,9 @@ class StratumCpuMiner:
     ) -> Optional[ShareResult]:
         nonce = start_nonce
         for attempt in range(1, iterations + 1):
-            digest = sha3_256(serialize_header(replace(header_template, nonce=nonce)))
-            if int.from_bytes(digest, "big", signed=False) <= target:
-                h_micro = h_micro_from_digest(digest)
+            candidate_hash = hash_candidate_header(header_template, nonce=nonce)
+            if candidate_hash.digest_int <= target:
+                h_micro = h_micro_from_digest(candidate_hash.digest)
                 d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
                 return ShareResult(
                     nonce=nonce,

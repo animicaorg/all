@@ -9,6 +9,7 @@
 #include <QTest>
 
 #include "../src/rpc/AnimicaRpcClient.h"
+#include "../src/rpc/RpcSettings.h"
 #include "../src/wallet/WalletEngine.h"
 
 namespace {
@@ -21,7 +22,7 @@ void configureBackendEnvironment()
 WalletEngine* makeEngine(AnimicaRpcClient& rpcClient, QObject* parent = nullptr)
 {
     configureBackendEnvironment();
-    rpcClient.setEndpoint("http://127.0.0.1:8545/rpc");
+    rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
     return new WalletEngine(&rpcClient, parent);
 }
 
@@ -38,6 +39,9 @@ private slots:
         QVERIFY(tmpDir.isValid());
 
         AnimicaRpcClient rpcClient;
+        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setTimeout(250);
+        rpcClient.setRetryPolicy(0, 0);
         WalletEngine engine(&rpcClient);
         configureBackendEnvironment();
 
@@ -98,6 +102,9 @@ private slots:
         QVERIFY(targetDir.isValid());
 
         AnimicaRpcClient sourceRpcClient;
+        sourceRpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        sourceRpcClient.setTimeout(250);
+        sourceRpcClient.setRetryPolicy(0, 0);
         WalletEngine sourceEngine(&sourceRpcClient);
         configureBackendEnvironment();
 
@@ -114,6 +121,9 @@ private slots:
         QVERIFY(QFileInfo::exists(exportPath));
 
         AnimicaRpcClient targetRpcClient;
+        targetRpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        targetRpcClient.setTimeout(250);
+        targetRpcClient.setRetryPolicy(0, 0);
         WalletEngine targetEngine(&targetRpcClient);
         configureBackendEnvironment();
 
@@ -142,6 +152,9 @@ private slots:
         QCOMPARE(contacts.first().note, QString("Cold reserve"));
 
         AnimicaRpcClient reopenedRpcClient;
+        reopenedRpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        reopenedRpcClient.setTimeout(250);
+        reopenedRpcClient.setRetryPolicy(0, 0);
         WalletEngine reopenedEngine(&reopenedRpcClient);
         configureBackendEnvironment();
 
@@ -153,6 +166,9 @@ private slots:
         QTemporaryDir importedContactsDir;
         QVERIFY(importedContactsDir.isValid());
         AnimicaRpcClient importedContactsRpcClient;
+        importedContactsRpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        importedContactsRpcClient.setTimeout(250);
+        importedContactsRpcClient.setRetryPolicy(0, 0);
         WalletEngine importedContactsEngine(&importedContactsRpcClient);
         configureBackendEnvironment();
         QVERIFY(importedContactsEngine.createWallet(QString(), importedContactsDir.path()));
@@ -170,6 +186,9 @@ private slots:
         QVERIFY(tmpDir.isValid());
 
         AnimicaRpcClient rpcClient;
+        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setTimeout(250);
+        rpcClient.setRetryPolicy(0, 0);
         WalletEngine engine(&rpcClient);
         configureBackendEnvironment();
 
@@ -208,6 +227,9 @@ private slots:
         blocker.close();
 
         AnimicaRpcClient rpcClient;
+        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setTimeout(250);
+        rpcClient.setRetryPolicy(0, 0);
         WalletEngine engine(&rpcClient);
         configureBackendEnvironment();
 
@@ -234,6 +256,9 @@ private slots:
         QVERIFY(!QFileInfo::exists(walletPath));
 
         AnimicaRpcClient rpcClient;
+        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setTimeout(250);
+        rpcClient.setRetryPolicy(0, 0);
         WalletEngine engine(&rpcClient);
         configureBackendEnvironment();
 

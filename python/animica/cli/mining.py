@@ -25,6 +25,9 @@ from animica.coin import COIN_UNIT
 from animica.config import load_network_config
 from animica.cli.rpc_guard import guard_bootstrap_rpc
 from animica.cli.rpc import call_rpc
+from mining.template_block import (build_submit_block_payload,
+                                   hash_candidate_header,
+                                   header_from_template_view)
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 app = typer.Typer(help="Mining operations and Stratum pool management.")
@@ -137,41 +140,6 @@ def _is_truthy_env(var_name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_hex_bytes(value: str) -> bytes:
-    hex_value = value[2:] if value.startswith("0x") else value
-    if len(hex_value) % 2:
-        hex_value = "0" + hex_value
-    return bytes.fromhex(hex_value)
-
-
-def _header_from_template(header_view: dict) -> "Header":
-    from core.types.header import Header
-
-    return Header(
-        v=int(header_view.get("v", 1)),
-        chainId=int(header_view.get("chainId", header_view.get("chain_id", 0))),
-        height=int(header_view.get("height", header_view.get("number", 0))),
-        parentHash=_parse_hex_bytes(header_view["parentHash"]),
-        timestamp=int(header_view.get("timestamp", 0)),
-        stateRoot=_parse_hex_bytes(header_view.get("stateRoot", "0x" + "00" * 32)),
-        txsRoot=_parse_hex_bytes(header_view.get("txsRoot", "0x" + "00" * 32)),
-        receiptsRoot=_parse_hex_bytes(header_view.get("receiptsRoot", "0x" + "00" * 32)),
-        proofsRoot=_parse_hex_bytes(header_view.get("proofsRoot", "0x" + "00" * 32)),
-        daRoot=_parse_hex_bytes(header_view.get("daRoot", "0x" + "00" * 32)),
-        mixSeed=_parse_hex_bytes(header_view.get("mixSeed", "0x" + "00" * 32)),
-        poiesPolicyRoot=_parse_hex_bytes(
-            header_view.get("poiesPolicyRoot", "0x" + "00" * 32)
-        ),
-        pqAlgPolicyRoot=_parse_hex_bytes(
-            header_view.get("pqAlgPolicyRoot", "0x" + "00" * 32)
-        ),
-        thetaMicro=int(header_view.get("thetaMicro", 0)),
-        workType=int(header_view.get("workType", 0)),
-        nonce=int(header_view.get("nonce", 0)),
-        extra=_parse_hex_bytes(header_view.get("extra", "0x")),
-    )
-
-
 def _mine_header(
     header: "Header",
     target_int: int,
@@ -213,37 +181,11 @@ def _mine_header(
 
         for nonce in range(start_nonce, end_nonce):
             try:
-                candidate = header.__class__(
-                    v=header.v,
-                    chainId=header.chainId,
-                    height=header.height,
-                    parentHash=header.parentHash,
-                    timestamp=header.timestamp,
-                    stateRoot=header.stateRoot,
-                    txsRoot=header.txsRoot,
-                    receiptsRoot=header.receiptsRoot,
-                    proofsRoot=header.proofsRoot,
-                    daRoot=header.daRoot,
-                    mixSeed=header.mixSeed,
-                    poiesPolicyRoot=header.poiesPolicyRoot,
-                    pqAlgPolicyRoot=header.pqAlgPolicyRoot,
-                    thetaMicro=header.thetaMicro,
-                    workType=header.workType,
-                    nonce=nonce,
-                    extra=header.extra,
-                )
+                candidate_hash = hash_candidate_header(header, nonce=nonce)
             except Exception:
-                candidate = header
-            try:
-                from core.types.header import serialize_header
-                from core.utils.hash import sha3_256
-
-                digest = sha3_256(serialize_header(candidate))
-            except Exception:
-                digest = candidate.hash()
-            digest_int = int.from_bytes(digest, "big")
-            if digest_int <= target_int:
-                return nonce, digest
+                continue
+            if candidate_hash.digest_int <= target_int:
+                return nonce, candidate_hash.digest
         return None, None
 
     # Use random starting nonce for each block to prevent nonce growth issues
@@ -1556,7 +1498,7 @@ def mine_blocks(
                         )
 
                     header_view = template.get("header", {})
-                    header = _header_from_template(header_view)
+                    header = header_from_template_view(header_view)
                     target_hex = template.get("target")
                     target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
                     nonce, digest = _mine_header(
@@ -1637,40 +1579,11 @@ def mine_blocks(
                         stale_attempts = 0
                         break
 
-                    header = header.__class__(
-                        v=header.v,
-                        chainId=header.chainId,
-                        height=header.height,
-                        parentHash=header.parentHash,
-                        timestamp=header.timestamp,
-                        stateRoot=header.stateRoot,
-                        txsRoot=header.txsRoot,
-                        receiptsRoot=header.receiptsRoot,
-                        proofsRoot=header.proofsRoot,
-                        daRoot=header.daRoot,
-                        mixSeed=header.mixSeed,
-                        poiesPolicyRoot=header.poiesPolicyRoot,
-                        pqAlgPolicyRoot=header.pqAlgPolicyRoot,
-                        thetaMicro=header.thetaMicro,
-                        workType=header.workType,
-                        nonce=nonce,
-                        extra=header.extra,
-                    )
-
-                    txs_raw = [tx.get("raw") for tx in template.get("txs", []) if isinstance(tx, dict)]
-                    header_payload = {
-                        k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
-                        for k, v in header.to_obj().items()
-                    }
+                    header = hash_candidate_header(header, nonce=nonce).header
                     parent_height = parent_info.get("height")
-                    template_id = template.get("templateId") or template.get("template_id")
-                    block_payload = {
-                        "header": header_payload,
-                        "txs": txs_raw,
-                        "proofs": [],
-                        "parentHash": parent_hash,
-                        "templateId": template_id,
-                    }
+                    block_payload = build_submit_block_payload(template, nonce=nonce)
+                    template_id = block_payload.get("templateId")
+                    parent_hash = block_payload.get("parentHash") or parent_hash
 
                     summary = {
                         "template": {

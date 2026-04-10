@@ -15,7 +15,6 @@ QT_ROOT="${WINDOWS_QT_ROOT:-${QT_WINDOWS_ROOT:-}}"
 QT_HOST_PATH="${WINDOWS_QT_HOST_PATH:-${QT_HOST_PATH:-}}"
 OPENSSL_ROOT="${WINDOWS_OPENSSL_ROOT:-}"
 COMPILER_PREFIX="${WINDOWS_COMPILER_PREFIX:-x86_64-w64-mingw32}"
-NODE_VENV=""
 
 BUILD_TYPE="Release"
 JOBS="$(nproc 2>/dev/null || echo 4)"
@@ -27,7 +26,7 @@ ARCH_LABEL="x86_64"
 DIST_INSTALLER_NAME="animica-wallet-setup-x64.exe"
 DIST_ZIP_NAME="animica-wallet-windows-x64.zip"
 DIST_CHECKSUM_NAME="SHA256SUMS.txt"
-STAGE_RUNTIME_MODE="remote-rpc-only"
+STAGE_RUNTIME_MODE="hosted-rpc"
 
 usage() {
     cat <<'EOF'
@@ -47,7 +46,6 @@ Options:
   --qt-host-path <path>     Host Qt prefix used for moc/rcc/uic
   --openssl-root <path>     Windows-target OpenSSL prefix (required unless WINDOWS_OPENSSL_ROOT is set)
   --compiler-prefix <name>  MinGW compiler prefix (default: x86_64-w64-mingw32)
-  --node-venv <path>        Bundle a prebuilt Windows node venv instead of a remote-RPC-only build
   --per-machine             Generate a per-machine installer (admin/UAC)
   --help                    Show this help
 EOF
@@ -131,12 +129,6 @@ parse_args() {
             --compiler-prefix)
                 [ "$#" -ge 2 ] || fail "--compiler-prefix requires a value"
                 COMPILER_PREFIX="$2"
-                shift 2
-                ;;
-            --node-venv)
-                [ "$#" -ge 2 ] || fail "--node-venv requires a value"
-                NODE_VENV="$2"
-                STAGE_RUNTIME_MODE="bundled-node"
                 shift 2
                 ;;
             --per-machine)
@@ -251,11 +243,6 @@ check_prerequisites() {
     validate_qt_root
     validate_openssl_root
 
-    if [ -n "$NODE_VENV" ]; then
-        NODE_VENV="$(canonicalize_dir "$NODE_VENV" 2>/dev/null || true)"
-        [ -n "$NODE_VENV" ] || fail "--node-venv must point to an existing Windows node virtual environment"
-        [ -f "$NODE_VENV/Scripts/python.exe" ] || fail "Expected Windows bundled Python at $NODE_VENV/Scripts/python.exe"
-    fi
 }
 
 copy_required_file() {
@@ -496,13 +483,6 @@ configure_and_build() {
     rm -rf "$STAGE_DIR"
     mkdir -p "$BUILD_DIR" "$STAGE_DIR" "$DIST_DIR"
 
-    local wallet_remote_rpc_only=ON
-    local node_venv_arg=()
-    if [ -n "$NODE_VENV" ]; then
-        wallet_remote_rpc_only=OFF
-        node_venv_arg=(-DANIMICA_NODE_VENV_OVERRIDE="$NODE_VENV")
-    fi
-
     cmake -S "$WALLET_ROOT" -B "$BUILD_DIR" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
@@ -512,10 +492,8 @@ configure_and_build() {
         -DWINDOWS_EXTRA_PREFIX_PATHS="$QT_ROOT;$OPENSSL_ROOT" \
         -DCMAKE_PREFIX_PATH="$QT_ROOT;$OPENSSL_ROOT" \
         -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" \
-        -DWALLET_REMOTE_RPC_ONLY="$wallet_remote_rpc_only" \
         -DWALLET_ENABLE_QT_INSTALL_DEPLOYMENT=OFF \
-        -DBUILD_TESTING=OFF \
-        "${node_venv_arg[@]}"
+        -DBUILD_TESTING=OFF
 
     cmake --build "$BUILD_DIR" --parallel "$JOBS"
     cmake --install "$BUILD_DIR" --prefix "$STAGE_DIR"
@@ -578,11 +556,7 @@ main() {
     configure_and_build
     deploy_runtime_dependencies
 
-    if [ -n "$NODE_VENV" ]; then
-        "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR"
-    else
-        "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR" --remote-rpc-only
-    fi
+    "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR"
 
     package_artifacts "$(resolve_version)"
 

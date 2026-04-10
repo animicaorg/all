@@ -2,6 +2,7 @@
 #define WALLETWIDGET_H
 
 #include "BalanceTracker.h"
+#include <QFrame>
 #include <QWidget>
 #include <QTabWidget>
 #include <QToolBar>
@@ -74,12 +75,16 @@ private slots:
     void handleRpcConnected();
     void handleRpcDisconnected();
     void handleRpcError(const QString& message);
+    void retryRpcProbe();
 
 private:
     void setupUi();
     void updateToolbarState();
     QString formatTotalBalance() const;
     void updateRpcStatusLabel(const QString& status, const QString& color);
+    void probeRpcStatus();
+    void setConnectionBanner(const QString& title, const QString& details);
+    void clearConnectionBanner();
     
     WalletEngine* m_engine;
     AnimicaRpcClient* m_rpcClient;
@@ -89,11 +94,15 @@ private:
     // UI components
     QToolBar* m_toolbar;
     QTabWidget* m_tabWidget;
+    QFrame* m_connectionBanner;
+    QLabel* m_connectionBannerTitle;
+    QLabel* m_connectionBannerDetails;
     QLabel* m_statusLabel;
     QLabel* m_balanceLabel;
     QLabel* m_syncLabel;
     QLabel* m_rpcStatusLabel;
     QLabel* m_rpcEndpointLabel;
+    QAction* m_retryConnectionAction;
     
     // Actions
     QAction* m_createAccountAction;
@@ -107,6 +116,7 @@ private:
     TransactionHistoryWidget* m_historyWidget;
     ContractInteractionWidget* m_contractWidget;
     SettingsWidget* m_settingsWidget;
+    QString m_lastRpcError;
 };
 
 #endif // WALLETWIDGET_H
