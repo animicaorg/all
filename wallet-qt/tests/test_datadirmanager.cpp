@@ -1,6 +1,7 @@
 #include "../src/platform/AppPaths.h"
 #include "../src/platform/DataDirManager.h"
 
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -38,7 +39,22 @@ void TestDataDirManager::testGetDefaultDataDir()
 {
     const QString defaultDir = DataDirManager::getDefaultDataDir();
     QVERIFY(!defaultDir.isEmpty());
-    QCOMPARE(defaultDir, AppPaths::walletDir());
+    const QString preferredDir = AppPaths::walletDir();
+    QString userTag = qEnvironmentVariable("USER").trimmed();
+    if (userTag.isEmpty()) {
+        userTag = qEnvironmentVariable("LOGNAME").trimmed();
+    }
+    if (userTag.isEmpty()) {
+        userTag = QStringLiteral("user");
+    }
+    const QString fallbackDir = QDir(QDir::tempPath()).filePath(
+        QStringLiteral("animica-wallet-data-%1").arg(userTag)
+    );
+    QVERIFY(defaultDir == preferredDir || defaultDir == fallbackDir);
+
+    DataDirManager manager;
+    QString errorMsg;
+    QVERIFY(manager.validateDataDir(defaultDir, errorMsg));
 }
 
 void TestDataDirManager::testSetCustomDataDir()

@@ -14,19 +14,8 @@
 
 namespace {
 
-bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& errorMessage)
+QByteArray canonicalWalletStorePayload()
 {
-    const QFileInfo walletInfo(walletFilePath);
-    QDir walletDir(walletInfo.absolutePath());
-    if (!walletDir.exists() && !walletDir.mkpath(".")) {
-        errorMessage = QString("Failed to create wallet data directory: %1").arg(walletInfo.absolutePath());
-        return false;
-    }
-
-    if (walletInfo.exists()) {
-        return true;
-    }
-
     const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     QJsonObject store;
     store["format"] = QStringLiteral("animica.wallets");
@@ -36,16 +25,33 @@ bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& er
     store["wallets"] = QJsonArray();
     store["default"] = QJsonValue::Null;
 
+    QByteArray payload = QJsonDocument(store).toJson(QJsonDocument::Indented);
+    if (!payload.endsWith('\n')) {
+        payload.append('\n');
+    }
+    return payload;
+}
+
+bool writeCanonicalWalletStore(const QString& walletFilePath, bool overwriteExisting, QString& errorMessage)
+{
+    const QFileInfo walletInfo(walletFilePath);
+    QDir walletDir(walletInfo.absolutePath());
+    if (!walletDir.exists() && !walletDir.mkpath(".")) {
+        errorMessage = QString("Failed to create wallet data directory: %1").arg(walletInfo.absolutePath());
+        return false;
+    }
+
+    if (!overwriteExisting && walletInfo.exists()) {
+        return true;
+    }
+
     QSaveFile walletFile(walletInfo.absoluteFilePath());
     if (!walletFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         errorMessage = QString("Failed to create wallets.json: %1").arg(walletFile.errorString());
         return false;
     }
 
-    QByteArray payload = QJsonDocument(store).toJson(QJsonDocument::Indented);
-    if (!payload.endsWith('\n')) {
-        payload.append('\n');
-    }
+    const QByteArray payload = canonicalWalletStorePayload();
 
     if (walletFile.write(payload) != payload.size()) {
         errorMessage = QString("Failed to write wallets.json: %1").arg(walletFile.errorString());
@@ -62,6 +68,57 @@ bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& er
     QFile::setPermissions(walletInfo.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);
 #endif
 
+    return true;
+}
+
+bool ensureCanonicalWalletStoreExists(const QString& walletFilePath, QString& errorMessage)
+{
+    return writeCanonicalWalletStore(walletFilePath, false, errorMessage);
+}
+
+bool resetCanonicalWalletStore(const QString& walletFilePath, QString& errorMessage)
+{
+    return writeCanonicalWalletStore(walletFilePath, true, errorMessage);
+}
+
+bool isWalletStoreParseFailure(const QString& errorMessage)
+{
+    const QString lowered = errorMessage.toLower();
+    return lowered.contains("failed to parse wallet store")
+        || lowered.contains("failed to parse wallet file")
+        || lowered.contains("invalid json")
+        || lowered.contains("unsupported wallets.json")
+        || lowered.contains("wallets must be a list");
+}
+
+bool backupWalletStore(const QString& walletFilePath, QString& backupPath, QString& errorMessage)
+{
+    const QFileInfo walletInfo(walletFilePath);
+    if (!walletInfo.exists()) {
+        errorMessage = QString("Wallet store does not exist: %1").arg(walletFilePath);
+        return false;
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString("yyyyMMddTHHmmssZ");
+    backupPath = QDir(walletInfo.absolutePath()).filePath(
+        QString("%1.corrupt.%2.bak").arg(walletInfo.fileName(), timestamp)
+    );
+    if (QFileInfo::exists(backupPath)) {
+        const QString uniquifier = QDateTime::currentDateTimeUtc().toString("zzz");
+        backupPath = QDir(walletInfo.absolutePath()).filePath(
+            QString("%1.corrupt.%2-%3.bak").arg(walletInfo.fileName(), timestamp, uniquifier)
+        );
+    }
+
+    QFile source(walletInfo.absoluteFilePath());
+    if (!source.copy(backupPath)) {
+        errorMessage = QString("Failed to back up wallet store to %1: %2").arg(backupPath, source.errorString());
+        return false;
+    }
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(backupPath, QFile::ReadOwner | QFile::WriteOwner);
+#endif
     return true;
 }
 
@@ -105,9 +162,15 @@ QJsonObject WalletEngine::backendResult(const QString& operation, const QJsonObj
 {
     const QJsonObject response = m_backend->call(operation, args, timeoutMs);
     if (!response.value("ok").toBool()) {
-        const QString message = response.value("error").toObject().value("message").toString("Wallet backend operation failed.");
-        m_lastError = message;
-        emit const_cast<WalletEngine*>(this)->error(message);
+        const QJsonObject error = response.value("error").toObject();
+        const QString message = error.value("message").toString("Wallet backend operation failed.");
+        const QString details = error.value("details").toString().trimmed();
+        if (!details.isEmpty() && !message.contains(details)) {
+            m_lastError = QString("%1\n\nDetails: %2").arg(message, details);
+        } else {
+            m_lastError = message;
+        }
+        emit const_cast<WalletEngine*>(this)->error(m_lastError);
     } else {
         m_lastError.clear();
     }
@@ -226,7 +289,26 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
 
     m_backend->setWalletFile(nextWalletFilePath);
 
-    const QJsonObject response = backendResult("init_store");
+    QJsonObject response = backendResult("init_store");
+    if (!response.value("ok").toBool() && isWalletStoreParseFailure(m_lastError)) {
+        QString backupPath;
+        QString recoveryError;
+        if (backupWalletStore(nextWalletFilePath, backupPath, recoveryError)
+            && resetCanonicalWalletStore(nextWalletFilePath, recoveryError)) {
+            response = backendResult("init_store");
+            if (!response.value("ok").toBool()) {
+                m_lastError = QString(
+                    "Recovered unreadable wallets.json to a fresh store, but backend initialization still failed.\n"
+                    "Backup saved at: %1\n\n%2"
+                ).arg(backupPath, m_lastError);
+            }
+        } else {
+            const QString originalError = m_lastError;
+            m_lastError = QString(
+                "%1\n\nAutomatic recovery failed: %2"
+            ).arg(originalError, recoveryError);
+        }
+    }
     if (!response.value("ok").toBool()) {
         m_backend->setWalletFile(previousBackendWalletFile);
         m_walletFilePath = previousWalletFilePath;

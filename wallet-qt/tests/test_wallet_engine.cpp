@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QSignalSpy>
@@ -267,6 +268,46 @@ private slots:
         QVERIFY(!engine.isLocked());
         QVERIFY(QFileInfo::exists(walletPath));
         QCOMPARE(engine.listAccounts().size(), 0);
+    }
+
+    void testOpenWalletRecoversUnreadableStoreWithBackup()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+
+        const QString walletPath = QDir(tmpDir.path()).filePath("wallets.json");
+        QFile invalid(walletPath);
+        QVERIFY(invalid.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+        invalid.write("{\"wallets\":[\n");
+        invalid.close();
+
+        AnimicaRpcClient rpcClient;
+        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setTimeout(250);
+        rpcClient.setRetryPolicy(0, 0);
+        WalletEngine engine(&rpcClient);
+        configureBackendEnvironment();
+
+        QVERIFY(engine.openWallet(walletPath));
+        QVERIFY(engine.isLoaded());
+        QVERIFY(!engine.isLocked());
+        QCOMPARE(engine.listAccounts().size(), 0);
+
+        const QStringList backups = QDir(tmpDir.path()).entryList(
+            {"wallets.json.corrupt.*.bak"},
+            QDir::Files
+        );
+        QVERIFY(!backups.isEmpty());
+
+        QFile canonical(walletPath);
+        QVERIFY(canonical.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QJsonDocument doc = QJsonDocument::fromJson(canonical.readAll());
+        canonical.close();
+        QVERIFY(doc.isObject());
+        const QJsonObject root = doc.object();
+        QCOMPARE(root.value("format").toString(), QString("animica.wallets"));
+        QCOMPARE(root.value("version").toInt(), 2);
+        QVERIFY(root.value("wallets").toArray().isEmpty());
     }
 };
 

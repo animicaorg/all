@@ -9,6 +9,53 @@
 #include <QTextStream>
 #include <QDebug>
 
+namespace {
+
+QString fallbackDataDir()
+{
+    QString userTag = qEnvironmentVariable("USER").trimmed();
+    if (userTag.isEmpty()) {
+        userTag = qEnvironmentVariable("LOGNAME").trimmed();
+    }
+    if (userTag.isEmpty()) {
+        userTag = QStringLiteral("user");
+    }
+    return QDir(QDir::tempPath()).filePath(QStringLiteral("animica-wallet-data-%1").arg(userTag));
+}
+
+bool isWritableDataDir(const QString& path, QString* errorMsg = nullptr)
+{
+    const QFileInfo info(path);
+    if (!info.isAbsolute()) {
+        if (errorMsg) {
+            *errorMsg = QStringLiteral("Path must be absolute.");
+        }
+        return false;
+    }
+
+    QDir dir(path);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        if (errorMsg) {
+            *errorMsg = QStringLiteral("Cannot create directory.");
+        }
+        return false;
+    }
+
+    QFile testFile(dir.filePath(QStringLiteral(".write_test")));
+    if (!testFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMsg) {
+            *errorMsg = QStringLiteral("Directory is not writable.");
+        }
+        return false;
+    }
+    testFile.close();
+    testFile.remove();
+
+    return true;
+}
+
+} // namespace
+
 DataDirManager::DataDirManager(QObject* parent)
     : QObject(parent)
     , m_settings(new QSettings(this))
@@ -53,7 +100,22 @@ bool DataDirManager::setDataDir(const QString& path, bool validate)
 
 QString DataDirManager::getDefaultDataDir()
 {
-    return AppPaths::walletDir();
+    const QString preferredDir = AppPaths::walletDir();
+    QString reason;
+    if (isWritableDataDir(preferredDir, &reason)) {
+        return preferredDir;
+    }
+
+    const QString fallbackDir = fallbackDataDir();
+    if (isWritableDataDir(fallbackDir)) {
+        qWarning() << "Default wallet data directory is unavailable; using fallback:" << fallbackDir
+                   << "(reason:" << reason << ")";
+        return fallbackDir;
+    }
+
+    qWarning() << "Wallet data directories are unavailable. Preferred:" << preferredDir
+               << "(reason:" << reason << "), fallback:" << fallbackDir;
+    return preferredDir;
 }
 
 QString DataDirManager::getWalletsFilePath() const
@@ -68,27 +130,7 @@ QString DataDirManager::getLogsDir() const
 
 bool DataDirManager::validateDataDir(const QString& path, QString& errorMsg) const
 {
-    const QFileInfo info(path);
-    if (!info.isAbsolute()) {
-        errorMsg = QStringLiteral("Path must be absolute.");
-        return false;
-    }
-
-    QDir dir(path);
-    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
-        errorMsg = QStringLiteral("Cannot create directory.");
-        return false;
-    }
-
-    QFile testFile(dir.filePath(QStringLiteral(".write_test")));
-    if (!testFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        errorMsg = QStringLiteral("Directory is not writable.");
-        return false;
-    }
-    testFile.close();
-    testFile.remove();
-
-    return true;
+    return isWritableDataDir(path, &errorMsg);
 }
 
 bool DataDirManager::ensureDirectoriesExist()
