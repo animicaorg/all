@@ -295,7 +295,11 @@ void SendWidget::handleSendFinished()
 
     const QJsonObject result = m_sendWatcher->future().result();
     if (result.isEmpty()) {
-        showError("Send Failed", "The transaction was not admitted by the node.");
+        const QString detail = m_walletEngine ? m_walletEngine->lastError().trimmed() : QString();
+        const QString message = detail.isEmpty()
+            ? QStringLiteral("The transaction was not admitted by the node.")
+            : detail;
+        showError("Send Failed", message);
         m_statusLabel->setText("Transaction failed.");
         return;
     }

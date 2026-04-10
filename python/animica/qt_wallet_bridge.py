@@ -423,6 +423,33 @@ def _extract_send_hash(result: Any) -> str:
     raise ValueError(f"unexpected tx.sendRawTransaction result: {result!r}")
 
 
+def _format_rpc_submit_error(exc: tx_cli.RpcError) -> str:
+    """Return a concise, actionable error for tx.sendRawTransaction failures."""
+    fallback = f"rpc error {exc.code}: {exc.message}"
+    data = exc.data if isinstance(exc.data, dict) else {}
+    mempool_error = data.get("mempoolError") if isinstance(data, dict) else None
+    if not isinstance(mempool_error, dict):
+        reason = str(data.get("reason") or "").strip()
+        return f"transaction rejected by node: {reason}" if reason else fallback
+
+    reason = str(mempool_error.get("reason_code") or mempool_error.get("reason") or "admission_failed")
+    message = str(mempool_error.get("message") or exc.message or "").strip()
+    context = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
+    hint = str(mempool_error.get("hint") or "").strip()
+
+    pieces: list[str] = [f"transaction rejected by node: {reason}"]
+    if message and message.lower() not in {"rpc error", reason.lower()}:
+        pieces.append(message)
+    if hint:
+        pieces.append(f"hint={hint}")
+
+    expected = context.get("expected_nonce")
+    got = context.get("got_nonce")
+    if expected is not None and got is not None:
+        pieces.append(f"expected_nonce={expected} got_nonce={got}")
+    return " | ".join(pieces)
+
+
 def _submit_signed_tx(
     *,
     wallet_file: str,
@@ -508,7 +535,10 @@ def _submit_signed_tx(
         chain_id=resolved_chain_id,
     )
     raw_hex = "0x" + raw.hex()
-    send_result = tx_cli._rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+    try:
+        send_result = tx_cli._rpc(rpc, "tx.sendRawTransaction", [raw_hex])
+    except tx_cli.RpcError as exc:
+        raise RuntimeError(_format_rpc_submit_error(exc)) from exc
     tx_hash = _extract_send_hash(send_result)
     in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
     _record_pending_tx(

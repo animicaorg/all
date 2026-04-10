@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from animica.cli import tx as tx_cli
 from animica.qt_wallet_bridge import (
+    _format_rpc_submit_error,
     create_wallet,
     export_secret,
     fetch_history,
@@ -118,3 +120,28 @@ def test_preview_contract_call_builds_payload_for_valid_wallet_address(tmp_path:
 
     with pytest.raises(ValueError):
         preview_contract_call("not-an-address", abi, "inc", [7])
+
+
+def test_format_rpc_submit_error_prefers_mempool_reason_and_context() -> None:
+    exc = tx_cli.RpcError(
+        code=-32010,
+        message="mempool admission failed",
+        data={
+            "mempoolError": {
+                "reason_code": "nonce_gap",
+                "message": "mempool admission failed: nonce_gap",
+                "hint": "Submit missing lower nonce transactions first.",
+                "context": {"expected_nonce": 4, "got_nonce": 7},
+            }
+        },
+    )
+
+    out = _format_rpc_submit_error(exc)
+    assert "transaction rejected by node: nonce_gap" in out
+    assert "hint=Submit missing lower nonce transactions first." in out
+    assert "expected_nonce=4 got_nonce=7" in out
+
+
+def test_format_rpc_submit_error_falls_back_to_rpc_error() -> None:
+    exc = tx_cli.RpcError(code=-32601, message="Method not found", data=None)
+    assert _format_rpc_submit_error(exc) == "rpc error -32601: Method not found"
