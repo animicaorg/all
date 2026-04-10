@@ -271,6 +271,42 @@ QJsonObject AnimicaRpcClient::getTransactionByHash(const QString& txHash)
     return QJsonObject();
 }
 
+QJsonObject AnimicaRpcClient::getTransactionStatusByHash(const QString& txHash)
+{
+    QJsonArray params;
+    params.append(txHash);
+
+    QJsonValue result = rpcCallSync("tx.getStatus", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+
+    // Backward-compatibility fallback for nodes exposing only tx.getTransactionStatus.
+    result = rpcCallSync("tx.getTransactionStatus", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+
+    // Legacy fallback: infer status from tx.getTransactionByHash shape.
+    result = rpcCallSync("tx.getTransactionByHash", params);
+    if (result.isObject()) {
+        const QJsonObject tx = result.toObject();
+        if (!tx.isEmpty()) {
+            QJsonObject normalized;
+            const bool hasBlockRef = tx.contains("blockHash") || tx.contains("blockNumber");
+            normalized["status"] = hasBlockRef ? "confirmed" : "pending";
+            if (tx.contains("blockHash")) {
+                normalized["blockHash"] = tx.value("blockHash");
+            }
+            if (tx.contains("blockNumber")) {
+                normalized["blockNumber"] = tx.value("blockNumber");
+            }
+            return normalized;
+        }
+    }
+    return QJsonObject();
+}
+
 QJsonObject AnimicaRpcClient::buildRequest(const QString& method, const QJsonValue& params)
 {
     QJsonObject request;

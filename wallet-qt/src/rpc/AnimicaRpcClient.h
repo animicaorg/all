@@ -211,6 +211,13 @@ public:
      */
     QJsonObject getTransactionByHash(const QString& txHash);
 
+    /**
+     * @brief Get transaction status synchronously.
+     * @param txHash Transaction hash (hex with 0x prefix)
+     * @return JSON object with status data or empty object on error
+     */
+    QJsonObject getTransactionStatusByHash(const QString& txHash);
+
 signals:
     /**
      * @brief Emitted when successfully connected to node.
