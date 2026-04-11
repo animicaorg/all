@@ -80,7 +80,136 @@ def _normalize_bytes(value: Any) -> bytes:
     return bytes(value)
 
 
+def _normalize_account_key(value: Any, *, field: str) -> bytes:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        out = bytes(value)
+        if len(out) != 32:
+            raise ValueError(f"{field} must be 32 bytes, got {len(out)}")
+        return out
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.startswith(("0x", "0X")):
+            out = bytes.fromhex(raw[2:])
+            if len(out) != 32:
+                raise ValueError(f"{field} must be 32-byte hex, got {len(out)} bytes")
+            return out
+        try:
+            from omni_sdk.address import parse as parse_address  # type: ignore
+
+            parsed = parse_address(raw)
+            pub_hash = parsed.get("pubkey_hash")
+            if isinstance(pub_hash, (bytes, bytearray, memoryview)):
+                out = bytes(pub_hash)
+                if len(out) == 32:
+                    return out
+        except Exception as exc:
+            raise ValueError(f"{field} must be a valid address or 0x-hex key: {exc}") from exc
+    raise TypeError(f"{field} must be 32-byte bytes, address, or 0x-hex")
+
+
+def _canonical_body_from_typed_tx(tx: TxLike) -> Dict[str, Any] | None:
+    if not isinstance(tx, dict):
+        return None
+    if not {"v", "gas", "payload"}.issubset(tx.keys()):
+        return None
+
+    gas = tx.get("gas")
+    payload = tx.get("payload")
+    if not isinstance(gas, dict) or not isinstance(payload, dict):
+        raise TypeError("typed tx requires 'gas' and 'payload' maps")
+
+    version = _normalize_int(tx.get("v"), field="v")
+    out: Dict[str, Any] = {
+        "v": version,
+        "chainId": _normalize_int(tx.get("chainId"), field="chainId"),
+        "from": _normalize_account_key(tx.get("from"), field="from"),
+        "gas": {
+            "price": _normalize_int(gas.get("price"), field="gas.price"),
+            "limit": _normalize_int(gas.get("limit"), field="gas.limit"),
+        },
+        "accessList": [],
+    }
+
+    payload_tag = _normalize_int(payload.get("t"), field="payload.t")
+    payload_val = payload.get("v")
+    if not isinstance(payload_val, dict):
+        raise TypeError("typed tx payload.v must be a map")
+
+    if payload_tag == 0:
+        out["payload"] = {
+            "t": 0,
+            "v": {
+                "to": _normalize_account_key(payload_val.get("to"), field="payload.v.to"),
+                "amount": _normalize_int(payload_val.get("amount", 0), field="payload.v.amount"),
+                "data": _normalize_bytes(payload_val.get("data", b"")),
+            },
+        }
+    elif payload_tag == 1:
+        out["payload"] = {
+            "t": 1,
+            "v": {
+                "code": _normalize_bytes(payload_val.get("code", b"")),
+                "manifest": _normalize_bytes(payload_val.get("manifest", b"")),
+            },
+        }
+    elif payload_tag == 2:
+        out["payload"] = {
+            "t": 2,
+            "v": {
+                "to": _normalize_account_key(payload_val.get("to"), field="payload.v.to"),
+                "data": _normalize_bytes(payload_val.get("data", b"")),
+            },
+        }
+    elif payload_tag == 3:
+        out["payload"] = {
+            "t": 3,
+            "v": {
+                "to": _normalize_account_key(payload_val.get("to"), field="payload.v.to"),
+                "amount": _normalize_int(payload_val.get("amount", 0), field="payload.v.amount"),
+                "data": _normalize_bytes(payload_val.get("data", b"")),
+            },
+        }
+    else:
+        raise ValueError(f"unsupported typed payload tag: {payload_tag}")
+
+    access_list = tx.get("accessList", [])
+    if access_list is None:
+        access_list = []
+    if not isinstance(access_list, list):
+        raise TypeError("accessList must be a list")
+    for idx, entry in enumerate(access_list):
+        if not isinstance(entry, dict):
+            raise TypeError(f"accessList[{idx}] must be a map")
+        keys = entry.get("keys", [])
+        if keys is None:
+            keys = []
+        if not isinstance(keys, list):
+            raise TypeError(f"accessList[{idx}].keys must be a list")
+        out["accessList"].append(
+            {
+                "addr": _normalize_account_key(entry.get("addr"), field=f"accessList[{idx}].addr"),
+                "keys": [_normalize_bytes(k) for k in keys],
+            }
+        )
+
+    if version == 1:
+        out["nonce"] = _normalize_int(tx.get("nonce"), field="nonce")
+    else:
+        out["validAfter"] = _normalize_int(tx.get("validAfter"), field="validAfter")
+        out["validUntil"] = _normalize_int(tx.get("validUntil"), field="validUntil")
+        out["salt"] = _normalize_bytes(tx.get("salt"))
+        fork_id = tx.get("forkId")
+        if fork_id is not None:
+            out["forkId"] = _normalize_int(fork_id, field="forkId")
+
+    return out
+
+
 def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
+    typed_body = _canonical_body_from_typed_tx(tx)
+    if typed_body is not None:
+        return typed_body
+
     body: Dict[str, Any] = {}
 
     from_addr = _get_optional(tx, "from_addr", "from", "sender")

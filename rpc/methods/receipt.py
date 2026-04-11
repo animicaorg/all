@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import typing as t
 
 from rpc import deps
@@ -134,15 +135,127 @@ def _lookup_receipt_loc(tx_hash_b: bytes) -> _ReceiptLoc | None:
                 try:
                     loc = getattr(tidx, meth)(tx_hash_b)  # type: ignore[misc]
                     if isinstance(loc, (tuple, list)) and len(loc) >= 2:
-                        return _ReceiptLoc(height=int(loc[0]), index=int(loc[1]))
+                        out: _ReceiptLoc = _ReceiptLoc(height=int(loc[0]), index=int(loc[1]))
+                        if len(loc) >= 3 and isinstance(loc[2], (bytes, bytearray, memoryview)):
+                            out["block_hash"] = bytes(loc[2])
+                        return out
                     if isinstance(loc, dict) and "height" in loc and "index" in loc:
-                        return _ReceiptLoc(
+                        out: _ReceiptLoc = _ReceiptLoc(
                             height=int(loc["height"]), index=int(loc["index"])
                         )
+                        bh = loc.get("block_hash")
+                        if isinstance(bh, (bytes, bytearray, memoryview)):
+                            out["block_hash"] = bytes(bh)
+                        return out
+                    if hasattr(loc, "height") and hasattr(loc, "index"):
+                        out = _ReceiptLoc(
+                            height=int(getattr(loc, "height")),
+                            index=int(getattr(loc, "index")),
+                        )
+                        bh = getattr(loc, "block_hash", None)
+                        if isinstance(bh, (bytes, bytearray, memoryview)):
+                            out["block_hash"] = bytes(bh)
+                        return out
                 except Exception:
                     pass
 
-    # 3) Not found
+    # 3) Scan recent canonical blocks as a resilient fallback if indexes lag.
+    scan_depth = int(os.environ.get("ANIMICA_TX_RECEIPT_SCAN_DEPTH", "4096") or 4096)
+    if scan_depth > 0:
+        loc = _scan_receipt_loc_by_blocks(tx_hash_b, max_depth=scan_depth)
+        if loc is not None:
+            return loc
+
+    # 4) Not found
+    return None
+
+
+def _tx_hash_from_obj(tx_obj: t.Any) -> bytes | None:
+    if isinstance(tx_obj, dict):
+        h = tx_obj.get("hash")
+        if isinstance(h, str) and h:
+            raw = h[2:] if h.startswith("0x") else h
+            try:
+                return bytes.fromhex(raw)
+            except Exception:
+                return None
+        if isinstance(h, (bytes, bytearray, memoryview)):
+            return bytes(h)
+    txid_fn = getattr(tx_obj, "txid", None)
+    if callable(txid_fn):
+        try:
+            hv = txid_fn()
+            if isinstance(hv, (bytes, bytearray, memoryview)):
+                return bytes(hv)
+        except Exception:
+            pass
+    h_attr = getattr(tx_obj, "hash", None)
+    if callable(h_attr):
+        try:
+            hv = h_attr()
+            if isinstance(hv, (bytes, bytearray, memoryview)):
+                return bytes(hv)
+        except Exception:
+            pass
+    elif isinstance(h_attr, (bytes, bytearray, memoryview)):
+        return bytes(h_attr)
+    elif isinstance(h_attr, str):
+        raw = h_attr[2:] if h_attr.startswith("0x") else h_attr
+        try:
+            return bytes.fromhex(raw)
+        except Exception:
+            return None
+    return None
+
+
+def _scan_receipt_loc_by_blocks(tx_hash_b: bytes, *, max_depth: int) -> _ReceiptLoc | None:
+    bdb = getattr(deps, "block_db", None)
+    if bdb is None:
+        return None
+
+    head_height: int | None = None
+    try:
+        head = deps.ensure_started().get_head()
+        if isinstance(head, dict):
+            head_height = int(head.get("height") or 0)
+    except Exception:
+        head_height = None
+    if head_height is None:
+        try:
+            if hasattr(bdb, "get_height"):
+                head_height = int(bdb.get_height())  # type: ignore[attr-defined]
+        except Exception:
+            head_height = None
+    if head_height is None:
+        return None
+
+    lower = max(0, int(head_height) - max(1, int(max_depth)) + 1)
+    for h in range(int(head_height), lower - 1, -1):
+        blk = None
+        try:
+            if hasattr(bdb, "get_block_by_height"):
+                blk = bdb.get_block_by_height(h)  # type: ignore[attr-defined]
+            elif hasattr(bdb, "get_block"):
+                blk = bdb.get_block(h)  # type: ignore[attr-defined]
+        except Exception:
+            blk = None
+        if blk is None:
+            continue
+
+        txs = getattr(blk, "txs", None)
+        if txs is None and isinstance(blk, dict):
+            txs = blk.get("txs") or blk.get("transactions")
+        if not isinstance(txs, (list, tuple)):
+            continue
+
+        for idx, tx_obj in enumerate(txs):
+            if _tx_hash_from_obj(tx_obj) != tx_hash_b:
+                continue
+            out: _ReceiptLoc = _ReceiptLoc(height=int(h), index=int(idx))
+            block_hash = _extract_block_hash(blk)
+            if isinstance(block_hash, (bytes, bytearray, memoryview)):
+                out["block_hash"] = bytes(block_hash)
+            return out
     return None
 
 
@@ -214,8 +327,9 @@ def _fetch_block_and_receipt(
             return (blk, r)
         except Exception:
             pass
-
-    return None
+    # Last fallback: tx is known in canonical chain, but receipt payload is unavailable.
+    # Return an empty placeholder so callers can still surface block inclusion.
+    return (blk, {})
 
 
 def _extract_block_hash(blk: t.Any) -> bytes | None:
@@ -377,17 +491,38 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
         "result": "unknown",
     }
 
-    # If it's still pending, report null per spec
+    # Capture pending state, but do not early-return before checking canonical inclusion.
+    # A stale mempool entry may coexist with a canonical inclusion.
     lookup_trace["checked"]["pending_mempool"] = True
-    if _pending_contains(tx_hash_hex):
-        lookup_trace["result"] = "pending"
-        log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-        return None
+    is_pending = _pending_contains(tx_hash_hex)
 
     # Find location (height, index), then fetch receipt and block context
     lookup_trace["checked"]["receipt_loc"] = True
     loc = _lookup_receipt_loc(tx_hash_b)
     if loc is None:
+        # Reuse tx-status canonical lookup fallback (which scans recent blocks when indexes lag).
+        try:
+            from rpc.methods import tx as tx_methods
+
+            if hasattr(tx_methods, "_lookup_persisted_tx"):
+                _view, h, idx, bh = tx_methods._lookup_persisted_tx(tx_hash_hex)  # type: ignore[attr-defined]
+                if h is not None:
+                    loc = _ReceiptLoc(height=int(h), index=int(idx or 0))
+                    if isinstance(bh, (bytes, bytearray, memoryview)):
+                        loc["block_hash"] = bytes(bh)
+                    pair = _fetch_block_and_receipt(loc, tx_hash_b)
+                    if pair is None:
+                        # Canonical inclusion known, receipt payload unavailable -> synthesize minimal view.
+                        lookup_trace["result"] = "found_by_tx_scan"
+                        log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
+                        return _normalize_receipt(tx_hash_hex, loc, None, {})
+                    blk, rec = pair
+                    lookup_trace["result"] = "found_by_tx_scan"
+                    log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
+                    return _normalize_receipt(tx_hash_hex, loc, blk, rec)
+        except Exception:
+            pass
+
         # Try the new get_receipt_by_tx_hash method on block_db
         bdb = getattr(deps, "block_db", None)
         if bdb is not None and hasattr(bdb, "get_receipt_by_tx_hash"):
@@ -412,7 +547,7 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
                 lookup_trace["checked"]["receipt_by_hash"] = True
                 rec = bdb.get_receipt_by_hash(tx_hash_b)  # type: ignore[attr-defined]
                 if rec is None:
-                    lookup_trace["result"] = "not_found"
+                    lookup_trace["result"] = "pending" if is_pending else "not_found"
                     log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
                     return None
                 # We don't know height/index; build a minimal result
@@ -421,7 +556,7 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
                 return _normalize_receipt(tx_hash_hex, _ReceiptLoc(), None, rec)
             except Exception:
                 pass
-        lookup_trace["result"] = "not_found"
+        lookup_trace["result"] = "pending" if is_pending else "not_found"
         log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
         return None
 

@@ -371,7 +371,15 @@ export class ExplorerService {
       for (let i = 0; i < txs.length; i += 1) {
         const tx = txs[i]
         const receipt = tx?.receipt ?? receipts[i] ?? null
-        const txDetail = normalizeTxDetail(tx, receipt)
+        const receiptForStatus =
+          receipt ??
+          {
+            txHash: tx?.hash ?? tx?.txHash,
+            blockNumber: blockDetail.height,
+            blockHash: blockDetail.hash,
+            status: tx?.status ?? 'SUCCESS'
+          }
+        const txDetail = normalizeTxDetail(tx, receiptForStatus)
         const deployment = buildContractDeployment(txDetail, tx, receipt, blockDetail)
         if (!deployment) continue
         items.push(deployment)
@@ -668,6 +676,7 @@ export class ExplorerService {
         : Array.isArray((block as any)?.transactions)
           ? (block as any).transactions
           : []
+      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
 
       for (let i = 0; i < txs.length; i += 1) {
         const tx = txs[i]
@@ -683,7 +692,16 @@ export class ExplorerService {
 
         if (normalized !== targetHash) continue
 
-        const txDetail = normalizeTxDetail(tx, tx?.receipt ?? null)
+        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const receiptForStatus =
+          receipt ??
+          {
+            txHash: tx?.hash ?? tx?.txHash,
+            blockNumber: detail.height,
+            blockHash: detail.hash,
+            status: tx?.status ?? 'SUCCESS'
+          }
+        const txDetail = normalizeTxDetail(tx, receiptForStatus)
         return {
           tx: txDetail,
           includedHeight: detail.height,

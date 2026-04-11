@@ -97,6 +97,8 @@ class _VerifyingRpc:
         params = params or []
         if method == "chain.getChainIdentity":
             return self._chain_identity()
+        if method == "chain.getHead":
+            return {"height": 123}
         if method == "tx.sendRawTransaction":
             raw = params[0]
             if isinstance(raw, str):
@@ -142,13 +144,26 @@ def test_deploy_package_submission_signature_verifies_node_path(alg_name: str) -
         manifest=manifest,
         code=code,
         chain_id=CHAIN_ID,
-        nonce=0,
+        nonce=2,
         max_fee=1,
         await_receipt=False,
     )
 
     assert isinstance(result.get("txHash"), str)
     assert len(rpc.raw_txs) == 1
+    body = cbor2.loads(rpc.raw_txs[0]).get("body", {})
+    assert "validAfter" in body
+    assert "validUntil" in body
+    assert "salt" in body
+    assert "nonce" not in body
+    assert int(body["validUntil"]) > int(body["validAfter"])
+    payload = body.get("payload", {})
+    assert payload.get("t") == 1
+    payload_v = payload.get("v", {})
+    assert isinstance(payload_v.get("code"), (bytes, bytearray))
+    assert isinstance(payload_v.get("manifest"), (bytes, bytearray))
+    assert len(payload_v["code"]) > 0
+    assert len(payload_v["manifest"]) > 0
 
 
 @pytest.mark.parametrize("tx_kind", ["transfer", "deploy"])
@@ -180,7 +195,7 @@ def test_submission_preimage_matches_after_envelope_normalization(tx_kind: str) 
         tx = build_deploy_tx(
             from_addr=signer.address or "anim1sender",
             chain_id=CHAIN_ID,
-            nonce=0,
+            nonce=2,
             max_fee=1,
             package_bytes=package,
         )

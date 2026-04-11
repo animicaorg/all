@@ -16,6 +16,7 @@ from rpc import deps
 from mempool.tx_hash import normalized_tx_bytes, tx_hash_hex as _tx_hash_hex
 from core.utils.tx import normalize_tx_envelope, TxNormalizationError, coerce_int, normalize_tx_fields
 from core.utils.address_codec import account_key_from_pubkey, account_key_from_raw, AccountKeyError
+from core.utils.address import address_to_bytes
 from mempool.config import MempoolConfig, load_config as load_mempool_config
 from mempool.errors import (
     AdmissionError,
@@ -161,6 +162,7 @@ def log_exception(trace_id: str, tx: Any, exc: Exception, *, field_hint: str | N
         )
 def _tx_context_fields(tx: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
+    out["tx_kind"] = _tx_kind(tx)
     try:
         nonce = _tx_nonce(tx)
         if nonce is not None:
@@ -514,6 +516,88 @@ def _tx_chain_id(tx: Any) -> Optional[int]:
         return None
 
 
+def _tx_kind(tx: Any) -> str:
+    body = _tx_body(tx)
+    kind_val = None
+    if isinstance(body, dict):
+        payload = body.get("payload")
+        if isinstance(payload, dict):
+            kind_val = payload.get("t")
+        if kind_val is None:
+            kind_val = body.get("kind") or body.get("type")
+    if kind_val is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            kind_val = getattr(unsigned, "kind", None)
+    if kind_val is None:
+        kind_val = getattr(tx, "kind", None)
+
+    if hasattr(kind_val, "value"):
+        kind_val = getattr(kind_val, "value", kind_val)
+    if isinstance(kind_val, str):
+        lowered = kind_val.strip().lower()
+        if lowered in {"transfer", "deploy", "call", "coinbase"}:
+            return lowered
+    if isinstance(kind_val, int):
+        mapping = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+        if kind_val in mapping:
+            return mapping[kind_val]
+
+    if isinstance(body, dict):
+        has_data = body.get("data") is not None or body.get("input") is not None
+        to = body.get("to")
+        if to in (None, "", b"") and has_data:
+            return "deploy"
+    return "unknown"
+
+
+def _tx_transfer_recipient_key(tx: Any) -> bytes | None:
+    recipient = None
+    body = _tx_body(tx)
+    if isinstance(body, dict):
+        payload = body.get("payload")
+        if isinstance(payload, dict):
+            payload_value = payload.get("v")
+            if isinstance(payload_value, dict):
+                recipient = payload_value.get("to") or payload_value.get("recipient")
+        recipient = recipient or body.get("to") or body.get("recipient")
+    if recipient is None:
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            payload = getattr(unsigned, "payload", None)
+            if payload is not None:
+                recipient = getattr(payload, "to", getattr(payload, "recipient", None))
+    if recipient is None:
+        recipient = getattr(tx, "to", getattr(tx, "recipient", None))
+
+    if isinstance(recipient, str):
+        text = recipient.strip()
+        if not text:
+            return None
+        if text.startswith(("0x", "0X")):
+            try:
+                recipient = bytes.fromhex(text[2:])
+            except Exception:
+                return None
+        elif text.startswith("anim1"):
+            try:
+                recipient = address_to_bytes(text)
+            except Exception:
+                return None
+        else:
+            try:
+                recipient = bytes.fromhex(text)
+            except Exception:
+                return None
+
+    if not isinstance(recipient, (bytes, bytearray, memoryview)):
+        return None
+    try:
+        return account_key_from_raw(bytes(recipient))
+    except AccountKeyError:
+        return None
+
+
 def _current_height() -> int:
     try:
         ctx = deps.get_ctx()
@@ -636,12 +720,23 @@ class MempoolService:
             self._instant_block_loop = owner_loop
 
     def _record_rejection(
-        self, tx_hash_hex: str, reason: str, details: dict[str, Any] | None = None
+        self,
+        tx_hash_hex: str,
+        reason: str,
+        details: dict[str, Any] | None = None,
+        *,
+        stage: str = "mempool_admission",
+        tx_kind: str | None = None,
     ) -> None:
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+        payload = dict(details or {})
+        payload.setdefault("tx_hash", tx_hash_hex)
+        payload.setdefault("stage", stage)
+        if tx_kind:
+            payload.setdefault("tx_kind", tx_kind)
         self._last_rejections[tx_hash_hex] = {
             "reason": reason,
-            "details": details or {},
+            "details": payload,
             "ts": time.time(),
         }
         self._prune_rejections()
@@ -1187,6 +1282,7 @@ class MempoolService:
 
         with sender_lock:
             tx_for_meta = normalized_env if isinstance(tx, dict) else tx
+            tx_kind = _tx_kind(tx_for_meta)
             valid_after = _tx_valid_after(tx_for_meta)
             valid_until = _tx_valid_until(tx_for_meta)
             salt = _tx_salt(tx_for_meta)
@@ -1196,6 +1292,30 @@ class MempoolService:
                     tx_version = coerce_int("v", normalized_env["tx"].get("v", 1))
                 except Exception:
                     tx_version = 1
+
+            if tx_kind == "transfer":
+                recipient_key = _tx_transfer_recipient_key(tx_for_meta)
+                if recipient_key is None or not any(recipient_key):
+                    recipient_repr = (
+                        recipient_key.hex()
+                        if isinstance(recipient_key, (bytes, bytearray))
+                        else None
+                    )
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "invalid_recipient",
+                        {"sender": sender_hex, "recipient": recipient_repr},
+                        tx_kind=tx_kind,
+                    )
+                    raise AdmissionError(
+                        "transfer requires a non-zero recipient",
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "sender": sender_hex,
+                            "recipient": recipient_repr,
+                            "reason": "invalid_recipient",
+                        },
+                    )
 
             if tx_version == 2 and (valid_after is None or valid_until is None or salt is None):
                 missing = []
@@ -1663,6 +1783,7 @@ class MempoolService:
             if reason == "admission_failed" and context.get("reason"):
                 reason = str(context.get("reason"))
             norm_reason, norm_message, norm_context = _normalize_reject(str(reason), str(message), context)
+            norm_context.setdefault("stage", "mempool_admission")
             inferred_bad_type = _infer_bad_field_type_from_exception(tx, exc)
             if inferred_bad_type and norm_reason == "internal_error":
                 norm_reason = "bad_field_type"
@@ -1679,6 +1800,8 @@ class MempoolService:
             )
             reject = reject_obj.to_dict()
             reject["reason_code"] = norm_reason
+            reject.setdefault("stage", "mempool_admission")
+            reject.setdefault("tx_kind", norm_context.get("tx_kind", "unknown"))
             if "code" not in reject or reject.get("code") == 1000:
                 reject["code"] = int(REJECT_CODE.get(reject_obj.reason, REJECT_CODE[RejectReason.internal_error]))
             if os.getenv("ANIMICA_DEBUG_MEMPOOL", "0") == "1":

@@ -1814,35 +1814,50 @@ class BlockImporter:
             block_hash_hex = "0x" + block.header.hash().hex()
             begin_apply_block(height, block_hash_hex)
 
+            block_result = apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
+            apply_events = end_apply_block()
             tx_expectations: list[dict[str, Any]] = []
-            for tx in non_coinbase_txs:
+            for i, tx in enumerate(non_coinbase_txs):
                 tx_hash_hex = self._extract_tx_hash(tx)
                 if tx_hash_hex is None:
                     continue
 
-                sender = getattr(getattr(tx, "unsigned", tx), "sender", None)
-                payload = getattr(getattr(tx, "unsigned", tx), "payload", None)
+                unsigned = getattr(tx, "unsigned", tx)
+                payload = getattr(unsigned, "payload", None)
+                sender = getattr(unsigned, "sender", None)
                 to = getattr(payload, "to", None) if payload is not None else None
                 amount = int(getattr(payload, "amount", 0) or 0) if payload is not None else 0
-                gas_limit = int(getattr(getattr(tx, "unsigned", tx), "gas_limit", 0) or 0)
-                gas_price = int(getattr(getattr(tx, "unsigned", tx), "gas_price", 0) or 0)
-                fee_charged = gas_limit * gas_price
+                gas_price = int(getattr(unsigned, "gas_price", 0) or 0)
 
+                tx_result = block_result.tx_results[i] if i < len(block_result.tx_results) else None
+                status_obj = getattr(tx_result, "status", None) if tx_result is not None else None
+                status_name = (
+                    getattr(status_obj, "name", None)
+                    or str(status_obj or "")
+                ).upper()
+                gas_used = int(getattr(tx_result, "gas_used", 0) or 0) if tx_result is not None else 0
+                fee_charged = 0 if status_name == "OOG" else int(gas_used) * int(gas_price)
+
+                transfer_applied = status_name == "SUCCESS"
                 sender_hex = bytes(sender).hex() if isinstance(sender, (bytes, bytearray)) else ""
                 to_hex = bytes(to).hex() if isinstance(to, (bytes, bytearray)) else ""
-                sender_delta = -(int(amount) + int(fee_charged)) if sender_hex else 0
-                recipient_delta = int(amount) if to_hex and to_hex != sender_hex else 0
+                value_component = (
+                    int(amount)
+                    if transfer_applied and sender_hex and to_hex and to_hex != sender_hex
+                    else 0
+                )
+                sender_delta = -(value_component + int(fee_charged)) if sender_hex else 0
+                recipient_delta = value_component if to_hex and to_hex != sender_hex else 0
 
-                tx_expectations.append({
-                    "tx_hash": tx_hash_hex,
-                    "sender": sender_hex,
-                    "recipient": to_hex,
-                    "sender_delta": sender_delta,
-                    "recipient_delta": recipient_delta,
-                })
-
-            block_result = apply_block(non_coinbase_txs, self.state_db, block_env, params=self.params)
-            apply_events = end_apply_block()
+                tx_expectations.append(
+                    {
+                        "tx_hash": tx_hash_hex,
+                        "sender": sender_hex,
+                        "recipient": to_hex,
+                        "sender_delta": sender_delta,
+                        "recipient_delta": recipient_delta,
+                    }
+                )
             assert_block_apply_deltas(tx_expectations=tx_expectations, events=apply_events)
 
             # Compute block rewards with AICF slicing
@@ -1985,9 +2000,21 @@ class BlockImporter:
                 end_apply_block()
             except Exception:
                 pass
+            tx_hashes_sample: list[str] = []
+            for tx in list(getattr(block, "txs", ())[:10]):
+                tx_hash = self._extract_tx_hash(tx)
+                if tx_hash:
+                    tx_hashes_sample.append(tx_hash)
             log.error(
                 "state: block execution failed",
-                extra={"error": str(exc), "height": getattr(block.header, "height", None)},
+                extra={
+                    "stage": "block_apply",
+                    "reason": "invalid_state_transition",
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "height": getattr(block.header, "height", None),
+                    "tx_hashes_sample": tx_hashes_sample,
+                },
             )
             return False
 

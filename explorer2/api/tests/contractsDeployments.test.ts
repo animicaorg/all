@@ -7,8 +7,10 @@ const TX_CREATE = '0x' + '1'.repeat(64)
 const TX_PACKAGE = '0x' + '2'.repeat(64)
 const TX_FAILED = '0x' + '3'.repeat(64)
 const TX_TRANSFER = '0x' + '4'.repeat(64)
+const TX_NO_RECEIPT = '0x' + '5'.repeat(64)
 const BLOCK_20 = '0x' + 'a'.repeat(64)
 const BLOCK_19 = '0x' + 'b'.repeat(64)
+const BLOCK_30 = '0x' + 'c'.repeat(64)
 
 function makeService(): ExplorerService {
   return new ExplorerService({
@@ -105,5 +107,41 @@ describe('contract deployment feed', () => {
     expect(res.body.items).toHaveLength(2)
     expect(res.body.items[0].txHash).toBeDefined()
     expect(res.body.stats.total).toBe(2)
+  })
+
+  it('treats block-included deploy txs as confirmed even when receipts are temporarily missing', async () => {
+    const service = new ExplorerService({
+      getHead: async () => ({ height: 30, hash: '0x' + 'f'.repeat(64), time: 1_700_000_030 }),
+      getBlockByNumber: async (height: number | string) => {
+        const n = Number(height)
+        if (n === 30) {
+          return {
+            header: { height: 30, hash: BLOCK_30, time: 1_700_000_030 },
+            txs: [
+              {
+                hash: TX_NO_RECEIPT,
+                from: 'anim1creator000000000000000000000000000000x4x7h',
+                kind: 'contract.create'
+              }
+            ],
+            receipts: []
+          }
+        }
+        return { header: { height: n, hash: '0x' + 'd'.repeat(64), time: 1_700_000_000 + n }, txs: [], receipts: [] }
+      },
+      getBlockByHash: async () => null,
+      getTransactionByHash: async () => null,
+      getTransactionReceipt: async () => null,
+      getMempoolPending: async () => [],
+      getMempoolStats: async () => ({ count: 0, totalBytes: 0, oldestAgeSec: null }),
+      getPeers: async () => [],
+      getBalance: async () => '0x0'
+    })
+
+    const feed = await service.getContractDeployments(10, 1)
+    expect(feed.items).toHaveLength(1)
+    expect(feed.items[0].txHash).toBe(TX_NO_RECEIPT)
+    expect(feed.items[0].status).toBe('confirmed')
+    expect(feed.items[0].kind).toBe('contract_create')
   })
 })

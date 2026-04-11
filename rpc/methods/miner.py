@@ -5672,6 +5672,18 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             reason_lower = str(reason).lower()
             reject_reason = "invalid_state_transition"
             code = rpc_errors.AnimicaCode.INVALID_STATE_TRANSITION
+            tx_hashes_sample: list[str] = []
+            if raw_txs_hex:
+                try:
+                    from mempool.tx_hash import tx_hash_hex as _tx_hash_hex
+
+                    for raw_hex in raw_txs_hex[:10]:
+                        raw_bytes = bytes.fromhex(
+                            raw_hex[2:] if raw_hex.startswith("0x") else raw_hex
+                        )
+                        tx_hashes_sample.append(_tx_hash_hex(raw_bytes))
+                except Exception:
+                    tx_hashes_sample = []
             if "pow" in reason_lower:
                 reject_reason = "invalid_pow"
                 code = rpc_errors.AnimicaCode.INVALID_POW
@@ -5688,14 +5700,27 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 reject_reason = "invalid_merkle_root"
                 code = rpc_errors.AnimicaCode.INVALID_MERKLE_ROOT
 
+            log.warning(
+                "block_rejected",
+                extra={
+                    "stage": "block_apply",
+                    "reason": reject_reason,
+                    "detail": str(reason),
+                    "height": result.height,
+                    "tx_hashes_sample": tx_hashes_sample,
+                },
+            )
+
             raise rpc_errors.RpcError(
                 code,
                 "block rejected",
                 {
+                    "stage": "block_apply",
                     "reason": reject_reason,
                     "detail": reason,
                     "height": result.height,
                     "block_hash": result.block_hash.hex() if result.block_hash else None,
+                    "tx_hashes_sample": tx_hashes_sample,
                 },
             )
 
