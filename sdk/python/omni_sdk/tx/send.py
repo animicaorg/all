@@ -96,6 +96,26 @@ class _WsClient(Protocol):
 # -----------------------------------------------------------------------------
 
 
+def _normalize_tx_hash_text(value: str) -> str:
+    s = value.strip()
+    if not s:
+        return s
+    return s if s.startswith("0x") else "0x" + s
+
+
+def _extract_send_hash(result: Any) -> Optional[str]:
+    if isinstance(result, bytes):
+        return _to_hex(result)
+    if isinstance(result, str):
+        return _normalize_tx_hash_text(result)
+    if isinstance(result, dict):
+        for key in ("tx_hash", "txHash", "hash", "existing_tx_hash", "existingTxHash"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return _normalize_tx_hash_text(value)
+    return None
+
+
 def submit_raw(rpc: _RpcClient, raw_tx: bytes) -> str:
     """
     Submit a raw CBOR transaction to the node.
@@ -125,15 +145,15 @@ def submit_raw(rpc: _RpcClient, raw_tx: bytes) -> str:
             # Fallback RpcError is just RuntimeError
             raise RpcError(f"tx.sendRawTransaction failed: {e}") from e
 
-    if not isinstance(result, (str, bytes)):
-        raise TxError(f"unexpected RPC result for sendRawTransaction: {type(result)!r}")
-    # Normalize to hex string
-    if isinstance(result, bytes):
-        return _to_hex(result)
-    if result.startswith("0x"):
-        return result
-    # Accept plain hex without prefix
-    return "0x" + result
+    tx_hash = _extract_send_hash(result)
+    if tx_hash:
+        return tx_hash
+    if isinstance(result, dict):
+        raise TxError(
+            "unexpected RPC result for sendRawTransaction (missing tx hash)",
+            receipt=dict(result),
+        )
+    raise TxError(f"unexpected RPC result for sendRawTransaction: {type(result)!r}")
 
 
 def get_transaction_receipt(rpc: _RpcClient, tx_hash: str) -> Optional[Dict[str, Any]]:

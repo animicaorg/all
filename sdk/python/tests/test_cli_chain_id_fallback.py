@@ -8,6 +8,7 @@ These tests validate that:
 4. Clear warnings are shown when fallback occurs
 """
 
+import json
 from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
@@ -26,20 +27,20 @@ def test_auto_detect_chain_id_success():
     """Test successful auto-detection of chain ID from node."""
     with patch("omni_sdk.cli.main.RpcClient") as mock_client:
         mock_instance = Mock()
-        mock_instance.call.return_value = 1337
+        mock_instance.request.return_value = 1337
         mock_client.return_value = mock_instance
         
         result = _auto_detect_chain_id("http://localhost:8545", 10.0)
         
         assert result == 1337
-        mock_instance.call.assert_called_once_with("chain.getChainId", [])
+        mock_instance.request.assert_called_once_with("chain.getChainId", [])
 
 
 def test_auto_detect_chain_id_failure():
     """Test auto-detection returns None when node is unreachable."""
     with patch("omni_sdk.cli.main.RpcClient") as mock_client:
         mock_instance = Mock()
-        mock_instance.call.side_effect = Exception("Connection refused")
+        mock_instance.request.side_effect = Exception("Connection refused")
         mock_client.return_value = mock_instance
         
         result = _auto_detect_chain_id("http://localhost:8545", 10.0)
@@ -51,7 +52,7 @@ def test_auto_detect_chain_id_null_response():
     """Test auto-detection returns None when node returns null."""
     with patch("omni_sdk.cli.main.RpcClient") as mock_client:
         mock_instance = Mock()
-        mock_instance.call.return_value = None
+        mock_instance.request.return_value = None
         mock_client.return_value = mock_instance
         
         result = _auto_detect_chain_id("http://localhost:8545", 10.0)
@@ -135,6 +136,30 @@ def test_cli_version_no_chain_id_needed():
     
     assert result.exit_code == 0
     assert "omni-sdk" in result.stdout
+
+
+def test_cli_honors_omni_rpc_url_env():
+    """OMNI_RPC_URL should be accepted as an RPC source."""
+    result = runner.invoke(
+        app,
+        ["--chain-id", "1", "env"],
+        env={"OMNI_RPC_URL": "https://rpc.animica.org/rpc"},
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["rpc"] == "https://rpc.animica.org/rpc"
+
+
+def test_cli_rpc_flag_overrides_env():
+    """Explicit --rpc must win over env-provided URLs."""
+    result = runner.invoke(
+        app,
+        ["--rpc", "https://flag.animica.org/rpc", "--chain-id", "1", "env"],
+        env={"OMNI_RPC_URL": "https://env.animica.org/rpc"},
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["rpc"] == "https://flag.animica.org/rpc"
 
 
 if __name__ == "__main__":

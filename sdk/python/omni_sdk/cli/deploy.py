@@ -61,10 +61,13 @@ def _resolve_nonce(
 ) -> int:
     if override is not None:
         return int(override)
-    try:
-        return int(rpc.request("state.getNonce", [sender]))
-    except Exception as exc:  # noqa: BLE001
-        raise typer.BadParameter(f"failed to fetch sender nonce: {exc}") from exc
+    errors = []
+    for params in ([sender, "pending"], [sender]):
+        try:
+            return int(rpc.request("state.getNonce", params))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"state.getNonce({params!r}) failed: {exc}")
+    raise typer.BadParameter(f"failed to fetch sender nonce: {'; '.join(errors)}")
 
 
 @app.command("package")

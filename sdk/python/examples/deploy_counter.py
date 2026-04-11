@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from omni_sdk.address import from_pubkey
 from omni_sdk.contracts.deployer import build_deploy_tx, deploy_package, make_package_bytes
+from omni_sdk.errors import RpcError
 from omni_sdk.rpc.http import RpcClient
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import encode as tx_encode
@@ -47,6 +48,14 @@ ALG_ALIASES = {
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _default_rpc_url() -> str:
+    for key in ("OMNI_RPC_URL", "OMNI_SDK_RPC_URL", "ANIMICA_RPC_URL"):
+        value = os.getenv(key)
+        if value and value.strip():
+            return value.strip()
+    return "http://127.0.0.1:8545/rpc"
 
 
 def _default_paths() -> Dict[str, Path]:
@@ -308,10 +317,88 @@ def _make_signer_from_wallet(path: Path, label: str) -> PQSigner:
 def _rpc_nonce(rpc: RpcClient, sender: str, override: Optional[int]) -> int:
     if override is not None:
         return int(override)
+    errors: List[str] = []
+    for params in ([sender, "pending"], [sender]):
+        try:
+            return int(rpc.request("state.getNonce", params))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"state.getNonce({params!r}) failed: {exc}")
+    sys.exit(f"error: failed to fetch nonce for {sender}: {'; '.join(errors)}")
+
+
+def _normalize_tx_hash(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    out = value.strip()
+    if not out:
+        return None
+    if not out.startswith("0x"):
+        out = "0x" + out
+    return out
+
+
+def _extract_replay_info(exc: Exception) -> Optional[Dict[str, Any]]:
+    if not isinstance(exc, RpcError):
+        return None
+
+    payload = exc.data if isinstance(exc.data, dict) else {}
+    mempool_error = (
+        payload.get("mempoolError")
+        if isinstance(payload.get("mempoolError"), dict)
+        else {}
+    )
+    ctx = mempool_error.get("context") if isinstance(mempool_error.get("context"), dict) else {}
+    reason = str(
+        mempool_error.get("reason_code")
+        or mempool_error.get("reason")
+        or payload.get("reason")
+        or exc.message
+        or ""
+    ).lower()
+    if "replay" not in reason and "duplicate" not in reason:
+        return None
+
+    tx_hash = _normalize_tx_hash(
+        ctx.get("tx_hash")
+        or mempool_error.get("tx_hash")
+        or payload.get("tx_hash")
+        or payload.get("hash")
+        or payload.get("txHash")
+    )
+    return {
+        "reason": reason,
+        "txHash": tx_hash,
+        "mempoolError": mempool_error,
+    }
+
+
+def _collect_replay_diagnostics(
+    rpc: RpcClient,
+    *,
+    sender: str,
+    tx_hash: Optional[str],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"txHash": tx_hash}
+    if tx_hash:
+        try:
+            receipt = rpc.request("tx.getTransactionReceipt", [tx_hash])
+            out["receipt"] = receipt
+            out["receiptFound"] = bool(receipt)
+        except Exception as exc:  # noqa: BLE001
+            out["receiptError"] = str(exc)
+        try:
+            out["txStatus"] = rpc.request("tx.getStatus", [tx_hash])
+        except Exception as exc:  # noqa: BLE001
+            out["txStatusError"] = str(exc)
     try:
-        return int(rpc.request("state.getNonce", [sender]))
+        out["nonceLatest"] = int(rpc.request("state.getNonce", [sender]))
     except Exception as exc:  # noqa: BLE001
-        sys.exit(f"error: failed to fetch nonce for {sender}: {exc}")
+        out["nonceLatestError"] = str(exc)
+    try:
+        out["noncePending"] = int(rpc.request("state.getNonce", [sender, "pending"]))
+    except Exception as exc:  # noqa: BLE001
+        out["noncePendingError"] = str(exc)
+    return out
 
 
 def _rpc_simulate(
@@ -383,7 +470,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--rpc",
-        default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"),
+        default=_default_rpc_url(),
         help="RPC URL",
     )
     parser.add_argument(
@@ -531,18 +618,49 @@ def main() -> None:
         sys.exit("error: signer is required for non-dry-run deployment")
 
     deploy_nonce = _rpc_nonce(rpc, sender, args.nonce)
-    contract_addr, deploy_receipt = deploy_package(
-        rpc=rpc,
-        signer=signer,
-        manifest=manifest,
-        code=code,
-        chain_id=args.chain_id,
-        nonce=deploy_nonce,
-        max_fee=int(args.max_fee),
-        gas_limit=args.gas_limit,
-        await_receipt=True,
-        timeout_s=120.0,
-    )
+    try:
+        contract_addr, deploy_receipt = deploy_package(
+            rpc=rpc,
+            signer=signer,
+            manifest=manifest,
+            code=code,
+            chain_id=args.chain_id,
+            nonce=deploy_nonce,
+            max_fee=int(args.max_fee),
+            gas_limit=args.gas_limit,
+            await_receipt=True,
+            timeout_s=120.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        replay_info = _extract_replay_info(exc)
+        if replay_info is None:
+            raise
+        diagnostics = _collect_replay_diagnostics(
+            rpc,
+            sender=sender,
+            tx_hash=replay_info.get("txHash"),
+        )
+        next_steps = [
+            "If receiptFound=true, deployment already confirmed; reuse contractAddress from receipt/logs.",
+            "If txStatus.status=pending, wait for inclusion and re-run receipt check.",
+            "If noncePending equals nonceLatest and no receipt/status, inspect node mempool/indexing logs.",
+        ]
+        print(
+            json.dumps(
+                {
+                    "error": "replay",
+                    "message": "deploy transaction appears to already be known by the node",
+                    "sender": sender,
+                    "nonceUsed": deploy_nonce,
+                    "reason": replay_info.get("reason"),
+                    "txHash": replay_info.get("txHash"),
+                    "diagnostics": diagnostics,
+                    "nextSteps": next_steps,
+                },
+                indent=2,
+            )
+        )
+        raise SystemExit(2)
 
     if not contract_addr:
         sys.exit(

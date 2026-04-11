@@ -38,7 +38,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import typer
 
@@ -76,9 +76,13 @@ class Ctx:
     timeout: float
 
 
-def _env_default(key: str, default: str) -> str:
-    v = os.environ.get(key)
-    return v if v is not None and v != "" else default
+def _env_default(key: str | Sequence[str], default: str) -> str:
+    keys = (key,) if isinstance(key, str) else tuple(key)
+    for item in keys:
+        v = os.environ.get(item)
+        if v is not None and v != "":
+            return v
+    return default
 
 
 def _print_json(obj: Any) -> None:
@@ -93,7 +97,10 @@ def _auto_detect_chain_id(rpc_url: str, timeout: float) -> Optional[int]:
     """
     try:
         client = RpcClient(rpc_url, timeout=timeout)
-        result = client.call("chain.getChainId", [])
+        call_fn = getattr(client, "request", None) or getattr(client, "call", None)
+        if not callable(call_fn):
+            return None
+        result = call_fn("chain.getChainId", [])
         if result is not None:
             return int(result)
     except Exception:
@@ -108,7 +115,7 @@ def _root(
         None,
         "--rpc",
         help="Node HTTP JSON-RPC URL.",
-        envvar="OMNI_SDK_RPC_URL",
+        envvar=["OMNI_RPC_URL", "OMNI_SDK_RPC_URL", "ANIMICA_RPC_URL"],
     ),
     chain_id: Optional[int] = typer.Option(
         None,
@@ -127,7 +134,10 @@ def _root(
     Set effective configuration for this CLI process (and export to env so that
     lazily-imported subcommands share the same settings).
     """
-    effective_rpc = rpc or _env_default("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545")
+    effective_rpc = rpc or _env_default(
+        ("OMNI_RPC_URL", "OMNI_SDK_RPC_URL", "ANIMICA_RPC_URL"),
+        "http://127.0.0.1:8545/rpc",
+    )
     effective_timeout = float(
         timeout
         if timeout is not None
@@ -150,14 +160,14 @@ def _root(
                 effective_chain = detected_chain
                 # Warn user about auto-detection for transparency
                 typer.echo(
-                    f"ℹ️  Auto-detected chain ID {effective_chain} from node",
+                    f"Auto-detected chain ID {effective_chain} from node",
                     err=True,
                 )
             else:
                 # Fallback to testnet (chain ID 2) per requirements
                 effective_chain = 2
                 typer.echo(
-                    "⚠️  WARNING: Could not auto-detect chain ID from node",
+                    "WARNING: Could not auto-detect chain ID from node",
                     err=True,
                 )
                 typer.echo(
@@ -171,6 +181,7 @@ def _root(
 
     # Persist to env for submodules that consult env vars
     os.environ["OMNI_SDK_RPC_URL"] = effective_rpc
+    os.environ["OMNI_RPC_URL"] = effective_rpc
     os.environ["OMNI_CHAIN_ID"] = str(effective_chain)
     os.environ["OMNI_SDK_HTTP_TIMEOUT"] = str(effective_timeout)
 
@@ -210,14 +221,14 @@ def env(ctx: typer.Context) -> None:
 @app.command("head")
 def head(ctx: typer.Context) -> None:
     """Fetch and print the current chain head."""
-    res = _client(ctx).call("chain.getHead", [])
+    res = _client(ctx).request("chain.getHead", [])
     _print_json(res)
 
 
 @app.command("params")
 def params(ctx: typer.Context) -> None:
     """Fetch and print the current chain parameters."""
-    res = _client(ctx).call("chain.getParams", [])
+    res = _client(ctx).request("chain.getParams", [])
     _print_json(res)
 
 
@@ -229,7 +240,7 @@ def tx(
     """
     Look up a transaction by hash.
     """
-    res = _client(ctx).call("tx.getTransactionByHash", [tx_hash])
+    res = _client(ctx).request("tx.getTransactionByHash", [tx_hash])
     _print_json(res)
 
 
@@ -239,7 +250,7 @@ def receipt(
     tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
 ) -> None:
     """Fetch a transaction receipt by hash."""
-    res = _client(ctx).call("tx.getTransactionReceipt", [tx_hash])
+    res = _client(ctx).request("tx.getTransactionReceipt", [tx_hash])
     _print_json(res)
 
 
@@ -266,11 +277,11 @@ def block(
     if (number is None) == (block_hash is None):
         raise typer.BadParameter("Provide exactly one of --number or --hash")
     if number is not None:
-        res = client.call(
+        res = client.request(
             "chain.getBlockByNumber", [number, include_txs, include_receipts]
         )
     else:
-        res = client.call(
+        res = client.request(
             "chain.getBlockByHash", [block_hash, include_txs, include_receipts]
         )
     _print_json(res)

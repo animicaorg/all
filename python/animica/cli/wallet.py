@@ -201,13 +201,14 @@ def _find_wallet_raw(store: Dict[str, Any], *, identifier: str) -> Dict[str, Any
     raise typer.Exit(code=1)
 
 
-def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
+def _resolve_rpc_url(rpc_url: Optional[str]) -> Tuple[str, str]:
     if rpc_url and rpc_url.strip():
-        return rpc_url.strip()
-    env_url = os.environ.get(_RPC_ENV)
-    if env_url and env_url.strip():
-        return env_url.strip()
-    return load_network_config().rpc_url
+        return rpc_url.strip(), "cli"
+    for key in ("OMNI_RPC_URL", "OMNI_SDK_RPC_URL", _RPC_ENV):
+        env_url = os.environ.get(key)
+        if env_url and env_url.strip():
+            return env_url.strip(), f"env:{key}"
+    return load_network_config().rpc_url, "network_config"
 
 
 def _request_rpc(method: str, params: Optional[List[Any]], rpc_url: str) -> Any:
@@ -692,7 +693,7 @@ def show(
         pending_entries = []
         raw_entry["pending_txs"] = pending_entries
 
-    rpc_endpoint = _resolve_rpc_url(rpc_url)
+    rpc_endpoint, rpc_source = _resolve_rpc_url(rpc_url)
     guard_bootstrap_rpc(rpc_endpoint, allow_remote=allow_remote_rpc, method="state.getBalance")
 
     # Get head info
@@ -744,6 +745,8 @@ def show(
         format_amount(balance_confirmed) if balance_confirmed is not None else None
     )
     output["balance_source"] = balance_source
+    output["rpc_url"] = rpc_endpoint
+    output["rpc_source"] = rpc_source
     output["confirmations_required"] = confirmations_required
     output["pending_txs"] = pending_entries
     reserved_outgoing = 0

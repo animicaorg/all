@@ -229,6 +229,30 @@ def _to_mempool_reject(*, reason: str, message: str, context: dict[str, Any], ex
     )
 
 
+def _build_replay_error(
+    *, tx_hash_hex: str, sender_hex: str, replay_source: str
+) -> Exception:
+    """
+    Build a replay exception that preserves typed replay semantics even when
+    runtime class loading differences make Replay(...) keyword construction fail.
+    """
+    try:
+        replay_exc = Replay(tx_hash=tx_hash_hex, sender=sender_hex)
+        if hasattr(replay_exc, "context") and isinstance(replay_exc.context, dict):
+            replay_exc.context.setdefault("replay_source", replay_source)
+        return replay_exc
+    except Exception:
+        return AdmissionError(
+            "replay detected",
+            context={
+                "reason": "replay",
+                "tx_hash": tx_hash_hex,
+                "sender": sender_hex,
+                "replay_source": replay_source,
+            },
+        )
+
+
 @dataclass(frozen=True)
 class MempoolSnapshot:
     entries: list[PendingTxEntry]
@@ -1142,7 +1166,11 @@ class MempoolService:
                 "replay",
                 {"tx_hash": tx_hash_hex},
             )
-            raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
+            raise _build_replay_error(
+                tx_hash_hex=tx_hash_hex,
+                sender_hex=sender_hex,
+                replay_source="tx_index",
+            )
 
         if tx_hash_hex in self._recent_txids:
             self._record_rejection(
@@ -1150,7 +1178,11 @@ class MempoolService:
                 "replay",
                 {"tx_hash": tx_hash_hex},
             )
-            raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
+            raise _build_replay_error(
+                tx_hash_hex=tx_hash_hex,
+                sender_hex=sender_hex,
+                replay_source="recent_cache",
+            )
 
         # Acquire per-sender lock to prevent TOCTOU race between getNextNonce and admission
         sender_lock = self._get_sender_lock(sender_hex)
