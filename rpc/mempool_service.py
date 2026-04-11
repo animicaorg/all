@@ -1130,19 +1130,19 @@ class MempoolService:
                 context={"tx_hash": tx_hash_hex, "error": str(exc)},
             ) from exc
 
+        replay_in_index = False
         if self.tx_index is not None and hasattr(self.tx_index, "exists"):
             try:
-                if self.tx_index.exists(tx_hash_bytes):
-                    self._record_rejection(
-                        tx_hash_hex,
-                        "replay",
-                        {"tx_hash": tx_hash_hex},
-                    )
-                    raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
-            except Replay:
-                raise
+                replay_in_index = bool(self.tx_index.exists(tx_hash_bytes))
             except Exception:
-                pass
+                replay_in_index = False
+        if replay_in_index:
+            self._record_rejection(
+                tx_hash_hex,
+                "replay",
+                {"tx_hash": tx_hash_hex},
+            )
+            raise Replay(tx_hash=tx_hash_hex, sender=sender_hex)
 
         if tx_hash_hex in self._recent_txids:
             self._record_rejection(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from core.encoding.cbor import dumps as cbor_dumps
+from mempool.tx_hash import tx_hash_hex
 from rpc.mempool_service import MempoolService
 from mempool.errors import AdmissionError
 
@@ -23,6 +25,30 @@ class _AcceptingService(MempoolService):
 
     def has_hash(self, _tx_hash_hex: str) -> bool:
         return True
+
+
+class _SeenTxIndex:
+    def exists(self, _tx_hash: bytes) -> bool:
+        return True
+
+
+def _replay_candidate_envelope() -> tuple[dict[str, object], bytes, str, str]:
+    sender_hex = "0x" + "11" * 32
+    tx = {
+        "body": {
+            "chainId": 1,
+            "from": sender_hex,
+            "to": "0x" + "22" * 32,
+            "nonce": 0,
+            "value": 1,
+            "gasLimit": 21_000,
+            "maxFee": 1,
+            "data": b"",
+        },
+        "sigs": [],
+    }
+    raw = cbor_dumps(tx)
+    return tx, raw, tx_hash_hex(raw), sender_hex
 
 
 def test_submit_atomic_reject_payload_is_typed() -> None:
@@ -54,6 +80,51 @@ def test_submit_atomic_simulate_accepts_without_insert() -> None:
     ok, reject, _ = svc.submit_atomic(tx={}, raw=b"\x80", tx_hash_hex="0x" + "33" * 32, simulate=True)
     assert ok is True
     assert reject is None
+
+
+def test_submit_atomic_replay_from_recent_cache_is_typed() -> None:
+    svc = MempoolService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    tx, raw, txh, sender_hex = _replay_candidate_envelope()
+    svc._recent_txids[txh] = 1_000_000
+
+    ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
+    assert ok is False
+    assert got_hash == txh
+    assert isinstance(reject, dict)
+    assert reject["reason"] != "internal_error"
+    assert reject["reason_code"] == "replay"
+    assert reject["context"]["tx_hash"] == txh
+    assert reject["context"]["sender"] == sender_hex
+    assert "trace_id" not in reject["context"]
+
+
+def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
+    svc = MempoolService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=_SeenTxIndex(),
+        persist_enabled=False,
+    )
+    tx, raw, txh, sender_hex = _replay_candidate_envelope()
+
+    ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
+    assert ok is False
+    assert got_hash == txh
+    assert isinstance(reject, dict)
+    assert reject["reason"] != "internal_error"
+    assert reject["reason_code"] == "replay"
+    assert reject["context"]["tx_hash"] == txh
+    assert reject["context"]["sender"] == sender_hex
+    assert "trace_id" not in reject["context"]
 
 
 class _TypeErrorService(MempoolService):

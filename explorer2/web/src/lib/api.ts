@@ -2,6 +2,7 @@ import type {
   AddressSummary,
   BlockDetail,
   BlockSummary,
+  ContractDeploymentFeed,
   HeadView,
   MempoolView,
   RichListResponse,
@@ -49,6 +50,8 @@ export const api = {
     apiGet<AddressSummary>(`/api/address/${address}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
   getMempool: (limit = 50, cursor?: string) =>
     apiGet<MempoolView>(`/api/mempool?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
+  getContractDeployments: (limit = 24, scanBlocks = 240) =>
+    apiGet<ContractDeploymentFeed>(`/api/contracts/deployments?limit=${limit}&scanBlocks=${scanBlocks}`),
   getRichList: (limit = 100, offset = 0) =>
     apiGet<RichListResponse>(`/api/richlist?limit=${limit}&offset=${offset}`),
   getRichListSummary: () =>
