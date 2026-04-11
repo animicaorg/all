@@ -171,6 +171,17 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/contracts/deployments', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 24)
+      const scanBlocks = Number(req.query.scanBlocks || 240)
+      const payload = await service.getContractDeployments(limit, scanBlocks)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   app.get('/api/search', async (req, res, next) => {
     try {
       const query = typeof req.query.q === 'string' ? req.query.q : ''

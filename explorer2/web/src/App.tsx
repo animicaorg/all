@@ -6,6 +6,7 @@ import TxDetailPage from './pages/TxDetailPage'
 import AddressPage from './pages/AddressPage'
 import MempoolPage from './pages/MempoolPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
+import ContractsPage from './pages/ContractsPage'
 import { RichListPage } from './pages/RichListPage'
 import AICFPage from './pages/AICFPage'
 import MiningPage from './pages/MiningPage'
@@ -40,6 +41,9 @@ export default function App() {
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/mempool">
                   Mempool
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/contracts">
+                  Contracts
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/aicf">
                   AICF
@@ -81,6 +85,7 @@ export default function App() {
           <Route path="/address/:address" element={<AddressPage />} />
           <Route path="/richlist" element={<RichListPage />} />
           <Route path="/mempool" element={<MempoolPage />} />
+          <Route path="/contracts" element={<ContractsPage />} />
           <Route path="/aicf" element={<AICFPage />} />
           <Route path="/mining" element={<MiningPage />} />
           <Route path="/da" element={<DAPage />} />

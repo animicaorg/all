@@ -1,4 +1,14 @@
-import type { AddressSummary, BlockDetail, BlockSummary, HeadView, MempoolView, TxDetail } from '@animica/explorer2-shared'
+import type {
+  AddressSummary,
+  BlockDetail,
+  BlockSummary,
+  ContractDeployment,
+  ContractDeploymentFeed,
+  ContractDeploymentKind,
+  HeadView,
+  MempoolView,
+  TxDetail
+} from '@animica/explorer2-shared'
 import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
 import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
@@ -24,6 +34,9 @@ export interface ChainClient {
 
 const RECENT_BLOCK_WINDOW = 20
 const ADDRESS_SCAN_WINDOW = 50
+const CONTRACT_DEPLOYMENT_SCAN_DEFAULT = 240
+const CONTRACT_DEPLOYMENT_SCAN_MAX = 1000
+const CONTRACT_DEPLOYMENT_LIMIT_MAX = 200
 
 export class ExplorerService {
   private coalescer = new RequestCoalescer()
@@ -327,6 +340,70 @@ export class ExplorerService {
       entries: slice.map((hash) => ({ hash })),
       nextCursor,
       stats: stats ?? undefined
+    }
+  }
+
+  async getContractDeployments(limitInput: number, scanBlocksInput: number): Promise<ContractDeploymentFeed> {
+    const limit = Math.max(1, Math.min(CONTRACT_DEPLOYMENT_LIMIT_MAX, Number(limitInput) || 24))
+    const scanBlocks = Math.max(
+      limit,
+      Math.min(CONTRACT_DEPLOYMENT_SCAN_MAX, Number(scanBlocksInput) || CONTRACT_DEPLOYMENT_SCAN_DEFAULT)
+    )
+    const head = normalizeHead(await this.safeRpc(() => this.rpc.getHead()))
+    const heights = Array.from({ length: scanBlocks }, (_, i) => head.height - i).filter((height) => height >= 0)
+    const items: ContractDeployment[] = []
+    let scannedBlocks = 0
+
+    for (const height of heights) {
+      if (items.length >= limit) break
+      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
+      if (!block) continue
+      scannedBlocks += 1
+
+      const blockDetail = normalizeBlockDetail(block)
+      const txs = Array.isArray((block as any)?.txs)
+        ? (block as any).txs
+        : Array.isArray((block as any)?.transactions)
+          ? (block as any).transactions
+          : []
+      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+
+      for (let i = 0; i < txs.length; i += 1) {
+        const tx = txs[i]
+        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const txDetail = normalizeTxDetail(tx, receipt)
+        const deployment = buildContractDeployment(txDetail, tx, receipt, blockDetail)
+        if (!deployment) continue
+        items.push(deployment)
+        if (items.length >= limit) break
+      }
+    }
+
+    const successful = items.filter((item) => item.status === 'confirmed').length
+    const failed = items.length - successful
+    const uniqueDeployers = new Set(
+      items
+        .map((item) => item.deployer)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    )
+    const uniqueContracts = new Set(
+      items
+        .map((item) => item.contractAddress)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    )
+
+    return {
+      headHeight: head.height,
+      scannedBlocks,
+      stats: {
+        total: items.length,
+        successful,
+        failed,
+        uniqueDeployers: uniqueDeployers.size,
+        uniqueContracts: uniqueContracts.size
+      },
+      spotlight: items.find((item) => item.status === 'confirmed') ?? items[0] ?? null,
+      items
     }
   }
 
@@ -656,6 +733,204 @@ function buildNetworkStats(blocks: BlockSummary[], mempool: any, peers: any): an
     tps,
     avgBlockTime
   }
+}
+
+function buildContractDeployment(txDetail: TxDetail, rawTx: any, receipt: any, block: BlockDetail): ContractDeployment | null {
+  if (txDetail.status === 'pending') return null
+
+  const contractAddress =
+    extractContractAddress(receipt) ??
+    extractContractAddress(rawTx?.receipt) ??
+    extractContractAddress(txDetail.receipt) ??
+    extractContractAddress(txDetail.raw)
+  const noRecipient = hasNoRecipient(txDetail, rawTx)
+  const inferredKind = inferDeploymentKind(rawTx, txDetail.raw, receipt)
+  const isDeployLike = Boolean(contractAddress) || noRecipient || inferredKind !== 'unknown'
+  if (!isDeployLike) return null
+
+  const label =
+    findFirstStringByKey(rawTx, ['contractName', 'contract_name', 'manifestName']) ??
+    findFirstStringByKey(rawTx?.manifest, ['name']) ??
+    findFirstStringByKey(receipt, ['contractName', 'contract_name']) ??
+    null
+
+  return {
+    txHash: String(txDetail.hash),
+    blockHeight: txDetail.blockHeight ?? block.height,
+    blockHash: txDetail.blockHash ? String(txDetail.blockHash) : String(block.hash),
+    blockTime: block.time || null,
+    deployer: txDetail.from,
+    contractAddress,
+    status: txDetail.status === 'failed' ? 'failed' : 'confirmed',
+    kind: resolveDeploymentKind(contractAddress, noRecipient, inferredKind),
+    feePaid: txDetail.feePaid,
+    gasUsed: txDetail.gasUsed,
+    codeSizeBytes: inferCodeSizeBytes(rawTx, txDetail.raw, receipt),
+    label
+  }
+}
+
+function resolveDeploymentKind(
+  contractAddress: string | null,
+  noRecipient: boolean,
+  inferredKind: ContractDeploymentKind
+): ContractDeploymentKind {
+  if (inferredKind !== 'unknown') return inferredKind
+  if (contractAddress || noRecipient) return 'contract_create'
+  return 'unknown'
+}
+
+function inferDeploymentKind(...sources: unknown[]): ContractDeploymentKind {
+  const markers = collectDeploymentMarkers(...sources)
+  if (markers.some((marker) => marker.includes('manifest'))) return 'manifest_deploy'
+  if (markers.some((marker) => marker.includes('package'))) return 'package_publish'
+  if (markers.some((marker) => marker.includes('deploy') || marker.includes('contractcreate') || marker.includes('createcontract'))) {
+    return 'contract_create'
+  }
+  return 'unknown'
+}
+
+function collectDeploymentMarkers(...sources: unknown[]): string[] {
+  const queue: unknown[] = [...sources]
+  const out: string[] = []
+  const visited = new Set<unknown>()
+  let depth = 0
+
+  while (queue.length && depth < 5) {
+    const levelSize = queue.length
+    for (let i = 0; i < levelSize; i += 1) {
+      const value = queue.shift()
+      if (!value || typeof value !== 'object' || visited.has(value)) continue
+      visited.add(value)
+      const record = value as Record<string, unknown>
+      for (const key of ['kind', 'type', 'txType', 'tx_type', 'method', 'action', 'op', 'operation', 'module', 'function']) {
+        const marker = normalizeMarker(record[key])
+        if (marker) out.push(marker)
+      }
+      for (const child of Object.values(record)) {
+        if (child && typeof child === 'object') queue.push(child)
+      }
+    }
+    depth += 1
+  }
+
+  return out
+}
+
+function normalizeMarker(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return compact.length ? compact : null
+}
+
+function hasNoRecipient(txDetail: TxDetail, rawTx: any): boolean {
+  const toCandidate =
+    txDetail.to ??
+    rawTx?.to ??
+    rawTx?.tx?.to ??
+    rawTx?.body?.to ??
+    rawTx?.tx?.payload?.v?.to ??
+    rawTx?.payload?.v?.to
+  if (toCandidate === undefined || toCandidate === null) return true
+  if (typeof toCandidate !== 'string') return false
+  const trimmed = toCandidate.trim().toLowerCase()
+  return trimmed.length === 0 || trimmed === '0x' || trimmed === '0x0' || /^0x0+$/.test(trimmed)
+}
+
+function extractContractAddress(value: unknown): string | null {
+  return findFirstStringByKey(value, [
+    'contractAddress',
+    'contract_address',
+    'createdContract',
+    'created_contract',
+    'createdAddress',
+    'created_address',
+    'deployedAddress',
+    'deployed_address',
+    'deployAddress',
+    'deploy_address'
+  ])
+}
+
+function findFirstStringByKey(root: unknown, keys: string[]): string | null {
+  if (!root || typeof root !== 'object') return null
+  const queue: unknown[] = [root]
+  const visited = new Set<unknown>()
+  let depth = 0
+
+  while (queue.length && depth < 5) {
+    const levelSize = queue.length
+    for (let i = 0; i < levelSize; i += 1) {
+      const value = queue.shift()
+      if (!value || typeof value !== 'object' || visited.has(value)) continue
+      visited.add(value)
+      const record = value as Record<string, unknown>
+
+      for (const key of keys) {
+        const candidate = sanitizeString(record[key])
+        if (candidate) return candidate
+      }
+
+      for (const child of Object.values(record)) {
+        if (child && typeof child === 'object') queue.push(child)
+      }
+    }
+    depth += 1
+  }
+
+  return null
+}
+
+function sanitizeString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed === '0x' || trimmed === '0x0' || /^0x0+$/.test(trimmed)) return null
+  return trimmed
+}
+
+function inferCodeSizeBytes(...sources: unknown[]): number | null {
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    const record = source as Record<string, unknown>
+    for (const numericKey of ['codeSizeBytes', 'code_size_bytes', 'codeSize', 'code_size', 'bytecodeSize', 'bytecode_size']) {
+      const numeric = toPositiveInt(record[numericKey])
+      if (numeric !== null) return numeric
+    }
+    for (const blobKey of ['bytecode', 'code', 'package', 'packageBytes', 'payload']) {
+      const size = byteLengthFromEncoded(record[blobKey])
+      if (size !== null) return size
+    }
+  }
+  return null
+}
+
+function toPositiveInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value)
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, value.startsWith('0x') ? 16 : 10)
+    if (!Number.isNaN(parsed) && parsed >= 0) return parsed
+  }
+  return null
+}
+
+function byteLengthFromEncoded(value: unknown): number | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('0x')) {
+    const hex = trimmed.slice(2)
+    if (!hex || hex.length % 2 !== 0 || /[^0-9a-f]/i.test(hex)) return null
+    return hex.length / 2
+  }
+  if (/^[a-z0-9+/=]+$/i.test(trimmed) && trimmed.length >= 8) {
+    try {
+      return Buffer.from(trimmed, 'base64').byteLength
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 function isNumeric(value: string): boolean {

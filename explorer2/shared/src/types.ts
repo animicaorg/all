@@ -116,3 +116,34 @@ export interface RichListSummary {
   top100Pct?: number
   top1000Pct?: number
 }
+
+export type ContractDeploymentKind = 'contract_create' | 'package_publish' | 'manifest_deploy' | 'unknown'
+
+export interface ContractDeployment {
+  txHash: Hash
+  blockHeight: number
+  blockHash: Hash
+  blockTime: number | null
+  deployer?: Address
+  contractAddress?: Address | null
+  status: 'confirmed' | 'failed'
+  kind: ContractDeploymentKind
+  feePaid?: string
+  gasUsed?: string
+  codeSizeBytes?: number | null
+  label?: string | null
+}
+
+export interface ContractDeploymentFeed {
+  headHeight: number
+  scannedBlocks: number
+  stats: {
+    total: number
+    successful: number
+    failed: number
+    uniqueDeployers: number
+    uniqueContracts: number
+  }
+  spotlight: ContractDeployment | null
+  items: ContractDeployment[]
+}

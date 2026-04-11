@@ -156,7 +156,8 @@ class FeeTooLow(AdmissionError):
             f"gas price too low: offered {gwei(offered_gas_price_wei):.9g} gwei "
             f"< required {gwei(min_required_wei):.9g} gwei"
         )
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.FEE_TOO_LOW,
             reason="fee_too_low",
             message=msg,
@@ -184,7 +185,8 @@ class NotYetValid(AdmissionError):
         tx_hash: Optional[str] = None,
     ) -> None:
         msg = f"not yet valid: valid_after {valid_after} > current {current_height}"
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.NOT_YET_VALID,
             reason="not_yet_valid",
             message=msg,
@@ -211,7 +213,8 @@ class Expired(AdmissionError):
         tx_hash: Optional[str] = None,
     ) -> None:
         msg = f"expired: valid_until {valid_until} < current {current_height}"
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.EXPIRED,
             reason="expired",
             message=msg,
@@ -236,7 +239,8 @@ class Replay(AdmissionError):
         sender: Optional[str] = None,
     ) -> None:
         msg = "replay detected"
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.REPLAY,
             reason="replay",
             message=msg,
@@ -281,7 +285,8 @@ class InsufficientFundsPending(AdmissionError):
         available: Optional[int] = None,
     ) -> None:
         msg = "insufficient funds accounting for pending transactions"
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.INSUFFICIENT_FUNDS_PENDING,
             reason="insufficient_funds_pending",
             message=msg,
@@ -309,7 +314,8 @@ class Oversize(AdmissionError):
         sender: Optional[str] = None,
     ) -> None:
         msg = f"transaction too large: {size_bytes} bytes > limit {max_bytes} bytes"
-        super(MempoolError, self).__init__(  # type: ignore[misc]
+        MempoolError.__init__(
+            self,
             code=MempoolErrorCode.OVERSIZE,
             reason="tx_too_large",
             message=msg,
