@@ -1,0 +1,321 @@
+from __future__ import annotations
+
+import json
+import hashlib
+import os
+from pathlib import Path
+from typing import Any, Dict, Mapping, Tuple
+
+import cbor2
+
+from ..tx import encode as tx_encode
+from ..tx import send as tx_send
+
+TxLike = Any
+
+
+def _rpc_req(rpc, method: str, params=None):
+    params = [] if params is None else params
+    if rpc is None:
+        return None
+    if hasattr(rpc, "request"):
+        return rpc.request(method, params)
+    if hasattr(rpc, "call"):
+        return rpc.call(method, params)
+    raise TypeError("rpc object has neither request() nor call()")
+
+
+def _infer_chain_height(rpc) -> int:
+    probes = [
+        ("chain.getHead", []),
+        ("chain.getInfo", []),
+        ("node.status", []),
+    ]
+    for method, params in probes:
+        try:
+            out = _rpc_req(rpc, method, params)
+        except Exception:
+            continue
+
+        if isinstance(out, int):
+            return int(out)
+
+        if isinstance(out, Mapping):
+            for key in ("height", "head_height", "best_height", "blockHeight"):
+                value = out.get(key)
+                if isinstance(value, int):
+                    return int(value)
+
+            head = out.get("head")
+            if isinstance(head, Mapping) and isinstance(head.get("height"), int):
+                return int(head["height"])
+
+    return 0
+
+
+def _resolve_validity_window_from_rpc(
+    rpc,
+    *,
+    valid_after: int | None,
+    valid_until: int | None,
+    ttl_blocks: int = 120,
+) -> tuple[int, int]:
+    if valid_after is not None and valid_until is not None:
+        va = int(valid_after)
+        vu = int(valid_until)
+        if vu <= va:
+            vu = va + int(ttl_blocks)
+        return va, vu
+
+    head = _infer_chain_height(rpc)
+    va = int(valid_after) if valid_after is not None else int(head)
+    vu = int(valid_until) if valid_until is not None else int(va + int(ttl_blocks))
+    if vu <= va:
+        vu = va + int(ttl_blocks)
+    return va, vu
+
+
+def _coerce_bytes(value: Any, *, field: str) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return bytes(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith(("0x", "0X")):
+            text = text[2:]
+            if len(text) % 2 == 1:
+                text = "0" + text
+            try:
+                return bytes.fromhex(text)
+            except ValueError as exc:
+                raise ValueError(f"{field} hex string is invalid") from exc
+        return value.encode("utf-8")
+    raise TypeError(f"{field} must be bytes-like or string, got {type(value).__name__}")
+
+
+def _read_textish(value: Any) -> str:
+    if isinstance(value, Path):
+        return value.read_text()
+    if isinstance(value, str):
+        p = Path(value)
+        if p.exists():
+            return p.read_text()
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    raise TypeError(f"unsupported text-like value: {type(value).__name__}")
+
+
+def _read_jsonish(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, Path):
+        return json.loads(value.read_text())
+    if isinstance(value, str):
+        p = Path(value)
+        if p.exists():
+            return json.loads(p.read_text())
+        return json.loads(value)
+    if isinstance(value, bytes):
+        return json.loads(value.decode("utf-8"))
+    raise TypeError(f"unsupported json-like value: {type(value).__name__}")
+
+
+def make_package_bytes(
+    manifest: Any,
+    code: Any,
+    *,
+    extras: Mapping[str, Any] | None = None,
+) -> bytes:
+    manifest_obj = _read_jsonish(manifest)
+    code_text = _read_textish(code)
+
+    payload: dict[str, Any] = {
+        "manifest": manifest_obj,
+        "code": code_text.encode("utf-8"),
+    }
+    if extras:
+        payload["extras"] = dict(extras)
+
+    return cbor2.dumps(payload)
+
+
+def _get_public_key_bytes(signer: Any) -> bytes:
+    for attr in ("public_key", "public_key_bytes", "pubkey", "pubkey_bytes"):
+        if not hasattr(signer, attr):
+            continue
+        value = getattr(signer, attr)
+        value = value() if callable(value) else value
+        if value is not None:
+            return _coerce_bytes(value, field=attr)
+    raise TypeError(
+        "signer must expose one of: public_key, public_key_bytes, pubkey, pubkey_bytes"
+    )
+
+
+def _get_alg_id(signer: Any) -> int:
+    for attr in ("alg_id", "algorithm_id"):
+        if not hasattr(signer, attr):
+            continue
+        value = getattr(signer, attr)
+        value = value() if callable(value) else value
+        if value is not None:
+            return int(value)
+    raise TypeError("signer must expose alg_id or algorithm_id")
+
+
+def _sign_bytes(signer: Any, sign_bytes: bytes) -> bytes:
+    for attr in ("sign", "sign_bytes", "sign_detached"):
+        if not hasattr(signer, attr):
+            continue
+        fn = getattr(signer, attr)
+        if callable(fn):
+            out = fn(sign_bytes)
+            return _coerce_bytes(out, field=attr)
+    raise TypeError("signer must expose sign(), sign_bytes(), or sign_detached()")
+
+
+def _get_from_addr(signer: Any, explicit_from_addr: str | None) -> str:
+    if explicit_from_addr:
+        return str(explicit_from_addr)
+
+    for attr in ("address", "sender", "from_addr"):
+        if not hasattr(signer, attr):
+            continue
+        value = getattr(signer, attr)
+        value = value() if callable(value) else value
+        if isinstance(value, str) and value:
+            return value
+
+    if hasattr(signer, "get_address") and callable(getattr(signer, "get_address")):
+        value = signer.get_address()
+        if isinstance(value, str) and value:
+            return value
+
+    raise TypeError(
+        "from_addr was not provided and could not be derived from signer "
+        "(expected signer.address, signer.sender, signer.from_addr, or signer.get_address())"
+    )
+
+
+def _derive_contract_address(receipt: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(receipt, Mapping):
+        return None
+
+    for key in ("contractAddress", "contract_address", "address"):
+        value = receipt.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    logs = receipt.get("logs")
+    if isinstance(logs, list):
+        for log in logs:
+            if not isinstance(log, Mapping):
+                continue
+            for key in ("contractAddress", "contract_address", "address"):
+                value = log.get(key)
+                if isinstance(value, str) and value:
+                    return value
+    return None
+
+
+def _resolve_sign_bytes(tx: Mapping[str, Any]) -> bytes:
+    body = tx_encode.canonical_body_dict(tx)
+    return cbor2.dumps(body, canonical=True)
+
+def build_deploy_tx(
+    from_addr: str,
+    chain_id: int,
+    nonce: int = 0,
+    max_fee: int = 1,
+    package_bytes: bytes = b"",
+    gas_limit: int | None = None,
+    valid_after: int = 0,
+    valid_until: int = 10_000_000,
+    salt: bytes | None = None,
+) -> Dict[str, Any]:
+    resolved_gas_limit = 58353 if gas_limit is None else int(gas_limit)
+    resolved_salt = os.urandom(16) if salt is None else bytes(salt)
+
+    return {
+        "from_addr": str(from_addr),
+        "to": None,
+        "value": 0,
+        "data": bytes(package_bytes),
+        "gas_limit": resolved_gas_limit,
+        "max_fee": int(max_fee),
+        "chain_id": int(chain_id),
+        "valid_after": int(valid_after),
+        "valid_until": int(valid_until),
+        "salt": resolved_salt,
+    }
+
+
+def deploy_package(
+    *,
+    rpc,
+    signer: Any,
+    chain_id: int,
+    from_addr: str | None = None,
+    manifest: Any | None = None,
+    code: Any | None = None,
+    package_bytes: bytes | None = None,
+    max_fee: int = 1,
+    gas_limit: int | None = None,
+    valid_after: int | None = None,
+    valid_until: int | None = None,
+    receipt_timeout_s: float = 120.0,
+    poll_interval_s: float = 1.0,
+    extras: Mapping[str, Any] | None = None,
+    nonce: int = 0,
+    **_ignored: Any,
+) -> Tuple[str | None, Mapping[str, Any] | None]:
+    sender = _get_from_addr(signer, from_addr)
+
+    if package_bytes is None:
+        if manifest is None or code is None:
+            raise ValueError("deploy_package requires either package_bytes or both manifest and code")
+        package_bytes = make_package_bytes(manifest, code, extras=extras)
+
+    resolved_valid_after, resolved_valid_until = _resolve_validity_window_from_rpc(
+        rpc,
+        valid_after=valid_after,
+        valid_until=valid_until,
+    )
+
+    tx = build_deploy_tx(
+        from_addr=sender,
+        chain_id=chain_id,
+        nonce=nonce,
+        max_fee=max_fee,
+        package_bytes=package_bytes,
+        gas_limit=gas_limit,
+        valid_after=resolved_valid_after,
+        valid_until=resolved_valid_until,
+        salt=None,
+    )
+
+    sign_bytes = _resolve_sign_bytes(tx)
+    signature = _sign_bytes(signer, sign_bytes)
+    public_key = _get_public_key_bytes(signer)
+    alg_id = _get_alg_id(signer)
+
+    raw = tx_encode.pack_signed(
+        tx,
+        signature=signature,
+        alg_id=alg_id,
+        public_key=public_key,
+    )
+
+    receipt = tx_send.submit_and_wait(
+        rpc,
+        raw,
+        timeout_s=float(receipt_timeout_s),
+        poll_interval_s=float(poll_interval_s),
+    )
+
+    contract_addr = _derive_contract_address(receipt)
+    return contract_addr, receipt

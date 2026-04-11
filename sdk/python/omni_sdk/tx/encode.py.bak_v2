@@ -81,49 +81,46 @@ def _normalize_bytes(value: Any) -> bytes:
 
 
 def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
-    body: Dict[str, Any] = {}
+    """
+    Return the canonical tx body dict used for sign-bytes and wire encoding.
 
-    from_addr = _get_optional(tx, "from_addr", "from", "sender")
-    to_addr = _get_optional(tx, "to", "to_addr", "recipient")
+    Supports both:
+    - dataclass/object txs with SDK field names
+    - plain dict txs using snake_case or camelCase keys
+    """
+    from_addr = _get_optional(tx, "from_addr", "fromAddr")
+    to_addr = _get_optional(tx, "to", "to_addr", "toAddr")
+    nonce = _get_optional(tx, "nonce")
     value = _get_optional(tx, "value")
-    data = _get_optional(tx, "data", "payload")
-    gas_limit = _get_optional(tx, "gas_limit", "gasLimit", "gas")
+    data = _get_optional(tx, "data")
+    gas_limit = _get_optional(tx, "gas_limit", "gasLimit")
     max_fee = _get_optional(tx, "max_fee", "maxFee")
     chain_id = _get_optional(tx, "chain_id", "chainId")
-    nonce = _get_optional(tx, "nonce")
     valid_after = _get_optional(tx, "valid_after", "validAfter")
     valid_until = _get_optional(tx, "valid_until", "validUntil")
-    salt = _get_optional(tx, "salt")
+    fork_id = _get_optional(tx, "fork_id", "forkId")
 
-    if from_addr is not None:
-        body["from"] = str(from_addr)
+    body: Dict[str, Any] = {
+        "from": str(from_addr),
+        "nonce": _normalize_int(nonce, field="nonce"),
+        "value": _normalize_int(value if value is not None else 0, field="value"),
+        "data": _normalize_bytes(data),
+        "gasLimit": _normalize_int(gas_limit, field="gas_limit"),
+        "maxFee": _normalize_int(max_fee, field="max_fee"),
+        "chainId": _normalize_int(chain_id, field="chain_id"),
+    }
+
     if to_addr is not None:
         body["to"] = str(to_addr)
-    if value is not None:
-        body["value"] = _normalize_int(value, field="value")
-    if data is not None:
-        body["data"] = _normalize_bytes(data)
-    if gas_limit is not None:
-        body["gasLimit"] = _normalize_int(gas_limit, field="gas_limit")
-    if max_fee is not None:
-        body["maxFee"] = _normalize_int(max_fee, field="max_fee")
-    if chain_id is not None:
-        body["chainId"] = _normalize_int(chain_id, field="chain_id")
 
-    # v2 tx semantics:
-    # if validity window is present, omit nonce and require salt
-    is_v2 = (valid_after is not None) or (valid_until is not None) or (salt is not None)
+    if valid_after is not None:
+        body["validAfter"] = _normalize_int(valid_after, field="valid_after")
 
-    if is_v2:
-        if valid_after is not None:
-            body["validAfter"] = _normalize_int(valid_after, field="valid_after")
-        if valid_until is not None:
-            body["validUntil"] = _normalize_int(valid_until, field="valid_until")
-        if salt is not None:
-            body["salt"] = _normalize_bytes(salt)
-    else:
-        if nonce is not None:
-            body["nonce"] = _normalize_int(nonce, field="nonce")
+    if valid_until is not None:
+        body["validUntil"] = _normalize_int(valid_until, field="valid_until")
+
+    if fork_id is not None:
+        body["forkId"] = _normalize_int(fork_id, field="fork_id")
 
     return body
 

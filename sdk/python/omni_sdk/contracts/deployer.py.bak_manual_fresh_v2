@@ -1,0 +1,310 @@
+"""
+omni_sdk.contracts.deployer
+===========================
+
+Deploy a Python-VM contract package (manifest + code bytes).
+"""
+
+from __future__ import annotations
+
+import os
+
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+try:
+    from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
+except Exception as _e:  # pragma: no cover
+    raise RuntimeError(
+        "omni_sdk.utils.cbor is required for deterministic encoding"
+    ) from _e
+
+try:
+    from omni_sdk.types.abi import normalize_abi  # type: ignore
+except Exception as _e:  # pragma: no cover
+    raise RuntimeError(
+        "omni_sdk.types.abi is required to normalize manifest ABI"
+    ) from _e
+
+from omni_sdk.tx import build as tx_build
+from omni_sdk.tx import signing as tx_signing
+from omni_sdk.tx import send as tx_send
+from omni_sdk.wallet.signer import PQSigner  # type: ignore
+
+try:
+    from omni_sdk.errors import AbiError  # type: ignore
+except Exception:  # pragma: no cover
+    class AbiError(RuntimeError): ...
+
+
+JsonDict = Dict[str, Any]
+
+
+def _coerce_abi_input(abi_value: Any) -> Any:
+    if not isinstance(abi_value, dict):
+        return abi_value
+    if {"entries", "functions", "events"} <= set(abi_value.keys()):
+        return abi_value
+
+    funcs = abi_value.get("functions", [])
+    events = abi_value.get("events", [])
+    if not isinstance(funcs, list) or not isinstance(events, list):
+        return abi_value
+
+    entries = []
+    for fn in funcs:
+        if isinstance(fn, Mapping):
+            item = dict(fn)
+            item.setdefault("type", "function")
+            entries.append(item)
+    for ev in events:
+        if isinstance(ev, Mapping):
+            item = dict(ev)
+            item.setdefault("type", "event")
+            entries.append(item)
+    return entries
+
+
+def normalize_manifest(manifest: Mapping[str, Any]) -> JsonDict:
+    if not isinstance(manifest, Mapping):
+        raise AbiError("manifest must be a mapping")
+
+    m = dict(manifest)
+
+    if "abi" not in m:
+        raise AbiError("manifest missing required 'abi' field")
+    try:
+        m["abi"] = normalize_abi(_coerce_abi_input(m["abi"]))
+    except Exception as e:
+        raise AbiError(f"manifest.abi normalization failed: {e}") from e
+
+    if "name" in m and not isinstance(m["name"], str):
+        raise AbiError("manifest.name must be a string if provided")
+    if "version" in m and not isinstance(m["version"], (str, int)):
+        raise AbiError("manifest.version must be string or int if provided")
+
+    return m
+
+
+def make_package_bytes(
+    *,
+    manifest: Mapping[str, Any],
+    code: bytes,
+    resources: Optional[Mapping[str, bytes]] = None,
+) -> bytes:
+    if not isinstance(code, (bytes, bytearray)):
+        raise TypeError("code must be bytes")
+
+    env: JsonDict = {
+        "manifest": normalize_manifest(manifest),
+        "code": bytes(code),
+    }
+    if resources:
+        env["resources"] = {str(k): bytes(v) for k, v in resources.items()}
+    return cbor_dumps(env)
+
+
+def build_deploy_tx(
+    *,
+    from_addr: str,
+    chain_id: int,
+    nonce: int,
+    max_fee: int,
+    package_bytes: bytes,
+    gas_limit: Optional[int] = None,
+    valid_after: int = 0,
+    valid_until: int = 10_000_000,
+) -> JsonDict:
+    gl = (
+        int(gas_limit)
+        if gas_limit is not None
+        else tx_build.suggest_gas_limit(
+            kind="deploy",
+            calldata_len=len(package_bytes),
+        )
+    )
+
+    # IMPORTANT:
+    # Return a plain dict instead of omni_sdk.types.core.Tx so we can
+    # carry validity fields even though the current Tx dataclass does not.
+    return {
+        "from_addr": from_addr,
+        "to": None,
+        "nonce": int(nonce),
+        "value": 0,
+        "data": bytes(package_bytes),
+        "gas_limit": int(gl),
+        "max_fee": int(max_fee),
+        "chain_id": int(chain_id),
+        "valid_after": int(valid_after),
+        "valid_until": int(valid_until),
+    }
+
+
+def _rpc_req(rpc, method: str, params=None):
+    params = [] if params is None else params
+    if rpc is None:
+        return None
+    if hasattr(rpc, "request"):
+        return rpc.request(method, params)
+    if hasattr(rpc, "call"):
+        return rpc.call(method, params)
+    return None
+
+
+def _infer_chain_height(rpc) -> int:
+    """
+    Best-effort current chain height resolver for SDK deploy flows.
+    Tries several common RPC methods/shapes.
+    """
+    candidates = [
+        ("chain.getHead", []),
+        ("chain.getInfo", []),
+        ("chain.info", []),
+        ("chain.getBlockchainInfo", []),
+        ("chain.getBlockNumber", []),
+        ("chain.blockNumber", []),
+    ]
+
+    for method, params in candidates:
+        try:
+            out = _rpc_req(rpc, method, params)
+        except Exception:
+            continue
+
+        if out is None:
+            continue
+
+        if isinstance(out, int):
+            return int(out)
+
+        if isinstance(out, str):
+            text = out.strip()
+            if text.isdigit():
+                return int(text)
+            if text.startswith(("0x", "0X")):
+                try:
+                    return int(text, 16)
+                except Exception:
+                    pass
+
+        if isinstance(out, dict):
+            for key in ("height", "blockHeight", "head_height", "bestHeight", "currentHeight"):
+                v = out.get(key)
+                if isinstance(v, int):
+                    return int(v)
+                if isinstance(v, str) and v.strip().isdigit():
+                    return int(v.strip())
+
+            head = out.get("head")
+            if isinstance(head, dict):
+                for key in ("height", "blockHeight"):
+                    v = head.get(key)
+                    if isinstance(v, int):
+                        return int(v)
+                    if isinstance(v, str) and v.strip().isdigit():
+                        return int(v.strip())
+
+    raise RuntimeError(
+        "Could not infer current chain height from RPC; add a compatible chain height RPC or patch resolver."
+    )
+
+
+def _resolve_validity_window_from_rpc(
+    rpc,
+    *,
+    valid_after=None,
+    valid_until=None,
+    ttl_blocks: int = 120,
+):
+    """
+    Resolve a live validity window like the CLI/wallet path does.
+    """
+    resolved_after = int(valid_after) if valid_after is not None else None
+    resolved_until = int(valid_until) if valid_until is not None else None
+
+    if resolved_after is None:
+        chain_height = _infer_chain_height(rpc)
+        resolved_after = max(1, int(chain_height))
+
+    if resolved_until is None:
+        resolved_until = int(resolved_after) + int(ttl_blocks)
+
+    if resolved_until <= resolved_after:
+        raise ValueError(
+            f"invalid validity window: valid_after={resolved_after} valid_until={resolved_until}"
+        )
+
+    return int(resolved_after), int(resolved_until)
+
+
+def extract_contract_address(receipt: Mapping[str, Any]) -> Optional[str]:
+    for k in ("contractAddress", "contract_address", "address"):
+        v = receipt.get(k)  # type: ignore[arg-type]
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def deploy_package(
+    *,
+    rpc,
+    signer: PQSigner,
+    manifest: Mapping[str, Any],
+    code: bytes,
+    chain_id: int,
+    nonce: int,
+    max_fee: int,
+    gas_limit: Optional[int] = None,
+    resources: Optional[Mapping[str, bytes]] = None,
+    await_receipt: bool = True,
+    timeout_s: float = 3600.0,
+    poll_interval_s: float = 0.5,
+) -> Tuple[Optional[str], JsonDict]:
+    pkg = make_package_bytes(manifest=manifest, code=code, resources=resources)
+    resolved_valid_after, resolved_valid_until = _resolve_validity_window_from_rpc(
+        rpc,
+        valid_after=None,
+        valid_until=None,
+        ttl_blocks=120,
+    )
+
+    tx_obj = build_deploy_tx(
+        from_addr=signer.address,
+        chain_id=int(chain_id),
+        nonce=int(nonce),
+        max_fee=int(max_fee),
+        package_bytes=pkg,
+        gas_limit=gas_limit,
+        valid_after=resolved_valid_after,
+        valid_until=resolved_valid_until,
+    )
+
+    signed = tx_signing.sign_transaction_with_rpc_context(
+        tx_obj,
+        signer,
+        chain_id=int(chain_id),
+        rpc=rpc,
+    )
+    raw = signed.raw_tx
+
+    if not await_receipt:
+        tx_hash = tx_send.submit_raw(rpc, raw)
+        return None, {"txHash": tx_hash}
+
+    receipt = tx_send.submit_and_wait(
+        rpc,
+        raw,
+        timeout_s=timeout_s,
+        poll_interval_s=poll_interval_s,
+    )
+    addr = extract_contract_address(receipt)
+    return addr, receipt
+
+
+__all__ = [
+    "normalize_manifest",
+    "make_package_bytes",
+    "build_deploy_tx",
+    "deploy_package",
+    "extract_contract_address",
+]
