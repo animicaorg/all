@@ -2,7 +2,7 @@ from rpc.instant_tx import InstantTxService, set_instant_tx_service_singleton
 from rpc.methods import tx as tx_methods
 
 
-def test_tx_get_status_reports_instant_confirmed(tmp_path, monkeypatch):
+def test_tx_get_status_reports_pending_mempool_state(tmp_path, monkeypatch):
     svc = InstantTxService(data_root=tmp_path, chain_id=1, ttl_s=3600)
     set_instant_tx_service_singleton(svc)
     txid = "0x" + "66" * 32
@@ -20,9 +20,11 @@ def test_tx_get_status_reports_instant_confirmed(tmp_path, monkeypatch):
     monkeypatch.setattr(tx_methods.deps, "ensure_started", lambda: _Ctx())
 
     out = tx_methods.tx_get_status(txid)
-    assert out["status"] == "instant_confirmed"
-    assert out["instant_confirmed"] is True
+    assert out["status"] == "pending"
+    assert out["state"] == "pending_mempool"
+    assert out["instant_confirmed"] is False
     assert out["finalized_in_pow"] is False
+    assert out["reason"] == "pending_mempool"
 
 
 def test_tx_get_instant_receipt_not_found(monkeypatch):

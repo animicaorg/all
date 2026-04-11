@@ -341,7 +341,17 @@ def _svc_pending_nonce(addr: str) -> int:
     except Exception:
         ctx = None
 
-    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    mempool_service = None
+    try:
+        from rpc.methods import tx as tx_methods
+
+        resolver = getattr(tx_methods, "_get_mempool_service", None)
+        if callable(resolver):
+            mempool_service = resolver()
+    except Exception:
+        mempool_service = None
+    if mempool_service is None and ctx is not None:
+        mempool_service = getattr(ctx, "mempool", None)
     if mempool_service is not None:
         try:
             addr_bytes = _to_account_key_bytes(addr)
