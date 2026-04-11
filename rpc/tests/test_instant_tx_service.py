@@ -9,12 +9,12 @@ def test_emit_and_finalize_instant_receipt(tmp_path: Path):
     anchor = "0x" + "22" * 32
 
     rec = svc.emit_local(txid=txid, anchor_hash=anchor, timestamp=2_200_000_000)
-    assert rec["instant_confirmed"] is True
+    assert rec["instant_confirmed"] is False
     assert rec["finalized_in_pow"] is False
 
     got = svc.get_receipt(txid)
     assert got is not None
-    assert got["instant_confirmed"] is True
+    assert got["instant_confirmed"] is False
     assert got["anchor_hash"] == anchor
 
     svc.mark_finalized([txid])

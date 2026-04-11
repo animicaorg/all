@@ -1172,17 +1172,15 @@ class MempoolService:
                 replay_source="tx_index",
             )
 
+        # Do not treat transient recent-cache entries as canonical replay source.
+        # A transaction is "already known" only if it is in canonical mempool
+        # or canonical chain index.
         if tx_hash_hex in self._recent_txids:
-            self._record_rejection(
-                tx_hash_hex,
-                "replay",
-                {"tx_hash": tx_hash_hex},
+            log.debug(
+                "Ignoring stale recent tx cache entry during admission",
+                extra={"tx_hash": tx_hash_hex},
             )
-            raise _build_replay_error(
-                tx_hash_hex=tx_hash_hex,
-                sender_hex=sender_hex,
-                replay_source="recent_cache",
-            )
+            self._recent_txids.pop(tx_hash_hex, None)
 
         # Acquire per-sender lock to prevent TOCTOU race between getNextNonce and admission
         sender_lock = self._get_sender_lock(sender_hex)

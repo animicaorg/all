@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from core.encoding.cbor import dumps as cbor_dumps
@@ -8,12 +10,46 @@ from rpc.mempool_service import MempoolService
 from mempool.errors import AdmissionError
 
 
-class _DummyPool:
-    def __len__(self):
-        return 0
+@dataclass
+class _DummyEntry:
+    tx: object
+    meta: object
+    tx_hash: bytes
+    raw: bytes
 
-    def get(self, _):
-        return None
+
+class _DummyIndex:
+    def __init__(self) -> None:
+        self._by_hash: dict[bytes, _DummyEntry] = {}
+        self._by_sender: dict[str, list[_DummyEntry]] = {}
+
+    def get_by_sender(self, sender_hex: str) -> list[_DummyEntry]:
+        return list(self._by_sender.get(sender_hex, []))
+
+    def get(self, tx_hash: bytes) -> _DummyEntry | None:
+        return self._by_hash.get(bytes(tx_hash))
+
+    def all_items(self):
+        return list(self._by_hash.items())
+
+
+class _DummyPool:
+    def __init__(self):
+        self._by_hash: dict[bytes, _DummyEntry] = {}
+        self.index = _DummyIndex()
+
+    def __len__(self):
+        return len(self._by_hash)
+
+    def get(self, tx_hash):
+        return self._by_hash.get(bytes(tx_hash))
+
+    def add(self, pool_tx, meta, is_local=True):
+        tx_hash = bytes(pool_tx.tx_hash)
+        entry = _DummyEntry(tx=pool_tx, meta=meta, tx_hash=tx_hash, raw=bytes(pool_tx.raw))
+        self._by_hash[tx_hash] = entry
+        self.index._by_hash[tx_hash] = entry
+        self.index._by_sender.setdefault(str(meta.sender), []).append(entry)
 
 
 class _RejectingService(MempoolService):
@@ -84,7 +120,7 @@ def test_submit_atomic_simulate_accepts_without_insert() -> None:
     assert reject is None
 
 
-def test_submit_atomic_replay_from_recent_cache_is_typed() -> None:
+def test_submit_atomic_stale_recent_cache_is_not_false_replay() -> None:
     svc = MempoolService(
         pool=_DummyPool(),
         chain_id=1,
@@ -97,14 +133,11 @@ def test_submit_atomic_replay_from_recent_cache_is_typed() -> None:
     svc._recent_txids[txh] = 1_000_000
 
     ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
-    assert ok is False
+    assert ok is True
     assert got_hash == txh
-    assert isinstance(reject, dict)
-    assert reject["reason"] != "internal_error"
-    assert reject["reason_code"] == "replay"
-    assert reject["context"]["tx_hash"] == txh
-    assert reject["context"]["sender"] == sender_hex
-    assert "trace_id" not in reject["context"]
+    assert reject is None
+    assert svc.has_hash(txh) is True
+    assert txh in svc._recent_txids
 
 
 def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
@@ -129,7 +162,7 @@ def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
     assert "trace_id" not in reject["context"]
 
 
-def test_submit_atomic_replay_constructor_mismatch_stays_typed(
+def test_submit_atomic_stale_recent_cache_ignores_replay_constructor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import rpc.mempool_service as mempool_service
@@ -150,13 +183,10 @@ def test_submit_atomic_replay_constructor_mismatch_stays_typed(
     svc._recent_txids[txh] = 1_000_000
 
     ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
-    assert ok is False
+    assert ok is True
     assert got_hash == txh
-    assert isinstance(reject, dict)
-    assert reject["reason_code"] == "replay"
-    assert reject["context"]["tx_hash"] == txh
-    assert reject["context"]["sender"] == sender_hex
-    assert reject["context"]["replay_source"] == "recent_cache"
+    assert reject is None
+    assert svc.has_hash(txh) is True
 
 
 class _TypeErrorService(MempoolService):

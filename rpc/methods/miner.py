@@ -3154,6 +3154,10 @@ def _mine_once(
                 "mempool_total": pending_total,
                 "included": len(txs),
                 "rejected": dict(merged_rejected),
+                "included_hashes_sample": list(included_hashes[:10]),
+                "rejected_by_hash_sample": dict(
+                    list(merged_rejected_by_hash.items())[:10]
+                ),
             },
         )
         if selection.total_pending and len(txs) == 0:
@@ -4942,6 +4946,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                     "mempool_total": pending_total,
                     "included": len(txs),
                     "rejected": dict(merged_rejected),
+                    "included_hashes_sample": list(included_hashes[:10]),
+                    "rejected_by_hash_sample": dict(
+                        list(merged_rejected_by_hash.items())[:10]
+                    ),
                 },
             )
             _maybe_log_mempool_debug(

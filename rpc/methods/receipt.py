@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import typing as t
 
 from rpc import deps
@@ -7,6 +8,7 @@ from rpc import errors as rpc_errors
 from rpc.methods import method
 
 HexStr = str
+log = logging.getLogger(__name__)
 
 
 # ——— Helpers ———
@@ -53,10 +55,35 @@ def _hex_quantity(n: int) -> str:
 
 
 def _pending_contains(tx_hash_hex: str) -> bool:
+    # Prefer canonical mempool service used by tx admission/mining.
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception:
+        tx_methods = None  # type: ignore[assignment]
+    if tx_methods is not None and hasattr(tx_methods, "_get_mempool_service"):
+        try:
+            svc = tx_methods._get_mempool_service()  # type: ignore[attr-defined]
+        except Exception:
+            svc = None
+        if svc is not None:
+            if hasattr(svc, "has_hash") and callable(getattr(svc, "has_hash")):
+                try:
+                    return bool(svc.has_hash(tx_hash_hex))
+                except Exception:
+                    pass
+            if hasattr(svc, "snapshot") and callable(getattr(svc, "snapshot")):
+                try:
+                    snap = svc.snapshot(limit=1000)
+                    for entry in getattr(snap, "entries", []) or []:
+                        if getattr(entry, "hash_hex", None) == tx_hash_hex:
+                            return True
+                except Exception:
+                    pass
+
+    # Legacy fallback only when canonical service is unavailable.
     pool = getattr(deps, "pending_pool", None)
     if pool is None:
         return False
-    # best-effort: support .has, .contains, or 'in'
     if hasattr(pool, "has"):
         try:
             return bool(pool.has(tx_hash_hex))
@@ -339,44 +366,72 @@ def _normalize_receipt(
 def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     # Validate & parse hash
     tx_hash_hex, tx_hash_b = _parse_tx_hash(txHash)
+    lookup_trace: dict[str, t.Any] = {
+        "tx_hash": tx_hash_hex,
+        "checked": {
+            "pending_mempool": False,
+            "receipt_loc": False,
+            "receipt_by_tx_hash": False,
+            "receipt_by_hash": False,
+        },
+        "result": "unknown",
+    }
 
     # If it's still pending, report null per spec
+    lookup_trace["checked"]["pending_mempool"] = True
     if _pending_contains(tx_hash_hex):
+        lookup_trace["result"] = "pending"
+        log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
         return None
 
     # Find location (height, index), then fetch receipt and block context
+    lookup_trace["checked"]["receipt_loc"] = True
     loc = _lookup_receipt_loc(tx_hash_b)
     if loc is None:
         # Try the new get_receipt_by_tx_hash method on block_db
         bdb = getattr(deps, "block_db", None)
         if bdb is not None and hasattr(bdb, "get_receipt_by_tx_hash"):
             try:
+                lookup_trace["checked"]["receipt_by_tx_hash"] = True
                 result = bdb.get_receipt_by_tx_hash(tx_hash_b)  # type: ignore[attr-defined]
                 if result is not None:
                     height, idx, block_hash, receipt = result
                     loc = _ReceiptLoc(height=height, index=idx, block_hash=block_hash)
                     # Fetch the block for context
                     blk = bdb.get_block_by_hash(block_hash)
+                    lookup_trace["result"] = "found_by_tx_hash"
+                    log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
                     return _normalize_receipt(tx_hash_hex, loc, blk, receipt)
             except Exception:
                 pass
-        
+
         # As a last-chance, some block_db offer get_receipt_by_hash directly
         bdb = getattr(deps, "block_db", None)
         if bdb is not None and hasattr(bdb, "get_receipt_by_hash"):
             try:
+                lookup_trace["checked"]["receipt_by_hash"] = True
                 rec = bdb.get_receipt_by_hash(tx_hash_b)  # type: ignore[attr-defined]
                 if rec is None:
+                    lookup_trace["result"] = "not_found"
+                    log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
                     return None
                 # We don't know height/index; build a minimal result
+                lookup_trace["result"] = "found_by_hash"
+                log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
                 return _normalize_receipt(tx_hash_hex, _ReceiptLoc(), None, rec)
             except Exception:
                 pass
+        lookup_trace["result"] = "not_found"
+        log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
         return None
 
     pair = _fetch_block_and_receipt(loc, tx_hash_b)
     if pair is None:
+        lookup_trace["result"] = "not_found"
+        log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
         return None
 
     blk, rec = pair
+    lookup_trace["result"] = "found"
+    log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
     return _normalize_receipt(tx_hash_hex, loc, blk, rec)

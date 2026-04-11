@@ -201,6 +201,14 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
         snapshot = mempool_service.snapshot(limit=1000)
         pending_hashes = [entry.hash_hex for entry in snapshot.entries]
         pending_hashes.sort()
+        log.info(
+            "mempool.getPending",
+            extra={
+                "count": len(pending_hashes),
+                "source_store": "canonical_mempool_service",
+                "source_id": hex(id(mempool_service)),
+            },
+        )
         if not verbose:
             return pending_hashes
         diagnostics = mempool_service.diagnose(limit=len(pending_hashes) + 1)
@@ -226,6 +234,14 @@ def mempool_get_pending(verbose: bool | None = None) -> list[str] | list[dict]:
     pending_items = list(_iter_pending())
     pending_hashes = [h for h, _raw, _ts in pending_items]
     pending_hashes.sort()
+    log.info(
+        "mempool.getPending",
+        extra={
+            "count": len(pending_hashes),
+            "source_store": "legacy_fallback_pending",
+            "source_id": "none",
+        },
+    )
     if not verbose:
         return pending_hashes
     diagnostics: dict[str, dict[str, Any]] = {}
@@ -343,11 +359,7 @@ __all__ = ["mempool_get_pending", "mempool_get_stats", "debug_mempool_status"]
 def mempool_explain(tx_hash: str) -> dict:
     target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
     raw = None
-    try:
-        ctx = deps.get_ctx()
-    except Exception:
-        ctx = None
-    mempool_service = getattr(ctx, "mempool", None) if ctx is not None else None
+    mempool_service = _get_mempool_service()
     if mempool_service is not None:
         snapshot = mempool_service.snapshot(limit=1000)
         for entry in snapshot.entries:
@@ -515,8 +527,7 @@ def mempool_get_status(tx_hash: str) -> dict:
 )
 def mempool_get_raw_tx(tx_hash: str) -> dict:
     target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
-    ctx = deps.get_ctx()
-    mempool_service = getattr(ctx, "mempool", None)
+    mempool_service = _get_mempool_service()
     raw = None
     if mempool_service is not None:
         getter = getattr(mempool_service, "get_raw", None)
@@ -537,8 +548,7 @@ def mempool_get_raw_tx(tx_hash: str) -> dict:
     aliases=("mempool_listRawTxs",),
 )
 def mempool_list_raw_txs(limit: int | None = None) -> list[dict]:
-    ctx = deps.get_ctx()
-    mempool_service = getattr(ctx, "mempool", None)
+    mempool_service = _get_mempool_service()
     if mempool_service is None:
         return []
     lim = int(limit or 1000)

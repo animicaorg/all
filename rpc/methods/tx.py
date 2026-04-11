@@ -402,7 +402,7 @@ def _record_reorged_txs(tx_hashes: t.Iterable[bytes | str]) -> None:
             hex_str = str(h)
             if not hex_str.startswith("0x"):
                 hex_str = "0x" + hex_str
-    _REORGED_TXS[hex_str.lower()] = now
+        _REORGED_TXS[hex_str.lower()] = now
 
 
 def _coerce_optional_tx_int(field_name: str, value: t.Any) -> int | None:
@@ -1238,6 +1238,10 @@ def _validate_sufficient_balance(obj: dict) -> None:
 
 
 def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
+    # Canonical path: if authoritative mempool service exists, do not shadow-write
+    # into legacy fallback stores (avoids split-brain status visibility).
+    if _get_mempool_service() is not None:
+        return
     if _PEND is not None and hasattr(_PEND, "add_raw"):
         _PEND.add_raw(tx_hash_hex, raw)  # type: ignore[attr-defined]
         return
@@ -1249,6 +1253,9 @@ def _pending_put(tx_hash_hex: str, raw: bytes) -> None:
 
 
 def _pending_get(tx_hash_hex: str) -> bytes | None:
+    # When canonical mempool is available, only trust that source.
+    if _get_mempool_service() is not None:
+        return _mempool_get_raw(tx_hash_hex)
     if _PEND is not None and hasattr(_PEND, "get_raw"):
         return _PEND.get_raw(tx_hash_hex)  # type: ignore[attr-defined]
     if _PEND is not None and hasattr(_PEND, "get"):
@@ -1398,7 +1405,33 @@ def _pending_remove(tx_hash_hex: str) -> bool:
             return bool(res)
         except Exception:
             return False
-    return _FALLBACK_PENDING.pop(tx_hash_hex, None) is not None
+    removed = _FALLBACK_PENDING.pop(tx_hash_hex, None) is not None
+    _FALLBACK_PENDING_TS.pop(tx_hash_hex, None)
+    return removed
+
+
+def _pending_nonce_for_sender(svc: t.Any, sender_value: t.Any) -> int | None:
+    if sender_value is None or _parse_address is None:
+        return None
+    sender_bytes: bytes | None = None
+    if isinstance(sender_value, (bytes, bytearray)):
+        sender_bytes = bytes(sender_value)
+    elif isinstance(sender_value, str):
+        try:
+            sender_bytes = _parse_address(sender_value)
+        except Exception:
+            sender_bytes = None
+    if sender_bytes is None:
+        return None
+    try:
+        confirmed = None
+        if hasattr(svc, "_confirmed_nonce"):
+            confirmed = svc._confirmed_nonce(sender_bytes)  # type: ignore[attr-defined]
+        if hasattr(svc, "get_next_nonce"):
+            return int(svc.get_next_nonce(sender_bytes, int(confirmed or 0)))
+    except Exception:
+        return None
+    return None
 
 
 def _get_mempool_service():
@@ -2240,26 +2273,45 @@ def _tx_send_raw_transaction(
             )
 
         # Admit to mempool using robust method probing
+        pending_nonce_before = _pending_nonce_for_sender(svc, sender or tx_view.get("from"))
         try:
             _mempool_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex, local=True) if not simulate else _mempool_simulate_submit(svc, tx_obj=tx_obj, raw=raw_canonical, tx_hash_hex=tx_hash_hex)
         except Exception as exc:
             if ReplacementUnsupported is not None and isinstance(exc, ReplacementUnsupported):
                 existing = exc.context.get("existing_tx_hash") if hasattr(exc, "context") else None
                 hint = (
-                    "Use animica mempool drop <tx_hash> to clear the existing transaction "
-                    "before resubmitting, or wait for it to be mined."
+                    "A same-sender nonce conflict already exists in canonical mempool. "
+                    "Drop or wait for the existing tx before resubmitting."
                 )
-                _log_decision("accepted", "replacement_unsupported")
-                return _format_send_result(
-                    tx_hash=existing or tx_hash_hex,
-                    accepted_to_mempool=True,
-                    persisted_to_chain=False,
-                    status="replacement_unsupported",
-                    reason_value="replacement_unsupported",
-                    existing_tx_hash=existing,
-                    hint=hint,
-                )
+                raise rpc_errors.InvalidTx(
+                    "mempool admission failed: replacement_unsupported",
+                    data={
+                        "mempoolError": {
+                            "code": 1042,
+                            "reason": "replacement_unsupported",
+                            "reason_code": "replacement_unsupported",
+                            "message": "same-sender nonce conflict in canonical mempool",
+                            "hint": hint,
+                            "context": {
+                                "tx_hash": tx_hash_hex,
+                                "existing_tx_hash": existing,
+                            },
+                        }
+                    },
+                ) from exc
             raise
+        pending_nonce_after = _pending_nonce_for_sender(svc, sender or tx_view.get("from"))
+        log.info(
+            "tx.mempool_insert",
+            extra={
+                "tx_hash": tx_hash_hex,
+                "sender": sender or tx_view.get("from"),
+                "nonce": nonce,
+                "ok": True,
+                "pending_nonce_before": pending_nonce_before,
+                "pending_nonce_after": pending_nonce_after,
+            },
+        )
     except rpc_errors.RpcError as exc:
         reason = getattr(exc, "message", str(exc))
         if int(getattr(exc, "code", 0)) == -32603 and "mempool" in str(reason).lower():
@@ -2405,12 +2457,6 @@ def _tx_send_raw_transaction(
                 },
             )
 
-        # Add to pending cache for tx.getTransactionByHash pending view (best-effort)
-        try:
-            _pending_put(tx_hash_hex, raw_canonical)
-        except Exception:
-            pass
-
         # Notify WS hub (best-effort)
         try:
             if hasattr(deps, "ws_broadcast_pending"):
@@ -2423,6 +2469,18 @@ def _tx_send_raw_transaction(
             _gossip_tx_to_peers(raw_canonical)
         except Exception:
             pass
+
+        # Status-store diagnostics (best-effort): this should reflect the same
+        # canonical admission event, not a parallel acceptance path.
+        status_row = _instant_receipt(tx_hash_hex)
+        log.info(
+            "tx.status_store_update",
+            extra={
+                "tx_hash": tx_hash_hex,
+                "ok": bool(status_row is not None),
+                "reason": (status_row or {}).get("reason") if isinstance(status_row, dict) else None,
+            },
+        )
 
         persisted, mine_error = _ensure_tx_persisted_to_chain(tx_hash_hex)
         if _TX_SEND_FORCE_CHAIN and not persisted:
@@ -2702,21 +2760,6 @@ def tx_get_transaction_status(txHash: str) -> dict:
     if not tx_hash_hex.startswith("0x"):
         tx_hash_hex = "0x" + tx_hash_hex
 
-    svc = _get_mempool_service()
-    if svc is not None:
-        try:
-            has = _mempool_has(svc, tx_hash_hex)
-        except Exception:
-            has = None
-        if has:
-            receipt = _instant_receipt(tx_hash_hex)
-            if receipt is not None:
-                return {"hash": tx_hash_hex, "status": "instant_confirmed", "instant_receipt": receipt}
-            return {"hash": tx_hash_hex, "status": "pending"}
-
-    if _pending_get(tx_hash_hex) is not None:
-        return {"hash": tx_hash_hex, "status": "pending"}
-
     view, height, idx, block_hash = _lookup_persisted_tx(tx_hash_hex)
     if view is not None:
         return {
@@ -2726,6 +2769,15 @@ def tx_get_transaction_status(txHash: str) -> dict:
             "blockHash": _hex(block_hash) if block_hash is not None else None,
             "transactionIndex": int(idx) if idx is not None else None,
         }
+
+    svc = _get_mempool_service()
+    if svc is not None:
+        try:
+            has = _mempool_has(svc, tx_hash_hex)
+        except Exception:
+            has = None
+        if has:
+            return {"hash": tx_hash_hex, "status": "pending"}
 
     if svc is not None:
         rejection = getattr(svc, "get_rejection", None)
@@ -2768,7 +2820,8 @@ def tx_get_status(txHash: str) -> dict:
             seen_in_mempool = bool(_mempool_has(svc, tx_hash_hex))
         except Exception:
             seen_in_mempool = False
-    if not seen_in_mempool and _pending_get(tx_hash_hex) is not None:
+    # Only consult legacy fallback cache when canonical mempool service is absent.
+    if svc is None and not seen_in_mempool and _pending_get(tx_hash_hex) is not None:
         seen_in_mempool = True
 
     included_height = None
@@ -2800,24 +2853,61 @@ def tx_get_status(txHash: str) -> dict:
     if included_hash is None and tx_hash_hex in _REORGED_TXS:
         reorged_out = True
 
+    rejected = None
+    if svc is not None:
+        rejection = getattr(svc, "get_rejection", None)
+        if callable(rejection):
+            try:
+                rejected = rejection(tx_hash_hex)
+            except Exception:
+                rejected = None
+
     receipt = _instant_receipt(tx_hash_hex)
-    instant_confirmed = bool(receipt is not None and receipt.get("instant_confirmed"))
+    receipt_reason = receipt.get("reason") if isinstance(receipt, dict) else None
+    pending_receipt_reason = receipt_reason in {"accepted_to_mempool", "pending_mempool"}
+    instant_confirmed = bool(
+        receipt is not None
+        and receipt.get("instant_confirmed")
+        and not pending_receipt_reason
+    )
     finalized_in_pow = bool(included_hash is not None) or bool(receipt is not None and receipt.get("finalized_in_pow"))
 
+    # Canonical state machine:
+    # pending_mempool -> included_block -> finalized
+    # plus rejected/evicted/reorged_out side states.
+    state = "not_found"
     if included_hash is not None:
-        status = "confirmed"
+        state = "finalized" if finalized else "included_block"
     elif reorged_out:
-        status = "reorged_out"
-    elif instant_confirmed:
-        status = "instant_confirmed"
-    elif seen_in_mempool:
-        status = "pending"
-    else:
-        status = "not_found"
+        state = "reorged_out"
+    elif rejected is not None:
+        state = "rejected"
+    elif seen_in_mempool or pending_receipt_reason:
+        state = "pending_mempool"
+    elif receipt_reason in {"evicted", "evicted_from_mempool"}:
+        state = "evicted"
+
+    # Backward-compatible status mapping.
+    status_map = {
+        "pending_mempool": "pending",
+        "included_block": "confirmed",
+        "finalized": "finalized",
+        "rejected": "rejected",
+        "evicted": "evicted",
+        "reorged_out": "reorged_out",
+        "not_found": "not_found",
+    }
+    status = status_map.get(state, "not_found")
+    reason = None
+    if rejected is not None:
+        reason = rejected.get("reason")
+    elif receipt_reason:
+        reason = receipt_reason
 
     return {
         "hash": tx_hash_hex,
         "status": status,
+        "state": state,
         "seen_in_mempool": seen_in_mempool,
         "included_in_block_hash": included_hash,
         "included_height": included_height,
@@ -2826,7 +2916,8 @@ def tx_get_status(txHash: str) -> dict:
         "reorged_out": reorged_out,
         "instant_confirmed": instant_confirmed,
         "finalized_in_pow": finalized_in_pow,
-        "reason": receipt.get("reason") if receipt else None,
+        "reason": reason,
+        "rejection_details": rejected.get("details") if isinstance(rejected, dict) else None,
     }
 
 # NOTE: tx.getTransactionReceipt is in rpc/methods/receipt.py

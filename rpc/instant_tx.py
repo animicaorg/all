@@ -99,10 +99,10 @@ class InstantTxService:
             "anchor_hash": anchor_hash,
             "txids": [txid],
             "timestamp": ts,
-            "instant_confirmed": True,
+            "instant_confirmed": False,
             "finalized_in_pow": False,
             "revoked": False,
-            "reason": "accepted_to_mempool",
+            "reason": "pending_mempool",
             "source": "local",
         }
         with self._lock:
@@ -110,10 +110,10 @@ class InstantTxService:
             self._blocks[block_id] = rec
             self._tx_index[txid] = {
                 "block_id": block_id,
-                "instant_confirmed": True,
+                "instant_confirmed": False,
                 "finalized_in_pow": False,
                 "revoked": False,
-                "reason": "accepted_to_mempool",
+                "reason": "pending_mempool",
                 "anchor_hash": anchor_hash,
                 "timestamp": ts,
             }
@@ -132,12 +132,13 @@ class InstantTxService:
                 return False
             self._blocks[block_id] = dict(rec)
             for txid in txids:
+                remote_instant = bool(rec.get("instant_confirmed"))
                 self._tx_index[txid] = {
                     "block_id": block_id,
-                    "instant_confirmed": True,
+                    "instant_confirmed": remote_instant,
                     "finalized_in_pow": bool(rec.get("finalized_in_pow")),
                     "revoked": bool(rec.get("revoked")),
-                    "reason": rec.get("reason") or "peer_gossip",
+                    "reason": rec.get("reason") or ("instant_confirmed" if remote_instant else "pending_mempool"),
                     "anchor_hash": rec.get("anchor_hash"),
                     "timestamp": int(rec.get("timestamp") or time.time()),
                 }
