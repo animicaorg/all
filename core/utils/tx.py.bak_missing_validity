@@ -411,8 +411,8 @@ def normalize_tx_body(body: Mapping[str, Any]) -> dict:
         gas_price = body.get("tip", 1)
     data = _safe_to_bytes(body.get("data", b""))
 
-    valid_after = body.get("validAfter", body.get("valid_after", body.get("validAfter")))
-    valid_until = body.get("validUntil", body.get("valid_until", body.get("validUntil")))
+    valid_after = body.get("validAfter", body.get("valid_after"))
+    valid_until = body.get("validUntil", body.get("valid_until"))
     salt_raw = body.get("salt")
     salt = _safe_to_bytes(salt_raw)
     fork_id = body.get("forkId", body.get("fork_id"))

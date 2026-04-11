@@ -1,0 +1,202 @@
+"""
+omni_sdk.contracts.deployer
+===========================
+
+Deploy a Python-VM contract package (manifest + code bytes).
+"""
+
+from __future__ import annotations
+
+import os
+
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+try:
+    from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
+except Exception as _e:  # pragma: no cover
+    raise RuntimeError(
+        "omni_sdk.utils.cbor is required for deterministic encoding"
+    ) from _e
+
+try:
+    from omni_sdk.types.abi import normalize_abi  # type: ignore
+except Exception as _e:  # pragma: no cover
+    raise RuntimeError(
+        "omni_sdk.types.abi is required to normalize manifest ABI"
+    ) from _e
+
+from omni_sdk.tx import build as tx_build
+from omni_sdk.tx import signing as tx_signing
+from omni_sdk.tx import send as tx_send
+from omni_sdk.wallet.signer import PQSigner  # type: ignore
+
+try:
+    from omni_sdk.errors import AbiError  # type: ignore
+except Exception:  # pragma: no cover
+    class AbiError(RuntimeError): ...
+
+
+JsonDict = Dict[str, Any]
+
+
+def _coerce_abi_input(abi_value: Any) -> Any:
+    if not isinstance(abi_value, dict):
+        return abi_value
+    if {"entries", "functions", "events"} <= set(abi_value.keys()):
+        return abi_value
+
+    funcs = abi_value.get("functions", [])
+    events = abi_value.get("events", [])
+    if not isinstance(funcs, list) or not isinstance(events, list):
+        return abi_value
+
+    entries = []
+    for fn in funcs:
+        if isinstance(fn, Mapping):
+            item = dict(fn)
+            item.setdefault("type", "function")
+            entries.append(item)
+    for ev in events:
+        if isinstance(ev, Mapping):
+            item = dict(ev)
+            item.setdefault("type", "event")
+            entries.append(item)
+    return entries
+
+
+def normalize_manifest(manifest: Mapping[str, Any]) -> JsonDict:
+    if not isinstance(manifest, Mapping):
+        raise AbiError("manifest must be a mapping")
+
+    m = dict(manifest)
+
+    if "abi" not in m:
+        raise AbiError("manifest missing required 'abi' field")
+    try:
+        m["abi"] = normalize_abi(_coerce_abi_input(m["abi"]))
+    except Exception as e:
+        raise AbiError(f"manifest.abi normalization failed: {e}") from e
+
+    if "name" in m and not isinstance(m["name"], str):
+        raise AbiError("manifest.name must be a string if provided")
+    if "version" in m and not isinstance(m["version"], (str, int)):
+        raise AbiError("manifest.version must be string or int if provided")
+
+    return m
+
+
+def make_package_bytes(
+    *,
+    manifest: Mapping[str, Any],
+    code: bytes,
+    resources: Optional[Mapping[str, bytes]] = None,
+) -> bytes:
+    if not isinstance(code, (bytes, bytearray)):
+        raise TypeError("code must be bytes")
+
+    env: JsonDict = {
+        "manifest": normalize_manifest(manifest),
+        "code": bytes(code),
+    }
+    if resources:
+        env["resources"] = {str(k): bytes(v) for k, v in resources.items()}
+    return cbor_dumps(env)
+
+
+def build_deploy_tx(
+    from_addr: str,
+    chain_id: int,
+    nonce: int = 0,
+    max_fee: int = 1,
+    package_bytes: bytes = b"",
+    gas_limit: int = 58353,
+    valid_after: int = 0,
+    valid_until: int = 10_000_000,
+    salt: bytes | None = None,
+) -> Dict[str, Any]:
+    """
+    Build a deploy transaction using the v2-style validity window format.
+
+    Important:
+    - omit nonce from the tx body
+    - include a per-tx random salt so repeated deploy attempts do not hash identically
+    """
+    if salt is None:
+        salt = os.urandom(16)
+
+    return {
+        "from_addr": str(from_addr),
+        "to": None,
+        "value": 0,
+        "data": bytes(package_bytes),
+        "gas_limit": int(gas_limit),
+        "max_fee": int(max_fee),
+        "chain_id": int(chain_id),
+        "valid_after": int(valid_after),
+        "valid_until": int(valid_until),
+        "salt": bytes(salt),
+    }
+
+def deploy_package(
+    *,
+    rpc,
+    signer: PQSigner,
+    manifest: Mapping[str, Any],
+    code: bytes,
+    chain_id: int,
+    nonce: int,
+    max_fee: int,
+    gas_limit: Optional[int] = None,
+    resources: Optional[Mapping[str, bytes]] = None,
+    await_receipt: bool = True,
+    timeout_s: float = 3600.0,
+    poll_interval_s: float = 0.5,
+) -> Tuple[Optional[str], JsonDict]:
+    pkg = make_package_bytes(manifest=manifest, code=code, resources=resources)
+    resolved_valid_after, resolved_valid_until = _resolve_validity_window_from_rpc(
+        rpc,
+        valid_after=None,
+        valid_until=None,
+        ttl_blocks=120,
+    )
+
+    tx_obj = build_deploy_tx(
+        from_addr=signer.address,
+        chain_id=int(chain_id),
+        nonce=int(nonce),
+        max_fee=int(max_fee),
+        package_bytes=pkg,
+        gas_limit=gas_limit,
+        valid_after=resolved_valid_after,
+        valid_until=resolved_valid_until,
+    )
+
+    signed = tx_signing.sign_transaction_with_rpc_context(
+        tx_obj,
+        signer,
+        chain_id=int(chain_id),
+        rpc=rpc,
+    )
+    raw = signed.raw_tx
+
+    if not await_receipt:
+        tx_hash = tx_send.submit_raw(rpc, raw)
+        return None, {"txHash": tx_hash}
+
+    receipt = tx_send.submit_and_wait(
+        rpc,
+        raw,
+        timeout_s=timeout_s,
+        poll_interval_s=poll_interval_s,
+    )
+    addr = extract_contract_address(receipt)
+    return addr, receipt
+
+
+__all__ = [
+    "normalize_manifest",
+    "make_package_bytes",
+    "build_deploy_tx",
+    "deploy_package",
+    "extract_contract_address",
+]

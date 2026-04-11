@@ -622,7 +622,6 @@ def main() -> None:
         contract_addr, deploy_receipt = deploy_package(
             rpc=rpc,
             signer=signer,
-            from_addr=sender,
             manifest=manifest,
             code=code,
             chain_id=args.chain_id,

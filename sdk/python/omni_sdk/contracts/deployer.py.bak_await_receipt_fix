@@ -6,8 +6,10 @@ from typing import Any, Dict, Mapping, Tuple
 
 import cbor2
 
+from ..tx import encode as tx_encode
 from ..tx import send as tx_send
-from ..tx.signing import resolve_signing_context, sign_transaction_for_submission
+
+TxLike = Any
 
 
 def _rpc_req(rpc, method: str, params=None):
@@ -93,6 +95,11 @@ def make_package_bytes(
     return cbor2.dumps(package, canonical=True)
 
 
+def _resolve_sign_bytes(tx: Mapping[str, Any]) -> bytes:
+    body = tx_encode.canonical_body_dict(tx)
+    return cbor2.dumps(body, canonical=True)
+
+
 def build_deploy_tx(
     *,
     from_addr: str,
@@ -116,13 +123,64 @@ def build_deploy_tx(
         "gas_limit": int(gas_limit),
         "max_fee": int(max_fee),
         "chain_id": int(chain_id),
-        "nonce": int(nonce),
         "valid_after": int(valid_after),
         "valid_until": int(valid_until),
     }
     if salt is not None:
         tx["salt"] = _coerce_bytes(salt, field="salt")
     return tx
+
+
+def _get_public_key_bytes(signer: Any) -> bytes:
+    for attr in ("public_key", "pubkey", "public_key_bytes", "pubkey_bytes"):
+        value = getattr(signer, attr, None)
+        if value is None:
+            continue
+        if callable(value):
+            try:
+                value = value()
+            except TypeError:
+                continue
+        try:
+            return _coerce_bytes(value, field=attr)
+        except Exception:
+            pass
+    raise RuntimeError("Could not extract public key bytes from signer")
+
+
+def _get_alg_id(signer: Any) -> int:
+    for attr in ("alg_id", "algorithm_id", "sig_scheme_id"):
+        value = getattr(signer, attr, None)
+        if value is None:
+            continue
+        if callable(value):
+            try:
+                value = value()
+            except TypeError:
+                continue
+        if isinstance(value, int):
+            return value
+    raise RuntimeError("Could not determine signer algorithm id")
+
+
+def _sign_tx_with_animica(tx: Mapping[str, Any], signer: Any) -> bytes:
+    import sys
+
+    repo_python = Path.cwd() / "python"
+    if repo_python.exists():
+        repo_python_str = str(repo_python)
+        if repo_python_str not in sys.path:
+            sys.path.insert(0, repo_python_str)
+
+    from animica.tx.signing import tx_sign_hash
+
+    sign_hash = tx_sign_hash(tx)
+
+    if hasattr(signer, "sign_bytes") and callable(signer.sign_bytes):
+        return _coerce_bytes(signer.sign_bytes(sign_hash), field="signer.sign_bytes")
+    if hasattr(signer, "sign") and callable(signer.sign):
+        return _coerce_bytes(signer.sign(sign_hash), field="signer.sign")
+    raise RuntimeError("Signer has no supported signing method for tx_sign_hash output")
 
 
 def _extract_contract_address(receipt: Any) -> str | None:
@@ -147,10 +205,10 @@ def deploy_package(
     *,
     rpc,
     signer,
+    from_addr: str,
+    chain_id: int,
     manifest: str | Path | Mapping[str, Any],
     code: str | Path | bytes,
-    chain_id: int,
-    from_addr: str | None = None,
     nonce: int = 0,
     max_fee: int = 1,
     gas_limit: int | None = None,
@@ -158,13 +216,7 @@ def deploy_package(
     valid_until: int | None = None,
     salt: bytes | None = None,
     timeout_s: float = 120.0,
-    await_receipt: bool = True,
-    receipt_timeout_s: float | None = None,
 ):
-    sender = from_addr or getattr(signer, "address", None)
-    if not sender:
-        raise RuntimeError("deploy_package requires from_addr or signer.address")
-
     package_bytes = make_package_bytes(manifest=manifest, code=code)
     resolved_valid_after, resolved_valid_until = _resolve_validity_window_from_rpc(
         rpc,
@@ -173,7 +225,7 @@ def deploy_package(
     )
 
     tx = build_deploy_tx(
-        from_addr=sender,
+        from_addr=from_addr,
         chain_id=chain_id,
         nonce=nonce,
         max_fee=max_fee,
@@ -184,16 +236,17 @@ def deploy_package(
         salt=salt,
     )
 
-    ctx = resolve_signing_context(rpc, chain_id=int(chain_id))
-    signed = sign_transaction_for_submission(tx, signer, context=ctx)
-    raw = signed.raw_tx
+    signature = _sign_tx_with_animica(tx, signer)
+    public_key = _get_public_key_bytes(signer)
+    alg_id = _get_alg_id(signer)
 
-    wait_timeout = receipt_timeout_s if receipt_timeout_s is not None else timeout_s
-    if await_receipt:
-        receipt = tx_send.submit_and_wait(rpc, raw, timeout_s=wait_timeout)
-    else:
-        tx_hash = tx_send.submit_raw(rpc, raw)
-        receipt = {"txHash": tx_hash}
+    raw = tx_encode.pack_signed(
+        tx,
+        signature=signature,
+        public_key=public_key,
+        alg_id=alg_id,
+    )
 
+    receipt = tx_send.submit_and_wait(rpc, raw, timeout_s=timeout_s)
     contract_address = _extract_contract_address(receipt)
     return contract_address, receipt
