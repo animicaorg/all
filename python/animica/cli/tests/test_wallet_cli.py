@@ -566,3 +566,20 @@ def test_wallet_list_does_not_leak_secrets(premine_wallet_store: Path) -> None:
     store = json.loads(premine_wallet_store.read_text())
     secret_key = store["wallets"][0]["secret_key_hex"]
     assert secret_key not in output, "list command should not display secret keys"
+
+
+@respx.mock
+def test_wallet_show_honors_omni_rpc_env(
+    premine_wallet_store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """wallet show should honor OMNI_RPC_URL when ANIMICA_RPC_URL is unset."""
+    monkeypatch.delenv("ANIMICA_RPC_URL", raising=False)
+    monkeypatch.setenv("OMNI_RPC_URL", "https://rpc.animica.org/rpc")
+
+    route = respx.post("https://rpc.animica.org/rpc")
+    route.respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x0a"})
+
+    output = run_cli(["show", "premine"], premine_wallet_store)
+    data = json.loads(output)
+    assert data["rpc_url"] == "https://rpc.animica.org/rpc"
+    assert data["rpc_source"] == "env:OMNI_RPC_URL"

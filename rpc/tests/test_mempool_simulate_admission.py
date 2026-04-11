@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.encoding.cbor import dumps as cbor_dumps
 from mempool.tx_hash import tx_hash_hex
 from rpc.mempool_service import MempoolService
@@ -125,6 +127,36 @@ def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
     assert reject["context"]["tx_hash"] == txh
     assert reject["context"]["sender"] == sender_hex
     assert "trace_id" not in reject["context"]
+
+
+def test_submit_atomic_replay_constructor_mismatch_stays_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import rpc.mempool_service as mempool_service
+
+    class BrokenReplay(Exception):
+        pass
+
+    monkeypatch.setattr(mempool_service, "Replay", BrokenReplay)
+    svc = MempoolService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    tx, raw, txh, sender_hex = _replay_candidate_envelope()
+    svc._recent_txids[txh] = 1_000_000
+
+    ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
+    assert ok is False
+    assert got_hash == txh
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "replay"
+    assert reject["context"]["tx_hash"] == txh
+    assert reject["context"]["sender"] == sender_hex
+    assert reject["context"]["replay_source"] == "recent_cache"
 
 
 class _TypeErrorService(MempoolService):

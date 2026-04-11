@@ -22,6 +22,44 @@ def _get_ptl_service() -> Optional[PtlService]:
         return None
 
 
+def _parse_txid_param(params: Any) -> tuple[str, bytes]:
+    """
+    Accept tx.get params in common JSON-RPC shapes:
+    - {"txid": "..."} / {"txHash": "..."} / {"hash": "..."}
+    - ["0x..."]
+    - "0x..."
+    """
+    candidate: Any = params
+    if isinstance(params, dict):
+        candidate = params.get("txid")
+        if not candidate:
+            candidate = params.get("txHash")
+        if not candidate:
+            candidate = params.get("hash")
+    elif isinstance(params, (list, tuple)):
+        candidate = params[0] if params else ""
+
+    if isinstance(candidate, (bytes, bytearray)):
+        txid = bytes(candidate)
+        return f"0x{txid.hex()}", txid
+
+    if not isinstance(candidate, str):
+        raise ValueError(
+            f"Invalid txid format: expected hex string, got {type(candidate).__name__}"
+        )
+
+    txid_hex = candidate.strip()
+    if txid_hex.startswith("0x"):
+        txid_hex = txid_hex[2:]
+    if not txid_hex:
+        raise ValueError("txid parameter required")
+    try:
+        txid = bytes.fromhex(txid_hex)
+    except ValueError as exc:
+        raise ValueError("txid must be hex string") from exc
+    return f"0x{txid.hex()}", txid
+
+
 @method(name="tx.submitRawTransaction")
 async def tx_submit_raw(params: Dict[str, Any]) -> Dict[str, Any]:
     """Submit a raw transaction to the PTL.
@@ -76,7 +114,7 @@ async def tx_submit_raw(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @method(name="tx.get")
-async def tx_get(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+async def tx_get(params: Any) -> Optional[Dict[str, Any]]:
     """Get a transaction by ID from PTL.
     
     Args:
@@ -85,34 +123,61 @@ async def tx_get(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Returns:
         Transaction details or None if not found
     """
+    txid_hex, txid = _parse_txid_param(params)
+
     ptl = _get_ptl_service()
-    if not ptl:
-        raise RuntimeError("PTL service not available")
-    
-    txid_hex = params.get("txid", "")
-    if txid_hex.startswith("0x"):
-        txid_hex = txid_hex[2:]
-    
-    txid = bytes.fromhex(txid_hex)
-    entry = await ptl.get(txid)
-    
-    if not entry:
+    if ptl:
+        entry = await ptl.get(txid)
+        if entry:
+            return {
+                "txid": f"0x{entry.txid.hex()}",
+                "status": entry.status.value,
+                "received_at": entry.received_at,
+                "updated_at": entry.updated_at,
+                "origin": entry.origin,
+                "size": entry.size,
+                "fee": entry.fee,
+                "ack_count": entry.ack_count(),
+                "reject_reason": entry.reject_reason,
+                "included_height": entry.included_height,
+                "finalized_height": entry.finalized_height,
+                "expire_at": entry.expire_at,
+            }
+
+    # Fallback for deployments/nodes running without PTL: surface tx status from
+    # the canonical tx methods instead of raising an opaque internal error.
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception:
         return None
-    
-    return {
-        "txid": f"0x{entry.txid.hex()}",
-        "status": entry.status.value,
-        "received_at": entry.received_at,
-        "updated_at": entry.updated_at,
-        "origin": entry.origin,
-        "size": entry.size,
-        "fee": entry.fee,
-        "ack_count": entry.ack_count(),
-        "reject_reason": entry.reject_reason,
-        "included_height": entry.included_height,
-        "finalized_height": entry.finalized_height,
-        "expire_at": entry.expire_at,
+
+    tx_view: Optional[Dict[str, Any]]
+    try:
+        tx_view = tx_methods.tx_get_transaction_by_hash(txid_hex)
+    except Exception:
+        tx_view = None
+
+    status_view: Dict[str, Any] = {}
+    try:
+        status_res = tx_methods.tx_get_transaction_status(txid_hex)
+        if isinstance(status_res, dict):
+            status_view = status_res
+    except Exception:
+        status_view = {}
+
+    if tx_view is None and status_view.get("status") in (None, "not_found"):
+        return None
+
+    out: Dict[str, Any] = {
+        "txid": txid_hex,
+        "status": str(status_view.get("status") or "unknown"),
     }
+    if tx_view is not None:
+        out["tx"] = tx_view
+    for key in ("blockNumber", "blockHash", "transactionIndex", "reason", "details"):
+        if key in status_view:
+            out[key] = status_view[key]
+    return out
 
 
 @method(name="tx.pending")

@@ -270,6 +270,20 @@ def test_tx_helpers_use_expected_methods_and_handle_errors():
         submit_raw(rpc_error, b"raw")
 
 
+def test_submit_raw_accepts_structured_send_result_payload():
+    rpc = RecordingRpc(
+        responses={
+            "tx.sendRawTransaction": lambda _params: {
+                "tx_hash": "0xfeed",
+                "status": "already_known",
+                "accepted_to_mempool": True,
+            }
+        }
+    )
+    tx_hash = submit_raw(rpc, b"raw-bytes")
+    assert tx_hash == "0xfeed"
+
+
 def test_contract_client_rpc_wrappers():
     rpc = RecordingRpc(
         responses={"state.getNonce": lambda _p: 7, "state.getBalance": 42}
