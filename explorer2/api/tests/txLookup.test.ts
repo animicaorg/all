@@ -113,4 +113,39 @@ describe('transaction lookup lifecycle', () => {
     const tx = await service.getTxDetail(uppercaseNoPrefix)
     expect(tx.tx_hash).toBe('0x' + 'a'.repeat(64))
   })
+
+  it('recent block scan marks tx as confirmed even when receipts are missing', async () => {
+    const blockHash = '0x' + 'c'.repeat(64)
+    const service = new ExplorerService({
+      getHead: async () => ({ height: 500, hash: '0x' + 'f'.repeat(64), time: 1700000500 }),
+      getBlockByNumber: async (height: number | string) => {
+        const n = Number(height)
+        if (n === 500) {
+          return {
+            header: { height: 500, hash: blockHash, time: 1700000500 },
+            txs: [{ hash: TX_HASH, from: 'anim1scanfrom', to: null, value: '0x7' }],
+            receipts: []
+          }
+        }
+        return {
+          header: { height: n, hash: '0x' + 'e'.repeat(64), time: 1700000000 + n },
+          txs: [],
+          receipts: []
+        }
+      },
+      getBlockByHash: vi.fn(),
+      getTransactionByHash: async () => null,
+      getTransactionReceipt: async () => null,
+      getMempoolPending: async () => [],
+      getMempoolStats: async () => ({ count: 0, totalBytes: 0, oldestAgeSec: null }),
+      getPeers: async () => [],
+      getBalance: async () => '0x0'
+    })
+
+    const tx = await service.getTxDetail(TX_HASH)
+    expect(tx.status).toBe('confirmed')
+    expect(tx.included_height).toBe(500)
+    expect(tx.included_block_hash).toBe(blockHash)
+    expect(tx.confirmations).toBe(1)
+  })
 })

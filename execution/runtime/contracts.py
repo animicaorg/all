@@ -21,7 +21,11 @@ import os
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import ExecError
-from ..state.apply_balance import InsufficientBalance
+from ..state.apply_balance import (
+    InsufficientBalance,
+    credit as state_credit,
+    debit as state_debit,
+)
 from ..types.events import LogEvent
 from ..types.result import ApplyResult
 from ..types.status import TxStatus
@@ -36,6 +40,7 @@ if TYPE_CHECKING:
 
 DEFAULT_INTRINSIC_CALL = 21_000
 DEFAULT_INTRINSIC_DEPLOY = 53_000
+ADDRESS_LEN = 32
 
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
@@ -199,29 +204,108 @@ def _compute_fee_parts(
     return total, base_component, tip_component
 
 
-def _credit_balance(state: Any, addr: bytes, amount: int) -> None:
+def _tx_hash_hex(tx: Any) -> str | None:
+    tx_hash_value = _get(tx, "hash", "tx_hash", "transactionHash")
+    if isinstance(tx_hash_value, (bytes, bytearray)):
+        raw = bytes(tx_hash_value)
+        if len(raw) == 32:
+            return "0x" + raw.hex()
+    if isinstance(tx_hash_value, str) and tx_hash_value:
+        return tx_hash_value if tx_hash_value.startswith("0x") else f"0x{tx_hash_value}"
+    if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+        try:
+            txid = tx.txid()
+            if isinstance(txid, (bytes, bytearray)):
+                return "0x" + bytes(txid).hex()
+        except Exception:
+            pass
+    if hasattr(tx, "hash") and callable(getattr(tx, "hash")):
+        try:
+            digest = tx.hash()
+            if isinstance(digest, (bytes, bytearray)):
+                return "0x" + bytes(digest).hex()
+        except Exception:
+            pass
+    return None
+
+
+def _extract_tx_nonce(tx: Any) -> int | None:
+    unsigned = _get(tx, "unsigned")
+    nonce = _get(unsigned, "nonce") if unsigned is not None else None
+    if nonce is None:
+        nonce = _get(tx, "nonce", "n")
+    if nonce is None and isinstance(tx, Mapping):
+        body = tx.get("body")
+        if isinstance(body, Mapping):
+            nonce = body.get("nonce")
+    if nonce is None:
+        return None
+    return _as_int(nonce, default=0)
+
+
+def _credit_balance(
+    state: Any,
+    addr: bytes,
+    amount: int,
+    *,
+    reason: str,
+    tx_hash: str | None,
+    height: int | None,
+) -> None:
     if amount < 0:
         raise ExecError("negative credit amount", code="NEGATIVE_AMOUNT")
     if amount == 0:
         return
-    cur = _get_balance(state, addr)
-    _set_balance(state, addr, cur + amount)
+    try:
+        state_credit(
+            state,
+            addr,
+            amount,
+            reason=reason,
+            tx_hash=tx_hash,
+            height=height,
+            callsite="execution.runtime.contracts._credit_balance",
+        )
+        return
+    except Exception:
+        cur = _get_balance(state, addr)
+        _set_balance(state, addr, cur + amount)
 
 
-def _debit_balance(state: Any, addr: bytes, amount: int) -> None:
+def _debit_balance(
+    state: Any,
+    addr: bytes,
+    amount: int,
+    *,
+    reason: str,
+    tx_hash: str | None,
+    height: int | None,
+) -> None:
     if amount < 0:
         raise ExecError("negative debit amount", code="NEGATIVE_AMOUNT")
     if amount == 0:
         return
-    cur = _get_balance(state, addr)
-    if cur < amount:
-        raise InsufficientBalance(
-            "insufficient balance",
-            required=amount,
-            available=cur,
-            shortfall=amount - cur,
+    try:
+        state_debit(
+            state,
+            addr,
+            amount,
+            reason=reason,
+            tx_hash=tx_hash,
+            height=height,
+            callsite="execution.runtime.contracts._debit_balance",
         )
-    _set_balance(state, addr, cur - amount)
+        return
+    except Exception:
+        cur = _get_balance(state, addr)
+        if cur < amount:
+            raise InsufficientBalance(
+                "insufficient balance",
+                required=amount,
+                available=cur,
+                shortfall=amount - cur,
+            )
+        _set_balance(state, addr, cur - amount)
 
 
 def _increment_nonce(state: Any, addr: bytes) -> None:
@@ -284,24 +368,49 @@ def _settle_fees(
     gas_used: int,
     gas_price: int,
     base_price: int,
+    tx_hash: str | None,
+    block_height: int | None,
 ) -> Tuple[int, int, int]:
     total_fee, base_fee_part, tip_fee_part = _compute_fee_parts(
         base_price, gas_price, gas_used
     )
 
-    _debit_balance(state, sender, total_fee)
+    _debit_balance(
+        state,
+        sender,
+        total_fee,
+        reason="BLOCK_APPLY_SENDER_TOTAL",
+        tx_hash=tx_hash,
+        height=block_height,
+    )
 
-    coinbase = _as_bytes(getattr(block_env, "coinbase", b"\x00" * 20), expect_len=20)
+    coinbase = _as_bytes(
+        getattr(block_env, "coinbase", b"\x00" * ADDRESS_LEN), expect_len=ADDRESS_LEN
+    )
     if tip_fee_part > 0 and any(coinbase):
         _ensure_account(state, coinbase)
-        _credit_balance(state, coinbase, tip_fee_part)
+        _credit_balance(
+            state,
+            coinbase,
+            tip_fee_part,
+            reason="BLOCK_APPLY_TIP",
+            tx_hash=tx_hash,
+            height=block_height,
+        )
 
     treasury = getattr(block_env, "treasury", None)
     if base_fee_part > 0 and isinstance(treasury, (bytes, bytearray, str)):
-        t_addr = _as_bytes(treasury, expect_len=20)
+        t_addr = _as_bytes(treasury, expect_len=ADDRESS_LEN)
         if any(t_addr):
             _ensure_account(state, t_addr)
-            _credit_balance(state, t_addr, base_fee_part)
+            _credit_balance(
+                state,
+                t_addr,
+                base_fee_part,
+                reason="BLOCK_APPLY_BASE_FEE",
+                tx_hash=tx_hash,
+                height=block_height,
+            )
 
     return total_fee, base_fee_part, tip_fee_part
 
@@ -338,12 +447,25 @@ def apply_deploy(
         )
 
     # Fees: debit sender, pay tip/treasury
-    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=20)
-    if len(sender) != 20:
-        raise ExecError("TxEnv.sender must be 20 bytes")
+    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=ADDRESS_LEN)
+    if len(sender) != ADDRESS_LEN:
+        raise ExecError(f"TxEnv.sender must be {ADDRESS_LEN} bytes")
+    tx_nonce = _extract_tx_nonce(tx)
+    if tx_nonce is not None:
+        get_nonce = getattr(state, "get_nonce", None)
+        if callable(get_nonce):
+            expected_nonce = int(get_nonce(sender))
+            if int(tx_nonce) != expected_nonce:
+                raise ExecError(
+                    "nonce mismatch",
+                    code="NONCE_MISMATCH",
+                    data={"expected": expected_nonce, "got": int(tx_nonce)},
+                )
 
     gas_price = _as_int(getattr(tx_env, "gas_price", 0))
     base_price = _as_int(getattr(tx_env, "base_price", 0))
+    tx_hash_hex = _tx_hash_hex(tx)
+    block_height = _as_int(getattr(block_env, "height", None), default=0) or None
 
     _ensure_account(state, sender)
     _settle_fees(
@@ -353,6 +475,8 @@ def apply_deploy(
         gas_used=intrinsic,
         gas_price=gas_price,
         base_price=base_price,
+        tx_hash=tx_hash_hex,
+        block_height=block_height,
     )
 
     # Feature-gated path (future)
@@ -373,7 +497,7 @@ def apply_deploy(
     # Deterministic no-op: REVERT with a diagnostic log
     logs: List[LogEvent] = [
         LogEvent(
-            address=b"\x00" * 20,
+            address=b"\x00" * ADDRESS_LEN,
             topics=[b"vm.disabled", b"deploy"],
             data=b"",
         )
@@ -417,12 +541,25 @@ def apply_call(
         )
 
     # Fees: debit sender, pay tip/treasury
-    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=20)
-    if len(sender) != 20:
-        raise ExecError("TxEnv.sender must be 20 bytes")
+    sender = _as_bytes(getattr(tx_env, "sender", None), expect_len=ADDRESS_LEN)
+    if len(sender) != ADDRESS_LEN:
+        raise ExecError(f"TxEnv.sender must be {ADDRESS_LEN} bytes")
+    tx_nonce = _extract_tx_nonce(tx)
+    if tx_nonce is not None:
+        get_nonce = getattr(state, "get_nonce", None)
+        if callable(get_nonce):
+            expected_nonce = int(get_nonce(sender))
+            if int(tx_nonce) != expected_nonce:
+                raise ExecError(
+                    "nonce mismatch",
+                    code="NONCE_MISMATCH",
+                    data={"expected": expected_nonce, "got": int(tx_nonce)},
+                )
 
     gas_price = _as_int(getattr(tx_env, "gas_price", 0))
     base_price = _as_int(getattr(tx_env, "base_price", 0))
+    tx_hash_hex = _tx_hash_hex(tx)
+    block_height = _as_int(getattr(block_env, "height", None), default=0) or None
 
     _ensure_account(state, sender)
     _settle_fees(
@@ -432,6 +569,8 @@ def apply_call(
         gas_used=intrinsic,
         gas_price=gas_price,
         base_price=base_price,
+        tx_hash=tx_hash_hex,
+        block_height=block_height,
     )
 
     # Future: route to vm_py if enabled & available
@@ -442,7 +581,7 @@ def apply_call(
             # VM-PY contract call hook (Phase 2)
             # When vm_py runtime is ready, uncomment:
             # from vm_py.runtime.abi import dispatch_call
-            # to = _as_bytes(_get(tx, "to", "recipient"), expect_len=20)
+            # to = _as_bytes(_get(tx, "to", "recipient"), expect_len=ADDRESS_LEN)
             # input_data = _as_bytes(_get(tx, "data", "input"))
             # result = dispatch_call(state_adapter, to, input_data, gas=gas_limit or intrinsic, env=...)
             # return result_as_ApplyResult(...)
@@ -452,10 +591,10 @@ def apply_call(
             pass
 
     # Deterministic no-op: REVERT with diagnostic log tagged with recipient
-    to = _as_bytes(_get(tx, "to", "recipient"), expect_len=20)
+    to = _as_bytes(_get(tx, "to", "recipient"), expect_len=ADDRESS_LEN)
     logs: List[LogEvent] = [
         LogEvent(
-            address=to if any(to) else b"\x00" * 20,
+            address=to if any(to) else b"\x00" * ADDRESS_LEN,
             topics=[b"vm.disabled", b"call"],
             data=b"",
         )

@@ -85,6 +85,52 @@ def _tx_sender(tx: Any) -> bytes | None:
     return bytes(sender) if sender else None
 
 
+def _coerce_account_key(value: Any) -> bytes | None:
+    if isinstance(value, str):
+        if value.startswith("0x"):
+            try:
+                value = bytes.fromhex(value[2:])
+            except ValueError:
+                value = None
+        elif value.startswith("anim1"):
+            try:
+                record = decode_address(value)
+                value = bytes(record.digest)[:32].ljust(32, b"\x00")
+            except Exception:
+                value = None
+        else:
+            try:
+                value = bytes.fromhex(value)
+            except ValueError:
+                value = None
+    if value is not None and not isinstance(value, (bytes, bytearray)):
+        return None
+    out = bytes(value) if value else None
+    return out if out else None
+
+
+def _tx_transfer_recipient(tx: Any) -> bytes | None:
+    recipient = None
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            payload = getattr(unsigned, "payload", None)
+            if payload is not None:
+                recipient = getattr(payload, "to", None)
+    if recipient is None:
+        recipient = getattr(tx, "to", getattr(tx, "recipient", None))
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            payload = body.get("payload")
+            if isinstance(payload, dict):
+                payload_value = payload.get("v")
+                if isinstance(payload_value, dict):
+                    recipient = recipient or payload_value.get("to")
+            recipient = recipient or body.get("to") or body.get("recipient")
+    return _coerce_account_key(recipient)
+
+
 def _tx_valid_after(tx: Any) -> int | None:
     if hasattr(tx, "unsigned"):
         unsigned = getattr(tx, "unsigned", None)
@@ -172,21 +218,56 @@ def _tx_size_bytes(raw: bytes, tx: Any) -> int:
     return 0
 
 
+def _tx_kind(tx: Any) -> str:
+    kind = None
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            kind = getattr(unsigned, "kind", None)
+    if kind is None:
+        kind = getattr(tx, "kind", None)
+    if kind is None and isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            payload = body.get("payload")
+            if isinstance(payload, dict):
+                kind = payload.get("t")
+            if kind is None:
+                kind = body.get("kind")
+    if hasattr(kind, "value"):
+        kind = getattr(kind, "value", kind)
+    if isinstance(kind, str):
+        lowered = kind.strip().lower()
+        if lowered in {"transfer", "deploy", "call", "coinbase"}:
+            return lowered
+    if isinstance(kind, int):
+        mapping = {0: "transfer", 1: "deploy", 2: "call", 3: "coinbase"}
+        if kind in mapping:
+            return mapping[kind]
+    return "unknown"
+
+
 def _bump_reject(
     result: BlockSelection,
     hash_hex: str,
     reason: str,
     *,
     details: dict[str, Any] | None = None,
+    tx_kind: str | None = None,
+    stage: str = "template_filter",
 ) -> None:
     result.rejected[reason] = result.rejected.get(reason, 0) + 1
     if hash_hex:
         result.rejected_by_hash[hash_hex] = reason
-        if details is not None:
-            result.rejected_details_by_hash[hash_hex] = {
-                "reason": reason,
-                "details": details,
-            }
+        payload = dict(details or {})
+        payload.setdefault("tx_hash", hash_hex)
+        payload.setdefault("stage", stage)
+        if tx_kind:
+            payload.setdefault("tx_kind", tx_kind)
+        result.rejected_details_by_hash[hash_hex] = {
+            "reason": reason,
+            "details": payload,
+        }
 
 
 def _tx_gas_price(tx: Any) -> int:
@@ -301,6 +382,7 @@ def select_for_block(
         result.total_pending += 1
         hash_hex = _normalize_hash_hex(entry.hash_hex)
         tx = entry.tx
+        tx_kind = _tx_kind(tx) if tx is not None else "unknown"
         decoded_obj: dict[str, Any] | None = None
         if entry.expires_at is not None:
             now_value = now_ts
@@ -315,6 +397,7 @@ def select_for_block(
                     hash_hex,
                     "expired",
                     details={"expires_at": entry.expires_at, "now": now_value},
+                    tx_kind=tx_kind,
                 )
                 continue
         if tx is None and decode is not None:
@@ -325,8 +408,9 @@ def select_for_block(
             else:
                 tx = decoded
                 decoded_obj = decoded if isinstance(decoded, dict) else None
+            tx_kind = _tx_kind(tx) if tx is not None else tx_kind
         if tx is None:
-            _bump_reject(result, hash_hex, "invalid_format")
+            _bump_reject(result, hash_hex, "invalid_format", tx_kind=tx_kind)
             continue
 
         sender = _tx_sender(tx)
@@ -343,6 +427,7 @@ def select_for_block(
                         decoded_obj = decoded
             except Exception:
                 tx = tx
+            tx_kind = _tx_kind(tx) if tx is not None else tx_kind
             sender = _tx_sender(tx)
 
         if chain_id is not None:
@@ -353,6 +438,7 @@ def select_for_block(
                     hash_hex,
                     "chain_id_mismatch",
                     details={"expected": int(chain_id), "got": int(tx_chain_id)},
+                    tx_kind=tx_kind,
                 )
                 continue
 
@@ -360,7 +446,7 @@ def select_for_block(
         if tx_index is not None and hasattr(tx_index, "exists") and tx_hash_bytes is not None:
             try:
                 if tx_index.exists(tx_hash_bytes):
-                    _bump_reject(result, hash_hex, "replay")
+                    _bump_reject(result, hash_hex, "replay", tx_kind=tx_kind)
                     continue
             except Exception:
                 pass
@@ -369,17 +455,29 @@ def select_for_block(
             try:
                 signature_validator(tx, decoded_obj)
             except Exception:
-                _bump_reject(result, hash_hex, "invalid_sig")
+                _bump_reject(result, hash_hex, "invalid_sig", tx_kind=tx_kind)
                 continue
 
         if sender is None:
-            _bump_reject(result, hash_hex, "missing_sender")
+            _bump_reject(result, hash_hex, "missing_sender", tx_kind=tx_kind)
             continue
+
+        if tx_kind == "transfer":
+            recipient = _tx_transfer_recipient(tx)
+            if recipient is None or not any(recipient):
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "invalid_recipient",
+                    details={"recipient": recipient.hex() if isinstance(recipient, (bytes, bytearray)) else None},
+                    tx_kind=tx_kind,
+                )
+                continue
 
         valid_after = _tx_valid_after(tx)
         valid_until = _tx_valid_until(tx)
         if valid_after is None or valid_until is None:
-            _bump_reject(result, hash_hex, "missing_validity")
+            _bump_reject(result, hash_hex, "missing_validity", tx_kind=tx_kind)
             continue
         if current_height < valid_after:
             _bump_reject(
@@ -387,6 +485,7 @@ def select_for_block(
                 hash_hex,
                 "not_yet_valid",
                 details={"valid_after": valid_after, "current_height": current_height},
+                tx_kind=tx_kind,
             )
             continue
         if current_height > valid_until:
@@ -395,6 +494,7 @@ def select_for_block(
                 hash_hex,
                 "expired",
                 details={"valid_until": valid_until, "current_height": current_height},
+                tx_kind=tx_kind,
             )
             continue
 
@@ -405,6 +505,7 @@ def select_for_block(
                 hash_hex,
                 "fee_too_low",
                 details={"min": min_gas_price, "got": gas_price},
+                tx_kind=tx_kind,
             )
             continue
 
@@ -420,22 +521,23 @@ def select_for_block(
 
     for gas_price, tx_hash_bytes, entry, tx in candidates:
         hash_hex = _normalize_hash_hex(entry.hash_hex)
+        tx_kind = _tx_kind(tx)
         sender = _tx_sender(tx)
         if sender is None:
             continue
 
         gas = _tx_gas_limit(tx)
         if max_gas and total_gas + gas > max_gas:
-            _bump_reject(result, hash_hex, "exceeds_block_gas")
+            _bump_reject(result, hash_hex, "exceeds_block_gas", tx_kind=tx_kind)
             continue
 
         size_bytes = _tx_size_bytes(entry.raw, tx)
         if max_bytes and size_bytes and total_bytes + size_bytes > max_bytes:
-            _bump_reject(result, hash_hex, "exceeds_block_bytes")
+            _bump_reject(result, hash_hex, "exceeds_block_bytes", tx_kind=tx_kind)
             continue
 
         if max_txs is not None and len(result.selected) >= max_txs:
-            _bump_reject(result, hash_hex, "max_txs")
+            _bump_reject(result, hash_hex, "max_txs", tx_kind=tx_kind)
             continue
 
         required = _tx_value(tx) + (gas * gas_price)
@@ -451,6 +553,7 @@ def select_for_block(
                     hash_hex,
                     "insufficient_funds",
                     details={"need": required, "have": balances[sender]},
+                    tx_kind=tx_kind,
                 )
                 continue
 

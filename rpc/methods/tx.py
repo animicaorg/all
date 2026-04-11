@@ -1848,6 +1848,189 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
                     return view, height, idx, block_hash
             except Exception:
                 pass
+    # Fallback: tx index may know (height, index, block_hash) even if block_db has no direct tx-hash lookup.
+    tidx = getattr(ctx, "tx_index", None)
+    bdb = getattr(ctx, "block_db", None)
+    if tidx is not None and bdb is not None:
+        pointer = None
+        for meth in ("get", "lookup", "get_loc"):
+            if hasattr(tidx, meth):
+                try:
+                    pointer = getattr(tidx, meth)(_b(tx_hash_hex))  # type: ignore[misc]
+                    if pointer is not None:
+                        break
+                except Exception:
+                    continue
+        if pointer is not None:
+            height: int | None = None
+            idx: int | None = None
+            block_hash: bytes | None = None
+            if isinstance(pointer, (tuple, list)) and len(pointer) >= 2:
+                try:
+                    height = int(pointer[0])
+                    idx = int(pointer[1])
+                    if len(pointer) >= 3 and isinstance(pointer[2], (bytes, bytearray)):
+                        block_hash = bytes(pointer[2])
+                except Exception:
+                    height = None
+                    idx = None
+            elif isinstance(pointer, dict):
+                try:
+                    height = int(pointer.get("height")) if pointer.get("height") is not None else None
+                    idx = int(pointer.get("index")) if pointer.get("index") is not None else None
+                    bh = pointer.get("block_hash")
+                    if isinstance(bh, (bytes, bytearray)):
+                        block_hash = bytes(bh)
+                except Exception:
+                    height = None
+                    idx = None
+            else:
+                try:
+                    height_v = getattr(pointer, "height", None)
+                    idx_v = getattr(pointer, "index", None)
+                    if height_v is not None and idx_v is not None:
+                        height = int(height_v)
+                        idx = int(idx_v)
+                    bh = getattr(pointer, "block_hash", None)
+                    if isinstance(bh, (bytes, bytearray)):
+                        block_hash = bytes(bh)
+                except Exception:
+                    height = None
+                    idx = None
+
+            if height is not None and idx is not None:
+                blk = None
+                try:
+                    if block_hash is not None and hasattr(bdb, "get_block_by_hash"):
+                        blk = bdb.get_block_by_hash(block_hash)  # type: ignore[attr-defined]
+                    if blk is None and hasattr(bdb, "get_block_by_height"):
+                        blk = bdb.get_block_by_height(height)  # type: ignore[attr-defined]
+                        if blk is not None and hasattr(getattr(blk, "header", None), "hash"):
+                            block_hash = getattr(blk.header, "hash")()
+                except Exception:
+                    blk = None
+
+                tx_obj = None
+                if blk is not None:
+                    txs = getattr(blk, "txs", None)
+                    if isinstance(txs, (list, tuple)) and 0 <= idx < len(txs):
+                        tx_obj = txs[idx]
+                if tx_obj is not None:
+                    obj = _dcd(tx_obj) if _dc.is_dataclass(tx_obj) else (dict(tx_obj) if isinstance(tx_obj, dict) else {})
+                    view = _tx_view(tx_obj, obj, pending=False, block_hash=block_hash, block_number=height, tx_index=idx)
+                    return view, height, idx, block_hash
+
+    # Final fallback: scan recent canonical blocks for tx hash when tx_index/block_db hash lookup misses.
+    # This keeps tx.getStatus aligned with canonical chain state even when auxiliary indexes lag.
+    if bdb is not None:
+        target = _b(tx_hash_hex)
+        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "4096") or 4096)
+        head_height: int | None = None
+        try:
+            getter = getattr(ctx, "get_head", None)
+            if callable(getter):
+                head = getter()
+                if isinstance(head, dict):
+                    head_height = int(head.get("height") or 0)
+        except Exception:
+            head_height = None
+        if head_height is None:
+            try:
+                if hasattr(bdb, "get_height"):
+                    head_height = int(bdb.get_height())  # type: ignore[attr-defined]
+            except Exception:
+                head_height = None
+        if head_height is not None and head_height >= 0:
+            lower = max(0, int(head_height) - max(1, scan_depth) + 1)
+
+            def _tx_hash_bytes_from_obj(tx_obj: t.Any) -> bytes | None:
+                if isinstance(tx_obj, dict):
+                    h = tx_obj.get("hash")
+                    if isinstance(h, str) and h:
+                        if h.startswith("0x"):
+                            h = h[2:]
+                        try:
+                            return bytes.fromhex(h)
+                        except Exception:
+                            return None
+                    if isinstance(h, (bytes, bytearray)):
+                        return bytes(h)
+                txid_fn = getattr(tx_obj, "txid", None)
+                if callable(txid_fn):
+                    try:
+                        hv = txid_fn()
+                        if isinstance(hv, (bytes, bytearray)):
+                            return bytes(hv)
+                    except Exception:
+                        pass
+                h_attr = getattr(tx_obj, "hash", None)
+                if callable(h_attr):
+                    try:
+                        hv = h_attr()
+                        if isinstance(hv, (bytes, bytearray)):
+                            return bytes(hv)
+                    except Exception:
+                        pass
+                elif isinstance(h_attr, (bytes, bytearray)):
+                    return bytes(h_attr)
+                elif isinstance(h_attr, str):
+                    raw = h_attr[2:] if h_attr.startswith("0x") else h_attr
+                    try:
+                        return bytes.fromhex(raw)
+                    except Exception:
+                        return None
+                return None
+
+            for h in range(int(head_height), lower - 1, -1):
+                blk = None
+                try:
+                    if hasattr(bdb, "get_block_by_height"):
+                        blk = bdb.get_block_by_height(h)  # type: ignore[attr-defined]
+                    elif hasattr(bdb, "get_block"):
+                        blk = bdb.get_block(h)  # type: ignore[attr-defined]
+                except Exception:
+                    blk = None
+                if blk is None:
+                    continue
+                txs = getattr(blk, "txs", None)
+                if txs is None and isinstance(blk, dict):
+                    txs = blk.get("txs") or blk.get("transactions")
+                if not isinstance(txs, (list, tuple)):
+                    continue
+                for idx, tx_obj in enumerate(txs):
+                    tx_hash_b = _tx_hash_bytes_from_obj(tx_obj)
+                    if tx_hash_b != target:
+                        continue
+                    block_hash: bytes | None = None
+                    try:
+                        header = getattr(blk, "header", None)
+                        h_fn = getattr(header, "hash", None)
+                        if callable(h_fn):
+                            hv = h_fn()
+                            if isinstance(hv, (bytes, bytearray)):
+                                block_hash = bytes(hv)
+                    except Exception:
+                        block_hash = None
+                    if block_hash is None and isinstance(blk, dict):
+                        hv = blk.get("hash")
+                        if isinstance(hv, str):
+                            raw = hv[2:] if hv.startswith("0x") else hv
+                            try:
+                                block_hash = bytes.fromhex(raw)
+                            except Exception:
+                                block_hash = None
+                        elif isinstance(hv, (bytes, bytearray)):
+                            block_hash = bytes(hv)
+                    obj = _dcd(tx_obj) if _dc.is_dataclass(tx_obj) else (dict(tx_obj) if isinstance(tx_obj, dict) else {})
+                    view = _tx_view(
+                        tx_obj,
+                        obj,
+                        pending=False,
+                        block_hash=block_hash,
+                        block_number=h,
+                        tx_index=idx,
+                    )
+                    return view, h, idx, block_hash
     return None, None, None, None
 
 

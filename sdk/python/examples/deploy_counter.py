@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -337,6 +338,13 @@ def _normalize_tx_hash(value: Any) -> Optional[str]:
     return out
 
 
+def _extract_tx_hash_from_text(text: str) -> Optional[str]:
+    match = re.search(r"0x[0-9a-fA-F]{64}", text)
+    if not match:
+        return None
+    return _normalize_tx_hash(match.group(0))
+
+
 def _extract_replay_info(exc: Exception) -> Optional[Dict[str, Any]]:
     if not isinstance(exc, RpcError):
         return None
@@ -632,6 +640,34 @@ def main() -> None:
             await_receipt=True,
             timeout_s=120.0,
         )
+    except TimeoutError as exc:
+        timeout_text = str(exc)
+        tx_hash = _extract_tx_hash_from_text(timeout_text)
+        diagnostics = _collect_replay_diagnostics(
+            rpc,
+            sender=sender,
+            tx_hash=tx_hash,
+        )
+        print(
+            json.dumps(
+                {
+                    "error": "receipt_timeout",
+                    "message": "deployment transaction was accepted but receipt is not indexed yet",
+                    "sender": sender,
+                    "nonceUsed": deploy_nonce,
+                    "txHash": tx_hash,
+                    "details": timeout_text,
+                    "diagnostics": diagnostics,
+                    "nextSteps": [
+                        "Use txHash with tx.getStatus and tx.getTransactionReceipt until receipt appears.",
+                        "If txStatus is pending, wait for inclusion and retry receipt query.",
+                        "If txStatus is accepted/finalized but receipt is still missing, inspect node indexing logs.",
+                    ],
+                },
+                indent=2,
+            )
+        )
+        raise SystemExit(3)
     except Exception as exc:  # noqa: BLE001
         replay_info = _extract_replay_info(exc)
         if replay_info is None:
