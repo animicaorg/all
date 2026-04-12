@@ -58,7 +58,7 @@ def test_wallet_show_outputs_clean_json(wallet_with_entry, monkeypatch):
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
     
     # Mock _resolve_rpc_url to avoid network calls
-    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
     
     # Mock get_balance to return a test balance
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
@@ -123,7 +123,7 @@ def test_wallet_show_with_address_arg_outputs_clean_json(wallet_with_entry, monk
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
     
     # Mock _resolve_rpc_url to avoid network calls
-    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
     
     # Mock get_balance to return a test balance
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 1000000000)
@@ -159,7 +159,7 @@ def test_wallet_show_rpc_failure_exits_nonzero(wallet_with_entry, monkeypatch):
     wallet_file, label = wallet_with_entry
 
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
     monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: (_ for _ in ()).throw(RuntimeError("rpc")))
 
@@ -188,7 +188,7 @@ def test_wallet_show_pending_outgoing_uses_active_statuses_only(wallet_with_entr
     wallet_file.write_text(json.dumps(wallet_data, indent=2))
 
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
     monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
     result = runner.invoke(wallet.app, ["show", label])
@@ -219,7 +219,7 @@ def test_wallet_show_pending_outgoing_counts_reserve_amount_once(wallet_with_ent
     wallet_file.write_text(json.dumps(wallet_data, indent=2))
 
     monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
-    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: "http://127.0.0.1:8545")
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
     monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
     monkeypatch.setattr(wallet, "_request_rpc", lambda method, params, rpc_url: {"height": 1, "hash": "0xabc"} if method == "chain.getHead" else {})
     result = runner.invoke(wallet.app, ["show", label])
@@ -230,3 +230,44 @@ def test_wallet_show_pending_outgoing_counts_reserve_amount_once(wallet_with_ent
     assert output_data["available_balance"] == 89
     # If fee_reserved were double-counted we'd see 12 and 88.
     assert output_data["balance_confirmed"] == 100
+
+
+def test_wallet_show_marks_confirmed_txs_non_pending(wallet_with_entry, monkeypatch):
+    wallet_file, label = wallet_with_entry
+    wallet_data = json.loads(wallet_file.read_text())
+    wallet_data["wallets"][0]["pending_txs"] = [
+        {
+            "tx_hash": "0xabc",
+            "status": "mempool_accepted",
+            "reserve_amount": 11,
+        }
+    ]
+    wallet_file.write_text(json.dumps(wallet_data, indent=2))
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
+
+    def _mock_request_rpc(method, params, rpc_url):
+        if method == "chain.getHead":
+            return {"height": 10, "hash": "0xabc"}
+        if method == "tx.getStatus":
+            return {
+                "status": "confirmed",
+                "confirmations": 1,
+                "included_height": 10,
+            }
+        return {}
+
+    monkeypatch.setattr(wallet, "_request_rpc", _mock_request_rpc)
+
+    result = runner.invoke(wallet.app, ["show", label])
+    assert result.exit_code == 0, result.output
+    output_data = json.loads(result.output)
+
+    assert output_data["pending_txs"][0]["status"] == "confirmed"
+    assert output_data["pending_outgoing"] == 0
+    assert output_data["pending_outgoing_count"] == 0
+
+    persisted = json.loads(wallet_file.read_text())
+    assert persisted["wallets"][0]["pending_txs"][0]["status"] == "confirmed"
