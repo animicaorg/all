@@ -337,6 +337,105 @@ def test_get_work_enabled_when_99_blocks_behind(monkeypatch: pytest.MonkeyPatch)
     assert res["miningEnabled"] is True
 
 
+def test_get_block_template_disabled_when_offline_without_override(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Snap:
+        def __init__(self, data):
+            self._data = data
+
+        def to_dict(self):
+            return dict(self._data)
+
+    class _Svc:
+        def status_snapshot(self):
+            return _Snap({"peers_total": 0, "peers_outbound": 0})
+
+        def sync_status_snapshot(self):
+            return _Snap(
+                {
+                    "head_height": 5,
+                    "best_header_height": 5,
+                    "best_block_height": 5,
+                    "fatal_error": None,
+                }
+            )
+
+    import p2p
+
+    monkeypatch.delenv("ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS", raising=False)
+    monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "0")
+    monkeypatch.setattr(p2p, "get_service", lambda: _Svc())
+
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+    res = rpc_call(client, "miner.getBlockTemplate", {"address": payout_address})["result"]
+
+    assert res["enabled"] is False
+    assert res["reason"] == "offline_no_outbound_peers"
+
+
+def test_get_block_template_offline_override_enabled_only_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Snap:
+        def __init__(self, data):
+            self._data = data
+
+        def to_dict(self):
+            return dict(self._data)
+
+    class _Svc:
+        def status_snapshot(self):
+            return _Snap({"peers_total": 0, "peers_outbound": 0})
+
+        def sync_status_snapshot(self):
+            return _Snap(
+                {
+                    "head_height": 5,
+                    "best_header_height": 5,
+                    "best_block_height": 5,
+                    "fatal_error": None,
+                }
+            )
+
+    import p2p
+
+    monkeypatch.delenv("ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS", raising=False)
+    monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "0")
+    monkeypatch.setattr(p2p, "get_service", lambda: _Svc())
+
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    blocked = rpc_call(client, "miner.getBlockTemplate", {"address": payout_address})["result"]
+    assert blocked["enabled"] is False
+    assert blocked["reason"] == "offline_no_outbound_peers"
+
+    monkeypatch.setenv("ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS", "1")
+    enabled = rpc_call(client, "miner.getBlockTemplate", {"address": payout_address})["result"]
+    assert enabled["enabled"] is True
+    assert "header" in enabled
+
+
+def test_offline_override_denied_on_mainnet(monkeypatch: pytest.MonkeyPatch):
+    class _Cfg:
+        chain_id = 1
+
+    class _Ctx:
+        cfg = _Cfg()
+
+    monkeypatch.setenv("ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS", "1")
+    monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+
+    assert (
+        miner_methods._resolve_allow_offline_mining(
+            True, source="test_offline_override_denied_on_mainnet"
+        )
+        is False
+    )
+
+
 @pytest.mark.asyncio
 async def test_dispatch_accepts_empty_param_array():
     from rpc import jsonrpc

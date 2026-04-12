@@ -1272,6 +1272,60 @@ def _network_block_interval(head_height: int, head_timestamp: int) -> float | No
     return float(dt_seconds)
 
 
+def _bool_env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _current_chain_id_for_mining_policy() -> int | None:
+    try:
+        ctx = _ctx()
+        cfg = getattr(ctx, "cfg", None)
+        chain_id = getattr(cfg, "chain_id", None)
+        if chain_id is not None:
+            return int(chain_id)
+    except Exception:
+        pass
+
+    raw = os.getenv("ANIMICA_CHAIN_ID", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _resolve_allow_offline_mining(allow_offline_mining: bool, *, source: str) -> bool:
+    """
+    Resolve whether offline mining/template issuance is allowed for this request.
+
+    Policy:
+    - Disabled by default.
+    - Enabled when explicitly requested by RPC params (`allow_offline_mining=true`)
+      or via env override (`ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS=1`).
+    - Always denied on mainnet chain_id=1 to preserve production safety.
+    """
+    env_override = _bool_env_enabled("ANIMICA_ALLOW_OFFLINE_MINING_FOR_TESTS")
+    requested = bool(allow_offline_mining)
+    if not requested and not env_override:
+        return False
+
+    chain_id = _current_chain_id_for_mining_policy()
+    if chain_id == 1:
+        log.warning(
+            "Offline mining/template override denied on mainnet.",
+            extra={
+                "source": source,
+                "chain_id": chain_id,
+                "requested": requested,
+                "env_override": env_override,
+            },
+        )
+        return False
+
+    return True
+
+
 def _mining_gate(
     *, allow_offline_mining: bool = False, allow_unsynced: bool = False
 ) -> tuple[bool, str | None]:
@@ -1287,49 +1341,14 @@ def _mining_gate(
     - No fatal errors
     
     Args:
-        allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled)
-        allow_unsynced: Requested unsynced override (ignored; unsafe overrides disabled)
+        allow_offline_mining: Effective offline override (resolved by caller policy).
+        allow_unsynced: Effective unsynced override.
         
     Returns:
         (allowed: bool, reason: str | None)
         - (True, None) if mining is allowed
         - (False, reason) if mining is blocked
     """
-    # Unsafe override flags are disabled; log and ignore if requested.
-    if os.getenv("ANIMICA_MINING_FORCE", "").lower() in ("1", "true", "yes", "on"):
-        log.warning(
-            "Unsafe mining override ANIMICA_MINING_FORCE requested; ignoring.",
-            extra={"override": "ANIMICA_MINING_FORCE"},
-        )
-    if allow_offline_mining or os.getenv("ANIMICA_ALLOW_OFFLINE_MINING", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
-        log.warning(
-            "Unsafe offline mining override requested; ignoring.",
-            extra={
-                "override": "allow_offline_mining",
-                "requested": bool(allow_offline_mining),
-            },
-        )
-    if allow_unsynced or os.getenv("ANIMICA_ALLOW_UNSYNCED_MINING", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
-        log.warning(
-            "Unsafe unsynced mining override requested; ignoring.",
-            extra={
-                "override": "allow_unsynced_mining",
-                "requested": bool(allow_unsynced),
-            },
-        )
-    allow_offline_mining = False
-    allow_unsynced = False
-    
     # Check P2P service availability (optional - graceful degradation)
     try:
         import p2p
@@ -4348,8 +4367,8 @@ def miner_mine(
                  The nonce search space is divided among workers for parallel mining.
         threads: Deprecated alias for workers (for backward compatibility).
         include_mempool: Whether to include pending mempool transactions (default: True).
-        allow_offline_mining: Requested offline override (ignored; unsafe overrides disabled).
-        allow_unsynced_mining: Requested unsynced override (ignored; unsafe overrides disabled).
+        allow_offline_mining: Explicit offline override request (policy-validated).
+        allow_unsynced_mining: Requested unsynced override (restricted/ignored by policy).
         force_empty_template: Force mining without mempool inclusion.
         instant_block: If True, mine instant blocks with zero rewards (default: False).
         
@@ -4408,16 +4427,17 @@ def miner_mine(
     # Instant blocks bypass all safety checks - they are used for immediate tx persistence
     # and do not produce rewards or count towards supply
     if not instant_block_flag and not mempool_instant_mode:
-        if allow_offline_mining or allow_unsynced_flag:
+        allow_offline_flag = _resolve_allow_offline_mining(
+            bool(allow_offline_mining), source="miner.mine"
+        )
+        if allow_unsynced_flag:
             log.warning(
-                "Unsafe mining override requested; ignoring.",
+                "Unsafe unsynced mining override requested; ignoring.",
                 extra={
-                    "allow_offline_mining": bool(allow_offline_mining),
                     "allow_unsynced_mining": bool(allow_unsynced_flag),
                 },
             )
-        allow_offline_flag = False
-        allow_unsynced_flag = False
+            allow_unsynced_flag = False
 
         allowed, reason = _mining_gate(
             allow_offline_mining=allow_offline_flag,
@@ -4471,6 +4491,7 @@ def miner_mine(
             "address": address,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
+            "allow_offline_mining": allow_offline_flag if not instant_block_flag else None,
             "allow_unsynced_mining": allow_unsynced_flag if not instant_block_flag else None,
             "force_empty_template": force_empty_flag,
             "workers": workers,
@@ -4673,22 +4694,26 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         raise rpc_errors.InvalidParams("address is required")
     payout_address = _validate_payout_address(payout_address)
 
-    if allow_offline_mining or allow_unsynced_mining:
+    requested_allow_offline_mining = bool(allow_offline_mining)
+    allow_offline_mining = _resolve_allow_offline_mining(
+        requested_allow_offline_mining, source="miner.getBlockTemplate"
+    )
+
+    if allow_unsynced_mining:
         log.warning(
-            "Unsafe mining override requested; ignoring.",
+            "Unsafe unsynced mining override requested; ignoring.",
             extra={
-                "allow_offline_mining": bool(allow_offline_mining),
                 "allow_unsynced_mining": bool(allow_unsynced_mining),
             },
         )
-    allow_offline_mining = False
-    allow_unsynced_mining = False
+        allow_unsynced_mining = False
 
     log.info(
         "miner.getBlockTemplate request",
         extra={
             "params": raw_params or payload,
             "include_mempool": include_mempool_flag,
+            "allow_offline_mining_requested": requested_allow_offline_mining,
             "allow_offline_mining": allow_offline_mining,
             "allow_unsynced_mining": allow_unsynced_mining,
             "force_empty_template": force_empty_template,
@@ -4982,7 +5007,19 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             txs = []
             included_hashes = []
 
-        head = adapter.get_head()
+        try:
+            head = adapter.get_head()
+        except Exception as exc:
+            if not allow_offline_mining:
+                raise
+            log.warning(
+                "miner.getBlockTemplate: adapter head unavailable in offline-override mode; using local snapshot fallback",
+                extra={"error": str(exc)},
+            )
+            try:
+                head = _current_head_snapshot()
+            except Exception:
+                head = {"height": 0, "hash": "0x" + ZERO32.hex(), "header": None}
         parent_height = int(head.get("height") or 0)
         parent_hash_val = head.get("hash") or head.get("hash_hex")
         parent_header = head.get("obj") or head.get("header")
