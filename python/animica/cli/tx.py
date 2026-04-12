@@ -1409,7 +1409,7 @@ def send(
     ),
     nonce: str = typer.Option("auto", "--nonce", help="Nonce override (default: auto)"),
     nonce_source: str = typer.Option(
-        "confirmed", "--nonce-source", help="Nonce source: confirmed|pending (default: confirmed)"
+        "confirmed", "--nonce-source", help="Nonce source: pending|confirmed (default: pending)"
     ),
     valid_from: Optional[int] = typer.Option(
         None, "--valid-from", help="First valid block height (default: current head height)"
