@@ -180,3 +180,126 @@ def test_template_includes_mempool_txs(monkeypatch: pytest.MonkeyPatch) -> None:
     recipient_balance = rpc_call(client, "state.getBalance", [recipient_hex])["result"]
     recipient_balance = int(recipient_balance, 16) if isinstance(recipient_balance, str) else int(recipient_balance)
     assert recipient_balance >= transfer_amount
+
+
+def test_three_pending_txs_from_same_sender_are_cleared_after_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    monkeypatch.setenv("ANIMICA_MINING_MIN_PEERS", "0")
+    monkeypatch.setenv("ANIMICA_DEFAULT_THETA_MICRO", "1000")
+    monkeypatch.setenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0")
+    monkeypatch.setenv("ANIMICA_MINER_MAX_NONCE", "50000")
+
+    client, cfg, _tmp = new_test_client()
+    sender_kp = keygen_sig("dilithium3")
+    recipient_kp = keygen_sig("dilithium3")
+
+    sender_bytes = _address_bytes(sender_kp.address)
+    sender_hex = "0x" + sender_bytes.hex()
+    recipient_bytes = _address_bytes(recipient_kp.address)
+
+    # Fund sender with a first block reward.
+    funding_template = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": sender_kp.address, "include_mempool": False},
+    )["result"]
+    if not funding_template.get("enabled", True):
+        pytest.skip(f"miner.getBlockTemplate disabled: {funding_template.get('reason')}")
+    funding_header = _header_from_template(funding_template["header"])
+    funding_nonce, _digest = _find_nonce(funding_header, int(funding_template["target"], 16))
+    funding_header = replace(funding_header, nonce=funding_nonce)
+    funding_payload = {
+        "header": {
+            k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
+            for k, v in funding_header.to_obj().items()
+        },
+        "txs": [],
+        "proofs": [],
+        "parentHash": funding_template["parent"]["hash"],
+        "templateId": funding_template.get("templateId"),
+    }
+    funding_submit = rpc_call(client, "miner.submitBlock", funding_payload)["result"]
+    assert funding_submit["accepted"] is True
+
+    sender_balance = rpc_call(client, "state.getBalance", [sender_hex])["result"]
+    sender_balance = int(sender_balance, 16) if isinstance(sender_balance, str) else int(sender_balance)
+    assert sender_balance > 0
+
+    fork_id = compute_chain_identity(None, chain_id=cfg.chain_id).fork_id
+    tx_hashes: list[str] = []
+    amount_each = 250_000_000
+
+    for nonce in range(3):
+        unsigned = UnsignedTx(
+            chain_id=cfg.chain_id,
+            nonce=nonce,
+            gas_price=1,
+            gas_limit=21000,
+            sender=sender_bytes,
+            kind=TxKind.TRANSFER,
+            payload=TxTransfer(
+                to=recipient_bytes,
+                amount=amount_each,
+                data=f"batch-{nonce}".encode(),
+            ),
+            access_list=(),
+        )
+        sign_bytes = tx_sign_bytes(unsigned.to_obj())
+        sig_env = sign.sign_detached(
+            sign_bytes,
+            "dilithium3",
+            sender_kp.secret_key,
+            domain="tx",
+            chain_id=cfg.chain_id,
+            fork_id=fork_id,
+        )
+        sig = PqSignature(
+            alg_id=ALG_ID["dilithium3"],
+            pubkey=sender_kp.public_key,
+            sig=sig_env.sig,
+        )
+        tx = Tx(unsigned=unsigned, sigs=(sig,))
+        tx_hash = "0x" + tx.txid().hex()
+        tx_hashes.append(tx_hash)
+        rpc_call(client, "tx.sendRawTransaction", {"rawTx": "0x" + tx.to_cbor().hex()})
+
+    pending_before = rpc_call(client, "mempool.getPending")["result"]
+    for tx_hash in tx_hashes:
+        assert tx_hash in pending_before
+
+    template = rpc_call(
+        client,
+        "miner.getBlockTemplate",
+        {"address": sender_kp.address, "include_mempool": True},
+    )["result"]
+    if not template.get("enabled", True):
+        pytest.skip(f"miner.getBlockTemplate disabled: {template.get('reason')}")
+    assert int(template["mempool"]["selected"]) >= 3
+
+    header = _header_from_template(template["header"])
+    nonce, _digest = _find_nonce(header, int(template["target"], 16))
+    header = replace(header, nonce=nonce)
+    block_payload = {
+        "header": {
+            k: ("0x" + v.hex() if isinstance(v, (bytes, bytearray)) else v)
+            for k, v in header.to_obj().items()
+        },
+        "txs": [entry.get("raw") for entry in template.get("txs", []) if isinstance(entry, dict)],
+        "proofs": [],
+        "parentHash": template["parent"]["hash"],
+        "templateId": template.get("templateId"),
+    }
+    submit = rpc_call(client, "miner.submitBlock", block_payload)["result"]
+    assert submit["accepted"] is True
+
+    head = rpc_call(client, "chain.getHead")["result"]
+    block = rpc_call(client, "chain.getBlockByNumber", [head["height"], True])["result"]
+    block_txs = block.get("transactions", [])
+    block_hashes = [tx.get("hash") if isinstance(tx, dict) else tx for tx in block_txs]
+    for tx_hash in tx_hashes:
+        assert tx_hash in block_hashes
+
+    pending_after = rpc_call(client, "mempool.getPending")["result"]
+    assert pending_after == []
+    pending_verbose = rpc_call(client, "mempool.getPending", [True])["result"]
+    assert pending_verbose == []

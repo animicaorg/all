@@ -126,6 +126,8 @@ class TxRequestManager:
             "dropped_evicted": 15,
             "unavailable": 15,
             "accepted_in_mempool": 90,
+            "mined": 95,
+            "confirmed": 100,
             "invalid_final": 90,
         }
 
@@ -205,7 +207,7 @@ class TxRequestManager:
 
     def mark_announced(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
         entry = self._states.get(txid)
-        if entry and entry.state in {"accepted_in_mempool", "invalid_final"}:
+        if entry and entry.state in {"accepted_in_mempool", "mined", "confirmed", "invalid_final"}:
             return
         self._touch(txid, now=now, state="announced_only", peer=peer, clear_reason=True)
 
@@ -238,6 +240,12 @@ class TxRequestManager:
         entry = self._touch(txid, now=now, state="accepted_in_mempool", peer=peer)
         entry.validated_ok = True
         entry.terminal = True
+
+    def mark_confirmed(self, txid: bytes, *, peer: Optional[str], now: float) -> None:
+        entry = self._touch(txid, now=now, state="confirmed", peer=peer, reason="in_chain")
+        entry.validated_ok = True
+        entry.terminal = True
+        entry.next_retry_at = float("inf")
 
     def mark_dropped(
         self, txid: bytes, *, peer: Optional[str], reason: Optional[str], now: float
@@ -278,7 +286,7 @@ class TxRequestManager:
         entry = self._states.get(txid)
         if entry is None:
             return True
-        if entry.state in {"accepted_in_mempool", "invalid_final"}:
+        if entry.state in {"accepted_in_mempool", "mined", "confirmed", "invalid_final"}:
             return False
         return entry.next_retry_at <= now
 
@@ -623,6 +631,19 @@ class TxRelayService:
         except Exception:
             return None, peer, normalized
 
+    def _coerce_txid(self, txid_like: Any) -> Optional[bytes]:
+        if isinstance(txid_like, (bytes, bytearray)):
+            txid = bytes(txid_like)
+            return txid if len(txid) == 32 else None
+        if isinstance(txid_like, str):
+            raw = txid_like[2:] if txid_like.startswith("0x") else txid_like
+            try:
+                txid = bytes.fromhex(raw)
+            except Exception:
+                return None
+            return txid if len(txid) == 32 else None
+        return None
+
     def _set_peer_tx_state(
         self,
         conn_id: str,
@@ -701,6 +722,66 @@ class TxRelayService:
             entry.last_peer_node_id = self._normalize_peer_id(last_peer_node_id)
         if last_peer_conn_id is not None:
             entry.last_peer_conn_id = last_peer_conn_id
+
+    def on_block_accepted(self, txids: Iterable[bytes | str]) -> dict[str, int]:
+        """
+        Mark block-included transactions as confirmed in relay bookkeeping.
+
+        Peer-known advertisement history is preserved, but confirmed txids are
+        terminal and cannot be re-requested/imported as pending.
+        """
+        now = time.time()
+        confirmed = 0
+        cleared_inflight = 0
+        dropped_inv_queue = 0
+
+        for txid_like in txids:
+            txid = self._coerce_txid(txid_like)
+            if txid is None:
+                continue
+            if txid in self._inflight:
+                self._clear_inflight(txid)
+                cleared_inflight += 1
+            self._reject_cache.pop(txid, None)
+            self._notfound_cache.pop(txid, None)
+            self._tx_sources.pop(txid, None)
+            self._tx_sources_order.pop(txid, None)
+            self._request_mgr.mark_confirmed(txid, peer="chain", now=now)
+            self._touch_tx_store(
+                txid,
+                validation_status="valid",
+                mempool_status="confirmed",
+                mempool_reason="in_chain",
+                last_peer="chain",
+            )
+            for peer_state in self._peer_state.values():
+                if txid in peer_state.inv_queue:
+                    peer_state.inv_queue = deque(item for item in peer_state.inv_queue if item != txid)
+                    dropped_inv_queue += 1
+                peer_state.inv_queue_timestamps.pop(txid, None)
+            for key, peer_tx_state in list(self._peer_tx_state.items()):
+                if key[1] != txid:
+                    continue
+                peer_tx_state.state = "CONFIRMED_IN_CHAIN"
+                peer_tx_state.last_reason = "in_chain"
+                peer_tx_state.last_updated_at = now
+            confirmed += 1
+
+        if confirmed:
+            self._record_event(
+                "TX_RELAY_CONFIRMED_IN_CHAIN",
+                extra={
+                    "confirmed": confirmed,
+                    "cleared_inflight": cleared_inflight,
+                    "dropped_inv_queue": dropped_inv_queue,
+                },
+            )
+
+        return {
+            "confirmed": confirmed,
+            "cleared_inflight": cleared_inflight,
+            "dropped_inv_queue": dropped_inv_queue,
+        }
 
     def _reject_remember(self, txid: bytes) -> None:
         expire_at = time.time() + self._reject_cache_ttl_s
@@ -954,12 +1035,11 @@ class TxRelayService:
                 )
                 continue
             if await self._has_chain_tx(txid):
-                self._request_mgr.mark_dropped(
-                    txid, peer="chain", reason="in_chain", now=now
-                )
+                self._request_mgr.mark_confirmed(txid, peer="chain", now=now)
                 self._touch_tx_store(
                     txid,
-                    mempool_status="evicted",
+                    validation_status="valid",
+                    mempool_status="confirmed",
                     mempool_reason="in_chain",
                     last_peer="chain",
                 )
@@ -1168,7 +1248,13 @@ class TxRelayService:
             txid_bytes = bytes(txid)
             raw_bytes = bytes(raw)
             req_state = self._request_mgr.get_state(txid_bytes)
-            if req_state is not None and req_state.state in {"invalid_final", "accepted_in_mempool", "admitted"}:
+            if req_state is not None and req_state.state in {
+                "invalid_final",
+                "accepted_in_mempool",
+                "admitted",
+                "mined",
+                "confirmed",
+            }:
                 log.info(
                     "TX_IMPORT_SKIP_TERMINAL",
                     extra={
@@ -1706,8 +1792,13 @@ class TxRelayService:
                 self._request_mgr.mark_accepted(txid, peer="local", now=time.time())
                 continue
             if await self._has_chain_tx(txid):
-                self._request_mgr.mark_dropped(
-                    txid, peer="chain", reason="in_chain", now=time.time()
+                self._request_mgr.mark_confirmed(txid, peer="chain", now=time.time())
+                self._touch_tx_store(
+                    txid,
+                    validation_status="valid",
+                    mempool_status="confirmed",
+                    mempool_reason="in_chain",
+                    last_peer="chain",
                 )
                 continue
             async with self._lock:
@@ -2261,8 +2352,13 @@ class TxRelayService:
                     skip_reasons[f"0x{txid.hex()}"] = "terminal_ok"
                     continue
                 if await self._has_chain_tx(txid):
-                    self._request_mgr.mark_dropped(
-                        txid, peer="chain", reason="in_chain", now=now
+                    self._request_mgr.mark_confirmed(txid, peer="chain", now=now)
+                    self._touch_tx_store(
+                        txid,
+                        validation_status="valid",
+                        mempool_status="confirmed",
+                        mempool_reason="in_chain",
+                        last_peer="chain",
                     )
                     skip_reasons[f"0x{txid.hex()}"] = "in_chain"
                     continue

@@ -222,3 +222,24 @@ def test_submit_block_rejects_expired_template(monkeypatch: pytest.MonkeyPatch) 
     assert error["code"] == -32063
     assert error["data"]["reason"] == "stale_template"
     assert error["data"].get("detail") == "template_expired"
+
+
+def test_submit_block_payload_extraction_compatibility() -> None:
+    block_payload = {
+        "header": {"height": 1, "parentHash": "0x" + "00" * 32},
+        "txs": [],
+        "proofs": [],
+        "parentHash": "0x" + "00" * 32,
+    }
+
+    # Positional payload (CLI path)
+    extracted = miner_methods._extract_payload(block_payload, {})
+    assert extracted == block_payload
+
+    # Wrapped list payload (legacy/stratum variants)
+    extracted = miner_methods._extract_payload([block_payload], {})
+    assert extracted == block_payload
+
+    # Keyword-only payload (regression guard for unexpected keyword argument paths)
+    extracted = miner_methods._extract_payload(None, dict(block_payload))
+    assert extracted == block_payload

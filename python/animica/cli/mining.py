@@ -1742,7 +1742,25 @@ def mine_blocks(
                     if isinstance(balance_now, int) and isinstance(balance_before_submit, int):
                         credited_delta = balance_now - balance_before_submit
 
-                    credited_display = int(credited_delta if credited_delta is not None else submit_result.get("credited_amount", block_reward) or 0)
+                    credited_display = None
+                    credited_amount_raw = submit_result.get("credited_amount")
+                    if credited_amount_raw is not None:
+                        try:
+                            credited_display = int(credited_amount_raw)
+                        except Exception:
+                            credited_display = None
+
+                    # Fallback only when credited_amount is unavailable; guard against
+                    # negative or tx-transfer-distorted deltas.
+                    if credited_display is None and isinstance(credited_delta, int):
+                        if credited_delta >= 0 and (
+                            block_reward <= 0 or credited_delta <= int(block_reward)
+                        ):
+                            credited_display = int(credited_delta)
+
+                    if credited_display is None:
+                        credited_display = int(block_reward or 0)
+
                     typer.secho(
                         f"  ACCEPTED: Block {total_mined}/{count} (height: {final_height}, "
                         f"reward: {reward_anm:.9f} ANM = {block_reward} nANM, "

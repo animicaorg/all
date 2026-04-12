@@ -1395,3 +1395,153 @@ def test_mine_blocks_continues_after_consecutive_rejections(monkeypatch: Any) ->
     
     # Should NOT exit with error (only warning about partial success)
     assert result.exit_code == 0, f"Should complete successfully, got exit code {result.exit_code}\nOutput: {result.output}"
+
+
+def test_mine_blocks_prefers_submit_credited_amount(monkeypatch: Any) -> None:
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            self._balance_calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method in {"chain_getHead", "chain.getHead"}:
+                return {"height": 100, "hash": "0x" + "00" * 32}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 101,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 1000},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "state.getBalance":
+                self._balance_calls += 1
+                # Force a large delta that should NOT be used when credited_amount exists.
+                return 100 if self._balance_calls == 1 else 10_100
+            if method == "miner.submitBlock":
+                return {"accepted": True, "new_head": 101, "credited_amount": 500}
+            return {}
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address",
+            test_address,
+            "--count",
+            "1",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--no-proxy",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "credited: 500 nANM" in result.output
+    assert "credited: 10000 nANM" not in result.output
+
+
+def test_mine_blocks_credited_fallback_ignores_negative_delta(monkeypatch: Any) -> None:
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            self._balance_calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method in {"chain_getHead", "chain.getHead"}:
+                return {"height": 100, "hash": "0x" + "00" * 32}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 101,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 777},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "state.getBalance":
+                self._balance_calls += 1
+                # Negative delta fallback should be rejected.
+                return 1_000 if self._balance_calls == 1 else 900
+            if method == "miner.submitBlock":
+                return {"accepted": True, "new_head": 101}
+            return {}
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address",
+            test_address,
+            "--count",
+            "1",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--no-proxy",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "credited: 777 nANM" in result.output
+    assert "credited: -100 nANM" not in result.output

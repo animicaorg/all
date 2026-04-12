@@ -5235,7 +5235,13 @@ def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str,
         Extracted payload dict, or None if no valid payload provided
     """
     if payload is not None:
-        return payload
+        # Support wrapped payloads passed positionally as a single-item list.
+        if isinstance(payload, list):
+            if len(payload) == 1:
+                candidate = payload[0]
+                return candidate if isinstance(candidate, dict) else None
+            return None
+        return payload if isinstance(payload, dict) else None
     elif kwargs:
         # Support wrapped payload format: {"payload": {...}}
         if len(kwargs) == 1 and "payload" in kwargs:
