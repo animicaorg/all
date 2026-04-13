@@ -102,7 +102,9 @@ export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
   const hash = tx?.hash ?? tx?.txHash ?? receipt?.txHash ?? '0x0'
   const blockHeight = toNumber(receipt?.blockNumber ?? tx?.blockNumber)
   const statusRaw = receipt?.status ?? tx?.status
-  const status = statusRaw === 'REVERT' || statusRaw === 'OOG' ? 'failed' : blockHeight ? 'confirmed' : 'pending'
+  const statusText = typeof statusRaw === 'string' ? statusRaw.toUpperCase() : statusRaw
+  const failed = statusText === 'REVERT' || statusText === 'OOG' || statusText === 'FAILED' || statusText === 0
+  const status = failed ? 'failed' : blockHeight ? 'confirmed' : 'pending'
   return {
     hash,
     status,

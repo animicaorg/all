@@ -2,7 +2,13 @@ import type {
   AddressSummary,
   BlockDetail,
   BlockSummary,
+  ContractCodeResponse,
+  ContractDetailResponse,
   ContractDeploymentFeed,
+  ContractProfile,
+  ContractVerificationJob,
+  ContractVerificationRecord,
+  ContractVerificationSubmitRequest,
   HeadView,
   MempoolView,
   RichListResponse,
@@ -52,6 +58,32 @@ export const api = {
     apiGet<MempoolView>(`/api/mempool?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
   getContractDeployments: (limit = 24, scanBlocks = 240) =>
     apiGet<ContractDeploymentFeed>(`/api/contracts/deployments?limit=${limit}&scanBlocks=${scanBlocks}`),
+  getContract: (address: string, limit = 20, cursor?: string) =>
+    apiGet<ContractDetailResponse>(
+      `/api/contracts/address/${encodeURIComponent(address)}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`
+    ),
+  getContractByCreationTx: (txHash: string) =>
+    apiGet<ContractProfile>(`/api/contracts/created-by/${encodeURIComponent(txHash)}`),
+  getContractCode: (address: string) =>
+    apiGet<ContractCodeResponse>(`/api/contracts/address/${encodeURIComponent(address)}/code`),
+  getContractVerification: (address: string) =>
+    apiGet<ContractVerificationRecord>(`/api/contracts/address/${encodeURIComponent(address)}/verification`),
+  submitContractVerification: async (payload: ContractVerificationSubmitRequest) => {
+    const res = await fetch('/api/contracts/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      let msg = text || `Request failed: ${res.status}`
+      try { msg = JSON.parse(text)?.message ?? msg } catch { /* not JSON */ }
+      throw new Error(msg)
+    }
+    return res.json() as Promise<ContractVerificationJob>
+  },
+  getContractVerificationJob: (jobId: string) =>
+    apiGet<ContractVerificationJob>(`/api/contracts/verify/${encodeURIComponent(jobId)}`),
   getRichList: (limit = 100, offset = 0) =>
     apiGet<RichListResponse>(`/api/richlist?limit=${limit}&offset=${offset}`),
   getRichListSummary: () =>

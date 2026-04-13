@@ -182,6 +182,79 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  app.get('/api/contracts/address/:address', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 20)
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined
+      const payload = await service.getContractDetail(req.params.address, limit, cursor)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/contracts/address/:address/code', async (req, res, next) => {
+    try {
+      const payload = await service.getContractCode(req.params.address)
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/contracts/address/:address/verification', async (req, res, next) => {
+    try {
+      const payload = service.getContractVerification(req.params.address)
+      if (!payload) {
+        res.json({
+          status: 'unverified',
+          verifierStatus: 'unverified',
+          submittedAt: null,
+          completedAt: null
+        })
+        return
+      }
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/contracts/created-by/:txHash', async (req, res, next) => {
+    try {
+      const payload = await service.getContractByCreationTx(req.params.txHash)
+      if (!payload) {
+        res.status(404).json({ error: 'not_found', message: 'No contract found for transaction hash' })
+        return
+      }
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.post('/api/contracts/verify', async (req, res, next) => {
+    try {
+      const payload = await service.submitContractVerification(req.body ?? {})
+      res.status(202).json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/contracts/verify/:jobId', async (req, res, next) => {
+    try {
+      const payload = service.getContractVerificationJob(req.params.jobId)
+      if (!payload) {
+        res.status(404).json({ error: 'not_found', message: 'Verification job not found' })
+        return
+      }
+      res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   app.get('/api/search', async (req, res, next) => {
     try {
       const query = typeof req.query.q === 'string' ? req.query.q : ''

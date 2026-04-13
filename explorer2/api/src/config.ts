@@ -17,5 +17,13 @@ export const config = {
   corsOrigin: process.env.EXPLORER2_CORS_ORIGIN || '*',
   logLevel: process.env.EXPLORER2_LOG_LEVEL || 'info',
   rpcTimeout: Number(process.env.EXPLORER2_RPC_TIMEOUT_MS || 30000),
-  rpcMaxRetries: Number(process.env.EXPLORER2_RPC_MAX_RETRIES || 3)
+  rpcMaxRetries: Number(process.env.EXPLORER2_RPC_MAX_RETRIES || 3),
+  explorerIndexDbPath:
+    process.env.EXPLORER2_INDEX_DB_PATH ||
+    process.env.EXPLORER2_STATE_DB_PATH ||
+    path.join(
+      process.env.EXPLORER2_DATA_ROOT || process.env.ANIMICA_DATA_ROOT || path.join(homedir(), '.animica'),
+      'explorer2',
+      'explorer2-index.db'
+    )
 }

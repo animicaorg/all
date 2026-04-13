@@ -18,6 +18,8 @@ interface Capabilities {
   hasPeers: boolean
   hasReceipts: boolean
   hasStateBalance: boolean
+  hasStateAccount: boolean
+  hasStateCode: boolean
   hasRichList: boolean
   hasTotalSupply: boolean
 }
@@ -43,6 +45,8 @@ export class RpcChainClient implements ChainClient {
       this.rpc.call('p2p.getPeers', []),
       this.rpc.call('receipt.getReceipt', ['0x0000000000000000000000000000000000000000000000000000000000000000']),
       this.rpc.call('state.getBalance', ['anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4']),
+      this.rpc.call('state.getAccount', ['anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4']),
+      this.rpc.call('state.getCode', ['anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5nvly4']),
       this.rpc.call('state.getRichList', [10, 0]),
       this.rpc.call('state.getTotalSupply', [])
     ])
@@ -74,8 +78,10 @@ export class RpcChainClient implements ChainClient {
       hasPeers: isMethodAvailable(checks[1]),
       hasReceipts: isMethodAvailable(checks[2]),
       hasStateBalance: isMethodAvailable(checks[3]),
-      hasRichList: isMethodAvailable(checks[4]),
-      hasTotalSupply: isMethodAvailable(checks[5])
+      hasStateAccount: isMethodAvailable(checks[4]),
+      hasStateCode: isMethodAvailable(checks[5]),
+      hasRichList: isMethodAvailable(checks[6]),
+      hasTotalSupply: isMethodAvailable(checks[7])
     }
 
     log.info({ capabilities: this.capabilities }, 'Capabilities detected')
@@ -261,6 +267,50 @@ export class RpcChainClient implements ChainClient {
       log.warn({ address, tag, error }, 'Failed to get balance')
       return '0x0'
     }
+  }
+
+  async getAccount(address: string): Promise<unknown> {
+    const caps = await this.detectCapabilities()
+    if (!caps.hasStateAccount) {
+      return null
+    }
+
+    for (const method of ['state.getAccount', 'state_getAccount', 'account.get']) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const out = await this.rpc.call(method, [address])
+        if (out) return out
+      } catch (error) {
+        const message = String((error as Error)?.message ?? error).toLowerCase()
+        if (message.includes('method not found') || message.includes('unknown method')) continue
+        log.warn({ address, method, error }, 'Failed account lookup method')
+      }
+    }
+    return null
+  }
+
+  async getCode(address: string): Promise<string | null> {
+    const caps = await this.detectCapabilities()
+    if (!caps.hasStateCode) {
+      return null
+    }
+
+    for (const method of ['state.getCode', 'state_getCode', 'state.getContractCode', 'eth_getCode']) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const out = await this.rpc.call(method, [address])
+        if (typeof out === 'string') return out
+        if (out && typeof out === 'object') {
+          const code = (out as Record<string, unknown>).code ?? (out as Record<string, unknown>).bytecode
+          if (typeof code === 'string') return code
+        }
+      } catch (error) {
+        const message = String((error as Error)?.message ?? error).toLowerCase()
+        if (message.includes('method not found') || message.includes('unknown method')) continue
+        log.warn({ address, method, error }, 'Failed code lookup method')
+      }
+    }
+    return null
   }
 
   async getRichList(limit: number, offset: number): Promise<unknown> {
