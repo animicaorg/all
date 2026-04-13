@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from animica.stratum_pool.core import MiningCoreAdapter, MiningJob
+from animica.stratum_pool.core import MiningCoreAdapter, MiningJob, TemplateUnavailable
 
 from core.types.header import Header, serialize_header
 from core.utils.hash import sha3_256
@@ -259,6 +259,39 @@ async def test_get_new_job_prefers_block_template(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_new_job_surfaces_min_block_spacing(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": False,
+                    "reason": "min_block_spacing",
+                    "waitSeconds": 1.25,
+                    "head": {"height": 9, "hash": "0x" + "ab" * 32},
+                }
+            raise AssertionError(f"unexpected call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    with pytest.raises(TemplateUnavailable) as excinfo:
+        await adapter.get_new_job()
+
+    assert excinfo.value.reason == "min_block_spacing"
+    assert excinfo.value.wait_seconds == pytest.approx(1.25)
+    assert excinfo.value.head.get("height") == 9
+
+
+@pytest.mark.asyncio
 async def test_submit_share_uses_submit_work(monkeypatch):
     rpc = DummyRpc({"accepted": True, "reason": None})
 
@@ -387,7 +420,116 @@ async def test_template_block_share_uses_submit_block(monkeypatch):
     assert reason is None
     assert is_block is True
     assert tx_count == 1
-    assert rpc.calls[0][0] == "miner.submitBlock"
-    assert rpc.calls[0][1]["templateId"] == "template-3"
-    assert rpc.calls[0][1]["header"]["nonce"] == 1
-    assert rpc.calls[0][1]["txs"] == ["0x0102"]
+    assert rpc.calls[0][0] == "chain.getHead"
+    assert rpc.calls[1][0] == "miner.submitBlock"
+    assert rpc.calls[1][1]["templateId"] == "template-3"
+    assert rpc.calls[1][1]["header"]["nonce"] == 1
+    assert rpc.calls[1][1]["txs"] == ["0x0102"]
+
+
+@pytest.mark.asyncio
+async def test_template_block_share_rejects_stale_head_locally(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 42, "hash": "0x" + "ff" * 32}
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    header = _full_header_template()
+    mining_job = MiningJob(
+        job_id="template-stale-head",
+        header=header,
+        theta_micro=int(header["thetaMicro"]),
+        share_target=1.0,
+        height=7,
+        target="0x" + "ff" * 32,
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-stale-head",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-stale-head",
+            "header": header,
+            "target": "0x" + "ff" * 32,
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [{"hash": "0xabc", "raw": "0x0102"}],
+        },
+    )
+
+    accepted, reason, is_block, tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {"hashshare": {"nonce": "0x01", "body": {}}},
+    )
+
+    assert accepted is False
+    assert is_block is True
+    assert tx_count == 1
+    assert isinstance(reason, str)
+    assert "stale template" in reason
+    assert [call[0] for call in rpc.calls] == ["chain.getHead"]
+
+
+@pytest.mark.asyncio
+async def test_template_block_share_rejects_expired_template_locally(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 6, "hash": "0x" + "11" * 32}
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    header = _full_header_template()
+    mining_job = MiningJob(
+        job_id="template-expired",
+        header=header,
+        theta_micro=int(header["thetaMicro"]),
+        share_target=1.0,
+        height=7,
+        target="0x" + "ff" * 32,
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-expired",
+        parent_hash=header["parentHash"],
+        expires_at=0.0,
+        raw={
+            "templateId": "template-expired",
+            "header": header,
+            "target": "0x" + "ff" * 32,
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [{"hash": "0xabc", "raw": "0x0102"}],
+            "expiresAt": 1,
+        },
+    )
+
+    accepted, reason, is_block, tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {"hashshare": {"nonce": "0x01", "body": {}}},
+    )
+
+    assert accepted is False
+    assert is_block is True
+    assert tx_count == 1
+    assert isinstance(reason, str)
+    assert "template_expired" in reason
+    assert [call[0] for call in rpc.calls] == ["chain.getHead"]

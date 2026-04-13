@@ -28,6 +28,11 @@ class PoolShareValidator:
             hints=job.hints,
             target=job.target,
             sign_bytes=job.sign_bytes,
+            template_id=(job.raw or {}).get("templateId")
+            if isinstance(job.raw, dict)
+            else None,
+            parent_hash=job.parent_hash,
+            expires_at=job.expires_at,
             raw=job.raw or {},
         )
         try:
@@ -53,6 +58,8 @@ class StratumPoolServer:
         self._job_manager = job_manager
         self._log = logger or logging.getLogger("animica.stratum_pool.server")
         self._validator = PoolShareValidator(adapter, logger=logger)
+        self._last_published_job_id: Optional[str] = None
+        self._last_diff_tuple: Optional[tuple[float, int]] = None
         self._server = StratumServer(
             host=config.host,
             port=config.port,
@@ -91,13 +98,21 @@ class StratumPoolServer:
             target=job.target,
             sign_bytes=job.sign_bytes or header.get("signBytes"),
             height=job.height,
+            parent_hash=job.parent_hash,
+            expires_at=job.expires_at,
             raw=job.raw if isinstance(job.raw, dict) else None,
         )
-        await self._server.set_global_difficulty(
-            stratum_job.share_target,
-            stratum_job.theta_micro,
-        )
-        await self._server.publish_job(stratum_job)
+        diff_tuple = (float(stratum_job.share_target), int(stratum_job.theta_micro))
+        if self._last_diff_tuple != diff_tuple:
+            await self._server.set_global_difficulty(
+                stratum_job.share_target,
+                stratum_job.theta_micro,
+            )
+            self._last_diff_tuple = diff_tuple
+
+        clean_jobs = stratum_job.job_id != self._last_published_job_id
+        await self._server.publish_job(stratum_job, clean_jobs=clean_jobs)
+        self._last_published_job_id = stratum_job.job_id
 
     async def wait_closed(self) -> None:
         while True:

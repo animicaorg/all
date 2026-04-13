@@ -327,7 +327,12 @@ class StratumServer:
             outputs_commit=job.outputs_commit,
         )
 
-    async def publish_job(self, job: StratumJob | MiningJob) -> None:
+    async def publish_job(
+        self,
+        job: StratumJob | MiningJob,
+        *,
+        clean_jobs: bool = True,
+    ) -> None:
         """
         Publish a new job (header template) to all connected sessions.
         """
@@ -335,14 +340,23 @@ class StratumServer:
             job = self._from_mining_job(job)
         self._jobs[job.job_id] = job
         self._current_job_id = job.job_id
-        await self._broadcast_job(job, clean_jobs=True)
-        log.info(
-            "[Stratum] notify job=%s θμ=%s shareTarget=%s sessions=%s",
-            job.job_id,
-            job.theta_micro,
-            job.share_target,
-            len(self._sessions),
-        )
+        await self._broadcast_job(job, clean_jobs=clean_jobs)
+        if clean_jobs:
+            log.info(
+                "[Stratum] notify job=%s θμ=%s shareTarget=%s sessions=%s",
+                job.job_id,
+                job.theta_micro,
+                job.share_target,
+                len(self._sessions),
+            )
+        else:
+            log.info(
+                "[Stratum] refreshed current job metadata job=%s θμ=%s shareTarget=%s sessions=%s",
+                job.job_id,
+                job.theta_micro,
+                job.share_target,
+                len(self._sessions),
+            )
 
     async def set_global_difficulty(
         self, share_target: float, theta_micro: Optional[int] = None
@@ -765,7 +779,13 @@ class StratumServer:
                     make_error(id_val, RpcErrorCodes.STALE_JOB, "job expired"),
                 )
                 return
-            ok, reason, is_block, tx_count = await self._validator.validate(job, params)
+            params_with_context = dict(params)
+            params_with_context["_session_id"] = session.session_id
+            params_with_context["_worker"] = session.worker
+            params_with_context["_address"] = session.address
+            ok, reason, is_block, tx_count = await self._validator.validate(
+                job, params_with_context
+            )
             if ok:
                 self._accepted += 1
                 session.shares_accepted += 1
@@ -794,8 +814,9 @@ class StratumServer:
             level = logging.INFO if ok else logging.WARNING
             log.log(
                 level,
-                "[Stratum] submit worker=%s job=%s ok=%s block=%s reason=%s diff=%s",
+                "[Stratum] submit worker=%s session=%s job=%s ok=%s block=%s reason=%s diff=%s",
                 session.worker,
+                session.session_id,
                 job_id,
                 ok,
                 is_block,
@@ -804,7 +825,7 @@ class StratumServer:
             )
             if self._submit_hook is not None:
                 await self._submit_hook(
-                    session, job, params, ok, reason, is_block, tx_count
+                    session, job, params_with_context, ok, reason, is_block, tx_count
                 )
 
         elif method == Method.GET_VERSION:
