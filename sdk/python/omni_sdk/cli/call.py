@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+import click
 import typer
 
 from ..address import from_pubkey
@@ -20,9 +22,9 @@ try:
 except Exception:  # pragma: no cover
     Ctx = object
 
-app = typer.Typer(help="Call contract functions (read/write)")
+app = typer.Typer(help="Call contract functions (read/write)", no_args_is_help=True)
 
-__all__ = ["app"]
+__all__ = ["app", "main", "run"]
 
 ALG_BY_ID = {
     0x1001: "dilithium3",
@@ -114,14 +116,95 @@ def _to_positional_args(abi_obj: Any, fn: str, args_obj: Any) -> List[Any]:
     return out
 
 
-def _rpc_endpoint(ctx_obj: Ctx, override: Optional[str]) -> str:
+def _rpc_endpoint(ctx_obj: Any, override: Optional[str]) -> str:
     if override and override.strip():
         return override.strip()
+    if isinstance(ctx_obj, str) and ctx_obj.strip():
+        return ctx_obj.strip()
+    inherited = getattr(ctx_obj, "rpc", None)
+    if isinstance(inherited, str) and inherited.strip():
+        return inherited.strip()
     for key in ("OMNI_RPC_URL", "OMNI_SDK_RPC_URL", "ANIMICA_RPC_URL"):
         val = os.environ.get(key)
         if val and val.strip():
             return val.strip()
-    return str(getattr(ctx_obj, "rpc", "http://127.0.0.1:8545/rpc"))
+    return "http://127.0.0.1:8545/rpc"
+
+
+def _ctx_value(ctx: typer.Context, name: str) -> Any:
+    obj = getattr(ctx, "obj", None)
+    if obj is None:
+        return None
+    return getattr(obj, name, None)
+
+
+def _resolve_timeout(ctx: typer.Context, timeout: Optional[float]) -> float:
+    if timeout is not None:
+        return float(timeout)
+    inherited = _ctx_value(ctx, "timeout")
+    if inherited is not None:
+        return float(inherited)
+    raw = os.environ.get("OMNI_SDK_HTTP_TIMEOUT")
+    if raw and raw.strip():
+        try:
+            return float(raw)
+        except Exception as exc:  # noqa: BLE001
+            raise typer.BadParameter(f"invalid OMNI_SDK_HTTP_TIMEOUT value {raw!r}") from exc
+    return 3600.0
+
+
+def _auto_detect_chain_id(rpc_url: str, timeout: float) -> Optional[int]:
+    try:
+        client = RpcClient(rpc_url, timeout=timeout)
+        call_fn = getattr(client, "request", None) or getattr(client, "call", None)
+        if not callable(call_fn):
+            return None
+        value = call_fn("chain.getChainId", [])
+        if value is None:
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _resolve_chain_id(
+    ctx: typer.Context,
+    chain_id: Optional[int],
+    *,
+    rpc_url: str,
+    timeout: float,
+) -> int:
+    if chain_id is not None:
+        return int(chain_id)
+    inherited = _ctx_value(ctx, "chain_id")
+    if inherited is not None:
+        return int(inherited)
+    env_chain = os.environ.get("OMNI_CHAIN_ID")
+    if env_chain and env_chain.strip():
+        try:
+            return int(env_chain)
+        except Exception as exc:  # noqa: BLE001
+            raise typer.BadParameter(f"invalid OMNI_CHAIN_ID value {env_chain!r}") from exc
+    detected = _auto_detect_chain_id(rpc_url, timeout)
+    if detected is not None:
+        return int(detected)
+    return 2
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray)):
+        return "0x" + bytes(value).hex()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _emit_json(payload: Dict[str, Any]) -> None:
+    typer.echo(json.dumps(_json_safe(payload), indent=2, ensure_ascii=False))
 
 
 def _simulate_call(
@@ -138,6 +221,9 @@ def _simulate_call(
         ("execution.simulateCall", [payload]),
         ("state.call", [payload]),
         ("vm.simulateCall", [address, "0x" + calldata.hex(), sender, None]),
+        ("state.simulateCall", [payload]),
+        ("call.simulate", [payload]),
+        ("contracts.simulate", [payload]),
     )
 
     errors: List[str] = []
@@ -155,6 +241,36 @@ def _simulate_call(
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{method}: invalid hex return ({exc})")
                 continue
+        if isinstance(out, dict):
+            candidates_values = [
+                out.get("returnData"),
+                out.get("return_data"),
+                out.get("result"),
+                out.get("data"),
+                out.get("output"),
+                out.get("raw"),
+                out.get("bytes"),
+            ]
+            nested = out.get("result")
+            if isinstance(nested, dict):
+                candidates_values.extend(
+                    [
+                        nested.get("returnData"),
+                        nested.get("return_data"),
+                        nested.get("data"),
+                        nested.get("output"),
+                        nested.get("raw"),
+                    ]
+                )
+            for value in candidates_values:
+                if isinstance(value, (bytes, bytearray)):
+                    return bytes(value)
+                if isinstance(value, str) and value.startswith("0x"):
+                    try:
+                        return bytes.fromhex(value[2:])
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"{method}: invalid hex return ({exc})")
+                        continue
         errors.append(f"{method}: unsupported response type {type(out).__name__}")
 
     method_list = ", ".join(method for method, _ in candidates)
@@ -377,6 +493,18 @@ def call_read(
     func: str = typer.Option(..., "--func", "-f"),
     args_json: Optional[str] = typer.Option(None, "--args-json"),
     sender: Optional[str] = typer.Option(None, "--from"),
+    chain_id: Optional[int] = typer.Option(
+        None,
+        "--chain-id",
+        envvar="OMNI_CHAIN_ID",
+        help="Chain ID for output context (auto-detected when omitted).",
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        envvar="OMNI_SDK_HTTP_TIMEOUT",
+        help="HTTP timeout in seconds.",
+    ),
     rpc: Optional[str] = typer.Option(
         None,
         "--rpc",
@@ -387,16 +515,34 @@ def call_read(
     """
     Simulate a read-only contract call and decode return values via ABI.
     """
-    c: Ctx = ctx.obj  # type: ignore[assignment]
-    rpc_endpoint = _rpc_endpoint(c, rpc)
-    rpc_client = RpcClient(rpc_endpoint, timeout=c.timeout)
+    rpc_endpoint = _rpc_endpoint(_ctx_value(ctx, "rpc"), rpc)
+    timeout_value = _resolve_timeout(ctx, timeout)
+    chain_id_value = _resolve_chain_id(
+        ctx, chain_id, rpc_url=rpc_endpoint, timeout=timeout_value
+    )
+    rpc_client = RpcClient(rpc_endpoint, timeout=timeout_value)
     abi_obj = _load_abi(abi)
     args_obj = _parse_args_json(args_json)
     args_list = _to_positional_args(abi_obj, func, args_obj)
     calldata = encode_call(abi_obj, func, args_list)
     raw = _simulate_call(rpc_client, address=address, calldata=calldata, sender=sender)
     decoded = decode_return(abi_obj, func, raw)
-    typer.echo(json.dumps(decoded, indent=2))
+    summary: Dict[str, Any] = {
+        "status": "ok",
+        "rpc_url": rpc_endpoint,
+        "rpcUrl": rpc_endpoint,
+        "chain_id": int(chain_id_value),
+        "chainId": int(chain_id_value),
+        "address": address,
+        "func": func,
+        "args": args_list,
+        "result": "0x" + raw.hex(),
+        "decoded_result": decoded,
+        "decodedResult": decoded,
+    }
+    if sender:
+        summary["sender"] = sender
+    _emit_json(summary)
 
 
 @app.command("write")
@@ -427,6 +573,18 @@ def call_write(
     gas_limit: Optional[int] = typer.Option(None, "--gas-limit"),
     nonce: Optional[int] = typer.Option(None, "--nonce"),
     wait: bool = typer.Option(True, "--wait/--no-wait"),
+    chain_id: Optional[int] = typer.Option(
+        None,
+        "--chain-id",
+        envvar="OMNI_CHAIN_ID",
+        help="Chain ID for transaction signing (auto-detected when omitted).",
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        envvar="OMNI_SDK_HTTP_TIMEOUT",
+        help="HTTP timeout in seconds.",
+    ),
     rpc: Optional[str] = typer.Option(
         None,
         "--rpc",
@@ -437,9 +595,12 @@ def call_write(
     """
     Build, sign, and send a state-changing contract call.
     """
-    c: Ctx = ctx.obj  # type: ignore[assignment]
-    rpc_endpoint = _rpc_endpoint(c, rpc)
-    rpc_client = RpcClient(rpc_endpoint, timeout=c.timeout)
+    rpc_endpoint = _rpc_endpoint(_ctx_value(ctx, "rpc"), rpc)
+    timeout_value = _resolve_timeout(ctx, timeout)
+    chain_id_value = _resolve_chain_id(
+        ctx, chain_id, rpc_url=rpc_endpoint, timeout=timeout_value
+    )
+    rpc_client = RpcClient(rpc_endpoint, timeout=timeout_value)
     abi_obj = _load_abi(abi)
     args_obj = _parse_args_json(args_json)
     args_list = _to_positional_args(abi_obj, func, args_obj)
@@ -463,32 +624,106 @@ def call_write(
         nonce=nonce_value,
         gas_limit=gas_limit,
         max_fee=int(max_fee),
-        chain_id=int(c.chain_id),
+        chain_id=int(chain_id_value),
         value=0,
     )
     signed = tx_signing.sign_transaction_with_rpc_context(
         tx,
         signer,
-        chain_id=int(c.chain_id),
+        chain_id=int(chain_id_value),
         rpc=rpc_client,
     )
     tx_hash = tx_send.submit_raw(rpc_client, signed.raw_tx)
 
-    summary: Dict[str, Any] = {
-        "txHash": tx_hash,
+    receipt: Optional[Dict[str, Any]] = None
+    wait_error: Optional[str] = None
+    if wait:
+        try:
+            maybe_receipt = tx_send.wait_for_receipt(
+                rpc_client, tx_hash, timeout_s=max(timeout_value, 120.0)
+            )
+        except Exception as exc:  # noqa: BLE001
+            maybe_receipt = None
+            wait_error = str(exc)
+        if isinstance(maybe_receipt, dict):
+            receipt = maybe_receipt
+        elif maybe_receipt is not None and wait_error is None:
+            wait_error = (
+                "unexpected receipt payload type "
+                f"{type(maybe_receipt).__name__}; expected object"
+            )
+
+    block_number = None
+    tx_status = None
+    gas_used = None
+    if isinstance(receipt, dict):
+        block_number = receipt.get("blockNumber", receipt.get("block_number"))
+        tx_status = receipt.get("status", receipt.get("tx_status"))
+        gas_used = receipt.get("gasUsed", receipt.get("gas_used"))
+
+    summary = {
+        "status": "ok",
+        "rpc_url": rpc_endpoint,
+        "rpcUrl": rpc_endpoint,
+        "chain_id": int(chain_id_value),
+        "chainId": int(chain_id_value),
+        "address": address,
+        "func": func,
+        "args": args_list,
+        "sender": sender,
         "from": sender,
         "to": address,
-        "func": func,
+        "tx_hash": tx_hash,
+        "txHash": tx_hash,
+        "tx_status": tx_status,
+        "txStatus": tx_status,
+        "block_number": block_number,
+        "blockNumber": block_number,
+        "gas_used": gas_used,
+        "gasUsed": gas_used,
+        "receipt": receipt,
+        "wait": bool(wait),
+        "waited": bool(wait),
     }
-    if wait:
-        receipt = tx_send.wait_for_receipt(
-            rpc_client, tx_hash, timeout_s=max(c.timeout, 120.0)
-        )
-        summary.update(
-            {
-                "status": receipt.get("status"),
-                "gasUsed": receipt.get("gasUsed"),
-                "blockNumber": receipt.get("blockNumber"),
-            }
-        )
-    typer.echo(json.dumps(summary, indent=2))
+    if wait_error:
+        summary["wait_error"] = wait_error
+    _emit_json(summary)
+
+
+def _format_exception(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _rewrite_direct_args(argv: List[str]) -> List[str]:
+    if not argv:
+        return argv
+    first = argv[0]
+    if first == "call":
+        return argv[1:]
+    if first == "help":
+        return ["--help", *argv[1:]]
+    return argv
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    args = _rewrite_direct_args(args)
+    try:
+        app(prog_name="omni-sdk-call", standalone_mode=False, args=args)
+        return 0
+    except typer.Exit as exc:
+        return int(exc.exit_code)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(getattr(exc, "exit_code", 1))
+    except Exception as exc:  # pragma: no cover
+        typer.echo(f"error: {_format_exception(exc)}", err=True)
+        return 1
+
+
+def run(argv: Optional[List[str]] = None) -> int:
+    return main(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
