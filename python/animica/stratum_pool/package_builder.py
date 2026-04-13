@@ -16,6 +16,8 @@ from .portal import (DEFAULT_VERSION, PLACEHOLDER_ADDRESS, BundleInput,
                      build_bundle_readme, build_config_document,
                      build_launcher_script, resolve_public_mining_config)
 
+BUNDLE_FORMAT_VERSION = 2
+
 
 @dataclass(frozen=True)
 class BundleArtifact:
@@ -39,6 +41,7 @@ class MinerBundleBuilder:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._version = version
         self._source_path = Path(__file__).with_name("reference_cpu_miner.py")
+        self._source_hash = hashlib.sha256(self._source_path.read_bytes()).hexdigest()
 
     def build(self, resolved: ResolvedMiningConfig, platform: str, bundle: BundleInput) -> BundleArtifact:
         platform = platform.lower()
@@ -55,14 +58,20 @@ class MinerBundleBuilder:
         personalized = bundle.address != PLACEHOLDER_ADDRESS
 
         key_payload = {
+            "bundle_format_version": BUNDLE_FORMAT_VERSION,
+            "source_hash": self._source_hash,
             "platform": platform,
             "version": self._version,
             "endpoint": resolved.stratum_url,
             "network": resolved.network,
             "profile": resolved.profile,
+            "pool_mode": resolved.pool_mode,
+            "api_base_url": resolved.api_base_url,
             "address": bundle.address,
             "worker": bundle.worker,
             "threads": bundle.threads,
+            "scan_window": bundle.scan_window,
+            "log_level": bundle.log_level,
         }
         digest = hashlib.sha256(json.dumps(key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         stem = f"animica-cpu-miner-{self._version}-{resolved.network}-{platform}"

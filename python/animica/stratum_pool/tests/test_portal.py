@@ -148,6 +148,30 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert len(download_res.content) > 100
 
 
+@pytest.mark.asyncio
+async def test_api_mining_endpoints_alias_primary_site_host_to_pool(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANIMICA_MINING_DOWNLOAD_DIR", str(tmp_path))
+    cfg = PoolConfig(host="0.0.0.0", port=3333, api_host="0.0.0.0", api_port=8550, network="mainnet")
+    app = create_app(DummyMetrics(cfg))
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://animica.org") as client:
+        config_res = await client.get("/api/mining/config")
+        assert config_res.status_code == 200
+        config_payload = config_res.json()
+        assert config_payload["stratum_host"] == "pool.animica.org"
+        assert config_payload["stratum_url"] == "stratum+tcp://pool.animica.org:3333"
+        assert config_payload["host_source"] == "request_host_site_alias"
+
+        download_res = await client.get("/api/mining/downloads/windows")
+        assert download_res.status_code == 200
+        assert len(download_res.content) > 100
+
+
 def test_build_bundle_input_uses_placeholder_defaults() -> None:
     bundle = build_bundle_input()
     assert bundle.address == PLACEHOLDER_ADDRESS

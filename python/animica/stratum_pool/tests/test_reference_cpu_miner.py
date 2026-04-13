@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+import animica.stratum_pool.reference_cpu_miner as miner_mod
 from animica.stratum_pool.reference_cpu_miner import (
     MinerConfig,
     ShareResult,
@@ -295,6 +296,62 @@ async def test_mine_job_accepts_full_header_template_without_signbytes(
                         "thetaMicro": 1_000_000,
                         "workType": 0,
                         "extra": "0x",
+                    },
+                    "shareTarget": 1.0,
+                },
+            ),
+            timeout=0.5,
+        )
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+    assert len(scans) == 1
+
+
+@pytest.mark.asyncio
+async def test_mine_job_falls_back_to_signbytes_when_header_helpers_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            log_level="INFO",
+        )
+    )
+    scans: list[int] = []
+
+    def fake_scan(*_args, **_kwargs):
+        scans.append(1)
+        return ShareResult(nonce=11, h_micro=1_000_000, d_ratio=1.0)
+
+    async def fake_submit(_job_id: str, _share: ShareResult) -> SubmitOutcome:
+        return SubmitOutcome(True, True, None, False)
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(miner_mod, "_hash_candidate_header", None)
+    monkeypatch.setattr(miner_mod, "_header_from_template_view", None)
+    monkeypatch.setattr(miner, "_scan_parallel", fake_scan)
+    monkeypatch.setattr(miner, "_submit_share", fake_submit)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    try:
+        await asyncio.wait_for(
+            miner._mine_job(
+                0,
+                {
+                    "jobId": "job-signbytes-only",
+                    "header": {
+                        "thetaMicro": 1_000_000,
+                        "signBytes": "0x1234",
                     },
                     "shareTarget": 1.0,
                 },

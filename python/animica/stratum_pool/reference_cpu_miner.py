@@ -23,8 +23,16 @@ from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import Path
 from typing import Any, Optional
 
-from core.types.header import Header
-from mining.template_block import hash_candidate_header, header_from_template_view
+try:
+    from mining.template_block import (
+        hash_candidate_header as _hash_candidate_header,
+    )
+    from mining.template_block import (
+        header_from_template_view as _header_from_template_view,
+    )
+except Exception:
+    _hash_candidate_header = None
+    _header_from_template_view = None
 
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
@@ -81,6 +89,10 @@ def _default_api_base_url(host: str, tls: bool) -> str:
 
 def _join_url(base: str, path: str) -> str:
     return f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _has_canonical_header_hashing() -> bool:
+    return _hash_candidate_header is not None and _header_from_template_view is not None
 
 
 def _format_hashrate(hashrate_hps: float) -> str:
@@ -302,7 +314,9 @@ def _normalize_job_payload(
     return job_id, header, sign_hex, theta_micro, share_target
 
 
-def _header_template_from_job(header: dict[str, Any]) -> Optional[Header]:
+def _header_template_from_job(header: dict[str, Any]) -> Optional[Any]:
+    if not _has_canonical_header_hashing():
+        return None
     if not isinstance(header, dict):
         return None
     required = (
@@ -320,7 +334,7 @@ def _header_template_from_job(header: dict[str, Any]) -> Optional[Header]:
     if not all(key in header for key in required):
         return None
     try:
-        return header_from_template_view(header, nonce=0)
+        return _header_from_template_view(header, nonce=0)
     except Exception:
         return None
 
@@ -687,7 +701,13 @@ class StratumCpuMiner:
         prefix = None
         if header_template is None:
             if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-                self.log.warning("Job %s missing usable header template; skipping", job_id)
+                if _has_canonical_header_hashing():
+                    self.log.warning("Job %s missing usable header template; skipping", job_id)
+                else:
+                    self.log.warning(
+                        "Job %s missing signBytes and standalone canonical-header helpers are unavailable; skipping",
+                        job_id,
+                    )
                 return
             prefix = bytes.fromhex(sign_hex[2:])
 
@@ -777,7 +797,7 @@ class StratumCpuMiner:
 
     def _scan_header_parallel(
         self,
-        header_template: Header,
+        header_template: Any,
         target_micro: int,
         theta_micro: int,
         nonce_start: int,
@@ -846,15 +866,17 @@ class StratumCpuMiner:
 
     @staticmethod
     def _scan_header_range(
-        header_template: Header,
+        header_template: Any,
         target: int,
         theta_micro: int,
         start_nonce: int,
         iterations: int,
     ) -> Optional[ShareResult]:
+        if _hash_candidate_header is None:
+            return None
         nonce = start_nonce
         for attempt in range(1, iterations + 1):
-            candidate_hash = hash_candidate_header(header_template, nonce=nonce)
+            candidate_hash = _hash_candidate_header(header_template, nonce=nonce)
             if candidate_hash.digest_int <= target:
                 h_micro = h_micro_from_digest(candidate_hash.digest)
                 d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
