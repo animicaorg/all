@@ -119,6 +119,20 @@ class _VerifyingRpc:
         raise AssertionError(f"unexpected RPC method: {method}")
 
 
+class _VerifyingRpcNoAddress(_VerifyingRpc):
+    def request(self, method: str, params: list[Any] | None = None) -> Any:
+        params = params or []
+        if method == "tx.getTransactionReceipt":
+            tx_hash = params[0]
+            return {
+                "txHash": tx_hash,
+                "status": "SUCCESS",
+                "blockNumber": 321,
+                "logs": [],
+            }
+        return super().request(method, params)
+
+
 @pytest.fixture(autouse=True)
 def _enable_test_pq_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
@@ -235,3 +249,38 @@ def test_submission_preimage_matches_after_envelope_normalization(tx_kind: str) 
         ),
     )
     assert verify.ok, verify
+
+
+def test_deploy_package_derives_contract_address_when_receipt_omits_it() -> None:
+    signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
+    rpc = _VerifyingRpcNoAddress()
+    manifest, code = _counter_manifest_and_code()
+
+    address, receipt = deploy_package(
+        rpc=rpc,
+        signer=signer,
+        manifest=manifest,
+        code=code,
+        chain_id=CHAIN_ID,
+        nonce=3,
+        max_fee=1,
+        await_receipt=True,
+    )
+
+    assert isinstance(address, str)
+    assert address.startswith("0x")
+    assert receipt.get("contractAddress") == address
+    assert receipt.get("deploymentType") == "python_vm_package"
+
+    sender = signer.address or "anim1sender"
+    call_tx = tx_build.call(
+        from_addr=sender,
+        to_addr=address,
+        data=b"",
+        nonce=0,
+        gas_limit=21_000,
+        max_fee=1,
+        chain_id=CHAIN_ID,
+        value=0,
+    )
+    assert call_tx.to == address

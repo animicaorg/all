@@ -51,6 +51,7 @@ PFX_HDR = b"\x10"
 PFX_BLK = b"\x11"
 PFX_HIX = b"\x12"
 PFX_RXI = b"\x22"  # Receipt index: tx_hash → (height, index, receipt)
+PFX_DMI = b"\x23"  # Deploy metadata index: tx_hash → deploy metadata map
 PFX_META = b"\x1f"
 
 META_HEAD_HASH = PFX_META + b"head_hash"
@@ -88,6 +89,10 @@ def k_hix(height: int) -> bytes:
 
 def k_rxi(tx_hash: bytes) -> bytes:
     return PFX_RXI + tx_hash
+
+
+def k_dmi(tx_hash: bytes) -> bytes:
+    return PFX_DMI + tx_hash
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +562,36 @@ class BlockDB:
         
         tx = block.txs[idx]
         return (height, idx, block_hash, tx)
+
+    # --- Deploy metadata lookup by tx_hash ---
+
+    def put_deploy_metadata_by_tx_hash(
+        self,
+        tx_hash: bytes,
+        metadata: dict,
+        *,
+        batch: Optional[Batch] = None,
+    ) -> None:
+        """
+        Persist deployment metadata for a transaction hash.
+        """
+        payload = cbor_dumps(metadata)
+        if batch is None:
+            self.kv.put(k_dmi(tx_hash), payload)
+        else:
+            batch.put(k_dmi(tx_hash), payload)
+
+    def get_deploy_metadata_by_tx_hash(self, tx_hash: bytes) -> Optional[dict]:
+        """
+        Fetch deployment metadata by transaction hash.
+        """
+        payload = self.kv.get(k_dmi(tx_hash))
+        if payload is None:
+            return None
+        decoded = cbor_loads(payload)
+        if isinstance(decoded, dict):
+            return decoded
+        return None
 
     # --- Iteration over canonical chain ---
 

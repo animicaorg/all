@@ -8,6 +8,15 @@ from rpc import deps
 from rpc import errors as rpc_errors
 from rpc.methods import method
 
+try:
+    from core.utils.deploy_metadata import (
+        canonical_contract_address as _canonical_contract_address,
+        copy_deploy_metadata_fields as _copy_deploy_metadata_fields,
+    )
+except Exception:  # pragma: no cover
+    _canonical_contract_address = None  # type: ignore[assignment]
+    _copy_deploy_metadata_fields = None  # type: ignore[assignment]
+
 HexStr = str
 log = logging.getLogger(__name__)
 
@@ -208,6 +217,32 @@ def _tx_hash_from_obj(tx_obj: t.Any) -> bytes | None:
     return None
 
 
+def _lookup_deploy_metadata(tx_hash_b: bytes) -> dict | None:
+    bdb = getattr(deps, "block_db", None)
+    if bdb is None:
+        return None
+    getter = getattr(bdb, "get_deploy_metadata_by_tx_hash", None)
+    if not callable(getter):
+        return None
+    try:
+        out = getter(tx_hash_b)
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def _bytes_from_hex_string(value: t.Any) -> bytes | None:
+    if not isinstance(value, str):
+        return None
+    raw = value[2:] if value.startswith("0x") else value
+    if not raw:
+        return None
+    try:
+        return bytes.fromhex(raw)
+    except Exception:
+        return None
+
+
 def _scan_receipt_loc_by_blocks(tx_hash_b: bytes, *, max_depth: int) -> _ReceiptLoc | None:
     bdb = getattr(deps, "block_db", None)
     if bdb is None:
@@ -402,6 +437,7 @@ def _normalize_receipt(
     loc: _ReceiptLoc,
     blk: t.Any,
     rec: t.Any,
+    deploy_meta: dict | None = None,
 ) -> dict:
     """
     Map various receipt object shapes into the RPC ReceiptView.
@@ -428,6 +464,11 @@ def _normalize_receipt(
     logs = _pick(rec, "logs", "event_logs", default=[])
     bloom = _pick(rec, "logsBloom", "bloom", default=None)
     contract_addr = _pick(rec, "contractAddress", "contract_addr", default=None)
+    if contract_addr is None and callable(_canonical_contract_address):
+        try:
+            contract_addr = _canonical_contract_address(deploy_meta)
+        except Exception:
+            contract_addr = None
 
     # Normalize basic types
     if isinstance(gas_used, (bytes, bytearray, memoryview)):
@@ -442,6 +483,10 @@ def _normalize_receipt(
             gas_used = None
     if isinstance(status, str) and status.isdigit():
         status = int(status)
+    if status is None and isinstance(deploy_meta, dict):
+        status = deploy_meta.get("status")
+        if isinstance(status, str) and status.isdigit():
+            status = int(status)
 
     # Build dictionary
     out: dict = {
@@ -457,6 +502,12 @@ def _normalize_receipt(
     }
     if contract_addr:
         out["contractAddress"] = str(contract_addr)
+        out["createdAddress"] = str(contract_addr)
+    if callable(_copy_deploy_metadata_fields):
+        try:
+            _copy_deploy_metadata_fields(out, deploy_meta, include_created_alias=True)
+        except Exception:
+            pass
     if bloom is not None:
         if isinstance(bloom, (bytes, bytearray, memoryview)):
             out["logsBloom"] = _ensure_hex_prefixed(bloom)
@@ -480,6 +531,7 @@ def _normalize_receipt(
 def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     # Validate & parse hash
     tx_hash_hex, tx_hash_b = _parse_tx_hash(txHash)
+    deploy_meta = _lookup_deploy_metadata(tx_hash_b)
     lookup_trace: dict[str, t.Any] = {
         "tx_hash": tx_hash_hex,
         "checked": {
@@ -515,11 +567,11 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
                         # Canonical inclusion known, receipt payload unavailable -> synthesize minimal view.
                         lookup_trace["result"] = "found_by_tx_scan"
                         log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-                        return _normalize_receipt(tx_hash_hex, loc, None, {})
+                        return _normalize_receipt(tx_hash_hex, loc, None, {}, deploy_meta)
                     blk, rec = pair
                     lookup_trace["result"] = "found_by_tx_scan"
                     log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-                    return _normalize_receipt(tx_hash_hex, loc, blk, rec)
+                    return _normalize_receipt(tx_hash_hex, loc, blk, rec, deploy_meta)
         except Exception:
             pass
 
@@ -536,7 +588,7 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
                     blk = bdb.get_block_by_hash(block_hash)
                     lookup_trace["result"] = "found_by_tx_hash"
                     log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-                    return _normalize_receipt(tx_hash_hex, loc, blk, receipt)
+                    return _normalize_receipt(tx_hash_hex, loc, blk, receipt, deploy_meta)
             except Exception:
                 pass
 
@@ -553,9 +605,30 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
                 # We don't know height/index; build a minimal result
                 lookup_trace["result"] = "found_by_hash"
                 log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-                return _normalize_receipt(tx_hash_hex, _ReceiptLoc(), None, rec)
+                return _normalize_receipt(tx_hash_hex, _ReceiptLoc(), None, rec, deploy_meta)
             except Exception:
                 pass
+        if isinstance(deploy_meta, dict):
+            loc_from_meta = _ReceiptLoc()
+            meta_height = deploy_meta.get("blockNumber")
+            meta_index = deploy_meta.get("transactionIndex")
+            meta_block_hash = _bytes_from_hex_string(deploy_meta.get("blockHash"))
+            if meta_height is not None:
+                try:
+                    loc_from_meta["height"] = int(meta_height)
+                except Exception:
+                    pass
+            if meta_index is not None:
+                try:
+                    loc_from_meta["index"] = int(meta_index)
+                except Exception:
+                    pass
+            if meta_block_hash is not None:
+                loc_from_meta["block_hash"] = meta_block_hash
+            if loc_from_meta:
+                lookup_trace["result"] = "found_by_deploy_meta"
+                log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
+                return _normalize_receipt(tx_hash_hex, loc_from_meta, None, {}, deploy_meta)
         lookup_trace["result"] = "pending" if is_pending else "not_found"
         log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
         return None
@@ -569,4 +642,4 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     blk, rec = pair
     lookup_trace["result"] = "found"
     log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
-    return _normalize_receipt(tx_hash_hex, loc, blk, rec)
+    return _normalize_receipt(tx_hash_hex, loc, blk, rec, deploy_meta)

@@ -121,6 +121,10 @@ export function extractContractAddress(receipt: unknown, rawTx: unknown): Addres
 
 function inferExplicitKind(rawTx: any): string | null {
   const kind = extractByPath(rawTx, 'kind') ?? extractByPath(rawTx, 'tx_kind') ?? extractByPath(rawTx, 'type') ?? extractByPath(rawTx, 'txType')
+  const deploymentType =
+    extractByPath(rawTx, 'deploymentType') ??
+    extractByPath(rawTx, 'deployment_type') ??
+    extractByPath(rawTx, 'receipt.deploymentType')
   const methodLike =
     extractByPath(rawTx, 'method') ??
     extractByPath(rawTx, 'action') ??
@@ -137,6 +141,12 @@ function inferExplicitKind(rawTx: any): string | null {
     if (compact.includes('deploy') || compact.includes('contractcreate') || compact === 'create') return 'deploy'
     if (compact.includes('call') || compact.includes('invoke') || compact.includes('interaction')) return 'call'
     if (compact.includes('transfer') || compact.includes('payment')) return 'transfer'
+  }
+  if (typeof deploymentType === 'string') {
+    const compact = deploymentType.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (compact.includes('pythonvm') || compact.includes('package') || compact.includes('deploy')) {
+      return 'deploy'
+    }
   }
   if (typeof methodLike === 'string') {
     const compact = methodLike.toLowerCase().replace(/[^a-z0-9]/g, '')

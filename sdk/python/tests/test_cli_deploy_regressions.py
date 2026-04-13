@@ -146,6 +146,60 @@ def _assert_success_payload(
     assert payload["irPath"] == payload["ir_path"]
 
 
+def test_deploy_confirmed_without_contract_address_fails_loudly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
+    monkeypatch.setenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+
+    manifest_path = _write_manifest(tmp_path / "manifest.json")
+    ir_path = _write_ir(tmp_path / "counter.ir")
+
+    class _RpcStub:
+        def __init__(self, _url: str, timeout: float | None = None):
+            self.timeout = timeout
+
+        def request(self, method: str, params: Any = None) -> Any:
+            if method == "state.getNonce":
+                return 7
+            raise AssertionError(f"unexpected RPC method: {method}")
+
+    def _fake_deploy_package(**_kwargs: Any) -> Any:
+        return None, {
+            "txHash": "0x" + "cd" * 32,
+            "status": "SUCCESS",
+            "blockNumber": 99,
+            "logs": [],
+        }
+
+    monkeypatch.setattr(deploy_cli, "RpcClient", _RpcStub)
+    monkeypatch.setattr(deploy_cli, "deploy_package", _fake_deploy_package)
+
+    rc = deploy_cli.main(
+        [
+            "--rpc",
+            "http://127.0.0.1:8545",
+            "--chain-id",
+            "1",
+            "--alg",
+            "sphincs_shake_128s",
+            "--manifest",
+            str(manifest_path),
+            "--ir",
+            str(ir_path),
+            "--seed-hex",
+            "2a" * 32,
+        ]
+    )
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert rc != 0
+    assert "deploy confirmed but no contract address was returned or derivable" in combined
+
+
 def test_deploy_module_entrypoint_help_not_silent() -> None:
     root = _repo_root()
     env = os.environ.copy()
