@@ -28,6 +28,7 @@ const PFX_BLK = Buffer.from([0x11])
 const PFX_HIX = Buffer.from([0x12])
 const PFX_RXI = Buffer.from([0x22])
 const PFX_META = Buffer.from([0x1f])
+const PFX_CODE = Buffer.from([0x02])
 
 const META_HEAD_HASH = Buffer.concat([PFX_META, Buffer.from('head_hash')])
 const META_HEAD_HEIGHT = Buffer.concat([PFX_META, Buffer.from('head_height')])
@@ -172,7 +173,7 @@ function formatTxView(
 }
 
 function formatReceipt(receipt: Record<string, any>, txHash: string, blockHash: string, height: number): Record<string, any> {
-  const status = receipt.status === 1 ? 'REVERT' : receipt.status === 2 ? 'OOG' : 'SUCCESS'
+  const status = receipt.status === 1 ? 'SUCCESS' : receipt.status === 2 ? 'REVERT' : receipt.status === 3 ? 'OOG' : 'SUCCESS'
   return {
     txHash,
     blockHash,
@@ -313,12 +314,53 @@ export class LocalChainClient {
       throw new Error('Receipt not found')
     }
 
-    const block = await this.getBlockByHash(blockHash, true)
+    const block = await this.getBlockByHash(blockHash, true, true)
     const receipts = block.receipts as Record<string, any>[] | undefined
     if (!receipts || !receipts[index]) {
       throw new Error('Receipt not found')
     }
     return formatReceipt(receipts[index], hashHex, blockHash, height)
+  }
+
+  async getAccount(address: string): Promise<Record<string, any>> {
+    const addrBytes = decodeAddress(address)
+    const key = Buffer.concat([PFX_ACC, Buffer.from([addrBytes.length]), addrBytes])
+    const raw = this.getKv(key)
+    if (!raw) {
+      return {
+        address,
+        balance: '0x0',
+        nonce: 0,
+        codeHash: '0x' + '00'.repeat(32)
+      }
+    }
+    const account = decodeCbor(raw) as Record<string, any>
+    const balance = typeof account.balance === 'bigint' ? account.balance : BigInt(account.balance ?? 0)
+    const nonce = Number(account.nonce ?? account.seq ?? 0)
+    const codeHashRaw = account.code_hash ?? account.codeHash ?? null
+    const codeHash =
+      typeof codeHashRaw === 'string'
+        ? codeHashRaw
+        : codeHashRaw instanceof Uint8Array
+          ? toHex(codeHashRaw)
+          : Buffer.isBuffer(codeHashRaw)
+            ? toHex(codeHashRaw)
+            : '0x' + '00'.repeat(32)
+
+    return {
+      address,
+      balance: `0x${balance.toString(16)}`,
+      nonce,
+      codeHash
+    }
+  }
+
+  async getCode(address: string): Promise<string | null> {
+    const addrBytes = decodeAddress(address)
+    const key = Buffer.concat([PFX_CODE, Buffer.from([addrBytes.length]), addrBytes])
+    const raw = this.getKv(key)
+    if (!raw || raw.length === 0) return null
+    return toHex(raw)
   }
 
   async getBalance(address: string, _tag: BalanceTag = 'latest'): Promise<string> {
@@ -358,6 +400,14 @@ export class HybridChainClient {
 
   async getBalance(address: string, tag: BalanceTag = 'latest'): Promise<string> {
     return this.local.getBalance(address, tag)
+  }
+
+  async getAccount(address: string): Promise<unknown> {
+    return this.local.getAccount(address)
+  }
+
+  async getCode(address: string): Promise<string | null> {
+    return this.local.getCode(address)
   }
 
   async getMempoolPending(): Promise<string[]> {

@@ -1,14 +1,22 @@
 import type {
+  AccountType,
   AddressSummary,
   BlockDetail,
   BlockSummary,
+  ContractDetailResponse,
   ContractDeployment,
   ContractDeploymentFeed,
   ContractDeploymentKind,
+  ContractProfile,
+  ContractVerificationJob,
+  ContractVerificationRecord,
+  ContractVerificationSubmitRequest,
   HeadView,
   MempoolView,
+  TxClassification,
   TxDetail
 } from '@animica/explorer2-shared'
+import { createHash } from 'node:crypto'
 import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
 import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
@@ -16,6 +24,9 @@ import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
 import { normalizeTxHash } from './txHash.js'
 import pino from 'pino'
 import { TxLifecycleStore } from './txLifecycle.js'
+import { ExplorerStore } from './explorerStore.js'
+import { ContractVerifier } from './contractVerifier.js'
+import { classifyTransaction, extractDeployCode, extractManifest, extractTxInputData } from './txClassifier.js'
 
 const log = pino({ name: 'explorer-service' })
 export interface ChainClient {
@@ -28,6 +39,8 @@ export interface ChainClient {
   getMempoolStats: () => Promise<{ count: number; totalBytes: number; oldestAgeSec: number | null }>
   getPeers: () => Promise<unknown[]>
   getBalance: (address: string, tag?: 'latest' | 'pending') => Promise<string>
+  getAccount?: (address: string) => Promise<unknown>
+  getCode?: (address: string) => Promise<string | null>
   getRichList?: (limit: number, offset: number) => Promise<unknown>
   getTotalSupply?: () => Promise<unknown>
 }
@@ -37,14 +50,27 @@ const ADDRESS_SCAN_WINDOW = 50
 const CONTRACT_DEPLOYMENT_SCAN_DEFAULT = 240
 const CONTRACT_DEPLOYMENT_SCAN_MAX = 1000
 const CONTRACT_DEPLOYMENT_LIMIT_MAX = 200
+const CONTRACT_CREATION_DISCOVERY_SCAN_MAX = 600
+
+export interface ExplorerServiceOptions {
+  store?: ExplorerStore
+  verifier?: ContractVerifier
+  [key: string]: unknown
+}
 
 export class ExplorerService {
   private coalescer = new RequestCoalescer()
   private txLifecycle = new TxLifecycleStore()
+  private store: ExplorerStore | null = null
+  private verifier: ContractVerifier | null = null
 
   constructor(
-    private rpc: ChainClient
-  ) {}
+    private rpc: ChainClient,
+    options: ExplorerServiceOptions = {}
+  ) {
+    this.store = options.store ?? null
+    this.verifier = options.verifier ?? null
+  }
 
   async getHead(): Promise<{ head: HeadView; stats: any }> {
     return this.coalescer.run('head', async () => {
@@ -137,7 +163,7 @@ export class ExplorerService {
         const enrichedRecord = await this.enrichConfirmedRecordIfMissing(storeRecord)
         const confirmations = enrichedRecord.included_height ? Math.max(0, head.height - enrichedRecord.included_height + 1) : 0
         log.debug({ normalizedHash, store: 'lifecycle-store-confirmed', result: 'hit' }, 'tx lookup result')
-        return {
+        return this.attachClassification({
           hash: enrichedRecord.tx_hash,
           tx_hash: enrichedRecord.tx_hash,
           status: enrichedRecord.status,
@@ -155,7 +181,7 @@ export class ExplorerService {
           fee: enrichedRecord.fee,
           raw: enrichedRecord.rawTx ?? { hash: enrichedRecord.tx_hash },
           receipt: enrichedRecord.rawReceipt
-        }
+        })
       }
 
       const tx = await this.safeRpc(() => this.rpc.getTransactionByHash(normalizedHash)).catch(() => null)
@@ -191,7 +217,7 @@ export class ExplorerService {
         }
 
         log.debug({ normalizedHash, store: includedHeight ? 'confirmed-rpc' : 'pending-rpc', result: 'hit' }, 'tx lookup result')
-        return {
+        return this.attachClassification({
           ...detail,
           tx_hash: normalizedHash,
           included_height: includedHeight,
@@ -200,7 +226,7 @@ export class ExplorerService {
           timestamp: includedHeight ? head.time : null,
           explorer_head_height: head.height,
           fee: detail.feePaid
-        }
+        })
       }
 
       const pending = await this.safeRpc(() => this.rpc.getMempoolPending()).catch(() => [])
@@ -216,7 +242,7 @@ export class ExplorerService {
         const pendingRecord = this.txLifecycle.get(normalizedHash)
         const detail = normalizeTxDetail(pendingRecord?.rawTx ?? { hash: normalizedHash, status: 'pending' }, null)
         log.debug({ normalizedHash, store: 'mempool', result: 'hit' }, 'tx lookup result')
-        return {
+        return this.attachClassification({
           ...detail,
           tx_hash: normalizedHash,
           from: pendingRecord?.from ?? detail.from,
@@ -229,12 +255,12 @@ export class ExplorerService {
           confirmations: 0,
           timestamp: null,
           explorer_head_height: head.height
-        }
+        })
       }
 
       if (storeRecord?.status === 'pending') {
         log.debug({ normalizedHash, store: 'lifecycle-store-pending', result: 'hit' }, 'tx lookup result')
-        return {
+        return this.attachClassification({
           hash: storeRecord.tx_hash,
           tx_hash: storeRecord.tx_hash,
           status: 'pending',
@@ -250,7 +276,7 @@ export class ExplorerService {
           fee: storeRecord.fee,
           raw: storeRecord.rawTx ?? { hash: storeRecord.tx_hash },
           receipt: storeRecord.rawReceipt
-        }
+        })
       }
 
       const recentBlockMatch = await this.findTxInRecentBlocks(head.height, normalizedHash)
@@ -270,7 +296,7 @@ export class ExplorerService {
           rawReceipt: recentBlockMatch.tx.receipt
         })
         log.debug({ normalizedHash, store: 'recent-block-scan', result: 'hit' }, 'tx lookup result')
-        return {
+        return this.attachClassification({
           ...recentBlockMatch.tx,
           tx_hash: normalizedHash,
           included_height: recentBlockMatch.includedHeight,
@@ -278,7 +304,7 @@ export class ExplorerService {
           confirmations,
           timestamp: recentBlockMatch.timestamp,
           explorer_head_height: head.height
-        }
+        })
       }
 
       log.debug({ normalizedHash, store: 'confirmed+mempool+lifecycle-store', result: 'miss' }, 'tx lookup result')
@@ -301,26 +327,39 @@ export class ExplorerService {
 
     const txs: any[] = []
     for (const height of heights) {
-      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, false)).catch(() => null)
+      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
       if (!block) continue
       
       const blockTxs = Array.isArray((block as any)?.txs) ? (block as any).txs : []
-      for (const tx of blockTxs) {
+      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+      for (let i = 0; i < blockTxs.length; i += 1) {
+        const tx = blockTxs[i]
         const summary = normalizeTxSummary(tx)
-        if (summary.from === address || summary.to === address) {
-          summary.status = 'confirmed'
-          txs.push(summary)
-        }
+        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const detail = normalizeTxDetail(tx, receipt)
+        const classification = await this.classifyAndPersistTx(detail, tx, receipt)
+        const touchesAddress =
+          summary.from === address ||
+          summary.to === address ||
+          classification.createdContractAddress === address
+        if (!touchesAddress) continue
+        summary.status = detail.status
+        summary.classification = classification
+        txs.push(summary)
       }
       if (txs.length >= limit) break
     }
 
     const nextHeight = heights.length ? heights[heights.length - 1] : startHeight
+    const profile = await this.resolveContractProfile(address)
+    const accountType = profile?.accountType ?? (await this.resolveAccountType(address))
     return {
       address,
+      accountType,
       confirmedBalance,
       pendingBalance,
       txs: txs.slice(0, limit),
+      contract: accountType === 'contract' ? profile ?? null : null,
       nextCursor: nextCursorForHeight(nextHeight),
       scannedBlocks: heights.length,
       partial: true
@@ -380,7 +419,9 @@ export class ExplorerService {
             status: tx?.status ?? 'SUCCESS'
           }
         const txDetail = normalizeTxDetail(tx, receiptForStatus)
-        const deployment = buildContractDeployment(txDetail, tx, receipt, blockDetail)
+        const classification = await this.classifyAndPersistTx(txDetail, tx, receiptForStatus)
+        if (classification.type !== 'contract_deployment') continue
+        const deployment = buildContractDeployment(txDetail, tx, receipt, blockDetail, classification)
         if (!deployment) continue
         items.push(deployment)
         if (items.length >= limit) break
@@ -413,6 +454,69 @@ export class ExplorerService {
       spotlight: items.find((item) => item.status === 'confirmed') ?? items[0] ?? null,
       items
     }
+  }
+
+  async getContractDetail(address: string, limitInput: number, cursor?: string): Promise<ContractDetailResponse> {
+    const summary = await this.getAddressDetail(address, limitInput, cursor)
+    const profile = await this.resolveContractProfile(address)
+    if (!profile || profile.accountType !== 'contract') {
+      throw new HttpError(404, 'Contract not found')
+    }
+    return {
+      address,
+      profile,
+      txs: summary.txs
+    }
+  }
+
+  async getContractByCreationTx(txHash: string): Promise<ContractProfile | null> {
+    const normalized = normalizeTxHash(txHash)
+    const row = this.store ? this.store.findContractProfileByCreatorTx(normalized) : null
+    if (row) return row
+
+    const detail = await this.getTxDetail(normalized).catch(() => null)
+    if (!detail) return null
+    const classification = detail.classification ?? (await this.classifyAndPersistTx(detail, detail.raw, detail.receipt))
+    if (!classification.createdContractAddress) return null
+    return this.resolveContractProfile(classification.createdContractAddress)
+  }
+
+  async getContractCode(address: string): Promise<{ address: string; code: string | null; codeHash: string | null }> {
+    const code = this.rpc.getCode ? await this.safeRpc(() => this.rpc.getCode!(address)).catch(() => null) : null
+    const normalizedCode = typeof code === 'string' ? code : null
+    const codeHash = normalizedCode ? hashHex(normalizedCode) : null
+    if (this.store) {
+      this.store.upsertContractProfile({
+        address,
+        accountType: normalizedCode ? 'contract' : 'unknown',
+        runtimeCodeHash: codeHash,
+        codeSizeBytes: normalizedCode ? Math.max(0, (normalizedCode.length - 2) / 2) : null
+      })
+    }
+    return { address, code: normalizedCode, codeHash }
+  }
+
+  async submitContractVerification(request: ContractVerificationSubmitRequest): Promise<ContractVerificationJob> {
+    if (!this.verifier) {
+      throw new HttpError(503, 'Contract verifier unavailable')
+    }
+    if (!request.address || typeof request.address !== 'string') {
+      throw new HttpError(400, 'address is required')
+    }
+    if (!request.language || typeof request.language !== 'string') {
+      throw new HttpError(400, 'language is required')
+    }
+    return this.verifier.submit(request)
+  }
+
+  getContractVerificationJob(jobId: string): ContractVerificationJob | null {
+    if (!this.verifier) return null
+    return this.verifier.getJob(jobId)
+  }
+
+  getContractVerification(address: string): ContractVerificationRecord | undefined {
+    if (!this.store) return undefined
+    return this.store.getLatestVerificationForAddress(address)
   }
 
   async search(query: string): Promise<{ type: 'block' | 'tx' | 'address'; result: unknown } | { type: 'none' }> {
@@ -645,6 +749,240 @@ export class ExplorerService {
     })
   }
 
+  private async attachClassification<
+    T extends TxDetail & {
+      tx_hash?: string
+      included_height?: number | null
+      included_block_hash?: string | null
+      confirmations?: number
+      timestamp?: number | null
+      explorer_head_height?: number
+    }
+  >(tx: T): Promise<T> {
+    const classification = await this.classifyAndPersistTx(tx, tx.raw, tx.receipt ?? null, {
+      timestamp: tx.timestamp ?? null
+    })
+    return { ...tx, classification }
+  }
+
+  private async classifyAndPersistTx(
+    txDetail: TxDetail,
+    rawTx: unknown,
+    receipt: unknown,
+    options: { timestamp?: number | null } = {}
+  ): Promise<TxClassification> {
+    const txHash = normalizeTxHash(String(txDetail.tx_hash ?? txDetail.hash))
+    const cached = this.store?.getTxClassification(txHash)
+    const toAddress = txDetail.to ?? findToAddress(rawTx)
+    const targetAccountType = toAddress ? await this.resolveAccountType(toAddress) : 'unknown'
+    const targetIsContract = targetAccountType === 'contract'
+    const targetProfile = targetIsContract && toAddress ? await this.resolveContractProfile(toAddress) : null
+    const targetAbi = targetProfile?.verification?.abi ?? targetProfile?.abi ?? null
+
+    const classification = classifyTransaction({
+      txDetail,
+      rawTx,
+      receipt,
+      knownTargetIsContract: targetIsContract,
+      abi: targetAbi
+    })
+
+    const needRefreshCachedDecoded =
+      cached &&
+      targetAbi &&
+      classification.type === 'contract_interaction' &&
+      (!cached.decodedCall || !cached.decodedEvents || cached.decodedEvents.length === 0)
+    if (cached && !needRefreshCachedDecoded && classification.type === cached.type && classification.failed === cached.failed) {
+      return cached
+    }
+
+    if (this.store) {
+      this.store.upsertTxClassification({
+        txHash,
+        fromAddress: txDetail.from,
+        toAddress: toAddress ?? undefined,
+        classification
+      })
+    }
+
+    if (classification.createdContractAddress) {
+      await this.persistContractCreationFromClassification({
+        classification,
+        txDetail,
+        rawTx,
+        receipt,
+        timestamp: options.timestamp ?? txDetail.timestamp ?? null
+      })
+    }
+
+    return classification
+  }
+
+  private async persistContractCreationFromClassification(params: {
+    classification: TxClassification
+    txDetail: TxDetail
+    rawTx: unknown
+    receipt: unknown
+    timestamp: number | null
+  }): Promise<void> {
+    const { classification, txDetail, rawTx, timestamp } = params
+    const createdAddress = classification.createdContractAddress
+    if (!this.store || !createdAddress) return
+
+    const code = this.rpc.getCode ? await this.safeRpc(() => this.rpc.getCode!(createdAddress)).catch(() => null) : null
+    const normalizedCode = normalizeBytecode(code)
+    const runtimeCodeHash = normalizedCode ? hashHex(normalizedCode) : null
+    const deployCode = extractDeployCode(rawTx) ?? extractTxInputData(rawTx, txDetail)
+    const codeHash = deployCode ? hashHex(deployCode) : null
+    const manifest = extractManifest(rawTx)
+
+    this.store.upsertContractProfile({
+      address: createdAddress,
+      accountType: 'contract',
+      creatorAddress: txDetail.from ?? null,
+      creatorTxHash: normalizeTxHash(String(txDetail.tx_hash ?? txDetail.hash)),
+      creationBlockHeight: txDetail.blockHeight ?? txDetail.included_height ?? null,
+      creationBlockHash: txDetail.blockHash ? String(txDetail.blockHash) : txDetail.included_block_hash ?? null,
+      creationTimestamp: timestamp ?? null,
+      codeHash,
+      runtimeCodeHash,
+      codeSizeBytes: normalizedCode ? Math.max(0, (normalizedCode.length - 2) / 2) : null,
+      metadataJson: manifest ?? null
+    })
+  }
+
+  private async resolveAccountType(address: string): Promise<AccountType> {
+    if (!address) return 'unknown'
+    const cached = this.store?.getContractProfile(address)
+    if (cached?.accountType === 'contract' || cached?.accountType === 'eoa') {
+      return cached.accountType
+    }
+
+    const codeRaw = this.rpc.getCode ? await this.safeRpc(() => this.rpc.getCode!(address)).catch(() => null) : null
+    const code = normalizeBytecode(codeRaw)
+    if (code) {
+      this.store?.upsertContractProfile({
+        address,
+        accountType: 'contract',
+        runtimeCodeHash: hashHex(code),
+        codeSizeBytes: Math.max(0, (code.length - 2) / 2)
+      })
+      return 'contract'
+    }
+
+    const accountRaw = this.rpc.getAccount ? await this.safeRpc(() => this.rpc.getAccount!(address)).catch(() => null) : null
+    const hasAccount = hasAccountSignals(accountRaw)
+    const accountType: AccountType = hasAccount ? 'eoa' : 'unknown'
+
+    this.store?.upsertContractProfile({
+      address,
+      accountType
+    })
+    return accountType
+  }
+
+  private async resolveContractProfile(address: string): Promise<ContractProfile | null> {
+    const accountType = await this.resolveAccountType(address)
+    if (!this.store) {
+      if (accountType !== 'contract') return null
+      const code = this.rpc.getCode ? await this.safeRpc(() => this.rpc.getCode!(address)).catch(() => null) : null
+      const normalizedCode = normalizeBytecode(code)
+      return {
+        address,
+        accountType: 'contract',
+        runtimeCodeHash: normalizedCode ? hashHex(normalizedCode) : null,
+        codeSizeBytes: normalizedCode ? Math.max(0, (normalizedCode.length - 2) / 2) : null,
+        isVerified: false
+      }
+    }
+
+    let profile = this.store.getContractProfile(address)
+    if (accountType !== 'contract') {
+      return profile ?? { address, accountType, isVerified: false }
+    }
+
+    if (!profile?.creatorTxHash) {
+      const creation = await this.discoverCreationTxForContract(address)
+      if (creation) {
+        this.store.upsertContractProfile({
+          address,
+          accountType: 'contract',
+          creatorAddress: creation.creatorAddress,
+          creatorTxHash: creation.creatorTxHash,
+          creationBlockHeight: creation.creationBlockHeight,
+          creationBlockHash: creation.creationBlockHash,
+          creationTimestamp: creation.creationTimestamp,
+          codeHash: creation.codeHash
+        })
+      }
+    }
+
+    if (!profile?.runtimeCodeHash || !profile?.codeSizeBytes) {
+      const code = this.rpc.getCode ? await this.safeRpc(() => this.rpc.getCode!(address)).catch(() => null) : null
+      const normalizedCode = normalizeBytecode(code)
+      if (normalizedCode) {
+        this.store.upsertContractProfile({
+          address,
+          accountType: 'contract',
+          runtimeCodeHash: hashHex(normalizedCode),
+          codeSizeBytes: Math.max(0, (normalizedCode.length - 2) / 2)
+        })
+      }
+    }
+
+    profile = this.store.getContractProfile(address)
+    return profile ?? { address, accountType: 'contract', isVerified: false }
+  }
+
+  private async discoverCreationTxForContract(address: string): Promise<{
+    creatorAddress: string | null
+    creatorTxHash: string
+    creationBlockHeight: number
+    creationBlockHash: string
+    creationTimestamp: number | null
+    codeHash: string | null
+  } | null> {
+    const head = normalizeHead(await this.safeRpc(() => this.rpc.getHead()))
+    const scanBlocks = Math.min(head.height + 1, CONTRACT_CREATION_DISCOVERY_SCAN_MAX)
+    const heights = Array.from({ length: scanBlocks }, (_, i) => head.height - i).filter((h) => h >= 0)
+
+    for (const height of heights) {
+      const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
+      if (!block) continue
+      const blockDetail = normalizeBlockDetail(block)
+      const txs = Array.isArray((block as any)?.txs)
+        ? (block as any).txs
+        : Array.isArray((block as any)?.transactions)
+          ? (block as any).transactions
+          : []
+      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+
+      for (let i = 0; i < txs.length; i += 1) {
+        const tx = txs[i]
+        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const detail = normalizeTxDetail(tx, receipt)
+        const classification = classifyTransaction({
+          txDetail: detail,
+          rawTx: tx,
+          receipt,
+          knownTargetIsContract: false
+        })
+        if (classification.createdContractAddress !== address) continue
+        const deployCode = extractDeployCode(tx) ?? extractTxInputData(tx, detail)
+        return {
+          creatorAddress: detail.from ?? null,
+          creatorTxHash: normalizeTxHash(String(detail.hash)),
+          creationBlockHeight: detail.blockHeight ?? blockDetail.height,
+          creationBlockHash: detail.blockHash ? String(detail.blockHash) : String(blockDetail.hash),
+          creationTimestamp: blockDetail.time || null,
+          codeHash: deployCode ? hashHex(deployCode) : null
+        }
+      }
+    }
+
+    return null
+  }
+
   private async getRecentBlocks(headHeight: number): Promise<BlockSummary[]> {
     const heights = Array.from({ length: RECENT_BLOCK_WINDOW }, (_, i) => headHeight - i).filter((h) => h >= 0)
     const blocks = await Promise.all(
@@ -753,14 +1091,22 @@ function buildNetworkStats(blocks: BlockSummary[], mempool: any, peers: any): an
   }
 }
 
-function buildContractDeployment(txDetail: TxDetail, rawTx: any, receipt: any, block: BlockDetail): ContractDeployment | null {
+function buildContractDeployment(
+  txDetail: TxDetail,
+  rawTx: any,
+  receipt: any,
+  block: BlockDetail,
+  classification: TxClassification
+): ContractDeployment | null {
   if (txDetail.status === 'pending') return null
+  if (classification.type !== 'contract_deployment') return null
 
   const contractAddress =
-    extractContractAddress(receipt) ??
-    extractContractAddress(rawTx?.receipt) ??
-    extractContractAddress(txDetail.receipt) ??
-    extractContractAddress(txDetail.raw)
+    classification.createdContractAddress ??
+    extractContractAddressFromRecord(receipt) ??
+    extractContractAddressFromRecord(rawTx?.receipt) ??
+    extractContractAddressFromRecord(txDetail.receipt) ??
+    extractContractAddressFromRecord(txDetail.raw)
   const noRecipient = hasNoRecipient(txDetail, rawTx)
   const inferredKind = inferDeploymentKind(rawTx, txDetail.raw, receipt)
   const isDeployLike = Boolean(contractAddress) || noRecipient || inferredKind !== 'unknown'
@@ -779,7 +1125,7 @@ function buildContractDeployment(txDetail: TxDetail, rawTx: any, receipt: any, b
     blockTime: block.time || null,
     deployer: txDetail.from,
     contractAddress,
-    status: txDetail.status === 'failed' ? 'failed' : 'confirmed',
+    status: classification.failed || txDetail.status === 'failed' ? 'failed' : 'confirmed',
     kind: resolveDeploymentKind(contractAddress, noRecipient, inferredKind),
     feePaid: txDetail.feePaid,
     gasUsed: txDetail.gasUsed,
@@ -855,7 +1201,7 @@ function hasNoRecipient(txDetail: TxDetail, rawTx: any): boolean {
   return trimmed.length === 0 || trimmed === '0x' || trimmed === '0x0' || /^0x0+$/.test(trimmed)
 }
 
-function extractContractAddress(value: unknown): string | null {
+function extractContractAddressFromRecord(value: unknown): string | null {
   return findFirstStringByKey(value, [
     'contractAddress',
     'contract_address',
@@ -949,6 +1295,62 @@ function byteLengthFromEncoded(value: unknown): number | null {
     }
   }
   return null
+}
+
+function findToAddress(rawTx: unknown): string | undefined {
+  if (!rawTx || typeof rawTx !== 'object') return undefined
+  const tx = rawTx as any
+  const candidate = tx.to ?? tx.tx?.to ?? tx.body?.to ?? tx.payload?.v?.to ?? tx.tx?.payload?.v?.to
+  return typeof candidate === 'string' && candidate.trim().length ? candidate : undefined
+}
+
+function normalizeBytecode(code: unknown): string | null {
+  if (typeof code !== 'string') return null
+  const trimmed = code.trim().toLowerCase()
+  if (!trimmed.length || trimmed === '0x') return null
+  if (trimmed.startsWith('0x')) {
+    const body = trimmed.slice(2)
+    if (!body.length || /^0+$/.test(body) || /[^0-9a-f]/i.test(body)) return null
+    return `0x${body}`
+  }
+  if (/^[0-9a-f]+$/i.test(trimmed) && !/^0+$/i.test(trimmed)) {
+    return `0x${trimmed}`
+  }
+  return null
+}
+
+function hasAccountSignals(account: unknown): boolean {
+  if (!account || typeof account !== 'object') return false
+  const record = account as Record<string, unknown>
+  const nonce = toPositiveInt(record.nonce ?? record.seq)
+  if (nonce !== null && nonce > 0) return true
+
+  const balanceValue = record.balance
+  if (typeof balanceValue === 'string') {
+    try {
+      const parsed = BigInt(balanceValue)
+      if (parsed > 0n) return true
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof balanceValue === 'number' && Number.isFinite(balanceValue) && balanceValue > 0) return true
+  if (typeof balanceValue === 'bigint' && balanceValue > 0n) return true
+  return Object.keys(record).length > 0
+}
+
+function decodeHexString(value: string): Buffer | null {
+  const normalized = normalizeBytecode(value)
+  if (!normalized) return null
+  const body = normalized.slice(2)
+  if (body.length % 2 !== 0 || /[^0-9a-f]/i.test(body)) return null
+  return Buffer.from(body, 'hex')
+}
+
+function hashHex(value: string): string {
+  const raw = decodeHexString(value)
+  const payload = raw ?? Buffer.from(value, 'utf-8')
+  return `0x${createHash('sha3-256').update(payload).digest('hex')}`
 }
 
 function isNumeric(value: string): boolean {
