@@ -65,8 +65,40 @@ class StratumPoolServer:
             port=config.port,
             default_share_target=config.min_difficulty,
             default_theta_micro=0,
+            max_cached_jobs=128,
             validator=self._validator,
         )
+
+    def _resolve_share_target(self, requested: float) -> float:
+        value = float(requested or 0.0)
+        if value <= 0.0:
+            value = float(self._config.min_difficulty)
+
+        lower = max(1e-9, float(self._config.min_difficulty))
+        upper = min(1.0, float(self._config.max_difficulty))
+        if upper < lower:
+            upper = lower
+
+        clamped = min(max(value, lower), upper)
+        if clamped != value:
+            self._log.warning(
+                "share_target_clamped",
+                extra={
+                    "requested": value,
+                    "clamped": clamped,
+                    "min_difficulty": self._config.min_difficulty,
+                    "max_difficulty": self._config.max_difficulty,
+                },
+            )
+        if clamped >= 0.95:
+            self._log.warning(
+                "share_target_near_block_target",
+                extra={
+                    "share_target": clamped,
+                    "note": "Shares will be close to full block difficulty.",
+                },
+            )
+        return clamped
 
     async def start(self) -> None:
         self._job_manager.subscribe(self._on_new_job)
@@ -89,10 +121,13 @@ class StratumPoolServer:
             header.setdefault("thetaMicro", job.theta_micro)
             header.setdefault("thetaTargetMicro", job.theta_micro)
             header.setdefault("theta_target_micro", job.theta_micro)
+        share_target = self._resolve_share_target(
+            job.share_target or self._config.min_difficulty
+        )
         stratum_job = StratumJob(
             job_id=job.job_id,
             header=header,
-            share_target=job.share_target or self._config.min_difficulty,
+            share_target=share_target,
             theta_micro=job.theta_micro,
             hints=job.hints,
             target=job.target,

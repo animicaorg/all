@@ -246,6 +246,7 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         keepalive_secs: float = 45.0,
+        max_cached_jobs: int = 64,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
             Callable[
@@ -260,7 +261,9 @@ class StratumServer:
         self._sessions: Dict[str, Session] = {}
         self._conn_tasks: Dict[asyncio.Task, None] = {}
         self._jobs: Dict[str, StratumJob] = {}
+        self._job_order: List[str] = []
         self._current_job_id: Optional[str] = None
+        self._max_cached_jobs = max(2, int(max_cached_jobs))
         self._extranonce2_size = int(extranonce2_size)
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
@@ -327,6 +330,30 @@ class StratumServer:
             outputs_commit=job.outputs_commit,
         )
 
+    def _prune_jobs(self, *, now: Optional[float] = None) -> None:
+        now = now if now is not None else time.time()
+        stale_ids: list[str] = []
+        for jid in list(self._job_order):
+            entry = self._jobs.get(jid)
+            if entry is None:
+                stale_ids.append(jid)
+                continue
+            if entry.expires_at is not None and now >= float(entry.expires_at):
+                stale_ids.append(jid)
+
+        for jid in stale_ids:
+            self._jobs.pop(jid, None)
+            with suppress(ValueError):
+                self._job_order.remove(jid)
+            if jid == self._current_job_id:
+                self._current_job_id = None
+
+        while len(self._job_order) > self._max_cached_jobs:
+            drop_id = self._job_order.pop(0)
+            self._jobs.pop(drop_id, None)
+            if drop_id == self._current_job_id:
+                self._current_job_id = self._job_order[-1] if self._job_order else None
+
     async def publish_job(
         self,
         job: StratumJob | MiningJob,
@@ -339,7 +366,11 @@ class StratumServer:
         if isinstance(job, MiningJob):
             job = self._from_mining_job(job)
         self._jobs[job.job_id] = job
+        with suppress(ValueError):
+            self._job_order.remove(job.job_id)
+        self._job_order.append(job.job_id)
         self._current_job_id = job.job_id
+        self._prune_jobs()
         await self._broadcast_job(job, clean_jobs=clean_jobs)
         if clean_jobs:
             log.info(
@@ -760,6 +791,7 @@ class StratumServer:
         elif method == Method.SUBMIT:
             # Validate job and share via validator
             job_id = params.get("jobId")
+            self._prune_jobs()
             if job_id not in self._jobs:
                 await self._send(
                     session,
@@ -767,18 +799,19 @@ class StratumServer:
                 )
                 return
             job = self._jobs[job_id]
-            if job_id != self._current_job_id:
-                await self._send(
-                    session,
-                    make_error(id_val, RpcErrorCodes.STALE_JOB, "stale job"),
-                )
-                return
             if job.expires_at and time.time() >= job.expires_at:
                 await self._send(
                     session,
                     make_error(id_val, RpcErrorCodes.STALE_JOB, "job expired"),
                 )
                 return
+            log.info(
+                "[Stratum] submit job_matched worker=%s session=%s submitJob=%s currentJob=%s",
+                session.worker,
+                session.session_id,
+                job_id,
+                self._current_job_id,
+            )
             params_with_context = dict(params)
             params_with_context["_session_id"] = session.session_id
             params_with_context["_worker"] = session.worker
@@ -849,6 +882,7 @@ class StratumServer:
             "rejected": self._rejected,
             "uptime_sec": int(time.time() - self._started_ts),
             "currentJob": self._current_job_id,
+            "activeJobs": len(self._jobs),
         }
 
     def session_snapshots(self) -> List[JSON]:

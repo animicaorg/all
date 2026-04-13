@@ -80,3 +80,33 @@ async def test_record_share_only_tracks_accepted_blocks():
     assert metrics.miner_detail("worker-1")["blocks_found"] == 1
     assert metrics.recent_blocks()["items"][0]["worker"] == "worker-1"
     assert metrics.recent_blocks()["items"][0]["reward"] == "123456789"
+
+
+@pytest.mark.asyncio
+async def test_record_share_stale_template_requests_refresh():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(PoolConfig(db_url=""), job_manager, DummyServer())
+    session = Session(session_id="s1", writer=None, worker="worker-1", address="anim1qqq")
+    job = StratumJob(
+        job_id="job-stale",
+        header={"number": 7},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 123456789}},
+    )
+    job_manager.current = SimpleNamespace(
+        height=7,
+        header={"hash": "0xabc"},
+        raw={"coinbase": {"amount": 123456789}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={},
+        ok=False,
+        reason="rpc:-32063:RPC error -32063: stale template",
+        is_block=True,
+        tx_count=0,
+    )
+    assert job_manager.refresh_calls == 1

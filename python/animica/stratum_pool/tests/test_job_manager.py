@@ -100,6 +100,8 @@ async def test_job_manager_does_not_churn_templates_without_reason():
     adapter = DummyAdapter()
     cfg = PoolConfig(poll_interval=0.01)
     manager = JobManager(adapter, cfg)
+    manager._periodic_refresh_s = 0.05
+    manager._next_periodic_refresh_at = time.time()
 
     seen: list[str] = []
 
@@ -108,11 +110,11 @@ async def test_job_manager_does_not_churn_templates_without_reason():
 
     manager.subscribe(on_job)
     manager.start()
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.25)
     await manager.stop()
 
     assert seen == ["1"]
-    assert adapter.calls == 1
+    assert adapter.calls >= 2
 
 
 @pytest.mark.asyncio

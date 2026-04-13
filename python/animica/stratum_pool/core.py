@@ -16,11 +16,12 @@ Discovered mining APIs in this repository
   so that HashShare envelopes are verified using the real proofs logic rather
   than custom hashing.
 
-This module reuses those components directly: we build ``StratumJob`` objects
-from templates delivered by the node's ``miner.getWork`` RPC, validate shares
-with ``ShareValidator`` and forward accepted shares to the node using the
-``miner.submitWork`` RPC so PoW validation stays inside the existing mining
-code.
+This module reuses those components directly: it prefers ``miner.getBlockTemplate``
+for canonical block assembly (same submit path as ``animica miner mine-blocks``),
+falls back to ``miner.getWork`` only when template APIs are unavailable, validates
+shares with ``ShareValidator`` and submits either:
+  - ``miner.submitBlock`` for canonical template-backed candidates
+  - ``miner.submitWork`` for legacy getWork compatibility
 """
 
 import asyncio
@@ -453,6 +454,24 @@ class MiningCoreAdapter:
             return False, f"invalid header template: {exc}", False, 0
 
         digest_int = candidate_hash.digest_int
+        template_parent_hash = _template_parent_hash(template, header_view)
+        template_height = _parse_int(
+            header_view.get("height") or header_view.get("number"), default=0
+        )
+        self._log.info(
+            "stratum_submit_job_matched",
+            extra={
+                "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                "session_id": submit_params.get("_session_id"),
+                "job_id": job.job_id,
+                "template_id": job.template_id,
+                "template_height": template_height or None,
+                "template_parent_hash": template_parent_hash,
+                "template_issued_at": job.issued_at,
+                "template_expires_at": job.expires_at,
+                "share_hash": "0x" + candidate_hash.digest.hex(),
+            },
+        )
         theta_micro = _parse_int(
             template.get("thetaMicro")
             or header_view.get("thetaMicro")
@@ -495,7 +514,24 @@ class MiningCoreAdapter:
         except Exception:
             share_target_int = 0
 
-        if share_target_int and digest_int > int(share_target_int):
+        share_ok = bool(share_target_int == 0 or digest_int <= int(share_target_int))
+        block_target_preview = int_from_value(job.target or template.get("target"))
+        self._log.info(
+            "stratum_submit_share_target_compare",
+            extra={
+                "job_id": job.job_id,
+                "template_id": job.template_id,
+                "share_hash": "0x" + candidate_hash.digest.hex(),
+                "share_target": hex(int(share_target_int))
+                if share_target_int > 0
+                else "0x0",
+                "share_ratio": share_ratio,
+                "theta_micro": theta_micro,
+                "pass": share_ok,
+            },
+        )
+
+        if not share_ok:
             head_hash, head_height, _ = await self._head_hash_height()
             self._log_share_reject(
                 submit_params=submit_params,
@@ -503,7 +539,7 @@ class MiningCoreAdapter:
                 reason="low difficulty share",
                 share_hash_hex="0x" + candidate_hash.digest.hex(),
                 share_target_int=int(share_target_int),
-                block_target_int=int_from_value(job.target or template.get("target")),
+                block_target_int=block_target_preview,
                 template_height=_parse_int(
                     header_view.get("height") or header_view.get("number"), default=0
                 )
@@ -516,16 +552,33 @@ class MiningCoreAdapter:
             )
             return False, "low difficulty share", False, 0
 
-        block_target = int_from_value(job.target or template.get("target"))
+        block_target = block_target_preview
         is_block = block_target > 0 and digest_int <= block_target
+        self._log.info(
+            "stratum_submit_block_target_compare",
+            extra={
+                "job_id": job.job_id,
+                "template_id": job.template_id,
+                "share_hash": "0x" + candidate_hash.digest.hex(),
+                "block_target": hex(int(block_target)) if block_target > 0 else "0x0",
+                "pass": is_block,
+            },
+        )
         tx_count = template_tx_count(template)
         if not is_block:
+            self._log.info(
+                "stratum_share_accepted",
+                extra={
+                    "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                    "session_id": submit_params.get("_session_id"),
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "is_block": False,
+                    "tx_count": 0,
+                },
+            )
             return True, None, False, 0
 
-        template_parent_hash = _template_parent_hash(template, header_view)
-        template_height = _parse_int(
-            header_view.get("height") or header_view.get("number"), default=0
-        )
         local_prevalidation_ok = True
         stale_by_server = False
         head_hash: Optional[str] = None
@@ -541,6 +594,18 @@ class MiningCoreAdapter:
             stale_by_server = True
             head_hash, head_height, _ = await self._head_hash_height()
             reason = "stale template (template_expired)"
+            self._log.warning(
+                "stratum_block_candidate_rejected",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "reason": reason,
+                    "template_height": template_height or None,
+                    "template_parent_hash": template_parent_hash,
+                    "current_head_hash": head_hash,
+                    "current_head_height": head_height,
+                },
+            )
             self._log_share_reject(
                 submit_params=submit_params,
                 job=job,
@@ -574,6 +639,18 @@ class MiningCoreAdapter:
             local_prevalidation_ok = False
             stale_by_server = True
             reason = f"stale template ({';'.join(stale_reasons)})"
+            self._log.warning(
+                "stratum_block_candidate_rejected",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "reason": reason,
+                    "template_height": template_height or None,
+                    "template_parent_hash": template_parent_hash,
+                    "current_head_hash": head_hash,
+                    "current_head_height": head_height,
+                },
+            )
             self._log_share_reject(
                 submit_params=submit_params,
                 job=job,
@@ -603,6 +680,27 @@ class MiningCoreAdapter:
             if not stale_reason and "stale template" in str(exc).lower():
                 stale_reason = "stale_template"
             stale_by_server = bool(stale_reason)
+            self._log.warning(
+                "stratum_block_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": True,
+                    "reason": error_reason,
+                    "stale_template": stale_by_server,
+                    "node_rejection": {"code": exc.code, "data": error_data},
+                },
+            )
+            self._log.warning(
+                "stratum_block_candidate_rejected",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "reason": error_reason,
+                    "template_height": template_height or None,
+                },
+            )
             self._log_share_reject(
                 submit_params=submit_params,
                 job=job,
@@ -637,6 +735,27 @@ class MiningCoreAdapter:
             updated_reason = updated_reason or "block rejected"
             if isinstance(result, dict):
                 stale_by_server = str(result.get("reason") or "") == "stale_template"
+            self._log.warning(
+                "stratum_block_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": bool(is_block),
+                    "reason": updated_reason,
+                    "stale_template": stale_by_server,
+                    "node_rejection": result if isinstance(result, dict) else {"result": result},
+                },
+            )
+            self._log.warning(
+                "stratum_block_candidate_rejected",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "reason": updated_reason,
+                    "template_height": template_height or None,
+                },
+            )
             self._log_share_reject(
                 submit_params=submit_params,
                 job=job,
@@ -651,6 +770,29 @@ class MiningCoreAdapter:
                 stale_by_server=stale_by_server,
                 local_prevalidation_ok=local_prevalidation_ok,
                 node_rejection=result if isinstance(result, dict) else {"result": result},
+            )
+        else:
+            self._log.info(
+                "stratum_block_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": True,
+                    "is_block": bool(is_block),
+                    "reason": updated_reason,
+                    "duplicate": is_duplicate,
+                    "tx_count": tx_count,
+                    "height": template_height or None,
+                },
+            )
+            self._log.info(
+                "stratum_block_candidate_accepted",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "tx_count": tx_count,
+                    "height": template_height or None,
+                },
             )
 
         return accepted, updated_reason, is_block, tx_count
@@ -717,10 +859,34 @@ class MiningCoreAdapter:
             return ok, reason, is_block, tx_count
 
         payload = self._encode_share_payload(job, submit_params)
+        self._log.info(
+            "stratum_submit_share_target_compare",
+            extra={
+                "job_id": job.job_id,
+                "template_id": job.template_id,
+                "share_hash": None,
+                "share_target": job.share_target,
+                "share_ratio": submit_params.get("d_ratio") or job.share_target,
+                "theta_micro": job.theta_micro,
+                "pass": True,
+            },
+        )
         try:
             result: Json = await self._rpc_call("miner.submitWork", payload)
         except RpcError as exc:
             head_hash, head_height, _ = await self._head_hash_height()
+            self._log.warning(
+                "stratum_share_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": bool(is_block),
+                    "reason": f"rpc:{exc.code}:{exc}",
+                    "stale_template": "stale" in str(exc).lower(),
+                    "node_rejection": {"code": exc.code, "data": getattr(exc, "data", None)},
+                },
+            )
             self._log.warning(
                 "stratum_share_rejected",
                 extra={
@@ -756,6 +922,18 @@ class MiningCoreAdapter:
             is_block = False
 
         if not accepted:
+            self._log.warning(
+                "stratum_share_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": bool(is_block),
+                    "reason": updated_reason,
+                    "stale_template": str(updated_reason or "").startswith("stale"),
+                    "node_rejection": result if isinstance(result, dict) else {"result": result},
+                },
+            )
             head_hash, head_height, _ = await self._head_hash_height()
             self._log.warning(
                 "stratum_share_rejected",
@@ -772,6 +950,30 @@ class MiningCoreAdapter:
                     "stale_by_server_state": str(updated_reason or "").startswith("stale"),
                     "local_prevalidation_ok": True,
                     "node_rejection": result if isinstance(result, dict) else {"result": result},
+                },
+            )
+        else:
+            self._log.info(
+                "stratum_share_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": True,
+                    "is_block": bool(is_block),
+                    "reason": updated_reason,
+                    "duplicate": is_duplicate,
+                    "tx_count": tx_count,
+                },
+            )
+            self._log.info(
+                "stratum_share_accepted",
+                extra={
+                    "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                    "session_id": submit_params.get("_session_id"),
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "is_block": bool(is_block),
+                    "tx_count": tx_count,
                 },
             )
 
