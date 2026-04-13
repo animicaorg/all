@@ -5,9 +5,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Dict
 
+import cbor2
 import pytest
 from typer.testing import CliRunner
 
@@ -64,9 +65,11 @@ def _patch_rpc_client(
     return captured
 
 
-def _patch_write_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+def _patch_write_flow(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
+    captured: Dict[str, Any] = {}
+
     class _Signer:
-        address = "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc8247j"
+        address = None
         public_key = bytes([1] * 32)
         alg_id = 0x1002
         alg_name = "sphincs_shake_128s"
@@ -77,12 +80,17 @@ def _patch_write_flow(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda **_kwargs: _Signer(),
     )
     monkeypatch.setattr(call_cli, "encode_call", lambda _abi, _fn, _args: b"\x01")
-    monkeypatch.setattr(call_cli.tx_build, "call", lambda **kwargs: {"tx": kwargs})
+
+    def _fake_sign(tx: Any, *_args: Any, **_kwargs: Any) -> Any:
+        captured["tx"] = tx
+        return SimpleNamespace(raw_tx=b"\xaa")
+
     monkeypatch.setattr(
         call_cli.tx_signing,
         "sign_transaction_with_rpc_context",
-        lambda *_a, **_k: SimpleNamespace(raw_tx=b"\xaa"),
+        _fake_sign,
     )
+    return captured
 
 
 def test_call_read_emits_structured_json_on_success(
@@ -158,10 +166,10 @@ def test_call_write_emits_structured_json_on_success(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     abi = _write_abi(tmp_path, func_name="set")
-    _patch_write_flow(monkeypatch)
+    captured_write = _patch_write_flow(monkeypatch)
     _patch_rpc_client(
         monkeypatch,
-        lambda method, _params: 9 if method == "state.getNonce" else {},
+        lambda method, _params: {"height": 15} if method == "chain.getHead" else {},
     )
     monkeypatch.setattr(call_cli.tx_send, "submit_raw", lambda *_a, **_k: "0xabc123")
     monkeypatch.setattr(
@@ -206,7 +214,18 @@ def test_call_write_emits_structured_json_on_success(
     assert payload["tx_status"] == "SUCCESS"
     assert payload["block_number"] == 12
     assert payload["receipt"]["gasUsed"] == 99
+    assert payload["tx_kind"] == "call"
+    assert payload["txKind"] == "call"
     assert payload["wait"] is True
+    assert payload["valid_until"] > payload["valid_after"]
+
+    built_tx = captured_write["tx"]
+    assert built_tx["v"] == 2
+    assert built_tx["payload"]["t"] == 2
+    assert "nonce" not in built_tx
+    assert built_tx["validUntil"] > built_tx["validAfter"]
+    assert isinstance(built_tx["from"], (bytes, bytearray))
+    assert isinstance(built_tx["payload"]["v"]["to"], (bytes, bytearray))
 
 
 def test_call_module_main_write_emits_json_on_success(
@@ -216,7 +235,7 @@ def test_call_module_main_write_emits_json_on_success(
     _patch_write_flow(monkeypatch)
     _patch_rpc_client(
         monkeypatch,
-        lambda method, _params: 9 if method == "state.getNonce" else {},
+        lambda method, _params: {"height": 18} if method == "chain.getHead" else {},
     )
     monkeypatch.setattr(call_cli.tx_send, "submit_raw", lambda *_a, **_k: "0xabc999")
     monkeypatch.setattr(
@@ -292,7 +311,7 @@ def test_call_write_tx_hash_with_wait_timeout_still_emits_json(
     _patch_write_flow(monkeypatch)
     _patch_rpc_client(
         monkeypatch,
-        lambda method, _params: 3 if method == "state.getNonce" else {},
+        lambda method, _params: {"height": 3} if method == "chain.getHead" else {},
     )
     monkeypatch.setattr(call_cli.tx_send, "submit_raw", lambda *_a, **_k: "0xdeadbeef")
 
@@ -421,7 +440,7 @@ def test_call_write_null_receipt_fields_still_emits_success_json(
     _patch_write_flow(monkeypatch)
     _patch_rpc_client(
         monkeypatch,
-        lambda method, _params: 4 if method == "state.getNonce" else {},
+        lambda method, _params: {"height": 4} if method == "chain.getHead" else {},
     )
     monkeypatch.setattr(call_cli.tx_send, "submit_raw", lambda *_a, **_k: "0xfacefeed")
     monkeypatch.setattr(
@@ -458,3 +477,169 @@ def test_call_write_null_receipt_fields_still_emits_success_json(
     assert payload["tx_status"] is None
     assert payload["block_number"] is None
     assert payload["receipt"] == {"status": None, "blockNumber": None, "gasUsed": None}
+
+
+def test_call_read_uses_local_replay_fallback_when_simulation_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    abi = _write_abi(tmp_path, func_name="get")
+    _patch_rpc_client(monkeypatch, lambda _method, _params: {})
+    monkeypatch.setattr(call_cli, "encode_call", lambda _abi, _fn, _args: b"\x00")
+
+    def _missing_simulation(*_args: Any, **_kwargs: Any) -> bytes:
+        raise call_cli.typer.BadParameter(
+            "node did not expose a recognized call simulation RPC method; "
+            "probed methods: execution.simulateCall, state.call"
+        )
+
+    monkeypatch.setattr(call_cli, "_simulate_call", _missing_simulation)
+    monkeypatch.setattr(
+        call_cli,
+        "_simulate_call_local_replay",
+        lambda *_a, **_k: (
+            b"\x01",
+            1,
+            {"source": "sdk_local_replay", "head_height": 9, "replayed_calls": 2},
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "--chain-id",
+            "1",
+            "call",
+            "read",
+            "--rpc",
+            "http://127.0.0.1:8545/rpc",
+            "--address",
+            "0x" + "11" * 32,
+            "--abi",
+            str(abi),
+            "--func",
+            "get",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["simulation_source"] == "sdk_local_replay"
+    assert payload["result"] == "0x01"
+    assert payload["decoded_result"] == 1
+    assert payload["replay"]["head_height"] == 9
+    assert payload["replay"]["replayed_calls"] == 2
+
+
+def test_local_replay_uses_raw_block_payloads_when_tx_views_lack_calldata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    contract_address = "0x" + ("11" * 32)
+    contract_source = tmp_path / "contract.py"
+    contract_source.write_text(
+        "counter = 0\n"
+        "def set(n):\n"
+        "    global counter\n"
+        "    counter = n\n"
+        "def get():\n"
+        "    return counter\n",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Counter",
+                "entry": "contract.py",
+                "source": "contract.py",
+                "abi": {
+                    "functions": [
+                        {
+                            "name": "set",
+                            "inputs": [{"name": "n", "type": "int"}],
+                            "outputs": [],
+                        },
+                        {
+                            "name": "get",
+                            "inputs": [],
+                            "outputs": [{"name": "value", "type": "int"}],
+                        },
+                    ],
+                    "events": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    abi_obj = call_cli._load_abi(manifest_path)
+    set_call = call_cli.encode_call(abi_obj, "set", [7])
+    block_cbor = cbor2.dumps(
+        {
+            "txs": [
+                {
+                    "tx": {
+                        "payload": {
+                            "t": 2,
+                            "v": {
+                                "to": bytes.fromhex(contract_address[2:]),
+                                "data": bytes(set_call),
+                            },
+                        }
+                    }
+                }
+            ]
+        }
+    )
+
+    class _RpcStub:
+        def request(self, method: str, _params: Any = None) -> Any:
+            if method == "chain.getHead":
+                return {"height": 0}
+            if method == "chain.getBlockByHeight":
+                return {
+                    "hash": "0x" + ("aa" * 32),
+                    "transactions": [
+                        {
+                            "hash": "0x" + ("bb" * 32),
+                            "value": 0,
+                        }
+                    ],
+                }
+            if method == "debug.getRawBlock":
+                return {"blockCbor": "0x" + block_cbor.hex()}
+            raise AssertionError(f"unexpected method {method}")
+
+    vm_state: Dict[str, Any] = {"counter": 0}
+
+    def _run_call(_manifest: Any, method: str, args: list[Any]) -> dict[str, Any]:
+        if method == "set":
+            vm_state["counter"] = int(args[0])
+            return {"result": None}
+        if method == "get":
+            return {"result": vm_state["counter"]}
+        raise AssertionError(f"unexpected method {method}")
+
+    stdlib_module = ModuleType("stdlib")
+    stdlib_storage_module = ModuleType("stdlib.storage")
+    stdlib_storage_module.reset_backend = lambda: vm_state.update(counter=0)  # type: ignore[attr-defined]
+    stdlib_module.storage = stdlib_storage_module  # type: ignore[attr-defined]
+    vm_loader_module = ModuleType("vm_py.runtime.loader")
+    vm_loader_module.run_call = _run_call  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "stdlib", stdlib_module)
+    monkeypatch.setitem(sys.modules, "stdlib.storage", stdlib_storage_module)
+    monkeypatch.setitem(sys.modules, "vm_py.runtime.loader", vm_loader_module)
+
+    raw, decoded, meta = call_cli._simulate_call_local_replay(
+        _RpcStub(),
+        address=contract_address,
+        abi_path=manifest_path,
+        abi_obj=abi_obj,
+        func="get",
+        args=[],
+    )
+
+    assert decoded == 7
+    assert meta["replayed_calls"] == 1
+    assert isinstance(raw, bytes)
+    assert call_cli.decode_return(abi_obj, "get", raw) == 7

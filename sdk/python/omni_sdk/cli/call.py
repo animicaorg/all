@@ -15,6 +15,7 @@ from ..tx import build as tx_build
 from ..tx import send as tx_send
 from ..tx import signing as tx_signing
 from ..types.abi import decode_return, encode_call, normalize_abi
+from ..types import abi as abi_codec
 from ..wallet.signer import PQSigner
 
 try:
@@ -76,6 +77,15 @@ def _load_abi(path: Path) -> Any:
         raise typer.BadParameter(f"invalid JSON in ABI file {path}: {exc}") from exc
     parsed = data.get("abi", data) if isinstance(data, dict) else data
     return _coerce_abi_for_calls(parsed)
+
+
+def _load_abi_document(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(f"ABI file not found: {path}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise typer.BadParameter(f"invalid JSON in ABI file {path}: {exc}") from exc
 
 
 def _parse_args_json(args_json: Optional[str]) -> Any:
@@ -279,6 +289,333 @@ def _simulate_call(
         "node did not expose a recognized call simulation RPC method; "
         f"probed methods: {method_list}; details: {detail}"
     )
+
+
+def _normalize_address_for_match(value: Any) -> Optional[str]:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "0x" + bytes(value).hex().lower()
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text.startswith(("0x", "0X")):
+        try:
+            raw = bytes.fromhex(text[2:])
+        except Exception:
+            return text
+        return "0x" + raw.hex()
+    if text.startswith("anim"):
+        return text
+    try:
+        raw = bytes.fromhex(text)
+    except Exception:
+        return text
+    return "0x" + raw.hex()
+
+
+def _decode_call_data(abi_obj: Any, data: bytes) -> Optional[tuple[str, List[Any]]]:
+    if len(data) < 8:
+        return None
+    normalized = normalize_abi(abi_obj)
+    functions = normalized.get("functions", {})
+    if not isinstance(functions, dict):
+        return None
+    selector = data[:8]
+    for fn_name, fn_def in functions.items():
+        if not isinstance(fn_name, str) or not isinstance(fn_def, dict):
+            continue
+        try:
+            fn_selector = abi_codec.function_selector(fn_def)
+        except Exception:
+            continue
+        if fn_selector != selector:
+            continue
+
+        inputs = fn_def.get("inputs", [])
+        if not isinstance(inputs, list):
+            return None
+        try:
+            arg_count, offset = abi_codec._uvarint_decode(data, 8)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+        if arg_count != len(inputs):
+            return None
+
+        values: List[Any] = []
+        for param in inputs:
+            if not isinstance(param, dict):
+                return None
+            typ = param.get("type")
+            if not isinstance(typ, str):
+                return None
+            try:
+                desc = abi_codec._parse_type(typ)  # type: ignore[attr-defined]
+                value, offset = abi_codec._decode_desc(data, desc, offset)  # type: ignore[attr-defined]
+            except Exception:
+                return None
+            values.append(value)
+
+        if offset != len(data):
+            return None
+        return fn_name, values
+    return None
+
+
+def _encode_return_data(abi_obj: Any, fn_name: str, value: Any) -> Optional[bytes]:
+    normalized = normalize_abi(abi_obj)
+    fn_def = normalized.get("functions", {}).get(fn_name)
+    if not isinstance(fn_def, dict):
+        return None
+    outputs = fn_def.get("outputs", [])
+    if not isinstance(outputs, list):
+        return None
+    if len(outputs) == 0:
+        return b""
+
+    encoded: List[bytes] = []
+    encoded.append(abi_codec._uvarint_encode(len(outputs)))  # type: ignore[attr-defined]
+
+    if len(outputs) == 1:
+        values = [value]
+    else:
+        if not isinstance(value, (list, tuple)) or len(value) != len(outputs):
+            return None
+        values = list(value)
+
+    for out_item, out_value in zip(outputs, values):
+        if not isinstance(out_item, dict):
+            return None
+        typ = out_item.get("type")
+        if not isinstance(typ, str):
+            return None
+        try:
+            desc = abi_codec._parse_type(typ)  # type: ignore[attr-defined]
+            encoded.append(abi_codec._encode_desc(out_value, desc))  # type: ignore[attr-defined]
+        except Exception:
+            return None
+    return b"".join(encoded)
+
+
+def _chain_head_height(rpc: RpcClient) -> int:
+    out = rpc.request("chain.getHead", [])
+    if not isinstance(out, dict):
+        raise RuntimeError("chain.getHead did not return an object")
+    for key in ("height", "number", "headHeight"):
+        if key in out and out[key] is not None:
+            return int(out[key])
+    raise RuntimeError("chain.getHead response did not include a height")
+
+
+def _coerce_payload_kind(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
+        except Exception:
+            return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _coerce_data_bytes(value: Any) -> Optional[bytes]:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return b""
+        if text.startswith(("0x", "0X")):
+            text = text[2:]
+        if len(text) % 2 != 0:
+            text = "0" + text
+        try:
+            return bytes.fromhex(text)
+        except Exception:
+            return None
+    return None
+
+
+def _extract_call_destination_and_data(tx_obj: Any) -> Optional[tuple[Any, bytes]]:
+    if not isinstance(tx_obj, dict):
+        return None
+
+    to_value: Any = tx_obj.get("to")
+    data_value: Any = tx_obj.get("data")
+    payload = tx_obj.get("payload")
+    if isinstance(payload, dict):
+        payload_kind = _coerce_payload_kind(payload.get("t"))
+        payload_value = payload.get("v")
+        if isinstance(payload_value, dict):
+            if payload_kind in (0, 2, 3):
+                to_value = payload_value.get("to", to_value)
+                data_value = payload_value.get("data", data_value)
+            elif to_value is None:
+                to_value = payload_value.get("to")
+
+    data_bytes = _coerce_data_bytes(data_value)
+    if data_bytes is None:
+        return None
+    if to_value is None:
+        return None
+    return to_value, data_bytes
+
+
+def _iter_block_call_payloads(
+    rpc: RpcClient,
+    *,
+    block_hash: str,
+) -> List[tuple[Any, bytes]]:
+    payloads: List[tuple[Any, bytes]] = []
+    try:
+        raw_block = rpc.request("debug.getRawBlock", [block_hash])
+    except Exception:
+        return payloads
+    if not isinstance(raw_block, dict):
+        return payloads
+
+    raw_block_hex = raw_block.get("blockCbor", raw_block.get("block_cbor"))
+    if not isinstance(raw_block_hex, str):
+        return payloads
+    block_hex = raw_block_hex[2:] if raw_block_hex.startswith(("0x", "0X")) else raw_block_hex
+    if not block_hex:
+        return payloads
+    try:
+        raw_bytes = bytes.fromhex(block_hex)
+    except Exception:
+        return payloads
+
+    try:
+        import cbor2
+
+        block_obj = cbor2.loads(raw_bytes)
+    except Exception:
+        return payloads
+    if not isinstance(block_obj, dict):
+        return payloads
+
+    tx_entries = block_obj.get("txs", [])
+    if not isinstance(tx_entries, list):
+        return payloads
+    for entry in tx_entries:
+        tx_body = None
+        if isinstance(entry, dict):
+            tx_candidate = entry.get("tx")
+            tx_body = tx_candidate if isinstance(tx_candidate, dict) else entry
+        parsed = _extract_call_destination_and_data(tx_body)
+        if parsed is not None:
+            payloads.append(parsed)
+    return payloads
+
+
+def _iter_confirmed_call_payloads(
+    rpc: RpcClient,
+    *,
+    head_height: int,
+) -> List[tuple[Any, bytes]]:
+    payloads: List[tuple[Any, bytes]] = []
+    for height in range(max(0, int(head_height)) + 1):
+        try:
+            block = rpc.request("chain.getBlockByHeight", [height, True, True])
+        except Exception:
+            try:
+                block = rpc.request("chain.getBlockByHeight", [height, False, False])
+            except Exception:
+                continue
+        if not isinstance(block, dict):
+            continue
+
+        tx_list = block.get("transactions", block.get("txs", []))
+        block_payloads = []
+        if isinstance(tx_list, list):
+            for tx_entry in tx_list:
+                parsed = _extract_call_destination_and_data(tx_entry)
+                if parsed is not None:
+                    block_payloads.append(parsed)
+
+        if block_payloads:
+            payloads.extend(block_payloads)
+            continue
+
+        block_hash = block.get("hash")
+        if isinstance(block_hash, str) and block_hash:
+            payloads.extend(_iter_block_call_payloads(rpc, block_hash=block_hash))
+    return payloads
+
+
+def _simulate_call_local_replay(
+    rpc: RpcClient,
+    *,
+    address: str,
+    abi_path: Path,
+    abi_obj: Any,
+    func: str,
+    args: List[Any],
+) -> tuple[Optional[bytes], Any, Dict[str, Any]]:
+    manifest_path = abi_path.expanduser().resolve()
+    manifest_doc = _load_abi_document(abi_path)
+    if not isinstance(manifest_doc, dict):
+        raise RuntimeError(
+            "local replay fallback requires --abi to point to a contract manifest object"
+        )
+    if not any(key in manifest_doc for key in ("source", "entry", "sources")):
+        raise RuntimeError(
+            "local replay fallback requires a manifest with source/entry/sources fields"
+        )
+    manifest_input: Any = str(manifest_path)
+
+    try:
+        from stdlib import storage as stdlib_storage  # type: ignore
+        from vm_py.runtime.loader import run_call as vm_run_call  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "local replay fallback requires vm_py runtime modules (stdlib, vm_py.runtime.loader)"
+        ) from exc
+
+    if callable(getattr(stdlib_storage, "reset_backend", None)):
+        stdlib_storage.reset_backend()
+
+    target = _normalize_address_for_match(address)
+    if target is None:
+        raise RuntimeError(f"invalid contract address for replay: {address!r}")
+
+    head_height = _chain_head_height(rpc)
+    call_payloads = _iter_confirmed_call_payloads(rpc, head_height=head_height)
+    replayed_calls = 0
+
+    for tx_to_raw, calldata in call_payloads:
+        tx_to = _normalize_address_for_match(tx_to_raw)
+        if tx_to != target:
+            continue
+        decoded = _decode_call_data(abi_obj, calldata)
+        if decoded is None:
+            continue
+        tx_fn, tx_args = decoded
+        try:
+            vm_run_call(manifest_input, tx_fn, tx_args)
+            replayed_calls += 1
+        except Exception:
+            continue
+
+    call_out = vm_run_call(manifest_input, func, list(args))
+    decoded_result = call_out.get("result") if isinstance(call_out, dict) else call_out
+    raw_result = _encode_return_data(abi_obj, func, decoded_result)
+    meta = {
+        "source": "sdk_local_replay",
+        "head_height": head_height,
+        "replayed_calls": replayed_calls,
+    }
+    return raw_result, decoded_result, meta
 
 
 def _normalize_hex(value: str, *, field: str) -> str:
@@ -485,6 +822,121 @@ def _resolve_nonce(rpc: RpcClient, sender: str, override: Optional[int]) -> int:
     raise typer.BadParameter(f"failed to fetch sender nonce: {'; '.join(errors)}")
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
+        except Exception:
+            return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _infer_chain_height(rpc: RpcClient) -> Optional[int]:
+    for method in ("chain.getHead", "chain.getInfo", "node.status", "chain.getStatus"):
+        try:
+            out = rpc.request(method, [])
+        except Exception:
+            continue
+        if isinstance(out, dict):
+            for key in (
+                "height",
+                "head_height",
+                "best_height",
+                "block_height",
+                "bestHeight",
+                "headHeight",
+                "blockHeight",
+                "number",
+            ):
+                value = _coerce_int(out.get(key))
+                if value is not None:
+                    return value
+            head = out.get("head")
+            if isinstance(head, dict):
+                for key in ("height", "number", "head_height", "headHeight"):
+                    value = _coerce_int(head.get(key))
+                    if value is not None:
+                        return value
+        else:
+            value = _coerce_int(out)
+            if value is not None:
+                return value
+    return None
+
+
+def _resolve_validity_window_from_rpc(
+    rpc: RpcClient,
+    *,
+    ttl_blocks: int = 120,
+) -> tuple[int, int]:
+    height = _infer_chain_height(rpc)
+    if height is None:
+        raise typer.BadParameter(
+            "could not infer chain height for call tx validity window"
+        )
+    valid_after = int(height)
+    valid_until = int(valid_after + max(1, int(ttl_blocks)))
+    if valid_until <= valid_after:
+        valid_until = valid_after + 1
+    return valid_after, valid_until
+
+
+def _address_to_account_key(value: str | bytes | bytearray | memoryview) -> bytes:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        if len(raw) != 32:
+            raise typer.BadParameter(
+                f"address/account key must be 32 bytes, got {len(raw)}"
+            )
+        return raw
+    if not isinstance(value, str):
+        raise typer.BadParameter(
+            f"address/account key must be string or 32-byte value, got {type(value).__name__}"
+        )
+    text = value.strip()
+    if text.startswith(("0x", "0X")):
+        raw = bytes.fromhex(text[2:])
+        if len(raw) != 32:
+            raise typer.BadParameter(
+                f"hex account key must be 32 bytes, got {len(raw)}"
+            )
+        return raw
+    try:
+        from pq.py.address import decode_address
+
+        record = decode_address(text)
+        digest = bytes(record.digest) if isinstance(record.digest, list) else bytes(record.digest)
+        raw = digest[:32].ljust(32, b"\x00")
+        if len(raw) == 32:
+            return raw
+    except Exception:
+        pass
+    try:
+        from ..address import parse as parse_address
+
+        parsed = parse_address(text)
+        pubkey_hash = parsed.get("pubkey_hash")
+        if isinstance(pubkey_hash, (bytes, bytearray, memoryview)):
+            raw = bytes(pubkey_hash)
+            if len(raw) == 32:
+                return raw
+    except Exception as exc:
+        raise typer.BadParameter(f"invalid address {value!r}: {exc}") from exc
+    raise typer.BadParameter(f"invalid address/account key: {value!r}")
+
+
 @app.command("read")
 def call_read(
     ctx: typer.Context,
@@ -525,8 +977,29 @@ def call_read(
     args_obj = _parse_args_json(args_json)
     args_list = _to_positional_args(abi_obj, func, args_obj)
     calldata = encode_call(abi_obj, func, args_list)
-    raw = _simulate_call(rpc_client, address=address, calldata=calldata, sender=sender)
-    decoded = decode_return(abi_obj, func, raw)
+    raw: Optional[bytes] = None
+    replay_meta: Optional[Dict[str, Any]] = None
+    simulation_source = "rpc_simulation"
+    try:
+        raw = _simulate_call(rpc_client, address=address, calldata=calldata, sender=sender)
+        decoded = decode_return(abi_obj, func, raw)
+    except typer.BadParameter as exc:
+        if "node did not expose a recognized call simulation RPC method" not in str(exc):
+            raise
+        try:
+            raw, decoded, replay_meta = _simulate_call_local_replay(
+                rpc_client,
+                address=address,
+                abi_path=abi,
+                abi_obj=abi_obj,
+                func=func,
+                args=args_list,
+            )
+        except Exception as replay_exc:
+            raise typer.BadParameter(
+                f"{exc}; local replay fallback failed: {replay_exc}"
+            ) from replay_exc
+        simulation_source = "sdk_local_replay"
     summary: Dict[str, Any] = {
         "status": "ok",
         "rpc_url": rpc_endpoint,
@@ -536,10 +1009,14 @@ def call_read(
         "address": address,
         "func": func,
         "args": args_list,
-        "result": "0x" + raw.hex(),
+        "result": ("0x" + raw.hex()) if isinstance(raw, (bytes, bytearray)) else None,
         "decoded_result": decoded,
         "decodedResult": decoded,
+        "simulation_source": simulation_source,
+        "simulationSource": simulation_source,
     }
+    if replay_meta:
+        summary["replay"] = replay_meta
     if sender:
         summary["sender"] = sender
     _emit_json(summary)
@@ -614,19 +1091,30 @@ def call_write(
     sender = signer.address or from_pubkey(
         signer.public_key, alg_id=signer.alg_id, hrp="anim"
     )
-    nonce_value = _resolve_nonce(rpc_client, sender, nonce)
     calldata = encode_call(abi_obj, func, args_list)
-
-    tx = tx_build.call(
-        from_addr=sender,
-        to_addr=address,
-        data=calldata,
-        nonce=nonce_value,
-        gas_limit=gas_limit,
-        max_fee=int(max_fee),
-        chain_id=int(chain_id_value),
-        value=0,
+    valid_after, valid_until = _resolve_validity_window_from_rpc(rpc_client)
+    resolved_gas_limit = (
+        int(gas_limit)
+        if gas_limit is not None
+        else tx_build.suggest_gas_limit("call", calldata_len=len(calldata))
     )
+    tx: Dict[str, Any] = {
+        "v": 2,
+        "chainId": int(chain_id_value),
+        "from": _address_to_account_key(sender),
+        "gas": {"price": int(max_fee), "limit": int(resolved_gas_limit)},
+        "payload": {
+            "t": 2,
+            "v": {
+                "to": _address_to_account_key(address),
+                "data": bytes(calldata),
+            },
+        },
+        "accessList": [],
+        "validAfter": int(valid_after),
+        "validUntil": int(valid_until),
+        "salt": os.urandom(16),
+    }
     signed = tx_signing.sign_transaction_with_rpc_context(
         tx,
         signer,
@@ -673,6 +1161,14 @@ def call_write(
         "sender": sender,
         "from": sender,
         "to": address,
+        "tx_kind": "call",
+        "txKind": "call",
+        "valid_after": int(valid_after),
+        "validAfter": int(valid_after),
+        "valid_until": int(valid_until),
+        "validUntil": int(valid_until),
+        "gas_limit": int(resolved_gas_limit),
+        "gasLimit": int(resolved_gas_limit),
         "tx_hash": tx_hash,
         "txHash": tx_hash,
         "tx_status": tx_status,
