@@ -15,6 +15,8 @@ DEFAULT_THREADS = 4
 DEFAULT_SCAN_WINDOW = 200_000
 DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.0")
 WILDCARD_HOSTS = {"", "0.0.0.0", "::", "[::]"}
+PRIMARY_SITE_HOSTS = {"animica.org", "www.animica.org"}
+STAGED_SITE_HOSTS = {"dev.animica.org", "staging.animica.org", "preview.animica.org"}
 
 
 def _read_env(name: str) -> Optional[str]:
@@ -55,6 +57,17 @@ def _env_float(name: str) -> Optional[float]:
 def _is_publicly_routable_host(host: str) -> bool:
     normalized = host.strip().lower()
     return normalized not in {"", "localhost", "127.0.0.1", "::1"}
+
+
+def _public_pool_alias_for_request_host(host: Optional[str]) -> Optional[str]:
+    if not host:
+        return None
+    normalized = host.strip().lower()
+    if normalized in PRIMARY_SITE_HOSTS:
+        return "pool.animica.org"
+    if normalized in STAGED_SITE_HOSTS:
+        return f"pool.{normalized}"
+    return None
 
 
 def _sanitize_worker_name(value: Optional[str]) -> str:
@@ -214,8 +227,13 @@ def resolve_public_mining_config(
         public_host = explicit_domain
         host_source = "public_domain"
     elif request_host:
-        public_host = request_host
-        host_source = "request_host"
+        site_pool_alias = _public_pool_alias_for_request_host(request_host)
+        if site_pool_alias:
+            public_host = site_pool_alias
+            host_source = "request_host_site_alias"
+        else:
+            public_host = request_host
+            host_source = "request_host"
     elif config.host not in WILDCARD_HOSTS:
         public_host = config.host
         host_source = "stratum_bind"
