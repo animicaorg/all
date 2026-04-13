@@ -6,9 +6,18 @@ Working deploy command (direct module invocation):
 PYTHONPATH=sdk/python python -m omni_sdk.cli.deploy \
   --rpc http://127.0.0.1:8545 \
   --chain-id 1 \
-  --keystore ~/.animica/wallets.json \
+  --wallet-store ~/.animica/wallets.json \
+  --label main \
   --manifest contracts/packages/counter/manifest.json \
   --ir contracts/build/counter/counter.ir
 ```
 
-If the wallet file contains multiple entries, add `--wallet-label <label>`.
+Selection options:
+
+- `--label <label>`: choose a wallet by label.
+- `--address <address>`: choose a wallet by address.
+- If `--wallet-store` is used without `--label/--address`, deploy uses the default wallet from `wallets.json`.
+
+Backward compatibility:
+
+- `--keystore` is still accepted for existing scripts.
