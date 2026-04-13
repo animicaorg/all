@@ -81,6 +81,22 @@ def _find_nonce_for_target(header_view: dict, target_int: int, limit: int = 10_0
     raise AssertionError("unable to find nonce within search window")
 
 
+def _find_nonce_between_targets(
+    header_view: dict,
+    *,
+    upper_target: int,
+    lower_exclusive: int,
+    limit: int = 20_000,
+) -> int:
+    header = _header_obj(header_view)
+    for nonce in range(limit):
+        digest = sha3_256(serialize_header(replace(header, nonce=nonce)))
+        digest_int = int.from_bytes(digest, "big", signed=False)
+        if digest_int <= upper_target and digest_int > lower_exclusive:
+            return nonce
+    raise AssertionError("unable to find nonce between targets")
+
+
 @pytest.mark.asyncio
 async def test_get_new_job_prefers_first_success(monkeypatch):
     payload = {
@@ -533,3 +549,228 @@ async def test_template_block_share_rejects_expired_template_locally(monkeypatch
     assert isinstance(reason, str)
     assert "template_expired" in reason
     assert [call[0] for call in rpc.calls] == ["chain.getHead"]
+
+
+@pytest.mark.asyncio
+async def test_template_submit_payload_header_matches_direct_mine_blocks_path(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 6, "hash": "0x" + "11" * 32}
+            if method == "miner.submitBlock":
+                return {"accepted": True, "reason": None}
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    header = _full_header_template()
+    nonce = 7
+    target_hex = "0x" + "ff" * 32
+    mining_job = MiningJob(
+        job_id="template-header-match",
+        header=header,
+        theta_micro=int(header["thetaMicro"]),
+        share_target=1.0,
+        height=7,
+        target=target_hex,
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-header-match",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-header-match",
+            "header": header,
+            "target": target_hex,
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [{"hash": "0xabc", "raw": "0x0102"}],
+        },
+    )
+
+    accepted, reason, is_block, tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {"hashshare": {"nonce": hex(nonce), "body": {}}},
+    )
+
+    assert accepted is True
+    assert reason is None
+    assert is_block is True
+    assert tx_count == 1
+
+    submit_payload = rpc.calls[1][1]
+    submitted_header = _header_obj(submit_payload["header"])
+    direct_header = replace(_header_obj(header), nonce=nonce)
+    assert serialize_header(submitted_header) == serialize_header(direct_header)
+
+
+@pytest.mark.asyncio
+async def test_template_share_target_and_block_target_boundaries(monkeypatch):
+    header = _full_header_template()
+    theta_micro = int(header["thetaMicro"])
+    share_ratio = 0.6
+    share_target_int = micro_threshold_to_target256(int(theta_micro * share_ratio))
+    block_target_int = share_target_int // 2
+
+    nonce_share_only = _find_nonce_between_targets(
+        header,
+        upper_target=share_target_int,
+        lower_exclusive=block_target_int,
+    )
+    nonce_block = _find_nonce_for_target(header, block_target_int)
+
+    class RejectingRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 6, "hash": header["parentHash"]}
+            if method == "miner.submitBlock":
+                return {"accepted": True, "reason": None}
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = RejectingRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    mining_job = MiningJob(
+        job_id="template-target-bounds",
+        header=header,
+        theta_micro=theta_micro,
+        share_target=share_ratio,
+        height=7,
+        target=hex(block_target_int),
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-target-bounds",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-target-bounds",
+            "header": header,
+            "target": hex(block_target_int),
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    accepted_share, reason_share, is_block_share, tx_count_share = (
+        await adapter.validate_and_submit_share(
+            mining_job,
+            {"hashshare": {"nonce": hex(nonce_share_only), "body": {}}},
+        )
+    )
+    assert accepted_share is True
+    assert reason_share is None
+    assert is_block_share is False
+    assert tx_count_share == 0
+    assert rpc.calls == []
+
+    accepted_block, reason_block, is_block_block, tx_count_block = (
+        await adapter.validate_and_submit_share(
+            mining_job,
+            {"hashshare": {"nonce": hex(nonce_block), "body": {}}},
+        )
+    )
+    assert accepted_block is True
+    assert reason_block is None
+    assert is_block_block is True
+    assert tx_count_block == 0
+    assert [call[0] for call in rpc.calls] == ["chain.getHead", "miner.submitBlock"]
+
+    # Deterministically pick a nonce that misses the share target.
+    nonce_low_diff = nonce_share_only + 1
+    low_diff_ok, low_diff_reason, low_diff_block, low_diff_tx_count = (
+        await adapter.validate_and_submit_share(
+            mining_job,
+            {"hashshare": {"nonce": hex(nonce_low_diff), "body": {}}},
+        )
+    )
+    if low_diff_ok:
+        # If the immediate successor happened to pass, find one that fails.
+        probe = nonce_low_diff + 1
+        while True:
+            low_diff_ok, low_diff_reason, low_diff_block, low_diff_tx_count = (
+                await adapter.validate_and_submit_share(
+                    mining_job,
+                    {"hashshare": {"nonce": hex(probe), "body": {}}},
+                )
+            )
+            if not low_diff_ok:
+                break
+            probe += 1
+
+    assert low_diff_ok is False
+    assert low_diff_reason == "low difficulty share"
+    assert low_diff_block is False
+    assert low_diff_tx_count == 0
+
+
+@pytest.mark.asyncio
+async def test_template_block_share_rpc_stale_template_regression(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 6, "hash": "0x" + "11" * 32}
+            if method == "miner.submitBlock":
+                raise RpcError(
+                    -32063,
+                    "stale template",
+                    {"reason": "stale_template", "detail": "template_expired"},
+                )
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    header = _full_header_template()
+    mining_job = MiningJob(
+        job_id="template-rpc-stale",
+        header=header,
+        theta_micro=int(header["thetaMicro"]),
+        share_target=1.0,
+        height=7,
+        target="0x" + "ff" * 32,
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-rpc-stale",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-rpc-stale",
+            "header": header,
+            "target": "0x" + "ff" * 32,
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    accepted, reason, is_block, tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {"hashshare": {"nonce": "0x01", "body": {}}},
+    )
+
+    assert accepted is False
+    assert is_block is True
+    assert tx_count == 0
+    assert isinstance(reason, str)
+    assert "rpc:-32063" in reason
+    assert "stale template" in reason.lower()

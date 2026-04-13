@@ -129,6 +129,7 @@ class JobManager:
 
                 job = await self._adapter.get_new_job()
                 replace_reason: Optional[str] = None
+                refresh_only = False
                 if self._current is None:
                     replace_reason = "initial"
                 else:
@@ -156,20 +157,19 @@ class JobManager:
                     elif prev_mempool and job_mempool and prev_mempool != job_mempool:
                         replace_reason = "mempool_changed"
                     elif prev_job_id != job_job_id:
-                        replace_reason = (
-                            "template_expired"
-                            if refresh_reason == "template_expired"
-                            else "manual_refresh"
-                            if refresh_reason == "manual_refresh"
-                            else "periodic_refresh"
-                            if refresh_reason == "periodic_refresh"
-                            else "template_refreshed"
-                        )
+                        if refresh_reason in {"template_expired", "manual_refresh"}:
+                            replace_reason = refresh_reason
+                        elif refresh_reason == "periodic_refresh":
+                            # Keep the current job stable during periodic lease checks
+                            # when only template ids changed. This avoids unnecessary
+                            # clean-job broadcasts that invalidate in-flight miner work.
+                            refresh_only = True
 
                 if replace_reason is not None:
                     self._current = job
+                    event_name = "job_created" if replace_reason == "initial" else "job_replaced"
                     self._log.info(
-                        "job_replaced",
+                        event_name,
                         extra={
                             "reason": replace_reason,
                             "job_id": _attr(job, "job_id"),
@@ -184,9 +184,23 @@ class JobManager:
                 elif self._current is not None and _attr(self._current, "job_id") == _attr(job, "job_id"):
                     # Keep lease metadata fresh when template identity stayed stable.
                     self._current = job
+                elif refresh_only and self._current is not None:
+                    self._log.info(
+                        "job_refresh_ignored",
+                        extra={
+                            "reason": refresh_reason,
+                            "current_job_id": _attr(self._current, "job_id"),
+                            "new_job_id": _attr(job, "job_id"),
+                            "current_template_id": _attr(self._current, "template_id"),
+                            "new_template_id": _attr(job, "template_id"),
+                            "height": _attr(job, "height"),
+                            "parent_hash": _attr(job, "parent_hash"),
+                        },
+                    )
 
                 now = time.time()
-                job_expires_at = _attr(job, "expires_at")
+                active_job = self._current if self._current is not None else job
+                job_expires_at = _attr(active_job, "expires_at")
                 if job_expires_at is not None:
                     ttl = max(1.0, float(job_expires_at) - now)
                     self._next_periodic_refresh_at = now + min(

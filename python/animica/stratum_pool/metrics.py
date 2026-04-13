@@ -130,6 +130,14 @@ class PoolMetrics:
             tx_count=tx_count,
             reward=reward,
         )
+        rejection_reason = str(reason or "").lower()
+        stale_template_reject = (not ok) and (
+            "stale template" in rejection_reason or "stale_template" in rejection_reason
+        )
+        if stale_template_reject:
+            request_refresh = getattr(self._job_manager, "request_refresh", None)
+            if callable(request_refresh):
+                request_refresh()
         if accepted_block:
             self._block_events.appendleft(
                 {

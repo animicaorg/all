@@ -1,5 +1,6 @@
 import asyncio
 import socket
+import time
 
 import pytest
 
@@ -16,7 +17,7 @@ def _free_port() -> int:
 
 
 @pytest.mark.asyncio
-async def test_stratum_rejects_stale_job():
+async def test_stratum_accepts_recent_previous_job_after_rollover():
     port = _free_port()
     server = StratumServer(host="127.0.0.1", port=port)
     await server.start()
@@ -61,7 +62,60 @@ async def test_stratum_rejects_stale_job():
         job_id="job1",
         hashshare={"nonce": "0x01", "body": {"hMicro": 1}},
     )
-    assert res.get("error"), "stale job submission should be rejected"
+    assert res.get("accepted") is True, f"recent prior job should remain valid: {res}"
+
+    await client.close()
+    await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_stratum_rejects_expired_cached_job():
+    port = _free_port()
+    server = StratumServer(host="127.0.0.1", port=port)
+    await server.start()
+    client = StratumClient(host="127.0.0.1", port=port)
+    await client.connect()
+    await client.subscribe()
+    await client.authorize(worker="rig1", address="anim1qqq")
+
+    sign_hex = "0x" + "00" * 32
+    hints = {"mixSeed": "0x" + "00" * 32}
+    job1 = StratumJob(
+        job_id="job1",
+        header={"signBytes": sign_hex},
+        share_target=1.0,
+        theta_micro=1,
+        hints=hints,
+        target="0x" + "ff" * 32,
+        sign_bytes=sign_hex,
+        height=1,
+        parent_hash="0x" + "11" * 32,
+        parent_height=0,
+        chain_id=1,
+        expires_at=time.time() - 1.0,
+    )
+    job2 = StratumJob(
+        job_id="job2",
+        header={"signBytes": sign_hex},
+        share_target=1.0,
+        theta_micro=1,
+        hints=hints,
+        target="0x" + "ff" * 32,
+        sign_bytes=sign_hex,
+        height=2,
+        parent_hash="0x" + "22" * 32,
+        parent_height=1,
+        chain_id=1,
+    )
+
+    await server.publish_job(job1)
+    await server.publish_job(job2)
+
+    res = await client.submit_share(
+        job_id="job1",
+        hashshare={"nonce": "0x01", "body": {"hMicro": 1}},
+    )
+    assert res.get("error"), "expired cached job should be rejected"
 
     await client.close()
     await server.stop()

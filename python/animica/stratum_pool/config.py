@@ -104,8 +104,16 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         raise ValueError("rpc_timeout must be positive")
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
+    if min_difficulty > 1.0:
+        raise ValueError("min_difficulty must be <= 1.0")
+    if max_difficulty <= 0:
+        raise ValueError("max_difficulty must be positive")
+    if max_difficulty > 1.0:
+        raise ValueError("max_difficulty must be <= 1.0")
     if max_difficulty < min_difficulty:
         raise ValueError("max_difficulty must be >= min_difficulty")
+    if poll_interval <= 0:
+        raise ValueError("poll_interval must be positive")
 
     return PoolConfig(
         host=host,

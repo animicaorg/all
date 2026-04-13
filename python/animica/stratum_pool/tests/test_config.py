@@ -57,3 +57,9 @@ def test_invalid_rpc_timeout(monkeypatch):
     monkeypatch.setenv("ANIMICA_STRATUM_RPC_TIMEOUT", "0")
     with pytest.raises(ValueError):
         load_config_from_env()
+
+
+def test_invalid_max_difficulty_gt_one(monkeypatch):
+    monkeypatch.setenv("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.1")
+    with pytest.raises(ValueError):
+        load_config_from_env()
