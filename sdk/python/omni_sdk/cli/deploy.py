@@ -14,6 +14,11 @@ from ..contracts.deployer import build_deploy_tx, deploy_package, make_package_b
 from ..rpc.http import RpcClient
 from ..tx import encode as tx_encode
 from ..wallet.signer import PQSigner
+from .wallet_loader import (
+    load_signer_from_wallet_source,
+    normalize_alg_name,
+    wallet_store_default_path,
+)
 
 try:
     from .main import Ctx  # type: ignore
@@ -23,23 +28,6 @@ except Exception:  # pragma: no cover
 app = typer.Typer(help="Deploy contracts and packages", no_args_is_help=True)
 
 __all__ = ["app", "main", "run"]
-
-ALG_BY_ID = {
-    0x1001: "dilithium3",
-    0x1002: "sphincs_shake_128s",
-}
-
-ALG_ALIASES = {
-    "dilithium": "dilithium3",
-    "dilithium-3": "dilithium3",
-    "dilithium3": "dilithium3",
-    "ml-dsa-65": "dilithium3",
-    "mldsa65": "dilithium3",
-    "sphincs": "sphincs_shake_128s",
-    "sphincs+": "sphincs_shake_128s",
-    "sphincs+-shake-128s": "sphincs_shake_128s",
-    "sphincs_shake_128s": "sphincs_shake_128s",
-}
 
 
 def _env_default(keys: Sequence[str], default: str) -> str:
@@ -171,148 +159,6 @@ def _parse_seed_hex(seed_input: str) -> bytes:
     return seed
 
 
-def _normalize_alg_name(raw_name: str) -> str:
-    normalized = ALG_ALIASES.get(raw_name.strip().lower(), raw_name.strip().lower())
-    if normalized not in ("dilithium3", "sphincs_shake_128s"):
-        raise typer.BadParameter(
-            f"unsupported algorithm '{raw_name}' "
-            "(supported: dilithium3, sphincs_shake_128s)"
-        )
-    return normalized
-
-
-def _parse_alg_id(raw_value: Any) -> Optional[int]:
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, str):
-        value = raw_value.strip().lower()
-        if not value:
-            return None
-        try:
-            return int(value, 16) if value.startswith("0x") else int(value)
-        except Exception as exc:  # noqa: BLE001
-            raise typer.BadParameter(f"invalid wallet alg_id '{raw_value}'") from exc
-    try:
-        return int(raw_value)
-    except Exception as exc:  # noqa: BLE001
-        raise typer.BadParameter(f"invalid wallet alg_id '{raw_value}'") from exc
-
-
-def _wallet_default_path() -> Path:
-    env_path = os.getenv("ANIMICA_WALLETS_FILE")
-    if env_path and env_path.strip():
-        return Path(env_path).expanduser()
-    return Path.home() / ".animica" / "wallets.json"
-
-
-def _wallet_entries(path: Path) -> tuple[list[Dict[str, Any]], Optional[str]]:
-    expanded = path.expanduser()
-    try:
-        raw = json.loads(expanded.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise typer.BadParameter(f"wallet/keystore file not found: {expanded}") from exc
-    except Exception as exc:  # noqa: BLE001
-        raise typer.BadParameter(
-            f"invalid JSON in wallet/keystore file {expanded}: {exc}"
-        ) from exc
-
-    default_label: Optional[str] = None
-    if isinstance(raw, dict) and isinstance(raw.get("wallets"), list):
-        entries = raw["wallets"]
-        if isinstance(raw.get("default"), str):
-            default_label = str(raw["default"])
-    elif isinstance(raw, list):
-        entries = raw
-    elif isinstance(raw, dict):
-        entries = []
-        for label, value in raw.items():
-            if not isinstance(value, dict):
-                continue
-            item = dict(value)
-            item.setdefault("label", str(label))
-            entries.append(item)
-    else:
-        raise typer.BadParameter(
-            "unsupported wallet/keystore format; expected wallets.json-like object or list"
-        )
-
-    normalized = [item for item in entries if isinstance(item, dict)]
-    if not normalized:
-        raise typer.BadParameter(f"no wallet entries found in {expanded}")
-    return normalized, default_label
-
-
-def _find_wallet_by_label(entries: Sequence[Dict[str, Any]], label: str) -> Dict[str, Any]:
-    needle = label.strip().lower()
-    if not needle:
-        raise typer.BadParameter("--wallet-label cannot be empty")
-    for item in entries:
-        item_label = str(item.get("label") or "").strip().lower()
-        if item_label == needle:
-            return item
-    raise typer.BadParameter(f"wallet label '{label}' not found")
-
-
-def _resolve_wallet_entry(path: Path, wallet_label: Optional[str]) -> tuple[Dict[str, Any], str]:
-    entries, default_label = _wallet_entries(path)
-    if wallet_label is not None:
-        entry = _find_wallet_by_label(entries, wallet_label)
-        return entry, str(entry.get("label") or wallet_label)
-
-    if default_label:
-        try:
-            entry = _find_wallet_by_label(entries, default_label)
-            return entry, str(entry.get("label") or default_label)
-        except typer.BadParameter:
-            pass
-
-    if len(entries) == 1:
-        only = entries[0]
-        label = str(only.get("label") or "default")
-        return only, label
-
-    raise typer.BadParameter(
-        "wallet/keystore has multiple entries; pass --wallet-label to select one"
-    )
-
-
-def _wallet_alg_name(entry: Dict[str, Any]) -> str:
-    name_raw = entry.get("alg_name") or entry.get("algName")
-    alg_id = _parse_alg_id(entry.get("alg_id", entry.get("algId", entry.get("alg"))))
-    name_from_id = ALG_BY_ID.get(int(alg_id)) if alg_id is not None else None
-    if isinstance(name_raw, str) and name_raw.strip():
-        normalized_name = _normalize_alg_name(name_raw)
-        if name_from_id and name_from_id != normalized_name:
-            raise typer.BadParameter(
-                "wallet algorithm mismatch: "
-                f"alg_id {alg_id} maps to {name_from_id}, but alg_name is {name_raw!r}"
-            )
-        return normalized_name
-    if name_from_id:
-        return name_from_id
-    raise typer.BadParameter(
-        "wallet entry missing supported alg_id/alg_name "
-        "(expected dilithium3 or sphincs_shake_128s)"
-    )
-
-
-def _wallet_key_bytes(
-    entry: Dict[str, Any],
-    *,
-    field_name: str,
-    aliases: Sequence[str],
-) -> bytes:
-    for key in aliases:
-        value = entry.get(key)
-        if isinstance(value, str) and value.strip():
-            return bytes.fromhex(_normalize_hex(value, field=f"wallet.{field_name}"))
-    raise typer.BadParameter(f"wallet entry missing {field_name}")
-
-
-def _sender_from_signer(signer: PQSigner) -> str:
-    return signer.address or from_pubkey(signer.public_key, alg_id=signer.alg_id, hrp="anim")
-
-
 def _make_signer_from_seed(alg_name: str, seed_hex: str) -> PQSigner:
     seed = _parse_seed_hex(seed_hex)
     try:
@@ -321,54 +167,6 @@ def _make_signer_from_seed(alg_name: str, seed_hex: str) -> PQSigner:
         raise typer.BadParameter(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise typer.BadParameter(f"failed to create signer from seed: {exc}") from exc
-
-
-def _make_signer_from_wallet(
-    path: Path,
-    wallet_label: Optional[str],
-    alg_override: Optional[str],
-) -> tuple[PQSigner, str]:
-    entry, resolved_label = _resolve_wallet_entry(path, wallet_label)
-    wallet_alg = _wallet_alg_name(entry)
-    if alg_override:
-        normalized_override = _normalize_alg_name(alg_override)
-        if normalized_override != wallet_alg:
-            raise typer.BadParameter(
-                f"--alg={normalized_override} does not match wallet algorithm {wallet_alg}"
-            )
-
-    public_key = _wallet_key_bytes(
-        entry,
-        field_name="public_key_hex",
-        aliases=("public_key_hex", "publicKeyHex", "pubkey", "pk"),
-    )
-    secret_key = _wallet_key_bytes(
-        entry,
-        field_name="secret_key_hex",
-        aliases=("secret_key_hex", "secretKeyHex"),
-    )
-
-    try:
-        signer = PQSigner.from_keypair(
-            alg_name=wallet_alg,
-            secret_key=secret_key,
-            public_key=public_key,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise typer.BadParameter(
-            f"failed to create signer from wallet entry '{resolved_label}': {exc}"
-        ) from exc
-
-    wallet_address = str(entry.get("address") or "").strip()
-    signer_address = _sender_from_signer(signer)
-    if wallet_address and wallet_address.lower() != signer_address.lower():
-        raise typer.BadParameter(
-            "wallet address mismatch: "
-            f"wallet entry '{resolved_label}' has {wallet_address}, "
-            f"derived signer address is {signer_address}"
-        )
-
-    return signer, resolved_label
 
 
 def _resolve_nonce(
@@ -390,64 +188,94 @@ def _resolve_nonce(
 def _resolve_signer_and_sender(
     *,
     seed_hex: Optional[str],
+    wallet_store: Optional[Path],
     wallet_file: Optional[Path],
+    label: Optional[str],
     wallet_label: Optional[str],
+    address: Optional[str],
     keystore: Optional[Path],
     sender: Optional[str],
     alg: Optional[str],
     dry_run: bool,
-) -> tuple[Optional[PQSigner], str, str]:
+) -> tuple[Optional[PQSigner], str, str, Optional[str]]:
     has_seed = bool(seed_hex and seed_hex.strip())
-    has_wallet_source = bool(wallet_file is not None or wallet_label is not None or keystore is not None)
+    has_wallet_source = bool(
+        wallet_store is not None
+        or wallet_file is not None
+        or label is not None
+        or wallet_label is not None
+        or address is not None
+        or keystore is not None
+    )
+
+    if label and wallet_label and label.strip() != wallet_label.strip():
+        raise typer.BadParameter("--label and --wallet-label must match when both are provided")
+    resolved_label = label or wallet_label
 
     resolved_wallet_file: Optional[Path] = None
-    if wallet_file is not None:
-        resolved_wallet_file = wallet_file.expanduser()
-    if keystore is not None:
-        keystore_path = keystore.expanduser()
-        if resolved_wallet_file is not None and resolved_wallet_file != keystore_path:
+    strict_default_selection = False
+    for source_name, source_path in (
+        ("--wallet-store", wallet_store),
+        ("--wallet-file", wallet_file),
+        ("--keystore", keystore),
+    ):
+        if source_path is None:
+            continue
+        expanded = source_path.expanduser()
+        if resolved_wallet_file is not None and resolved_wallet_file != expanded:
             raise typer.BadParameter(
-                "--wallet-file and --keystore point to different paths; provide only one"
+                "wallet source flags point to different paths; provide one of "
+                "--wallet-store, --wallet-file, or --keystore"
             )
-        resolved_wallet_file = keystore_path
-    if wallet_label is not None and resolved_wallet_file is None:
-        resolved_wallet_file = _wallet_default_path()
+        resolved_wallet_file = expanded
+        if source_name == "--wallet-store":
+            strict_default_selection = True
+    if (
+        (resolved_label is not None or address is not None)
+        and resolved_wallet_file is None
+    ):
+        resolved_wallet_file = wallet_store_default_path()
+        strict_default_selection = True
 
     if has_seed and has_wallet_source:
         raise typer.BadParameter(
-            "choose exactly one signer source: --seed-hex or --keystore/--wallet-file"
+            "choose exactly one signer source: --seed-hex or wallet source flags "
+            "(--wallet-store/--wallet-file/--keystore)"
         )
 
     if has_seed:
-        resolved_alg = _normalize_alg_name(alg or "dilithium3")
+        resolved_alg = normalize_alg_name(alg or "dilithium3")
         signer = _make_signer_from_seed(resolved_alg, seed_hex or "")
-        sender_addr = _sender_from_signer(signer)
-        return signer, sender_addr, f"seed:{resolved_alg}"
+        sender_addr = signer.address or from_pubkey(
+            signer.public_key, alg_id=signer.alg_id, hrp="anim"
+        )
+        return signer, sender_addr, f"seed:{resolved_alg}", None
 
     if resolved_wallet_file is not None:
-        signer, resolved_label = _make_signer_from_wallet(
-            resolved_wallet_file,
-            wallet_label=wallet_label,
+        loaded = load_signer_from_wallet_source(
+            path=resolved_wallet_file,
+            label=resolved_label,
+            address=address,
             alg_override=alg,
+            strict_default_selection=strict_default_selection,
         )
-        sender_addr = _sender_from_signer(signer)
-        return signer, sender_addr, f"wallet:{resolved_label}@{resolved_wallet_file}"
+        return loaded.signer, loaded.sender, loaded.source, loaded.source_kind
 
     if sender:
         if not dry_run:
             raise typer.BadParameter(
                 "--sender without signer material is only supported in --dry-run mode"
             )
-        return None, sender, "sender-override"
+        return None, sender, "sender-override", None
 
     if dry_run:
         raise typer.BadParameter(
             "missing sender material for --dry-run: pass --sender, --seed-hex, "
-            "or --keystore/--wallet-file"
+            "or --wallet-store/--wallet-file/--keystore"
         )
 
     raise typer.BadParameter(
-        "missing signer material: pass --seed-hex or --keystore/--wallet-file"
+        "missing signer material: pass --seed-hex or --wallet-store/--wallet-file/--keystore"
     )
 
 
@@ -525,20 +353,35 @@ def deploy_package_cmd(
         "--seed-hex",
         help="Signer seed as hex (dev/test only)",
     ),
+    wallet_store: Optional[Path] = typer.Option(
+        None,
+        "--wallet-store",
+        help="Path to wallet store (Animica wallets.json or SDK keystore entries)",
+    ),
     keystore: Optional[Path] = typer.Option(
         None,
         "--keystore",
-        help="Wallet file path (wallets.json-compatible) used for signing",
+        help="Backward-compatible wallet/keystore path for signing",
     ),
     wallet_file: Optional[Path] = typer.Option(
         None,
         "--wallet-file",
-        help="Wallet file path (wallets.json-compatible) used for signing",
+        help="Deprecated alias for --wallet-store",
+    ),
+    label: Optional[str] = typer.Option(
+        None,
+        "--label",
+        help="Wallet label within the wallet source",
     ),
     wallet_label: Optional[str] = typer.Option(
         None,
         "--wallet-label",
-        help="Wallet label from the wallet/keystore file",
+        help="Deprecated alias for --label",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Wallet address within the wallet source",
     ),
     sender: Optional[str] = typer.Option(
         None,
@@ -589,10 +432,13 @@ def deploy_package_cmd(
     manifest_obj = _load_manifest(manifest)
     ir_bytes = _load_ir(ir)
 
-    signer, sender_addr, signer_source = _resolve_signer_and_sender(
+    signer, sender_addr, signer_source, signer_source_kind = _resolve_signer_and_sender(
         seed_hex=seed_hex,
+        wallet_store=wallet_store,
         wallet_file=wallet_file,
+        label=label,
         wallet_label=wallet_label,
+        address=address,
         keystore=keystore,
         sender=sender,
         alg=alg,
@@ -622,13 +468,19 @@ def deploy_package_cmd(
             "sender": sender_addr,
             "rpcUrl": effective_rpc,
             "chainId": int(effective_chain_id),
+            "rpc_url": effective_rpc,
+            "chain_id": int(effective_chain_id),
             "manifestPath": _as_output_path(manifest),
             "irPath": _as_output_path(ir),
+            "manifest_path": _as_output_path(manifest),
+            "ir_path": _as_output_path(ir),
             "nonce": nonce_value,
             "packageBytes": len(package),
             "signBytesLen": sign_bytes_len,
             "txBuildError": tx_build_error,
             "signerSource": signer_source,
+            "signer_source": signer_source,
+            "signer_source_kind": signer_source_kind,
         }
         typer.echo(json.dumps(summary, indent=2))
         return
@@ -663,15 +515,23 @@ def deploy_package_cmd(
         "sender": sender_addr,
         "rpcUrl": effective_rpc,
         "chainId": int(effective_chain_id),
+        "rpc_url": effective_rpc,
+        "chain_id": int(effective_chain_id),
         "txHash": tx_hash,
+        "tx_hash": tx_hash,
         "contractAddress": resolved_contract,
+        "contract_address": resolved_contract,
         "createdContractId": created_contract_id,
         "manifestPath": _as_output_path(manifest),
         "irPath": _as_output_path(ir),
+        "manifest_path": _as_output_path(manifest),
+        "ir_path": _as_output_path(ir),
         "status": receipt.get("status") if isinstance(receipt, dict) else None,
         "gasUsed": receipt.get("gasUsed") if isinstance(receipt, dict) else None,
         "blockNumber": receipt.get("blockNumber") if isinstance(receipt, dict) else None,
         "signerSource": signer_source,
+        "signer_source": signer_source,
+        "signer_source_kind": signer_source_kind,
     }
 
     if out_dir is not None:
