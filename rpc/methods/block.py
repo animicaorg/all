@@ -7,6 +7,15 @@ import typing as t
 from rpc import deps
 from rpc.methods import method
 
+try:
+    from core.utils.deploy_metadata import (
+        build_python_vm_package_deploy_metadata as _build_pyvm_deploy_metadata,
+        copy_deploy_metadata_fields as _copy_deploy_metadata_fields,
+    )
+except Exception:  # pragma: no cover
+    _build_pyvm_deploy_metadata = None  # type: ignore[assignment]
+    _copy_deploy_metadata_fields = None  # type: ignore[assignment]
+
 log = logging.getLogger(__name__)
 
 # Prefer canonical encoders from core; fall back to CBOR if needed.
@@ -166,7 +175,36 @@ def _compute_tx_hash(tx: t.Any) -> str | None:
     return None
 
 
-def _tx_view(tx: t.Any) -> dict[str, t.Any]:
+def _lookup_deploy_metadata_by_hash(tx_hash: str | None) -> dict | None:
+    if not isinstance(tx_hash, str) or not tx_hash:
+        return None
+    raw = tx_hash[2:] if tx_hash.startswith("0x") else tx_hash
+    try:
+        tx_hash_b = bytes.fromhex(raw)
+    except Exception:
+        return None
+
+    ctx = deps.get_ctx()
+    bdb = getattr(ctx, "block_db", None)
+    if bdb is None:
+        return None
+    getter = getattr(bdb, "get_deploy_metadata_by_tx_hash", None)
+    if not callable(getter):
+        return None
+    try:
+        out = getter(tx_hash_b)
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def _tx_view(
+    tx: t.Any,
+    *,
+    block_number: int | None = None,
+    tx_index: int | None = None,
+    block_hash: str | None = None,
+) -> dict[str, t.Any]:
     """Project a Tx dataclass/object into a JSON-friendly view."""
     # Read common fields defensively
     _from = getattr(tx, "sender", getattr(tx, "frm", getattr(tx, "from_", None)))
@@ -197,6 +235,25 @@ def _tx_view(tx: t.Any) -> dict[str, t.Any]:
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
         "accessList": access_list,
     }
+
+    tx_hash = v.get("hash")
+    deploy_meta = _lookup_deploy_metadata_by_hash(tx_hash if isinstance(tx_hash, str) else None)
+    if deploy_meta is None and callable(_build_pyvm_deploy_metadata):
+        try:
+            deploy_meta = _build_pyvm_deploy_metadata(
+                tx,
+                tx_hash=tx_hash if isinstance(tx_hash, str) else None,
+                block_hash=block_hash,
+                block_number=block_number,
+                tx_index=tx_index,
+            )
+        except Exception:
+            deploy_meta = None
+    if deploy_meta is not None and callable(_copy_deploy_metadata_fields):
+        try:
+            _copy_deploy_metadata_fields(v, deploy_meta, include_created_alias=True)
+        except Exception:
+            pass
     return {k: v for k, v in v.items() if v is not None}
 
 
@@ -318,7 +375,15 @@ def _block_view(
         v["roots"] = roots_view
 
     if include_txs:
-        tx_objects = [_tx_view(tx) for tx in txs]
+        tx_objects = [
+            _tx_view(
+                tx,
+                block_number=height,
+                tx_index=idx,
+                block_hash=computed_hash if isinstance(computed_hash, str) else None,
+            )
+            for idx, tx in enumerate(txs)
+        ]
         # Set both 'transactions' and 'txs' to same list (true alias, not copy)
         # This is intentional for efficiency - the dict is only used for JSON serialization
         v["transactions"] = tx_objects

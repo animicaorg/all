@@ -130,6 +130,15 @@ DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
 # Used for re-indexing receipts with canonical tx hashes
 PFX_RXI = b"\x22"
 
+try:
+    from core.utils.deploy_metadata import (
+        build_python_vm_package_deploy_metadata,
+        is_python_vm_package_deploy_tx,
+    )
+except Exception:  # pragma: no cover
+    build_python_vm_package_deploy_metadata = None  # type: ignore[assignment]
+    is_python_vm_package_deploy_tx = None  # type: ignore[assignment]
+
 # Default gas limit for transactions when not specified (same as INTRINSIC_GAS_TRANSFER)
 DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
 
@@ -2755,11 +2764,29 @@ def _execute_transactions(
 ) -> list[dict[str, Any]]:
     # Import execution runtime modules once at function level
     try:
-        from execution.runtime.transfers import apply_transfer
         from execution.runtime.env import make_tx_env
     except ImportError:
-        # If execution runtime is not available, return empty receipts
         logger.warning("execution.runtime not available; cannot execute transactions")
+        return [{"status": 0, "gasUsed": 0, "logs": []} for _ in txs]
+
+    apply_dispatch = None
+    resolve_kind = None
+    try:
+        from execution.runtime.dispatcher import dispatch as apply_dispatch
+        from execution.runtime.dispatcher import resolve_tx_kind as resolve_kind
+    except ImportError:
+        apply_dispatch = None
+        resolve_kind = None
+
+    apply_transfer = None
+    if apply_dispatch is None:
+        try:
+            from execution.runtime.transfers import apply_transfer
+        except ImportError:
+            apply_transfer = None
+
+    if apply_dispatch is None and apply_transfer is None:
+        logger.warning("execution.runtime dispatcher not available; cannot execute transactions")
         return [{"status": 0, "gasUsed": 0, "logs": []} for _ in txs]
     
     receipts: list[dict[str, Any]] = []
@@ -2813,6 +2840,13 @@ def _execute_transactions(
                 )
                 sender_bytes = None
 
+        tx_kind: str | None = None
+        if callable(resolve_kind):
+            try:
+                tx_kind = str(resolve_kind(tx))
+            except Exception:
+                tx_kind = None
+
         try:
             # Get recipient address for logging
             to_addr = getattr(tx, "to", None)
@@ -2847,8 +2881,14 @@ def _execute_transactions(
                 gas_price=int(gas_price),
             )
 
-            # Execute state transition (use keyword arguments for clarity)
-            res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
+            # Execute state transition (use dispatcher when available).
+            if callable(apply_dispatch):
+                res = apply_dispatch(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
+            elif callable(apply_transfer):
+                res = apply_transfer(tx=tx, state=state_db, block_env=block_env, tx_env=tx_env)
+                tx_kind = tx_kind or "transfer"
+            else:
+                raise RuntimeError("No execution handler available")
 
             # Log execution result
             status_str = "SUCCESS" if res.is_success else "FAILED"
@@ -2859,13 +2899,53 @@ def _execute_transactions(
 
             # Receipt-like view
             # Note: res.is_success checks if res.status == TxStatus.SUCCESS
-            receipts.append(
-                {
-                    "status": 1 if res.is_success else 0,
-                    "gasUsed": int(res.gas_used or 0),
-                    "logs": res.logs or [],
-                }
-            )
+            receipt_view: dict[str, Any] = {
+                "status": 1 if res.is_success else 0,
+                "gasUsed": int(res.gas_used or 0),
+                "logs": res.logs or [],
+            }
+
+            is_deploy = tx_kind == "deploy"
+            if not is_deploy and callable(is_python_vm_package_deploy_tx):
+                try:
+                    is_deploy = bool(is_python_vm_package_deploy_tx(tx))
+                except Exception:
+                    is_deploy = False
+
+            if (
+                is_deploy
+                and res.is_success
+                and callable(build_python_vm_package_deploy_metadata)
+            ):
+                try:
+                    tx_hash_hex = _canonical_txid_hex(tx)
+                    deploy_meta = build_python_vm_package_deploy_metadata(
+                        tx,
+                        tx_hash=tx_hash_hex,
+                        sender=sender_bytes,
+                        block_number=getattr(block_env, "height", None),
+                        tx_index=idx,
+                        status=1,
+                        chain_id=getattr(block_env, "chain_id", None),
+                    )
+                except Exception as meta_err:
+                    logger.debug(
+                        "Failed to compute deploy metadata during execution",
+                        extra={"tx_index": idx, "error": str(meta_err)},
+                    )
+                    deploy_meta = None
+
+                if isinstance(deploy_meta, dict):
+                    contract_address = deploy_meta.get("contractAddress")
+                    if isinstance(contract_address, str) and contract_address:
+                        receipt_view["contractAddress"] = contract_address
+                        receipt_view["createdAddress"] = contract_address
+                    for key in ("deploymentType", "codeHash", "manifestHash", "sender"):
+                        value = deploy_meta.get(key)
+                        if value is not None:
+                            receipt_view[key] = value
+
+            receipts.append(receipt_view)
         except Exception as e:
             logger.exception(f"Transaction {idx} execution failed: %s", e)
             receipts.append({"status": 0, "gasUsed": 0, "logs": []})
@@ -3814,17 +3894,62 @@ def _mine_once(
                         # Re-index receipts with canonical hashes
                         with block_db.kv.batch() as batch:
                             for idx, tx in enumerate(txs):
-                                # Get canonical hash from tracked raw bytes
+                                # Prefer canonical hash from tracked raw bytes.
                                 tracked = _tracked(tx)
                                 if tracked:
-                                    tx_hash_hex, raw = tracked
-                                    tx_hash = bytes.fromhex(tx_hash_hex[2:])  # strip "0x" prefix
+                                    tx_hash_hex, _raw = tracked
+                                else:
+                                    tx_hash_hex = _canonical_txid_hex(tx)
 
-                                    # Store receipt pointer using canonical hash
-                                    # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
-                                    receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
-                                    batch.put(PFX_RXI + tx_hash, receipt_ptr)
-                                    log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
+                                tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+                                if not (tx_hash_hex.startswith("0x") and len(tx_hash_hex) == 66):
+                                    continue
+
+                                tx_hash = bytes.fromhex(tx_hash_hex[2:])
+
+                                # Store receipt pointer using canonical hash
+                                # Format: PFX_RXI + tx_hash → {"h": height, "i": idx, "b": block_hash}
+                                receipt_ptr = cbor_dumps({"h": header.height, "i": idx, "b": block_hash_bytes})
+                                batch.put(PFX_RXI + tx_hash, receipt_ptr)
+                                log.debug(f"Re-indexed receipt for canonical hash: {tx_hash_hex[:16]}...")
+
+                                # Persist deployment metadata index for successful deploy txs.
+                                receipt_view = receipts_dict[idx] if idx < len(receipts_dict) else {}
+                                status_int = None
+                                try:
+                                    status_int = int(receipt_view.get("status")) if isinstance(receipt_view, dict) else None
+                                except Exception:
+                                    status_int = None
+
+                                if (
+                                    status_int == 1
+                                    and callable(build_python_vm_package_deploy_metadata)
+                                ):
+                                    try:
+                                        deploy_meta = build_python_vm_package_deploy_metadata(
+                                            tx,
+                                            tx_hash=tx_hash_hex,
+                                            block_hash=block_hash_bytes,
+                                            block_number=header.height,
+                                            tx_index=idx,
+                                            status=status_int,
+                                            chain_id=header.chainId,
+                                        )
+                                    except Exception as meta_err:
+                                        log.debug(
+                                            "Failed to build deploy metadata for tx",
+                                            extra={"tx_hash": tx_hash_hex, "error": str(meta_err)},
+                                        )
+                                        deploy_meta = None
+
+                                    if isinstance(deploy_meta, dict):
+                                        if hasattr(block_db, "put_deploy_metadata_by_tx_hash"):
+                                            block_db.put_deploy_metadata_by_tx_hash(  # type: ignore[attr-defined]
+                                                tx_hash, deploy_meta, batch=batch
+                                            )
+                                        else:
+                                            # Fallback path for older BlockDB implementations.
+                                            batch.put(b"\x23" + tx_hash, cbor_dumps(deploy_meta))
                             batch.commit()
                         log.info(f"Re-indexed {len(txs)} receipts with canonical tx hashes")
                     except Exception as e:

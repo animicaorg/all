@@ -282,7 +282,13 @@ def _resolve_signer_and_sender(
 def _extract_contract_address(receipt: Any) -> Optional[str]:
     if not isinstance(receipt, dict):
         return None
-    for key in ("contractAddress", "contract_address", "address"):
+    for key in (
+        "contractAddress",
+        "contract_address",
+        "createdAddress",
+        "created_address",
+        "address",
+    ):
         value = receipt.get(key)
         if isinstance(value, str) and value:
             return value
@@ -311,6 +317,22 @@ def _extract_tx_hash(receipt: Any) -> Optional[str]:
 
 def _format_exception(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
+
+
+def _receipt_is_confirmed_success(receipt: Any) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+    status = receipt.get("status")
+    if isinstance(status, str):
+        normalized = status.strip().upper()
+        return normalized in {"SUCCESS", "OK", "CONFIRMED", "1"}
+    if isinstance(status, bool):
+        return bool(status)
+    if isinstance(status, int):
+        # Node surfaces mixed conventions across handlers; treat 0/1 as successful
+        # confirmed statuses in this CLI gate.
+        return status in (0, 1)
+    return False
 
 
 @app.command("package")
@@ -510,6 +532,11 @@ def deploy_package_cmd(
     tx_hash = _extract_tx_hash(receipt)
     resolved_contract = contract_address or _extract_contract_address(receipt)
     created_contract_id = _extract_created_contract_id(receipt)
+
+    if wait and _receipt_is_confirmed_success(receipt) and not resolved_contract:
+        raise click.ClickException(
+            "deploy confirmed but no contract address was returned or derivable"
+        )
 
     summary: Dict[str, Any] = {
         "sender": sender_addr,

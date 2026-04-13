@@ -1167,7 +1167,7 @@ function collectDeploymentMarkers(...sources: unknown[]): string[] {
       if (!value || typeof value !== 'object' || visited.has(value)) continue
       visited.add(value)
       const record = value as Record<string, unknown>
-      for (const key of ['kind', 'type', 'txType', 'tx_type', 'method', 'action', 'op', 'operation', 'module', 'function']) {
+      for (const key of ['kind', 'type', 'txType', 'tx_type', 'deploymentType', 'deployment_type', 'method', 'action', 'op', 'operation', 'module', 'function']) {
         const marker = normalizeMarker(record[key])
         if (marker) out.push(marker)
       }

@@ -12,6 +12,7 @@ const TX_CALL = '0x' + '3'.repeat(64)
 const TX_CALL_FAILED = '0x' + '4'.repeat(64)
 const TX_VALUE_TO_CONTRACT = '0x' + '5'.repeat(64)
 const TX_CALL_UNKNOWN_ABI = '0x' + '6'.repeat(64)
+const TX_DEPLOY_MARKER = '0x' + '7'.repeat(64)
 
 const CREATOR = 'anim1creator0000000000000000000000000000000aaaa'
 const EOA_TARGET = 'anim1target0000000000000000000000000000000bbbb'
@@ -65,7 +66,8 @@ function makeService(includeAbi = true) {
     [TX_CALL]: { hash: TX_CALL, from: CREATOR, to: CONTRACT, data: txInput, value: '0x0' },
     [TX_CALL_FAILED]: { hash: TX_CALL_FAILED, from: CREATOR, to: CONTRACT, data: txInput, value: '0x0' },
     [TX_VALUE_TO_CONTRACT]: { hash: TX_VALUE_TO_CONTRACT, from: CREATOR, to: CONTRACT, value: '0x01' },
-    [TX_CALL_UNKNOWN_ABI]: { hash: TX_CALL_UNKNOWN_ABI, from: CREATOR, to: CONTRACT_UNVERIFIED, data: txInput, value: '0x0' }
+    [TX_CALL_UNKNOWN_ABI]: { hash: TX_CALL_UNKNOWN_ABI, from: CREATOR, to: CONTRACT_UNVERIFIED, data: txInput, value: '0x0' },
+    [TX_DEPLOY_MARKER]: { hash: TX_DEPLOY_MARKER, from: CREATOR, to: RECEIVER, value: '0x0', deploymentType: 'python_vm_package' }
   }
   const receiptMap: Record<string, any> = {
     [TX_TRANSFER]: { txHash: TX_TRANSFER, blockNumber: 100, blockHash, status: 'SUCCESS', logs: [] },
@@ -73,12 +75,13 @@ function makeService(includeAbi = true) {
     [TX_CALL]: { txHash: TX_CALL, blockNumber: 100, blockHash, status: 'SUCCESS', logs: [{ topics: [eventTopic], data: '0x0107' }] },
     [TX_CALL_FAILED]: { txHash: TX_CALL_FAILED, blockNumber: 100, blockHash, status: 'REVERT', logs: [] },
     [TX_VALUE_TO_CONTRACT]: { txHash: TX_VALUE_TO_CONTRACT, blockNumber: 100, blockHash, status: 'SUCCESS', logs: [] },
-    [TX_CALL_UNKNOWN_ABI]: { txHash: TX_CALL_UNKNOWN_ABI, blockNumber: 100, blockHash, status: 'SUCCESS', logs: [] }
+    [TX_CALL_UNKNOWN_ABI]: { txHash: TX_CALL_UNKNOWN_ABI, blockNumber: 100, blockHash, status: 'SUCCESS', logs: [] },
+    [TX_DEPLOY_MARKER]: { txHash: TX_DEPLOY_MARKER, blockNumber: 100, blockHash, status: 'SUCCESS', contractAddress: CONTRACT_UNVERIFIED, deploymentType: 'python_vm_package', logs: [] }
   }
   const block = {
     header: { height: 100, hash: blockHash, time: 1_700_000_100 },
-    txs: [txMap[TX_TRANSFER], txMap[TX_DEPLOY], txMap[TX_CALL], txMap[TX_CALL_FAILED], txMap[TX_VALUE_TO_CONTRACT], txMap[TX_CALL_UNKNOWN_ABI]],
-    receipts: [receiptMap[TX_TRANSFER], receiptMap[TX_DEPLOY], receiptMap[TX_CALL], receiptMap[TX_CALL_FAILED], receiptMap[TX_VALUE_TO_CONTRACT], receiptMap[TX_CALL_UNKNOWN_ABI]]
+    txs: [txMap[TX_TRANSFER], txMap[TX_DEPLOY], txMap[TX_CALL], txMap[TX_CALL_FAILED], txMap[TX_VALUE_TO_CONTRACT], txMap[TX_CALL_UNKNOWN_ABI], txMap[TX_DEPLOY_MARKER]],
+    receipts: [receiptMap[TX_TRANSFER], receiptMap[TX_DEPLOY], receiptMap[TX_CALL], receiptMap[TX_CALL_FAILED], receiptMap[TX_VALUE_TO_CONTRACT], receiptMap[TX_CALL_UNKNOWN_ABI], receiptMap[TX_DEPLOY_MARKER]]
   }
 
   const store = new ExplorerStore({ dbPath: tempDbPath() })
@@ -120,6 +123,10 @@ describe('transaction classification and address typing', () => {
     const deployment = await service.getTxDetail(TX_DEPLOY)
     expect(deployment.classification?.type).toBe('contract_deployment')
     expect(deployment.classification?.createdContractAddress).toBe(CONTRACT)
+
+    const deploymentMarker = await service.getTxDetail(TX_DEPLOY_MARKER)
+    expect(deploymentMarker.classification?.type).toBe('contract_deployment')
+    expect(deploymentMarker.classification?.createdContractAddress).toBe(CONTRACT_UNVERIFIED)
 
     const call = await service.getTxDetail(TX_CALL)
     expect(call.classification?.type).toBe('contract_interaction')

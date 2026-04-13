@@ -10,6 +10,13 @@ import cbor2
 from ..tx import send as tx_send
 from ..tx.signing import resolve_signing_context, sign_transaction_for_submission
 
+try:
+    from core.utils.deploy_metadata import (
+        build_python_vm_package_deploy_metadata as _build_pyvm_deploy_metadata,
+    )
+except Exception:  # pragma: no cover
+    _build_pyvm_deploy_metadata = None  # type: ignore[assignment]
+
 
 def _rpc_req(rpc, method: str, params=None):
     params = [] if params is None else params
@@ -317,7 +324,13 @@ def build_deploy_tx(
 def _extract_contract_address(receipt: Any) -> str | None:
     if not isinstance(receipt, Mapping):
         return None
-    for key in ("contractAddress", "contract_address"):
+    for key in (
+        "contractAddress",
+        "contract_address",
+        "createdAddress",
+        "created_address",
+        "address",
+    ):
         value = receipt.get(key)
         if isinstance(value, str) and value:
             return value
@@ -325,7 +338,13 @@ def _extract_contract_address(receipt: Any) -> str | None:
     if isinstance(logs, list):
         for log in logs:
             if isinstance(log, Mapping):
-                for key in ("contractAddress", "contract_address"):
+                for key in (
+                    "contractAddress",
+                    "contract_address",
+                    "createdAddress",
+                    "created_address",
+                    "address",
+                ):
                     value = log.get(key)
                     if isinstance(value, str) and value:
                         return value
@@ -411,4 +430,32 @@ def deploy_package(
         receipt = {"txHash": tx_hash}
 
     contract_address = _extract_contract_address(receipt)
+    if (
+        contract_address is None
+        and callable(_build_pyvm_deploy_metadata)
+        and isinstance(receipt, Mapping)
+    ):
+        try:
+            derived = _build_pyvm_deploy_metadata(
+                tx,
+                tx_hash=tx_hash,
+                sender=sender,
+                block_hash=receipt.get("blockHash"),
+                block_number=_coerce_int(receipt.get("blockNumber")),
+                tx_index=_coerce_int(receipt.get("transactionIndex")),
+                status=receipt.get("status"),
+                chain_id=chain_id,
+            )
+        except Exception:
+            derived = None
+        if isinstance(derived, Mapping):
+            maybe_addr = derived.get("contractAddress")
+            if isinstance(maybe_addr, str) and maybe_addr:
+                contract_address = maybe_addr
+                if isinstance(receipt, dict):
+                    receipt.setdefault("contractAddress", maybe_addr)
+                    receipt.setdefault("createdAddress", maybe_addr)
+                    for key in ("deploymentType", "codeHash", "manifestHash"):
+                        if key in derived:
+                            receipt.setdefault(key, derived.get(key))
     return contract_address, receipt

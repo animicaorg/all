@@ -22,6 +22,15 @@ from core.utils.tx import coerce_int as _coerce_tx_int, TxNormalizationError as 
 from core.utils.tx import normalize_tx_fields as _normalize_tx_fields
 from rpc.instant_tx import get_instant_tx_service_singleton
 
+try:
+    from core.utils.deploy_metadata import (
+        build_python_vm_package_deploy_metadata as _build_pyvm_deploy_metadata,
+        copy_deploy_metadata_fields as _copy_deploy_metadata_fields,
+    )
+except Exception:  # pragma: no cover
+    _build_pyvm_deploy_metadata = None  # type: ignore[assignment]
+    _copy_deploy_metadata_fields = None  # type: ignore[assignment]
+
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
 _PQ_VERIFY_OPTIONAL = os.environ.get("ANIMICA_PQ_VERIFY_OPTIONAL") == "1" or (
@@ -2034,6 +2043,25 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
     return None, None, None, None
 
 
+def _lookup_deploy_metadata(tx_hash_hex: str) -> dict | None:
+    try:
+        tx_hash_bytes = _b(tx_hash_hex)
+    except Exception:
+        return None
+    ctx = deps.get_ctx()
+    bdb = getattr(ctx, "block_db", None)
+    if bdb is None:
+        return None
+    getter = getattr(bdb, "get_deploy_metadata_by_tx_hash", None)
+    if not callable(getter):
+        return None
+    try:
+        out = getter(tx_hash_bytes)
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
 def _tx_view(
     tx: t.Any,
     obj: dict,
@@ -2115,6 +2143,28 @@ def _tx_view(
         "blockNumber": None if pending else (_coerce_optional_tx_int("blockNumber", block_number)),
         "transactionIndex": None if pending else (_coerce_optional_tx_int("transactionIndex", tx_index)),
     }
+
+    deploy_meta = None
+    if not pending and isinstance(hash_hex, str) and hash_hex:
+        deploy_meta = _lookup_deploy_metadata(hash_hex)
+    if deploy_meta is None and not pending and callable(_build_pyvm_deploy_metadata):
+        try:
+            deploy_meta = _build_pyvm_deploy_metadata(
+                tx,
+                tx_hash=hash_hex,
+                block_hash=block_hash,
+                block_number=block_number,
+                tx_index=tx_index,
+                chain_id=v.get("chainId"),
+            )
+        except Exception:
+            deploy_meta = None
+    if deploy_meta is not None and callable(_copy_deploy_metadata_fields):
+        try:
+            _copy_deploy_metadata_fields(v, deploy_meta, include_created_alias=True)
+        except Exception:
+            pass
+
     return {k: vv for k, vv in v.items() if vv is not None}
 
 
