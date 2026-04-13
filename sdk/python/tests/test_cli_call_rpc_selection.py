@@ -153,12 +153,12 @@ def test_call_write_accepts_wallet_options(
 
     captured = _patch_rpc_client(
         monkeypatch,
-        lambda method, _params: 5 if method == "state.getNonce" else {},
+        lambda method, _params: {"height": 5} if method == "chain.getHead" else {},
     )
     captured_wallet: Dict[str, Any] = {}
 
     class _Signer:
-        address = "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc8247j"
+        address = None
         public_key = bytes([1] * 32)
         alg_id = 0x1002
         alg_name = "sphincs_shake_128s"

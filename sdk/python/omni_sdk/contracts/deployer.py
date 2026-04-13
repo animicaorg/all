@@ -351,6 +351,68 @@ def _extract_contract_address(receipt: Any) -> str | None:
     return None
 
 
+def _tx_status_looks_confirmed(status: Any) -> bool:
+    if not isinstance(status, Mapping):
+        return False
+    status_text = str(status.get("status") or "").strip().lower()
+    state_text = str(status.get("state") or "").strip().lower()
+    if status_text in {"confirmed", "included", "mined", "finalized", "ok", "success"}:
+        return True
+    if state_text in {"included_block", "confirmed", "mined", "finalized", "committed"}:
+        return True
+    if status.get("included_height") is not None:
+        return True
+    if status.get("included_in_block_hash") is not None:
+        return True
+    confirmations = _coerce_int(status.get("confirmations"))
+    if confirmations is not None and confirmations > 0:
+        return True
+    if bool(status.get("finalized")):
+        return True
+    return False
+
+
+def _recover_receipt_after_timeout(
+    rpc,
+    *,
+    tx_hash: str,
+) -> tuple[dict[str, Any] | None, Any, str | None, list[str]]:
+    receipt_errors: list[str] = []
+    for method in ("tx.getTransactionReceipt", "tx.getReceipt", "tx.getInstantReceipt"):
+        try:
+            out = _rpc_req(rpc, method, [tx_hash])
+        except Exception as exc:  # noqa: BLE001
+            receipt_errors.append(f"{method}: {exc}")
+            continue
+        if isinstance(out, Mapping):
+            receipt = dict(out)
+            receipt.setdefault("txHash", tx_hash)
+            return receipt, None, None, receipt_errors
+
+    status = None
+    status_error = None
+    try:
+        status = _rpc_req(rpc, "tx.getStatus", [tx_hash])
+    except Exception as exc:  # noqa: BLE001
+        status_error = str(exc)
+
+    if _tx_status_looks_confirmed(status):
+        synthesized: dict[str, Any] = {"txHash": tx_hash}
+        if isinstance(status, Mapping):
+            included_height = _coerce_int(status.get("included_height"))
+            if included_height is not None:
+                synthesized["blockNumber"] = included_height
+            included_hash = status.get("included_in_block_hash")
+            if isinstance(included_hash, str) and included_hash:
+                synthesized["blockHash"] = included_hash
+            status_text = status.get("status")
+            if status_text is not None:
+                synthesized["status"] = status_text
+        return synthesized, status, status_error, receipt_errors
+
+    return None, status, status_error, receipt_errors
+
+
 def deploy_package(
     *,
     rpc,
@@ -412,17 +474,17 @@ def deploy_package(
         try:
             receipt = tx_send.wait_for_receipt(rpc, tx_hash, timeout_s=wait_timeout)
         except TimeoutError as exc:
-            status = None
-            status_error = None
-            try:
-                status = _rpc_req(rpc, "tx.getStatus", [tx_hash])
-            except Exception as status_exc:  # noqa: BLE001
-                status_error = str(status_exc)
-            raise TimeoutError(
-                "transaction accepted but receipt not indexed yet "
-                f"(tx={tx_hash}, timeout_s={wait_timeout}, "
-                f"tx_status={status!r}, tx_status_error={status_error!r})"
-            ) from exc
+            recovered_receipt, status, status_error, receipt_errors = (
+                _recover_receipt_after_timeout(rpc, tx_hash=tx_hash)
+            )
+            if recovered_receipt is None:
+                raise TimeoutError(
+                    "transaction accepted but receipt not indexed yet "
+                    f"(tx={tx_hash}, timeout_s={wait_timeout}, "
+                    f"tx_status={status!r}, tx_status_error={status_error!r}, "
+                    f"receipt_probe_errors={receipt_errors!r})"
+                ) from exc
+            receipt = recovered_receipt
         if isinstance(receipt, dict):
             receipt.setdefault("txHash", tx_hash)
     else:

@@ -10,6 +10,7 @@ import pytest
 
 from animica.tx.signing import ChainContext, pq_verify_tx, tx_signing_preimage
 from core.utils.tx import normalize_tx_envelope
+from omni_sdk.contracts import deployer as deployer_mod
 from omni_sdk.contracts.deployer import build_deploy_tx, deploy_package, make_package_bytes
 from omni_sdk.errors import RpcError
 from omni_sdk.tx import build as tx_build
@@ -129,6 +130,22 @@ class _VerifyingRpcNoAddress(_VerifyingRpc):
                 "status": "SUCCESS",
                 "blockNumber": 321,
                 "logs": [],
+            }
+        return super().request(method, params)
+
+
+class _VerifyingRpcDelayedReceipt(_VerifyingRpc):
+    def request(self, method: str, params: list[Any] | None = None) -> Any:
+        params = params or []
+        if method in ("tx.getTransactionReceipt", "tx.getReceipt", "tx.getInstantReceipt"):
+            return None
+        if method == "tx.getStatus":
+            tx_hash = params[0]
+            return {
+                "hash": tx_hash,
+                "status": "confirmed",
+                "included_height": 77,
+                "included_in_block_hash": "0x" + ("ef" * 32),
             }
         return super().request(method, params)
 
@@ -284,3 +301,35 @@ def test_deploy_package_derives_contract_address_when_receipt_omits_it() -> None
         value=0,
     )
     assert call_tx.to == address
+
+
+def test_deploy_package_recovers_confirmed_tx_when_receipt_indexing_is_delayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
+    rpc = _VerifyingRpcDelayedReceipt()
+    manifest, code = _counter_manifest_and_code()
+
+    def _timeout_wait(*_args: Any, **_kwargs: Any) -> Any:
+        raise TimeoutError("receipt not indexed yet")
+
+    monkeypatch.setattr(deployer_mod.tx_send, "wait_for_receipt", _timeout_wait)
+
+    address, receipt = deploy_package(
+        rpc=rpc,
+        signer=signer,
+        manifest=manifest,
+        code=code,
+        chain_id=CHAIN_ID,
+        nonce=4,
+        max_fee=1,
+        await_receipt=True,
+        timeout_s=0.01,
+    )
+
+    assert isinstance(address, str)
+    assert address.startswith("0x")
+    assert receipt["txHash"].startswith("0x")
+    assert receipt["status"] == "confirmed"
+    assert receipt["blockNumber"] == 77
+    assert receipt["blockHash"] == "0x" + ("ef" * 32)
