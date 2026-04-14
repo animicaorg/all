@@ -544,7 +544,6 @@ def _default_ctx() -> Context:
 
 async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     ensure_loaded()
-    _sync_with_methods_registry()
     """
     Dispatch a single JSON-RPC request object.
     Returns a response object or None (for notifications).

@@ -5353,10 +5353,87 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 "allow_offline_mining": allow_offline_mining,
             },
         )
-        raise rpc_errors.RpcError(
-            rpc_errors.AnimicaCode.INTERNAL_ERROR,
-            f"internal error: {exc}",
-            {"reason": "NameError"},
+        raise rpc_errors.InternalError(
+            f"{exc.__class__.__name__}: {exc}",
+            reason="NameError",
+        ) from exc
+
+
+@method(
+    "miner.start", aliases=("miner_start", "miner.setAutoMine", "animica_setAutoMine")
+)
+def miner_start(enable: bool | None = None) -> bool:
+    global _AUTO_MINE
+    _AUTO_MINE = True if enable is None else bool(enable)
+    _start_auto_task()
+    return _AUTO_MINE
+
+
+@method("miner.stop", aliases=("miner_stop", "animica_stopAutoMine"))
+def miner_stop() -> bool:
+    global _AUTO_MINE
+    _AUTO_MINE = False
+    if _AUTO_TASK is not None:
+        _AUTO_TASK.cancel()
+    if _WATCHDOG_TASK is not None:
+        _WATCHDOG_TASK.cancel()
+    return False
+
+
+def _extract_payload(payload: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract payload from either positional or keyword arguments.
+    
+    Supports:
+    - params=[payload_dict] -> positional dict (from share_submitter)
+    - params={key: val, ...} -> keyword arguments (backward compatibility)
+    - params=[{"payload": {...}}] -> wrapped payload format (for compatibility with wrapped payloads)
+    
+    Args:
+        payload: First positional argument (None if called with kwargs only)
+        kwargs: Keyword arguments
+        
+    Returns:
+        Extracted payload dict, or None if no valid payload provided
+    """
+    if payload is not None:
+        # Support wrapped payloads passed positionally as a single-item list.
+        if isinstance(payload, list):
+            if len(payload) == 1:
+                candidate = payload[0]
+                return candidate if isinstance(candidate, dict) else None
+            return None
+        return payload if isinstance(payload, dict) else None
+    elif kwargs:
+        # Support wrapped payload format: {"payload": {...}}
+        if len(kwargs) == 1 and "payload" in kwargs:
+            return kwargs.get("payload")
+        # Direct keyword arguments
+        return kwargs
+    return None
+
+
+def _process_attached_proofs(
+    attached_proofs: list[str],
+    job_id: str,
+    nonce: bytes,
+    mix_seed: bytes,
+    height: int,
+    miner_address: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Process attached useful work proofs with strict budgeting and error handling.
+    
+    Returns:
+        (proof_results, total_bonus_credits)
+    """
+    try:
+        from core.usefulwork import (
+            decode_proof_from_hex,
+            verify_proof,
+            ShareContext,
+            get_policy,
+            UWPDecodeError,
         )
     except ImportError as e:
         log.warning(f"UWP module not available: {e}")

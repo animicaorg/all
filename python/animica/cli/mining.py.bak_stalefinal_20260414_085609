@@ -1321,46 +1321,6 @@ def mine_blocks(
                         )
                         time.sleep(cooldown_seconds)
 
-                    def _emit_stale_diff_debug() -> None:
-                        try:
-                            head_now = client.request("chain.getHead", [])
-                        except Exception:
-                            head_now = {}
-                        if not isinstance(head_now, dict):
-                            head_now = {}
-
-                        template_id_dbg = (
-                            summary.get("template", {}).get("id")
-                            or template.get("id")
-                            or template_view.get("templateId")
-                            or template_view.get("jobId")
-                        )
-                        template_height_dbg = (
-                            template.get("height")
-                            or template.get("number")
-                            or template_view.get("height")
-                            or template_view.get("number")
-                        )
-                        template_parent_dbg = (
-                            template.get("parent", {}).get("hash")
-                            or template.get("parent_hash")
-                            or template_view.get("parentHash")
-                            or template_view.get("parent_hash")
-                        )
-                        head_height_dbg = head_now.get("height")
-                        if head_height_dbg is None:
-                            head_height_dbg = head_now.get("number")
-
-                        typer.secho(
-                            "  STALE_DIFF: "
-                            f"template_id={template_id_dbg} "
-                            f"template_height={template_height_dbg} "
-                            f"template_parent={template_parent_dbg} "
-                            f"head_height={head_height_dbg} "
-                            f"head_hash={head_now.get('hash')}",
-                            fg=typer.colors.YELLOW,
-                        )
-
                     def _handle_template_rpc_error(error: Exception) -> None:
                         code, message, data = _rpc_error_details(error)
                         detail_text = _rpc_error_detail_text(message, data)
@@ -1686,7 +1646,44 @@ def mine_blocks(
                         ) or ("stale" in error_str.lower())
 
                         if is_stale:
-                            _emit_stale_diff_debug()
+                            try:
+                                head_now = client.request("chain.getHead", [])
+                            except Exception:
+                                head_now = {}
+                            if not isinstance(head_now, dict):
+                                head_now = {}
+
+                            template_id_dbg = (
+                                summary.get("template", {}).get("id")
+                                or template.get("id")
+                                or template_view.get("templateId")
+                                or template_view.get("jobId")
+                            )
+                            template_height_dbg = (
+                                template.get("height")
+                                or template.get("number")
+                                or template_view.get("height")
+                                or template_view.get("number")
+                            )
+                            template_parent_dbg = (
+                                template.get("parent", {}).get("hash")
+                                or template.get("parent_hash")
+                                or template_view.get("parentHash")
+                                or template_view.get("parent_hash")
+                            )
+                            head_height_dbg = head_now.get("height")
+                            if head_height_dbg is None:
+                                head_height_dbg = head_now.get("number")
+
+                            typer.secho(
+                                "  STALE_DIFF: "
+                                f"template_id={template_id_dbg} "
+                                f"template_height={template_height_dbg} "
+                                f"template_parent={template_parent_dbg} "
+                                f"head_height={head_height_dbg} "
+                                f"head_hash={head_now.get('hash')}",
+                                fg=typer.colors.YELLOW,
+                            )
 
                         _emit_mining_summary(summary, verbose=verbose, force=True)
                         typer.secho(
@@ -1712,10 +1709,46 @@ def mine_blocks(
 
                     if not submit_result or not submit_result.get("accepted", False):
                         rejection_reason = submit_result.get("reason") if isinstance(submit_result, dict) else None
-                        is_stale = isinstance(rejection_reason, str) and "stale" in rejection_reason.lower()
 
-                        if is_stale:
-                            _emit_stale_diff_debug()
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason.lower():
+                            try:
+                                head_now = client.request("chain.getHead", [])
+                            except Exception:
+                                head_now = {}
+                            if not isinstance(head_now, dict):
+                                head_now = {}
+
+                            template_id_dbg = (
+                                summary.get("template", {}).get("id")
+                                or template.get("id")
+                                or template_view.get("templateId")
+                                or template_view.get("jobId")
+                            )
+                            template_height_dbg = (
+                                template.get("height")
+                                or template.get("number")
+                                or template_view.get("height")
+                                or template_view.get("number")
+                            )
+                            template_parent_dbg = (
+                                template.get("parent", {}).get("hash")
+                                or template.get("parent_hash")
+                                or template_view.get("parentHash")
+                                or template_view.get("parent_hash")
+                            )
+                            head_height_dbg = head_now.get("height")
+                            if head_height_dbg is None:
+                                head_height_dbg = head_now.get("number")
+
+                            typer.secho(
+                                "  STALE_DIFF: "
+                                f"template_id={template_id_dbg} "
+                                f"template_height={template_height_dbg} "
+                                f"template_parent={template_parent_dbg} "
+                                f"head_height={head_height_dbg} "
+                                f"head_hash={head_now.get('hash')}",
+                                fg=typer.colors.YELLOW,
+                            )
 
                         _emit_mining_summary(summary, verbose=verbose, force=True)
                         typer.secho(
@@ -1723,7 +1756,7 @@ def mine_blocks(
                             fg=typer.colors.RED,
                         )
 
-                        if is_stale and stale_attempts < 1:
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason.lower() and stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
                                 f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
@@ -1731,7 +1764,7 @@ def mine_blocks(
                             )
                             continue
 
-                        if is_stale:
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason.lower():
                             _apply_stale_template_cooldown()
                             _stale_cooldown_applied = True
 

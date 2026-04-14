@@ -1321,46 +1321,6 @@ def mine_blocks(
                         )
                         time.sleep(cooldown_seconds)
 
-                    def _emit_stale_diff_debug() -> None:
-                        try:
-                            head_now = client.request("chain.getHead", [])
-                        except Exception:
-                            head_now = {}
-                        if not isinstance(head_now, dict):
-                            head_now = {}
-
-                        template_id_dbg = (
-                            summary.get("template", {}).get("id")
-                            or template.get("id")
-                            or template_view.get("templateId")
-                            or template_view.get("jobId")
-                        )
-                        template_height_dbg = (
-                            template.get("height")
-                            or template.get("number")
-                            or template_view.get("height")
-                            or template_view.get("number")
-                        )
-                        template_parent_dbg = (
-                            template.get("parent", {}).get("hash")
-                            or template.get("parent_hash")
-                            or template_view.get("parentHash")
-                            or template_view.get("parent_hash")
-                        )
-                        head_height_dbg = head_now.get("height")
-                        if head_height_dbg is None:
-                            head_height_dbg = head_now.get("number")
-
-                        typer.secho(
-                            "  STALE_DIFF: "
-                            f"template_id={template_id_dbg} "
-                            f"template_height={template_height_dbg} "
-                            f"template_parent={template_parent_dbg} "
-                            f"head_height={head_height_dbg} "
-                            f"head_hash={head_now.get('hash')}",
-                            fg=typer.colors.YELLOW,
-                        )
-
                     def _handle_template_rpc_error(error: Exception) -> None:
                         code, message, data = _rpc_error_details(error)
                         detail_text = _rpc_error_detail_text(message, data)
@@ -1653,46 +1613,46 @@ def mine_blocks(
                         balance_before_submit = None
 
                     try:
-                        submit_payload = {
-                            "jobId": (
-                                summary.get("template", {}).get("id")
-                                or template.get("id")
-                                or template_view.get("templateId")
-                                or template_view.get("jobId")
-                            ),
-                            "nonce": nonce,
-                        }
-
-                        if verbose:
-                            typer.echo(f"  submitWork payload: {submit_payload}")
-
                         if proxy:
                             submit_result = proxy.sync_forward_request(
                                 "miner.submitWork",
-                                submit_payload,
-                                fallback_handler=lambda: client.request("miner.submitWork", submit_payload),
+                                block_payload,
+                                fallback_handler=lambda: client.request("miner.submitWork", block_payload),
                             )
                         else:
-                            submit_result = client.request("miner.submitWork", submit_payload)
+                            submit_result = client.request("miner.submitWork", block_payload)
                     except Exception as submit_error:
                         error_str = _format_rpc_error(submit_error)
                         error_data = getattr(submit_error, "data", None)
-                        rejection_reason = None
+                        reason = None
                         if isinstance(error_data, dict):
-                            rejection_reason = error_data.get("reason")
-
+                            reason = error_data.get("reason")
                         is_stale = (
-                            isinstance(rejection_reason, str) and "stale" in rejection_reason.lower()
-                        ) or ("stale" in error_str.lower())
-
-                        if is_stale:
-                            _emit_stale_diff_debug()
-
+                            isinstance(reason, str) and reason == "stale_template"
+                        ) or "stale template" in error_str.lower()
                         _emit_mining_summary(summary, verbose=verbose, force=True)
+                        
+                        # REJECTED - explicit rejection with reason
                         typer.secho(
-                            f"  REJECTED: Block {total_mined + 1}/{count} (reason: {rejection_reason or error_str})",
+                            f"  REJECTED: Block {total_mined + 1}/{count} (reason: {reason or error_str})",
                             fg=typer.colors.RED,
                         )
+                        
+                        if is_stale:
+                            try:
+                                head_now = client.request("chain.getHead", [])
+                            except Exception:
+                                head_now = {}
+                            if not isinstance(head_now, dict):
+                                head_now = {}
+                            typer.secho(
+                                "  STALE_DIFF: "
+                                f"template.parent={template.get('parent', {}).get('hash')} "
+                                f"head.hash={head_now.get('hash')} "
+                                f"head_at_issue={template.get('headHashAtIssue')} "
+                                f"issued_at={template.get('issuedAt')} expires_at={template.get('expiresAt')}",
+                                fg=typer.colors.YELLOW,
+                            )
 
                         if is_stale and stale_attempts < 1:
                             stale_attempts += 1
@@ -1701,44 +1661,40 @@ def mine_blocks(
                                 fg=typer.colors.YELLOW,
                             )
                             continue
-
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
                         if is_stale:
                             _apply_stale_template_cooldown()
                             _stale_cooldown_applied = True
-
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
 
                     if not submit_result or not submit_result.get("accepted", False):
                         rejection_reason = submit_result.get("reason") if isinstance(submit_result, dict) else None
-                        is_stale = isinstance(rejection_reason, str) and "stale" in rejection_reason.lower()
-
-                        if is_stale:
-                            _emit_stale_diff_debug()
-
                         _emit_mining_summary(summary, verbose=verbose, force=True)
+                        
+                        # REJECTED - node did not accept
                         typer.secho(
                             f"  REJECTED: Block {total_mined + 1}/{count} by node (reason: {rejection_reason})",
                             fg=typer.colors.RED,
                         )
-
-                        if is_stale and stale_attempts < 1:
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason and stale_attempts < 1:
                             stale_attempts += 1
                             typer.secho(
                                 f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
                                 fg=typer.colors.YELLOW,
                             )
                             continue
-
-                        if is_stale:
+                        # Exhausted stale retries - wait before moving to next block
+                        # to give blockchain time to stabilize and avoid rapid retry loops
+                        if isinstance(rejection_reason, str) and "stale" in rejection_reason:
                             _apply_stale_template_cooldown()
                             _stale_cooldown_applied = True
-
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
-
+                    
                     # Check if block is a duplicate (already found by another miner)
                     is_duplicate = submit_result.get("duplicate", False)
                     
@@ -1757,35 +1713,14 @@ def mine_blocks(
                     total_mined += 1
                     blocks_attempted += 1
                     _block_accepted = True
-
-                    # Re-read canonical head after acceptance instead of trusting submit_result shape.
-                    head_after = {}
-                    try:
-                        head_after = client.request("chain.getHead", [])
-                        if not isinstance(head_after, dict):
-                            head_after = {}
-                    except Exception:
-                        head_after = {}
-
-                    try:
-                        final_height = int(
-                            head_after.get("height")
-                            or head_after.get("number")
-                            or head_after.get("block_number")
-                            or 0
-                        )
-                    except Exception:
-                        final_height = 0
-
+                    block_reward = int(template.get("coinbase", {}).get("amount") or 0)
+                    total_reward += block_reward
+                    reward_anm = block_reward / COIN_UNIT
+                    
+                    new_head_hash = submit_result.get("new_head") or submit_result.get("block_hash")
+                    final_height = int(submit_result.get("new_head", 0))
                     if final_height > 0:
                         last_accepted_height = final_height
-
-                    new_head_hash = (
-                        head_after.get("hash")
-                        or head_after.get("block_hash")
-                        or submit_result.get("block_hash")
-                        or submit_result.get("new_head")
-                    )
 
                     balance_now = None
                     credited_delta = None
@@ -1811,39 +1746,21 @@ def mine_blocks(
                         except Exception:
                             credited_display = None
 
-                    if credited_display is None and isinstance(credited_delta, int) and credited_delta >= 0:
-                        credited_display = int(credited_delta)
-
-                    block_reward = 0
-                    for candidate in (
-                        submit_result.get("reward"),
-                        submit_result.get("reward_nano"),
-                        submit_result.get("reward_nanom"),
-                        submit_result.get("expected_reward"),
-                        submit_result.get("credited_amount"),
-                    ):
-                        if candidate is not None:
-                            try:
-                                block_reward = int(candidate)
-                                break
-                            except Exception:
-                                pass
-
-                    if block_reward <= 0 and credited_display is not None:
-                        block_reward = int(credited_display)
-
-                    total_reward += int(block_reward or 0)
-                    reward_anm = block_reward / COIN_UNIT
+                    # Fallback only when credited_amount is unavailable; guard against
+                    # negative or tx-transfer-distorted deltas.
+                    if credited_display is None and isinstance(credited_delta, int):
+                        if credited_delta >= 0 and (
+                            block_reward <= 0 or credited_delta <= int(block_reward)
+                        ):
+                            credited_display = int(credited_delta)
 
                     if credited_display is None:
                         credited_display = int(block_reward or 0)
 
                     typer.secho(
                         f"  ACCEPTED: Block {total_mined}/{count} (height: {final_height}, "
-                        f"head: {new_head_hash or 'unknown'}, "
                         f"reward: {reward_anm:.9f} ANM = {block_reward} nANM, "
-                        f"credited: {credited_display} nANM, "
-                        f"balance_now: {balance_now if balance_now is not None else 'unknown'})",
+                        f"credited: {credited_display} nANM, balance_now: {balance_now if balance_now is not None else 'unknown'})",
                         fg=typer.colors.GREEN,
                         bold=True,
                     )
