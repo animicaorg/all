@@ -1313,14 +1313,6 @@ def mine_blocks(
                         return f"{message} {detail}".strip().lower()
 
                     def _apply_stale_template_cooldown() -> None:
-                        """Apply cooldown period after exhausting stale template retries."""
-                        cooldown_seconds = MIN_BLOCK_INTERVAL_SECONDS * 2
-                        typer.secho(
-                            f"  Exhausted stale template retries. Waiting {cooldown_seconds}s for blockchain to stabilize...",
-                            fg=typer.colors.YELLOW,
-                        )
-                        time.sleep(cooldown_seconds)
-
                     def _emit_stale_diff_debug() -> None:
                         try:
                             head_now = client.request("chain.getHead", [])
@@ -1351,15 +1343,22 @@ def mine_blocks(
                         if head_height_dbg is None:
                             head_height_dbg = head_now.get("number")
 
-                        typer.secho(
+                        typer.echo(
                             "  STALE_DIFF: "
                             f"template_id={template_id_dbg} "
                             f"template_height={template_height_dbg} "
                             f"template_parent={template_parent_dbg} "
                             f"head_height={head_height_dbg} "
-                            f"head_hash={head_now.get('hash')}",
+                            f"head_hash={head_now.get('hash')}"
+                        )
+
+                        """Apply cooldown period after exhausting stale template retries."""
+                        cooldown_seconds = MIN_BLOCK_INTERVAL_SECONDS * 2
+                        typer.secho(
+                            f"  Exhausted stale template retries. Waiting {cooldown_seconds}s for blockchain to stabilize...",
                             fg=typer.colors.YELLOW,
                         )
+                        time.sleep(cooldown_seconds)
 
                     def _handle_template_rpc_error(error: Exception) -> None:
                         code, message, data = _rpc_error_details(error)

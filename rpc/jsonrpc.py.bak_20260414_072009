@@ -101,7 +101,6 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
 
 
 from rpc import version as rpc_version
-from rpc.methods import ensure_loaded
 from rpc.access_policy import get_active_policy
 
 log = logging.getLogger(__name__)
@@ -543,8 +542,7 @@ def _default_ctx() -> Context:
 
 
 async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
-    ensure_loaded()
-    _sync_with_methods_registry()
+    _ensure_rpc_methods_loaded()
     """
     Dispatch a single JSON-RPC request object.
     Returns a response object or None (for notifications).

@@ -86,19 +86,6 @@ def register(name: str, func: HandlerFunc, *, desc: str | None = None, aliases: 
             continue
         _METHODS[alias] = m
     log.debug("Registered RPC method %s (aliases=%s)", name, m.aliases)
-    try:
-        from rpc.jsonrpc import registry as _jsonrpc_registry
-        try:
-            _jsonrpc_registry.method(name)(func)
-        except Exception:
-            pass
-        for alias in m.aliases:
-            try:
-                _jsonrpc_registry.method(alias)(func)
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 
 def method(name: str, *, desc: str | None = None, aliases: Iterable[str] = (), replace: bool = False) -> Callable[[HandlerFunc], HandlerFunc]:
@@ -180,7 +167,7 @@ def load_builtins() -> None:
         except Exception as exc:  # noqa: BLE001
             # Log and continue; a missing optional module should not make
             # the entire RPC server unusable.
-            import traceback; log.exception("Failed to import RPC methods module %s", mod); traceback.print_exc()
+            import traceback; log.error("Failed to import RPC methods module %s: %s", mod, exc); traceback.print_exc()
 
 
 def ensure_loaded() -> None:
