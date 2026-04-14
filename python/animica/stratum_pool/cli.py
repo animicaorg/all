@@ -53,14 +53,14 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="min_difficulty",
         type=float,
         default=None,
-        help="Minimum share target",
+        help="Minimum share threshold (theta micro; legacy ratio if <= 1.0)",
     )
     parser.add_argument(
         "--max-difficulty",
         dest="max_difficulty",
         type=float,
         default=None,
-        help="Maximum share target",
+        help="Maximum share threshold (theta micro; legacy ratio if <= 1.0)",
     )
     parser.add_argument(
         "--poll-interval",
@@ -160,7 +160,9 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
         job_manager = JobManager(adapter, config, logger=logger)
         server = StratumPoolServer(adapter, config, job_manager, logger=logger)
         metrics = PoolMetrics(config, job_manager, server.stratum)
-    server.stratum.set_submit_hook(metrics.record_share)
+        server.set_submit_hook(metrics.record_share)
+    if config.profile.startswith("asic"):
+        server.stratum.set_submit_hook(metrics.record_share)
     api_app = create_app(metrics)
     api_server = uvicorn.Server(
         uvicorn.Config(

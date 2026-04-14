@@ -605,13 +605,13 @@ def run_pool(
     min_difficulty: Optional[float] = typer.Option(
         None,
         "--min-difficulty",
-        help="Minimum share difficulty ratio (0,1]",
+        help="Minimum share threshold (theta micro; legacy ratio if <= 1.0)",
         envvar="ANIMICA_STRATUM_MIN_DIFFICULTY",
     ),
     max_difficulty: Optional[float] = typer.Option(
         None,
         "--max-difficulty",
-        help="Maximum share difficulty ratio (0,1]",
+        help="Maximum share threshold (theta micro; legacy ratio if <= 1.0)",
         envvar="ANIMICA_STRATUM_MAX_DIFFICULTY",
     ),
     poll_interval: Optional[float] = typer.Option(
