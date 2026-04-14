@@ -30,6 +30,9 @@ class BundleArtifact:
     version: str
     launcher: str
     personalized: bool
+    entrypoint: str
+    includes_executable: bool
+    requires_python: bool
 
 
 class MinerBundleBuilder:
@@ -42,6 +45,32 @@ class MinerBundleBuilder:
         self._version = version
         self._source_path = Path(__file__).with_name("reference_cpu_miner.py")
         self._source_hash = hashlib.sha256(self._source_path.read_bytes()).hexdigest()
+
+    @staticmethod
+    def _entrypoint_name(platform: str) -> str:
+        return "animica-miner.exe" if platform == "windows" else "animica-miner"
+
+    def _resolve_prebuilt_executable(self, platform: str) -> Path | None:
+        entrypoint = self._entrypoint_name(platform)
+        platform_upper = platform.upper()
+        explicit = os.getenv(f"ANIMICA_MINER_EXECUTABLE_{platform_upper}")
+        if explicit:
+            candidate = Path(explicit).expanduser()
+            if candidate.exists() and candidate.is_file():
+                return candidate
+
+        root = os.getenv("ANIMICA_MINER_EXECUTABLES_DIR")
+        search_roots = []
+        if root:
+            search_roots.append(Path(root).expanduser())
+
+        repo_root = Path(__file__).resolve().parents[3]
+        search_roots.append(repo_root / "artifacts" / "miners" / "bin")
+        for base in search_roots:
+            candidate = base / platform / entrypoint
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        return None
 
     def build(self, resolved: ResolvedMiningConfig, platform: str, bundle: BundleInput) -> BundleArtifact:
         platform = platform.lower()
@@ -56,6 +85,8 @@ class MinerBundleBuilder:
             "linux": "start_mining.sh",
         }[platform]
         personalized = bundle.address != PLACEHOLDER_ADDRESS
+        prebuilt_executable = self._resolve_prebuilt_executable(platform)
+        entrypoint = self._entrypoint_name(platform)
 
         key_payload = {
             "bundle_format_version": BUNDLE_FORMAT_VERSION,
@@ -72,6 +103,9 @@ class MinerBundleBuilder:
             "threads": bundle.threads,
             "scan_window": bundle.scan_window,
             "log_level": bundle.log_level,
+            "entrypoint": entrypoint,
+            "includes_executable": bool(prebuilt_executable),
+            "prebuilt_path": str(prebuilt_executable) if prebuilt_executable else "",
         }
         digest = hashlib.sha256(json.dumps(key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         stem = f"animica-cpu-miner-{self._version}-{resolved.network}-{platform}"
@@ -86,6 +120,7 @@ class MinerBundleBuilder:
                 resolved=resolved,
                 bundle=bundle,
                 ext=ext,
+                prebuilt_executable=prebuilt_executable,
             )
 
         sha256 = hashlib.sha256(archive_path.read_bytes()).hexdigest()
@@ -99,6 +134,9 @@ class MinerBundleBuilder:
             version=self._version,
             launcher=launcher,
             personalized=personalized,
+            entrypoint=entrypoint,
+            includes_executable=bool(prebuilt_executable),
+            requires_python=not bool(prebuilt_executable),
         )
 
     def _build_archive(
@@ -110,6 +148,7 @@ class MinerBundleBuilder:
         resolved: ResolvedMiningConfig,
         bundle: BundleInput,
         ext: str,
+        prebuilt_executable: Path | None,
     ) -> None:
         config_name = "animica-miner.config.json"
         with tempfile.TemporaryDirectory(dir=self._output_dir) as tmp_dir:
@@ -118,6 +157,10 @@ class MinerBundleBuilder:
 
             miner_target = staging_root / "animica_cpu_miner.py"
             miner_target.write_text(self._source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            if prebuilt_executable is not None:
+                executable_target = staging_root / self._entrypoint_name(platform)
+                executable_target.write_bytes(prebuilt_executable.read_bytes())
+                executable_target.chmod(0o755)
             config_target = staging_root / config_name
             config_target.write_text(build_config_document(resolved, bundle), encoding="utf-8")
             launcher_target = staging_root / launcher
@@ -143,7 +186,13 @@ class MinerBundleBuilder:
     def _write_zip(self, archive_path: Path, staging_root: Path) -> None:
         with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as zf:
             for file_path in sorted(staging_root.iterdir()):
-                executable = file_path.name in {"animica_cpu_miner.py", "start_mining.command"}
+                executable = file_path.name in {
+                    "animica_cpu_miner.py",
+                    "start_mining.command",
+                    "start_mining.sh",
+                    "animica-miner",
+                    "animica-miner.exe",
+                }
                 info = ZipInfo(file_path.name)
                 info.compress_type = ZIP_DEFLATED
                 info.external_attr = (0o755 if executable else 0o644) << 16
@@ -194,6 +243,9 @@ def main() -> int:
                 "sha256": artifact.sha256,
                 "size_bytes": artifact.size_bytes,
                 "launcher": artifact.launcher,
+                "entrypoint": artifact.entrypoint,
+                "includes_executable": artifact.includes_executable,
+                "requires_python": artifact.requires_python,
                 "personalized": artifact.personalized,
                 "version": artifact.version,
             }

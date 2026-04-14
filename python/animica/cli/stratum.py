@@ -270,6 +270,7 @@ def config() -> None:
     console.print(f"Stratum bind: {cfg.host}:{cfg.port}")
     console.print(f"API bind: {cfg.api_host}:{cfg.api_port}")
     console.print(f"Pool address: {cfg.pool_address or '(unset)'}")
+    console.print(f"Pool mode: {cfg.pool_mode}")
     console.print(f"Difficulty: {cfg.min_difficulty} -> {cfg.max_difficulty}")
 
 
@@ -311,6 +312,7 @@ def init(
         f"ANIMICA_STRATUM_MAX_DIFFICULTY={cfg.max_difficulty}",
         f"ANIMICA_STRATUM_POLL_INTERVAL={cfg.poll_interval}",
         f"ANIMICA_POOL_PROFILE={cfg.profile}",
+        f"ANIMICA_POOL_MODE={cfg.pool_mode}",
     ]
     path.write_text("\n".join(payload) + "\n", encoding="utf-8")
     console.print(f"[green]✓ Wrote pool env template[/green] {path}")

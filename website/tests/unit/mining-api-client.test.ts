@@ -98,4 +98,32 @@ describe('createMiningApiClient', () => {
       expect(result.error.attempts[1]?.status).toBe(502);
     }
   });
+
+  it('fetches miners payload successfully', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          items: [{ worker_id: 'rig-01', worker_name: 'rig-01' }],
+          total: 1,
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      )
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createMiningApiClient({
+      resolution: baseResolution,
+      currentOrigin: 'https://animica.org',
+    });
+
+    const result = await client.fetchMiners();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items?.[0]?.worker_name).toBe('rig-01');
+    }
+  });
 });

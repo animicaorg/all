@@ -49,6 +49,14 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     async def recent_blocks():
         return metrics.recent_blocks()
 
+    @app.get("/api/pool/accounting")
+    async def pool_accounting():
+        return metrics.accounting_summary()
+
+    @app.get("/api/pool/accounting/ledger")
+    async def pool_accounting_ledger(limit: int = Query(100, ge=1, le=500)):
+        return metrics.accounting_ledger(limit=limit)
+
     @app.get("/healthz")
     async def health():
         return metrics.health()
@@ -92,12 +100,19 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
                     "filename": artifact.filename,
                     "version": artifact.version,
                     "launcher": artifact.launcher,
+                    "entrypoint": artifact.entrypoint,
+                    "includes_executable": artifact.includes_executable,
+                    "requires_python": artifact.requires_python,
                     "sha256": artifact.sha256,
                     "size_bytes": artifact.size_bytes,
                     "url": str(request.url_for("download_miner_bundle", platform=platform)),
                     "notes": (
-                        "Generic starter bundle with placeholder payout address. "
-                        "Use /api/mining/generate for personalized launch files."
+                        "Starter bundle with launcher + config. "
+                        + (
+                            "Includes a standalone miner executable."
+                            if artifact.includes_executable
+                            else "Falls back to Python script miner when executable is unavailable."
+                        )
                     ),
                 }
             )

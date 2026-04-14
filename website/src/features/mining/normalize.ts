@@ -82,6 +82,11 @@ export function normalizeMiningConfig(input: {
   return {
     network: readString(input.config.network) ?? readString(status.network) ?? 'Unknown network',
     chainId: input.config.chain_id ?? status.chain_id,
+    poolMode: readString(input.config.pool_mode) ?? readString(status.pool_mode) ?? 'pps',
+    poolModeInstructions:
+      readString(input.config.pool_mode_instructions) ??
+      'Accepted shares and rewards are accounted by the configured pool mode.',
+    minerExecutable: readString(input.config.miner_executable) ?? 'animica-miner',
     profile: readString(input.config.profile) ?? 'pool',
     algorithm: readString(input.config.algorithm) ?? 'Unknown',
     deviceType: readString(input.config.device_type) ?? 'miner',
@@ -119,6 +124,9 @@ export function normalizeMiningDownloads(
       platform,
       label: readString(item.label) ?? defaultPlatformLabel(platform),
       launcher: readString(item.launcher) ?? defaultLauncherLabel(platform),
+      entrypoint: readString(item.entrypoint) ?? defaultEntrypoint(platform),
+      includesExecutable: readBoolean(item.includes_executable),
+      requiresPython: readBoolean(item.requires_python),
       notes: readString(item.notes) ?? 'Download the starter bundle for this platform.',
       normalizedUrl,
     };
@@ -304,6 +312,20 @@ function defaultLauncherLabel(platform: string): string {
     default:
       return 'launcher';
   }
+}
+
+function defaultEntrypoint(platform: string): string {
+  return platform === 'windows' ? 'animica-miner.exe' : 'animica-miner';
+}
+
+function readBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

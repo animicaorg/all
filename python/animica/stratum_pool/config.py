@@ -6,6 +6,9 @@ from typing import Optional
 
 from animica.config import load_network_config
 
+VALID_POOL_MODES = {"pps", "solo"}
+VALID_POOL_PROFILES = {"hashshare", "asic_sha256"}
+
 
 @dataclass
 class PoolConfig:
@@ -29,6 +32,7 @@ class PoolConfig:
     network: str = "mainnet"
     profile: str = "hashshare"
     extranonce2_size: int = 4
+    pool_mode: str = "pps"
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -49,7 +53,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
 
     stratum_bind = overrides.get("stratum_bind") or _env("ANIMICA_STRATUM_BIND")
     if stratum_bind:
-        host, port_str = stratum_bind.split(":")
+        host, port_str = stratum_bind.rsplit(":", 1)
         port = int(port_str)
     else:
         host = overrides.get("host") or _env("ANIMICA_STRATUM_HOST", "0.0.0.0")
@@ -99,9 +103,24 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         overrides.get("extranonce2_size")
         or _env("ANIMICA_STRATUM_EXTRANONCE2_SIZE", "4")
     )
+    pool_mode = (
+        str(overrides.get("pool_mode") or _env("ANIMICA_POOL_MODE", "pps"))
+        .strip()
+        .lower()
+    )
 
+    if not str(host or "").strip():
+        raise ValueError("host must be non-empty")
+    if port <= 0 or port > 65535:
+        raise ValueError("port must be between 1 and 65535")
+    if not rpc_url:
+        raise ValueError("rpc_url is required")
     if rpc_timeout <= 0:
         raise ValueError("rpc_timeout must be positive")
+    if not pool_address.strip():
+        raise ValueError(
+            "pool_address is required (set ANIMICA_POOL_ADDRESS or pass --pool-address)"
+        )
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
     if min_difficulty > 1.0:
@@ -114,6 +133,16 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         raise ValueError("max_difficulty must be >= min_difficulty")
     if poll_interval <= 0:
         raise ValueError("poll_interval must be positive")
+    if api_port <= 0 or api_port > 65535:
+        raise ValueError("api_port must be between 1 and 65535")
+    if profile not in VALID_POOL_PROFILES:
+        raise ValueError(
+            f"profile must be one of {', '.join(sorted(VALID_POOL_PROFILES))}"
+        )
+    if pool_mode not in VALID_POOL_MODES:
+        raise ValueError(
+            f"pool_mode must be one of {', '.join(sorted(VALID_POOL_MODES))}"
+        )
 
     return PoolConfig(
         host=host,
@@ -132,4 +161,5 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         network=network,
         profile=profile,
         extranonce2_size=extranonce2_size,
+        pool_mode=pool_mode,
     )

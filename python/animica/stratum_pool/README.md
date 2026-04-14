@@ -54,12 +54,22 @@ animica pool list-workers
 Connect the reference Stratum miner:
 
 ```bash
-python -m animica.stratum_pool.reference_cpu_miner \
+./animica-miner \
   --host 127.0.0.1 \
   --port 3333 \
   --address anim1... \
   --worker local-dev
 ```
+
+Build standalone miner executables (for website downloads / bundles):
+
+```bash
+./scripts/build_miner_executables.sh
+```
+
+This writes platform binaries under `artifacts/miners/bin/<platform>/`. The bundle builder will
+embed `animica-miner` / `animica-miner.exe` when present and fall back to `animica_cpu_miner.py`
+otherwise.
 
 ## Operator Commands
 

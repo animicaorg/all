@@ -378,6 +378,21 @@ def load_json_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _validate_animica_address(address: str) -> bool:
+    candidate = str(address or "").strip()
+    if not candidate.startswith("anim1"):
+        return False
+    try:
+        from pq.py.address import validate_address
+
+        validate_address(candidate, expect_hrp="anim")
+        return True
+    except Exception:
+        # Keep a light fallback for bundled executable environments that may
+        # not carry full wallet helper dependencies.
+        return len(candidate) >= 20
+
+
 def resolve_config(args: argparse.Namespace) -> MinerConfig:
     file_data: dict[str, Any] = {}
     if args.config:
@@ -392,6 +407,14 @@ def resolve_config(args: argparse.Namespace) -> MinerConfig:
         address = input("Animica payout address: ").strip()
     if not address:
         raise SystemExit("A payout address is required.")
+    if not _validate_animica_address(address):
+        raise SystemExit(
+            "Invalid Animica payout address. Expected a Bech32 address beginning with 'anim1'."
+        )
+    if not host:
+        raise SystemExit("Pool host is required.")
+    if port <= 0 or port > 65535:
+        raise SystemExit("Pool port must be between 1 and 65535.")
     worker = sanitize_worker_name(args.worker or file_data.get("worker"))
     threads = max(1, int(args.threads or file_data.get("threads") or 4))
     scan_window = max(25_000, int(args.scan_window or file_data.get("scan_window") or 200_000))

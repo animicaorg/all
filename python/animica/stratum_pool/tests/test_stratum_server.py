@@ -79,7 +79,11 @@ async def test_pool_share_validator_preserves_template_raw():
 
     accepted, reason, is_block, tx_count = await validator.validate(
         stratum_job,
-        {"hashshare": {"nonce": "0x01", "body": {}}},
+        {
+            "hashshare": {"nonce": "0x01", "body": {}},
+            "_address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "_worker": "worker-1",
+        },
     )
 
     assert accepted is True
@@ -89,3 +93,49 @@ async def test_pool_share_validator_preserves_template_raw():
     assert adapter.seen_job is not None
     assert adapter.seen_job.height == 7
     assert adapter.seen_job.raw == raw_template
+
+
+@pytest.mark.asyncio
+async def test_pool_share_validator_rejects_missing_address():
+    class CapturingAdapter:
+        async def validate_and_submit_share(self, job, submit_params):
+            return True, None, False, 0
+
+    from mining.stratum_server import StratumJob
+
+    validator = PoolShareValidator(CapturingAdapter(), pool_mode="pps")
+    accepted, reason, _is_block, _tx_count = await validator.validate(
+        StratumJob(job_id="j1", header={}, share_target=1.0, theta_micro=1),
+        {"hashshare": {"nonce": "0x01", "body": {}}},
+    )
+    assert accepted is False
+    assert reason == "missing miner payout address"
+
+
+@pytest.mark.asyncio
+async def test_pool_share_validator_solo_mode_accepts_multiple_addresses():
+    class CapturingAdapter:
+        async def validate_and_submit_share(self, job, submit_params):
+            return True, None, False, 0
+
+    from mining.stratum_server import StratumJob
+
+    validator = PoolShareValidator(CapturingAdapter(), pool_mode="solo")
+    job = StratumJob(job_id="j1", header={}, share_target=1.0, theta_micro=1)
+
+    first = await validator.validate(
+        job,
+        {
+            "hashshare": {"nonce": "0x01", "body": {}},
+            "_address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        },
+    )
+    second = await validator.validate(
+        job,
+        {
+            "hashshare": {"nonce": "0x02", "body": {}},
+            "_address": "anim1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        },
+    )
+    assert first[0] is True
+    assert second[0] is True

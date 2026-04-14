@@ -68,5 +68,7 @@ describe('mining normalization', () => {
 
     expect(downloads[0]?.normalizedUrl).toBe('https://pool.animica.org/api/mining/downloads/windows');
     expect(downloads[1]?.normalizedUrl).toBe('https://pool.animica.org/api/mining/downloads/linux');
+    expect(downloads[0]?.entrypoint).toBe('animica-miner.exe');
+    expect(downloads[1]?.entrypoint).toBe('animica-miner');
   });
 });

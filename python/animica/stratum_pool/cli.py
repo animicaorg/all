@@ -84,6 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Port for the metrics API server",
     )
     parser.add_argument(
+        "--mode",
+        dest="pool_mode",
+        default=None,
+        help="Payout/accounting mode (pps|solo)",
+    )
+    parser.add_argument(
         "--profile",
         dest="profile",
         default=None,
@@ -112,6 +118,21 @@ def build_config(args: argparse.Namespace) -> PoolConfig:
 
 
 async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) -> None:
+    logger = logger or logging.getLogger("animica.stratum_pool.cli")
+    logger.info(
+        "pool_startup",
+        extra={
+            "mode": config.pool_mode,
+            "profile": config.profile,
+            "rpc_url": config.rpc_url,
+            "stratum_bind": f"{config.host}:{config.port}",
+            "api_bind": f"{config.api_host}:{config.api_port}",
+            "pool_address": config.pool_address,
+            "min_difficulty": config.min_difficulty,
+            "max_difficulty": config.max_difficulty,
+        },
+    )
+
     if config.profile.startswith("asic"):
         adapter = Sha256RpcAdapter(
             config.rpc_url,
@@ -153,7 +174,6 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
 
     api_task = asyncio.create_task(api_server.serve())
     await server.start()
-    logger = logger or logging.getLogger("animica.stratum_pool.cli")
     logger.info(
         "Stratum pool listening",
         extra={
@@ -161,6 +181,7 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
             "port": config.port,
             "rpc": config.rpc_url,
             "api_port": config.api_port,
+            "mode": config.pool_mode,
         },
     )
     try:

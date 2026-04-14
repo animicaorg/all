@@ -72,6 +72,29 @@ class DummyMetrics:
     def health(self) -> dict[str, object]:
         return {"status": "ok", "uptime": 120}
 
+    def accounting_summary(self) -> dict[str, object]:
+        return {
+            "pool_mode": "pps",
+            "total_credit": "0",
+            "pps_credit": "0",
+            "solo_credit": "0",
+            "accepted_shares": 0,
+            "accepted_blocks": 0,
+            "rejected_shares": 0,
+            "workers_with_balance": 0,
+            "ledger_entries": 0,
+            "updated_at": None,
+        }
+
+    def accounting_ledger(self, *, limit: int = 100) -> dict[str, object]:
+        return {
+            "pool_mode": "pps",
+            "items": [],
+            "total": 0,
+            "summary": self.accounting_summary(),
+            "limit": limit,
+        }
+
 
 def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
@@ -117,6 +140,9 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert config_payload["host_source"] == "request_host"
         assert config_payload["status"]["network"] == "devnet"
         assert config_payload["pool_mode"] == "pps"
+        assert config_payload["miner_executable"] == "animica-miner"
+        assert "shares" in config_payload["pool_mode_instructions"].lower()
+        assert config_payload["status"]["accounting"]["pool_mode"] == "pps"
         assert any("Devnet" in warning for warning in config_payload["warnings"])
 
         manifest_res = await client.get("/api/mining/downloads")
@@ -126,6 +152,8 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert {item["platform"] for item in manifest["items"]} == {"windows", "macos", "linux"}
         assert all(item["url"].startswith("https://mine.animica.test/api/mining/downloads/") for item in manifest["items"])
         assert all(item["sha256"] for item in manifest["items"])
+        assert all(item["entrypoint"] for item in manifest["items"])
+        assert all("requires_python" in item for item in manifest["items"])
 
         generated_res = await client.get(
             "/api/mining/generate",
@@ -133,7 +161,7 @@ async def test_api_mining_endpoints_reflect_request_host(
         )
         assert generated_res.status_code == 200
         generated = generated_res.json()
-        assert generated["commands"]["windows"].startswith("py -3 animica_cpu_miner.py --host mine.animica.test")
+        assert generated["commands"]["windows"].startswith("animica-miner.exe --host mine.animica.test")
         assert generated["worker"] == "office-rig"
         assert generated["threads"] == 6
         assert '"api_base_url": "https://mine.animica.test"' in generated["config"]["content"]
@@ -146,6 +174,10 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert download_res.status_code == 200
         assert download_res.headers["content-type"] == "application/zip"
         assert len(download_res.content) > 100
+
+        accounting_res = await client.get("/api/pool/accounting")
+        assert accounting_res.status_code == 200
+        assert accounting_res.json()["pool_mode"] == "pps"
 
 
 @pytest.mark.asyncio
