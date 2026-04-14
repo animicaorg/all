@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR, localcontext
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from .hash_search import (digest_to_int256, h_micro_from_digest,
@@ -189,8 +190,25 @@ class ShareValidator:
         h_micro = h_micro_from_digest(digest)
 
         theta_micro = int(job.theta_micro)
-        share_ratio = float(submit_params.get("shareTarget") or job.share_target or 0.0)
-        t_share_micro = max(0, int(theta_micro * share_ratio)) if theta_micro > 0 else 0
+        share_ratio_raw: Any = job.share_target or 0.0
+        try:
+            share_ratio = Decimal(str(share_ratio_raw))
+        except (InvalidOperation, TypeError, ValueError):
+            share_ratio = Decimal("0")
+        if share_ratio <= 0:
+            share_ratio = Decimal("1")
+        if share_ratio > 1:
+            share_ratio = Decimal("1")
+        t_share_micro = 0
+        if theta_micro > 0:
+            with localcontext() as ctx:
+                ctx.prec = 50
+                t_share_micro = int(
+                    (Decimal(theta_micro) * share_ratio).to_integral_value(
+                        rounding=ROUND_FLOOR
+                    )
+                )
+            t_share_micro = max(1, t_share_micro)
         share_target256 = micro_threshold_to_target256(t_share_micro)
         if digest_int > share_target256:
             return False, "low difficulty share", False, 0

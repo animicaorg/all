@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -7,7 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from animica.stratum_pool.core import MiningCoreAdapter, MiningJob, TemplateUnavailable
+from animica.stratum_pool.core import (MiningCoreAdapter, MiningJob,
+                                       TemplateUnavailable, freeze_mining_job)
 
 from core.types.header import Header, serialize_header
 from core.utils.hash import sha3_256
@@ -95,6 +97,20 @@ def _find_nonce_between_targets(
         if digest_int <= upper_target and digest_int > lower_exclusive:
             return nonce
     raise AssertionError("unable to find nonce between targets")
+
+
+def _find_nonce_above_target(
+    header_view: dict,
+    *,
+    target_int: int,
+    limit: int = 20_000,
+) -> int:
+    header = _header_obj(header_view)
+    for nonce in range(limit):
+        digest = sha3_256(serialize_header(replace(header, nonce=nonce)))
+        if int.from_bytes(digest, "big", signed=False) > target_int:
+            return nonce
+    raise AssertionError("unable to find nonce above target")
 
 
 @pytest.mark.asyncio
@@ -715,6 +731,244 @@ async def test_template_share_target_and_block_target_boundaries(monkeypatch):
     assert low_diff_reason == "low difficulty share"
     assert low_diff_block is False
     assert low_diff_tx_count == 0
+
+
+@pytest.mark.asyncio
+async def test_template_share_validation_is_deterministic_for_same_nonce(monkeypatch):
+    header = _full_header_template()
+    theta_micro = int(header["thetaMicro"])
+    share_ratio = 0.01
+    share_target_int = micro_threshold_to_target256(int(theta_micro * share_ratio))
+    nonce_ok = _find_nonce_for_target(header, share_target_int, limit=200_000)
+    nonce_low = _find_nonce_above_target(header, target_int=share_target_int)
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    mining_job = MiningJob(
+        job_id="template-deterministic",
+        source_job_id="template-deterministic",
+        header=header,
+        theta_micro=theta_micro,
+        share_target=share_ratio,
+        height=7,
+        target="0x1",
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-deterministic",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-deterministic",
+            "header": header,
+            "target": "0x1",
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    accepted_runs = []
+    for _ in range(3):
+        accepted_runs.append(
+            await adapter.validate_and_submit_share(
+                mining_job,
+                {"hashshare": {"nonce": hex(nonce_ok), "body": {}}},
+            )
+        )
+    assert all(result[0] is True and result[1] is None for result in accepted_runs)
+
+    low_runs = []
+    for _ in range(3):
+        low_runs.append(
+            await adapter.validate_and_submit_share(
+                mining_job,
+                {"hashshare": {"nonce": hex(nonce_low), "body": {}}},
+            )
+        )
+    assert all(
+        result[0] is False and result[1] == "low difficulty share"
+        for result in low_runs
+    )
+    # Non-block validation should not consult live head state.
+    assert rpc.calls == []
+
+
+@pytest.mark.asyncio
+async def test_low_diff_reject_logging_includes_frozen_validation_fields(
+    monkeypatch, caplog
+):
+    header = _full_header_template()
+    theta_micro = int(header["thetaMicro"])
+    share_ratio = 0.01
+    share_target_int = micro_threshold_to_target256(int(theta_micro * share_ratio))
+    nonce_low = _find_nonce_above_target(header, target_int=share_target_int)
+
+    class DummyRpc:
+        def call(self, method, params):
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    monkeypatch.setattr(adapter, "_rpc", DummyRpc())
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    mining_job = MiningJob(
+        job_id="template-logging",
+        source_job_id="template-logging",
+        header=header,
+        theta_micro=theta_micro,
+        share_target=share_ratio,
+        height=7,
+        target="0x1",
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-logging",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-logging",
+            "header": header,
+            "target": "0x1",
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    caplog.set_level(logging.INFO, logger="animica.stratum_pool.core")
+    ok, reason, _is_block, _tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {
+            "_worker": "animica-cpu",
+            "_session_id": "sess-1",
+            "_address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "hashshare": {"nonce": hex(nonce_low), "body": {}},
+        },
+    )
+
+    assert ok is False
+    assert reason == "low difficulty share"
+
+    reject_record = next(r for r in caplog.records if r.msg == "stratum_share_rejected")
+    assert reject_record.nonce == nonce_low
+    assert reject_record.share_hash_int.startswith("0x")
+    assert reject_record.frozen_theta_micro == theta_micro
+    assert reject_record.share_threshold_micro == int(theta_micro * share_ratio)
+    assert reject_record.reason == "low difficulty share"
+
+
+def test_freeze_job_integer_target_derivation_for_diff_point_zero_zero_one():
+    header = _full_header_template()
+    header["thetaMicro"] = 12_076_750
+    job = MiningJob(
+        job_id="job-001",
+        source_job_id="job-001",
+        header=header,
+        theta_micro=12_076_750,
+        share_target=0.01,
+        height=141,
+        target="0x" + "ff" * 32,
+        raw={
+            "templateId": "job-001",
+            "header": header,
+            "target": "0x" + "ff" * 32,
+            "parent": {"height": 140, "hash": header["parentHash"]},
+        },
+    )
+
+    frozen = freeze_mining_job(job, fallback_chain_id=1)
+    assert frozen.share_threshold_micro == 120_767
+    assert frozen.share_target_int == micro_threshold_to_target256(120_767)
+
+
+@pytest.mark.asyncio
+async def test_template_share_sequence_matches_frozen_target_compare(monkeypatch):
+    header = _full_header_template()
+    theta_micro = int(header["thetaMicro"])
+    share_ratio = 0.6
+    share_target_int = micro_threshold_to_target256(int(theta_micro * share_ratio))
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    mining_job = MiningJob(
+        job_id="template-sequence",
+        source_job_id="template-sequence",
+        header=header,
+        theta_micro=theta_micro,
+        share_target=share_ratio,
+        height=7,
+        target="0x1",
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-sequence",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-sequence",
+            "header": header,
+            "target": "0x1",
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    header_obj = _header_obj(header)
+    nonces = list(range(0, 64))
+    expected = {}
+    for nonce in nonces:
+        digest = sha3_256(serialize_header(replace(header_obj, nonce=nonce)))
+        expected[nonce] = int.from_bytes(digest, "big", signed=False) <= share_target_int
+
+    assert any(expected.values())
+    assert any(not ok for ok in expected.values())
+
+    observed = []
+    for _round in (1, 2):
+        round_results = {}
+        for nonce in nonces:
+            ok, reason, is_block, _tx_count = await adapter.validate_and_submit_share(
+                mining_job,
+                {"hashshare": {"nonce": hex(nonce), "body": {}}},
+            )
+            round_results[nonce] = (ok, reason, is_block)
+        observed.append(round_results)
+
+    for nonce in nonces:
+        expected_ok = expected[nonce]
+        first = observed[0][nonce]
+        second = observed[1][nonce]
+        assert first == second
+        assert first[0] is expected_ok
+        if expected_ok:
+            assert first[1] is None
+            assert first[2] is False
+        else:
+            assert first[1] == "low difficulty share"
+            assert first[2] is False
+
+    assert rpc.calls == []
 
 
 @pytest.mark.asyncio

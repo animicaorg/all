@@ -41,7 +41,67 @@ async def test_on_new_job_updates_theta_and_broadcasts_difficulty():
     assert published_job.header["thetaMicro"] == 1_000_000
     assert published_job.header["thetaTargetMicro"] == 1_000_000
     assert published_job.header["theta_target_micro"] == 1_000_000
-    assert published_job.raw == job.raw
+    assert published_job.raw["templateId"] == "job-1"
+    assert published_job.raw["_sourceJobId"] == "job-1"
+    assert published_job.raw["_validationFingerprint"]
+    assert published_job.job_id.startswith("job-1-")
+
+
+@pytest.mark.asyncio
+async def test_on_new_job_same_source_id_with_new_binding_gets_new_effective_job_id():
+    server = StratumPoolServer(
+        DummyAdapter(),
+        PoolConfig(),
+        JobManager(DummyAdapter(), PoolConfig()),
+    )
+    server.stratum.set_global_difficulty = AsyncMock()
+    server.stratum.publish_job = AsyncMock()
+
+    base_header = {"signBytes": "0x1234", "thetaMicro": 1_000_000}
+    first = MiningJob(
+        job_id="job-stable",
+        source_job_id="job-stable",
+        header=dict(base_header, timestamp=1),
+        theta_micro=1_000_000,
+        share_target=0.5,
+        height=7,
+        target="0x99",
+        sign_bytes="0x1234",
+        raw={
+            "templateId": "job-stable",
+            "header": dict(base_header, timestamp=1),
+            "target": "0x99",
+        },
+    )
+    second = MiningJob(
+        job_id="job-stable",
+        source_job_id="job-stable",
+        header=dict(base_header, timestamp=2),
+        theta_micro=1_000_000,
+        share_target=0.5,
+        height=7,
+        target="0x98",
+        sign_bytes="0x1234",
+        raw={
+            "templateId": "job-stable",
+            "header": dict(base_header, timestamp=2),
+            "target": "0x98",
+        },
+    )
+
+    await server._on_new_job(first)
+    await server._on_new_job(second)
+
+    assert server.stratum.publish_job.await_count == 2
+    first_publish = server.stratum.publish_job.await_args_list[0]
+    second_publish = server.stratum.publish_job.await_args_list[1]
+    first_job = first_publish.args[0]
+    second_job = second_publish.args[0]
+    assert first_job.job_id != second_job.job_id
+    assert first_job.job_id.startswith("job-stable-")
+    assert second_job.job_id.startswith("job-stable-")
+    assert first_publish.kwargs["clean_jobs"] is True
+    assert second_publish.kwargs["clean_jobs"] is True
 
 
 @pytest.mark.asyncio
@@ -92,7 +152,11 @@ async def test_pool_share_validator_preserves_template_raw():
     assert tx_count == 0
     assert adapter.seen_job is not None
     assert adapter.seen_job.height == 7
-    assert adapter.seen_job.raw == raw_template
+    assert adapter.seen_job.raw["templateId"] == raw_template["templateId"]
+    assert adapter.seen_job.raw["target"] == raw_template["target"]
+    assert adapter.seen_job.raw["parent"] == raw_template["parent"]
+    assert adapter.seen_job.raw["txs"] == raw_template["txs"]
+    assert adapter.seen_job.raw["_sourceJobId"] == "job-1"
 
 
 @pytest.mark.asyncio
