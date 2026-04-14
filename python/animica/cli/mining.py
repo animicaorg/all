@@ -1875,8 +1875,13 @@ def mine_blocks(
                     new_head_hash = (
                         head_after.get("hash")
                         or head_after.get("block_hash")
+                        or (
+                            submit_result.get("newHead", {}).get("hash")
+                            if isinstance(submit_result.get("newHead"), dict)
+                            else None
+                        )
+                        or submit_result.get("new_head_hash")
                         or submit_result.get("block_hash")
-                        or submit_result.get("new_head")
                     )
 
                     balance_now = None
@@ -1895,10 +1900,11 @@ def mine_blocks(
                     if isinstance(balance_now, int) and isinstance(balance_before_submit, int):
                         credited_delta = balance_now - balance_before_submit
 
+                    credit_height = final_height if final_height > 0 else getattr(header, "height", None)
                     credit_record = _lookup_recent_mining_credit(
                         client,
                         resolved_address,
-                        final_height if final_height > 0 else getattr(header, "height", None),
+                        credit_height,
                     )
 
                     credited_display = None
@@ -1912,6 +1918,16 @@ def mine_blocks(
                     if credited_display is None and isinstance(credited_delta, int) and credited_delta > 0:
                         credited_display = int(credited_delta)
 
+                    if credited_display is None:
+                        try:
+                            credited_from_submit_delta = submit_result.get("credited_delta")
+                            if credited_from_submit_delta is not None:
+                                credited_candidate = int(credited_from_submit_delta)
+                                if credited_candidate >= 0:
+                                    credited_display = credited_candidate
+                        except Exception:
+                            credited_display = None
+
                     if credited_display is None and isinstance(credit_record, dict):
                         try:
                             credited_display = int(
@@ -1924,19 +1940,20 @@ def mine_blocks(
 
                     block_reward = None
                     for candidate in (
-                        submit_result.get("reward"),
-                        submit_result.get("reward_nano"),
-                        submit_result.get("reward_nanom"),
-                        submit_result.get("expected_reward"),
-                    ):
-                        if candidate is not None:
-                            try:
-                                parsed = int(candidate)
-                                if parsed > 0:
-                                    block_reward = parsed
-                                    break
-                            except Exception:
-                                pass
+                            submit_result.get("reward"),
+                            submit_result.get("reward_nano"),
+                            submit_result.get("reward_nanom"),
+                            submit_result.get("expected_reward"),
+                            submit_result.get("credited_amount"),
+                        ):
+                            if candidate is not None:
+                                try:
+                                    parsed = int(candidate)
+                                    if parsed > 0:
+                                        block_reward = parsed
+                                        break
+                                except Exception:
+                                    pass
 
                     if block_reward is None and isinstance(credit_record, dict):
                         for candidate in (

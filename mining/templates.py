@@ -11,8 +11,9 @@ from .nonce_domain import derive_mix_seed  # mixSeed evolution
 
 # We *prefer* the canonical header SignBytes encoder from core if present.
 try:
-    from core.encoding.canonical import \
-        encode_header_sign_bytes as _encode_header_sign_bytes  # type: ignore
+    from core.encoding.canonical import (
+        header_signing_bytes as _encode_header_sign_bytes,
+    )  # type: ignore
 except Exception:  # pragma: no cover
     _encode_header_sign_bytes = None  # fallback defined below
 
@@ -51,6 +52,7 @@ class HeaderTemplate:
     poies_policy_root: bytes
     timestamp: int  # seconds since epoch (informational; included in SignBytes)
     work_type: int | None = None
+    extra: bytes = b""
 
     def to_sign_bytes(self) -> bytes:
         """Canonical header SignBytes for nonce preimages."""
@@ -64,11 +66,12 @@ class HeaderTemplate:
             "receiptsRoot": self.receipts_root,
             "proofsRoot": self.proofs_root,
             "daRoot": self.da_root,
-            "thetaTargetMicro": self.theta_target_micro,
+            "thetaMicro": self.theta_target_micro,
             "mixSeed": self.mix_seed,
             "pqAlgPolicyRoot": self.pq_alg_policy_root,
             "poiesPolicyRoot": self.poies_policy_root,
             "timestamp": self.timestamp,
+            "extra": self.extra,
         }
         if self.work_type is not None:
             body["workType"] = int(self.work_type)
@@ -216,7 +219,7 @@ class TemplateBuilder:
         self._da_root = da_root_supplier or (lambda: ZERO32)
 
         # Cached tuple identifying the last head+θ we built a template for.
-        self._cache_key: Optional[Tuple[bytes, int, int | None]] = None
+        self._cache_key: Optional[Tuple[bytes, int, int, int | None]] = None
         self._cached: Optional[WorkTemplate] = None
 
     # Public API ---------------------------------------------------------------
@@ -237,7 +240,9 @@ class TemplateBuilder:
                 except Exception:
                     work_type = None
 
-        key = (parent_hash, theta, work_type)
+        # Cache key must include the live theta so template/signBytes/jobId
+        # refresh whenever difficulty/theta changes, even if parent head does not.
+        key = (parent_hash, int(height), int(theta), work_type)
         if not force and self._cache_key == key and self._cached is not None:
             return self._cached
 
@@ -263,6 +268,7 @@ class TemplateBuilder:
             poies_policy_root=poies_root,
             timestamp=int(time.time()),
             work_type=work_type,
+            extra=b"",
         )
         wt = WorkTemplate(
             header=header,
@@ -434,6 +440,7 @@ def compute_job_id(
             "timestamp": int(header.timestamp),
             "workType": int(header.work_type) if header.work_type is not None else None,
             "number": int(header.number),
+            "extra": header.extra.hex(),
         },
     }
     return _hash_job_payload(payload)

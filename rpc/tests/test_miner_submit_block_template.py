@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
 from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
 from core.types.header import Header, serialize_header
 from core.utils.hash import sha3_256
+from rpc import errors as rpc_errors
 from pq.py.address import decode_address
 from rpc.tests import new_test_client, rpc_call
 from rpc.methods import miner as miner_methods
@@ -67,6 +69,30 @@ def _find_nonce(header: Header, target_int: int, max_nonce: int = 10000) -> tupl
         if int.from_bytes(digest, "big") <= target_int:
             return nonce, digest
     pytest.skip("could not find valid nonce within search space")
+
+
+def _snapshot_miner_globals() -> dict[str, dict]:
+    with miner_methods._HEAD_RW_LOCK:
+        with miner_methods._TEMPLATE_CACHE_LOCK:
+            return {
+                "job_cache": dict(miner_methods._JOB_CACHE),
+                "template_cache": dict(miner_methods._TEMPLATE_CACHE),
+                "local_head": dict(miner_methods._LOCAL_HEAD),
+                "head_state": dict(miner_methods._HEAD_STATE),
+            }
+
+
+def _restore_miner_globals(snapshot: dict[str, dict]) -> None:
+    with miner_methods._HEAD_RW_LOCK:
+        miner_methods._JOB_CACHE.clear()
+        miner_methods._JOB_CACHE.update(snapshot["job_cache"])
+        miner_methods._LOCAL_HEAD.clear()
+        miner_methods._LOCAL_HEAD.update(snapshot["local_head"])
+        miner_methods._HEAD_STATE.clear()
+        miner_methods._HEAD_STATE.update(snapshot["head_state"])
+        with miner_methods._TEMPLATE_CACHE_LOCK:
+            miner_methods._TEMPLATE_CACHE.clear()
+            miner_methods._TEMPLATE_CACHE.update(snapshot["template_cache"])
 
 
 def test_submit_block_accepts_template(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,3 +269,175 @@ def test_submit_block_payload_extraction_compatibility() -> None:
     # Keyword-only payload (regression guard for unexpected keyword argument paths)
     extracted = miner_methods._extract_payload(None, dict(block_payload))
     assert extracted == block_payload
+
+
+def test_submit_work_happy_path_with_stubbed_submit_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mining.templates import HeaderTemplate, MiningJob
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        header_tpl = HeaderTemplate(
+            parent_hash=b"\x11" * 32,
+            number=5,
+            chain_id=1,
+            state_root=b"\x00" * 32,
+            txs_root=b"\x00" * 32,
+            receipts_root=b"\x00" * 32,
+            proofs_root=b"\x00" * 32,
+            da_root=b"\x00" * 32,
+            theta_target_micro=1_000_000,
+            mix_seed=b"\x22" * 32,
+            pq_alg_policy_root=b"\x00" * 32,
+            poies_policy_root=b"\x00" * 32,
+            timestamp=1_700_000_000,
+            work_type=0,
+            extra=b"",
+        )
+        job_obj = MiningJob(
+            job_id="job-submit-work",
+            parent_hash=header_tpl.parent_hash,
+            parent_height=4,
+            chain_id=1,
+            target=(1 << 256) - 1,
+            theta_target_micro=header_tpl.theta_target_micro,
+            proof_type="sha256d",
+            challenge=None,
+            expires_at=None,
+            template_version=1,
+            header=header_tpl,
+            sign_bytes=header_tpl.to_sign_bytes(),
+        )
+
+        miner_methods._JOB_CACHE.clear()
+        miner_methods._JOB_CACHE[job_obj.job_id] = {
+            "job": job_obj,
+            "sign_bytes": job_obj.sign_bytes,
+            "mix_seed": job_obj.header.mix_seed,
+            "block_target": (1 << 256) - 1,
+            "height": int(job_obj.header.number),
+            "created_at": 0.0,
+            "parent_hash": job_obj.parent_hash,
+            "parent_height": job_obj.parent_height,
+            "chain_id": int(job_obj.chain_id),
+            "head_generation": 7,
+        }
+
+        calls = {"head": 0}
+
+        def _fake_head_snapshot():
+            calls["head"] += 1
+            if calls["head"] == 1:
+                return {"height": 4, "hash": "0x" + ("11" * 32), "generation": 7}
+            return {"height": 5, "hash": "0x" + ("ab" * 32), "generation": 8}
+
+        def _stub_submit_block(_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "accepted": True,
+                "duplicate": False,
+                "newHead": {"height": 5, "hash": "0x" + ("ab" * 32)},
+                "new_head": 5,
+                "new_head_hash": "0x" + ("ab" * 32),
+                "block_hash": "0x" + ("ab" * 32),
+                "expected_reward": 100,
+                "credited_amount": 100,
+                "credited_delta": 100,
+                "credited_source": "state_balance_delta",
+                "balance_before": 1_000,
+                "balance_now": 1_100,
+            }
+
+        monkeypatch.setattr(miner_methods, "_current_head_snapshot", _fake_head_snapshot)
+        monkeypatch.setattr(miner_methods, "miner_submit_block", _stub_submit_block)
+
+        result = miner_methods.miner_submit_work(jobId=job_obj.job_id, nonce="0x2a")
+
+        assert result["accepted"] is True
+        assert result["reason"] is None
+        assert result["newHead"]["hash"] == "0x" + ("ab" * 32)
+        assert result["expected_reward"] == 100
+        assert result["credited_amount"] == 100
+    finally:
+        _restore_miner_globals(snapshot)
+
+
+def test_submit_block_invalid_payload_is_invalid_params_not_nameerror() -> None:
+    with pytest.raises(rpc_errors.InvalidParams, match="parent_hash or template_id is required"):
+        miner_methods.miner_submit_block({"header": {}})
+
+
+def test_submit_work_returns_structured_internal_reason_for_unexpected_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mining.templates import HeaderTemplate, MiningJob
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        header_tpl = HeaderTemplate(
+            parent_hash=b"\x33" * 32,
+            number=9,
+            chain_id=1,
+            state_root=b"\x00" * 32,
+            txs_root=b"\x00" * 32,
+            receipts_root=b"\x00" * 32,
+            proofs_root=b"\x00" * 32,
+            da_root=b"\x00" * 32,
+            theta_target_micro=1_000_000,
+            mix_seed=b"\x44" * 32,
+            pq_alg_policy_root=b"\x00" * 32,
+            poies_policy_root=b"\x00" * 32,
+            timestamp=1_700_000_000,
+            work_type=0,
+            extra=b"",
+        )
+        job_obj = MiningJob(
+            job_id="job-submit-work-error",
+            parent_hash=header_tpl.parent_hash,
+            parent_height=8,
+            chain_id=1,
+            target=(1 << 256) - 1,
+            theta_target_micro=header_tpl.theta_target_micro,
+            proof_type="sha256d",
+            challenge=None,
+            expires_at=None,
+            template_version=1,
+            header=header_tpl,
+            sign_bytes=header_tpl.to_sign_bytes(),
+        )
+
+        miner_methods._JOB_CACHE.clear()
+        miner_methods._JOB_CACHE[job_obj.job_id] = {
+            "job": job_obj,
+            "sign_bytes": job_obj.sign_bytes,
+            "mix_seed": job_obj.header.mix_seed,
+            "block_target": (1 << 256) - 1,
+            "height": int(job_obj.header.number),
+            "created_at": 0.0,
+            "parent_hash": job_obj.parent_hash,
+            "parent_height": job_obj.parent_height,
+            "chain_id": int(job_obj.chain_id),
+            "head_generation": 3,
+        }
+
+        monkeypatch.setattr(
+            miner_methods,
+            "_current_head_snapshot",
+            lambda: {"height": 8, "hash": "0x" + ("33" * 32), "generation": 3},
+        )
+
+        def _boom(*_args, **_kwargs):
+            raise NameError("name '_extract_payload' is not defined")
+
+        monkeypatch.setattr(miner_methods, "miner_submit_block", _boom)
+
+        with pytest.raises(rpc_errors.RpcError) as exc_info:
+            miner_methods.miner_submit_work(jobId=job_obj.job_id, nonce="0x1")
+
+        err = exc_info.value
+        assert err.code == -32000
+        assert err.message == "submitWork failed"
+        assert err.data["reason"] == "submit_work_failed"
+        assert "NameError" in err.data["detail"]
+    finally:
+        _restore_miner_globals(snapshot)
