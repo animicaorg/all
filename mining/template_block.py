@@ -51,24 +51,49 @@ def header_from_template_view(header_view: Mapping[str, Any], *, nonce: int | No
         chainId=int_from_value(
             header_view.get("chainId") or header_view.get("chain_id")
         ),
-        height=int_from_value(header_view.get("height") or header_view.get("number")),
-        parentHash=parse_hex_bytes(header_view.get("parentHash")),
+        height=int_from_value(
+            header_view.get("height") or header_view.get("number")
+        ),
+        parentHash=parse_hex_bytes(
+            header_view.get("parentHash") or header_view.get("parent_hash")
+        ),
         timestamp=int_from_value(header_view.get("timestamp")),
-        stateRoot=parse_hex_bytes(header_view.get("stateRoot")),
-        txsRoot=parse_hex_bytes(header_view.get("txsRoot")),
-        receiptsRoot=parse_hex_bytes(header_view.get("receiptsRoot")),
-        proofsRoot=parse_hex_bytes(header_view.get("proofsRoot")),
-        daRoot=parse_hex_bytes(header_view.get("daRoot")),
-        mixSeed=parse_hex_bytes(header_view.get("mixSeed")),
-        poiesPolicyRoot=parse_hex_bytes(header_view.get("poiesPolicyRoot")),
-        pqAlgPolicyRoot=parse_hex_bytes(header_view.get("pqAlgPolicyRoot")),
+        stateRoot=parse_hex_bytes(
+            header_view.get("stateRoot") or header_view.get("state_root")
+        ),
+        txsRoot=parse_hex_bytes(
+            header_view.get("txsRoot") or header_view.get("txs_root")
+        ),
+        receiptsRoot=parse_hex_bytes(
+            header_view.get("receiptsRoot") or header_view.get("receipts_root")
+        ),
+        proofsRoot=parse_hex_bytes(
+            header_view.get("proofsRoot") or header_view.get("proofs_root")
+        ),
+        daRoot=parse_hex_bytes(
+            header_view.get("daRoot") or header_view.get("da_root")
+        ),
+        mixSeed=parse_hex_bytes(
+            header_view.get("mixSeed") or header_view.get("mix_seed")
+        ),
+        poiesPolicyRoot=parse_hex_bytes(
+            header_view.get("poiesPolicyRoot") or header_view.get("poies_policy_root")
+        ),
+        pqAlgPolicyRoot=parse_hex_bytes(
+            header_view.get("pqAlgPolicyRoot") or header_view.get("pq_alg_policy_root")
+        ),
         thetaMicro=int_from_value(
             header_view.get("thetaMicro")
             or header_view.get("thetaTargetMicro")
             or header_view.get("theta_target_micro")
             or header_view.get("theta_micro")
         ),
-        workType=int_from_value(header_view.get("workType"), default=0),
+        workType=int_from_value(
+            header_view.get("workType")
+            if header_view.get("workType") is not None
+            else header_view.get("work_type"),
+            default=0,
+        ),
         nonce=resolved_nonce,
         extra=parse_hex_bytes(header_view.get("extra"), default=b""),
     )

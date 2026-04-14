@@ -224,6 +224,30 @@ def _emit_mining_summary(summary: dict, *, verbose: bool, force: bool = False) -
     typer.echo(f"  Mining summary: {payload}")
 
 
+def _lookup_recent_mining_credit(client: Any, address: str, height: int | None = None) -> dict | None:
+    try:
+        params = {"address": address, "last": 10}
+        if height is not None:
+            params["from_height"] = height
+            params["to_height"] = height
+        result = client.request("mining.getCredits", params)
+        if not isinstance(result, dict):
+            return None
+        credits = result.get("credits", [])
+        if not isinstance(credits, list):
+            return None
+        if height is not None:
+            for credit in credits:
+                try:
+                    if int(credit.get("height", -1)) == int(height):
+                        return credit
+                except Exception:
+                    continue
+        return credits[0] if credits else None
+    except Exception:
+        return None
+
+
 def _ensure_network_env() -> None:
     cfg = load_network_config()
     os.environ.setdefault("ANIMICA_NETWORK", cfg.name)
@@ -1574,7 +1598,7 @@ def mine_blocks(
                         parent_hash = "0x" + header.parentHash.hex()
 
                     try:
-                        head_snapshot = call_rpc("chain_getHead", [], url)
+                        head_snapshot = client.request("chain.getHead", [])
                     except Exception as exc:
                         if verbose:
                             typer.secho(
@@ -1584,36 +1608,30 @@ def mine_blocks(
                         head_snapshot = None
 
                     head_hash = None
+                    head_height_pre_submit = None
                     if isinstance(head_snapshot, dict):
                         head_hash = (
                             head_snapshot.get("hash")
                             or head_snapshot.get("block_hash")
                             or head_snapshot.get("head")
                         )
-
-                    if (
-                        isinstance(head_hash, str)
-                        and isinstance(parent_hash, str)
-                        and head_hash.lower() != parent_hash.lower()
-                    ):
-                        typer.secho(
-                            f"  REJECTED: Block {total_mined + 1}/{count} (reason: stale_template)",
-                            fg=typer.colors.RED,
+                        head_height_pre_submit = (
+                            head_snapshot.get("height")
+                            or head_snapshot.get("number")
+                            or head_snapshot.get("block_number")
                         )
-                        if stale_attempts < 1:
-                            stale_attempts += 1
-                            typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
-                                fg=typer.colors.YELLOW,
-                            )
-                            continue
-                        # Exhausted stale retries - wait before moving to next block
-                        # to give blockchain time to stabilize and avoid rapid retry loops
-                        _apply_stale_template_cooldown()
-                        _stale_cooldown_applied = True
-                        blocks_attempted += 1
-                        stale_attempts = 0
-                        break
+
+                    if verbose:
+                        typer.echo(
+                            "  pre-submit check: "
+                            f"head_hash={head_hash} "
+                            f"head_height={head_height_pre_submit} "
+                            f"job_parent={parent_hash} "
+                            f"template_height={header.height}"
+                        )
+
+                    # Do not reject locally here.
+                    # Let miner.submitWork be the source of truth for stale-vs-accepted.
 
                     header = hash_candidate_header(header, nonce=nonce).header
                     parent_height = parent_info.get("height")
@@ -1758,24 +1776,98 @@ def mine_blocks(
                     blocks_attempted += 1
                     _block_accepted = True
 
-                    # Re-read canonical head after acceptance instead of trusting submit_result shape.
+                    # Re-read canonical head after acceptance and wait for the miner work
+                    # template to advance past the block we just accepted.
                     head_after = {}
-                    try:
-                        head_after = client.request("chain.getHead", [])
-                        if not isinstance(head_after, dict):
+                    accepted_parent_hash = parent_hash
+                    accepted_height = int(getattr(header, "height", 0) or 0)
+                    accepted_deadline = time.time() + 8.0
+
+                    while time.time() < accepted_deadline:
+                        try:
+                            candidate_head = client.request("chain.getHead", [])
+                            if not isinstance(candidate_head, dict):
+                                candidate_head = {}
+                        except Exception:
+                            candidate_head = {}
+
+                        candidate_hash = (
+                            candidate_head.get("hash")
+                            or candidate_head.get("block_hash")
+                            or candidate_head.get("head")
+                        )
+                        candidate_height = (
+                            candidate_head.get("height")
+                            or candidate_head.get("number")
+                            or candidate_head.get("block_number")
+                            or 0
+                        )
+
+                        try:
+                            candidate_height = int(candidate_height or 0)
+                        except Exception:
+                            candidate_height = 0
+
+                        template_advanced = False
+                        try:
+                            next_work = client.request("miner.getWork", [resolved_address])
+                            if isinstance(next_work, dict):
+                                next_height = next_work.get("height")
+                                if next_height is None and isinstance(next_work.get("header"), dict):
+                                    next_height = (
+                                        next_work["header"].get("height")
+                                        or next_work["header"].get("number")
+                                    )
+                                next_parent = (
+                                    next_work.get("parentHash")
+                                    or ((next_work.get("parent") or {}).get("hash") if isinstance(next_work.get("parent"), dict) else None)
+                                )
+                                try:
+                                    next_height_int = int(next_height or 0)
+                                except Exception:
+                                    next_height_int = 0
+
+                                if next_height_int >= accepted_height + 1:
+                                    template_advanced = True
+
+                                if verbose:
+                                    typer.echo(
+                                        "  post-accept settle: "
+                                        f"head_hash={candidate_hash} "
+                                        f"head_height={candidate_height} "
+                                        f"next_height={next_height_int} "
+                                        f"next_parent={next_parent}"
+                                    )
+                        except Exception:
+                            next_work = None
+
+                        if (
+                            (candidate_hash and accepted_parent_hash and str(candidate_hash).lower() != str(accepted_parent_hash).lower())
+                            or candidate_height >= accepted_height
+                            or template_advanced
+                        ):
+                            head_after = candidate_head
+                            break
+
+                        time.sleep(0.25)
+
+                    if not isinstance(head_after, dict) or not head_after:
+                        try:
+                            head_after = client.request("chain.getHead", [])
+                            if not isinstance(head_after, dict):
+                                head_after = {}
+                        except Exception:
                             head_after = {}
-                    except Exception:
-                        head_after = {}
 
                     try:
                         final_height = int(
                             head_after.get("height")
                             or head_after.get("number")
                             or head_after.get("block_number")
-                            or 0
+                            or accepted_height
                         )
                     except Exception:
-                        final_height = 0
+                        final_height = accepted_height
 
                     if final_height > 0:
                         last_accepted_height = final_height
@@ -1803,6 +1895,12 @@ def mine_blocks(
                     if isinstance(balance_now, int) and isinstance(balance_before_submit, int):
                         credited_delta = balance_now - balance_before_submit
 
+                    credit_record = _lookup_recent_mining_credit(
+                        client,
+                        resolved_address,
+                        final_height if final_height > 0 else getattr(header, "height", None),
+                    )
+
                     credited_display = None
                     credited_amount_raw = submit_result.get("credited_amount")
                     if credited_amount_raw is not None:
@@ -1811,50 +1909,85 @@ def mine_blocks(
                         except Exception:
                             credited_display = None
 
-                    if credited_display is None and isinstance(credited_delta, int) and credited_delta >= 0:
+                    if credited_display is None and isinstance(credited_delta, int) and credited_delta > 0:
                         credited_display = int(credited_delta)
 
-                    block_reward = 0
+                    if credited_display is None and isinstance(credit_record, dict):
+                        try:
+                            credited_display = int(
+                                credit_record.get("credited_reward")
+                                or credit_record.get("credited_amount")
+                                or 0
+                            )
+                        except Exception:
+                            credited_display = None
+
+                    block_reward = None
                     for candidate in (
                         submit_result.get("reward"),
                         submit_result.get("reward_nano"),
                         submit_result.get("reward_nanom"),
                         submit_result.get("expected_reward"),
-                        submit_result.get("credited_amount"),
                     ):
                         if candidate is not None:
                             try:
-                                block_reward = int(candidate)
-                                break
+                                parsed = int(candidate)
+                                if parsed > 0:
+                                    block_reward = parsed
+                                    break
                             except Exception:
                                 pass
 
-                    if block_reward <= 0 and credited_display is not None:
-                        block_reward = int(credited_display)
+                    if block_reward is None and isinstance(credit_record, dict):
+                        for candidate in (
+                            credit_record.get("expected_reward"),
+                            credit_record.get("reward"),
+                            credit_record.get("credited_reward"),
+                        ):
+                            if candidate is not None:
+                                try:
+                                    parsed = int(candidate)
+                                    if parsed > 0:
+                                        block_reward = parsed
+                                        break
+                                except Exception:
+                                    pass
 
-                    total_reward += int(block_reward or 0)
-                    reward_anm = block_reward / COIN_UNIT
+                    if block_reward is None and isinstance(credited_delta, int) and credited_delta > 0:
+                        block_reward = int(credited_delta)
 
-                    if credited_display is None:
-                        credited_display = int(block_reward or 0)
+                    if block_reward is not None and block_reward > 0:
+                        total_reward += int(block_reward)
+
+                    reward_text = (
+                        f"{(block_reward / COIN_UNIT):.9f} ANM = {block_reward} nANM"
+                        if isinstance(block_reward, int) and block_reward > 0
+                        else "unknown"
+                    )
+                    credited_text = (
+                        f"{credited_display} nANM"
+                        if isinstance(credited_display, int) and credited_display >= 0
+                        else "unknown"
+                    )
 
                     typer.secho(
                         f"  ACCEPTED: Block {total_mined}/{count} (height: {final_height}, "
                         f"head: {new_head_hash or 'unknown'}, "
-                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM, "
-                        f"credited: {credited_display} nANM, "
+                        f"reward: {reward_text}, "
+                        f"credited: {credited_text}, "
                         f"balance_now: {balance_now if balance_now is not None else 'unknown'})",
                         fg=typer.colors.GREEN,
                         bold=True,
                     )
 
-                    if strict_credit and (balance_now is None or credited_display < block_reward):
-                        typer.secho(
-                            "  WARNING: strict credit check failed; RPC balance did not reflect expected reward delta",
-                            fg=typer.colors.RED,
-                            err=True,
-                        )
-                        raise typer.Exit(1)
+                    if strict_credit and isinstance(block_reward, int) and block_reward > 0:
+                        if balance_now is None or credited_display is None or credited_display < block_reward:
+                            typer.secho(
+                                "  WARNING: strict credit check failed; RPC balance/credits did not reflect expected reward delta",
+                                fg=typer.colors.RED,
+                                err=True,
+                            )
+                            raise typer.Exit(1)
 
                     if include_mempool and pending_before > 0 and selected == 0:
                         exclusions = template.get("excluded", []) or []
@@ -1891,7 +2024,7 @@ def mine_blocks(
                 # - For generic non-stale errors: use a shorter delay to fail fast
                 if total_mined < count and not _stale_cooldown_applied:
                     if _block_accepted:
-                        time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
+                        time.sleep(max(1.0, MIN_BLOCK_INTERVAL_SECONDS))
                     else:
                         # Short delay to avoid hammering the node on repeated errors
                         time.sleep(0.1)
@@ -1916,11 +2049,15 @@ def mine_blocks(
                 )
             
             # Display total reward summary
-            total_reward_anm = total_reward / COIN_UNIT
+            total_reward_text = (
+                f"{(total_reward / COIN_UNIT):.9f} ANM ({total_reward} nANM)"
+                if total_reward > 0
+                else "unknown"
+            )
             typer.secho(
                 f"✓ Successfully mined {total_mined} block(s). "
                 f"New chain height: {final_height}. "
-                f"Total reward: {total_reward_anm:.9f} ANM ({total_reward} nANM)",
+                f"Total reward: {total_reward_text}",
                 fg=typer.colors.GREEN,
                 bold=True,
             )
