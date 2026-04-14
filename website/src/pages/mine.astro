@@ -50,7 +50,7 @@ const mineRuntimeConfig = JSON.stringify({
             </h1>
             <p class="mt-5 max-w-3xl text-lg leading-8 text-slate-200/90">
               Connect to the live Animica Stratum pool, download the right starter bundle for your
-              machine, and launch a reference CPU miner with the detected host and port already wired in.
+              machine, and launch the miner executable with the detected host and port already wired in.
             </p>
 
             <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
@@ -137,8 +137,8 @@ const mineRuntimeConfig = JSON.stringify({
               <div class="rounded-2xl border border-white/8 bg-white/5 p-4">
                 <p class="text-sm font-semibold text-white">2. Download your starter bundle</p>
                 <p class="mt-2 text-sm text-slate-300">
-                  Windows gets a <code>.zip</code>, macOS a <code>.zip</code> with a
-                  <code>.command</code> launcher, and Ubuntu/Linux a <code>.tar.gz</code>.
+                  Bundles include <code>animica-miner</code> (<code>.exe</code> on Windows) when available,
+                  plus launchers and config files.
                 </p>
               </div>
               <div class="rounded-2xl border border-white/8 bg-white/5 p-4">
@@ -149,7 +149,13 @@ const mineRuntimeConfig = JSON.stringify({
                 </p>
               </div>
               <div class="rounded-2xl border border-white/8 bg-white/5 p-4">
-                <p class="text-sm font-semibold text-white">4. Track pool health</p>
+                <p class="text-sm font-semibold text-white">4. Confirm PPS vs SOLO mode</p>
+                <p class="mt-2 text-sm text-slate-300">
+                  PPS credits accepted shares. SOLO credits only accepted full blocks to the miner who found them.
+                </p>
+              </div>
+              <div class="rounded-2xl border border-white/8 bg-white/5 p-4">
+                <p class="text-sm font-semibold text-white">5. Track pool health</p>
                 <p class="mt-2 text-sm text-slate-300">
                   Current height: <span id="pool-height" data-testid="mine-pool-height" class="font-semibold text-white">0</span><br />
                   Pool hashrate: <span id="pool-hashrate" class="font-semibold text-white">0 H/s</span><br />
@@ -315,10 +321,10 @@ const mineRuntimeConfig = JSON.stringify({
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Downloads</p>
-            <h2 class="mt-2 text-2xl font-semibold text-white">Starter bundles per platform</h2>
+            <h2 class="mt-2 text-2xl font-semibold text-white">Miner bundles per platform</h2>
             <p class="mt-2 text-sm text-slate-300">
-              Each bundle contains a real miner entrypoint, a platform launcher, a config template,
-              and a README wired to the detected pool endpoint.
+              Each bundle contains a launcher, config template, README, and a standalone miner executable
+              when available for that platform.
             </p>
           </div>
           <p class="text-sm text-slate-300">
@@ -357,6 +363,10 @@ const mineRuntimeConfig = JSON.stringify({
                   <dd data-download-launcher class="font-medium text-white">Resolving…</dd>
                 </div>
                 <div class="flex items-center justify-between gap-3">
+                  <dt class="text-slate-400">Entrypoint</dt>
+                  <dd data-download-entrypoint class="font-medium text-white">Resolving…</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3">
                   <dt class="text-slate-400">Size</dt>
                   <dd data-download-size class="font-medium text-white">Resolving…</dd>
                 </div>
@@ -391,6 +401,48 @@ const mineRuntimeConfig = JSON.stringify({
       </div>
     </section>
 
+    <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Miner Tab</p>
+            <h2 class="mt-2 text-2xl font-semibold text-white">Search active and historical miners</h2>
+            <p class="mt-2 text-sm text-slate-300">
+              Miner names (worker labels), payout addresses, shares, blocks, and credits come from the live pool API.
+            </p>
+          </div>
+          <label class="w-full max-w-sm">
+            <span class="sr-only">Search miners</span>
+            <input
+              id="miner-search"
+              type="search"
+              placeholder="Search miner name or address..."
+              class="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/60"
+            />
+          </label>
+        </div>
+
+        <div class="mt-6 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/45">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-900/70 text-left text-slate-300">
+              <tr>
+                <th class="px-4 py-3 font-semibold">Miner Name</th>
+                <th class="px-4 py-3 font-semibold">Address</th>
+                <th class="px-4 py-3 font-semibold">Accepted</th>
+                <th class="px-4 py-3 font-semibold">Rejected</th>
+                <th class="px-4 py-3 font-semibold">Blocks</th>
+                <th class="px-4 py-3 font-semibold">Hashrate (1m)</th>
+                <th class="px-4 py-3 font-semibold">Credit</th>
+                <th class="px-4 py-3 font-semibold">Mode</th>
+              </tr>
+            </thead>
+            <tbody id="miner-rows" class="text-slate-200"></tbody>
+          </table>
+          <p id="miner-empty" class="px-4 py-4 text-sm text-slate-300">Loading miner data…</p>
+        </div>
+      </div>
+    </section>
+
     <section class="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
       <div class="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
         <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
@@ -414,7 +466,8 @@ const mineRuntimeConfig = JSON.stringify({
               <p class="text-sm font-semibold text-white">Step 3. Run the included launcher</p>
               <p class="mt-2 text-sm text-slate-300">
                 Windows opens Command Prompt, macOS opens Terminal through the
-                <code>.command</code> file, and Linux uses the included shell script.
+                <code>.command</code> file, and Linux uses the included shell script. Launchers prefer
+                the standalone <code>animica-miner</code> binary and fall back to Python only when needed.
               </p>
             </div>
               <div class="rounded-2xl border border-white/8 bg-slate-950/50 p-4">

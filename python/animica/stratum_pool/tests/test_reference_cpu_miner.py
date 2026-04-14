@@ -94,7 +94,7 @@ def test_resolve_config_reads_api_and_mode_from_file(tmp_path: Path):
                 "host": "pool.animica.test",
                 "port": 3333,
                 "scheme": "stratum+tcp",
-                "address": "anim1qqq",
+                "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
                 "worker": "office-rig",
                 "threads": 2,
                 "api_base_url": "https://mine.animica.test",
@@ -126,6 +126,39 @@ def test_resolve_config_reads_api_and_mode_from_file(tmp_path: Path):
     assert resolved.api_base_url == "https://mine.animica.test"
     assert resolved.pool_mode == "solo"
     assert resolved.stats_interval_sec == 12.0
+
+
+def test_resolve_config_rejects_invalid_address(tmp_path: Path):
+    config_path = tmp_path / "miner-invalid.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "host": "pool.animica.test",
+                "port": 3333,
+                "address": "not-an-address",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="Invalid Animica payout address"):
+        resolve_config(
+            argparse.Namespace(
+                config=str(config_path),
+                host=None,
+                port=None,
+                scheme=None,
+                tls=False,
+                api_base_url=None,
+                address=None,
+                worker=None,
+                pool_mode=None,
+                threads=None,
+                scan_window=None,
+                stats_interval=None,
+                log_level=None,
+            )
+        )
 
 
 @pytest.mark.asyncio

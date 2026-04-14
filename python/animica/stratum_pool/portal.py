@@ -264,7 +264,11 @@ def resolve_public_mining_config(
     download_base_url = _read_env("ANIMICA_MINING_DOWNLOAD_BASE_URL") or api_base_url
 
     pool_enabled = _env_bool("ANIMICA_POOL_ENABLED", default=True)
-    pool_mode = (_read_env("ANIMICA_POOL_MODE") or ("solo" if not pool_enabled else "pps")).strip().lower()
+    pool_mode = (
+        _read_env("ANIMICA_POOL_MODE")
+        or (config.pool_mode if getattr(config, "pool_mode", None) else None)
+        or ("solo" if not pool_enabled else "pps")
+    ).strip().lower()
     if pool_mode not in {"pps", "solo"}:
         pool_mode = "pps"
     fee_percent = _env_float("ANIMICA_POOL_FEE_PERCENT")
@@ -346,6 +350,7 @@ def build_config_document(resolved: ResolvedMiningConfig, bundle: BundleInput) -
         f'  "scan_window": {bundle.scan_window},\n'
         f'  "api_base_url": "{resolved.api_base_url}",\n'
         f'  "pool_mode": "{resolved.pool_mode}",\n'
+        '  "entrypoint": "animica-miner",\n'
         '  "stats_interval_sec": 20,\n'
         f'  "log_level": "{bundle.log_level}"\n'
         "}\n"
@@ -360,12 +365,13 @@ def build_manual_commands(resolved: ResolvedMiningConfig, bundle: BundleInput) -
         f"--port {resolved.public_port} "
         f"--address {quoted_address} "
         f"--worker {quoted_worker} "
-        f"--threads {bundle.threads}"
+        f"--threads {bundle.threads} "
+        f"--pool-mode {resolved.pool_mode}"
     )
     return {
-        "windows": f"py -3 animica_cpu_miner.py {common_args}",
-        "macos": f"python3 animica_cpu_miner.py {common_args}",
-        "linux": f"python3 animica_cpu_miner.py {common_args}",
+        "windows": f"animica-miner.exe {common_args}",
+        "macos": f"./animica-miner {common_args}",
+        "linux": f"./animica-miner {common_args}",
     }
 
 
@@ -382,21 +388,26 @@ def build_launcher_script(
             "cd /d %~dp0\r\n"
             "title Animica CPU Miner\r\n"
             "set CONFIG=animica-miner.config.json\r\n"
-            "set PYTHON_CMD=\r\n"
-            "where py >nul 2>nul\r\n"
-            "if %ERRORLEVEL%==0 set PYTHON_CMD=py -3\r\n"
-            "if not defined PYTHON_CMD (\r\n"
-            "  where python >nul 2>nul\r\n"
-            "  if %ERRORLEVEL%==0 set PYTHON_CMD=python\r\n"
-            ")\r\n"
-            "if not defined PYTHON_CMD (\r\n"
-            "  echo Python 3.10+ was not found on PATH.\r\n"
-            "  echo Install Python and run this launcher again.\r\n"
-            "  pause\r\n"
-            "  exit /b 1\r\n"
-            ")\r\n"
+            "set MINER_EXE=animica-miner.exe\r\n"
             f"echo Connecting to {resolved.stratum_url}\r\n"
-            "%PYTHON_CMD% animica_cpu_miner.py --config %CONFIG%\r\n"
+            "if exist %MINER_EXE% (\r\n"
+            "  %MINER_EXE% --config %CONFIG%\r\n"
+            ") else (\r\n"
+            "  set PYTHON_CMD=\r\n"
+            "  where py >nul 2>nul\r\n"
+            "  if %ERRORLEVEL%==0 set PYTHON_CMD=py -3\r\n"
+            "  if not defined PYTHON_CMD (\r\n"
+            "    where python >nul 2>nul\r\n"
+            "    if %ERRORLEVEL%==0 set PYTHON_CMD=python\r\n"
+            "  )\r\n"
+            "  if not defined PYTHON_CMD (\r\n"
+            "    echo Neither animica-miner.exe nor Python 3.10+ was found.\r\n"
+            "    echo Re-download the latest miner bundle or install Python and retry.\r\n"
+            "    pause\r\n"
+            "    exit /b 1\r\n"
+            "  )\r\n"
+            "  %PYTHON_CMD% animica_cpu_miner.py --config %CONFIG%\r\n"
+            ")\r\n"
             "set EXIT_CODE=%ERRORLEVEL%\r\n"
             "echo.\r\n"
             "if not %EXIT_CODE%==0 echo Miner exited with status %EXIT_CODE%.\r\n"
@@ -406,20 +417,21 @@ def build_launcher_script(
     if platform == "macos":
         return (
             "#!/bin/bash\n"
+            "set -euo pipefail\n"
             'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
             'cd "$SCRIPT_DIR"\n'
-            'PYTHON_BIN=""\n'
-            "if command -v python3 >/dev/null 2>&1; then\n"
-            '  PYTHON_BIN="python3"\n'
+            f'echo "Connecting to {resolved.stratum_url}"\n'
+            "if [ -x \"./animica-miner\" ]; then\n"
+            f"  ./animica-miner --config \"{config_name}\"\n"
+            "elif command -v python3 >/dev/null 2>&1; then\n"
+            f"  python3 animica_cpu_miner.py --config \"{config_name}\"\n"
             "elif command -v python >/dev/null 2>&1; then\n"
-            '  PYTHON_BIN="python"\n'
+            f"  python animica_cpu_miner.py --config \"{config_name}\"\n"
             "else\n"
-            '  echo "Python 3.10+ was not found on PATH."\n'
+            '  echo "Neither ./animica-miner nor Python 3.10+ was found."\n'
             '  read -r -p "Press Return to close this window."\n'
             "  exit 1\n"
             "fi\n"
-            f'echo "Connecting to {resolved.stratum_url}"\n'
-            f'"$PYTHON_BIN" animica_cpu_miner.py --config "{config_name}"\n'
             "status=$?\n"
             'echo ""\n'
             'if [ "$status" -ne 0 ]; then echo "Miner exited with status $status."; fi\n'
@@ -431,17 +443,17 @@ def build_launcher_script(
         "set -euo pipefail\n"
         'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
         'cd "$SCRIPT_DIR"\n'
-        'PYTHON_BIN=""\n'
-        "if command -v python3 >/dev/null 2>&1; then\n"
-        '  PYTHON_BIN="python3"\n'
+        f'echo "Connecting to {resolved.stratum_url}"\n'
+        "if [ -x \"./animica-miner\" ]; then\n"
+        f"  ./animica-miner --config \"{config_name}\"\n"
+        "elif command -v python3 >/dev/null 2>&1; then\n"
+        f"  python3 animica_cpu_miner.py --config \"{config_name}\"\n"
         "elif command -v python >/dev/null 2>&1; then\n"
-        '  PYTHON_BIN="python"\n'
+        f"  python animica_cpu_miner.py --config \"{config_name}\"\n"
         "else\n"
-        '  echo "Python 3.10+ was not found on PATH."\n'
+        '  echo "Neither ./animica-miner nor Python 3.10+ was found."\n'
         "  exit 1\n"
         "fi\n"
-        f'echo "Connecting to {resolved.stratum_url}"\n'
-        f'"$PYTHON_BIN" animica_cpu_miner.py --config "{config_name}"\n'
     )
 
 
@@ -471,7 +483,7 @@ Configured worker: {bundle.worker}
    - Windows: `start_mining.bat`
    - macOS: `start_mining.command`
    - Ubuntu/Linux: `start_mining.sh`
-4. The launcher opens a terminal, prints the target pool, and starts the miner.
+4. The launcher opens a terminal, prints the target pool, and starts `animica-miner`.
 
 ## Manual command
 
@@ -497,6 +509,7 @@ Worker names are informational. This bundle uses `{bundle.worker}` by default. G
 
 ## Pool notes
 
+- Mode: {resolved.pool_mode.upper()} ({'pay-per-share credits' if resolved.pool_mode == 'pps' else 'winner-takes-block credits'})
 - Fee: {resolved.fee_percent if resolved.fee_percent is not None else "not published"}%
 - Payout minimum: {resolved.payout_minimum or "not published"}
 - Host source: {resolved.host_source}
@@ -507,7 +520,7 @@ Worker names are informational. This bundle uses `{bundle.worker}` by default. G
 
 ## Troubleshooting
 
-- If Python is missing, install Python 3.10 or newer and re-run the launcher.
+- Bundles prefer `animica-miner` executable. If it is missing, the launcher falls back to `animica_cpu_miner.py` + Python 3.10+.
 - If the miner cannot connect, confirm that `{resolved.public_host}:{resolved.public_port}` is reachable from this machine.
 - If you are mining from another computer and the host resolves to `localhost` or `127.0.0.1`, ask the operator to set `ANIMICA_PUBLIC_STRATUM_HOST`.
 - Personalized bundles can be re-generated from the mining portal with your payout address prefilled.
@@ -526,6 +539,7 @@ class MiningPortalService:
         resolved = self.resolve(request)
         summary = self._metrics.pool_summary()
         health = self._metrics.health()
+        accounting = self._metrics.accounting_summary()
         return {
             "online": bool(resolved.pool_enabled and health.get("status") == "ok"),
             "health": health,
@@ -544,12 +558,31 @@ class MiningPortalService:
             "stratum_endpoint": resolved.stratum_url,
             "warnings": list(resolved.warnings),
             "last_update": summary.get("last_update"),
+            "accounting": accounting,
         }
 
     def config_payload(self, request: Request) -> dict[str, Any]:
         resolved = self.resolve(request)
         defaults = build_bundle_input()
         commands = build_manual_commands(resolved, defaults)
+        mode_examples = {
+            "pps": {
+                platform: cmd.replace(
+                    f"--pool-mode {resolved.pool_mode}", "--pool-mode pps"
+                )
+                for platform, cmd in commands.items()
+            },
+            "solo": {
+                platform: cmd.replace(
+                    f"--pool-mode {resolved.pool_mode}", "--pool-mode solo"
+                )
+                for platform, cmd in commands.items()
+            },
+        }
+        mode_summary = {
+            "pps": "Accepted shares earn deterministic per-share credit.",
+            "solo": "Only accepted full blocks are credited to the submitting miner.",
+        }
         downloads_url = str(request.url_for("mining_downloads_manifest"))
         status_url = str(request.url_for("mining_status"))
         generate_url = str(request.url_for("mining_generate"))
@@ -575,6 +608,7 @@ class MiningPortalService:
             "downloads_endpoint": downloads_url,
             "generate_endpoint": generate_url,
             "manual_commands": commands,
+            "mode_examples": mode_examples,
             "default_worker": defaults.worker,
             "default_threads": defaults.threads,
             "fee_percent": resolved.fee_percent,
@@ -582,6 +616,10 @@ class MiningPortalService:
             "warnings": list(resolved.warnings),
             "payout_instructions": "Enter an address on the active Animica network. Pool rewards are credited to that payout address.",
             "worker_instructions": "Worker names are labels only. Use short, stable names like rig-01 or office-cpu.",
+            "pool_mode_instructions": mode_summary.get(
+                resolved.pool_mode, mode_summary["pps"]
+            ),
+            "miner_executable": "animica-miner",
             "status": self.status_payload(request),
         }
 
@@ -610,10 +648,12 @@ class MiningPortalService:
             )
         return {
             "network": resolved.network,
+            "pool_mode": resolved.pool_mode,
             "stratum_url": resolved.stratum_url,
             "address": bundle.address,
             "worker": bundle.worker,
             "threads": bundle.threads,
+            "miner_executable": "animica-miner",
             "commands": commands,
             "config": {
                 "filename": "animica-miner.config.json",

@@ -18,6 +18,10 @@ def test_show_config(monkeypatch: Any) -> None:
     monkeypatch.setenv("ANIMICA_RPC_URL", "http://rpc")
     monkeypatch.setenv("ANIMICA_MINING_POOL_DB_URL", "sqlite:///db")
     monkeypatch.setenv("ANIMICA_STRATUM_BIND", "0.0.0.0:3333")
+    monkeypatch.setenv(
+        "ANIMICA_POOL_ADDRESS",
+        "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+    )
     result = runner.invoke(mining.app, ["show-config"])
     assert result.exit_code == 0
     assert "RPC URL" in result.output
@@ -38,6 +42,10 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
             "run-pool",
             "--rpc-url",
             "http://node",
+            "--mode",
+            "pps",
+            "--pool-address",
+            "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
             "--db-url",
             "sqlite:///db",
             "--stratum-bind",
@@ -57,14 +65,67 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
     assert os.getenv("ANIMICA_STRATUM_BIND") == "0.0.0.0:3333"
     assert os.getenv("ANIMICA_POOL_API_BIND") == "0.0.0.0:8082"
     assert os.getenv("ANIMICA_MINING_POOL_LOG_LEVEL") == "debug"
+    assert os.getenv("ANIMICA_POOL_MODE") == "pps"
+    assert os.getenv("ANIMICA_POOL_ADDRESS") == "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
     for key in [
         "ANIMICA_RPC_URL",
         "ANIMICA_MINING_POOL_DB_URL",
         "ANIMICA_STRATUM_BIND",
         "ANIMICA_POOL_API_BIND",
         "ANIMICA_MINING_POOL_LOG_LEVEL",
+        "ANIMICA_POOL_MODE",
+        "ANIMICA_POOL_ADDRESS",
     ]:
         os.environ.pop(key, None)
+
+
+def test_run_pool_requires_pool_address() -> None:
+    result = runner.invoke(mining.app, ["run-pool", "--mode", "pps"])
+    assert result.exit_code == 2
+    assert "pool payout address is required" in result.output
+
+
+def test_run_pool_rejects_invalid_mode() -> None:
+    result = runner.invoke(
+        mining.app,
+        [
+            "run-pool",
+            "--mode",
+            "pplns",
+            "--pool-address",
+            "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--mode must be either 'pps' or 'solo'" in result.output
+
+
+def test_run_pool_sets_solo_mode(monkeypatch: Any) -> None:
+    called = {}
+
+    def fake_main(argv: list[str] | None = None) -> None:
+        called["argv"] = argv
+
+    monkeypatch.setattr(mining.pool_cli, "main", fake_main)
+    result = runner.invoke(
+        mining.app,
+        [
+            "run-pool",
+            "--mode",
+            "solo",
+            "--pool-address",
+            "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+            "--rpc-url",
+            "http://127.0.0.1:8545/rpc",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["argv"] == []
+    import os
+
+    assert os.getenv("ANIMICA_POOL_MODE") == "solo"
+    os.environ.pop("ANIMICA_POOL_MODE", None)
+    os.environ.pop("ANIMICA_POOL_ADDRESS", None)
 
 
 def test_wallet_import_failure_does_not_disable_run_pool(monkeypatch: Any) -> None:
@@ -104,7 +165,13 @@ def test_run_pool_reports_missing_package_error(monkeypatch: Any) -> None:
         reloaded = importlib.reload(mining)
         result = runner.invoke(
             reloaded.app,
-            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+            [
+                "run-pool",
+                "--rpc-url",
+                "http://127.0.0.1:8545",
+                "--pool-address",
+                "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+            ],
         )
         assert result.exit_code == 1
         assert "Stratum pool not installed; run: pip install 'animica[stratum]'" in result.output
@@ -130,7 +197,13 @@ def test_run_pool_reports_symbol_mismatch_error(monkeypatch: Any) -> None:
         reloaded = importlib.reload(mining)
         result = runner.invoke(
             reloaded.app,
-            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+            [
+                "run-pool",
+                "--rpc-url",
+                "http://127.0.0.1:8545",
+                "--pool-address",
+                "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+            ],
         )
         assert result.exit_code == 1
         assert "Stratum pool import symbol mismatch" in result.output
@@ -154,7 +227,13 @@ def test_run_pool_reports_runtime_import_error(monkeypatch: Any) -> None:
         reloaded = importlib.reload(mining)
         result = runner.invoke(
             reloaded.app,
-            ["run-pool", "--rpc-url", "http://127.0.0.1:8545"],
+            [
+                "run-pool",
+                "--rpc-url",
+                "http://127.0.0.1:8545",
+                "--pool-address",
+                "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+            ],
         )
         assert result.exit_code == 1
         assert "Stratum pool failed during import" in result.output

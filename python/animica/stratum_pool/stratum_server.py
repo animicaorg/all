@@ -13,12 +13,24 @@ from .job_manager import JobManager
 
 class PoolShareValidator:
     def __init__(
-        self, adapter: MiningCoreAdapter, *, logger: Optional[logging.Logger] = None
+        self,
+        adapter: MiningCoreAdapter,
+        *,
+        pool_mode: str = "pps",
+        logger: Optional[logging.Logger] = None,
     ) -> None:
         self._adapter = adapter
+        self._pool_mode = str(pool_mode or "pps").strip().lower()
+        if self._pool_mode not in {"pps", "solo"}:
+            self._pool_mode = "pps"
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
 
     async def validate(self, job: StratumJob, submit_params):
+        address = str(submit_params.get("_address") or "").strip()
+        if not address:
+            return False, "missing miner payout address", False, 0
+        if not address.startswith("anim1"):
+            return False, "invalid miner payout address", False, 0
         mining_job = MiningJob(
             job_id=job.job_id,
             header=job.header,
@@ -57,7 +69,11 @@ class StratumPoolServer:
         self._config = config
         self._job_manager = job_manager
         self._log = logger or logging.getLogger("animica.stratum_pool.server")
-        self._validator = PoolShareValidator(adapter, logger=logger)
+        self._validator = PoolShareValidator(
+            adapter,
+            pool_mode=config.pool_mode,
+            logger=logger,
+        )
         self._last_published_job_id: Optional[str] = None
         self._last_diff_tuple: Optional[tuple[float, int]] = None
         self._server = StratumServer(

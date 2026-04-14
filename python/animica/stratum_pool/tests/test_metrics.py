@@ -110,3 +110,83 @@ async def test_record_share_stale_template_requests_refresh():
         tx_count=0,
     )
     assert job_manager.refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pps_accounting_credits_accepted_shares():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Session(session_id="s1", writer=None, worker="worker-pps", address="anim1pps")
+    job = StratumJob(
+        job_id="job-pps",
+        header={"number": 10},
+        share_target=0.25,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 0.25},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    detail = metrics.miner_detail("worker-pps")
+    assert detail["pool_mode"] == "pps"
+    assert detail["credit_pps"] == "250"
+    assert detail["credit_solo"] == "0"
+    summary = metrics.accounting_summary()
+    assert summary["total_credit"] == "250"
+    assert summary["accepted_shares"] == 1
+
+
+@pytest.mark.asyncio
+async def test_solo_accounting_only_credits_blocks():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="solo"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Session(session_id="s1", writer=None, worker="worker-solo", address="anim1solo")
+    job = StratumJob(
+        job_id="job-solo",
+        header={"number": 11},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 5000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=True,
+        tx_count=1,
+    )
+
+    detail = metrics.miner_detail("worker-solo")
+    assert detail["pool_mode"] == "solo"
+    assert detail["credit_pps"] == "0"
+    assert detail["credit_solo"] == "5000"
+    summary = metrics.accounting_summary()
+    assert summary["total_credit"] == "5000"
+    assert summary["accepted_blocks"] == 1

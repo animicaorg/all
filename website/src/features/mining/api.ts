@@ -8,6 +8,7 @@ import type {
   MiningConfigResponse,
   MiningDownloadsResponse,
   MiningGenerateResponse,
+  MiningMinersResponse,
   MiningPoolStatus,
   MiningPoolSummary,
 } from './types';
@@ -19,6 +20,7 @@ const ENDPOINTS = {
   downloads: 'api/mining/downloads',
   status: 'api/mining/status',
   summary: 'api/pool/summary',
+  miners: 'api/miners',
   generate: 'api/mining/generate',
 } as const;
 
@@ -27,6 +29,7 @@ export interface MiningApiClient {
   fetchDownloads(): Promise<MiningApiResult<MiningDownloadsResponse>>;
   fetchStatus(): Promise<MiningApiResult<MiningPoolStatus>>;
   fetchSummary(): Promise<MiningApiResult<MiningPoolSummary>>;
+  fetchMiners(): Promise<MiningApiResult<MiningMinersResponse>>;
   generateStarter(query?: Record<string, string | number | undefined>): Promise<MiningApiResult<MiningGenerateResponse>>;
 }
 
@@ -86,6 +89,9 @@ export function createMiningApiClient(input: {
     },
     fetchSummary() {
       return request<MiningPoolSummary>(ENDPOINTS.summary);
+    },
+    fetchMiners() {
+      return request<MiningMinersResponse>(ENDPOINTS.miners);
     },
     generateStarter(query) {
       return request<MiningGenerateResponse>(ENDPOINTS.generate, query);

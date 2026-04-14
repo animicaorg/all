@@ -37,6 +37,8 @@ DB_ENV = "ANIMICA_MINING_POOL_DB_URL"
 LOG_LEVEL_ENV = "ANIMICA_MINING_POOL_LOG_LEVEL"
 STRATUM_BIND_ENV = "ANIMICA_STRATUM_BIND"
 API_BIND_ENV = "ANIMICA_POOL_API_BIND"
+POOL_MODE_ENV = "ANIMICA_POOL_MODE"
+POOL_ADDRESS_ENV = "ANIMICA_POOL_ADDRESS"
 
 # Supported mining device backends
 SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
@@ -549,6 +551,19 @@ async def _run_pool(
 
 @app.command("run-pool")
 def run_pool(
+    mode: str = typer.Option(
+        "pps",
+        "--mode",
+        help="Payout/accounting mode (pps|solo)",
+        envvar=POOL_MODE_ENV,
+    ),
+    pool_address: Optional[str] = typer.Option(
+        None,
+        "--pool-address",
+        "--coinbase-address",
+        help="Pool payout address (used for block template generation)",
+        envvar=POOL_ADDRESS_ENV,
+    ),
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
     ),
@@ -569,22 +584,165 @@ def run_pool(
     log_level: Optional[str] = typer.Option(
         None, "--log-level", help="Log level", envvar=LOG_LEVEL_ENV
     ),
+    host: Optional[str] = typer.Option(
+        None, "--host", help="Stratum bind host", envvar="ANIMICA_STRATUM_HOST"
+    ),
+    port: Optional[int] = typer.Option(
+        None, "--port", help="Stratum bind port", envvar="ANIMICA_STRATUM_PORT"
+    ),
+    api_host: Optional[str] = typer.Option(
+        None,
+        "--api-host",
+        help="Pool API bind host",
+        envvar="ANIMICA_STRATUM_API_HOST",
+    ),
+    api_port: Optional[int] = typer.Option(
+        None,
+        "--api-port",
+        help="Pool API bind port",
+        envvar="ANIMICA_STRATUM_API_PORT",
+    ),
+    min_difficulty: Optional[float] = typer.Option(
+        None,
+        "--min-difficulty",
+        help="Minimum share difficulty ratio (0,1]",
+        envvar="ANIMICA_STRATUM_MIN_DIFFICULTY",
+    ),
+    max_difficulty: Optional[float] = typer.Option(
+        None,
+        "--max-difficulty",
+        help="Maximum share difficulty ratio (0,1]",
+        envvar="ANIMICA_STRATUM_MAX_DIFFICULTY",
+    ),
+    poll_interval: Optional[float] = typer.Option(
+        None,
+        "--poll-interval",
+        help="Template polling interval seconds",
+        envvar="ANIMICA_STRATUM_POLL_INTERVAL",
+    ),
+    rpc_timeout: Optional[float] = typer.Option(
+        None,
+        "--rpc-timeout",
+        help="Node RPC timeout seconds",
+        envvar="ANIMICA_STRATUM_RPC_TIMEOUT",
+    ),
+    chain_id: Optional[int] = typer.Option(
+        None,
+        "--chain-id",
+        help="Chain id override",
+        envvar="ANIMICA_CHAIN_ID",
+    ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Pool profile (hashshare|asic_sha256)",
+        envvar="ANIMICA_POOL_PROFILE",
+    ),
 ) -> None:
-    """Start the Animica Stratum mining pool."""
+    """Start the Animica Stratum mining pool with validated PPS/SOLO settings.
+
+    Examples:
+      animica miner run-pool --mode pps --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc
+      animica miner run-pool --mode solo --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc
+    """
     _ensure_network_env()
     runtime = _ensure_stratum_available()
+
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"pps", "solo"}:
+        typer.secho(
+            "Error: --mode must be either 'pps' or 'solo'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    if not str(pool_address or "").strip():
+        typer.secho(
+            "Error: pool payout address is required. Set --pool-address or ANIMICA_POOL_ADDRESS.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.secho(
+            "Example: animica miner run-pool --mode pps --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        raise typer.Exit(2)
+    resolved_pool_address = _resolve_payout_address(str(pool_address))
+
     effective_rpc = rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
     guard_bootstrap_rpc(effective_rpc, allow_remote=allow_remote_rpc, method="miner.runPool")
+
+    cfg_overrides: dict[str, object] = {
+        "pool_mode": normalized_mode,
+        "pool_address": resolved_pool_address,
+    }
     env_overrides = {
-        RPC_ENV: rpc_url,
+        RPC_ENV: rpc_url or effective_rpc,
         DB_ENV: db_url,
         STRATUM_BIND_ENV: stratum_bind,
         API_BIND_ENV: api_bind,
         LOG_LEVEL_ENV: log_level,
+        POOL_MODE_ENV: normalized_mode,
+        POOL_ADDRESS_ENV: resolved_pool_address,
+        "ANIMICA_POOL_ENABLED": "1",
     }
+    if stratum_bind is not None:
+        cfg_overrides["stratum_bind"] = stratum_bind
+    if api_bind is not None:
+        cfg_overrides["api_bind"] = api_bind
+    if host is not None:
+        cfg_overrides["host"] = host
+        env_overrides["ANIMICA_STRATUM_HOST"] = host
+    if port is not None:
+        cfg_overrides["port"] = int(port)
+        env_overrides["ANIMICA_STRATUM_PORT"] = str(int(port))
+    if api_host is not None:
+        cfg_overrides["api_host"] = api_host
+        env_overrides["ANIMICA_STRATUM_API_HOST"] = api_host
+    if api_port is not None:
+        cfg_overrides["api_port"] = int(api_port)
+        env_overrides["ANIMICA_STRATUM_API_PORT"] = str(int(api_port))
+    if min_difficulty is not None:
+        cfg_overrides["min_difficulty"] = float(min_difficulty)
+        env_overrides["ANIMICA_STRATUM_MIN_DIFFICULTY"] = str(float(min_difficulty))
+    if max_difficulty is not None:
+        cfg_overrides["max_difficulty"] = float(max_difficulty)
+        env_overrides["ANIMICA_STRATUM_MAX_DIFFICULTY"] = str(float(max_difficulty))
+    if poll_interval is not None:
+        cfg_overrides["poll_interval"] = float(poll_interval)
+        env_overrides["ANIMICA_STRATUM_POLL_INTERVAL"] = str(float(poll_interval))
+    if rpc_timeout is not None:
+        cfg_overrides["rpc_timeout"] = float(rpc_timeout)
+        env_overrides["ANIMICA_STRATUM_RPC_TIMEOUT"] = str(float(rpc_timeout))
+    if chain_id is not None:
+        cfg_overrides["chain_id"] = int(chain_id)
+        env_overrides["ANIMICA_CHAIN_ID"] = str(int(chain_id))
+    if profile is not None:
+        cfg_overrides["profile"] = profile
+        env_overrides["ANIMICA_POOL_PROFILE"] = profile
+
+    try:
+        resolved_cfg = runtime.load_config_from_env(overrides=cfg_overrides)
+    except Exception as exc:
+        typer.secho(
+            f"Error: invalid pool configuration: {exc}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2) from exc
+
+    typer.secho(
+        "Starting pool "
+        f"(mode={resolved_cfg.pool_mode}, profile={resolved_cfg.profile}, "
+        f"stratum={resolved_cfg.host}:{resolved_cfg.port}, api={resolved_cfg.api_host}:{resolved_cfg.api_port})",
+        fg=typer.colors.GREEN,
+    )
+
     for key, value in env_overrides.items():
         if value is not None:
-            os.environ[key] = value
+            os.environ[key] = str(value)
     try:
         runtime.pool_cli.main([])
     except RuntimeError as e:
@@ -824,9 +982,13 @@ def show_config() -> None:
         stratum_bind = os.getenv(STRATUM_BIND_ENV, "(not set)")
         api_bind = os.getenv(API_BIND_ENV, "(not set)")
         log_level = os.getenv(LOG_LEVEL_ENV, "info")
+        pool_mode = os.getenv(POOL_MODE_ENV, "pps")
+        pool_address = os.getenv(POOL_ADDRESS_ENV, "(not set)")
         typer.echo(
             f"RPC URL: {rpc_url}\n"
             f"DB URL: {db_url}\n"
+            f"Pool address: {pool_address}\n"
+            f"Pool mode: {pool_mode}\n"
             f"Stratum bind: {stratum_bind}\n"
             f"API bind: {api_bind}\n"
             f"Log level: {log_level}\n"
@@ -848,8 +1010,10 @@ def show_config() -> None:
         f"DB URL: {cfg.db_url}\n"
         f"Chain ID: {cfg.chain_id}\n"
         f"Pool address: {cfg.pool_address}\n"
+        f"Pool mode: {cfg.pool_mode}\n"
         f"Stratum bind: {cfg.host}:{cfg.port}\n"
         f"API bind: {cfg.api_host}:{cfg.api_port}\n"
+        f"Profile: {cfg.profile}\n"
         f"Log level: {cfg.log_level}"
     )
 

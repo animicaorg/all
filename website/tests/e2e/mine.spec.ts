@@ -96,6 +96,24 @@ test.describe('/mine', () => {
           latest_block: '0xfeedbeef',
         },
       },
+      '/api/miners': {
+        status: 200,
+        body: {
+          items: [
+            {
+              worker_id: 'office-rig-01',
+              worker_name: 'office-rig-01',
+              address: 'anim1qqexample',
+              shares_accepted: 42,
+              shares_rejected: 3,
+              blocks_found: 1,
+              hashrate_1m: 12500,
+              credit_total: '777',
+              pool_mode: 'pps',
+            },
+          ],
+        },
+      },
     });
 
     await page.goto(`${SITE_BASE_URL}/mine/`);
@@ -110,6 +128,9 @@ test.describe('/mine', () => {
       'href',
       /\/api\/mining\/downloads\/windows$/
     );
+    await expect(page.locator('#miner-rows')).toContainText('office-rig-01');
+    await page.fill('#miner-search', 'office-rig');
+    await expect(page.locator('#miner-rows')).toContainText('anim1qqexample');
     await expect(page.getByTestId('mine-fallback')).toBeHidden();
   });
 
@@ -160,6 +181,10 @@ test.describe('/mine', () => {
           height: 1000,
         },
       },
+      '/api/miners': {
+        status: 200,
+        body: { items: [] },
+      },
     });
 
     await page.goto(`${SITE_BASE_URL}/mine/`);
@@ -184,6 +209,10 @@ test.describe('/mine', () => {
         body: { error: 'offline' },
       },
       '/api/pool/summary': {
+        status: 503,
+        body: { error: 'offline' },
+      },
+      '/api/miners': {
         status: 503,
         body: { error: 'offline' },
       },

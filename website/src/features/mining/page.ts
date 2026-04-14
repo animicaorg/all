@@ -10,6 +10,7 @@ import { resolveMiningApi } from './resolve';
 import type {
   MiningApiError,
   MiningEnvHints,
+  MiningMinerItem,
   MiningPlatform,
   MiningPoolStatus,
   NormalizedMiningConfig,
@@ -24,8 +25,9 @@ type PageState = {
   activeTab: MiningPlatform;
   config?: NormalizedMiningConfig;
   downloads: NormalizedMiningDownloadItem[];
+  miners: MiningMinerItem[];
   liveStatus: MiningPoolStatus;
-  errors: Partial<Record<'config' | 'downloads' | 'status' | 'summary', MiningApiError>>;
+  errors: Partial<Record<'config' | 'downloads' | 'status' | 'summary' | 'miners', MiningApiError>>;
   diagnostics: string[];
 };
 
@@ -50,6 +52,7 @@ export async function initMinePage(): Promise<void> {
   const state: PageState = {
     activeTab: detectPlatform(),
     downloads: [],
+    miners: [],
     liveStatus: {},
     errors: {},
     diagnostics: [...resolution.diagnostics],
@@ -61,6 +64,7 @@ export async function initMinePage(): Promise<void> {
   setActiveTab(elements, state.activeTab);
   renderStaticDefaults(elements, resolution.publicBaseUrl);
   renderDownloads(elements, state.downloads);
+  renderMiners(elements, state);
   renderGenerated(elements, state);
   setFallback(elements, {
     visible: false,
@@ -69,11 +73,12 @@ export async function initMinePage(): Promise<void> {
   });
 
   try {
-    const [configResult, downloadsResult, statusResult, summaryResult] = await Promise.all([
+    const [configResult, downloadsResult, statusResult, summaryResult, minersResult] = await Promise.all([
       client.fetchConfig(),
       client.fetchDownloads(),
       client.fetchStatus(),
       client.fetchSummary(),
+      client.fetchMiners(),
     ]);
 
     if (statusResult.ok) {
@@ -109,6 +114,13 @@ export async function initMinePage(): Promise<void> {
       state.errors.downloads = downloadsResult.error;
       state.diagnostics.push(formatDiagnostic('downloads', downloadsResult.error));
     }
+
+    if (minersResult.ok) {
+      state.miners = unwrapMinerItems(minersResult.data);
+    } else {
+      state.errors.miners = minersResult.error;
+      state.diagnostics.push(formatDiagnostic('miners', minersResult.error));
+    }
   } catch (error) {
     state.diagnostics.push(error instanceof Error ? error.message : 'Unexpected mine page failure');
   }
@@ -130,6 +142,9 @@ function resolveElements() {
     fallbackLink: document.getElementById('mining-fallback-link') as HTMLAnchorElement | null,
     debugPanel: document.getElementById('mining-debug'),
     debugOutput: document.getElementById('mining-debug-output'),
+    minerSearch: document.getElementById('miner-search') as HTMLInputElement | null,
+    minerRows: document.getElementById('miner-rows'),
+    minerEmpty: document.getElementById('miner-empty'),
     stratumHost: document.getElementById('stratum-host'),
     stratumPort: document.getElementById('stratum-port'),
     stratumUrl: document.getElementById('stratum-url'),
@@ -167,6 +182,7 @@ function renderState(
   renderStatus(elements, state);
   renderInstructions(elements, state.config);
   renderDownloads(elements, state.downloads);
+  renderMiners(elements, state);
   renderGenerated(elements, state);
   renderDebug(elements, runtime.isDev === true, state.diagnostics);
 
@@ -239,7 +255,8 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
   if (elements.profileChip) {
     const profile = config?.profile ?? 'pool';
     const deviceType = config?.deviceType ?? 'miner';
-    elements.profileChip.textContent = `${profile} · ${deviceType}`;
+    const mode = (config?.poolMode ?? 'pps').toUpperCase();
+    elements.profileChip.textContent = `${profile} · ${deviceType} · ${mode}`;
   }
 
   if (elements.algorithmText) {
@@ -298,9 +315,11 @@ function renderInstructions(
   }
 
   if (elements.workerInstructions) {
-    elements.workerInstructions.textContent =
+    const workerText =
       config?.workerInstructions ??
       'Worker names are labels only. Keep them short and unique per machine.';
+    const modeText = config?.poolModeInstructions ? ` ${config.poolModeInstructions}` : '';
+    elements.workerInstructions.textContent = `${workerText}${modeText}`.trim();
   }
 
   if (elements.workerName && config && !elements.workerName.value.trim()) {
@@ -326,6 +345,7 @@ function renderDownloads(
     const version = card.querySelector<HTMLElement>('[data-download-version]');
     const filename = card.querySelector<HTMLElement>('[data-download-file]');
     const launcher = card.querySelector<HTMLElement>('[data-download-launcher]');
+    const entrypoint = card.querySelector<HTMLElement>('[data-download-entrypoint]');
     const size = card.querySelector<HTMLElement>('[data-download-size]');
     const sha = card.querySelector<HTMLElement>('[data-download-sha]');
     const note = card.querySelector<HTMLElement>('[data-download-note]');
@@ -339,6 +359,7 @@ function renderDownloads(
       if (version) version.textContent = 'Unavailable';
       if (filename) filename.textContent = 'Unavailable';
       if (launcher) launcher.textContent = 'Unavailable';
+      if (entrypoint) entrypoint.textContent = 'Unavailable';
       if (size) size.textContent = 'Unavailable';
       if (sha) sha.textContent = 'Unavailable';
       if (note) note.textContent = 'Download metadata is currently unavailable.';
@@ -361,10 +382,63 @@ function renderDownloads(
     if (version) version.textContent = item.version ?? 'Unversioned';
     if (filename) filename.textContent = item.filename ?? 'Unavailable';
     if (launcher) launcher.textContent = item.launcher;
+    if (entrypoint) entrypoint.textContent = item.entrypoint;
     if (size) size.textContent = formatBytes(item.size_bytes);
     if (sha) sha.textContent = item.sha256 ?? 'Unavailable';
-    if (note) note.textContent = item.notes;
+    if (note) {
+      const extra = item.requiresPython
+        ? ' Requires Python 3.10+ (no standalone executable in this bundle).'
+        : ` Entry point: ${item.entrypoint}.`;
+      note.textContent = `${item.notes}${extra}`;
+    }
   }
+}
+
+function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageState): void {
+  if (!elements.minerRows || !elements.minerEmpty) return;
+
+  const query = elements.minerSearch?.value.trim().toLowerCase() ?? '';
+  const miners = state.miners.filter((item) => {
+    if (!query) return true;
+    const worker = String(item.worker_name ?? item.worker_id ?? '').toLowerCase();
+    const address = String(item.address ?? '').toLowerCase();
+    return worker.includes(query) || address.includes(query);
+  });
+
+  if (miners.length === 0) {
+    elements.minerRows.innerHTML = '';
+    elements.minerEmpty.classList.remove('hidden');
+    elements.minerEmpty.textContent = query
+      ? 'No miners matched your search.'
+      : 'No miner activity reported yet.';
+    return;
+  }
+
+  elements.minerEmpty.classList.add('hidden');
+  elements.minerRows.innerHTML = miners
+    .map((item) => {
+      const worker = escapeHtml(String(item.worker_name ?? item.worker_id ?? 'unknown'));
+      const address = escapeHtml(String(item.address ?? ''));
+      const sharesAccepted = formatInteger(item.shares_accepted);
+      const sharesRejected = formatInteger(item.shares_rejected);
+      const blocks = formatInteger(item.blocks_found);
+      const hashrate = formatHashrate(item.hashrate_1m);
+      const credit = escapeHtml(String(item.credit_total ?? '0'));
+      const mode = escapeHtml(String(item.pool_mode ?? state.config?.poolMode ?? 'pps').toUpperCase());
+      return `
+        <tr class="border-t border-white/10">
+          <td class="px-4 py-3 font-medium text-white">${worker}</td>
+          <td class="px-4 py-3 text-slate-300">${address || 'n/a'}</td>
+          <td class="px-4 py-3 text-slate-300">${sharesAccepted}</td>
+          <td class="px-4 py-3 text-slate-300">${sharesRejected}</td>
+          <td class="px-4 py-3 text-slate-300">${blocks}</td>
+          <td class="px-4 py-3 text-slate-300">${hashrate}</td>
+          <td class="px-4 py-3 text-slate-300">${credit}</td>
+          <td class="px-4 py-3 text-slate-300">${mode}</td>
+        </tr>
+      `;
+    })
+    .join('');
 }
 
 function renderGenerated(elements: ReturnType<typeof resolveElements>, state: PageState): void {
@@ -428,6 +502,7 @@ function attachEvents(elements: ReturnType<typeof resolveElements>, state: PageS
   elements.payoutAddress?.addEventListener('change', () => renderGenerated(elements, state));
   elements.workerName?.addEventListener('change', () => renderGenerated(elements, state));
   elements.threadCount?.addEventListener('change', () => renderGenerated(elements, state));
+  elements.minerSearch?.addEventListener('input', () => renderMiners(elements, state));
 
   document.addEventListener('click', async (event) => {
     const target = event.target;
@@ -511,7 +586,26 @@ function buildCommandSnippet(state: PageState): string {
   }
 
   const command = config.manualCommands[state.activeTab];
-  if (command) return command;
+  if (command) {
+    const activeMode = (config.poolMode || 'pps').toLowerCase() === 'solo' ? 'solo' : 'pps';
+    const secondaryMode = activeMode === 'solo' ? 'pps' : 'solo';
+    const modeExamples = config.raw.mode_examples as
+      | Record<string, Partial<Record<MiningPlatform, string>>>
+      | undefined;
+    const activeCommand = modeExamples?.[activeMode]?.[state.activeTab] ?? command;
+    const secondaryCommand = modeExamples?.[secondaryMode]?.[state.activeTab];
+
+    if (secondaryCommand) {
+      return [
+        `${activeMode.toUpperCase()} mode:`,
+        personalizeCommand(activeCommand, state, state.activeTab),
+        '',
+        `${secondaryMode.toUpperCase()} mode:`,
+        personalizeCommand(secondaryCommand, state, state.activeTab),
+      ].join('\n');
+    }
+    return personalizeCommand(activeCommand, state, state.activeTab);
+  }
 
     return [
     '# Reference values',
@@ -520,6 +614,23 @@ function buildCommandSnippet(state: PageState): string {
     `WORKER=${readWorkerName(state, true)}`,
     `THREADS=${readThreadCount(state)}`,
   ].join('\n');
+}
+
+function personalizeCommand(command: string, state: PageState, platform: MiningPlatform): string {
+  const payout = readPayoutAddress(true);
+  const worker = readWorkerName(state, true);
+  const threads = readThreadCount(state);
+  let resolvedCommand = command;
+  const activeDownload = state.downloads.find((item) => item.platform === platform);
+  if (activeDownload?.requiresPython) {
+    resolvedCommand = resolvedCommand
+      .replace(/^animica-miner\.exe\b/, 'py -3 animica_cpu_miner.py')
+      .replace(/^\.\/*animica-miner\b/, 'python3 animica_cpu_miner.py');
+  }
+  return resolvedCommand
+    .replace(/--address\s+\S+/g, `--address ${payout}`)
+    .replace(/--worker\s+\S+/g, `--worker ${worker}`)
+    .replace(/--threads\s+\d+/g, `--threads ${threads}`);
 }
 
 function buildConfigSnippet(state: PageState): string {
@@ -614,6 +725,13 @@ function readStatusText(value: unknown): string | undefined {
 
 function hasLiveStatus(status: MiningPoolStatus): boolean {
   return ['miners', 'workers', 'height', 'pool_hashrate', 'latest_block'].some((key) => status[key] !== undefined);
+}
+
+function unwrapMinerItems(payload: unknown): MiningMinerItem[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const data = payload as { items?: unknown };
+  if (!Array.isArray(data.items)) return [];
+  return data.items.filter((item): item is MiningMinerItem => typeof item === 'object' && item !== null);
 }
 
 function readTextContent(elementId: string): string {
