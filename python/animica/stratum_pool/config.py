@@ -123,13 +123,16 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         )
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
-    if min_difficulty > 1.0:
-        raise ValueError("min_difficulty must be <= 1.0")
     if max_difficulty <= 0:
         raise ValueError("max_difficulty must be positive")
-    if max_difficulty > 1.0:
-        raise ValueError("max_difficulty must be <= 1.0")
-    if max_difficulty < min_difficulty:
+    # Keep order validation for same-unit inputs:
+    # - both <= 1.0: legacy ratio mode
+    # - both  > 1.0: absolute theta-micro mode
+    # Mixed units are normalized at runtime against live θ and are allowed.
+    if (
+        (min_difficulty <= 1.0 and max_difficulty <= 1.0)
+        or (min_difficulty > 1.0 and max_difficulty > 1.0)
+    ) and max_difficulty < min_difficulty:
         raise ValueError("max_difficulty must be >= min_difficulty")
     if poll_interval <= 0:
         raise ValueError("poll_interval must be positive")

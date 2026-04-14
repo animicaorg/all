@@ -4,9 +4,12 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
+from collections import deque
 from dataclasses import replace
-from typing import Optional
+from typing import Awaitable, Callable, Deque, Optional
 
+from core.utils.pow import micro_threshold_to_target256
 from mining.stratum_server import StratumJob, StratumServer
 
 from .config import PoolConfig
@@ -105,45 +108,121 @@ class StratumPoolServer:
         self._last_published_job_id: Optional[str] = None
         self._last_published_fingerprint: Optional[str] = None
         self._last_diff_tuple: Optional[tuple[float, int]] = None
+        self._current_stratum_job: Optional[StratumJob] = None
+        self._current_share_threshold_micro: Optional[int] = None
+        self._external_submit_hook: Optional[
+            Callable[[object, StratumJob, dict, bool, Optional[str], bool, int], Awaitable[None]]
+        ] = None
+        self._vardiff_samples: Deque[tuple[float, bool, bool]] = deque(maxlen=24)
+        self._vardiff_lock = asyncio.Lock()
+        self._last_vardiff_adjust_ts = 0.0
+        self._vardiff_min_samples = 8
+        self._vardiff_cooldown_s = 2.0
         self._server = StratumServer(
             host=config.host,
             port=config.port,
-            default_share_target=config.min_difficulty,
+            default_share_target=1.0,
             default_theta_micro=0,
             max_cached_jobs=128,
             validator=self._validator,
+            submit_hook=self._handle_share_submit,
         )
 
-    def _resolve_share_target(self, requested: float) -> float:
-        value = float(requested or 0.0)
-        if value <= 0.0:
-            value = float(self._config.min_difficulty)
+    def set_submit_hook(
+        self,
+        hook: Optional[
+            Callable[[object, StratumJob, dict, bool, Optional[str], bool, int], Awaitable[None]]
+        ],
+    ) -> None:
+        self._external_submit_hook = hook
 
-        lower = max(1e-9, float(self._config.min_difficulty))
-        upper = min(1.0, float(self._config.max_difficulty))
+    def _difficulty_value_to_threshold_micro(self, value: float, theta_micro: int) -> int:
+        """
+        Normalize configured difficulty values into θµ thresholds.
+
+        Compatibility:
+        - value <= 1.0: legacy ratio mode (ratio vs current θ)
+        - value > 1.0:  absolute θµ threshold
+        """
+        numeric = max(float(value or 0.0), 0.0)
+        theta = max(int(theta_micro or 0), 0)
+        if numeric <= 0:
+            return 1
+        if numeric <= 1.0:
+            if theta <= 0:
+                return 1
+            return max(1, int(theta * numeric))
+        return max(1, int(numeric))
+
+    def _share_bounds_for_theta(self, theta_micro: int) -> tuple[int, int]:
+        theta = max(int(theta_micro or 0), 0)
+        lower = self._difficulty_value_to_threshold_micro(
+            float(self._config.min_difficulty), theta
+        )
+        upper = self._difficulty_value_to_threshold_micro(
+            float(self._config.max_difficulty), theta
+        )
+        if theta > 0:
+            # Share threshold should not become harder than the block threshold.
+            lower = min(lower, theta)
+            upper = min(upper, theta)
+        lower = max(1, int(lower))
+        upper = max(1, int(upper))
         if upper < lower:
             upper = lower
+        return lower, upper
 
-        clamped = min(max(value, lower), upper)
-        if clamped != value:
+    @staticmethod
+    def _ratio_to_threshold_micro(theta_micro: int, ratio: float) -> int:
+        theta = max(int(theta_micro or 0), 0)
+        if theta <= 0:
+            return 0
+        value = max(float(ratio or 0.0), 0.0)
+        if value <= 0.0:
+            value = 1.0
+        return max(1, int(theta * min(value, 1.0)))
+
+    @staticmethod
+    def _threshold_micro_to_ratio(theta_micro: int, threshold_micro: int) -> float:
+        theta = max(int(theta_micro or 0), 0)
+        if theta <= 0:
+            return 1.0
+        ratio = float(max(1, int(threshold_micro))) / float(theta)
+        return min(max(ratio, 1e-9), 1.0)
+
+    def _resolve_share_target(self, requested: float, theta_micro: int) -> tuple[float, int]:
+        lower, upper = self._share_bounds_for_theta(theta_micro)
+        requested_threshold = self._ratio_to_threshold_micro(theta_micro, requested)
+        if requested_threshold <= 0:
+            requested_threshold = lower
+        current_threshold = (
+            int(self._current_share_threshold_micro)
+            if self._current_share_threshold_micro is not None
+            else requested_threshold
+        )
+        clamped_threshold = min(max(current_threshold, lower), upper)
+        if clamped_threshold != current_threshold:
             self._log.warning(
                 "share_target_clamped",
                 extra={
-                    "requested": value,
-                    "clamped": clamped,
+                    "requested_threshold_micro": current_threshold,
+                    "clamped_threshold_micro": clamped_threshold,
                     "min_difficulty": self._config.min_difficulty,
                     "max_difficulty": self._config.max_difficulty,
+                    "theta_micro": theta_micro,
                 },
             )
-        if clamped >= 0.95:
+        if theta_micro > 0 and clamped_threshold >= int(theta_micro * 0.95):
             self._log.warning(
                 "share_target_near_block_target",
                 extra={
-                    "share_target": clamped,
-                    "note": "Shares will be close to full block difficulty.",
+                    "share_threshold_micro": clamped_threshold,
+                    "theta_micro": theta_micro,
+                    "note": "Shares are close to full block difficulty.",
                 },
             )
-        return clamped
+        ratio = self._threshold_micro_to_ratio(theta_micro, clamped_threshold)
+        return ratio, clamped_threshold
 
     async def start(self) -> None:
         self._job_manager.subscribe(self._on_new_job)
@@ -156,10 +235,16 @@ class StratumPoolServer:
 
     async def _on_new_job(self, job: MiningJob) -> None:
         frozen_job = freeze_mining_job(job, fallback_chain_id=self._config.chain_id)
-        share_target = self._resolve_share_target(
-            frozen_job.share_target or self._config.min_difficulty
+        issued_theta_micro = int(frozen_job.issued_theta_micro or frozen_job.theta_micro or 0)
+        share_target, share_threshold_micro = self._resolve_share_target(
+            frozen_job.share_target or self._config.min_difficulty,
+            issued_theta_micro,
         )
-        if share_target != float(frozen_job.share_target):
+        self._current_share_threshold_micro = share_threshold_micro
+        if (
+            share_target != float(frozen_job.share_target)
+            or int(frozen_job.share_threshold_micro or 0) != int(share_threshold_micro)
+        ):
             frozen_job = freeze_mining_job(
                 replace(
                     frozen_job,
@@ -170,6 +255,7 @@ class StratumPoolServer:
                 ),
                 fallback_chain_id=self._config.chain_id,
             )
+            self._current_share_threshold_micro = int(frozen_job.share_threshold_micro or 0)
 
         validation_fingerprint = (
             frozen_job.validation_fingerprint or job_validation_fingerprint(frozen_job)
@@ -185,7 +271,6 @@ class StratumPoolServer:
             header.setdefault("target", frozen_job.target)
         if frozen_job.height:
             header.setdefault("number", frozen_job.height)
-        issued_theta_micro = int(frozen_job.issued_theta_micro or frozen_job.theta_micro or 0)
         if issued_theta_micro > 0:
             header.setdefault("thetaMicro", issued_theta_micro)
             header.setdefault("thetaTargetMicro", issued_theta_micro)
@@ -220,6 +305,7 @@ class StratumPoolServer:
             proof_type=frozen_job.proof_type,
             raw=raw_template,
         )
+        self._current_stratum_job = stratum_job
         diff_tuple = (float(stratum_job.share_target), int(stratum_job.theta_micro))
         if self._last_diff_tuple != diff_tuple:
             await self._server.set_global_difficulty(
@@ -235,6 +321,116 @@ class StratumPoolServer:
         await self._server.publish_job(stratum_job, clean_jobs=clean_jobs)
         self._last_published_job_id = stratum_job.job_id
         self._last_published_fingerprint = validation_fingerprint
+
+    async def _handle_share_submit(
+        self,
+        session: object,
+        job: StratumJob,
+        submit_params: dict,
+        ok: bool,
+        reason: Optional[str],
+        is_block: bool,
+        tx_count: int,
+    ) -> None:
+        try:
+            await self._maybe_auto_adjust_share_target(job, ok=ok, reason=reason)
+        finally:
+            if self._external_submit_hook is not None:
+                await self._external_submit_hook(
+                    session, job, submit_params, ok, reason, is_block, tx_count
+                )
+
+    async def _maybe_auto_adjust_share_target(
+        self,
+        job: StratumJob,
+        *,
+        ok: bool,
+        reason: Optional[str],
+    ) -> None:
+        theta_micro = int(job.theta_micro or 0)
+        if theta_micro <= 0:
+            return
+        is_low_diff_reject = (not ok) and str(reason or "").strip().lower() == "low difficulty share"
+
+        now = time.time()
+        self._vardiff_samples.append((now, bool(ok), bool(is_low_diff_reject)))
+        if len(self._vardiff_samples) < self._vardiff_min_samples:
+            return
+        if now - self._last_vardiff_adjust_ts < self._vardiff_cooldown_s:
+            return
+
+        async with self._vardiff_lock:
+            if now - self._last_vardiff_adjust_ts < self._vardiff_cooldown_s:
+                return
+            window = list(self._vardiff_samples)
+            total = len(window)
+            accepted = sum(1 for _, accepted_flag, _ in window if accepted_flag)
+            low_rejects = sum(1 for _, _, low_reject_flag in window if low_reject_flag)
+
+            current_threshold = int(
+                self._current_share_threshold_micro
+                or self._ratio_to_threshold_micro(theta_micro, job.share_target)
+                or 1
+            )
+            proposed_threshold = current_threshold
+            trigger: Optional[str] = None
+            if low_rejects / float(total) >= 0.70:
+                proposed_threshold = max(1, int(current_threshold * 0.70))
+                trigger = "low_difficulty_rejects"
+            elif accepted / float(total) >= 0.85 and low_rejects <= 1:
+                proposed_threshold = max(1, int(current_threshold * 1.15))
+                trigger = "high_accept_rate"
+            else:
+                return
+
+            lower, upper = self._share_bounds_for_theta(theta_micro)
+            proposed_threshold = min(max(proposed_threshold, lower), upper)
+            if proposed_threshold == current_threshold:
+                return
+
+            new_share_target = self._threshold_micro_to_ratio(theta_micro, proposed_threshold)
+            self._current_share_threshold_micro = proposed_threshold
+            self._last_vardiff_adjust_ts = now
+            self._vardiff_samples.clear()
+
+            raw_template = (
+                dict(self._current_stratum_job.raw)
+                if self._current_stratum_job is not None
+                and isinstance(self._current_stratum_job.raw, dict)
+                else {}
+            )
+            raw_template["_issuedThetaMicro"] = theta_micro
+            raw_template["_shareThresholdMicro"] = int(proposed_threshold)
+            raw_template["_shareTargetInt"] = int(
+                micro_threshold_to_target256(int(proposed_threshold))
+            )
+            if self._current_stratum_job is not None:
+                self._current_stratum_job = replace(
+                    self._current_stratum_job,
+                    share_target=float(new_share_target),
+                    theta_micro=theta_micro,
+                    raw=raw_template,
+                )
+
+            diff_tuple = (float(new_share_target), int(theta_micro))
+            if self._last_diff_tuple != diff_tuple:
+                await self._server.set_global_difficulty(new_share_target, theta_micro)
+                self._last_diff_tuple = diff_tuple
+            if self._current_stratum_job is not None:
+                await self._server.publish_job(self._current_stratum_job, clean_jobs=False)
+
+            self._log.info(
+                "share_target_auto_adjusted",
+                extra={
+                    "trigger": trigger,
+                    "share_threshold_micro": proposed_threshold,
+                    "share_target": new_share_target,
+                    "theta_micro": theta_micro,
+                    "accepted_samples": accepted,
+                    "low_difficulty_reject_samples": low_rejects,
+                    "window_size": total,
+                },
+            )
 
     async def wait_closed(self) -> None:
         while True:

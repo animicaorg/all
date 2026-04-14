@@ -93,11 +93,23 @@ def test_invalid_rpc_timeout(monkeypatch):
         load_config_from_env()
 
 
-def test_invalid_max_difficulty_gt_one(monkeypatch):
+def test_invalid_max_difficulty_non_positive(monkeypatch):
     monkeypatch.setenv(
         "ANIMICA_POOL_ADDRESS",
         "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
     )
-    monkeypatch.setenv("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.1")
+    monkeypatch.setenv("ANIMICA_STRATUM_MAX_DIFFICULTY", "0")
     with pytest.raises(ValueError):
         load_config_from_env()
+
+
+def test_mixed_difficulty_units_allowed(monkeypatch):
+    monkeypatch.setenv(
+        "ANIMICA_POOL_ADDRESS",
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    )
+    cfg = load_config_from_env(
+        overrides={"min_difficulty": 15_000_000, "max_difficulty": 1.0}
+    )
+    assert cfg.min_difficulty == 15_000_000
+    assert cfg.max_difficulty == 1.0

@@ -48,6 +48,94 @@ async def test_on_new_job_updates_theta_and_broadcasts_difficulty():
 
 
 @pytest.mark.asyncio
+async def test_on_new_job_clamps_theta_micro_difficulty_bounds():
+    cfg = PoolConfig(min_difficulty=120_000, max_difficulty=240_000)
+    server = StratumPoolServer(
+        DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg)
+    )
+    server.stratum.set_global_difficulty = AsyncMock()
+    server.stratum.publish_job = AsyncMock()
+
+    job = MiningJob(
+        job_id="job-micro",
+        header={"signBytes": "0x1234"},
+        theta_micro=1_000_000,
+        share_target=1.0,
+        height=7,
+        target="0x99",
+        sign_bytes="0x1234",
+        hints={"mixSeed": "0x55"},
+        raw={"templateId": "job-micro", "header": {"signBytes": "0x1234"}},
+    )
+
+    await server._on_new_job(job)
+
+    server.stratum.set_global_difficulty.assert_awaited_once_with(0.24, 1_000_000)
+    published_job = server.stratum.publish_job.await_args.args[0]
+    assert published_job.share_target == 0.24
+    assert int(published_job.raw["_shareThresholdMicro"]) == 240_000
+
+
+@pytest.mark.asyncio
+async def test_share_target_auto_adjusts_down_and_up():
+    cfg = PoolConfig(min_difficulty=100_000, max_difficulty=900_000)
+    server = StratumPoolServer(
+        DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg)
+    )
+    server.stratum.set_global_difficulty = AsyncMock()
+    server.stratum.publish_job = AsyncMock()
+
+    job = MiningJob(
+        job_id="job-vardiff",
+        header={"signBytes": "0x1234"},
+        theta_micro=1_000_000,
+        share_target=0.4,
+        height=7,
+        target="0x99",
+        sign_bytes="0x1234",
+        hints={"mixSeed": "0x55"},
+        raw={"templateId": "job-vardiff", "header": {"signBytes": "0x1234"}},
+    )
+    await server._on_new_job(job)
+
+    current_job = server._current_stratum_job
+    assert current_job is not None
+    base_ratio = float(current_job.share_target)
+
+    for _ in range(8):
+        await server._handle_share_submit(
+            object(),
+            current_job,
+            {},
+            False,
+            "low difficulty share",
+            False,
+            0,
+        )
+
+    lowered_ratio = float(server._current_stratum_job.share_target)  # type: ignore[union-attr]
+    assert lowered_ratio < base_ratio
+
+    server._last_vardiff_adjust_ts = 0.0
+    current_job = server._current_stratum_job
+    assert current_job is not None
+    for _ in range(8):
+        await server._handle_share_submit(
+            object(),
+            current_job,
+            {},
+            True,
+            None,
+            False,
+            0,
+        )
+
+    raised_ratio = float(server._current_stratum_job.share_target)  # type: ignore[union-attr]
+    assert raised_ratio > lowered_ratio
+    assert raised_ratio <= 0.9
+
+
+@pytest.mark.asyncio
 async def test_on_new_job_same_source_id_with_new_binding_gets_new_effective_job_id():
     server = StratumPoolServer(
         DummyAdapter(),
