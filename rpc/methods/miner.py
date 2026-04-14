@@ -1010,15 +1010,59 @@ def txid_bytes(tx: Tx | dict | bytes, raw: bytes | None = None) -> bytes:
 
 
 def _resolve_theta() -> int:
-    # Try the live consensus state if available
-    try:
-        from consensus.state import consensus_state  # type: ignore
+    def _theta_from_header(header: Any) -> int | None:
+        if header is None:
+            return None
+        theta = getattr(header, "thetaMicro", getattr(header, "theta_micro", None))
+        if isinstance(header, dict):
+            theta = header.get("thetaMicro", header.get("theta_micro", theta))
+        if theta is None:
+            return None
+        try:
+            return int(theta)
+        except Exception:
+            return None
 
-        st = consensus_state()
-        if st and getattr(st, "theta_micro", None):
-            return int(st.theta_micro)
+    # Canonical chain head is the source of truth for difficulty/theta.
+    try:
+        snap = _current_head_snapshot()
     except Exception:
-        pass
+        snap = {}
+    theta = _theta_from_header(snap.get("header"))
+    if theta and theta > 0:
+        return int(theta)
+
+    try:
+        ctx = _ctx()
+        block_db = getattr(ctx, "block_db", None)
+    except Exception:
+        block_db = None
+
+    if block_db is not None:
+        header = None
+        head_hash = snap.get("hash") if isinstance(snap, dict) else None
+        if isinstance(head_hash, str) and head_hash:
+            try:
+                head_hash_bytes = bytes.fromhex(
+                    head_hash[2:] if head_hash.startswith("0x") else head_hash
+                )
+                getter = getattr(block_db, "get_header_by_hash", None)
+                if callable(getter):
+                    header = getter(head_hash_bytes)
+            except Exception:
+                header = None
+        if header is None:
+            try:
+                head_height = int((snap or {}).get("height") or 0)
+                getter = getattr(block_db, "get_header_by_height", None)
+                if callable(getter):
+                    header = getter(head_height)
+            except Exception:
+                header = None
+        theta = _theta_from_header(header)
+        if theta and theta > 0:
+            return int(theta)
+
     return _DEFAULT_THETA_MICRO
 
 
@@ -1032,8 +1076,6 @@ def _ctx():
 
 
 def _target_block_time_s(default: float = 300.0) -> float:
-    log.info("template_submit", extra={"template_id": template_id, "parent_hash": parent_hash_hex, "head_hash_at_submit": head_snapshot.get("hash"), "head_height_at_submit": head_snapshot.get("height"), "head_hash_at_issue": (cached or {}).get("head_hash_at_issue") if isinstance(cached, dict) else None, "issued_at": (cached or {}).get("issued_at") if isinstance(cached, dict) else None, "expires_at": (cached or {}).get("expires_at") if isinstance(cached, dict) else None, "submitted_at": time.time()})
-
     try:
         ctx = _ctx()
         params = getattr(ctx, "params", {}) or {}
@@ -1516,34 +1558,62 @@ def _parent_within_canonical_window(
 
 
 def _current_head_snapshot() -> dict[str, Any]:
-    with _HEAD_RW_LOCK:
-        ctx = _ctx()
-        snap = ctx.get_head()
-        if _LOCAL_HEAD and isinstance(_LOCAL_HEAD, dict):
-            local_h = int(_LOCAL_HEAD.get("height", 0))
-            snap_h = int(snap.get("height", 0)) if isinstance(snap, dict) else 0
-            if local_h > snap_h:
-                snap = _LOCAL_HEAD
-        if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
-            snap = _LOCAL_HEAD
+    def _hash_hex(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, (bytes, bytearray)):
+            return "0x" + bytes(value).hex()
+        if isinstance(value, str):
+            return value
+        return None
 
-        header = snap.get("header") if isinstance(snap, dict) else None
-        height = int(snap.get("height") or 0)
-        hash_hex = snap.get("hash") if isinstance(snap, dict) else None
+    with _HEAD_RW_LOCK:
+        try:
+            ctx = _ctx()
+            snap = ctx.get_head()
+            if not isinstance(snap, dict):
+                snap = {}
+        except Exception:
+            snap = {}
+
+        header = snap.get("header")
+        height = int(snap.get("height") or snap.get("number") or 0)
+        hash_hex = _hash_hex(snap.get("hash") or snap.get("blockHash"))
+
         if hash_hex is None and header is not None:
             header_hash = getattr(header, "hash", None)
-            if callable(header_hash):
-                hash_hex = "0x" + header_hash().hex()
-            elif isinstance(header_hash, (bytes, bytearray)):
-                hash_hex = "0x" + bytes(header_hash).hex()
+            try:
+                if callable(header_hash):
+                    raw = header_hash()
+                    if isinstance(raw, (bytes, bytearray)):
+                        hash_hex = "0x" + bytes(raw).hex()
+                elif isinstance(header_hash, (bytes, bytearray)):
+                    hash_hex = "0x" + bytes(header_hash).hex()
+                elif isinstance(header_hash, str) and header_hash:
+                    hash_hex = header_hash
+            except Exception:
+                pass
 
-        if hash_hex != _HEAD_STATE.get("hash") or height != _HEAD_STATE.get("height"):
-            if height > int(_HEAD_STATE.get("height") or 0):
+        prev_height_raw = _HEAD_STATE.get("height")
+        prev_height = int(prev_height_raw) if prev_height_raw is not None else None
+        prev_hash = _hash_hex(_HEAD_STATE.get("hash"))
+        canonical_changed = (height, hash_hex) != (prev_height, prev_hash)
+
+        if canonical_changed:
+            if prev_height is not None and height > prev_height:
                 _metric_inc("head_advances")
-                _mark_head_progress()
+            _mark_head_progress()
+
             _HEAD_STATE["hash"] = hash_hex
             _HEAD_STATE["height"] = height
             _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
+
+            _LOCAL_HEAD.clear()
+            _JOB_CACHE.clear()
+            with _TEMPLATE_CACHE_LOCK:
+                _TEMPLATE_CACHE.clear()
+            _prune_template_cache()
+
         return {
             "height": height,
             "hash": hash_hex,
@@ -2004,14 +2074,137 @@ def _resolve_submit_work_mix_seed(
     return b""
 
 
+def _extract_payload(payload: Any, kwargs: dict[str, Any]) -> Any:
+    """Normalize positional/keyword JSON-RPC payload variants."""
+    if payload is not None:
+        if (
+            isinstance(payload, (list, tuple))
+            and len(payload) == 1
+            and isinstance(payload[0], dict)
+        ):
+            return payload[0]
+        return payload
+
+    if not kwargs:
+        return None
+
+    if len(kwargs) == 1 and "payload" in kwargs:
+        return kwargs.get("payload")
+
+    return dict(kwargs)
+
+
+def _encode_header_extra(*, coinbase: bytes | None = None, instant_block: bool = False) -> bytes:
+    """Encode optional header `extra` metadata as CBOR."""
+    extra: dict[str, Any] = {}
+    if isinstance(coinbase, (bytes, bytearray)):
+        cb = _bytes32(coinbase)
+        if cb != ZERO32:
+            extra["coinbase"] = cb
+    if instant_block:
+        extra["instant_block"] = True
+    if not extra:
+        return b""
+    try:
+        import cbor2
+
+        return cbor2.dumps(extra)
+    except Exception:
+        return b""
+
+
+def _decode_header_extra(extra: Any) -> dict[str, Any]:
+    if extra is None:
+        return {}
+    raw: bytes | None = None
+    if isinstance(extra, (bytes, bytearray)):
+        raw = bytes(extra)
+    elif isinstance(extra, str):
+        try:
+            raw = _hex_to_bytes(extra)
+        except Exception:
+            raw = None
+    if not raw:
+        return {}
+    try:
+        import cbor2
+
+        decoded = cbor2.loads(raw)
+        if isinstance(decoded, dict):
+            return decoded
+    except Exception:
+        return {}
+    return {}
+
+
+def _extract_coinbase_from_header_payload(header_payload: Any) -> bytes | None:
+    if not isinstance(header_payload, dict):
+        return None
+    for key in ("coinbase", "miner", "proposer"):
+        if key in header_payload:
+            candidate = _as_bytes32_addr(header_payload.get(key))
+            if candidate != ZERO32:
+                return candidate
+    extra_map = _decode_header_extra(header_payload.get("extra"))
+    if "coinbase" in extra_map:
+        candidate = _as_bytes32_addr(extra_map.get("coinbase"))
+        if candidate != ZERO32:
+            return candidate
+    return None
+
+
+def _header_from_cached_job(job: dict[str, Any], *, nonce: int) -> Header:
+    try:
+        job_obj = job["job"]
+        header_tpl = job_obj.header  # type: ignore[index]
+    except Exception as exc:
+        raise ValueError("cached mining job missing header template") from exc
+
+    return Header(
+        v=1,
+        chainId=int(getattr(header_tpl, "chain_id")),
+        height=int(getattr(header_tpl, "number")),
+        parentHash=_bytes32(getattr(header_tpl, "parent_hash")),
+        timestamp=int(getattr(header_tpl, "timestamp")),
+        stateRoot=_bytes32(getattr(header_tpl, "state_root")),
+        txsRoot=_bytes32(getattr(header_tpl, "txs_root")),
+        receiptsRoot=_bytes32(getattr(header_tpl, "receipts_root")),
+        proofsRoot=_bytes32(getattr(header_tpl, "proofs_root")),
+        daRoot=_bytes32(getattr(header_tpl, "da_root")),
+        mixSeed=_bytes32(getattr(header_tpl, "mix_seed")),
+        poiesPolicyRoot=_bytes32(getattr(header_tpl, "poies_policy_root")),
+        pqAlgPolicyRoot=_bytes32(getattr(header_tpl, "pq_alg_policy_root")),
+        thetaMicro=int(getattr(header_tpl, "theta_target_micro")),
+        workType=int(getattr(header_tpl, "work_type", 0) or 0),
+        nonce=int(nonce),
+        extra=bytes(getattr(header_tpl, "extra", b"") or b""),
+    )
+
+
+def _serialize_header_for_submit(header: Header) -> dict[str, Any]:
+    return {
+        k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in header.to_obj().items()
+    }
+
+
 def _record_local_block(
     height: int, block_hash: str, header: dict[str, Any] | None = None
 ) -> None:
-    _LOCAL_HEAD.update({"height": height, "hash": block_hash, "header": header})
-    if _HEAD_STATE.get("height") != height or _HEAD_STATE.get("hash") != block_hash:
-        _HEAD_STATE["height"] = height
-        _HEAD_STATE["hash"] = block_hash
-        _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
+    # Debug-only local mirror. Never advance canonical mining state from here.
+    with _HEAD_RW_LOCK:
+        _LOCAL_HEAD.clear()
+        _LOCAL_HEAD.update(
+            {
+                "height": int(height),
+                "hash": block_hash,
+                "header": header,
+            }
+        )
+        _JOB_CACHE.clear()
+        with _TEMPLATE_CACHE_LOCK:
+            _TEMPLATE_CACHE.clear()
+        _prune_template_cache()
 
 
 def _relay_mined_block(block_hash: bytes) -> None:
@@ -4143,10 +4336,30 @@ def _start_auto_task() -> bool:
     aliases=("miner_getWork",),
 )
 def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
-    from mining.templates import TemplateBuilder
+    from mining.templates import TemplateBuilder, compute_job_id
     from mining.share_submitter import json_sanitize
 
+    def _looks_like_address(value: str) -> bool:
+        candidate = value.strip()
+        if not candidate:
+            return False
+        if candidate.lower().startswith("anim"):
+            return True
+        if candidate.startswith("0x"):
+            return True
+        if len(candidate) == 64:
+            try:
+                int(candidate, 16)
+                return True
+            except Exception:
+                return False
+        return False
+
     algo_hint: str | None = None
+    payout_address_input: str | None = None
+    include_mempool_requested = True
+    proof_type = "sha256d"
+
     if params is None:
         payload: dict[str, Any] | None = None
     elif isinstance(params, dict):
@@ -4161,24 +4374,59 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
             payload = None
         elif len(params_list) == 1 and isinstance(params_list[0], dict):
             payload = params_list[0]
-        elif len(params_list) == 1:
+        elif len(params_list) == 1 and isinstance(params_list[0], str):
             payload = None
-            algo_hint = str(params_list[0])
+            value = params_list[0].strip()
+            if _looks_like_address(value):
+                payout_address_input = value
+            else:
+                algo_hint = value
+        elif (
+            len(params_list) == 2
+            and isinstance(params_list[0], str)
+            and isinstance(params_list[1], (bool, int))
+        ):
+            payload = None
+            value = params_list[0].strip()
+            if _looks_like_address(value):
+                payout_address_input = value
+            else:
+                algo_hint = value
+            include_mempool_requested = bool(params_list[1])
         else:
-            raise ValueError("expected at most one param: optional algo hint")
+            raise ValueError(
+                "expected params object or [address?, include_mempool?] or [algo_hint]"
+            )
     elif isinstance(params, str):
         payload = None
-        algo_hint = params
+        value = params.strip()
+        if _looks_like_address(value):
+            payout_address_input = value
+        else:
+            algo_hint = value
     else:
         raise ValueError("params must be array or object")
 
     if payload:
+        address_candidate = (
+            payload.get("address")
+            or payload.get("payout_address")
+            or payload.get("payoutAddress")
+        )
+        if isinstance(address_candidate, str) and address_candidate.strip():
+            payout_address_input = address_candidate.strip()
         algo_hint = str(
             payload.get("algo")
             or payload.get("algorithm")
             or algo_hint
             or "asic_sha256"
         )
+        include_mempool_requested = bool(
+            payload.get(
+                "include_mempool", payload.get("includeMempool", include_mempool_requested)
+            )
+        )
+        proof_type = str(payload.get("proof") or payload.get("proofType") or proof_type)
     elif algo_hint is None:
         algo_hint = "asic_sha256"
 
@@ -4198,10 +4446,43 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         get_beacon=_beacon,
         da_root_supplier=get_da_root if get_da_root is not None else None,
     )
-    proof_type = "sha256d"
-    if payload:
-        proof_type = str(payload.get("proof") or payload.get("proofType") or proof_type)
     job = tb.current_job(force=True, proof_type=proof_type)
+    sign_bytes = job.sign_bytes
+
+    payout_address: str | None = None
+    payout_address_bytes: bytes | None = None
+    if payout_address_input:
+        payout_address = _validate_payout_address(payout_address_input)
+        payout_address_bytes = _as_bytes32_addr(payout_address)
+    else:
+        try:
+            payout_address_bytes = _get_miner_address()
+            if payout_address_bytes != ZERO32:
+                payout_address = _to_hex(payout_address_bytes)
+        except Exception:
+            payout_address = None
+            payout_address_bytes = None
+
+    if payout_address_bytes and payout_address_bytes != ZERO32:
+        header_extra = _encode_header_extra(coinbase=payout_address_bytes)
+        if header_extra != getattr(job.header, "extra", b""):
+            header_with_extra = replace(job.header, extra=header_extra)
+            sign_bytes = header_with_extra.to_sign_bytes()
+            job_id = compute_job_id(
+                parent_hash=job.parent_hash,
+                parent_height=job.parent_height,
+                chain_id=job.chain_id,
+                theta_target_micro=job.theta_target_micro,
+                target=job.target,
+                proof_type=job.proof_type,
+                template_version=job.template_version,
+                header=header_with_extra,
+                challenge=job.challenge,
+                script_hash=job.script_hash,
+                inputs_commit=job.inputs_commit,
+                outputs_commit=job.outputs_commit,
+            )
+            job = replace(job, job_id=job_id, header=header_with_extra, sign_bytes=sign_bytes)
 
     theta = job.theta_target_micro
     block_target = job.target
@@ -4220,21 +4501,6 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
         for k, v in header_dict.items()
     }
-
-    try:
-        sign_bytes = job.header.to_sign_bytes()
-    except Exception:
-        # msgspec may not be available in lightweight environments; fall back
-        # to a deterministic JSON encoding with hex-encoded bytes.
-        import json
-
-        body = {
-            k: (v if not isinstance(v, (bytes, bytearray)) else v.hex())
-            for k, v in header_dict.items()
-        }
-        sign_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
     head_snapshot = _current_head_snapshot()
     now = time.time()
     for cached_job_id, cached in list(_JOB_CACHE.items()):
@@ -4258,16 +4524,12 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "parent_height": job.parent_height,
         "chain_id": int(job.chain_id),
         "head_generation": head_snapshot.get("generation"),
+        "payout_address": payout_address,
+        "payout_address_bytes": payout_address_bytes,
     }
 
     # Check mempool status for diagnostic compatibility with diagnose_tx_propagation.py
     # The diagnostic script passes include_mempool param to verify mining includes mempool txs
-    include_mempool_requested = True  # Default to True
-    if payload:
-        include_mempool_requested = bool(
-            payload.get("include_mempool", payload.get("includeMempool", True))
-        )
-    
     # Get mempool transaction count if service is available
     # Note: miner.getWork returns a header template without actual tx inclusion,
     # but we report mempool status for diagnostic purposes
@@ -4306,6 +4568,8 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "inputsCommit": job.inputs_commit,
         "outputsCommit": job.outputs_commit,
         "templateVersion": int(job.template_version),
+        "address": payout_address,
+        "payout_address": payout_address,
     }
 
 
@@ -4408,10 +4672,8 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
                 }
 
     nonce_int = _parse_nonce_int(nonce_val)
-    nonce = nonce_int.to_bytes(8, "little", signed=False)
-    sign_bytes: bytes = job["sign_bytes"]
-    mix_seed_bytes = _resolve_submit_work_mix_seed(payload, job)
-    digest = hashlib.sha3_256(sign_bytes + mix_seed_bytes + nonce).digest()
+    header = _header_from_cached_job(job, nonce=nonce_int)
+    digest = header.hash()
     digest_int = int.from_bytes(digest, "big")
 
     accepted = digest_int <= int(job["block_target"])
@@ -4427,43 +4689,133 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
         res["reason"] = "target-not-met"
         return res
 
-    # Check if this block hash already exists (duplicate)
-    try:
-        ctx = _ctx()
-        if hasattr(ctx, 'block_db') and ctx.block_db:
-            # Convert block_hash to bytes for lookup
-            block_hash_bytes = bytes.fromhex(block_hash[2:] if block_hash.startswith("0x") else block_hash)
-            existing_header = ctx.block_db.get_header_by_hash(block_hash_bytes)
-            if existing_header is not None:
-                # Block already exists - mark as duplicate
-                res["duplicate"] = True
-                res["reason"] = "duplicate"
-                res["height"] = int(job.get("height", 0))
-                res["newHead"] = {"height": int(job.get("height", 0)), "hash": block_hash}
-                _JOB_CACHE.pop(str(job_id), None)
-                return res
-    except Exception as e:
-        # If duplicate check fails, log but continue (don't block submission)
-        log.debug("Failed to check for duplicate block: %s", e)
-
-    # Record the new head locally for lightweight test chains.
-    try:
-        header_obj = job["job"].header  # type: ignore[index]
-        header_view = asdict(header_obj)
-    except Exception:
-        header_obj = None
-        header_view = None
-
     _JOB_CACHE.pop(str(job_id), None)
-    _record_local_block(
-        int(job.get("height", 0)), block_hash, header_view or header_obj
+    block_payload: dict[str, Any] = {
+        "header": _serialize_header_for_submit(header),
+        "txs": [],
+        "proofs": [],
+        "parentHash": _to_hex(header.parentHash),
+    }
+
+    try:
+        submit_result = miner_submit_block(block_payload)
+    except rpc_errors.RpcError as exc:
+        error_data = getattr(exc, "data", None)
+        reason = None
+        if isinstance(error_data, dict):
+            reason = error_data.get("reason")
+        reason_str = str(reason or exc).lower()
+        if (
+            exc.code == rpc_errors.AnimicaCode.STALE_TEMPLATE
+            or "stale" in reason_str
+            or "parent" in reason_str
+        ):
+            head_after_reject = _current_head_snapshot()
+            return {
+                "accepted": False,
+                "jobId": job_id,
+                "stale": True,
+                "reason": str(reason or "stale-template"),
+                "head": {
+                    "height": int(head_after_reject.get("height") or 0),
+                    "hash": head_after_reject.get("hash"),
+                },
+            }
+        raise
+    except Exception as exc:
+        log.exception(
+            "miner.submitWork unexpected submit failure",
+            extra={
+                "job_id": job_id,
+                "height": int(getattr(header, "height", 0) or 0),
+                "parent_hash": _to_hex(header.parentHash),
+                "nonce": int(nonce_int),
+            },
+        )
+        raise rpc_errors.RpcError(
+            rpc_errors.AnimicaCode.SERVER_ERROR,
+            "submitWork failed",
+            {
+                "reason": "submit_work_failed",
+                "detail": f"{exc.__class__.__name__}: {exc}",
+            },
+        ) from exc
+
+    head_after = _current_head_snapshot()
+    head_after_height = int(head_after.get("height") or 0)
+    head_after_hash = head_after.get("hash")
+    submit_new_head = (
+        submit_result.get("newHead")
+        if isinstance(submit_result.get("newHead"), dict)
+        else {}
     )
+    submit_height_raw = (
+        submit_new_head.get("height")
+        or submit_result.get("new_head")
+        or submit_result.get("height")
+        or 0
+    )
+    try:
+        submit_height = int(submit_height_raw)
+    except Exception:
+        submit_height = 0
+    submit_hash = (
+        submit_new_head.get("hash")
+        or submit_result.get("new_head_hash")
+        or submit_result.get("block_hash")
+    )
+
+    canonical_height = head_after_height
+    canonical_hash = head_after_hash
+    if submit_height > canonical_height:
+        canonical_height = submit_height
+        canonical_hash = submit_hash or canonical_hash
+    elif canonical_height == submit_height and not canonical_hash:
+        canonical_hash = submit_hash
+    canonical_head = {"height": int(canonical_height), "hash": canonical_hash}
+
+    expected_reward = submit_result.get("expected_reward")
+    credited_amount = submit_result.get("credited_amount")
+    balance_before = submit_result.get("balance_before")
+    balance_now = submit_result.get("balance_now")
+    credited_delta = submit_result.get("credited_delta")
+
+    try:
+        expected_reward = int(expected_reward) if expected_reward is not None else None
+    except Exception:
+        expected_reward = None
+    try:
+        credited_amount = int(credited_amount) if credited_amount is not None else None
+    except Exception:
+        credited_amount = None
+    try:
+        balance_before = int(balance_before) if balance_before is not None else None
+    except Exception:
+        balance_before = None
+    try:
+        balance_now = int(balance_now) if balance_now is not None else None
+    except Exception:
+        balance_now = None
+    try:
+        credited_delta = int(credited_delta) if credited_delta is not None else None
+    except Exception:
+        credited_delta = None
+
     res.update(
         {
             "reason": None,
-            "height": int(job.get("height", 0)),
-            "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
-            "duplicate": False,
+            "height": int(canonical_head["height"] or job.get("height", 0)),
+            "newHead": canonical_head,
+            "new_head": int(canonical_head["height"] or 0),
+            "new_head_hash": canonical_head.get("hash"),
+            "block_hash": submit_result.get("block_hash") or block_hash,
+            "duplicate": bool(submit_result.get("duplicate", False)),
+            "expected_reward": expected_reward,
+            "credited_amount": credited_amount,
+            "balance_before": balance_before,
+            "balance_now": balance_now,
+            "credited_delta": credited_delta,
+            "credited_source": submit_result.get("credited_source"),
         }
     )
     return res
@@ -5745,6 +6097,29 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         ctx = _ctx()
         from core.chain import block_import as block_import_mod
 
+        payout_address = None
+        payout_address_bytes: bytes | None = None
+        if template_id:
+            cached = _TEMPLATE_CACHE.get(str(template_id)) or {}
+            payout_address = cached.get("payout_address")
+            if payout_address:
+                payout_address_bytes = _as_bytes32_addr(payout_address)
+        if payout_address_bytes in (None, ZERO32):
+            payout_address_bytes = _extract_coinbase_from_header_payload(block.get("header"))
+        if payout_address_bytes == ZERO32:
+            payout_address_bytes = None
+
+        balance_before = None
+        if payout_address_bytes is not None:
+            try:
+                balance_before = int(ctx.state_db.get_balance(payout_address_bytes))
+            except Exception as e:
+                log.warning(
+                    "Failed to query payout balance before block submit: %s",
+                    e,
+                    exc_info=True,
+                )
+
         params = block_import_mod._load_chain_params_for_import(  # type: ignore[attr-defined]
             getattr(ctx.cfg, "genesis_path", None)
         )
@@ -5815,10 +6190,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 },
             )
 
-        payout_address = None
-        if template_id:
-            cached = _TEMPLATE_CACHE.get(str(template_id)) or {}
-            payout_address = cached.get("payout_address")
+        block_obj = None
         if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
             _metric_inc("imports_ok")
             _mark_head_progress()
@@ -5872,8 +6244,11 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                         extra={"err": str(e)},
                     )
 
-        # Calculate credited reward amount from canonical state delta
+        # Calculate credited reward amount from canonical state delta.
+        expected_reward = 0
         credited_amount = 0
+        credited_delta = None
+        credited_source = "none"
         block_hash_hex = None
         balance_now = None
         if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
@@ -5890,17 +6265,18 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 block_hash_hex = "0x" + result.block_hash.hex()
 
             # Read canonical balance after commit; this is the source of truth
-            if payout_address:
+            if payout_address_bytes is not None:
                 try:
-                    from rpc.state_service import parse_address
-
-                    key = parse_address(payout_address)
-                    balance_now = int(ctx.state_db.get_balance(key))
+                    balance_now = int(ctx.state_db.get_balance(payout_address_bytes))
                 except Exception as e:
                     log.warning("Failed to query payout balance after accepted block: %s", e, exc_info=True)
 
-            # For single-block submitBlock, credited amount equals expected protocol reward.
-            # Miner CLI validates the observable delta via state.getBalance RPC.
+            if isinstance(balance_before, int) and isinstance(balance_now, int):
+                credited_delta = int(balance_now) - int(balance_before)
+                if credited_delta >= 0:
+                    credited_amount = int(credited_delta)
+                    credited_source = "state_balance_delta"
+
             try:
                 from consensus.rewards import compute_block_reward
 
@@ -5912,9 +6288,12 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                     params=params,
                 )
                 if rewards:
-                    credited_amount = int(rewards[0][1])
+                    expected_reward = int(rewards[0][1])
             except Exception as e:
                 log.warning("Failed to calculate expected reward: %s", e)
+            if credited_source == "none":
+                credited_amount = int(expected_reward)
+                credited_source = "expected_reward"
 
             # AICF Credit Minting: Mint credits from block reward + fees
             # This happens AFTER block is committed and rewards are applied to state
@@ -5930,7 +6309,9 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 protocol_state = ProtocolState(aicf_db_path)
                 
                 # Get miner address for credit allocation
-                miner_addr_bytes = payout_address if payout_address else _get_miner_address()
+                miner_addr_bytes = (
+                    payout_address_bytes if payout_address_bytes is not None else _get_miner_address()
+                )
                 miner_addr_hex = "0x" + miner_addr_bytes.hex()
                 
                 # Get AICF slice configuration
@@ -5955,7 +6336,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                     block_height=int(result.height or 0),
                     block_hash=block_hash_hex or "0x" + result.block_hash.hex() if result.block_hash else "0x00",
                     miner_address=miner_addr_hex,
-                    base_reward=credited_amount,
+                    base_reward=expected_reward,
                     fees_collected=fees_collected,
                     aicf_slice_bps=aicf_slice_bps,
                 )
@@ -5973,21 +6354,49 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                     exc_info=True
                 )
 
+        head_after = _current_head_snapshot()
+        head_after_height = int(head_after.get("height") or 0)
+        committed_height = int(result.height or 0)
+        new_head_height = head_after_height
+        if committed_height > new_head_height:
+            new_head_height = committed_height
+
+        new_head_hash = head_after.get("hash")
+        if new_head_height == committed_height and (
+            head_after_height < committed_height or not new_head_hash
+        ):
+            new_head_hash = block_hash_hex or new_head_hash
+        if not new_head_hash:
+            new_head_hash = block_hash_hex
+
         return {
             "accepted": True,
             "duplicate": result.code == block_import_mod.ImportErrorCode.DUPLICATE,
+            "expected_reward": int(expected_reward),
             "credited_amount": int(credited_amount),
+            "credited_delta": int(credited_delta) if credited_delta is not None else None,
+            "credited_source": credited_source,
+            "balance_before": int(balance_before) if balance_before is not None else None,
             "balance_now": int(balance_now) if balance_now is not None else None,
-            "new_head": int(result.height or 0),
+            "new_head": int(new_head_height),
+            "new_head_hash": new_head_hash,
+            "newHead": {"height": int(new_head_height), "hash": new_head_hash},
             "block_hash": block_hash_hex,
         }
     except rpc_errors.RpcError:
         raise
     except Exception as e:
+        log.exception(
+            "miner.submitBlock unexpected failure",
+            extra={
+                "template_id": template_id,
+                "parent_hash": parent_hash_hex,
+            },
+        )
         raise rpc_errors.RpcError(
             rpc_errors.AnimicaCode.SERVER_ERROR,
             "block submission failed",
-            {"reason": "submit_failed", "detail": str(e)},
+            {"reason": "submit_failed", "detail": f"{e.__class__.__name__}: {e}"},
         )
 
 

@@ -49,3 +49,42 @@ def test_aicf_challenge_and_payload_verification():
         metrics={"ai_units": 10, "qos": 0.99},
     )
     assert verify_payload(payload)
+
+
+def test_template_and_job_refresh_when_theta_changes(monkeypatch):
+    fixed_time = 1_700_000_123
+    monkeypatch.setattr(time, "time", lambda: fixed_time)
+
+    parent_hash = b"\xaa" * 32
+    parent_mix = b"\xbb" * 32
+    theta_holder = {"value": 700_000}
+
+    def _head():
+        return parent_hash, 42, parent_mix, 1, b"\xcc" * 32
+
+    def _theta():
+        return int(theta_holder["value"])
+
+    def _roots():
+        return b"\xdd" * 32, b"\xee" * 32
+
+    tb = TemplateBuilder(
+        get_head_info=_head,
+        get_theta=_theta,
+        get_policy_roots=_roots,
+        get_beacon=lambda: b"",
+    )
+
+    tpl_a = tb.current_template()
+    job_a = tb.current_job()
+
+    # Parent is unchanged, only theta moves.
+    theta_holder["value"] = 900_000
+
+    tpl_b = tb.current_template()
+    job_b = tb.current_job()
+
+    assert tpl_a.parent_hash == tpl_b.parent_hash
+    assert tpl_a.theta_target_micro != tpl_b.theta_target_micro
+    assert tpl_a.sign_bytes != tpl_b.sign_bytes
+    assert job_a.job_id != job_b.job_id

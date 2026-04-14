@@ -167,6 +167,11 @@ class MiningCoreAdapter:
         for method in ("chain.getHead", "chain_getHead"):
             try:
                 result = await self._rpc_call(method, [])
+                self._log.warning(
+                    "DEBUG_STRATUM_HEAD_SNAPSHOT_TRACE method=%s result=%s",
+                    method,
+                    result,
+                )
             except RpcError as exc:
                 last_exc = exc
                 if exc.code == -32601:
@@ -872,7 +877,27 @@ class MiningCoreAdapter:
             },
         )
         try:
+            try:
+                dbg_head_before = await self._head_hash_height()
+                self._log.warning(
+                    "DEBUG_STRATUM_SUBMITWORK_TRACE before_submit head_hash=%s head_height=%s payload=%s",
+                    dbg_head_before[0],
+                    dbg_head_before[1],
+                    payload,
+                )
+            except Exception as dbg_exc:
+                self._log.warning("DEBUG_STRATUM_SUBMITWORK_TRACE before_submit_error=%r", dbg_exc)
             result: Json = await self._rpc_call("miner.submitWork", payload)
+            try:
+                dbg_head_after = await self._head_hash_height()
+                self._log.warning(
+                    "DEBUG_STRATUM_SUBMITWORK_TRACE after_submit head_hash=%s head_height=%s result=%s",
+                    dbg_head_after[0],
+                    dbg_head_after[1],
+                    result,
+                )
+            except Exception as dbg_exc:
+                self._log.warning("DEBUG_STRATUM_SUBMITWORK_TRACE after_submit_error=%r result=%s", dbg_exc, result)
         except RpcError as exc:
             head_hash, head_height, _ = await self._head_hash_height()
             self._log.warning(
