@@ -81,9 +81,13 @@ export default function HomePage() {
               />
               <StatCard label="Block Hash" value={<span className="truncate text-sm">{shorten(data.head.hash)}</span>} />
               <StatCard label="Last Block" value={`${timeAgo(data.head.time)}`} />
+              <StatCard
+                label="Theta (µnats)"
+                value={data.head.thetaMicro !== undefined ? formatNumber(data.head.thetaMicro) : '—'}
+              />
             </>
           ) : (
-            Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20" />)
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)
           )}
         </div>
       </section>

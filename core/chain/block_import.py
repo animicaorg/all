@@ -510,6 +510,7 @@ class BlockImporter:
         "difficulty_state",
         "_last_block_time",
         "_difficulty_samples",
+        "_difficulty_anchor_hash",
         "_timestamp_window",
         "_window_size",
         "_difficulty_epoch_start_height",
@@ -583,6 +584,8 @@ class BlockImporter:
         self.difficulty_state = None
         self._last_block_time: Optional[int] = None
         self._difficulty_samples = 0
+        # Canonical head hash the current difficulty_state is anchored to.
+        self._difficulty_anchor_hash: Optional[bytes] = None
         # Window of recent timestamps for anti-gaming difficulty adjustment
         # Use retarget window size from params, defaulting to 10 blocks minimum
         self._window_size = max(10, int(getattr(params.retarget, 'window', 10)))
@@ -724,7 +727,7 @@ class BlockImporter:
             self.difficulty_state = diff.init_state(retarget_params, theta_init_micro=theta_init)
             self._difficulty_samples = 0
             
-            # Initialize epoch tracking for static difficulty windows
+            # Initialize epoch tracking metadata (kept for diagnostics).
             self._difficulty_epoch_start_height = 0
             self._difficulty_epoch_theta = theta_init
 
@@ -736,100 +739,96 @@ class BlockImporter:
             self.difficulty_state = None
             self._difficulty_samples = 0
 
-    def _update_difficulty(self, block_timestamp: int, block_height: int) -> None:
+    def _update_difficulty(
+        self,
+        block_timestamp: int,
+        block_height: int,
+        block_hash: bytes | None = None,
+    ) -> None:
         """
-        Update difficulty state based on a window of recent block intervals.
-        
-        This implements static difficulty windows where:
-        1. Difficulty is computed at epoch boundaries (every window_size blocks)
-        2. Difficulty remains constant within each epoch
-        3. This prevents gaming and provides predictable mining conditions
-        
+        Update difficulty state for every accepted canonical block.
+
+        The state tracks the expected theta for the *next* canonical block.
+        Once a block at `block_height` is accepted, we use its timestamp delta
+        against the previous canonical block timestamp to evolve theta.
+
         Args:
             block_timestamp: Unix timestamp (seconds) of the current block
             block_height: Height of the current block
+            block_hash: Canonical hash of the current block
         """
         if not DIFFICULTY_AVAILABLE or diff is None or self.difficulty_state is None:
             return
-        
+
         try:
-            # Add current timestamp to the window
+            # Track recent timestamps for observability/debugging.
             self._timestamp_window.append(block_timestamp)
-            
-            # Determine if we're at an epoch boundary
-            # Epoch boundaries occur at multiples of window_size
-            # Calculate how many blocks have been processed in the current epoch
-            blocks_in_current_epoch = (block_height - self._difficulty_epoch_start_height) + 1
-            
-            # Only update difficulty at epoch boundaries
-            if blocks_in_current_epoch < self._window_size:
-                # Still within current epoch - keep difficulty static
+
+            # First observed canonical block after init/reanchor: establish the
+            # timestamp anchor; the next block will produce the first dt sample.
+            if self._last_block_time is None:
                 self._last_block_time = block_timestamp
+                if block_hash is not None:
+                    self._difficulty_anchor_hash = bytes(block_hash)
                 return
-            
-            # We've reached an epoch boundary - time to update difficulty
-            # Calculate average interval over the completed epoch
-            timestamps = list(self._timestamp_window)
-            intervals = []
-            for i in range(1, len(timestamps)):
-                dt = timestamps[i] - timestamps[i-1]
-                if dt > 0:  # Sanity check
-                    intervals.append(dt)
-            
-            if not intervals:
-                # No valid intervals, skip update but advance epoch
+
+            dt_seconds = int(block_timestamp) - int(self._last_block_time)
+            if dt_seconds <= 0:
                 self._last_block_time = block_timestamp
-                self._difficulty_epoch_start_height = block_height
-                self._timestamp_window.clear()
-                self._timestamp_window.append(block_timestamp)
+                if block_hash is not None:
+                    self._difficulty_anchor_hash = bytes(block_hash)
                 return
-            
-            # Use the average interval over the entire epoch
-            avg_dt_seconds = float(sum(intervals)) / len(intervals)
-            
-            # Update theta using the epoch average
-            # This provides stable difficulty for the next epoch
+
+            # Update theta for the next block.
             self.difficulty_state = diff.update_theta(
                 self.difficulty_state,
-                dt_seconds=avg_dt_seconds,
-                blocks_skipped=len(intervals),  # Account for the epoch size
+                dt_seconds=float(dt_seconds),
+                blocks_skipped=1,
             )
             self._difficulty_samples += 1
-            
-            # Record the new difficulty for the NEXT epoch
             self._difficulty_epoch_theta = int(self.difficulty_state.theta_micro)
-            
-            # Start a new epoch at the NEXT block
             self._difficulty_epoch_start_height = block_height + 1
-            self._timestamp_window.clear()
-            # Keep the last timestamp as starting point for next epoch
-            self._timestamp_window.append(block_timestamp)
-            
-            # Update last block time for next iteration
             self._last_block_time = block_timestamp
-            
+            if block_hash is not None:
+                self._difficulty_anchor_hash = bytes(block_hash)
+
             log.info(
-                f"Difficulty epoch update at height {block_height}: "
-                f"theta = {self._difficulty_epoch_theta / 1e6:.3f} nats "
-                f"(avg interval: {avg_dt_seconds:.1f}s)"
+                "Difficulty update at canonical height %d: theta=%.6f nats (dt=%.2fs, target=%.2fs)",
+                block_height,
+                self._difficulty_epoch_theta / 1e6,
+                float(dt_seconds),
+                float(self.difficulty_state.params.target_block_time_s),
             )
-            
+
         except Exception as e:  # pragma: no cover
             import logging
             logging.warning(f"Failed to update difficulty: {e}")
 
-    def _reanchor_difficulty_state(self, parent_header: Header) -> None:
+    def _reanchor_difficulty_state(
+        self,
+        parent_header: Header,
+        *,
+        parent_hash: bytes | None = None,
+    ) -> None:
         if not DIFFICULTY_AVAILABLE or diff is None:
             return
         parent_ts = _timestamp_of(parent_header)
         if parent_ts is None:
             return
         parent_theta = _weight_micro_of(parent_header, None, self.params)
+        if parent_hash is None:
+            try:
+                parent_hash = compute_header_hash(parent_header)
+            except Exception:
+                parent_hash = None
         needs_reset = (
             self._last_block_time is None
             or int(self._last_block_time) != int(parent_ts)
             or self.difficulty_state is None
-            or int(self.difficulty_state.theta_micro) != int(parent_theta)
+            or (
+                parent_hash is not None
+                and self._difficulty_anchor_hash != bytes(parent_hash)
+            )
         )
         if not needs_reset:
             return
@@ -847,6 +846,7 @@ class BlockImporter:
             )
             self._last_block_time = int(parent_ts)
             self._difficulty_samples = 0
+            self._difficulty_anchor_hash = bytes(parent_hash) if parent_hash is not None else None
             # Clear the timestamp window when reanchoring to start fresh
             self._timestamp_window.clear()
             # Add the parent timestamp as the first entry
@@ -861,6 +861,28 @@ class BlockImporter:
             logging.warning(f"Failed to reanchor difficulty state: {e}")
             self._difficulty_samples = 0
 
+    def sync_difficulty_to_canonical_head(self) -> None:
+        """
+        Ensure difficulty tracking is anchored to the current canonical head.
+
+        This keeps theta resolution deterministic even when canonical blocks are
+        committed through alternative paths that bypass BlockImporter internals.
+        """
+        if not DIFFICULTY_AVAILABLE or diff is None:
+            return
+        if self.difficulty_state is None:
+            return
+        head = self.block_db.get_canonical_head()
+        if head is None:
+            return
+        head_hash = bytes(head[1])
+        if self._difficulty_anchor_hash == head_hash and self._last_block_time is not None:
+            return
+        header = self.block_db.get_header_by_hash(head_hash)
+        if header is None:
+            return
+        self._reanchor_difficulty_state(header, parent_hash=head_hash)
+
     def get_current_difficulty(self) -> int:
         """
         Get the current difficulty threshold (Θ) in micro-nats.
@@ -869,27 +891,24 @@ class BlockImporter:
             Current theta_micro value, or genesis theta_initial if difficulty state not available.
         """
         if self.difficulty_state is not None:
+            self.sync_difficulty_to_canonical_head()
             return int(self.difficulty_state.theta_micro)
         return int(self.params.theta_initial)
 
     def _expected_theta_for_timestamp(self, block_timestamp: int) -> Optional[int]:
         """
-        Return the expected Θ for the current difficulty epoch.
-        
-        With static difficulty windows, theta remains constant within each epoch
-        and only changes at epoch boundaries. This provides predictable mining
-        conditions and prevents per-block difficulty fluctuations.
-        
+        Return the expected Θ for the next canonical block.
+
+        Theta is updated per canonical block acceptance and anchored to the
+        canonical head. `block_timestamp` is accepted for compatibility with
+        older callers but not currently required by the stateful retarget path.
+
         Returns None if difficulty state is unavailable.
         """
         if not DIFFICULTY_AVAILABLE or diff is None or self.difficulty_state is None:
             return None
         
-        # Return the static epoch theta if set
-        if self._difficulty_epoch_theta is not None:
-            return self._difficulty_epoch_theta
-        
-        # Fallback to current state theta if epoch theta not yet set
+        self.sync_difficulty_to_canonical_head()
         return int(self.difficulty_state.theta_micro)
 
     # --- Import -------------------------------------------------------------
@@ -1010,6 +1029,7 @@ class BlockImporter:
                 timestamp = _timestamp_of(header, hdr_map)
                 if timestamp is not None:
                     self._last_block_time = timestamp
+                self._difficulty_anchor_hash = h
                 
                 # Index canonical txs if any
                 self._index_block_if_canonical(height=0, block_hash=h, block=block)
@@ -1469,9 +1489,11 @@ class BlockImporter:
                 parent_header = self.block_db.get_header_by_hash(
                     _parent_hash_of(first_header)
                 )
-                parent_ts = _timestamp_of(parent_header) if parent_header else None
-                if parent_ts is not None:
-                    self._last_block_time = parent_ts
+                if parent_header is not None:
+                    self._reanchor_difficulty_state(
+                        parent_header,
+                        parent_hash=_parent_hash_of(first_header),
+                    )
 
         # Remove canonical indices for detached blocks
         if self.tx_index is not None:
@@ -1522,7 +1544,7 @@ class BlockImporter:
             
             ts = _timestamp_of(header)
             if ts is not None:
-                self._update_difficulty(ts, best.height)
+                self._update_difficulty(ts, height, h)
 
         if old_height is not None and best.height < old_height:
             self._delete_canonical_range(best.height + 1, old_height)
@@ -2414,7 +2436,7 @@ class BlockImporter:
             return None
         parent_header = self.block_db.get_header_by_hash(parent_hash)
         if parent_header is not None:
-            self._reanchor_difficulty_state(parent_header)
+            self._reanchor_difficulty_state(parent_header, parent_hash=parent_hash)
         ts = _timestamp_of(header, payload)
         if ts is None:
             return None

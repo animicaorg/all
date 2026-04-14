@@ -89,7 +89,7 @@ networks:
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
         # Target block time (consensus retarget aims to meet this)
-        target_block_interval_ms: 300000
+        target_block_interval_ms: 60000
         # Minimum time between blocks (prevents rapid block mining)
         min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         # Maximum time before difficulty emergency reduction kicks in
@@ -120,7 +120,7 @@ networks:
         theta_min_munats: 12000000
         theta_max_munats: 3000000000           # Hard cap at 3B µ-nats (3,000 nats) for network stability
         retarget:
-          window_blocks: 720                   # ~60 hours at 300s
+          window_blocks: 720                   # ~12 hours at 60s
           ema_beta: 0.15                       # fractional step toward target
           clamp_ratio_per_window:
             min: 0.5
@@ -229,7 +229,7 @@ networks:
             amount_anm: 250000.0
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
-        target_block_interval_ms: 300000
+        target_block_interval_ms: 60000
         min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         max_block_time_s: 3600                   # 3600 seconds (1 hour maximum)
         subsidy:
@@ -331,7 +331,7 @@ networks:
             amount_anm: 50000.0
             vesting: { cliff_days: 0, linear_months: 0 }
       issuance:
-        target_block_interval_ms: 300000
+        target_block_interval_ms: 60000
         min_block_spacing_ms: 60000              # 60 seconds (1 minute minimum)
         max_block_time_s: 3600                   # 3600 seconds (1 hour maximum)
         subsidy:
@@ -391,7 +391,7 @@ defaults:
     symbol: "ANM"
     decimals: 9
   issuance:
-    target_block_interval_ms: 2000
+    target_block_interval_ms: 60000
     min_block_spacing_ms: 500                  # 500ms minimum for fast devnet defaults
     max_block_time_s: 3600                     # 3600 seconds (1 hour maximum)
   consensus:

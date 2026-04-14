@@ -47,6 +47,7 @@ export interface HeadView {
   hash: Hash
   time: number
   chainId?: number
+  thetaMicro?: number
 }
 
 export interface BlockSummary {

@@ -145,7 +145,12 @@ DEFAULT_TX_GAS_LIMIT = INTRINSIC_GAS_TRANSFER  # 21,000 gas for simple transfers
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
-_HEAD_STATE: dict[str, Any] = {"height": None, "hash": None, "generation": 0}
+_HEAD_STATE: dict[str, Any] = {
+    "height": None,
+    "hash": None,
+    "theta": None,
+    "generation": 0,
+}
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
@@ -1023,6 +1028,29 @@ def _resolve_theta() -> int:
         except Exception:
             return None
 
+    # Canonical importer state is the authoritative source for the next
+    # canonical theta used by mining templates/jobs.
+    try:
+        ctx = _ctx()
+        block_db = getattr(ctx, "block_db", None)
+        if block_db is not None:
+            from core.chain import block_import as block_import_mod
+
+            params = block_import_mod._load_chain_params_for_import(  # type: ignore[attr-defined]
+                getattr(getattr(ctx, "cfg", None), "genesis_path", None)
+            )
+            importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
+                block_db,
+                getattr(ctx, "state_db", None),
+                getattr(ctx, "tx_index", None),
+                params,
+            )
+            theta = int(importer.get_current_difficulty())
+            if theta > 0:
+                return theta
+    except Exception:
+        pass
+
     # Canonical chain head is the source of truth for difficulty/theta.
     try:
         snap = _current_head_snapshot()
@@ -1075,7 +1103,7 @@ def _ctx():
         return deps.build_context()
 
 
-def _target_block_time_s(default: float = 300.0) -> float:
+def _target_block_time_s(default: float = 60.0) -> float:
     try:
         ctx = _ctx()
         params = getattr(ctx, "params", {}) or {}
@@ -1597,7 +1625,17 @@ def _current_head_snapshot() -> dict[str, Any]:
         prev_height_raw = _HEAD_STATE.get("height")
         prev_height = int(prev_height_raw) if prev_height_raw is not None else None
         prev_hash = _hash_hex(_HEAD_STATE.get("hash"))
-        canonical_changed = (height, hash_hex) != (prev_height, prev_hash)
+        theta_val = None
+        if isinstance(header, dict):
+            theta_val = header.get("thetaMicro", header.get("theta_micro"))
+        else:
+            theta_val = getattr(header, "thetaMicro", getattr(header, "theta_micro", None))
+        try:
+            theta_val = int(theta_val) if theta_val is not None else None
+        except Exception:
+            theta_val = None
+        prev_theta = _HEAD_STATE.get("theta")
+        canonical_changed = (height, hash_hex, theta_val) != (prev_height, prev_hash, prev_theta)
 
         if canonical_changed:
             if prev_height is not None and height > prev_height:
@@ -1606,6 +1644,7 @@ def _current_head_snapshot() -> dict[str, Any]:
 
             _HEAD_STATE["hash"] = hash_hex
             _HEAD_STATE["height"] = height
+            _HEAD_STATE["theta"] = theta_val
             _HEAD_STATE["generation"] = int(_HEAD_STATE.get("generation", 0)) + 1
 
             _LOCAL_HEAD.clear()

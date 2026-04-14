@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "wait-on ../shared/dist/index.js && tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/migrations && cp -f src/migrations/*.sql dist/migrations/",
     "start": "node dist/index.js",
     "test": "vitest run",
     "backfill:confirmed-txs": "tsx src/backfillConfirmedTxs.ts --missing-fields"

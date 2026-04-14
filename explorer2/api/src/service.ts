@@ -99,14 +99,18 @@ export class ExplorerService {
     const blocks = await Promise.all(
       heights.map((height) =>
         this.coalescer.run(`block:${height}`, async () => {
-          const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false))
+          const raw = await this.safeRpc(() => this.rpc.getBlockByNumber(height, false, false), { allowNotFound: true })
+          if (!raw) return null
           return normalizeBlockSummary(raw)
         })
       )
     )
 
     const minHeight = heights.length ? heights[heights.length - 1] : startHeight
-    return { items: blocks, nextCursor: nextCursorForHeight(minHeight) }
+    return {
+      items: blocks.filter((block): block is BlockSummary => block !== null),
+      nextCursor: nextCursorForHeight(minHeight)
+    }
   }
 
   async getBlockDetail(hashOrHeight: string): Promise<BlockDetail> {
@@ -161,7 +165,9 @@ export class ExplorerService {
       const storeRecord = this.txLifecycle.get(normalizedHash)
       if (storeRecord?.status === 'confirmed') {
         const enrichedRecord = await this.enrichConfirmedRecordIfMissing(storeRecord)
-        const confirmations = enrichedRecord.included_height ? Math.max(0, head.height - enrichedRecord.included_height + 1) : 0
+        const includedHeight = enrichedRecord.included_height
+        const hasIncludedHeight = isDefinedNumber(includedHeight)
+        const confirmations = hasIncludedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
         log.debug({ normalizedHash, store: 'lifecycle-store-confirmed', result: 'hit' }, 'tx lookup result')
         return this.attachClassification({
           hash: enrichedRecord.tx_hash,
@@ -190,9 +196,10 @@ export class ExplorerService {
         const detail = normalizeTxDetail(tx ?? { hash: normalizedHash }, receipt)
         const includedHeight = detail.blockHeight ?? null
         const includedBlockHash = detail.blockHash ? String(detail.blockHash) : null
-        const confirmations = includedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
+        const hasIncludedHeight = isDefinedNumber(includedHeight)
+        const confirmations = hasIncludedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
 
-        if (includedHeight) {
+        if (hasIncludedHeight) {
           this.txLifecycle.upsertConfirmed({
             hash: normalizedHash,
             includedHeight,
@@ -216,14 +223,14 @@ export class ExplorerService {
           })
         }
 
-        log.debug({ normalizedHash, store: includedHeight ? 'confirmed-rpc' : 'pending-rpc', result: 'hit' }, 'tx lookup result')
+        log.debug({ normalizedHash, store: hasIncludedHeight ? 'confirmed-rpc' : 'pending-rpc', result: 'hit' }, 'tx lookup result')
         return this.attachClassification({
           ...detail,
           tx_hash: normalizedHash,
           included_height: includedHeight,
           included_block_hash: includedBlockHash,
           confirmations,
-          timestamp: includedHeight ? head.time : null,
+          timestamp: hasIncludedHeight ? head.time : null,
           explorer_head_height: head.height,
           fee: detail.feePaid
         })
@@ -329,13 +336,13 @@ export class ExplorerService {
     for (const height of heights) {
       const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
       if (!block) continue
-      
-      const blockTxs = Array.isArray((block as any)?.txs) ? (block as any).txs : []
-      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+
+      const blockTxs = extractBlockTransactions(block)
+      const receipts = extractBlockReceipts(block)
       for (let i = 0; i < blockTxs.length; i += 1) {
         const tx = blockTxs[i]
         const summary = normalizeTxSummary(tx)
-        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const receipt = findReceiptForTx(tx, i, receipts)
         const detail = normalizeTxDetail(tx, receipt)
         const classification = await this.classifyAndPersistTx(detail, tx, receipt)
         const touchesAddress =
@@ -400,16 +407,12 @@ export class ExplorerService {
       scannedBlocks += 1
 
       const blockDetail = normalizeBlockDetail(block)
-      const txs = Array.isArray((block as any)?.txs)
-        ? (block as any).txs
-        : Array.isArray((block as any)?.transactions)
-          ? (block as any).transactions
-          : []
-      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+      const txs = extractBlockTransactions(block)
+      const receipts = extractBlockReceipts(block)
 
       for (let i = 0; i < txs.length; i += 1) {
         const tx = txs[i]
-        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const receipt = findReceiptForTx(tx, i, receipts)
         const receiptForStatus =
           receipt ??
           {
@@ -575,43 +578,50 @@ export class ExplorerService {
       if (this.rpc.getRichList) {
         try {
           const raw = await this.safeRpc(() => this.rpc.getRichList!(limit, safeOffset))
-          
-          // Parse response
-          const height = (raw as any).height ?? 0
-          const totalAddresses = (raw as any).totalAddresses ?? 0
-          const items = (raw as any).items ?? []
-          
+
+          const rawRecord = asRecord(raw)
+          const items = extractRichListItems(rawRecord)
+          const height = toPositiveInt(rawRecord.height ?? rawRecord.blockHeight ?? rawRecord.number) ?? 0
+          const totalAddresses =
+            toPositiveInt(rawRecord.totalAddresses ?? rawRecord.total_addresses ?? rawRecord.total) ?? items.length
+
           // Get total supply for percentage calculation
-          let totalSupply = BigInt(0)
+          let totalSupply = 0n
           try {
             const supplyRaw = await this.safeRpc(() => this.rpc.getTotalSupply!())
-            const supplyHex = (supplyRaw as any).totalSupply ?? '0x0'
-            totalSupply = BigInt(supplyHex)
+            const supplyRecord = asRecord(supplyRaw)
+            totalSupply = toBigIntLike(
+              supplyRecord.totalSupply ??
+                supplyRecord.total_supply ??
+                supplyRecord.supply ??
+                supplyRecord.value ??
+                '0x0'
+            )
           } catch {
             // If total supply fails, percentages will be 0
           }
-          
+
           // Format items with percentages
-          const formattedItems = items.map((item: any) => {
-            const balance = BigInt(item.balance ?? '0x0')
-            const pctSupply = totalSupply > 0 
-              ? Number((balance * BigInt(10000) / totalSupply)) / 100  // 2 decimal places
+          const formattedItems = items.map((item: any, index: number) => {
+            const balance = toBigIntLike(item.balance ?? item.amount ?? item.value ?? '0x0')
+            const pctSupply = totalSupply > 0n
+              ? Number((balance * 10000n) / totalSupply) / 100
               : 0
-            
+
             return {
-              rank: item.rank ?? 0,
-              address: item.address ?? '',
-              balance: item.balance ?? '0x0',
+              rank: toPositiveInt(item.rank) ?? safeOffset + index + 1,
+              address: typeof item.address === 'string' ? item.address : typeof item.addr === 'string' ? item.addr : '',
+              balance: toHexQuantity(balance),
               pctSupply
             }
           })
-          
+
           return {
             height,
             items: formattedItems,
             totalAddresses,
-            nextOffset: safeOffset + formattedItems.length < totalAddresses 
-              ? safeOffset + formattedItems.length 
+            nextOffset: safeOffset + formattedItems.length < totalAddresses
+              ? safeOffset + formattedItems.length
               : undefined
           }
         } catch (error) {
@@ -683,46 +693,42 @@ export class ExplorerService {
       if (this.rpc.getTotalSupply) {
         try {
           const raw = await this.safeRpc(() => this.rpc.getTotalSupply!())
-          
-          const height = (raw as any).height ?? 0
-          const totalSupply = (raw as any).totalSupply ?? '0x0'
-          const addressCount = (raw as any).addressCount ?? 0
-          
+
+          const rawRecord = asRecord(raw)
+          const height = toPositiveInt(rawRecord.height ?? rawRecord.blockHeight ?? rawRecord.number) ?? 0
+          const totalSupplyBig = toBigIntLike(
+            rawRecord.totalSupply ?? rawRecord.total_supply ?? rawRecord.supply ?? rawRecord.value ?? '0x0'
+          )
+          const totalSupply = toHexQuantity(totalSupplyBig)
+          const addressCount = toPositiveInt(rawRecord.addressCount ?? rawRecord.address_count ?? rawRecord.totalAddresses) ?? 0
+
           // Get top addresses to compute concentration metrics
           let top10Pct: number | undefined
           let top100Pct: number | undefined
           let top1000Pct: number | undefined
-          
+
           try {
-            const totalSupplyBig = BigInt(totalSupply)
-            
             // Get top 10
             if (this.rpc.getRichList) {
               const top10Raw = await this.safeRpc(() => this.rpc.getRichList!(10, 0))
-              const top10Items = (top10Raw as any).items ?? []
-              const top10Sum = top10Items.reduce((sum: bigint, item: any) => 
-                sum + BigInt(item.balance ?? '0x0'), BigInt(0))
-              top10Pct = totalSupplyBig > 0 
-                ? Number((top10Sum * BigInt(10000) / totalSupplyBig)) / 100
+              const top10Sum = sumRichListBalances(top10Raw)
+              top10Pct = totalSupplyBig > 0n
+                ? Number((top10Sum * 10000n) / totalSupplyBig) / 100
                 : 0
-              
+
               // Get top 100
               const top100Raw = await this.safeRpc(() => this.rpc.getRichList!(100, 0))
-              const top100Items = (top100Raw as any).items ?? []
-              const top100Sum = top100Items.reduce((sum: bigint, item: any) => 
-                sum + BigInt(item.balance ?? '0x0'), BigInt(0))
-              top100Pct = totalSupplyBig > 0 
-                ? Number((top100Sum * BigInt(10000) / totalSupplyBig)) / 100
+              const top100Sum = sumRichListBalances(top100Raw)
+              top100Pct = totalSupplyBig > 0n
+                ? Number((top100Sum * 10000n) / totalSupplyBig) / 100
                 : 0
-              
+
               // Get top 1000 (if addressCount >= 1000)
               if (addressCount >= 1000) {
                 const top1000Raw = await this.safeRpc(() => this.rpc.getRichList!(1000, 0))
-                const top1000Items = (top1000Raw as any).items ?? []
-                const top1000Sum = top1000Items.reduce((sum: bigint, item: any) => 
-                  sum + BigInt(item.balance ?? '0x0'), BigInt(0))
-                top1000Pct = totalSupplyBig > 0 
-                  ? Number((top1000Sum * BigInt(10000) / totalSupplyBig)) / 100
+                const top1000Sum = sumRichListBalances(top1000Raw)
+                top1000Pct = totalSupplyBig > 0n
+                  ? Number((top1000Sum * 10000n) / totalSupplyBig) / 100
                   : 0
               }
             }
@@ -950,16 +956,12 @@ export class ExplorerService {
       const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
       if (!block) continue
       const blockDetail = normalizeBlockDetail(block)
-      const txs = Array.isArray((block as any)?.txs)
-        ? (block as any).txs
-        : Array.isArray((block as any)?.transactions)
-          ? (block as any).transactions
-          : []
-      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+      const txs = extractBlockTransactions(block)
+      const receipts = extractBlockReceipts(block)
 
       for (let i = 0; i < txs.length; i += 1) {
         const tx = txs[i]
-        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const receipt = findReceiptForTx(tx, i, receipts)
         const detail = normalizeTxDetail(tx, receipt)
         const classification = classifyTransaction({
           txDetail: detail,
@@ -974,7 +976,7 @@ export class ExplorerService {
           creatorTxHash: normalizeTxHash(String(detail.hash)),
           creationBlockHeight: detail.blockHeight ?? blockDetail.height,
           creationBlockHash: detail.blockHash ? String(detail.blockHash) : String(blockDetail.hash),
-          creationTimestamp: blockDetail.time || null,
+          creationTimestamp: isDefinedNumber(blockDetail.time) ? blockDetail.time : null,
           codeHash: deployCode ? hashHex(deployCode) : null
         }
       }
@@ -1009,12 +1011,8 @@ export class ExplorerService {
       if (!block) continue
 
       const detail = normalizeBlockDetail(block)
-      const txs = Array.isArray((block as any)?.txs)
-        ? (block as any).txs
-        : Array.isArray((block as any)?.transactions)
-          ? (block as any).transactions
-          : []
-      const receipts = Array.isArray((block as any)?.receipts) ? (block as any).receipts : []
+      const txs = extractBlockTransactions(block)
+      const receipts = extractBlockReceipts(block)
 
       for (let i = 0; i < txs.length; i += 1) {
         const tx = txs[i]
@@ -1030,7 +1028,7 @@ export class ExplorerService {
 
         if (normalized !== targetHash) continue
 
-        const receipt = tx?.receipt ?? receipts[i] ?? null
+        const receipt = findReceiptForTx(tx, i, receipts)
         const receiptForStatus =
           receipt ??
           {
@@ -1045,7 +1043,7 @@ export class ExplorerService {
           includedHeight: detail.height,
           includedBlockHash: String(detail.hash),
           includedIndex: i,
-          timestamp: detail.time || null
+          timestamp: isDefinedNumber(detail.time) ? detail.time : null
         }
       }
     }
@@ -1091,6 +1089,86 @@ function buildNetworkStats(blocks: BlockSummary[], mempool: any, peers: any): an
   }
 }
 
+function isDefinedNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function toBigIntLike(value: unknown): bigint {
+  if (typeof value === 'bigint') return value >= 0n ? value : 0n
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return 0n
+    return BigInt(Math.floor(value))
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return 0n
+    try {
+      const parsed = BigInt(trimmed)
+      return parsed >= 0n ? parsed : 0n
+    } catch {
+      return 0n
+    }
+  }
+  return 0n
+}
+
+function toHexQuantity(value: bigint): string {
+  return `0x${value.toString(16)}`
+}
+
+function extractRichListItems(raw: Record<string, unknown>): any[] {
+  const fromItems = raw.items
+  if (Array.isArray(fromItems)) return fromItems
+  const fromAddresses = raw.addresses
+  if (Array.isArray(fromAddresses)) return fromAddresses
+  const fromList = raw.list
+  if (Array.isArray(fromList)) return fromList
+  return []
+}
+
+function sumRichListBalances(raw: unknown): bigint {
+  const items = extractRichListItems(asRecord(raw))
+  return items.reduce((sum: bigint, item: any) => {
+    if (Array.isArray(item) && item.length >= 2) {
+      return sum + toBigIntLike(item[1])
+    }
+    return sum + toBigIntLike(item?.balance ?? item?.amount ?? item?.value)
+  }, 0n)
+}
+
+function extractBlockTransactions(block: unknown): any[] {
+  const txs = (block as any)?.txs
+  if (Array.isArray(txs)) return txs
+  const transactions = (block as any)?.transactions
+  if (Array.isArray(transactions)) return transactions
+  return []
+}
+
+function extractBlockReceipts(block: unknown): any[] {
+  const receipts = (block as any)?.receipts
+  if (Array.isArray(receipts)) return receipts
+  const fromResults = (block as any)?.receiptResults
+  if (Array.isArray(fromResults)) return fromResults
+  return []
+}
+
+function findReceiptForTx(tx: any, index: number, receipts: any[]): any | null {
+  if (tx?.receipt) return tx.receipt
+  const direct = receipts[index]
+  if (direct) return direct
+  const txHash = tx?.hash ?? tx?.txHash
+  if (!txHash) return null
+  const match = receipts.find((receipt) => {
+    const receiptHash = receipt?.txHash ?? receipt?.hash
+    return typeof receiptHash === 'string' && receiptHash === txHash
+  })
+  return match ?? null
+}
+
 function buildContractDeployment(
   txDetail: TxDetail,
   rawTx: any,
@@ -1122,7 +1200,7 @@ function buildContractDeployment(
     txHash: String(txDetail.hash),
     blockHeight: txDetail.blockHeight ?? block.height,
     blockHash: txDetail.blockHash ? String(txDetail.blockHash) : String(block.hash),
-    blockTime: block.time || null,
+    blockTime: isDefinedNumber(block.time) ? block.time : null,
     deployer: txDetail.from,
     contractAddress,
     status: classification.failed || txDetail.status === 'failed' ? 'failed' : 'confirmed',
@@ -1271,6 +1349,7 @@ function inferCodeSizeBytes(...sources: unknown[]): number | null {
 
 function toPositiveInt(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value)
+  if (typeof value === 'bigint' && value >= 0n) return Number(value)
   if (typeof value === 'string') {
     const parsed = Number.parseInt(value, value.startsWith('0x') ? 16 : 10)
     if (!Number.isNaN(parsed) && parsed >= 0) return parsed

@@ -154,7 +154,7 @@ class RetargetParams:
         fast recovery. Default is None (no maximum). Typical value: 3600 (1 hour).
     """
 
-    target_block_time_s: float = 300.0
+    target_block_time_s: float = 60.0
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75
     step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max

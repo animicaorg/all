@@ -226,7 +226,8 @@ export class LocalChainClient {
       height,
       hash: toHex(headHashRaw),
       chainId: formatTxValue(header.chainId),
-      time: formatTxValue(header.timestamp)
+      time: formatTxValue(header.timestamp),
+      thetaMicro: formatTxValue(header.thetaMicro ?? header.theta_micro)
     }
 
     // Include canonical height if available
