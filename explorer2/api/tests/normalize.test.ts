@@ -25,6 +25,19 @@ describe('normalizeHead', () => {
     expect(head.height).toBe(10)
     expect(head.canonicalHeight).toBe(8)
   })
+
+  it('includes thetaMicro from top-level and header fields', () => {
+    const topLevel = normalizeHead({ height: 10, hash: '0xabc', time: 123, thetaMicro: '2000000' })
+    expect(topLevel.thetaMicro).toBe(2_000_000)
+
+    const nested = normalizeHead({
+      height: 11,
+      hash: '0xdef',
+      time: 124,
+      header: { theta_micro: '0x1e8480' } // 2,000,000
+    })
+    expect(nested.thetaMicro).toBe(2_000_000)
+  })
 })
 
 describe('normalizeBlockSummary', () => {
@@ -101,5 +114,24 @@ describe('normalizeTxDetail', () => {
     const receipt = { txHash: '0xtx', blockNumber: 5, status: 'SUCCESS' }
     const detail = normalizeTxDetail(tx, receipt)
     expect(detail.status).toBe('confirmed')
+  })
+
+  it('treats genesis blockNumber=0 as confirmed (not pending)', () => {
+    const tx = { hash: '0xtx', from: 'anim1from', to: 'anim1to', value: '0x1' }
+    const receipt = { txHash: '0xtx', blockNumber: 0, status: 'SUCCESS' }
+    const detail = normalizeTxDetail(tx, receipt)
+    expect(detail.blockHeight).toBe(0)
+    expect(detail.status).toBe('confirmed')
+  })
+
+  it('accepts snake_case receipt fields and sender/recipient aliases', () => {
+    const tx = { txHash: '0xtx', sender: 'anim1from', recipient: 'anim1to', fee: '0x2' }
+    const receipt = { txHash: '0xtx', block_height: '0x2', block_hash: '0xabc', fee: '0x3', status: 'SUCCESS' }
+    const detail = normalizeTxDetail(tx, receipt)
+    expect(detail.blockHeight).toBe(2)
+    expect(detail.blockHash).toBe('0xabc')
+    expect(detail.from).toBe('anim1from')
+    expect(detail.to).toBe('anim1to')
+    expect(detail.feePaid).toBe('0x3')
   })
 })

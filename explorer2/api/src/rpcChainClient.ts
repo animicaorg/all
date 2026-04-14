@@ -186,13 +186,35 @@ export class RpcChainClient implements ChainClient {
     }
 
     try {
-      const result = await this.rpc.call<string[] | { txs?: string[] }>('mempool.getPending', [])
-      // Handle both array and object response
+      const result = await this.rpc.call<unknown>('mempool.getPending', [])
       if (Array.isArray(result)) {
         return result
+          .map((entry) => {
+            if (typeof entry === 'string') return entry
+            if (entry && typeof entry === 'object') {
+              const hash = (entry as Record<string, unknown>).hash ?? (entry as Record<string, unknown>).txHash
+              return typeof hash === 'string' ? hash : null
+            }
+            return null
+          })
+          .filter((hash): hash is string => typeof hash === 'string' && hash.length > 0)
       }
-      if (result && typeof result === 'object' && 'txs' in result) {
-        return result.txs || []
+      if (result && typeof result === 'object') {
+        const record = result as Record<string, unknown>
+        const candidates = [record.txs, record.pending, record.items]
+        for (const candidate of candidates) {
+          if (!Array.isArray(candidate)) continue
+          return candidate
+            .map((entry) => {
+              if (typeof entry === 'string') return entry
+              if (entry && typeof entry === 'object') {
+                const hash = (entry as Record<string, unknown>).hash ?? (entry as Record<string, unknown>).txHash
+                return typeof hash === 'string' ? hash : null
+              }
+              return null
+            })
+            .filter((hash): hash is string => typeof hash === 'string' && hash.length > 0)
+        }
       }
       return []
     } catch (error) {
@@ -208,16 +230,12 @@ export class RpcChainClient implements ChainClient {
     }
 
     try {
-      const result = await this.rpc.call<{
-        count?: number
-        totalBytes?: number
-        oldestAgeSec?: number | null
-      }>('mempool.getStats', [])
+      const result = await this.rpc.call<Record<string, unknown>>('mempool.getStats', [])
 
       return {
-        count: result?.count ?? 0,
-        totalBytes: result?.totalBytes ?? 0,
-        oldestAgeSec: result?.oldestAgeSec ?? null
+        count: toFiniteInt(result?.count ?? result?.size ?? result?.txCount) ?? 0,
+        totalBytes: toFiniteInt(result?.totalBytes ?? result?.bytes ?? result?.total_bytes) ?? 0,
+        oldestAgeSec: toFiniteInt(result?.oldestAgeSec ?? result?.oldest_age_sec) ?? null
       }
     } catch (error) {
       log.warn({ error }, 'Failed to get mempool stats')
@@ -254,13 +272,27 @@ export class RpcChainClient implements ChainClient {
     }
 
     try {
-      const result = await this.rpc.call<string | { balance?: string }>('state.getBalance', [address, tag])
+      const result = await this.rpc.call<unknown>('state.getBalance', [address, tag])
       // Handle both string and object response
       if (typeof result === 'string') {
         return result
       }
-      if (result && typeof result === 'object' && 'balance' in result) {
-        return result.balance || '0x0'
+      if (typeof result === 'number' && Number.isFinite(result)) {
+        return `0x${Math.max(0, Math.floor(result)).toString(16)}`
+      }
+      if (typeof result === 'bigint') {
+        return result >= 0n ? `0x${result.toString(16)}` : '0x0'
+      }
+      if (result && typeof result === 'object') {
+        const record = result as Record<string, unknown>
+        const candidate = record.balance ?? record.value ?? record.amount
+        if (typeof candidate === 'string') return candidate
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          return `0x${Math.max(0, Math.floor(candidate)).toString(16)}`
+        }
+        if (typeof candidate === 'bigint') {
+          return candidate >= 0n ? `0x${candidate.toString(16)}` : '0x0'
+        }
       }
       return '0x0'
     } catch (error) {
@@ -342,4 +374,17 @@ export class RpcChainClient implements ChainClient {
       throw new Error(`Failed to get total supply from RPC: ${message}`)
     }
   }
+}
+
+function toFiniteInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.floor(value)
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed.length) return null
+    const parsed = trimmed.startsWith('0x') ? Number.parseInt(trimmed.slice(2), 16) : Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsed)) return null
+    return parsed
+  }
+  return null
 }

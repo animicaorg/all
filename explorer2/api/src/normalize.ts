@@ -47,7 +47,13 @@ export function normalizeHead(head: any): HeadView {
     canonicalHeight: toNumber(head?.canonicalHeight ?? head?.canonical_height),
     hash: head?.hash ?? head?.headerHash ?? '0x0',
     time: toNumber(head?.time ?? head?.timestamp ?? head?.header?.time) ?? 0,
-    chainId: toNumber(head?.chainId)
+    chainId: toNumber(head?.chainId),
+    thetaMicro: toNumber(
+      head?.thetaMicro ??
+        head?.theta_micro ??
+        head?.header?.thetaMicro ??
+        head?.header?.theta_micro
+    )
   }
 }
 
@@ -100,21 +106,29 @@ export function normalizeBlockDetail(block: any): BlockDetail {
 
 export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
   const hash = tx?.hash ?? tx?.txHash ?? receipt?.txHash ?? '0x0'
-  const blockHeight = toNumber(receipt?.blockNumber ?? tx?.blockNumber)
+  const blockHeight = toNumber(
+    receipt?.blockNumber ??
+      receipt?.block_height ??
+      receipt?.blockHeight ??
+      tx?.blockNumber ??
+      tx?.block_height ??
+      tx?.blockHeight
+  )
   const statusRaw = receipt?.status ?? tx?.status
   const statusText = typeof statusRaw === 'string' ? statusRaw.toUpperCase() : statusRaw
   const failed = statusText === 'REVERT' || statusText === 'OOG' || statusText === 'FAILED' || statusText === 0
-  const status = failed ? 'failed' : blockHeight ? 'confirmed' : 'pending'
+  const isIncluded = blockHeight !== undefined && blockHeight !== null
+  const status = failed ? 'failed' : isIncluded ? 'confirmed' : 'pending'
   return {
     hash,
     status,
-    blockHash: receipt?.blockHash ?? tx?.blockHash,
+    blockHash: receipt?.blockHash ?? receipt?.block_hash ?? tx?.blockHash ?? tx?.block_hash,
     blockHeight,
-    from: normalizeAddress(tx?.from),
-    to: normalizeAddress(tx?.to),
+    from: normalizeAddress(tx?.from ?? tx?.sender),
+    to: normalizeAddress(tx?.to ?? tx?.recipient),
     value: toStringValue(tx?.value),
     gasUsed: toStringValue(receipt?.gasUsed),
-    feePaid: toStringValue(receipt?.feePaid ?? receipt?.fee),
+    feePaid: toStringValue(receipt?.feePaid ?? receipt?.fee ?? tx?.feePaid ?? tx?.fee),
     raw: tx,
     receipt
   }

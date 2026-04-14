@@ -339,8 +339,20 @@ class ChainParams:
         )
 
         blocks_cfg = net.get("blocks") or {}
-        issuance_cfg = net.get("issuance") or {}
-        target_ms = issuance_cfg.get("target_block_interval_ms", 2000)
+        monetary_cfg = net.get("monetary") or {}
+        issuance_cfg = (
+            (monetary_cfg.get("issuance") if isinstance(monetary_cfg, Mapping) else None)
+            or net.get("issuance")
+            or {}
+        )
+        defaults_cfg = m.get("defaults") or {}
+        defaults_issuance_cfg = (
+            defaults_cfg.get("issuance") if isinstance(defaults_cfg, Mapping) else {}
+        ) or {}
+        target_ms = issuance_cfg.get(
+            "target_block_interval_ms",
+            defaults_issuance_cfg.get("target_block_interval_ms", 2000),
+        )
         try:
             target_seconds = float(target_ms) / 1000.0
         except Exception:

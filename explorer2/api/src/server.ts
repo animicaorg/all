@@ -6,7 +6,7 @@ import type { ApiError } from '@animica/explorer2-shared'
 import { ExplorerService } from './service.js'
 import { HttpError } from './errors.js'
 import { rpcDiscover, getServiceStatus, getAICFInfo, getMiningInfo, getDAInfo, daGetBlob, daGetProof, daPutBlob, daListHistory, getQuantumInfo } from './rpcExtended.js'
-import type { RpcClient } from './rpcClient.js'
+import { RpcClient, RpcError } from './rpcClient.js'
 import { bigIntSafeStringify } from './bigIntJson.js'
 import fs from 'node:fs'
 
@@ -17,6 +17,11 @@ interface DiagnosticsInfo {
   chainId: number
   detectedHead: number | null
   timestamp: string
+  runtimeStatus?: {
+    rpcReady: boolean | null
+    lastRpcError: string | null
+    lastRpcCheckAt: string | null
+  }
 }
 
 export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo, rpc?: RpcClient) {
@@ -33,7 +38,13 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
   }
 
   app.get('/api/health', async (_req, res) => {
-    res.json({ ok: true, timestamp: new Date().toISOString() })
+    const rpcReady = diagnostics?.runtimeStatus?.rpcReady
+    res.json({
+      ok: true,
+      ready: rpcReady === null ? true : rpcReady,
+      mode: diagnostics?.mode ?? 'Unknown',
+      timestamp: new Date().toISOString()
+    })
   })
 
   app.get('/api/meta', async (_req, res) => {
@@ -101,9 +112,11 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
           lastModified: dbLastModified
         },
         startupTime: diagnostics?.timestamp || null,
+        runtimeStatus: diagnostics?.runtimeStatus ?? null,
         currentTime: new Date().toISOString()
       })
     } catch (err) {
+      logger.error({ err }, 'Diagnostics endpoint failed')
       res.status(500).json({
         error: 'diagnostics_failed',
         message: err instanceof Error ? err.message : String(err)
@@ -376,9 +389,46 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
     const { addr } = req.params
     try {
-      const result = await rpc.call('aicf.creditsByAddress', [addr])
-      jsonSafe(res, result ?? { address: addr, balance: '0', events: [] })
+      const fallback = { available: false, address: addr, balance: '0', spent: '0', minted: '0', events: [] as unknown[] }
+      const attempts: Array<unknown[] | Record<string, unknown> | string> = [[addr], { address: addr }, addr]
+
+      let lastError: unknown = null
+      for (const params of attempts) {
+        try {
+          const result = await rpc.call('aicf.creditsByAddress', params as any)
+          const payload = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+          jsonSafe(res, { available: true, ...payload })
+          return
+        } catch (error) {
+          lastError = error
+          if (isRpcMethodNotFound(error) || isRpcInvalidParams(error)) {
+            continue
+          }
+          if (isRpcUnavailable(error)) {
+            logger.warn({ err: error, address: addr }, 'AICF credits endpoint unavailable; returning empty state')
+            jsonSafe(res, { ...fallback, reason: errorMessage(error) })
+            return
+          }
+          break
+        }
+      }
+
+      const info = await getAICFInfo(rpc, addr)
+      if (info.credits && typeof info.credits === 'object') {
+        jsonSafe(res, { available: info.available, ...(info.credits as object) })
+        return
+      }
+      if (info.available) {
+        jsonSafe(res, { ...fallback, available: true })
+        return
+      }
+
+      if (lastError && !isRpcMethodNotFound(lastError) && !isRpcInvalidParams(lastError) && !isRpcUnavailable(lastError)) {
+        throw lastError
+      }
+      jsonSafe(res, fallback)
     } catch (err) {
+      logger.error({ err, address: addr }, 'AICF address endpoint failed')
       res.status(500).json({ error: 'aicf_address_failed', message: err instanceof Error ? err.message : String(err) })
     }
   })
@@ -504,8 +554,14 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 20 : 20
     try {
       const result = await rpc.call('da.list', [{ limit }])
-      jsonSafe(res, result ?? { blobs: [] })
+      jsonSafe(res, normalizeDaRecent(result))
     } catch (err) {
+      if (isRpcUnavailable(err) || isRpcMethodNotFound(err)) {
+        logger.warn({ err }, 'DA list unavailable; returning empty recent list')
+        jsonSafe(res, { available: false, blobs: [] })
+        return
+      }
+      logger.error({ err }, 'DA recent endpoint failed')
       res.status(500).json({ error: 'da_recent_failed', message: err instanceof Error ? err.message : String(err) })
     }
   })
@@ -643,10 +699,12 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof HttpError) {
+      logger.warn({ err, path: _req.originalUrl, method: _req.method }, 'Handled API error')
       const body: ApiError = { error: 'request_failed', message: err.message, detail: err.detail }
       res.status(err.status).json(body)
       return
     }
+    logger.error({ err, path: _req.originalUrl, method: _req.method }, 'Unhandled API error')
     const message = err instanceof Error ? err.message : 'Unexpected error'
     res.status(500).json({ error: 'unexpected_error', message })
   })
@@ -664,4 +722,65 @@ function redactUrl(url: string): string {
   } catch {
     return url
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function isRpcMethodNotFound(err: unknown): boolean {
+  const message = errorMessage(err).toLowerCase()
+  return (
+    message.includes('method not found') ||
+    message.includes('unknown method') ||
+    message.includes('not implemented') ||
+    (err instanceof RpcError && err.code === -32601)
+  )
+}
+
+function isRpcInvalidParams(err: unknown): boolean {
+  const message = errorMessage(err).toLowerCase()
+  return (
+    message.includes('invalid params') ||
+    message.includes('missing required parameter') ||
+    message.includes('unexpected keyword argument') ||
+    message.includes('params must') ||
+    (err instanceof RpcError && err.code === -32602)
+  )
+}
+
+function isRpcUnavailable(err: unknown): boolean {
+  const message = errorMessage(err).toLowerCase()
+  return (
+    message.includes('not enabled') ||
+    message.includes('disabled') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('not configured') ||
+    message.includes('service unavailable') ||
+    message.includes('rpc unavailable')
+  )
+}
+
+function normalizeDaRecent(result: unknown): { available: boolean; blobs: unknown[]; nextCursor?: string | null } {
+  if (Array.isArray(result)) {
+    return { available: true, blobs: result }
+  }
+  if (result && typeof result === 'object') {
+    const record = result as Record<string, unknown>
+    if (Array.isArray(record.items)) {
+      return {
+        available: true,
+        blobs: record.items,
+        nextCursor: typeof record.next_cursor === 'string' ? record.next_cursor : null
+      }
+    }
+    if (Array.isArray(record.blobs)) {
+      return {
+        available: true,
+        blobs: record.blobs,
+        nextCursor: typeof record.nextCursor === 'string' ? record.nextCursor : null
+      }
+    }
+  }
+  return { available: false, blobs: [] }
 }

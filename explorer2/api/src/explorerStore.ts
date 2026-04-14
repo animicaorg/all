@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
 import type {
   ContractProfile,
@@ -15,8 +16,26 @@ function loadDatabaseModule(): typeof Database {
   return module.default ?? (module as unknown as typeof Database)
 }
 
+const moduleDir = path.dirname(fileURLToPath(import.meta.url))
+
+function migrationCandidates(fileName: string): string[] {
+  const cwd = process.cwd()
+  return [
+    path.resolve(moduleDir, 'migrations', fileName),
+    path.resolve(moduleDir, '..', 'src', 'migrations', fileName),
+    path.resolve(cwd, 'explorer2', 'api', 'src', 'migrations', fileName),
+    path.resolve(cwd, 'src', 'migrations', fileName)
+  ]
+}
+
 function readMigration(fileName: string): string {
-  return fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), 'migrations', fileName), 'utf-8')
+  for (const candidate of migrationCandidates(fileName)) {
+    if (!fs.existsSync(candidate)) continue
+    return fs.readFileSync(candidate, 'utf-8')
+  }
+  throw new Error(
+    `Migration file not found: ${fileName}. Tried: ${migrationCandidates(fileName).join(', ')}`
+  )
 }
 
 function safeJsonParse<T>(value: unknown): T | null {

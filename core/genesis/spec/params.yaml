@@ -16,6 +16,8 @@ policy_roots:
 consensus:
   # Mainnet PoIES parameters (see spec/params.yaml networks.animica:1.consensus.poies)
   theta_initial: 16000000
+  theta_min: 8000000
+  theta_max: 3000000000
   gamma_total_cap: 12000000
   retarget:
     window: 720
@@ -25,7 +27,7 @@ consensus:
       max: 2.0
 
 block:
-  target_seconds: 300.0
+  target_seconds: 60.0
   max_bytes: 2000000
   max_gas: 40000000
   tx_max_bytes: 131072

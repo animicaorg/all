@@ -8,7 +8,6 @@ import { ExplorerStore } from './explorerStore.js'
 import { ContractVerifier } from './contractVerifier.js'
 import { extractDeployCode, extractTxInputData } from './txClassifier.js'
 import pino from 'pino'
-import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 
 const log = pino({ name: 'explorer2-api', level: config.logLevel })
@@ -17,6 +16,15 @@ let chain: ChainClient
 let mode: 'RPC' | 'Local DB' = 'RPC'
 let detectedHead: number | null = null
 let rpcClientRef: RpcClient | undefined
+const runtimeStatus: {
+  rpcReady: boolean | null
+  lastRpcError: string | null
+  lastRpcCheckAt: string | null
+} = {
+  rpcReady: null,
+  lastRpcError: null,
+  lastRpcCheckAt: null
+}
 
 function normalizeBytecode(code: unknown): string | null {
   if (typeof code !== 'string') return null
@@ -63,72 +71,71 @@ function extractConstructorArgs(rawTx: unknown): string | null {
   return null
 }
 
+let refreshRpcState: (() => Promise<void>) | null = null
+
 // Try RPC connection first
 if (config.rpcUrl) {
   log.info({ rpcUrl: config.rpcUrl }, 'Attempting RPC connection...')
-  
+
   const rpcClient = new RpcClient({
     url: config.rpcUrl,
     timeout: config.rpcTimeout,
     maxRetries: config.rpcMaxRetries
   })
   rpcClientRef = rpcClient
-  
+
   const rpcChain = new RpcChainClient(rpcClient)
-  
-  // Test connectivity at startup
-  const rpcOk = await rpcClient.ping()
-  if (rpcOk) {
-    log.info('✓ RPC connection established')
-    mode = 'RPC'
-    chain = rpcChain
-    
-    // Detect head height
+
+  mode = 'RPC'
+  chain = rpcChain
+  let capabilitiesDetected = false
+
+  refreshRpcState = async () => {
+    runtimeStatus.lastRpcCheckAt = new Date().toISOString()
+    const rpcOk = await rpcClient.ping()
+    if (!rpcOk) {
+      runtimeStatus.rpcReady = false
+      runtimeStatus.lastRpcError = 'RPC ping failed'
+      return
+    }
+
+    runtimeStatus.rpcReady = true
+    runtimeStatus.lastRpcError = null
+
     try {
       const head = await rpcChain.getHead() as any
-      detectedHead = head?.height ?? null
-      log.info({ headHeight: detectedHead }, '✓ RPC head detected')
-    } catch (err) {
-      log.warn({ err }, 'Could not detect head height from RPC')
-    }
-    
-    // Detect capabilities in background
-    rpcChain.detectCapabilities().catch(err => {
-      log.warn({ err }, 'Failed to detect capabilities')
-    })
-  } else {
-    log.warn('✗ RPC connection failed, falling back to local database')
-    mode = 'Local DB'
-    
-    const chainDbPath = config.dbPath || defaultChainDbPath(config.chainId, config.dataRoot)
-    let local: LocalChainClient | null = null
-    try {
-      // Check if DB exists before trying to open
-      if (!fs.existsSync(chainDbPath)) {
-        throw new Error(`Database file not found at ${chainDbPath}`)
+      const resolvedHeight = head?.height ?? head?.number ?? null
+      if (typeof resolvedHeight === 'number' && Number.isFinite(resolvedHeight)) {
+        detectedHead = resolvedHeight
       }
-      
-      local = new LocalChainClient(chainDbPath)
-      
-      // Try to get head to verify DB is valid
-      const head = await local.getHead() as any
-      detectedHead = head?.height ?? null
-      
-      log.info({ chainDbPath, headHeight: detectedHead }, '✓ Local chain database loaded')
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Both RPC and local DB unavailable:\nRPC: ${config.rpcUrl} (unreachable)\nLocal DB: ${message}`)
+      runtimeStatus.lastRpcError = error instanceof Error ? error.message : String(error)
+      log.warn({ err: error }, 'Could not detect head height from RPC')
     }
-    if (!local) {
-      throw new Error('Local chain database unavailable.')
+
+    if (!capabilitiesDetected) {
+      try {
+        await rpcChain.detectCapabilities()
+        capabilitiesDetected = true
+      } catch (error) {
+        log.warn({ err: error }, 'Failed to detect capabilities')
+      }
     }
-    chain = new HybridChainClient(local)
+  }
+
+  await refreshRpcState()
+  if (runtimeStatus.rpcReady) {
+    log.info({ headHeight: detectedHead }, '✓ RPC connection established')
+  } else {
+    log.warn(
+      { rpcUrl: config.rpcUrl, error: runtimeStatus.lastRpcError },
+      'RPC is not ready yet; Explorer2 started in degraded RPC mode and will retry'
+    )
   }
 } else {
-  // Should not reach here with default config, but keep as fallback
-  log.warn('No RPC URL configured (unexpected)')
+  log.warn('No RPC URL configured, using local database mode')
   mode = 'Local DB'
-  
+
   const chainDbPath = config.dbPath || defaultChainDbPath(config.chainId, config.dataRoot)
   let local: LocalChainClient | null = null
   try {
@@ -144,6 +151,9 @@ if (config.rpcUrl) {
     throw new Error('Local chain database unavailable.')
   }
   chain = new HybridChainClient(local)
+  runtimeStatus.rpcReady = null
+  runtimeStatus.lastRpcError = null
+  runtimeStatus.lastRpcCheckAt = null
 }
 
 const store = new ExplorerStore({ dbPath: config.explorerIndexDbPath })
@@ -194,10 +204,23 @@ export const diagnostics = {
   chainDbPath: mode === 'Local DB' ? (config.dbPath || defaultChainDbPath(config.chainId, config.dataRoot)) : null,
   chainId: config.chainId,
   detectedHead,
-  timestamp: new Date().toISOString()
+  timestamp: new Date().toISOString(),
+  runtimeStatus
 }
 
 const app = createServer(service, config.corsOrigin, config.logLevel, diagnostics, rpcClientRef)
+
+if (refreshRpcState) {
+  const interval = setInterval(() => {
+    void refreshRpcState!().catch((error) => {
+      runtimeStatus.rpcReady = false
+      runtimeStatus.lastRpcCheckAt = new Date().toISOString()
+      runtimeStatus.lastRpcError = error instanceof Error ? error.message : String(error)
+      log.warn({ err: error }, 'RPC readiness refresh failed')
+    })
+  }, 5_000)
+  interval.unref()
+}
 
 app.listen(config.port, () => {
   log.info({ 
