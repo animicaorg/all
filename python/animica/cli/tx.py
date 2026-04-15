@@ -720,7 +720,7 @@ def _get_next_nonce(
     rpc_url: str,
     addr: str,
     *,
-    nonce_source: str = "confirmed",
+    nonce_source: str = "pending",
     verbose: bool = False,
 ) -> int:
     """
@@ -791,7 +791,7 @@ def _next_nonce(
     *,
     refresh: bool = False,
     verbose: bool = False,
-    nonce_source: str = "confirmed",
+    nonce_source: str = "pending",
 ) -> int:
     """
     Get the next nonce for an address, with caching.
@@ -1146,9 +1146,11 @@ def _resolve_validity_window(
         raise ValueError("--valid-until must be ≥ 0.")
 
     if resolved_from is None or resolved_until is None:
-        head_height = head_height_hint
+        # Prefer canonical chain head over sync snapshots when deriving default
+        # validity windows. sync.getStatus can report optimistic/network tip data.
+        head_height = _get_head_height(rpc_url)
         if head_height is None:
-            head_height = _get_head_height(rpc_url)
+            head_height = head_height_hint
         if head_height is None:
             raise ValidityWindowResolutionError(
                 "Cannot infer validity window without RPC; pass --valid-from/--valid-until (or --ttl)."
@@ -1380,12 +1382,24 @@ def _ensure_node_ready_for_tx(rpc: str) -> int | None:
     # Generate appropriate error message based on height status
     head_h = info.get("head_height")
     best_h = info.get("best_header_height")
+    max_allowed_behind = info.get("max_allowed_behind")
     
     if head_h and best_h and head_h < best_h:
         blocks_behind = best_h - head_h
-        console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
-        console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
-        console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
+        if isinstance(max_allowed_behind, int) and max_allowed_behind >= 0:
+            console.print("\n[bold red]Node is too far behind network tip; transaction submission is unavailable.[/bold red]")
+            console.print(
+                f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} "
+                f"(head={head_h}, best={best_h}, allowed lag={max_allowed_behind}).[/red]"
+            )
+            console.print(
+                f"\n[yellow]Tip:[/yellow] Wait until node is within {max_allowed_behind} block"
+                f"{'s' if max_allowed_behind != 1 else ''} of height {best_h}, then retry."
+            )
+        else:
+            console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
+            console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
+            console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
     else:
         phase = status.get("phase") or status.get("state")
         phase_name = str(phase).upper() if phase is not None else ""
@@ -1409,7 +1423,7 @@ def send(
     ),
     nonce: str = typer.Option("auto", "--nonce", help="Nonce override (default: auto)"),
     nonce_source: str = typer.Option(
-        "confirmed", "--nonce-source", help="Nonce source: pending|confirmed (default: pending)"
+        "pending", "--nonce-source", help="Nonce source: pending|confirmed (default: pending)"
     ),
     valid_from: Optional[int] = typer.Option(
         None, "--valid-from", help="First valid block height (default: current head height)"
@@ -1759,15 +1773,30 @@ def send(
                     # Extract height information from error data if available
                     head_h = None
                     best_h = None
+                    max_allowed_behind = None
                     if e.data is not None and isinstance(e.data, dict):
                         head_h = e.data.get("head_height")
                         best_h = e.data.get("best_header_height")
+                        max_allowed_behind = e.data.get("max_allowed_behind")
                     
                     if head_h and best_h and head_h < best_h:
                         blocks_behind = best_h - head_h
-                        console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
-                        console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
-                        console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
+                        if isinstance(max_allowed_behind, int) and max_allowed_behind >= 0:
+                            console.print(
+                                "\n[bold red]Node is too far behind network tip; transaction submission is unavailable.[/bold red]"
+                            )
+                            console.print(
+                                f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} "
+                                f"(head={head_h}, best={best_h}, allowed lag={max_allowed_behind}).[/red]"
+                            )
+                            console.print(
+                                f"\n[yellow]Tip:[/yellow] Wait until node is within {max_allowed_behind} block"
+                                f"{'s' if max_allowed_behind != 1 else ''} of height {best_h}, then retry."
+                            )
+                        else:
+                            console.print(f"\n[bold red]Node is not at highest height; transaction submission is unavailable.[/bold red]")
+                            console.print(f"[red]Node is behind by {blocks_behind} block{'s' if blocks_behind != 1 else ''} (head={head_h}, best={best_h}).[/red]")
+                            console.print(f"\n[yellow]Tip:[/yellow] Wait for node to sync to height {best_h} before resubmitting.")
                     else:
                         console.print("\n[bold red]Node is still syncing; transaction submission is unavailable.[/bold red]")
                         if e.data is not None:

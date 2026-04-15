@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import typing as t
 
 
@@ -23,6 +24,16 @@ def _first_int(status: StatusMapping, keys: t.Iterable[str]) -> int | None:
             if value is not None:
                 return value
     return None
+
+
+def _max_submit_lag_blocks() -> int:
+    """Return max tolerated lag for tx submission; -1 disables lag gating."""
+    raw = os.environ.get("ANIMICA_TX_SUBMIT_MAX_BEHIND", "5")
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return 5
+    return max(-1, value)
 
 
 def assess_tx_submission_readiness(
@@ -95,6 +106,10 @@ def assess_tx_submission_readiness(
     in_flight_blocks = in_flight_blocks or 0
     queued_blocks_count = queued_blocks_count or 0
     pending_header_batches = pending_header_batches or 0
+    max_allowed_behind = _max_submit_lag_blocks()
+    blocks_behind = None
+    if head_height is not None and best_header_height is not None and best_header_height > head_height:
+        blocks_behind = int(best_header_height - head_height)
 
     info = {
         "phase": phase or None,
@@ -109,21 +124,22 @@ def assess_tx_submission_readiness(
         "in_flight_blocks": in_flight_blocks,
         "queued_blocks_count": queued_blocks_count,
         "last_header_error": last_header_error,
+        "blocks_behind": blocks_behind,
+        "max_allowed_behind": max_allowed_behind,
     }
 
-    # Primary check: node must be at highest height to send transactions
-    # This is the strict requirement - head_height must be >= best_header_height
+    # Primary check: enforce lag ceiling when both heights are known.
+    # Default allows near-tip submission (<=5 blocks behind) to avoid false "tx disabled" states.
     if head_height is not None and best_header_height is not None:
         if head_height < best_header_height:
-            # Node is behind, reject transaction submission
-            return False, info
+            if max_allowed_behind >= 0 and (best_header_height - head_height) > max_allowed_behind:
+                return False, info
+            return True, info
         if head_height > best_header_height:
-            # Node is ahead of network - allow transactions immediately
             return True, info
     
-    # If we reach here, either heights are equal or heights are unknown
-    # For equal heights or unknown heights, check sync status flags
-    
+    # If we reach here, either heights are equal or heights are unknown.
+    # For equal heights or unknown heights, check sync status flags.
     if synchronized is True:
         return True, info
     if syncing_flag is False:
