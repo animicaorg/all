@@ -460,6 +460,207 @@ def test_submit_work_uses_submit_result_head_when_snapshot_lags(
         _restore_miner_globals(snapshot)
 
 
+def test_submit_work_forwards_cached_template_transactions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from mining.templates import HeaderTemplate, MiningJob
+
+    header_tpl = HeaderTemplate(
+        parent_hash=b"\x11" * 32,
+        number=5,
+        chain_id=1337,
+        state_root=b"\x00" * 32,
+        txs_root=b"\x00" * 32,
+        receipts_root=b"\x00" * 32,
+        proofs_root=b"\x00" * 32,
+        da_root=b"\x00" * 32,
+        theta_target_micro=1_000_000,
+        mix_seed=b"\x22" * 32,
+        pq_alg_policy_root=b"\x00" * 32,
+        poies_policy_root=b"\x00" * 32,
+        timestamp=1_700_000_000,
+        work_type=0,
+        extra=b"",
+    )
+    job_obj = MiningJob(
+        job_id="job-with-template",
+        parent_hash=header_tpl.parent_hash,
+        parent_height=4,
+        chain_id=header_tpl.chain_id,
+        target=(1 << 256) - 1,
+        theta_target_micro=header_tpl.theta_target_micro,
+        proof_type="sha256d",
+        challenge=None,
+        expires_at=None,
+        template_version=1,
+        header=header_tpl,
+        sign_bytes=header_tpl.to_sign_bytes(),
+    )
+
+    header_override = {
+        "v": 1,
+        "chainId": 1337,
+        "height": 5,
+        "parentHash": "0x" + ("11" * 32),
+        "timestamp": 1_700_000_000,
+        "stateRoot": "0x" + ("00" * 32),
+        "txsRoot": "0x" + ("00" * 32),
+        "receiptsRoot": "0x" + ("00" * 32),
+        "proofsRoot": "0x" + ("00" * 32),
+        "daRoot": "0x" + ("00" * 32),
+        "mixSeed": "0x" + ("22" * 32),
+        "poiesPolicyRoot": "0x" + ("00" * 32),
+        "pqAlgPolicyRoot": "0x" + ("00" * 32),
+        "thetaMicro": 1_000_000,
+        "workType": 0,
+        "nonce": 0,
+        "extra": "0x",
+    }
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._JOB_CACHE.clear()
+        miner_methods._JOB_CACHE["job-with-template"] = {
+            "job": job_obj,
+            "header_override": header_override,
+            "sign_bytes": job_obj.sign_bytes,
+            "mix_seed": job_obj.header.mix_seed,
+            "block_target": (1 << 256) - 1,
+            "share_target": 0.01,
+            "height": 5,
+            "created_at": 0.0,
+            "parent_hash": header_tpl.parent_hash,
+            "parent_height": 4,
+            "chain_id": 1337,
+            "head_generation": 7,
+            "template_id": "tpl-cache-1",
+            "template_txs_raw": ["0xdeadbeef"],
+            "template_proofs": [],
+        }
+
+        calls = {"head": 0}
+        seen: dict[str, Any] = {}
+
+        def _fake_head_snapshot():
+            calls["head"] += 1
+            if calls["head"] == 1:
+                return {
+                    "height": 4,
+                    "hash": "0x" + ("11" * 32),
+                    "generation": 7,
+                }
+            return {
+                "height": 5,
+                "hash": "0x" + ("aa" * 32),
+                "generation": 8,
+            }
+
+        def _fake_submit_block(block_payload: dict[str, Any]):
+            seen["payload"] = block_payload
+            return {
+                "accepted": True,
+                "block_hash": "0x" + ("aa" * 32),
+                "expected_reward": 0,
+                "credited_amount": 0,
+            }
+
+        monkeypatch.setattr(miner_methods, "_current_head_snapshot", _fake_head_snapshot)
+        monkeypatch.setattr(miner_methods, "miner_submit_block", _fake_submit_block)
+
+        result = miner_methods.miner_submit_work(jobId="job-with-template", nonce="0x2a")
+
+        assert result["accepted"] is True
+        assert seen["payload"]["templateId"] == "tpl-cache-1"
+        assert seen["payload"]["txs"] == ["0xdeadbeef"]
+        assert seen["payload"]["header"]["nonce"] == 0x2A
+    finally:
+        _restore_miner_globals(snapshot)
+
+
+def test_get_work_materializes_mempool_template_when_pending(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Cfg:
+        chain_id = 1337
+
+    class _Snap:
+        entries = [object()]
+
+    class _Mempool:
+        def snapshot(self, *, limit: int = 1000):
+            return _Snap()
+
+        def has_hash(self, _tx_hash: str) -> bool:
+            return False
+
+    class _Ctx:
+        cfg = _Cfg()
+        block_db = None
+        mempool = _Mempool()
+
+        def get_head(self):
+            return {
+                "height": 0,
+                "hash": "0x" + ("11" * 32),
+                "header": {"thetaMicro": 1_000_000},
+            }
+
+    header_override = {
+        "v": 1,
+        "chainId": 1337,
+        "height": 1,
+        "parentHash": "0x" + ("11" * 32),
+        "timestamp": 1_700_000_000,
+        "stateRoot": "0x" + ("00" * 32),
+        "txsRoot": "0x" + ("00" * 32),
+        "receiptsRoot": "0x" + ("00" * 32),
+        "proofsRoot": "0x" + ("00" * 32),
+        "daRoot": "0x" + ("00" * 32),
+        "mixSeed": "0x" + ("22" * 32),
+        "poiesPolicyRoot": "0x" + ("00" * 32),
+        "pqAlgPolicyRoot": "0x" + ("00" * 32),
+        "thetaMicro": 1_000_000,
+        "workType": 0,
+        "nonce": 0,
+        "extra": "0x",
+    }
+    fake_template = {
+        "enabled": True,
+        "templateId": "tpl-work-1",
+        "header": header_override,
+        "target": "0x" + ("f" * 64),
+        "parent": {"height": 0, "hash": "0x" + ("11" * 32)},
+        "txs": [{"hash": "0x" + ("aa" * 32), "raw": "0xdeadbeef"}],
+        "proofs": [],
+        "mempool": {"pending": 1, "selected": 1, "rejected": {}, "rejectedByHash": {}},
+    }
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._HEAD_STATE.clear()
+        miner_methods._HEAD_STATE.update({"height": None, "hash": None, "generation": 0})
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: _Mempool())
+        monkeypatch.setattr(miner_methods, "miner_get_block_template", lambda *_a, **_kw: fake_template)
+
+        payout = "0x" + ("33" * 32)
+        result = miner_methods.miner_get_work({"address": payout})
+
+        assert result["jobId"] == "tpl-work-1"
+        assert result["txCount"] == 1
+        assert isinstance(result.get("mempool"), dict)
+        assert result["mempool"].get("pending") == 1
+
+        cached = miner_methods._JOB_CACHE.get("tpl-work-1")
+        assert isinstance(cached, dict)
+        assert cached.get("template_id") == "tpl-work-1"
+        assert cached.get("template_txs_raw") == ["0xdeadbeef"]
+        assert isinstance(cached.get("header_override"), dict)
+    finally:
+        _restore_miner_globals(snapshot)
+
+
 def test_get_work_address_param_populates_coinbase_extra_without_client(
     monkeypatch: pytest.MonkeyPatch,
 ):

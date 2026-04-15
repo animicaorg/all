@@ -2233,6 +2233,15 @@ def _extract_coinbase_from_header_payload(header_payload: Any) -> bytes | None:
 
 
 def _header_from_cached_job(job: dict[str, Any], *, nonce: int) -> Header:
+    header_override = job.get("header_override")
+    if isinstance(header_override, dict):
+        try:
+            from mining.template_block import header_from_template_view
+
+            return header_from_template_view(header_override, nonce=int(nonce))
+        except Exception:
+            pass
+
     try:
         job_obj = job["job"]
         header_tpl = job_obj.header  # type: ignore[index]
@@ -2258,6 +2267,48 @@ def _header_from_cached_job(job: dict[str, Any], *, nonce: int) -> Header:
         nonce=int(nonce),
         extra=bytes(getattr(header_tpl, "extra", b"") or b""),
     )
+
+
+def _mempool_pending_count(mempool_service: Any) -> int:
+    if mempool_service is None:
+        return 0
+    try:
+        snapshot_fn = getattr(mempool_service, "snapshot", None)
+        if callable(snapshot_fn):
+            snapshot = snapshot_fn(limit=1000)
+            entries = getattr(snapshot, "entries", None)
+            if isinstance(entries, list):
+                return len(entries)
+    except Exception:
+        pass
+    try:
+        stats_fn = getattr(mempool_service, "stats", None)
+        if callable(stats_fn):
+            stats = stats_fn() or {}
+            if isinstance(stats, dict):
+                for key in ("count", "pending_count", "pending", "total_txs", "total"):
+                    value = stats.get(key)
+                    if value is not None:
+                        return int(value)
+    except Exception:
+        pass
+    return 0
+
+
+def _extract_template_raw_txs(template_payload: dict[str, Any]) -> list[str]:
+    raw_txs: list[str] = []
+    txs = template_payload.get("txs")
+    if not isinstance(txs, list):
+        return raw_txs
+    for entry in txs:
+        if isinstance(entry, dict):
+            raw = entry.get("raw")
+            if isinstance(raw, str) and raw.startswith("0x"):
+                raw_txs.append(raw)
+            continue
+        if isinstance(entry, str) and entry.startswith("0x"):
+            raw_txs.append(entry)
+    return raw_txs
 
 
 def _serialize_header_for_submit(header: Header) -> dict[str, Any]:
@@ -4432,6 +4483,10 @@ def _start_auto_task() -> bool:
 def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder, compute_job_id
     from mining.share_submitter import json_sanitize
+    from mining.template_block import (
+        header_from_template_view,
+        header_sign_bytes_from_template_view,
+    )
 
     def _looks_like_address(value: str) -> bool:
         candidate = value.strip()
@@ -4580,6 +4635,106 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
 
     theta = job.theta_target_micro
     block_target = job.target
+    header_dict = asdict(job.header)
+    # asdict preserves bytes; coerce to hex for JSON clients
+    header_view = {
+        k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in header_dict.items()
+    }
+    parent_hash_bytes = _bytes32(header_view.get("parent_hash") or header_view.get("parentHash") or job.parent_hash)
+    parent_height = int(job.parent_height)
+    chain_id = int(job.chain_id)
+    block_template_id: str | None = None
+    template_txs_raw: list[str] = []
+    template_proofs: list[Any] = []
+    mempool_summary: dict[str, Any] = {
+        "pending": 0,
+        "selected": 0,
+        "rejected": {},
+        "rejectedByHash": {},
+        "mempoolEnabled": include_mempool_requested,
+    }
+
+    mempool_service = _resolve_mempool_service(_ctx())
+    pending_count = (
+        _mempool_pending_count(mempool_service)
+        if include_mempool_requested
+        else 0
+    )
+    mempool_summary["pending"] = int(pending_count)
+
+    if include_mempool_requested and pending_count > 0 and payout_address is not None:
+        try:
+            template_payload = miner_get_block_template(
+                {
+                    "address": payout_address,
+                    "include_mempool": True,
+                    "sync_peer_mempools": False,
+                }
+            )
+            if (
+                isinstance(template_payload, dict)
+                and template_payload.get("enabled", True)
+                and isinstance(template_payload.get("header"), dict)
+                and template_payload.get("target") is not None
+            ):
+                template_header_view = dict(template_payload.get("header") or {})
+                _ = header_from_template_view(template_header_view, nonce=0)
+                sign_bytes = header_sign_bytes_from_template_view(template_header_view)
+                header_view = template_header_view
+                theta = int(
+                    header_view.get("thetaMicro")
+                    or header_view.get("theta_target_micro")
+                    or theta
+                )
+                target_value = template_payload.get("target")
+                if isinstance(target_value, str):
+                    block_target = int(target_value, 16) if target_value.startswith("0x") else int(target_value)
+                else:
+                    block_target = int(target_value)
+                parent_hash_bytes = _bytes32(
+                    header_view.get("parentHash")
+                    or header_view.get("parent_hash")
+                    or parent_hash_bytes
+                )
+                parent_obj = template_payload.get("parent")
+                if isinstance(parent_obj, dict):
+                    parent_height = int(parent_obj.get("height") or parent_height)
+                else:
+                    parent_height = max(0, int(header_view.get("height") or header_view.get("number") or 0) - 1)
+                chain_id = int(header_view.get("chainId") or chain_id)
+                template_txs_raw = _extract_template_raw_txs(template_payload)
+                proofs_payload = template_payload.get("proofs")
+                if isinstance(proofs_payload, list):
+                    template_proofs = list(proofs_payload)
+                block_template_id = str(
+                    template_payload.get("templateId")
+                    or template_payload.get("template_id")
+                    or ""
+                ) or None
+                tx_count_hint = int(
+                    template_payload.get("txCount")
+                    or len(template_txs_raw)
+                )
+                mempool_summary_raw = template_payload.get("mempool")
+                if isinstance(mempool_summary_raw, dict):
+                    mempool_summary = dict(mempool_summary_raw)
+                mempool_summary["pending"] = int(
+                    mempool_summary.get("pending")
+                    or mempool_summary.get("mempoolTotal")
+                    or tx_count_hint
+                    or pending_count
+                )
+                mempool_summary.setdefault("selected", int(len(template_txs_raw)))
+                mempool_summary.setdefault("rejected", {})
+                mempool_summary.setdefault("rejectedByHash", {})
+                mempool_summary["mempoolEnabled"] = True
+        except Exception as exc:
+            log.warning(
+                "miner.getWork failed to materialize mempool-aware template; falling back to header-only work",
+                extra={"error": str(exc)},
+            )
+
     share_target = _DEFAULT_SHARE_TARGET
     if share_microtarget is not None:
         try:
@@ -4589,12 +4744,6 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         except Exception:
             share_target = _DEFAULT_SHARE_TARGET
 
-    header_dict = asdict(job.header)
-    # asdict preserves bytes; coerce to hex for JSON clients
-    header_view = {
-        k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
-        for k, v in header_dict.items()
-    }
     head_snapshot = _current_head_snapshot()
     now = time.time()
     for cached_job_id, cached in list(_JOB_CACHE.items()):
@@ -4605,36 +4754,32 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         ):
             _JOB_CACHE.pop(cached_job_id, None)
 
-    job_id = job.job_id
+    job_id = block_template_id or job.job_id
+    job_height = int(header_view.get("height") or header_view.get("number") or job.header.number)
+    mix_seed_hex = header_view.get("mixSeed") or header_view.get("mix_seed")
+    mix_seed_bytes = _bytes32(mix_seed_hex) if mix_seed_hex is not None else bytes(job.header.mix_seed)
+    tx_count = int(len(template_txs_raw)) if template_txs_raw else int(pending_count)
+
     _JOB_CACHE[job_id] = {
         "job": job,
+        "header_override": dict(header_view),
         "sign_bytes": sign_bytes,
-        "mix_seed": job.header.mix_seed,
+        "mix_seed": mix_seed_bytes,
         "block_target": block_target,
         "share_target": share_target,
-        "height": int(job.header.number),
+        "height": int(job_height),
         "created_at": time.time(),
-        "parent_hash": job.parent_hash,
-        "parent_height": job.parent_height,
-        "chain_id": int(job.chain_id),
+        "parent_hash": parent_hash_bytes,
+        "parent_height": int(parent_height),
+        "chain_id": int(chain_id),
         "head_generation": head_snapshot.get("generation"),
         "payout_address": payout_address,
         "payout_address_bytes": payout_address_bytes,
+        "template_id": block_template_id,
+        "template_txs_raw": list(template_txs_raw),
+        "template_proofs": list(template_proofs),
+        "mempool": dict(mempool_summary),
     }
-
-    # Check mempool status for diagnostic compatibility with diagnose_tx_propagation.py
-    # The diagnostic script passes include_mempool param to verify mining includes mempool txs
-    # Get mempool transaction count if service is available
-    # Note: miner.getWork returns a header template without actual tx inclusion,
-    # but we report mempool status for diagnostic purposes
-    tx_count = 0
-    mempool_service = _resolve_mempool_service(_ctx())
-    if mempool_service is not None and include_mempool_requested:
-        try:
-            stats = mempool_service.stats() if hasattr(mempool_service, "stats") else {}
-            tx_count = stats.get("count", 0)
-        except Exception:
-            tx_count = 0
 
     return {
         "jobId": job_id,
@@ -4643,17 +4788,18 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         "thetaMicro": int(theta),
         "miningEnabled": True,
         "mempoolEnabled": include_mempool_requested,
+        "mempool": mempool_summary,
         "txCount": tx_count,
         "shareTarget": float(share_target),
         "target": hex(block_target),
-        "height": int(job.header.number),
-        "parentHash": _to_hex(job.parent_hash),
-        "parentHeight": int(job.parent_height),
-        "chainId": int(job.chain_id),
+        "height": int(job_height),
+        "parentHash": _to_hex(parent_hash_bytes),
+        "parentHeight": int(parent_height),
+        "chainId": int(chain_id),
         "createdAt": int(time.time()),
         "expiresAt": int(job.expires_at) if job.expires_at else None,
         "headGeneration": head_snapshot.get("generation"),
-        "hints": {"mixSeed": _to_hex(job.header.mix_seed)},
+        "hints": {"mixSeed": _to_hex(mix_seed_bytes)},
         "signBytes": _to_hex(sign_bytes),
         "algo": algo_hint,
         "proofType": proof_type,
@@ -4784,12 +4930,21 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
         return res
 
     _JOB_CACHE.pop(str(job_id), None)
+    cached_txs_raw = job.get("template_txs_raw")
+    if not isinstance(cached_txs_raw, list):
+        cached_txs_raw = []
+    cached_proofs = job.get("template_proofs")
+    if not isinstance(cached_proofs, list):
+        cached_proofs = []
+    cached_template_id = job.get("template_id")
     block_payload: dict[str, Any] = {
         "header": _serialize_header_for_submit(header),
-        "txs": [],
-        "proofs": [],
+        "txs": list(cached_txs_raw),
+        "proofs": list(cached_proofs),
         "parentHash": _to_hex(header.parentHash),
     }
+    if isinstance(cached_template_id, str) and cached_template_id:
+        block_payload["templateId"] = cached_template_id
 
     try:
         submit_result = miner_submit_block(block_payload)
@@ -5194,6 +5349,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allow_unsynced_mining = False
     include_aicf = False
     force_empty_template = False
+    sync_peer_mempools = True
     raw_params: dict[str, Any] | list[Any] | None = None
     template_ttl_s = _TEMPLATE_TTL_S
 
@@ -5235,6 +5391,9 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         include_aicf = bool(
             payload.get("include_aicf", payload.get("includeAicf", False))
         )
+        sync_peer_mempools = bool(
+            payload.get("sync_peer_mempools", payload.get("syncPeerMempools", sync_peer_mempools))
+        )
         ttl_raw = payload.get("ttl_seconds", payload.get("ttlSeconds", template_ttl_s))
         try:
             template_ttl_s = max(5.0, min(float(ttl_raw), 300.0))
@@ -5255,6 +5414,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "ttlSeconds",
             "include_aicf",
             "includeAicf",
+            "sync_peer_mempools",
+            "syncPeerMempools",
         }
         if unknown:
             raise rpc_errors.InvalidParams(
@@ -5353,13 +5514,14 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         }
 
         if include_mempool_flag:
-            # Sync mempools from all peers to ensure we have transactions from all nodes
-            synced_peers = _sync_all_peer_mempools(timeout_s=1.5)
-            if synced_peers > 0:
-                log.info(
-                    "Synced peer mempools before building block template",
-                    extra={"peers_synced": synced_peers},
-                )
+            if sync_peer_mempools:
+                # Sync mempools from peers to improve template completeness for external miners.
+                synced_peers = _sync_all_peer_mempools(timeout_s=1.5)
+                if synced_peers > 0:
+                    log.info(
+                        "Synced peer mempools before building block template",
+                        extra={"peers_synced": synced_peers},
+                    )
             
             pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
                 ctx=ctx,
@@ -5375,7 +5537,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                     "mempool_id": id(mempool_service) if mempool_service is not None else "None",
                 },
             )
-            if not pending_entries:
+            if not pending_entries and sync_peer_mempools:
                 requested = _request_missing_mempool_txs(limit=128, wait_s=0.25)
                 if requested:
                     log.info(

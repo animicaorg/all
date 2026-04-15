@@ -75,8 +75,8 @@ def test_tx_sync_gate_blocks_when_behind(monkeypatch: pytest.MonkeyPatch) -> Non
         tx_methods._sync_gate_tx_submit()
 
 
-def test_tx_sync_gate_blocks_when_one_block_behind(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that even being 1 block behind blocks transaction submission."""
+def test_tx_sync_gate_allows_when_one_block_behind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default lag tolerance keeps tx submission enabled when only 1 block behind."""
     status = {
         "phase": "SYNCED",
         "synchronized": True,
@@ -87,6 +87,25 @@ def test_tx_sync_gate_blocks_when_one_block_behind(monkeypatch: pytest.MonkeyPat
         "queued_blocks_count": 0,
     }
     svc = _Svc(status, status)
+    monkeypatch.setattr(deps, "get_ctx", lambda: _Ctx(svc))
+
+    tx_methods._sync_gate_tx_submit()
+
+
+def test_tx_sync_gate_blocks_when_one_block_behind_and_tolerance_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status = {
+        "phase": "SYNCED",
+        "synchronized": True,
+        "head_height": 99,
+        "best_header_height": 100,
+        "in_flight_headers": 0,
+        "in_flight_blocks": 0,
+        "queued_blocks_count": 0,
+    }
+    svc = _Svc(status, status)
+    monkeypatch.setenv("ANIMICA_TX_SUBMIT_MAX_BEHIND", "0")
     monkeypatch.setattr(deps, "get_ctx", lambda: _Ctx(svc))
 
     with pytest.raises(rpc_errors.TemporarilyUnavailable):
