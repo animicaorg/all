@@ -367,6 +367,16 @@ def test_target_block_time_helper_uses_60_seconds_from_config(
     assert miner_methods._target_block_time_s() == 60.0
 
 
+def test_target_block_time_helper_falls_back_to_defaults_issuance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Ctx:
+        params = {"defaults": {"issuance": {"target_block_interval_ms": 60000}}}
+
+    monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+    assert miner_methods._target_block_time_s() == 60.0
+
+
 def test_timestamp_bounds_reads_timestamp_from_dict_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -378,6 +388,24 @@ def test_timestamp_bounds_reads_timestamp_from_dict_header(
         {"timestamp": 1_000}
     )
     assert timestamp_min == 1_000
+
+
+def test_timestamp_bounds_uses_configured_min_block_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Ctx:
+        params = {"monetary": {"issuance": {"min_block_spacing_ms": 60000}}}
+
+    monkeypatch.delenv("ANIMICA_MIN_BLOCK_SPACING_MS", raising=False)
+    monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+    monkeypatch.setattr(miner_methods.time, "time", lambda: 1_100.0)
+    monkeypatch.setenv("ANIMICA_MAX_FUTURE_SECONDS", "10")
+
+    timestamp_min, _timestamp_max, candidate = miner_methods._timestamp_bounds(
+        {"timestamp": 1_000}
+    )
+    assert timestamp_min == 1_060
+    assert candidate == 1_100
 
 
 def test_stale_head_interval_triggers_once_per_target_bucket(

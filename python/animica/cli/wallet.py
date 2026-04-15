@@ -242,6 +242,63 @@ def _refresh_pending_txs(
     pending: list[dict[str, Any]],
     rpc_endpoint: str,
 ) -> Tuple[list[dict[str, Any]], bool]:
+    def _status_token(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    def _status_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                if text.startswith(("0x", "0X")):
+                    return int(text, 16)
+                return int(text)
+            except Exception:
+                return None
+        return None
+
+    def _normalize_status_payload(status_payload: dict[str, Any]) -> str:
+        token = _status_token(status_payload.get("status"))
+        if not token:
+            token = _status_token(status_payload.get("state"))
+
+        if token in {"pending", "pending_mempool", "mempool_accepted", "broadcast", "reserved"}:
+            return "mempool_accepted"
+        if token in {"in_block_pending_confirm", "included", "included_block"}:
+            return "in_block_pending_confirm"
+        if token in {"confirmed", "finalized", "final", "success", "succeeded", "applied", "mined"}:
+            return "confirmed"
+        if token in {"reorged_out", "reorged"}:
+            return "reorged_out"
+        if token in {"failed", "rejected", "dropped", "evicted", "not_found"}:
+            return "dropped"
+
+        confirmations = _status_int(status_payload.get("confirmations"))
+        if confirmations is not None and confirmations > 0:
+            return "confirmed"
+
+        if bool(status_payload.get("finalized")):
+            return "confirmed"
+
+        included_height = _status_int(status_payload.get("included_height"))
+        if included_height is None:
+            included_height = _status_int(status_payload.get("includedHeight"))
+        if included_height is None:
+            included_height = _status_int(status_payload.get("blockNumber"))
+        if included_height is not None and included_height >= 0:
+            return "in_block_pending_confirm"
+
+        return token or _status_token(status_payload.get("status"))
+
     changed = False
     now = datetime.now(timezone.utc).isoformat()
 
@@ -253,11 +310,17 @@ def _refresh_pending_txs(
             status = _request_rpc("tx.getStatus", [tx_hash], rpc_endpoint)
         except Exception:
             continue
+        if isinstance(status, str):
+            status = {"status": status}
         if not isinstance(status, dict):
             continue
-        new_state = status.get("status")
-        confirmations = status.get("confirmations")
-        included_height = status.get("included_height")
+        new_state = _normalize_status_payload(status)
+        confirmations = _status_int(status.get("confirmations"))
+        included_height = _status_int(status.get("included_height"))
+        if included_height is None:
+            included_height = _status_int(status.get("includedHeight"))
+        if included_height is None:
+            included_height = _status_int(status.get("blockNumber"))
         entry["updated_at"] = now
         if confirmations is not None:
             entry["confirmations"] = confirmations
@@ -273,7 +336,7 @@ def _refresh_pending_txs(
                 entry["status"] = "in_block_pending_confirm"
                 changed = True
             continue
-        if new_state == "pending":
+        if new_state in {"pending", "mempool_accepted", "broadcast", "reserved"}:
             if entry.get("status") != "mempool_accepted":
                 entry["status"] = "mempool_accepted"
                 changed = True
@@ -283,10 +346,13 @@ def _refresh_pending_txs(
                 entry["status"] = "reorged_out"
                 changed = True
             continue
-        if new_state == "not_found":
+        if new_state in {"not_found", "dropped", "failed", "rejected", "evicted"}:
             if entry.get("status") != "dropped":
                 entry["status"] = "dropped"
-                entry["drop_reason"] = "not_found"
+                drop_reason = _status_token(
+                    status.get("reason") or status.get("error") or status.get("details") or new_state
+                )
+                entry["drop_reason"] = drop_reason or "not_found"
                 changed = True
 
     return pending, changed

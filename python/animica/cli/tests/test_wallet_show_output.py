@@ -271,3 +271,79 @@ def test_wallet_show_marks_confirmed_txs_non_pending(wallet_with_entry, monkeypa
 
     persisted = json.loads(wallet_file.read_text())
     assert persisted["wallets"][0]["pending_txs"][0]["status"] == "confirmed"
+
+
+def test_wallet_show_normalizes_uppercase_status_payloads(wallet_with_entry, monkeypatch):
+    wallet_file, label = wallet_with_entry
+    wallet_data = json.loads(wallet_file.read_text())
+    wallet_data["wallets"][0]["pending_txs"] = [
+        {
+            "tx_hash": "0xabc",
+            "status": "mempool_accepted",
+            "reserve_amount": 11,
+        }
+    ]
+    wallet_file.write_text(json.dumps(wallet_data, indent=2))
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
+
+    def _mock_request_rpc(method, params, rpc_url):
+        if method == "chain.getHead":
+            return {"height": 16, "hash": "0xabc"}
+        if method == "tx.getStatus":
+            return {
+                "status": "CONFIRMED",
+                "confirmations": "0x2",
+                "includedHeight": "0x10",
+            }
+        return {}
+
+    monkeypatch.setattr(wallet, "_request_rpc", _mock_request_rpc)
+
+    result = runner.invoke(wallet.app, ["show", label])
+    assert result.exit_code == 0, result.output
+    output_data = json.loads(result.output)
+
+    assert output_data["pending_txs"][0]["status"] == "confirmed"
+    assert output_data["pending_txs"][0]["confirmations"] == 2
+    assert output_data["pending_txs"][0]["included_height"] == 16
+    assert output_data["pending_outgoing"] == 0
+
+
+def test_wallet_show_normalizes_rejected_status_payloads(wallet_with_entry, monkeypatch):
+    wallet_file, label = wallet_with_entry
+    wallet_data = json.loads(wallet_file.read_text())
+    wallet_data["wallets"][0]["pending_txs"] = [
+        {
+            "tx_hash": "0xdef",
+            "status": "mempool_accepted",
+            "reserve_amount": 19,
+        }
+    ]
+    wallet_file.write_text(json.dumps(wallet_data, indent=2))
+
+    monkeypatch.setattr(wallet, "_wallet_file_path", lambda x: wallet_file)
+    monkeypatch.setattr(wallet, "_resolve_rpc_url", lambda x: ("http://127.0.0.1:8545", "test"))
+    monkeypatch.setattr(wallet, "get_balance", lambda addr, url: 100)
+
+    def _mock_request_rpc(method, params, rpc_url):
+        if method == "chain.getHead":
+            return {"height": 16, "hash": "0xabc"}
+        if method == "tx.getStatus":
+            return {
+                "status": "REJECTED",
+                "error": "nonce gap",
+            }
+        return {}
+
+    monkeypatch.setattr(wallet, "_request_rpc", _mock_request_rpc)
+
+    result = runner.invoke(wallet.app, ["show", label])
+    assert result.exit_code == 0, result.output
+    output_data = json.loads(result.output)
+
+    assert output_data["pending_txs"][0]["status"] == "dropped"
+    assert output_data["pending_txs"][0]["drop_reason"] == "nonce gap"
+    assert output_data["pending_outgoing"] == 0

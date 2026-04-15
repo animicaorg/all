@@ -1108,20 +1108,44 @@ def _ctx():
 
 
 def _target_block_time_s(default: float = 60.0) -> float:
+    def _coerce_seconds(value: Any, *, ms: bool = False) -> float | None:
+        if value is None:
+            return None
+        try:
+            numeric = float(value)
+        except Exception:
+            return None
+        if not math.isfinite(numeric) or numeric <= 0:
+            return None
+        if ms:
+            numeric = numeric / 1000.0
+        return numeric
+
     try:
         ctx = _ctx()
         params = getattr(ctx, "params", {}) or {}
-        monetary = params.get("monetary") or {}
-        issuance = monetary.get("issuance") or {}
-        target_ms = issuance.get("target_block_interval_ms")
-        if target_ms is not None:
-            return float(target_ms) / 1000.0
-        block = params.get("block") or params.get("blocks") or {}
-        if "target_seconds" in block:
-            return float(block["target_seconds"])
+        if isinstance(params, dict):
+            monetary = params.get("monetary") or {}
+            issuance = monetary.get("issuance") or {}
+            defaults = params.get("defaults") or {}
+            defaults_issuance = defaults.get("issuance") if isinstance(defaults, dict) else {}
+            for src in (issuance, defaults_issuance or {}):
+                target_ms = _coerce_seconds(src.get("target_block_interval_ms"), ms=True)
+                if target_ms is not None:
+                    return float(target_ms)
+            block = params.get("block") or params.get("blocks") or {}
+            target_seconds = _coerce_seconds(block.get("target_seconds"))
+            if target_seconds is not None:
+                return float(target_seconds)
+        else:
+            block_obj = getattr(params, "block", None)
+            target_seconds = _coerce_seconds(getattr(block_obj, "target_seconds", None))
+            if target_seconds is not None:
+                return float(target_seconds)
     except Exception:
         pass
-    return float(os.getenv("ANIMICA_TARGET_BLOCK_TIME_S", default))
+    fallback = _coerce_seconds(os.getenv("ANIMICA_TARGET_BLOCK_TIME_S"), ms=False)
+    return float(fallback if fallback is not None else default)
 
 
 def _min_block_spacing_s() -> float:
@@ -1266,6 +1290,32 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped:
         
         # Return current theta from state
         state = _MINING_STATE.get("theta_state")
+        configured_target = _target_block_time_s()
+        if state and abs(float(state.params.target_block_time_s) - float(configured_target)) > 1e-9:
+            try:
+                from consensus.difficulty import RetargetParams, init_state
+
+                updated_params = RetargetParams(
+                    target_block_time_s=float(configured_target),
+                    half_life_blocks=float(state.params.half_life_blocks),
+                    gain_beta=float(state.params.gain_beta),
+                    step_clamp_micro=int(state.params.step_clamp_micro),
+                    theta_min_micro=int(state.params.theta_min_micro),
+                    theta_max_micro=(
+                        int(state.params.theta_max_micro)
+                        if state.params.theta_max_micro is not None
+                        else None
+                    ),
+                    max_block_time_s=state.params.max_block_time_s,
+                )
+                state = init_state(updated_params, int(state.theta_micro))
+                _MINING_STATE["theta_state"] = state
+                log.info(
+                    "Updated mining theta target block time: %.2fs",
+                    float(configured_target),
+                )
+            except Exception as e:
+                log.warning("Failed to refresh mining theta target block time: %s", e)
         if state:
             return int(state.theta_micro)
         return _resolve_theta()
@@ -1308,16 +1358,17 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped:
         # Clamp dt_seconds to prevent extreme difficulty increases during rapid mining
         # When mining blocks very quickly (e.g., local devnet, testing), dt_seconds can be < 1s
         # This causes ln(dt/T) to be very negative, leading to exponential theta growth
-        # Clamp to 10% of target to prevent runaway difficulty while still allowing adjustment
+        # Clamp to 2% of target to keep updates bounded while still reacting when
+        # blocks arrive much faster than the configured target.
         target_time = state.params.target_block_time_s
-        min_dt_threshold = max(1.0, target_time * 0.1)  # At least 1s or 10% of target
+        min_dt_threshold = max(0.25, target_time * 0.02)  # >=250ms or 2% of target
         
         if dt_seconds < min_dt_threshold:
             original_dt = dt_seconds
             dt_seconds = min_dt_threshold
             log.debug(
                 f"Clamped dt_seconds for theta adjustment: {original_dt:.3f}s → {dt_seconds:.1f}s "
-                f"(min threshold: {min_dt_threshold:.1f}s) to prevent extreme difficulty increases"
+                f"(min threshold: {min_dt_threshold:.2f}s) to prevent extreme difficulty increases"
             )
         
         # Apply retargeting update
@@ -3056,8 +3107,7 @@ def _prune_template_cache(now: float | None = None) -> None:
 
 def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
     parent_ts = _header_timestamp_seconds(parent_header)
-    min_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0"))
-    min_delta = int(math.ceil(min_spacing_ms / 1000)) if min_spacing_ms > 0 else 0
+    min_delta = int(math.ceil(_min_block_spacing_s()))
     timestamp_min = parent_ts + min_delta if parent_ts else int(time.time())
     now = int(time.time())
     max_future = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
