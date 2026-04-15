@@ -1326,8 +1326,10 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped:
         new_theta = int(new_state.theta_micro)
 
         # Avoid one-shot collapse to minimum difficulty on slow catch-up updates.
+        # For normal single-step updates, allow the consensus retarget step clamp
+        # to control downward movement so difficulty can respond symmetrically.
         max_down_step = max(0, int(_THETA_MAX_DOWN_STEP_MICRO))
-        if max_down_step > 0 and new_theta < old_theta:
+        if blocks_skipped > 1 and max_down_step > 0 and new_theta < old_theta:
             min_allowed = max(int(state.params.theta_min_micro), old_theta - max_down_step)
             if new_theta < min_allowed:
                 new_theta = int(min_allowed)

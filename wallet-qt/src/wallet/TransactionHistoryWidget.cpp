@@ -92,6 +92,16 @@ TransactionHistoryWidget::TransactionHistoryWidget(WalletEngine* engine, QWidget
     populateWalletFilter();
 }
 
+TransactionHistoryWidget::~TransactionHistoryWidget()
+{
+    if (m_refreshWatcher->isRunning()) {
+        m_refreshWatcher->future().waitForFinished();
+    }
+    if (m_detailsWatcher->isRunning()) {
+        m_detailsWatcher->future().waitForFinished();
+    }
+}
+
 void TransactionHistoryWidget::populateWalletFilter()
 {
     const QString current = m_walletFilter->currentData().toString();

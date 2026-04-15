@@ -117,6 +117,16 @@ ContractInteractionWidget::ContractInteractionWidget(WalletEngine* engine, QWidg
     updateMethodList();
 }
 
+ContractInteractionWidget::~ContractInteractionWidget()
+{
+    if (m_readWatcher->isRunning()) {
+        m_readWatcher->future().waitForFinished();
+    }
+    if (m_writeWatcher->isRunning()) {
+        m_writeWatcher->future().waitForFinished();
+    }
+}
+
 void ContractInteractionWidget::refreshWallets()
 {
     const QString current = m_walletCombo->currentData().toString();

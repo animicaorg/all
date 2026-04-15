@@ -17,6 +17,7 @@ class ContractInteractionWidget : public QWidget
 
 public:
     explicit ContractInteractionWidget(WalletEngine* engine, QWidget* parent = nullptr);
+    ~ContractInteractionWidget() override;
 
 private slots:
     void refreshWallets();

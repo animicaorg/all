@@ -102,6 +102,9 @@ ReceiveWidget::~ReceiveWidget()
 {
     m_qrGenerationPending = false;
     m_qrUpdateTimer->stop();
+    if (m_qrWatcher->isRunning()) {
+        m_qrWatcher->future().waitForFinished();
+    }
     disconnect(m_qrWatcher, nullptr, this, nullptr);
 }
 
