@@ -263,6 +263,58 @@ def test_theta_adjustment_mixed_intervals():
     assert ratio < 3.0, f"Theta variation too large: {ratio:.2f}x (min={min_theta}, max={max_theta})"
 
 
+def test_theta_adjustment_clamps_large_dt_and_still_reduces_theta():
+    """Very large dt values should be clamped, not skipped."""
+    from rpc.methods.miner import _adjust_theta_for_mining, _MINING_STATE
+
+    _MINING_STATE.clear()
+    _MINING_STATE["adjustment_enabled"] = True
+    _adjust_theta_for_mining(dt_seconds=None)
+
+    state = _MINING_STATE.get("theta_state")
+    assert state is not None
+
+    high_theta = diff.nats_to_micro(8.0)
+    _MINING_STATE["theta_state"] = diff.RetargetState(
+        theta_micro=high_theta,
+        tau_nats=diff.micro_to_nats(high_theta),
+        ema_log_dt_over_T=0.0,
+        alpha=state.alpha,
+        params=state.params,
+    )
+
+    theta_after = _adjust_theta_for_mining(dt_seconds=4000.0)
+    assert theta_after < high_theta
+
+
+def test_theta_adjustment_uses_blocks_skipped_for_catch_up():
+    """Larger blocks_skipped should apply a stronger catch-up adjustment."""
+    from rpc.methods.miner import _adjust_theta_for_mining, _MINING_STATE
+
+    _MINING_STATE.clear()
+    _MINING_STATE["adjustment_enabled"] = True
+    _adjust_theta_for_mining(dt_seconds=None)
+    state = _MINING_STATE.get("theta_state")
+    assert state is not None
+
+    base_theta = diff.nats_to_micro(8.0)
+    baseline_state = diff.RetargetState(
+        theta_micro=base_theta,
+        tau_nats=diff.micro_to_nats(base_theta),
+        ema_log_dt_over_T=0.0,
+        alpha=state.alpha,
+        params=state.params,
+    )
+
+    _MINING_STATE["theta_state"] = baseline_state
+    theta_single = _adjust_theta_for_mining(dt_seconds=180.0, blocks_skipped=1)
+
+    _MINING_STATE["theta_state"] = baseline_state
+    theta_catch_up = _adjust_theta_for_mining(dt_seconds=180.0, blocks_skipped=3)
+
+    assert theta_catch_up < theta_single
+
+
 if __name__ == "__main__":
     # Run tests directly
     test_theta_adjustment_initialization()
