@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import animica.qt_wallet_bridge as bridge
 from animica.cli import tx as tx_cli
 from animica.qt_wallet_bridge import (
     _format_rpc_submit_error,
@@ -145,3 +147,76 @@ def test_format_rpc_submit_error_prefers_mempool_reason_and_context() -> None:
 def test_format_rpc_submit_error_falls_back_to_rpc_error() -> None:
     exc = tx_cli.RpcError(code=-32601, message="Method not found", data=None)
     assert _format_rpc_submit_error(exc) == "rpc error -32601: Method not found"
+
+
+def test_submit_signed_tx_uses_string_rpc_endpoint_when_resolver_returns_tuple(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from_address = "anim1fromqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    to_address = "anim1toqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    store = {
+        "wallets": [
+            {
+                "address": from_address,
+                "public_key_hex": "aa",
+                "secret_key_hex": "bb",
+                "alg_id": 0x1001,
+            }
+        ]
+    }
+
+    monkeypatch.setattr(bridge, "_ensure_store", lambda _path: store)
+    monkeypatch.setattr(bridge, "_resolve_rpc_url", lambda _rpc_url: ("http://rpc.test", "env:OMNI_RPC_URL"))
+    monkeypatch.setattr(
+        bridge,
+        "wallet_overview",
+        lambda *_args, **_kwargs: {"wallets": [{"address": from_address, "balance_available": 10_000_000_000}]},
+    )
+    monkeypatch.setattr(bridge, "_record_pending_tx", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bridge.tx_cli, "_chain_context_from_identity", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(bridge.tx_cli, "_estimate_fee_quote", lambda _rpc: (21000, 1))
+    monkeypatch.setattr(bridge.tx_cli, "_get_default_max_fee", lambda _rpc: 1)
+    monkeypatch.setattr(bridge.tx_cli, "_next_nonce", lambda *_args, **_kwargs: 7)
+    monkeypatch.setattr(bridge.tx_cli, "_resolve_validity_window", lambda *_args, **_kwargs: (1, 100))
+    monkeypatch.setattr(bridge.tx_cli, "_build_tx_body", lambda **_kwargs: b"body")
+    monkeypatch.setattr(bridge.tx_cli, "_hex_to_bytes", lambda _hex: b"\x01")
+    monkeypatch.setattr(
+        bridge.tx_cli,
+        "pq_sign_tx",
+        lambda *_args, **_kwargs: SimpleNamespace(alg_id=0x1001, sig=b"\x02"),
+    )
+    monkeypatch.setattr(
+        bridge.tx_cli,
+        "pq_verify_tx",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, reason=""),
+    )
+    monkeypatch.setattr(bridge.tx_cli, "_build_raw_tx", lambda **_kwargs: b"\xaa")
+    monkeypatch.setattr(bridge.tx_cli, "_rpc", lambda *_args, **_kwargs: "0xabc123")
+    monkeypatch.setattr(bridge.tx_cli, "_get_mempool_status", lambda *_args, **_kwargs: (True, {"status": "ok"}))
+
+    def _fake_chain_identity(rpc_endpoint: object, chain_id_override: int | None = None) -> SimpleNamespace:
+        assert isinstance(rpc_endpoint, str)
+        assert rpc_endpoint == "http://rpc.test"
+        assert chain_id_override is None
+        return SimpleNamespace(identity={"chainId": 1337})
+
+    monkeypatch.setattr(bridge.tx_cli, "_get_chain_identity", _fake_chain_identity)
+
+    result = bridge._submit_signed_tx(
+        wallet_file=str(tmp_path / "wallets.json"),
+        rpc_url=None,
+        from_address=from_address,
+        to_address=to_address,
+        value_base=1000,
+        gas_limit=21000,
+        max_fee=1,
+        chain_id=None,
+        nonce=None,
+        valid_after=None,
+        valid_until=None,
+        ttl_blocks=None,
+        data_bytes=b"",
+    )
+
+    assert result["tx_hash"] == "0xabc123"
+    assert result["chain_id"] == 1337
