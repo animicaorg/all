@@ -64,6 +64,34 @@ def _write_wallet_store(path: Path) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _patch_deploy_submission_primitives(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tx_hash: str = "0x" + "aa" * 32,
+) -> None:
+    monkeypatch.setattr(
+        wallet_utils,
+        "resolve_signer",
+        lambda **_kwargs: _FakeSignerResolution(
+            "anim1q0j0u8j7s6g5f4d3c2b1a0mnpqrstuvwxzy1234567890abcdefghjkqf8z2"
+        ),
+    )
+    monkeypatch.setattr("omni_sdk.contracts.deployer.make_package_bytes", lambda **_kwargs: b"\xA1\x01")
+    monkeypatch.setattr(
+        "omni_sdk.contracts.deployer.build_deploy_tx",
+        lambda **_kwargs: {"kind": "deploy", "payload": {"t": 1, "v": {"code": b"\x01", "manifest": b"{}"}}},
+    )
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.resolve_signing_context",
+        lambda _rpc, chain_id: {"chain_id": chain_id},
+    )
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.sign_transaction_for_submission",
+        lambda _tx, _signer, context: type("Signed", (), {"raw_tx": b"\x99"})(),
+    )
+    monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: tx_hash)
+
+
 def test_contract_group_help_lists_all_commands() -> None:
     result = runner.invoke(app, ["contract", "--help"])
     assert result.exit_code == 0, result.output
@@ -216,13 +244,20 @@ def test_deploy_success_path_and_save(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: "0x" + "aa" * 32)
     monkeypatch.setattr(
         contract_cli,
-        "wait_for_receipt",
+        "_poll_transaction_confirmation",
         lambda _rpc, _tx_hash, **_kwargs: {
-            "txHash": "0x" + "aa" * 32,
-            "contractAddress": "0x" + "11" * 32,
-            "blockNumber": 7,
-            "gasUsed": 51234,
-            "status": "SUCCESS",
+            "receipt": {
+                "txHash": "0x" + "aa" * 32,
+                "contractAddress": "0x" + "11" * 32,
+                "blockNumber": 7,
+                "gasUsed": 51234,
+                "status": "SUCCESS",
+            },
+            "tx_status": "SUCCESS",
+            "block_height": 7,
+            "confirmed": True,
+            "success": True,
+            "timed_out": False,
         },
     )
 
@@ -247,9 +282,15 @@ def test_deploy_success_path_and_save(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["status"] == "ok"
+    assert payload["submitted"] is True
+    assert payload["confirmed"] is True
+    assert payload["success"] is True
     assert payload["tx_hash"].startswith("0x")
     assert payload["contract_address"] == "0x" + "11" * 32
+    assert payload["deployment_name"] == "counter"
     assert payload["saved"] is True
+    assert payload["wait_timeout_secs"] == 60
+    assert "confirmed successfully" in payload["message"].lower()
 
     saved = deployment_store.resolve_deployment("counter", key=None)
     assert isinstance(saved, dict)
@@ -297,12 +338,19 @@ def test_deploy_save_fails_when_address_missing(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: "0x" + "aa" * 32)
     monkeypatch.setattr(
         contract_cli,
-        "wait_for_receipt",
+        "_poll_transaction_confirmation",
         lambda _rpc, _tx_hash, **_kwargs: {
-            "txHash": "0x" + "aa" * 32,
-            "blockNumber": 7,
-            "gasUsed": 51234,
-            "status": "SUCCESS",
+            "receipt": {
+                "txHash": "0x" + "aa" * 32,
+                "blockNumber": 7,
+                "gasUsed": 51234,
+                "status": "SUCCESS",
+            },
+            "tx_status": "SUCCESS",
+            "block_height": 7,
+            "confirmed": True,
+            "success": True,
+            "timed_out": False,
         },
     )
     monkeypatch.setattr(contract_cli, "_derive_contract_address", lambda *a, **k: None)
@@ -325,6 +373,148 @@ def test_deploy_save_fails_when_address_missing(monkeypatch: pytest.MonkeyPatch,
     assert result.exit_code != 0
     assert "save failed" in result.output.lower()
     assert "address could not be resolved" in result.output.lower()
+
+
+def test_deploy_wait_save_timeout_returns_partial_result(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "counter.avm"
+    artifact.write_bytes(b"\xCA\xFE\xBA\xBE")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps({"functions": [{"name": "constructor", "inputs": [], "outputs": []}], "events": []}),
+        encoding="utf-8",
+    )
+
+    _patch_deploy_submission_primitives(monkeypatch)
+    observed: dict[str, Any] = {}
+
+    def _fake_poll(_rpc: Any, _tx_hash: str, **kwargs: Any) -> dict[str, Any]:
+        observed.update(kwargs)
+        return {
+            "receipt": None,
+            "tx_status": "PENDING",
+            "block_height": None,
+            "confirmed": False,
+            "success": None,
+            "timed_out": True,
+        }
+
+    monkeypatch.setattr(contract_cli, "_poll_transaction_confirmation", _fake_poll)
+    monkeypatch.setattr(contract_cli, "_derive_contract_address", lambda *a, **k: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "deploy",
+            str(artifact),
+            "--from",
+            "main",
+            "--abi",
+            str(abi_path),
+            "--wait",
+            "--wait-timeout-secs",
+            "2",
+            "--poll-interval-secs",
+            "0.1",
+            "--save",
+            "--name",
+            "counter",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["submitted"] is True
+    assert payload["confirmed"] is False
+    assert payload["success"] is None
+    assert payload["saved"] is False
+    assert payload["wait_timeout_secs"] == 2
+    assert "not confirmed before timeout" in payload["message"].lower()
+    assert "save was skipped pending confirmation" in payload["message"].lower()
+    assert deployment_store.resolve_deployment("counter", key=None) is None
+    assert observed["wait_timeout_secs"] == 2.0
+    assert observed["poll_interval_secs"] == 0.1
+
+
+def test_deploy_no_wait_returns_tx_hash_without_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "counter.avm"
+    artifact.write_bytes(b"\xAA")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps({"functions": [{"name": "constructor", "inputs": [], "outputs": []}], "events": []}),
+        encoding="utf-8",
+    )
+
+    _patch_deploy_submission_primitives(monkeypatch, tx_hash="0x" + "ab" * 32)
+    monkeypatch.setattr(
+        contract_cli,
+        "_poll_transaction_confirmation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("wait poll should not run for --no-wait")),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "deploy",
+            str(artifact),
+            "--from",
+            "main",
+            "--abi",
+            str(abi_path),
+            "--no-wait",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["submitted"] is True
+    assert payload["confirmed"] is False
+    assert payload["success"] is None
+    assert payload["tx_hash"] == "0x" + "ab" * 32
+    assert payload["saved"] is False
+    assert "without waiting" in payload["message"].lower()
+
+
+def test_deploy_no_wait_with_save_returns_actionable_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    artifact = tmp_path / "counter.avm"
+    artifact.write_bytes(b"\xAB")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps({"functions": [{"name": "constructor", "inputs": [], "outputs": []}], "events": []}),
+        encoding="utf-8",
+    )
+
+    _patch_deploy_submission_primitives(monkeypatch, tx_hash="0x" + "ac" * 32)
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "deploy",
+            str(artifact),
+            "--from",
+            "main",
+            "--abi",
+            str(abi_path),
+            "--no-wait",
+            "--save",
+            "--name",
+            "counter",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["submitted"] is True
+    assert payload["confirmed"] is False
+    assert payload["saved"] is False
+    assert payload["save_requested"] is True
+    assert "save-deployment" in payload["message"]
+    assert "contract receipt" in payload["message"]
+    assert deployment_store.resolve_deployment("counter", key=None) is None
 
 
 def test_deploy_missing_wallet_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -403,6 +593,181 @@ def test_deploy_bad_sender_address_error(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
     assert result.exit_code != 0
     assert "invalid from_addr" in result.output.lower()
+
+
+def test_save_deployment_stores_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ANIMICA_RPC_URL", "http://127.0.0.1:18545/rpc")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps(
+            {
+                "functions": [{"name": "get", "inputs": [], "outputs": [{"type": "int"}]}],
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "save-deployment",
+            "--name",
+            "counter",
+            "--address",
+            "0x" + "12" * 32,
+            "--abi",
+            str(abi_path),
+            "--tx-hash",
+            "0x" + "34" * 32,
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["saved"] is True
+    assert payload["deployment_name"] == "counter"
+    assert payload["address"] == "0x" + "12" * 32
+
+    saved = deployment_store.resolve_deployment("counter", key=None)
+    assert isinstance(saved, dict)
+    assert saved["address"] == "0x" + "12" * 32
+    assert saved["tx_hash"] == "0x" + "34" * 32
+    assert saved["abi_path"] == str(abi_path.resolve())
+
+
+def test_save_deployment_alias_can_be_used_by_call_and_send(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ANIMICA_RPC_URL", "http://127.0.0.1:18545/rpc")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps(
+            {
+                "functions": [
+                    {"name": "get", "inputs": [], "outputs": [{"type": "int"}]},
+                    {"name": "increment", "inputs": [], "outputs": []},
+                ],
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    save_result = runner.invoke(
+        app,
+        [
+            "contract",
+            "save-deployment",
+            "--name",
+            "counter",
+            "--address",
+            "0x" + "56" * 32,
+            "--abi",
+            str(abi_path),
+            "--tx-hash",
+            "0x" + "78" * 32,
+            "--json",
+        ],
+    )
+    assert save_result.exit_code == 0, save_result.output
+
+    monkeypatch.setattr(
+        contract_cli,
+        "_simulate_call_with_fallback",
+        lambda **_kwargs: ("state.call", "0x00", b"\x00", 11, None),
+    )
+    monkeypatch.setattr(
+        wallet_utils,
+        "resolve_signer",
+        lambda **_kwargs: _FakeSignerResolution(
+            "anim1q0j0u8j7s6g5f4d3c2b1a0mnpqrstuvwxzy1234567890abcdefghjkqf8z2"
+        ),
+    )
+    monkeypatch.setattr(contract_cli, "_resolve_nonce", lambda _rpc, _sender, _override: 4)
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.sign_transaction_with_rpc_context",
+        lambda _tx, _signer, chain_id, rpc: type("Signed", (), {"raw_tx": b"\x01"})(),
+    )
+    monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: "0x" + "89" * 32)
+    monkeypatch.setattr(
+        contract_cli,
+        "wait_for_receipt",
+        lambda _rpc, _tx_hash, **_kwargs: {
+            "txHash": "0x" + "89" * 32,
+            "status": "SUCCESS",
+            "blockNumber": 23,
+            "gasUsed": 9000,
+        },
+    )
+
+    call_result = runner.invoke(app, ["contract", "call", "counter", "get", "--json"])
+    assert call_result.exit_code == 0, call_result.output
+    call_payload = json.loads(call_result.output)
+    assert call_payload["decoded_result"] == 11
+    assert call_payload["address"] == "0x" + "56" * 32
+
+    send_result = runner.invoke(
+        app,
+        [
+            "contract",
+            "send",
+            "counter",
+            "increment",
+            "--from",
+            "main",
+            "--wait",
+            "--json",
+        ],
+    )
+    assert send_result.exit_code == 0, send_result.output
+    send_payload = json.loads(send_result.output)
+    assert send_payload["tx_hash"] == "0x" + "89" * 32
+    assert send_payload["tx_status"] == "SUCCESS"
+
+
+def test_contract_receipt_reports_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANIMICA_RPC_URL", "http://127.0.0.1:18545/rpc")
+    monkeypatch.setattr(
+        contract_cli,
+        "_poll_transaction_confirmation",
+        lambda _rpc, _tx_hash, **_kwargs: {
+            "receipt": {
+                "txHash": "0x" + "de" * 32,
+                "contractAddress": "0x" + "fe" * 32,
+                "status": "SUCCESS",
+                "blockNumber": 15,
+                "gasUsed": 1010,
+            },
+            "tx_status": "SUCCESS",
+            "block_height": 15,
+            "confirmed": True,
+            "success": True,
+            "timed_out": False,
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "receipt",
+            "0x" + "de" * 32,
+            "--wait",
+            "--wait-timeout-secs",
+            "3",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["confirmed"] is True
+    assert payload["success"] is True
+    assert payload["contract_address"] == "0x" + "fe" * 32
+    assert payload["tx_hash"] == "0x" + "de" * 32
 
 
 def test_call_decode_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -677,10 +1042,27 @@ def test_counter_happy_path_mocked(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     )
     monkeypatch.setattr(
         contract_cli,
+        "_poll_transaction_confirmation",
+        lambda _rpc, _tx_hash, **_kwargs: {
+            "receipt": {
+                "txHash": "0x" + "ab" * 32,
+                "contractAddress": "0x" + "cd" * 32,
+                "status": "SUCCESS",
+                "blockNumber": 21,
+                "gasUsed": 10001,
+            },
+            "tx_status": "SUCCESS",
+            "block_height": 21,
+            "confirmed": True,
+            "success": True,
+            "timed_out": False,
+        },
+    )
+    monkeypatch.setattr(
+        contract_cli,
         "wait_for_receipt",
         lambda _rpc, _tx_hash, **_kwargs: {
             "txHash": "0x" + "ab" * 32,
-            "contractAddress": "0x" + "cd" * 32,
             "status": "SUCCESS",
             "blockNumber": 21,
             "gasUsed": 10001,
