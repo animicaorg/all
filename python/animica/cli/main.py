@@ -50,9 +50,9 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import (aicf, chain, da, debug, ena, faucet, gui, key, mempool,
-               mining, network, node, p2p, peer, phase2, quantum, rpc,
-               script, snapshot, stratum, studio, sync, tx, wallet)
+from . import (aicf, chain, contract, da, debug, ena, faucet, gui, key,
+               mempool, mining, network, node, p2p, peer, phase2, quantum,
+               rpc, script, snapshot, stratum, studio, sync, tx, wallet)
 
 app = typer.Typer(
     name="animica",
@@ -164,6 +164,7 @@ app.add_typer(aicf.aicf_app, name="aicf")
 app.add_typer(phase2.phase2_app, name="phase2")
 app.add_typer(key.app, name="key")
 app.add_typer(tx.app, name="tx")
+app.add_typer(contract.app, name="contract")
 app.add_typer(rpc.app, name="rpc")
 app.add_typer(chain.app, name="chain")
 app.add_typer(da.app, name="da")

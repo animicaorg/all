@@ -15,6 +15,7 @@ node.py                 Node lifecycle (run, status, logs)
 tx.py                   Transaction operations (build, sign, send, simulate)
 rpc.py                  Raw JSON-RPC method calls
 chain.py                Chain queries (head, blocks, txs, accounts, events)
+contract.py             Contract lifecycle (compile, deploy, call, send, inspect)
 da.py                   Data Availability (submit, get, verify)
 mining.py               Mining pool operations (already exists)
 config.py               (in parent: python/animica/config.py) Network config
@@ -37,12 +38,21 @@ Installation & Usage
     animica wallet --help
     animica key --help
     animica tx --help
+    animica contract --help
     animica rpc --help
     animica chain --help
     animica da --help
     animica miner --help  (alias for mining pool)
     animica network --help
-    animica peer --help
+  animica peer --help
+
+Contract workflow (Counter example):
+```bash
+animica contract compile vm_py/examples/counter/contract.py --out build/counter.avm --abi-out build/counter.abi.json --overwrite
+animica contract deploy build/counter.avm --from main --abi build/counter.abi.json --save --name counter --wait
+animica contract call counter get
+animica contract send counter inc --from main --wait
+```
 
 Global Options
 ==============
