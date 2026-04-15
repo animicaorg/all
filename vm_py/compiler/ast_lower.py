@@ -85,6 +85,10 @@ _CMP_OP = {
     ast.IsNot: "is_not",
 }
 
+_ALLOWED_STDLIB_IMPORTS = {"storage", "events", "abi", "hash", "treasury", "syscalls"}
+_ALLOWED_TYPING_IMPORTS = {"Final"}
+_ALLOWED_FUTURE_IMPORTS = {"annotations"}
+
 # ---- Helpers ------------------------------------------------------------------
 
 
@@ -119,12 +123,103 @@ def _is_const_literal(n: ast.AST) -> bool:
     return False
 
 
+def _is_immutable_value(value: Any) -> bool:
+    if isinstance(value, (int, bool, bytes, str, type(None))):
+        return True
+    if isinstance(value, tuple):
+        return all(_is_immutable_value(x) for x in value)
+    return False
+
+
+def _eval_const_expr(node: ast.AST, *, known: dict[str, Any], filename: str) -> Any:
+    """
+    Evaluate a small, deterministic constant expression subset for module-level
+    constants (for example `MAX = 2**255 - 1`).
+    """
+    if isinstance(node, ast.Constant):
+        if not isinstance(node.value, (int, bool, bytes, str, type(None))):
+            raise _fail(node, filename, f"unsupported module constant type: {type(node.value).__name__}")
+        return node.value
+
+    if isinstance(node, ast.Name):
+        if node.id in known:
+            return known[node.id]
+        raise _fail(node, filename, f"unknown name in module constant expression: {node.id!r}")
+
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_const_expr(elt, known=known, filename=filename) for elt in node.elts)
+
+    if isinstance(node, ast.List):
+        return [_eval_const_expr(elt, known=known, filename=filename) for elt in node.elts]
+
+    if isinstance(node, ast.Dict):
+        out: dict[Any, Any] = {}
+        for k, v in zip(node.keys, node.values):
+            if k is None:
+                raise _fail(node, filename, "dict unpack is not supported in module constants")
+            out[_eval_const_expr(k, known=known, filename=filename)] = _eval_const_expr(
+                v, known=known, filename=filename
+            )
+        return out
+
+    if isinstance(node, ast.UnaryOp):
+        operand = _eval_const_expr(node.operand, known=known, filename=filename)
+        if isinstance(node.op, ast.UAdd):
+            if isinstance(operand, int):
+                return +operand
+        elif isinstance(node.op, ast.USub):
+            if isinstance(operand, int):
+                return -operand
+        elif isinstance(node.op, ast.Invert):
+            if isinstance(operand, int):
+                return ~operand
+        elif isinstance(node.op, ast.Not):
+            return not operand
+        raise _fail(node, filename, f"unsupported unary op in module constant: {type(node.op).__name__}")
+
+    if isinstance(node, ast.BinOp):
+        left = _eval_const_expr(node.left, known=known, filename=filename)
+        right = _eval_const_expr(node.right, known=known, filename=filename)
+        try:
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                return left**right
+            if isinstance(node.op, ast.BitAnd):
+                return left & right
+            if isinstance(node.op, ast.BitOr):
+                return left | right
+            if isinstance(node.op, ast.BitXor):
+                return left ^ right
+            if isinstance(node.op, ast.LShift):
+                return left << right
+            if isinstance(node.op, ast.RShift):
+                return left >> right
+        except Exception as exc:  # noqa: BLE001
+            raise _fail(node, filename, f"invalid module constant operation: {exc}") from exc
+        raise _fail(node, filename, f"unsupported binary op in module constant: {type(node.op).__name__}")
+
+    raise _fail(node, filename, f"unsupported module constant expression: {type(node).__name__}")
+
+
 # ---- Lowering -----------------------------------------------------------------
 
 
 class NodeLowerer:
     def __init__(self, filename: str):
         self.filename = filename
+        # Immutable module-level constants can be folded into IR Const nodes.
+        self.module_constants: dict[str, Any] = {}
+        # Track module names accepted at top level (constants/import bindings).
+        self.module_bindings: set[str] = set()
 
     # -- Entry points --
 
@@ -137,9 +232,12 @@ class NodeLowerer:
                     raise _fail(node, self.filename, f"duplicate function {fn.name!r}")
                 functions[fn.name] = fn
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                # The validator should already block arbitrary imports; allow only
-                # `from stdlib import ...` style if validator permits. We don't lower imports.
-                raise _fail(node, self.filename, "imports not allowed at top level")
+                # Top-level imports are accepted only from a strict allowlist.
+                # They are compiler-only hints; imports are not lowered to IR.
+                self._validate_top_level_import(node)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                # Module constants are accepted for built-in examples/templates.
+                self._record_module_assignment(node)
             elif isinstance(node, ast.Expr) and _is_docstring_node(node):
                 # Skip module docstring.
                 continue
@@ -150,6 +248,70 @@ class NodeLowerer:
                     f"unsupported top-level statement: {type(node).__name__}",
                 )
         return _ir.Module(filename=self.filename, functions=functions)
+
+    def _validate_top_level_import(self, node: ast.Import | ast.ImportFrom) -> None:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name != "stdlib" or alias.asname not in (None, "stdlib"):
+                    raise _fail(node, self.filename, f"import not allowed: {alias.name!r}")
+                self.module_bindings.add("stdlib")
+            return
+
+        if node.level not in (0, None):
+            raise _fail(node, self.filename, "relative imports are not supported")
+        module = node.module or ""
+        names = [a.name for a in node.names]
+
+        if module == "stdlib":
+            for alias in node.names:
+                if alias.name not in _ALLOWED_STDLIB_IMPORTS:
+                    raise _fail(node, self.filename, f"stdlib import not allowed: {alias.name!r}")
+                if alias.asname not in (None, alias.name):
+                    raise _fail(node, self.filename, "stdlib import aliasing is not supported")
+                self.module_bindings.add(alias.name)
+            return
+
+        if module == "typing":
+            for alias in node.names:
+                if alias.name not in _ALLOWED_TYPING_IMPORTS:
+                    raise _fail(node, self.filename, f"typing import not allowed: {alias.name!r}")
+                if alias.asname not in (None, alias.name):
+                    raise _fail(node, self.filename, "typing import aliasing is not supported")
+                self.module_bindings.add(alias.name)
+            return
+
+        if module == "__future__":
+            if any(name not in _ALLOWED_FUTURE_IMPORTS for name in names):
+                raise _fail(node, self.filename, "__future__ import is limited to 'annotations'")
+            return
+
+        raise _fail(node, self.filename, f"import not allowed: {module!r}")
+
+    def _record_module_assignment(self, node: ast.Assign | ast.AnnAssign) -> None:
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+            value = node.value
+        else:
+            targets = [node.target]
+            value = node.value
+
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                raise _fail(target, self.filename, "module assignment target must be a simple name")
+
+            self.module_bindings.add(target.id)
+            if value is None:
+                continue
+            evaluated = _eval_const_expr(
+                value,
+                known=self.module_constants,
+                filename=self.filename,
+            )
+            if _is_immutable_value(evaluated):
+                self.module_constants[target.id] = evaluated
+            elif target.id in self.module_constants:
+                # Mutable value assignment should not be folded as a constant.
+                self.module_constants.pop(target.id, None)
 
     def lower_function(self, fn: ast.FunctionDef) -> _ir.Function:
         # Parameters: only simple args, no varargs/kwargs-only/posonly
@@ -179,6 +341,20 @@ class NodeLowerer:
             return _ir.Return(value=value)
 
         if isinstance(st, ast.Assign):
+            if len(st.targets) == 1 and isinstance(st.targets[0], ast.Subscript):
+                target = st.targets[0]
+                if isinstance(target.slice, ast.Slice):
+                    raise _fail(st, self.filename, "slicing assignment is not supported")
+                return _ir.ExprStmt(
+                    expr=_ir.Call(
+                        func=_ir.Attribute(
+                            value=self.lower_expr(target.value),
+                            attr="__setitem__",
+                        ),
+                        args=[self.lower_expr(target.slice), self.lower_expr(st.value)],
+                        kwargs=[],
+                    )
+                )
             if len(st.targets) != 1:
                 # Support chained a = b = expr by turning into two Assigns
                 assigns: list[_ir.Stmt] = []
@@ -189,6 +365,13 @@ class NodeLowerer:
                     )
                 return assigns
             targets = self._lower_assign_target(st.targets[0])
+            value = self.lower_expr(st.value)
+            return _ir.Assign(targets=targets, value=value)
+
+        if isinstance(st, ast.AnnAssign):
+            if st.value is None:
+                return None
+            targets = self._lower_assign_target(st.target)
             value = self.lower_expr(st.value)
             return _ir.Assign(targets=targets, value=value)
 
@@ -278,51 +461,53 @@ class NodeLowerer:
                 # These typically come as ast.Constant in recent Python, but guard anyway:
                 mapping = {"True": True, "False": False, "None": None}
                 return _ir.Const(mapping[e.id])
+            if e.id in self.module_constants:
+                return _ir.Const(self.module_constants[e.id])
             return _ir.Name(e.id)
 
         if isinstance(e, ast.Tuple):
-            return _ir.Const(
-                tuple(
-                    (
-                        self.lower_expr(elt)
-                        if not _is_const_literal(elt)
-                        else _const_from_ast(elt)
-                    )
-                    for elt in e.elts
-                )
+            if all(_is_const_literal(elt) for elt in e.elts):
+                return _ir.Const(tuple(_const_from_ast(elt) for elt in e.elts))
+            return _ir.Call(
+                func=_ir.Name("__tuple__"),
+                args=[self.lower_expr(elt) for elt in e.elts],
+                kwargs=[],
             )
 
         if isinstance(e, ast.List):
-            return _ir.Const(
-                [
-                    (
-                        self.lower_expr(elt)
-                        if not _is_const_literal(elt)
-                        else _const_from_ast(elt)
-                    )
-                    for elt in e.elts
-                ]
+            if all(_is_const_literal(elt) for elt in e.elts):
+                return _ir.Const([_const_from_ast(elt) for elt in e.elts])
+            return _ir.Call(
+                func=_ir.Name("__list__"),
+                args=[self.lower_expr(elt) for elt in e.elts],
+                kwargs=[],
             )
 
         if isinstance(e, ast.Dict):
+            if all(
+                (k is not None and _is_const_literal(k) and _is_const_literal(v))
+                for k, v in zip(e.keys, e.values)
+            ):
+                return _ir.Const(
+                    {
+                        _const_from_ast(k): _const_from_ast(v)
+                        for k, v in zip(e.keys, e.values)
+                        if k is not None
+                    }
+                )
+
             items: list[tuple[Any, Any]] = []
             for k, v in zip(e.keys, e.values):
                 if k is None:
                     raise _fail(
                         e, self.filename, "**kwargs style dict unpack not supported"
                     )
-                k_val = (
-                    self.lower_expr(k)
-                    if not _is_const_literal(k)
-                    else _const_from_ast(k)
-                )
-                v_val = (
-                    self.lower_expr(v)
-                    if not _is_const_literal(v)
-                    else _const_from_ast(v)
-                )
-                items.append((k_val, v_val))
-            return _ir.Const(dict(items))
+                items.append((self.lower_expr(k), self.lower_expr(v)))
+            flat_args: list[_ir.Expr] = []
+            for key_expr, value_expr in items:
+                flat_args.append(key_expr)
+                flat_args.append(value_expr)
+            return _ir.Call(func=_ir.Name("__dict__"), args=flat_args, kwargs=[])
 
         if isinstance(e, ast.BinOp):
             op = _BIN_OP.get(type(e.op))
@@ -361,22 +546,42 @@ class NodeLowerer:
             return _ir.UnaryOp(op=op, operand=self.lower_expr(e.operand))
 
         if isinstance(e, ast.Compare):
-            # We only allow a single comparator (validator should enforce).
-            if len(e.ops) != 1 or len(e.comparators) != 1:
-                # Lower chained compares as AND of pairwise comparisons if ever permitted
-                raise _fail(e, self.filename, "chained comparisons are not supported")
-            op = _CMP_OP.get(type(e.ops[0]))
-            if op is None:
-                raise _fail(
-                    e,
-                    self.filename,
-                    f"unsupported comparison operator: {type(e.ops[0]).__name__}",
+            if len(e.ops) != len(e.comparators):
+                raise _fail(e, self.filename, "malformed comparison expression")
+            if len(e.ops) == 1:
+                op = _CMP_OP.get(type(e.ops[0]))
+                if op is None:
+                    raise _fail(
+                        e,
+                        self.filename,
+                        f"unsupported comparison operator: {type(e.ops[0]).__name__}",
+                    )
+                return _ir.Compare(
+                    op=op,
+                    left=self.lower_expr(e.left),
+                    right=self.lower_expr(e.comparators[0]),
                 )
-            return _ir.Compare(
-                op=op,
-                left=self.lower_expr(e.left),
-                right=self.lower_expr(e.comparators[0]),
-            )
+
+            # Lower chained comparisons (a < b < c) to (a < b) and (b < c).
+            terms: list[_ir.Expr] = []
+            left_expr = e.left
+            for op_node, right_expr in zip(e.ops, e.comparators):
+                op = _CMP_OP.get(type(op_node))
+                if op is None:
+                    raise _fail(
+                        e,
+                        self.filename,
+                        f"unsupported comparison operator: {type(op_node).__name__}",
+                    )
+                terms.append(
+                    _ir.Compare(
+                        op=op,
+                        left=self.lower_expr(left_expr),
+                        right=self.lower_expr(right_expr),
+                    )
+                )
+                left_expr = right_expr
+            return _ir.BoolOp(op="and", values=terms)
 
         if isinstance(e, ast.Call):
             func_expr = self._lower_callee(e.func)
@@ -418,11 +623,12 @@ class NodeLowerer:
         raise _fail(e, self.filename, f"unsupported expression: {type(e).__name__}")
 
     def _lower_callee(self, f: ast.expr) -> _ir.Expr:
-        # Allow Name or chained Attribute (e.g., stdlib.storage.get)
+        # Allow Name and Attribute callees, including bound-method calls on
+        # computed expressions (e.g. int(x).to_bytes(...)).
         if isinstance(f, ast.Name):
             return _ir.Name(f.id)
         if isinstance(f, ast.Attribute):
-            return _ir.Attribute(value=self._lower_callee(f.value), attr=f.attr)
+            return _ir.Attribute(value=self.lower_expr(f.value), attr=f.attr)
         # Disallow lambdas and other dynamic callables in deterministic subset
         raise _fail(f, self.filename, "callable must be a name or attribute")
 

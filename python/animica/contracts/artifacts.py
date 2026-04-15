@@ -136,6 +136,21 @@ def load_abi_from_manifest(manifest_path: Optional[Path]) -> Optional[Any]:
     return None
 
 
+def resolve_abi_path_from_manifest(manifest_path: Optional[Path]) -> Optional[Path]:
+    if manifest_path is None:
+        return None
+    manifest = _safe_json_load(manifest_path)
+    if not isinstance(manifest, dict):
+        return None
+    abi_path_value = manifest.get("abiPath") or manifest.get("abi_path")
+    if not isinstance(abi_path_value, str) or not abi_path_value.strip():
+        return None
+    abi_path = (manifest_path.parent / abi_path_value).resolve()
+    if abi_path.exists() and abi_path.is_file():
+        return abi_path
+    return None
+
+
 def generate_abi_from_source(source_path: Path) -> Optional[Any]:
     try:
         from contracts.tools.abi_gen import extract_abi_from_source
@@ -295,6 +310,62 @@ def find_artifact_by_path(path: Path) -> Optional[dict[str, Any]]:
     for item in list_saved_artifacts():
         if str(item.get("artifact_path") or "") == resolved:
             return item
+    return None
+
+
+def find_artifact_by_source(path: Path) -> Optional[dict[str, Any]]:
+    resolved = str(path.expanduser().resolve())
+    for item in list_saved_artifacts():
+        if str(item.get("source_path") or "") == resolved:
+            return item
+    return None
+
+
+def infer_saved_abi_path_for_source(source_path: Path) -> Optional[Path]:
+    saved = find_artifact_by_source(source_path)
+    if not isinstance(saved, dict):
+        return None
+    raw = saved.get("abi_path")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    candidate = Path(raw).expanduser().resolve()
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
+def infer_fixture_abi_path_for_source(source_path: Path) -> Optional[Path]:
+    source = source_path.expanduser().resolve()
+    search_start = source.parent if source.is_file() else source
+    fixture_dir: Optional[Path] = None
+    for parent in [search_start, *search_start.parents]:
+        candidate = parent / "tests" / "fixtures" / "abi"
+        if candidate.exists() and candidate.is_dir():
+            fixture_dir = candidate
+            break
+    if fixture_dir is None:
+        return None
+
+    names: list[str] = []
+    for value in (source.stem, source.parent.name, source.parent.parent.name):
+        text = str(value or "").strip()
+        if text and text not in names:
+            names.append(text)
+    for name in names:
+        candidate = (fixture_dir / f"{name}.json").resolve()
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def infer_abi_path_for_source(source_path: Path, manifest_path: Optional[Path]) -> Optional[Path]:
+    for candidate in (
+        resolve_abi_path_from_manifest(manifest_path),
+        infer_saved_abi_path_for_source(source_path),
+        infer_fixture_abi_path_for_source(source_path),
+    ):
+        if candidate is not None:
+            return candidate
     return None
 
 

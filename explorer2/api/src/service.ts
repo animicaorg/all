@@ -58,6 +58,12 @@ export interface ExplorerServiceOptions {
   [key: string]: unknown
 }
 
+export interface ThetaHistoryPoint {
+  height: number
+  time: number
+  thetaMicro: number | null
+}
+
 export class ExplorerService {
   private coalescer = new RequestCoalescer()
   private txLifecycle = new TxLifecycleStore()
@@ -72,7 +78,7 @@ export class ExplorerService {
     this.verifier = options.verifier ?? null
   }
 
-  async getHead(): Promise<{ head: HeadView; stats: any }> {
+  async getHead(): Promise<{ head: HeadView; stats: any; thetaHistory: ThetaHistoryPoint[] }> {
     return this.coalescer.run('head', async () => {
       const headRaw = await this.safeRpc(() => this.rpc.getHead())
       const head = normalizeHead(headRaw)
@@ -84,7 +90,14 @@ export class ExplorerService {
       ])
 
       const stats = buildNetworkStats(blocks, mempool, peers)
-      return { head, stats }
+      const thetaHistory = blocks
+        .map((block) => ({
+          height: block.height,
+          time: block.time,
+          thetaMicro: isDefinedNumber(block.thetaMicro) ? block.thetaMicro : null
+        }))
+        .reverse()
+      return { head, stats, thetaHistory }
     })
   }
 

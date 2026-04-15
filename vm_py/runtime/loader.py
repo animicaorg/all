@@ -30,7 +30,6 @@ Optional fields we accept but do not require:
 
 from __future__ import annotations
 
-import ast
 import json
 import sys
 from dataclasses import dataclass
@@ -354,59 +353,17 @@ def _best_effort_exports(manifest: Dict[str, Any], ir_module: Any) -> List[str]:
 def _lower_to_ir_module(source: str, *, name_hint: str) -> Any:
     if _lower is None:
         raise CompileError("vm_py.compiler.ast_lower is not available")
+    try:
+        from vm_py.compiler.lowering_adapter import lower_source_with_compat
 
-    parsed = ast.parse(source, filename=name_hint)
-    errors: List[str] = []
-
-    ast_candidates = (
-        "lower_to_ir",
-        "lower_from_ast",
-        "lower_ast",
-        "lower_module",
-        "lower",
-        "compile",
-    )
-    for nm in ast_candidates:
-        fn = getattr(_lower, nm, None)
-        if not callable(fn):
-            continue
-        attempts = (
-            lambda: fn(parsed, filename=name_hint),  # type: ignore[misc]
-            lambda: fn(parsed, name=name_hint),  # type: ignore[misc]
-            lambda: fn(parsed, name_hint),  # type: ignore[misc]
-            lambda: fn(parsed),  # type: ignore[misc]
+        out, _meta = lower_source_with_compat(
+            _lower,
+            source=source,
+            filename=name_hint,
         )
-        for attempt in attempts:
-            try:
-                return attempt()
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{nm}(ast): {exc}")
-
-    source_candidates = (
-        "lower_source",
-        "compile_source",
-        "lower",
-        "compile",
-    )
-    for nm in source_candidates:
-        fn = getattr(_lower, nm, None)
-        if not callable(fn):
-            continue
-        attempts = (
-            lambda: fn(source, name=name_hint),  # type: ignore[misc]
-            lambda: fn(source, filename=name_hint),  # type: ignore[misc]
-            lambda: fn(source),  # type: ignore[misc]
-        )
-        for attempt in attempts:
-            try:
-                return attempt()
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{nm}(source): {exc}")
-
-    raise CompileError(
-        "unable to lower source to IR; attempted helpers: "
-        + "; ".join(errors[:8] or ["<none>"])
-    )
+        return out
+    except Exception as exc:  # noqa: BLE001
+        raise CompileError(f"unable to lower source to IR: {exc}") from exc
 
 
 def build_source_bundle_bytes(

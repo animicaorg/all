@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import { formatNumber, formatTimestamp, shorten, timeAgo } from '../lib/format'
+import { formatNumber, shorten, timeAgo } from '../lib/format'
 import StatCard from '../components/StatCard'
 import Skeleton from '../components/Skeleton'
 import ErrorDisplay from '../components/ErrorDisplay'
+import ThetaMicroChart from '../components/ThetaMicroChart'
 
 export default function HomePage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getHead>> | null>(null)
@@ -111,6 +112,12 @@ export default function HomePage() {
           )}
         </div>
       </section>
+
+      {data ? (
+        <ThetaMicroChart points={data.thetaHistory ?? []} />
+      ) : (
+        <Skeleton className="h-80" />
+      )}
 
       <section className="rounded-xl border border-day-200 bg-white p-6 shadow-sm dark:border-night-800 dark:bg-night-900">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Welcome to Animica Explorer</h2>

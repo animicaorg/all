@@ -22,13 +22,12 @@ if needed. It never reaches out to the network.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import sys
 from dataclasses import asdict, is_dataclass
 from hashlib import sha3_256
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 # ---------------------- small utils ---------------------- #
 
@@ -104,22 +103,40 @@ def compile_via_runtime_loader(
                 and len(res) == 2
                 and isinstance(res[0], (bytes, bytearray))
             ):
-                return bytes(res[0]), dict(res[1])
+                meta = res[1] if isinstance(res[1], dict) else {"loader_meta": _safe_json(res[1])}
+                return bytes(res[0]), {
+                    "pipeline": f"loader.{fn_name}",
+                    "lowering": None,
+                    "gas_upper_bound": _safe_json(meta.get("gas_upper_bound")),
+                    "details": _safe_json(meta),
+                }
             if (
                 isinstance(res, tuple)
                 and len(res) >= 3
                 and isinstance(res[0], (bytes, bytearray))
             ):
-                meta: Dict[str, Any] = {"pipeline": f"loader.{fn_name}"}
-                if len(res) >= 3:
-                    meta["gas_upper_bound"] = _safe_json(res[2])
-                return bytes(res[0]), meta
+                return bytes(res[0]), {
+                    "pipeline": f"loader.{fn_name}",
+                    "lowering": None,
+                    "gas_upper_bound": _safe_json(res[2]) if len(res) >= 3 else None,
+                    "details": {},
+                }
             if isinstance(res, (bytes, bytearray)):
-                return bytes(res), {}
+                return bytes(res), {
+                    "pipeline": f"loader.{fn_name}",
+                    "lowering": None,
+                    "gas_upper_bound": None,
+                    "details": {},
+                }
             # Fallback: maybe it returned (ir_obj, meta) and we need to encode
             ir_obj = res
             ir_bytes, meta2 = encode_ir_flex(ir_obj)
-            return ir_bytes, meta2
+            return ir_bytes, {
+                "pipeline": f"loader.{fn_name}.encode_fallback",
+                "lowering": None,
+                "gas_upper_bound": _safe_json(meta2.get("gas_upper_bound")) if isinstance(meta2, dict) else None,
+                "details": _safe_json(meta2 if isinstance(meta2, dict) else {}),
+            }
 
     # If text compile not present, try file-based helper by temporarily writing to a temp file
     import tempfile
@@ -136,12 +153,28 @@ def compile_via_runtime_loader(
                 and len(res) == 2
                 and isinstance(res[0], (bytes, bytearray))
             ):
-                return bytes(res[0]), dict(res[1])
+                meta = res[1] if isinstance(res[1], dict) else {"loader_meta": _safe_json(res[1])}
+                return bytes(res[0]), {
+                    "pipeline": "loader.compile_file",
+                    "lowering": None,
+                    "gas_upper_bound": _safe_json(meta.get("gas_upper_bound")),
+                    "details": _safe_json(meta),
+                }
             if isinstance(res, (bytes, bytearray)):
-                return bytes(res), {}
+                return bytes(res), {
+                    "pipeline": "loader.compile_file",
+                    "lowering": None,
+                    "gas_upper_bound": None,
+                    "details": {},
+                }
             ir_obj = res
             ir_bytes, meta2 = encode_ir_flex(ir_obj)
-            return ir_bytes, meta2
+            return ir_bytes, {
+                "pipeline": "loader.compile_file.encode_fallback",
+                "lowering": None,
+                "gas_upper_bound": _safe_json(meta2.get("gas_upper_bound")) if isinstance(meta2, dict) else None,
+                "details": _safe_json(meta2 if isinstance(meta2, dict) else {}),
+            }
 
     raise RuntimeError("No suitable compile_* entry found in vm_py.runtime.loader")
 
@@ -178,64 +211,54 @@ def compile_via_lower_pipeline(
     """
     from importlib import import_module
 
-    mod_ast = ast.parse(src, filename=filename)
-
     lower = import_module("vm_py.compiler.ast_lower")
-    ir_mod = None
-    errors: List[str] = []
-    for name in (
-        "lower_to_ir",
-        "lower_from_ast",
-        "lower_ast",
-        "lower_module",
-        "lower",
-        "lower_from_source",
-    ):
-        fn = getattr(lower, name, None)
-        if not callable(fn):
-            continue
-        attempts = (
-            lambda: fn(mod_ast, filename=filename),  # type: ignore[misc]
-            lambda: fn(mod_ast, name=filename),  # type: ignore[misc]
-            lambda: fn(mod_ast, filename),  # type: ignore[misc]
-            lambda: fn(mod_ast),  # type: ignore[misc]
+    adapter = import_module("vm_py.compiler.lowering_adapter")
+    try:
+        ir_mod, lowering_meta = adapter.lower_source_with_compat(  # type: ignore[attr-defined]
+            lower,
+            source=src,
+            filename=filename,
         )
-        for attempt in attempts:
-            try:
-                ir_mod = attempt()
-                break
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{name}: {exc}")
-        if ir_mod is not None:
-            break
-    if ir_mod is None:
-        raise RuntimeError(
-            "No compatible lower() function found in vm_py.compiler.ast_lower: "
-            + "; ".join(errors[:8] or ["<none>"])
-        )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"No compatible lower() function found in vm_py.compiler.ast_lower: {exc}") from exc
 
     # Optional typecheck step
+    typecheck_result = "skipped"
     try:
         tc = import_module("vm_py.compiler.typecheck")
         _call_first(tc, ("typecheck", "typecheck_module", "check", "validate"), ir_mod)
+        typecheck_result = "ok"
     except Exception as e:
         # Surface typecheck errors; otherwise allow proceed if module isn't present
         if not isinstance(e, (ModuleNotFoundError, ImportError, AttributeError)):
-            raise
+            typecheck_result = f"failed: {e}"
+        else:
+            typecheck_result = "unavailable"
 
     # Optional static gas estimate
-    gas_meta: Dict[str, Any] = {}
+    gas_upper_bound = None
     try:
         ge = import_module("vm_py.compiler.gas_estimator")
         estimate = _call_first(
             ge, ("estimate", "estimate_module", "estimate_upper_bound"), ir_mod
         )
-        gas_meta["gas_estimate"] = _safe_json(estimate)
+        gas_upper_bound = _safe_json(estimate)
     except Exception:
-        pass
+        gas_upper_bound = None
 
     ir_bytes, enc_meta = encode_ir_flex(ir_mod)
-    meta = {"pipeline": "lower", **gas_meta, **enc_meta}
+    meta = {
+        "pipeline": "lower.ast_lower",
+        "lowering": {
+            "helper": getattr(lowering_meta, "helper_name", None),
+            "input_mode": getattr(lowering_meta, "input_mode", None),
+            "signature": getattr(lowering_meta, "signature", None),
+            "call": getattr(lowering_meta, "call_repr", None),
+        },
+        "typecheck": typecheck_result,
+        "gas_upper_bound": gas_upper_bound,
+        "details": _safe_json(enc_meta if isinstance(enc_meta, dict) else {}),
+    }
     return ir_bytes, meta
 
 
@@ -247,13 +270,28 @@ def compile_source_to_ir(
     """
     # Attempt high-level loader fast path
     try:
-        return compile_via_runtime_loader(src, filename=filename)
+        ir_bytes, meta = compile_via_runtime_loader(src, filename=filename)
+        return ir_bytes, {
+            "filename": filename,
+            "pipeline": meta.get("pipeline", "loader"),
+            "lowering": meta.get("lowering"),
+            "typecheck": meta.get("typecheck"),
+            "gas_upper_bound": meta.get("gas_upper_bound"),
+            "details": _safe_json(meta.get("details", {})),
+        }
     except Exception as e1:
         eprint(f"[vm-compile] runtime loader path unavailable: {e1}")
 
     # Fallback to lower pipeline
     ir_bytes, meta = compile_via_lower_pipeline(src, filename=filename)
-    return ir_bytes, meta
+    return ir_bytes, {
+        "filename": filename,
+        "pipeline": meta.get("pipeline", "lower"),
+        "lowering": meta.get("lowering"),
+        "typecheck": meta.get("typecheck"),
+        "gas_upper_bound": meta.get("gas_upper_bound"),
+        "details": _safe_json(meta.get("details", {})),
+    }
 
 
 def compile_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:

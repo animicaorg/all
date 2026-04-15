@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 from datetime import datetime, timezone
@@ -430,6 +431,88 @@ def _default_manifest_for_contract(
     return manifest
 
 
+def _coerce_abi_for_inspection(abi_obj: Optional[Any]) -> Optional[Any]:
+    if abi_obj is None:
+        return None
+    try:
+        return abi_utils.coerce_abi(abi_obj)
+    except Exception:
+        return abi_obj
+
+
+def _extract_callable_functions(abi_obj: Optional[Any]) -> list[str]:
+    if abi_obj is None:
+        return []
+    coerced = _coerce_abi_for_inspection(abi_obj)
+    names: set[str] = set()
+    try:
+        normalized = abi_utils.normalize_abi(coerced)
+        fn_map = normalized.get("functions", {})
+        if isinstance(fn_map, dict):
+            for key in fn_map.keys():
+                if isinstance(key, str) and key.strip():
+                    names.add(key.strip())
+    except Exception:
+        pass
+
+    if isinstance(coerced, dict):
+        funcs = coerced.get("functions")
+        if isinstance(funcs, list):
+            for item in funcs:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                    if isinstance(name, str) and name.strip():
+                        names.add(name.strip())
+        entries = coerced.get("entries")
+        if isinstance(entries, list):
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("type") or "").strip().lower() != "function":
+                    continue
+                name = item.get("name")
+                if isinstance(name, str) and name.strip():
+                    names.add(name.strip())
+    elif isinstance(coerced, list):
+        for item in coerced:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().lower() != "function":
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                names.add(name.strip())
+    return sorted(names)
+
+
+def _discover_source_callable_functions(source_path: Path) -> list[str]:
+    try:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    except Exception:
+        return []
+    names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            name = str(node.name or "").strip()
+            if not name or name.startswith("_"):
+                continue
+            names.append(name)
+    return sorted(set(names))
+
+
+def _tx_status_is_success(status: Optional[str]) -> Optional[bool]:
+    if status is None:
+        return None
+    text = status.strip().lower()
+    if not text:
+        return None
+    if text in {"success", "succeeded", "ok", "applied", "included", "1", "true"}:
+        return True
+    if text in {"failed", "failure", "error", "revert", "reverted", "0", "false"}:
+        return False
+    return None
+
+
 def _parse_constructor_args(
     *,
     args_json: Optional[str],
@@ -635,9 +718,15 @@ def contract_deploy(
     if not input_path.exists() or not input_path.is_file():
         raise typer.BadParameter(f"artifact or source file not found: {artifact_or_source}")
 
+    if save and not wait:
+        raise typer.BadParameter("--save requires --wait so deployment success/address can be confirmed")
+
     if input_path.suffix.lower() == ".py":
         source_path = input_path
-        ir_bytes, _compiler_meta = artifact_store.compile_source_to_ir_bytes(source_path)
+        try:
+            ir_bytes, _compiler_meta = artifact_store.compile_source_to_ir_bytes(source_path)
+        except Exception as exc:  # noqa: BLE001
+            raise typer.BadParameter(f"contract compile failed before deployment: {exc}") from exc
         code_hash = artifact_store.sha3_256_hex(ir_bytes)
         manifest_path = artifact_store.resolve_manifest_for_source(source_path)
         contract_name = artifact_store.detect_contract_name(source_path, manifest_path)
@@ -781,37 +870,48 @@ def contract_deploy(
     persisted_artifact_path: Optional[Path] = artifact_path
     persisted_abi_path: Optional[Path] = abi_path
     persisted_manifest_path: Optional[Path] = manifest_path
+    save_error: Optional[str] = None
 
     if save:
-        if persisted_artifact_path is None:
-            persisted_artifact_path = artifact_store.default_artifact_path(contract_name, code_hash)
-            if not persisted_artifact_path.exists():
-                artifact_store.write_artifact_bytes(persisted_artifact_path, artifact_bytes, overwrite=False)
+        try:
+            if wait_error:
+                raise RuntimeError(f"receipt wait failed: {wait_error}")
+            status_success = _tx_status_is_success(tx_status)
+            if status_success is False:
+                raise RuntimeError(f"transaction status indicates failure: {tx_status}")
+            if not contract_address:
+                raise RuntimeError(
+                    "contract address could not be resolved from receipt/metadata"
+                )
 
-        if persisted_abi_path is None and abi_obj is not None:
-            persisted_abi_path = artifact_store.default_abi_path(contract_name, code_hash)
-            if not persisted_abi_path.exists():
-                artifact_store.write_json_file(persisted_abi_path, abi_obj, overwrite=False)
+            if persisted_artifact_path is None:
+                persisted_artifact_path = artifact_store.default_artifact_path(contract_name, code_hash)
+                if not persisted_artifact_path.exists():
+                    artifact_store.write_artifact_bytes(persisted_artifact_path, artifact_bytes, overwrite=False)
 
-        if persisted_manifest_path is None:
-            persisted_manifest_path = artifact_store.default_manifest_path(contract_name, code_hash)
-            if not persisted_manifest_path.exists():
-                artifact_store.write_json_file(persisted_manifest_path, manifest_obj, overwrite=False)
+            if persisted_abi_path is None and abi_obj is not None:
+                persisted_abi_path = artifact_store.default_abi_path(contract_name, code_hash)
+                if not persisted_abi_path.exists():
+                    artifact_store.write_json_file(persisted_abi_path, abi_obj, overwrite=False)
 
-        artifact_store.save_artifact_record(
-            artifact_store.infer_artifact_metadata(
-                artifact_path=persisted_artifact_path,
-                source_path=source_path,
-                code_hash=code_hash,
-                contract_name=contract_name,
-                abi_path=persisted_abi_path,
-                manifest_path=persisted_manifest_path,
-                compiler_meta={"compiled_during": "deploy"} if source_path is not None else {},
-                optimize=True,
+            if persisted_manifest_path is None:
+                persisted_manifest_path = artifact_store.default_manifest_path(contract_name, code_hash)
+                if not persisted_manifest_path.exists():
+                    artifact_store.write_json_file(persisted_manifest_path, manifest_obj, overwrite=False)
+
+            artifact_store.save_artifact_record(
+                artifact_store.infer_artifact_metadata(
+                    artifact_path=persisted_artifact_path,
+                    source_path=source_path,
+                    code_hash=code_hash,
+                    contract_name=contract_name,
+                    abi_path=persisted_abi_path,
+                    manifest_path=persisted_manifest_path,
+                    compiler_meta={"compiled_during": "deploy"} if source_path is not None else {},
+                    optimize=True,
+                )
             )
-        )
 
-        if contract_address:
             deployment_name = (name or contract_name).strip() or contract_name
             deployment_store.save_deployment_record(
                 {
@@ -834,6 +934,13 @@ def contract_deploy(
                 },
                 key=deployment_key,
             )
+        except Exception as exc:  # noqa: BLE001
+            save_error = str(exc)
+
+    if save and save_error:
+        raise typer.BadParameter(
+            f"deployment submitted (tx_hash={tx_hash}) but save failed: {save_error}"
+        )
 
     payload = {
         "status": "ok",
@@ -1130,6 +1237,82 @@ def contract_inspect(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     path = Path(artifact_or_deployment).expanduser().resolve()
+    if path.exists() and path.is_file() and path.suffix.lower() == ".py":
+        source_path = path
+        manifest_path = artifact_store.resolve_manifest_for_source(source_path)
+        manifest_obj = _load_manifest_from_path(manifest_path) if manifest_path else None
+
+        abi_obj: Optional[Any] = None
+        abi_path = artifact_store.infer_abi_path_for_source(source_path, manifest_path)
+        if abi_path is not None:
+            try:
+                abi_obj = abi_utils.load_abi_document(abi_path)
+            except Exception:
+                abi_obj = None
+        if abi_obj is None and manifest_path is not None:
+            manifest_abi = artifact_store.load_abi_from_manifest(manifest_path)
+            if isinstance(manifest_abi, (dict, list)):
+                abi_obj = manifest_abi
+        if abi_obj is None:
+            generated = artifact_store.generate_abi_from_source(source_path)
+            if isinstance(generated, (dict, list)):
+                abi_obj = generated
+
+        functions = _extract_callable_functions(abi_obj)
+        if not functions:
+            functions = _discover_source_callable_functions(source_path)
+
+        compile_ready = False
+        compile_error: Optional[str] = None
+        compiler_meta: Optional[dict[str, Any]] = None
+        code_hash: Optional[str] = None
+        size_bytes: Optional[int] = None
+        try:
+            compiled_bytes, compiler_meta = artifact_store.compile_source_to_ir_bytes(source_path)
+            compile_ready = True
+            code_hash = artifact_store.sha3_256_hex(compiled_bytes)
+            size_bytes = len(compiled_bytes)
+        except Exception as exc:  # noqa: BLE001
+            compile_error = str(exc)
+
+        deployable = bool(compile_ready and functions)
+        payload = {
+            "status": "ok",
+            "kind": "source",
+            "path": str(source_path),
+            "manifest_path": str(manifest_path) if manifest_path else None,
+            "abi_path": str(abi_path) if abi_path else None,
+            "contract_name": (
+                (manifest_obj or {}).get("name")
+                or artifact_store.detect_contract_name(source_path, manifest_path)
+            ),
+            "functions": functions,
+            "compile_ready": compile_ready,
+            "deployable": deployable,
+            "compile_error": compile_error,
+            "compiler_meta": compiler_meta,
+            "compiled_code_hash": code_hash,
+            "compiled_size_bytes": size_bytes,
+        }
+        lines = [
+            "Source inspection",
+            f"Path:         {source_path}",
+            f"Manifest:     {manifest_path or 'not found'}",
+            f"ABI:          {abi_path or 'inferred from manifest/source'}",
+            f"Functions:    {', '.join(functions) if functions else 'none detected'}",
+            f"Compile:      {'ready' if compile_ready else 'not ready'}",
+            f"Deployable:   {'yes' if deployable else 'no'}",
+        ]
+        if compile_error:
+            lines.append(f"Compile error: {compile_error}")
+
+        _text_or_json(
+            payload=payload,
+            json_output=json_output,
+            lines=lines,
+        )
+        return
+
     if path.exists() and path.is_file():
         artifact_bytes, artifact_meta = artifact_store.load_artifact_file(path)
         code_hash = artifact_store.sha3_256_hex(artifact_bytes)
@@ -1137,21 +1320,28 @@ def contract_inspect(
         sidecar_abi = artifact_store.discover_sidecar_abi(path)
         sidecar_manifest = artifact_store.discover_sidecar_manifest(path)
         manifest_obj = _load_manifest_from_path(sidecar_manifest) if sidecar_manifest else None
-        abi_obj = None
-        if sidecar_abi:
-            abi_obj = abi_utils.load_abi_document(sidecar_abi)
-        elif manifest_obj is not None and isinstance(manifest_obj.get("abi"), (dict, list)):
-            abi_obj = manifest_obj.get("abi")
+        abi_obj: Optional[Any] = None
+        abi_path: Optional[Path] = sidecar_abi
+        if abi_path is not None:
+            abi_obj = abi_utils.load_abi_document(abi_path)
+        else:
+            if isinstance(saved, dict):
+                saved_abi = saved.get("abi_path")
+                if isinstance(saved_abi, str) and saved_abi.strip():
+                    candidate = Path(saved_abi).expanduser().resolve()
+                    if candidate.exists() and candidate.is_file():
+                        abi_path = candidate
+                        abi_obj = abi_utils.load_abi_document(candidate)
+            if abi_obj is None and sidecar_manifest is not None:
+                manifest_abi = artifact_store.load_abi_from_manifest(sidecar_manifest)
+                if isinstance(manifest_abi, (dict, list)):
+                    abi_obj = manifest_abi
 
-        functions: list[str] = []
-        if abi_obj is not None:
-            try:
-                normalized = abi_utils.normalize_abi(abi_obj)
-                fn_map = normalized.get("functions", {})
-                if isinstance(fn_map, dict):
-                    functions = sorted(str(k) for k in fn_map.keys())
-            except Exception:
-                functions = []
+        functions = _extract_callable_functions(abi_obj)
+        if not functions and isinstance(saved, dict):
+            raw_source = saved.get("source_path")
+            if isinstance(raw_source, str) and raw_source.strip():
+                functions = _discover_source_callable_functions(Path(raw_source))
 
         payload = {
             "status": "ok",
@@ -1161,7 +1351,7 @@ def contract_inspect(
             "size_bytes": len(artifact_bytes),
             "saved_record": saved,
             "artifact_meta": artifact_meta,
-            "abi_path": str(sidecar_abi) if sidecar_abi else None,
+            "abi_path": str(abi_path) if abi_path else None,
             "manifest_path": str(sidecar_manifest) if sidecar_manifest else None,
             "contract_name": (
                 (saved or {}).get("name")
@@ -1178,7 +1368,7 @@ def contract_inspect(
                 f"Path:         {path}",
                 f"Code hash:    {code_hash}",
                 f"Size:         {len(artifact_bytes)} bytes",
-                f"ABI:          {sidecar_abi or 'not found'}",
+                f"ABI:          {abi_path or 'not found'}",
                 f"Manifest:     {sidecar_manifest or 'not found'}",
                 f"Functions:    {', '.join(functions) if functions else 'none detected'}",
             ],
@@ -1188,12 +1378,26 @@ def contract_inspect(
     rpc_url = resolve_rpc_url(rpc)
     lookup_key, _, _ = _deployment_lookup_key(rpc_url)
     address, record = _resolve_contract_identifier(artifact_or_deployment, preferred_key=lookup_key)
+    functions: list[str] = []
+    manifest_path: Optional[str] = None
+    if isinstance(record, dict):
+        raw_manifest_path = record.get("manifest_path")
+        if isinstance(raw_manifest_path, str) and raw_manifest_path.strip():
+            manifest_path = raw_manifest_path.strip()
+        deployment_abi_obj, _deployment_abi_path = _load_abi_and_path(
+            abi_path_opt=None,
+            deployment_record=record,
+            manifest_obj=_load_manifest_from_path(Path(manifest_path)) if manifest_path else None,
+        )
+        functions = _extract_callable_functions(deployment_abi_obj)
+
     payload = {
         "status": "ok",
         "kind": "deployment",
         "query": artifact_or_deployment,
         "address": address,
         "record": record,
+        "functions": functions,
     }
     _text_or_json(
         payload=payload,
@@ -1206,6 +1410,7 @@ def contract_inspect(
             f"Deployer:     {(record or {}).get('deployer') or 'unknown'}",
             f"Artifact:     {(record or {}).get('artifact_path') or 'unknown'}",
             f"ABI:          {(record or {}).get('abi_path') or 'unknown'}",
+            f"Functions:    {', '.join(functions) if functions else 'none detected'}",
         ],
     )
 

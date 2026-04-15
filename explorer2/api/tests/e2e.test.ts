@@ -11,7 +11,7 @@ describe('Explorer API e2e', () => {
       {
         getHead: async () => ({ chainId: 1, height: 10, hash: '0xabc', time: 1000 }),
         getBlockByNumber: async () => ({
-          header: { height: 10, hash: '0xabc', parentHash: '0xdef', time: 1000 },
+          header: { height: 10, hash: '0xabc', parentHash: '0xdef', time: 1000, theta_micro: '2000000' },
           txs: [{ hash: '0x' + '1'.repeat(64), from: 'anim1from', to: 'anim1to', value: '0x1' }]
         }),
         getBlockByHash: async () => ({
@@ -42,6 +42,8 @@ describe('Explorer API e2e', () => {
     expect(res.status).toBe(200)
     expect(res.body.head.height).toBe(10)
     expect(res.body.stats.peerCount).toBe(2)
+    expect(Array.isArray(res.body.thetaHistory)).toBe(true)
+    expect(res.body.thetaHistory[0].thetaMicro).toBe(2_000_000)
   })
 
   it('serves block detail', async () => {
