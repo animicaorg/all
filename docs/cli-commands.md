@@ -163,6 +163,33 @@ animica-wallet export dev1 --out backup.json
 Addresses emitted by the wallet, explorer, and pool payout configs all follow
 `anim` bech32m encoding (alg_id || sha3_256(pubkey)) per `docs/spec/ADDRESSES.md`.
 
+## Contract CLI
+
+The contract workflow is available under `animica contract`:
+
+- `compile` source to an artifact (+ optional ABI/manifest outputs)
+- `deploy` from artifact/source, optional `--save --name <alias>`
+- `call` read-only method by alias or address
+- `send` state-changing method by alias or address
+- `inspect`, `address`, `estimate-gas`, `encode-calldata`, `decode-result`
+- `list-artifacts` to view saved artifacts/deployments
+
+Example Counter flow:
+
+```sh
+animica contract compile vm_py/examples/counter/contract.py --out build/counter.avm --abi-out build/counter.abi.json --overwrite
+animica contract deploy build/counter.avm --from main --abi build/counter.abi.json --save --name counter --wait
+animica contract call counter get
+animica contract send counter inc --from main --wait
+animica contract call counter get
+```
+
+Storage locations:
+- artifacts: `~/.animica/contracts/artifacts/`
+- deployments: `~/.animica/contracts/deployments/<network-key>/`
+
+See `docs/dev/CONTRACTS_CLI.md` for full command reference, JSON args examples, and troubleshooting.
+
 ## VM(Py) tooling
 
 ### Running commands
