@@ -153,6 +153,56 @@ def test_directionality_short_vs_long_intervals():
     assert theta2 < theta1, "longer interval should lower Θ (easier) via EMA"
 
 
+def test_update_theta_latest_slow_block_forces_theta_down():
+    """
+    Even after a long fast-block streak, a slow last block must move Θ down.
+    """
+    params = diff.RetargetParams(
+        target_block_time_s=60.0,
+        half_life_blocks=64.0,
+        gain_beta=0.75,
+        step_clamp_micro=400_000,
+        theta_min_micro=500_000,
+        theta_max_micro=None,
+    )
+    state = diff.init_state(params, theta_init_micro=3_000_000)
+
+    # Build EMA memory toward "fast blocks" first.
+    for _ in range(40):
+        state = diff.update_theta(state, dt_seconds=10.0)
+
+    theta_before = int(state.theta_micro)
+    state = diff.update_theta(state, dt_seconds=120.0)
+    theta_after = int(state.theta_micro)
+
+    assert theta_after < theta_before, "slow last block should move Θ down"
+
+
+def test_update_theta_latest_fast_block_forces_theta_up():
+    """
+    Even after a long slow-block streak, a fast last block must move Θ up.
+    """
+    params = diff.RetargetParams(
+        target_block_time_s=60.0,
+        half_life_blocks=64.0,
+        gain_beta=0.75,
+        step_clamp_micro=400_000,
+        theta_min_micro=500_000,
+        theta_max_micro=None,
+    )
+    state = diff.init_state(params, theta_init_micro=3_000_000)
+
+    # Build EMA memory toward "slow blocks" first.
+    for _ in range(40):
+        state = diff.update_theta(state, dt_seconds=120.0)
+
+    theta_before = int(state.theta_micro)
+    state = diff.update_theta(state, dt_seconds=10.0)
+    theta_after = int(state.theta_micro)
+
+    assert theta_after > theta_before, "fast last block should move Θ up"
+
+
 def test_clamp_limits_applied():
     """
     With a very extreme interval change, the per-step change should be bounded by clamp factors.

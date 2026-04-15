@@ -34,7 +34,58 @@ qint64 parseStatusIntField(const QJsonObject& status, const char* key, qint64 fa
 
 QString normalizedStatus(const QJsonObject& status)
 {
-    return status.value("status").toString().trimmed().toLower();
+    auto normalizeToken = [](const QJsonValue& value) -> QString {
+        const QString token = value.toString().trimmed().toLower();
+        if (token.isEmpty()) {
+            return QString();
+        }
+
+        if (token == "pending" || token == "pending_mempool" || token == "mempool_accepted" || token == "broadcast") {
+            return "pending";
+        }
+        if (token == "confirmed" || token == "included" || token == "included_block"
+            || token == "in_block_pending_confirm" || token == "instant_confirmed" || token == "mined") {
+            return "confirmed";
+        }
+        if (token == "finalized" || token == "final" || token == "success" || token == "succeeded"
+            || token == "applied") {
+            return "finalized";
+        }
+        if (token == "failed" || token == "rejected" || token == "dropped" || token == "evicted") {
+            return "rejected";
+        }
+        if (token == "reorged_out" || token == "reorged") {
+            return "reorged_out";
+        }
+        if (token == "not_found") {
+            return "not_found";
+        }
+
+        return token;
+    };
+
+    QString normalized = normalizeToken(status.value("status"));
+    if (normalized.isEmpty()) {
+        normalized = normalizeToken(status.value("state"));
+    }
+
+    if (normalized.isEmpty() || normalized == "pending") {
+        QString blockHash = status.value("included_in_block_hash").toString();
+        if (blockHash.isEmpty()) {
+            blockHash = status.value("includedInBlockHash").toString();
+        }
+        if (blockHash.isEmpty()) {
+            blockHash = status.value("blockHash").toString();
+        }
+        if (!blockHash.isEmpty()) {
+            normalized = status.value("finalized").toBool() ? "finalized" : "confirmed";
+        }
+    }
+
+    if (normalized.isEmpty()) {
+        return "not_found";
+    }
+    return normalized;
 }
 
 qint64 statusBlockHeight(const QJsonObject& status)
@@ -386,7 +437,7 @@ void TransactionMonitor::checkTransaction(const QString& txHash) {
             if (tx.direction == "out") {
                 ensureOutgoingReservation(txHash, tx.fromAccountId, tx.amount, tx.fee);
             }
-        } else if (status == "confirmed" || status == "instant_confirmed" || status == "mined" || status == "included") {
+        } else if (status == "confirmed" || status == "finalized") {
             const qint64 blockHeight = statusBlockHeight(txInfo);
             const QString blockHash = statusBlockHash(txInfo);
             
@@ -647,7 +698,7 @@ void TransactionMonitor::handleReorg(const QString& txHash, const WalletTx& tx) 
                 QMutexLocker locker(&m_mutex);
                 switchToFastPolling(txHash);
                 
-            } else if (status == "confirmed" || status == "instant_confirmed" || status == "mined" || status == "included") {
+            } else if (status == "confirmed" || status == "finalized") {
                 // Mined in different block
                 const qint64 newHeight = statusBlockHeight(txInfo);
                 const QString newHash = statusBlockHash(txInfo);

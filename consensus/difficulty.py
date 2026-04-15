@@ -264,8 +264,10 @@ def update_theta(
             params=state.params,
         )
     
+    target_s = max(1e-9, float(p.target_block_time_s))
+
     # Sample of ln(dt/T)
-    r_k = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
+    r_k = _safe_log(dt_seconds / target_s)
     # Skip-aware EMA update: r̂ = (1-α)^m r̂ + (1 - (1-α)^m) r_k
     m = max(1, int(blocks_skipped))
     decay = (1.0 - state.alpha) ** m
@@ -273,10 +275,20 @@ def update_theta(
     r_hat = decay * state.ema_log_dt_over_T + alpha_eff * r_k
 
     # τ update: τ_{k+1} = τ_k - β · r̂
-    tau_next = state.tau_nats - float(p.gain_beta) * r_hat
+    beta = float(p.gain_beta)
+    tau_next = state.tau_nats - beta * r_hat
     # Convert to micro and clamp step
     theta_prev = state.theta_micro
     theta_target_micro = nats_to_micro(tau_next)
+
+    # Directional guard: the latest block interval decides whether θ should
+    # move up or down, even when EMA memory is still catching up.
+    tau_latest = state.tau_nats - beta * r_k
+    theta_latest_micro = nats_to_micro(tau_latest)
+    if dt_seconds > target_s and theta_target_micro >= theta_prev:
+        theta_target_micro = min(theta_target_micro, theta_latest_micro, theta_prev - 1)
+    elif dt_seconds < target_s and theta_target_micro <= theta_prev:
+        theta_target_micro = max(theta_target_micro, theta_latest_micro, theta_prev + 1)
 
     # Per-step clamp
     delta = theta_target_micro - theta_prev
