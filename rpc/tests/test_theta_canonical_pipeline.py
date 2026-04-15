@@ -456,3 +456,29 @@ def test_stale_head_interval_reports_catch_up_steps(
         assert dt[1] == 3
     finally:
         _restore_miner_globals(snapshot)
+
+
+def test_network_block_interval_uses_mean_dt_per_step() -> None:
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(
+            {
+                "last_block_time": None,
+                "block_times": [],
+                "theta_state": None,
+                "adjustment_enabled": True,
+                "last_network_height": 100,
+                "last_network_timestamp": 1_000,
+                "stale_head_hash": "0xabc",
+                "stale_head_bucket": 2,
+            }
+        )
+
+        dt = miner_methods._network_block_interval(103, 1_180)
+        assert dt is not None
+        # 180 seconds over 3 blocks should be modeled as 60s per step with 3 steps.
+        assert dt[0] == pytest.approx(60.0)
+        assert dt[1] == 3
+    finally:
+        _restore_miner_globals(snapshot)

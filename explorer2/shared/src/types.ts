@@ -57,6 +57,7 @@ export interface BlockSummary {
   time: number
   txCount: number
   miner?: Address | null
+  thetaMicro?: number
 }
 
 export interface BlockDetail {

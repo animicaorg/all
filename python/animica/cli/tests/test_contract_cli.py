@@ -14,6 +14,7 @@ from animica.contracts import deployments as deployment_store
 from animica.contracts import wallet_utils
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 class _FakeSigner:
@@ -138,6 +139,40 @@ def test_contract_compile_writes_outputs(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert Path(payload["manifest_path"]).exists()
 
 
+@pytest.mark.parametrize(
+    "relative_source",
+    [
+        "contracts/packages/counter/contract.py",
+        "contracts/templates/counter/contract.py",
+        "vm_py/examples/counter/contract.py",
+        "vm_py/examples/min_counter/contract.py",
+    ],
+)
+def test_contract_compile_accepts_repo_counter_examples(relative_source: str) -> None:
+    source = REPO_ROOT / relative_source
+    assert source.exists(), f"missing source fixture: {source}"
+    result = runner.invoke(app, ["contract", "compile", str(source), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["artifact_path"]
+    assert payload["compiler_meta"]["pipeline"]
+
+
+def test_contract_inspect_source_reports_manifest_abi_and_functions() -> None:
+    source = REPO_ROOT / "contracts/packages/counter/contract.py"
+    result = runner.invoke(app, ["contract", "inspect", str(source), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["kind"] == "source"
+    assert payload["manifest_path"] and payload["manifest_path"].endswith("manifest.json")
+    assert "get" in payload["functions"]
+    assert "inc" in payload["functions"]
+    assert payload["compile_ready"] is True
+    assert payload["deployable"] is True
+
+
 def test_deploy_success_path_and_save(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     artifact = tmp_path / "counter.avm"
     artifact.write_bytes(b"\xCA\xFE\xBA\xBE")
@@ -220,6 +255,76 @@ def test_deploy_success_path_and_save(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert isinstance(saved, dict)
     assert saved["address"] == "0x" + "11" * 32
     assert saved["tx_hash"] == "0x" + "aa" * 32
+
+
+def test_deploy_save_fails_when_address_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "counter.avm"
+    artifact.write_bytes(b"\xCA\xFE\xBA\xBE")
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps(
+            {
+                "functions": [
+                    {"name": "constructor", "inputs": [], "outputs": []},
+                    {"name": "get", "inputs": [], "outputs": [{"type": "int"}]},
+                ],
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        wallet_utils,
+        "resolve_signer",
+        lambda **_kwargs: _FakeSignerResolution(
+            "anim1q0j0u8j7s6g5f4d3c2b1a0mnpqrstuvwxzy1234567890abcdefghjkqf8z2"
+        ),
+    )
+    monkeypatch.setattr("omni_sdk.contracts.deployer.make_package_bytes", lambda **_kwargs: b"\xA1\x01")
+    monkeypatch.setattr(
+        "omni_sdk.contracts.deployer.build_deploy_tx",
+        lambda **_kwargs: {"kind": "deploy", "payload": {"t": 1, "v": {"code": b"\x01", "manifest": b"{}"}}},
+    )
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.resolve_signing_context",
+        lambda _rpc, chain_id: {"chain_id": chain_id},
+    )
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.sign_transaction_for_submission",
+        lambda _tx, _signer, context: type("Signed", (), {"raw_tx": b"\x99"})(),
+    )
+    monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: "0x" + "aa" * 32)
+    monkeypatch.setattr(
+        contract_cli,
+        "wait_for_receipt",
+        lambda _rpc, _tx_hash, **_kwargs: {
+            "txHash": "0x" + "aa" * 32,
+            "blockNumber": 7,
+            "gasUsed": 51234,
+            "status": "SUCCESS",
+        },
+    )
+    monkeypatch.setattr(contract_cli, "_derive_contract_address", lambda *a, **k: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "deploy",
+            str(artifact),
+            "--from",
+            "main",
+            "--abi",
+            str(abi_path),
+            "--save",
+            "--name",
+            "counter",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "save failed" in result.output.lower()
+    assert "address could not be resolved" in result.output.lower()
 
 
 def test_deploy_missing_wallet_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -404,6 +509,81 @@ def test_send_wait_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     assert payload["tx_status"] == "SUCCESS"
     assert payload["block_height"] == 11
     assert payload["gas_used"] == 12000
+
+
+def test_send_accepts_increment_alias_for_inc_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    abi_path = tmp_path / "counter.abi.json"
+    abi_path.write_text(
+        json.dumps(
+            {
+                "functions": [
+                    {
+                        "name": "inc",
+                        "inputs": [{"name": "delta", "type": "int"}],
+                        "outputs": [{"name": "value", "type": "int"}],
+                    },
+                    {"name": "get", "inputs": [], "outputs": [{"name": "value", "type": "int"}]},
+                ],
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    deployment_store.save_deployment_record(
+        {
+            "name": "counter",
+            "address": "0x" + "99" * 32,
+            "abi_path": str(abi_path),
+            "tx_hash": "0x" + "11" * 32,
+        },
+        key=deployment_store.network_key(chain_id=1337, network="devnet"),
+    )
+
+    monkeypatch.setattr(
+        wallet_utils,
+        "resolve_signer",
+        lambda **_kwargs: _FakeSignerResolution(
+            "anim1q0j0u8j7s6g5f4d3c2b1a0mnpqrstuvwxzy1234567890abcdefghjkqf8z2"
+        ),
+    )
+    monkeypatch.setattr(contract_cli, "_resolve_nonce", lambda _rpc, _sender, _override: 2)
+    monkeypatch.setattr(
+        "omni_sdk.tx.signing.sign_transaction_with_rpc_context",
+        lambda _tx, _signer, chain_id, rpc: type("Signed", (), {"raw_tx": b"\x01"})(),
+    )
+    monkeypatch.setattr("omni_sdk.tx.send.submit_raw", lambda _rpc, _raw: "0x" + "22" * 32)
+    monkeypatch.setattr(
+        contract_cli,
+        "wait_for_receipt",
+        lambda _rpc, _tx_hash, **_kwargs: {
+            "txHash": "0x" + "22" * 32,
+            "status": "SUCCESS",
+            "blockNumber": 19,
+            "gasUsed": 5000,
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "contract",
+            "send",
+            "counter",
+            "increment",
+            "--args",
+            "[1]",
+            "--from",
+            "main",
+            "--wait",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["tx_status"] == "SUCCESS"
 
 
 def test_address_alias_resolution(tmp_path: Path) -> None:

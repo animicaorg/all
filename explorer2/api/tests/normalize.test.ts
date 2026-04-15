@@ -70,6 +70,14 @@ describe('normalizeBlockSummary', () => {
     expect(block.height).toBe(10)
     expect(block.canonicalHeight).toBe(8)
   })
+
+  it('includes thetaMicro from header fields', () => {
+    const block = normalizeBlockSummary({
+      header: { height: 11, hash: '0xblock11', time: 1001, theta_micro: '0x1e8480' },
+      txs: []
+    })
+    expect(block.thetaMicro).toBe(2_000_000)
+  })
 })
 
 describe('normalizeBlockDetail', () => {

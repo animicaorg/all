@@ -27,6 +27,11 @@ interface HeadResponse {
     tps?: number | null
     avgBlockTime?: number | null
   }
+  thetaHistory?: Array<{
+    height: number
+    time: number
+    thetaMicro: number | null
+  }>
 }
 
 async function apiGet<T>(path: string): Promise<T> {

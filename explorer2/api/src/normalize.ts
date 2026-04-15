@@ -70,7 +70,13 @@ export function normalizeBlockSummary(block: any): BlockSummary {
     hash,
     time,
     txCount: txs.length,
-    miner: normalizeAddress(header?.miner)
+    miner: normalizeAddress(header?.miner),
+    thetaMicro: toNumber(
+      header?.thetaMicro ??
+        header?.theta_micro ??
+        block?.thetaMicro ??
+        block?.theta_micro
+    )
   }
 }
 

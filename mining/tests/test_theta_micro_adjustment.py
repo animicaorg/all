@@ -315,6 +315,31 @@ def test_theta_adjustment_uses_blocks_skipped_for_catch_up():
     assert theta_catch_up < theta_single
 
 
+def test_theta_adjustment_does_not_snap_to_floor_on_large_catch_up():
+    """Large catch-up updates should lower theta gradually, not jump to minimum."""
+    from rpc.methods.miner import _adjust_theta_for_mining, _MINING_STATE
+
+    _MINING_STATE.clear()
+    _MINING_STATE["adjustment_enabled"] = True
+    _adjust_theta_for_mining(dt_seconds=None)
+
+    state = _MINING_STATE.get("theta_state")
+    assert state is not None
+
+    start_theta = 1_000_000
+    _MINING_STATE["theta_state"] = diff.RetargetState(
+        theta_micro=start_theta,
+        tau_nats=diff.micro_to_nats(start_theta),
+        ema_log_dt_over_T=0.0,
+        alpha=state.alpha,
+        params=state.params,
+    )
+
+    theta_after = _adjust_theta_for_mining(dt_seconds=3600.0, blocks_skipped=60)
+    assert theta_after == start_theta - 100_000
+    assert theta_after > state.params.theta_min_micro
+
+
 if __name__ == "__main__":
     # Run tests directly
     test_theta_adjustment_initialization()

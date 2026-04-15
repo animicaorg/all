@@ -253,32 +253,15 @@ def _encode_ir_bytes(ir_obj: Any) -> bytes:
 
 
 def _compile_lower_pipeline(src: str, filename: str) -> bytes:
-    import ast
     from importlib import import_module
 
     lower = import_module("vm_py.compiler.ast_lower")
-    ir_mod = getattr(lower, "lower", None)
-    if not callable(ir_mod):
-        for alt in (
-            "lower_module",
-            "lower_from_ast",
-            "lower_from_source",
-            "lower_to_ir",
-        ):
-            ir_mod = getattr(lower, alt, None)
-            if callable(ir_mod):
-                break
-    if ir_mod is None:
-        raise RuntimeError("No lower() function found in vm_py.compiler.ast_lower")
-    mod_ast = ast.parse(src, filename=filename)
-
-    try:
-        ir = ir_mod(mod_ast, filename=filename)  # type: ignore[misc]
-    except TypeError:
-        try:
-            ir = ir_mod(mod_ast, name=filename)  # type: ignore[misc]
-        except TypeError:
-            ir = ir_mod(mod_ast)  # type: ignore[misc]
+    adapter = import_module("vm_py.compiler.lowering_adapter")
+    ir, _meta = adapter.lower_source_with_compat(  # type: ignore[attr-defined]
+        lower,
+        source=src,
+        filename=filename,
+    )
 
     return _encode_ir_bytes(ir)
 

@@ -223,20 +223,15 @@ def compile_from_source(source_path: str) -> Tuple[bytes, Dict[str, Any]]:
         eprint(f"[inspect] loader compile from source failed: {e}")
 
     # Fallback: lower pipeline
-    import ast
     from importlib import import_module
 
     lower = import_module("vm_py.compiler.ast_lower")
-    lower_fn = getattr(lower, "lower", None)
-    if not callable(lower_fn):
-        for alt in ("lower_module", "lower_from_ast", "lower_from_source"):
-            lower_fn = getattr(lower, alt, None)
-            if callable(lower_fn):
-                break
-    if lower_fn is None:
-        raise RuntimeError("No lower() function found in vm_py.compiler.ast_lower")
-
-    ir_obj = lower_fn(ast.parse(src, filename=source_path), source_path)  # type: ignore[misc]
+    adapter = import_module("vm_py.compiler.lowering_adapter")
+    ir_obj, _meta = adapter.lower_source_with_compat(  # type: ignore[attr-defined]
+        lower,
+        source=src,
+        filename=source_path,
+    )
     return encode_ir_object(ir_obj), {"source": "ast_lower+encode"}
 
 

@@ -218,10 +218,12 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
-# Minimum theta for forced blocks (when previous block exceeds max_block_time_s)
-# This value matches theta_min_micro used in _adjust_theta_for_mining() for consistency
-# 100K µ-nats = 0.1 nats = very easy mining (allows quick block production)
+# Minimum theta for forced blocks (when previous block exceeds max_block_time_s).
+# 100K µ-nats = 0.1 nats = very easy mining (allows quick block production).
 _FORCED_BLOCK_MIN_THETA_MICRO = 100_000
+# Cap how much theta may decrease per retarget update so slow periods do not
+# collapse difficulty to the floor in a single call.
+_THETA_MAX_DOWN_STEP_MICRO = int(os.getenv("ANIMICA_THETA_MAX_DOWN_STEP_MICRO", "100000"))
 _WATCHDOG_INTERVAL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_INTERVAL_S", "30"))
 _WATCHDOG_STALL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_STALL_S", "120"))
 _WATCHDOG_MAX_ATTEMPTS = int(os.getenv("ANIMICA_MINER_WATCHDOG_MAX_ATTEMPTS", "2"))
@@ -1320,6 +1322,21 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped:
         
         # Apply retargeting update
         new_state = update_theta(state, dt_seconds, blocks_skipped=blocks_skipped)
+        old_theta = int(state.theta_micro)
+        new_theta = int(new_state.theta_micro)
+
+        # Avoid one-shot collapse to minimum difficulty on slow catch-up updates.
+        max_down_step = max(0, int(_THETA_MAX_DOWN_STEP_MICRO))
+        if max_down_step > 0 and new_theta < old_theta:
+            min_allowed = max(int(state.params.theta_min_micro), old_theta - max_down_step)
+            if new_theta < min_allowed:
+                new_theta = int(min_allowed)
+                new_state = replace(
+                    new_state,
+                    theta_micro=int(new_theta),
+                    tau_nats=float(new_theta) / 1_000_000.0,
+                )
+
         _MINING_STATE["theta_state"] = new_state
         
         # Track block times for monitoring (keep last 20)
@@ -1333,8 +1350,8 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped:
         block_times.append(dt_seconds)
         
         # Log adjustment if significant change
-        old_theta = state.theta_micro
-        new_theta = new_state.theta_micro
+        old_theta = int(state.theta_micro)
+        new_theta = int(new_state.theta_micro)
         
         # Check for cap warning
         effective_max = state.params.theta_max_micro if state.params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
@@ -1394,7 +1411,10 @@ def _network_block_interval(head_height: int, head_timestamp: int) -> tuple[floa
     _MINING_STATE["stale_head_bucket"] = 0
     if dt_seconds <= 0:
         return None
-    return float(dt_seconds), max(1, height_delta)
+    # update_theta() expects mean per-step dt when blocks_skipped > 1.
+    steps = max(1, int(height_delta))
+    dt_per_step = float(dt_seconds) / float(steps)
+    return float(dt_per_step), steps
 
 
 def _stale_head_interval(head_hash: str | None, head_timestamp: int) -> tuple[float, int] | None:

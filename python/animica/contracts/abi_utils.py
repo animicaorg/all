@@ -7,6 +7,10 @@ from typing import Any, Optional
 import typer
 
 CONSTRUCTOR_CANDIDATES = ("constructor", "__init__", "init")
+METHOD_ALIASES = {
+    "increment": "inc",
+    "decrement": "dec",
+}
 
 
 def _require_abi_codec():
@@ -75,6 +79,30 @@ def parse_args_json(raw: Optional[str], *, option_name: str = "--args") -> list[
     return parsed
 
 
+def _resolve_method_in_functions(functions: dict[str, Any], method: str) -> str:
+    if method in functions:
+        return method
+
+    lowered = {str(name).lower(): str(name) for name in functions.keys() if isinstance(name, str)}
+    requested = method.strip().lower()
+    if requested in lowered:
+        return lowered[requested]
+
+    alias = METHOD_ALIASES.get(requested)
+    if alias and alias in lowered:
+        return lowered[alias]
+
+    raise typer.BadParameter(f"method {method!r} is not present in ABI")
+
+
+def resolve_method_name(abi_obj: Any, method: str) -> str:
+    normalized = normalize_abi(abi_obj)
+    functions = normalized.get("functions", {})
+    if not isinstance(functions, dict):
+        raise typer.BadParameter("ABI function metadata is malformed")
+    return _resolve_method_in_functions(functions, method)
+
+
 def to_positional_args(abi_obj: Any, method: str, args_obj: Any) -> list[Any]:
     normalize_abi, _, _ = _require_abi_codec()
 
@@ -87,10 +115,10 @@ def to_positional_args(abi_obj: Any, method: str, args_obj: Any) -> list[Any]:
 
     normalized = normalize_abi(abi_obj)
     functions = normalized.get("functions", {})
-    if not isinstance(functions, dict) or method not in functions:
-        raise typer.BadParameter(f"method {method!r} is not present in ABI")
-
-    fn = functions[method]
+    if not isinstance(functions, dict):
+        raise typer.BadParameter("ABI function metadata is malformed")
+    resolved_method = _resolve_method_in_functions(functions, method)
+    fn = functions[resolved_method]
     inputs = fn.get("inputs", []) if isinstance(fn, dict) else []
     if not isinstance(inputs, list):
         raise typer.BadParameter(f"ABI function metadata for {method!r} is malformed")
@@ -112,16 +140,18 @@ def to_positional_args(abi_obj: Any, method: str, args_obj: Any) -> list[Any]:
 
 def encode_calldata(abi_obj: Any, method: str, args: list[Any]) -> bytes:
     _, encode_call, _ = _require_abi_codec()
+    resolved_method = resolve_method_name(abi_obj, method)
     try:
-        return encode_call(abi_obj, method, args)
+        return encode_call(abi_obj, resolved_method, args)
     except Exception as exc:  # noqa: BLE001
         raise typer.BadParameter(f"failed to encode calldata for {method!r}: {exc}") from exc
 
 
 def decode_method_result(abi_obj: Any, method: str, raw: bytes) -> Any:
     _, _, decode_return = _require_abi_codec()
+    resolved_method = resolve_method_name(abi_obj, method)
     try:
-        return decode_return(abi_obj, method, raw)
+        return decode_return(abi_obj, resolved_method, raw)
     except Exception as exc:  # noqa: BLE001
         raise typer.BadParameter(f"failed to decode result for {method!r}: {exc}") from exc
 
@@ -134,9 +164,10 @@ def normalize_abi(abi_obj: Any) -> dict[str, Any]:
 def method_info(abi_obj: Any, method: str) -> dict[str, Any]:
     normalized = normalize_abi(abi_obj)
     functions = normalized.get("functions", {})
-    if not isinstance(functions, dict) or method not in functions:
-        raise typer.BadParameter(f"method {method!r} is not present in ABI")
-    info = functions[method]
+    if not isinstance(functions, dict):
+        raise typer.BadParameter("ABI function metadata is malformed")
+    resolved_method = _resolve_method_in_functions(functions, method)
+    info = functions[resolved_method]
     if not isinstance(info, dict):
         raise typer.BadParameter(f"ABI metadata for {method!r} is malformed")
     return info
