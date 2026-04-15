@@ -94,7 +94,12 @@ SendWidget::SendWidget(
     refreshAccounts();
 }
 
-SendWidget::~SendWidget() = default;
+SendWidget::~SendWidget()
+{
+    if (m_sendWatcher->isRunning()) {
+        m_sendWatcher->future().waitForFinished();
+    }
+}
 
 void SendWidget::setupUI()
 {
@@ -553,11 +558,23 @@ void SendWidget::updateRecipientCompleter()
             candidates << item;
         }
     }
-    auto* model = new QStringListModel(candidates, m_toAddressEdit);
-    auto* completer = new QCompleter(model, m_toAddressEdit);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    completer->setFilterMode(Qt::MatchContains);
-    m_toAddressEdit->setCompleter(completer);
+
+    QCompleter* completer = m_toAddressEdit->completer();
+    QStringListModel* model = nullptr;
+    if (completer) {
+        model = qobject_cast<QStringListModel*>(completer->model());
+    }
+
+    if (!completer || !model) {
+        completer = new QCompleter(this);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        model = new QStringListModel(completer);
+        completer->setModel(model);
+        m_toAddressEdit->setCompleter(completer);
+    }
+
+    model->setStringList(candidates);
 }
 
 bool SendWidget::validateInputs()

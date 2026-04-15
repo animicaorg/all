@@ -46,7 +46,7 @@ private:
     void issueRequest();
     void handleReplyFinished();
 
-    QNetworkAccessManager* m_network;
+    QPointer<QNetworkAccessManager> m_network;
     QNetworkRequest m_request;
     QByteArray m_payload;
     int m_timeoutMs;

@@ -19,6 +19,7 @@ class TransactionHistoryWidget : public QWidget
 
 public:
     explicit TransactionHistoryWidget(WalletEngine* engine, QWidget* parent = nullptr);
+    ~TransactionHistoryWidget() override;
 
 public slots:
     void refresh();
