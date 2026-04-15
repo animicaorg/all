@@ -114,8 +114,10 @@ void TestPackagingConfig::testBundleVerifierChecksQtAppLayoutOnly()
     QVERIFY(!verifier.isEmpty());
     QVERIFY(verifier.contains("Qt6Core.dll"));
     QVERIFY(verifier.contains("libqcocoa.dylib"));
-    QVERIFY(!verifier.contains("assets/genesis"));
-    QVERIFY(!verifier.contains("venv"));
+    QVERIFY(verifier.contains("node\" / \"venv\""));
+    QVERIFY(verifier.contains("assets\" / \"spec\" / \"params.yaml"));
+    QVERIFY(verifier.contains("GENESIS_REQUIRED_FILES"));
+    QVERIFY(verifier.contains("bundled genesis asset"));
 }
 
 void TestPackagingConfig::testCMakeIncludesPackagingMetadata()

@@ -25,6 +25,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <limits>
 
 namespace {
 
@@ -46,6 +47,63 @@ QString rpcFailureDetails(const QString& message)
     return QString(
         "The wallet could not complete a request to https://rpc.animica.org/rpc.\n\n%1"
     ).arg(message);
+}
+
+bool tryParseChainIdString(const QString& text, int* chainIdOut)
+{
+    if (!chainIdOut) {
+        return false;
+    }
+    QString normalized = text.trimmed();
+    if (normalized.isEmpty()) {
+        return false;
+    }
+
+    int base = 10;
+    if (normalized.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)) {
+        normalized = normalized.mid(2);
+        base = 16;
+    }
+
+    bool ok = false;
+    const qlonglong parsed = normalized.toLongLong(&ok, base);
+    if (!ok || parsed < 0 || parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    *chainIdOut = static_cast<int>(parsed);
+    return true;
+}
+
+bool parseChainIdValue(const QJsonValue& value, int* chainIdOut)
+{
+    if (!chainIdOut) {
+        return false;
+    }
+
+    if (value.isDouble()) {
+        const double numeric = value.toDouble();
+        if (numeric < 0 || numeric > std::numeric_limits<int>::max()) {
+            return false;
+        }
+        *chainIdOut = static_cast<int>(numeric);
+        return true;
+    }
+
+    if (value.isString()) {
+        return tryParseChainIdString(value.toString(), chainIdOut);
+    }
+
+    if (value.isObject()) {
+        const QJsonObject obj = value.toObject();
+        if (parseChainIdValue(obj.value(QStringLiteral("chainId")), chainIdOut)) {
+            return true;
+        }
+        if (parseChainIdValue(obj.value(QStringLiteral("chain_id")), chainIdOut)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace
@@ -443,16 +501,8 @@ void WalletWidget::probeRpcStatus()
         const QJsonObject object = doc.object();
         const QJsonValue result = object.value("result");
 
-        bool ok = false;
         int chainId = 0;
-        if (result.isDouble()) {
-            chainId = result.toInt();
-            ok = true;
-        } else if (result.isString()) {
-            chainId = result.toString().toInt(&ok);
-        }
-
-        if (!ok) {
+        if (!parseChainIdValue(result, &chainId)) {
             setConnectionBanner(
                 "Unexpected RPC response.",
                 "The hosted endpoint did not return a valid chain ID."

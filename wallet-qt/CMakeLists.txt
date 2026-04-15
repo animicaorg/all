@@ -263,20 +263,35 @@ if(WALLET_BUNDLE_PYTHON_RUNTIME)
         DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/spec"
     )
 
-    if(EXISTS "${ANIMICA_REPO_ROOT}/genesis/devnet.json")
+    foreach(WALLET_GENESIS_FILE IN ITEMS mainnet.json testnet.json devnet.json)
+        set(WALLET_GENESIS_SOURCE "")
+        if(EXISTS "${ANIMICA_REPO_ROOT}/core/genesis/${WALLET_GENESIS_FILE}")
+            set(WALLET_GENESIS_SOURCE "${ANIMICA_REPO_ROOT}/core/genesis/${WALLET_GENESIS_FILE}")
+        elseif(WALLET_GENESIS_FILE STREQUAL "mainnet.json" AND EXISTS "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.mainnet.json")
+            set(WALLET_GENESIS_SOURCE "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.mainnet.json")
+        elseif(WALLET_GENESIS_FILE STREQUAL "testnet.json" AND EXISTS "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.testnet.json")
+            set(WALLET_GENESIS_SOURCE "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.testnet.json")
+        elseif(WALLET_GENESIS_FILE STREQUAL "devnet.json" AND EXISTS "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json")
+            set(WALLET_GENESIS_SOURCE "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json")
+        endif()
+
+        if(WALLET_GENESIS_SOURCE STREQUAL "")
+            message(FATAL_ERROR "No genesis asset found for ${WALLET_GENESIS_FILE} when bundling wallet runtime.")
+        endif()
+
         install(
-            FILES "${ANIMICA_REPO_ROOT}/genesis/devnet.json"
+            FILES "${WALLET_GENESIS_SOURCE}"
             DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/genesis"
-            RENAME "devnet.json"
+            RENAME "${WALLET_GENESIS_FILE}"
         )
-    elseif(EXISTS "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json")
+    endforeach()
+
+    if(EXISTS "${ANIMICA_REPO_ROOT}/core/genesis/genesis.json")
         install(
-            FILES "${ANIMICA_REPO_ROOT}/genesis/genesis.sample.devnet.json"
+            FILES "${ANIMICA_REPO_ROOT}/core/genesis/genesis.json"
             DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/genesis"
-            RENAME "devnet.json"
+            RENAME "genesis.json"
         )
-    else()
-        message(FATAL_ERROR "No devnet genesis asset found for bundled wallet runtime.")
     endif()
 endif()
 

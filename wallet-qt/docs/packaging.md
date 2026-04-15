@@ -18,7 +18,7 @@ Release artifacts should include:
 - the Qt wallet executable or app bundle
 - Qt runtime dependencies
 - bundled wallet Python runtime (`node/venv`)
-- bundled wallet runtime assets (`node/assets/spec/params.yaml`, `node/assets/genesis/devnet.json`)
+- bundled wallet runtime assets (`node/assets/spec/params.yaml`, `node/assets/genesis/{mainnet,testnet,devnet}.json`)
 - icons, desktop metadata, and app resources
 
 ## What must not ship

@@ -30,6 +30,12 @@ void configureBackendEnvironment()
     qputenv("ANIMICA_REPO_ROOT", QByteArray(ANIMICA_REPO_ROOT_PATH));
 }
 
+QString isolatedTestRpcEndpoint()
+{
+    // Avoid external DNS/network dependencies in widget tests.
+    return QStringLiteral("http://127.0.0.1:9/rpc");
+}
+
 struct WalletTestContext
 {
     WalletTestContext()
@@ -38,7 +44,7 @@ struct WalletTestContext
     {
         configureBackendEnvironment();
         Q_ASSERT(tempDir.isValid());
-        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setEndpoint(isolatedTestRpcEndpoint());
         rpcClient.setTimeout(250);
         rpcClient.setRetryPolicy(0, 0);
         const bool walletCreated = engine.createWallet(QString(), tempDir.path());
@@ -83,8 +89,9 @@ private slots:
     {
         FeeEstimator estimator(nullptr);
         const qint64 slowTierFee = estimator.getGasPrice(FeeEstimator::Slow);
-        const qint64 reserve = estimator.calculateFee(FeeEstimator::Slow, FeeEstimator::standardTransferGas());
-        QCOMPARE(reserve, slowTierFee);
+        const qint64 gasLimit = FeeEstimator::standardTransferGas();
+        const qint64 reserve = estimator.calculateFee(FeeEstimator::Slow, gasLimit);
+        QCOMPARE(reserve, slowTierFee * gasLimit);
     }
 
     void testHistoryWidgetInitializes()
@@ -175,7 +182,7 @@ private slots:
         configureBackendEnvironment();
 
         AnimicaRpcClient rpcClient;
-        rpcClient.setEndpoint(RpcSettings::canonicalRpcUrl());
+        rpcClient.setEndpoint(isolatedTestRpcEndpoint());
         WalletEngine engine(&rpcClient);
         ReceiveWidget receive(&engine);
 

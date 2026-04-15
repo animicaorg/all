@@ -27,8 +27,9 @@ QT_QPA_PLATFORM=offscreen /tmp/wallet-qt-build/tests/test_packaging_config
 
 ## Packaging checks
 
-- verify the staged artifact contains only the Qt app/runtime payload
-- verify `node/`, `node/venv`, and bundled genesis/spec assets are absent
+- verify the staged artifact contains the Qt app/runtime payload
+- verify bundled wallet runtime is present under `node/venv`
+- verify bundled chain assets are present under `node/assets/spec/params.yaml` and `node/assets/genesis/{mainnet,testnet,devnet}.json`
 
 ## Troubleshooting
 

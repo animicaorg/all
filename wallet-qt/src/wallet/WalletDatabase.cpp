@@ -17,10 +17,14 @@ WalletDatabase::WalletDatabase(const QString& dbPath, QObject* parent)
 
 WalletDatabase::~WalletDatabase()
 {
-    if (m_db.isOpen()) {
+    QMutexLocker locker(&m_mutex);
+    if (m_db.isValid() && m_db.isOpen()) {
         m_db.close();
     }
-    QSqlDatabase::removeDatabase(m_connectionName);
+    // Avoid removeDatabase() during teardown: Qt can still hold internal
+    // references to the connection while asynchronous wallet UI callbacks wind
+    // down, which has caused process-exit crashes in test runs.
+    m_db = QSqlDatabase();
 }
 
 bool WalletDatabase::initialize()
