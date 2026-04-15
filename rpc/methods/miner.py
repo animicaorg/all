@@ -4717,12 +4717,15 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     )
     mempool_summary["pending"] = int(pending_count)
 
-    if include_mempool_requested and pending_count > 0 and payout_address is not None:
+    # Materialize a full block template whenever we have a payout address.
+    # This keeps getWork aligned with getBlockTemplate behavior, including
+    # stale-head theta relaxation even when the mempool is currently empty.
+    if payout_address is not None:
         try:
             template_payload = miner_get_block_template(
                 {
                     "address": payout_address,
-                    "include_mempool": True,
+                    "include_mempool": bool(include_mempool_requested),
                     "sync_peer_mempools": False,
                 }
             )
@@ -4785,7 +4788,7 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
                 mempool_summary["mempoolEnabled"] = True
         except Exception as exc:
             log.warning(
-                "miner.getWork failed to materialize mempool-aware template; falling back to header-only work",
+                "miner.getWork failed to materialize block template; falling back to header-only work",
                 extra={"error": str(exc)},
             )
 
