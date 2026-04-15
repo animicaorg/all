@@ -13,7 +13,8 @@ cmake --build /tmp/wallet-qt-build -j
 
 - `animica-wallet` builds successfully
 - test binaries build successfully
-- no build output stages `node/venv` or bundled genesis/spec assets
+- build output stages bundled wallet runtime under `node/venv`
+- build output stages bundled chain assets under `node/assets/spec/params.yaml` and `node/assets/genesis/{mainnet,testnet,devnet}.json`
 
 ## Focused test run
 

@@ -15,7 +15,11 @@ SCRIPTS_DIR = WALLET_ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from linux_layout import resolve_linux_node_root_from_root, resolve_linux_node_root_from_wallet
+from linux_layout import (
+    GENESIS_REQUIRED_FILES,
+    resolve_linux_node_root_from_root,
+    resolve_linux_node_root_from_wallet,
+)
 
 
 def _load_verify_bundle_layout():
@@ -41,7 +45,8 @@ class TestLinuxLayoutResolver(unittest.TestCase):
     def _create_node_tree(self, node_root: Path) -> None:
         self._touch(node_root / "venv" / "bin" / "python", executable=True)
         self._touch(node_root / "assets" / "spec" / "params.yaml")
-        self._touch(node_root / "assets" / "genesis" / "devnet.json")
+        for genesis_file in GENESIS_REQUIRED_FILES:
+            self._touch(node_root / "assets" / "genesis" / genesis_file)
 
     def _create_appdir(self, root: Path, node_root: Path) -> None:
         self._touch(root / "usr" / "bin" / "animica-wallet", executable=True)

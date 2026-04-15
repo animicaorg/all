@@ -5,7 +5,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from linux_layout import LINUX_NODE_REQUIRED_PATHS, resolve_linux_node_root_from_root
+from linux_layout import (
+    GENESIS_REQUIRED_FILES,
+    LINUX_NODE_REQUIRED_PATHS,
+    resolve_linux_node_root_from_root,
+)
 
 
 def _assert_exists(path: Path, errors: list[str], label: str) -> None:
@@ -20,6 +24,15 @@ def _first_existing(paths: list[Path]) -> Path | None:
     return None
 
 
+def _assert_genesis_assets(root: Path, errors: list[str], label_prefix: str) -> None:
+    for genesis_file in GENESIS_REQUIRED_FILES:
+        _assert_exists(
+            root / "assets" / "genesis" / genesis_file,
+            errors,
+            f"{label_prefix} ({genesis_file})",
+        )
+
+
 def verify_macos(path: Path) -> list[str]:
     errors: list[str] = []
     _assert_exists(path, errors, "app bundle")
@@ -29,7 +42,7 @@ def verify_macos(path: Path) -> list[str]:
     _assert_exists(path / "Contents" / "PlugIns" / "platforms" / "libqcocoa.dylib", errors, "Qt cocoa platform plugin")
     _assert_exists(path / "Contents" / "Resources" / "node" / "venv" / "bin" / "python", errors, "bundled Python runtime")
     _assert_exists(path / "Contents" / "Resources" / "node" / "assets" / "spec" / "params.yaml", errors, "bundled spec asset")
-    _assert_exists(path / "Contents" / "Resources" / "node" / "assets" / "genesis" / "devnet.json", errors, "bundled genesis asset")
+    _assert_genesis_assets(path / "Contents" / "Resources" / "node", errors, "bundled genesis asset")
     return errors
 
 
@@ -52,7 +65,7 @@ def verify_windows(path: Path) -> list[str]:
         _assert_exists(root / "qt.conf", errors, "qt.conf")
     _assert_exists(root / "node" / "venv" / "Scripts" / "python.exe", errors, "bundled Python runtime")
     _assert_exists(root / "node" / "assets" / "spec" / "params.yaml", errors, "bundled spec asset")
-    _assert_exists(root / "node" / "assets" / "genesis" / "devnet.json", errors, "bundled genesis asset")
+    _assert_genesis_assets(root / "node", errors, "bundled genesis asset")
     return errors
 
 

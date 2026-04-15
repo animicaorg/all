@@ -9,8 +9,8 @@
 
 ## Packaging checks
 
-- No artifact contains `node/venv`.
-- No artifact contains bundled genesis/spec assets.
+- Artifacts contain bundled wallet runtime at `node/venv`.
+- Artifacts contain bundled chain assets at `node/assets/spec/params.yaml` and `node/assets/genesis/{mainnet,testnet,devnet}.json`.
 - Install/layout verification scripts pass.
 
 ## Smoke checks

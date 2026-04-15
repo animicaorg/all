@@ -66,7 +66,7 @@ On launch the wallet uses `https://rpc.animica.org/rpc` automatically.
 Packaging scripts stage a Qt desktop app plus bundled wallet runtime assets:
 
 - bundled Python venv for wallet backend and QR helper
-- bundled wallet runtime assets (`spec/params.yaml`, `genesis/devnet.json`)
+- bundled wallet runtime assets (`spec/params.yaml`, `genesis/mainnet.json`, `genesis/testnet.json`, `genesis/devnet.json`)
 
 See:
 

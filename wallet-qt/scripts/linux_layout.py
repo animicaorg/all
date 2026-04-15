@@ -6,10 +6,16 @@ import sys
 from pathlib import Path
 
 
+GENESIS_REQUIRED_FILES = (
+    "mainnet.json",
+    "testnet.json",
+    "devnet.json",
+)
+
 LINUX_NODE_REQUIRED_PATHS = (
     Path("venv/bin/python"),
     Path("assets/spec/params.yaml"),
-    Path("assets/genesis/devnet.json"),
+    *(Path("assets/genesis") / name for name in GENESIS_REQUIRED_FILES),
 )
 
 
