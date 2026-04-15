@@ -661,6 +661,87 @@ def test_get_work_materializes_mempool_template_when_pending(
         _restore_miner_globals(snapshot)
 
 
+def test_get_work_materializes_template_without_pending_for_theta_updates(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Cfg:
+        chain_id = 1337
+
+    class _Snap:
+        entries = []
+
+    class _Mempool:
+        def snapshot(self, *, limit: int = 1000):
+            return _Snap()
+
+        def has_hash(self, _tx_hash: str) -> bool:
+            return False
+
+    class _Ctx:
+        cfg = _Cfg()
+        block_db = None
+        mempool = _Mempool()
+
+        def get_head(self):
+            return {
+                "height": 12,
+                "hash": "0x" + ("12" * 32),
+                "header": {"thetaMicro": 1_500_000},
+            }
+
+    header_override = {
+        "v": 1,
+        "chainId": 1337,
+        "height": 13,
+        "parentHash": "0x" + ("12" * 32),
+        "timestamp": 1_700_000_120,
+        "stateRoot": "0x" + ("00" * 32),
+        "txsRoot": "0x" + ("00" * 32),
+        "receiptsRoot": "0x" + ("00" * 32),
+        "proofsRoot": "0x" + ("00" * 32),
+        "daRoot": "0x" + ("00" * 32),
+        "mixSeed": "0x" + ("22" * 32),
+        "poiesPolicyRoot": "0x" + ("00" * 32),
+        "pqAlgPolicyRoot": "0x" + ("00" * 32),
+        "thetaMicro": 750_000,
+        "workType": 0,
+        "nonce": 0,
+        "extra": "0x",
+    }
+    fake_template = {
+        "enabled": True,
+        "templateId": "tpl-theta-1",
+        "header": header_override,
+        "target": "0x" + ("e" * 64),
+        "parent": {"height": 12, "hash": "0x" + ("12" * 32)},
+        "txs": [],
+        "proofs": [],
+        "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+    }
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._HEAD_STATE.clear()
+        miner_methods._HEAD_STATE.update({"height": None, "hash": None, "generation": 0})
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: _Mempool())
+        monkeypatch.setattr(miner_methods, "miner_get_block_template", lambda *_a, **_kw: fake_template)
+
+        payout = "0x" + ("44" * 32)
+        result = miner_methods.miner_get_work({"address": payout, "include_mempool": False})
+
+        assert result["jobId"] == "tpl-theta-1"
+        assert int(result["thetaMicro"]) == 750_000
+        assert int(result["txCount"]) == 0
+
+        cached = miner_methods._JOB_CACHE.get("tpl-theta-1")
+        assert isinstance(cached, dict)
+        assert cached.get("template_id") == "tpl-theta-1"
+    finally:
+        _restore_miner_globals(snapshot)
+
+
 def test_get_work_address_param_populates_coinbase_extra_without_client(
     monkeypatch: pytest.MonkeyPatch,
 ):
