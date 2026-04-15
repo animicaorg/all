@@ -80,6 +80,35 @@ def _parse_float(value: Any, *, default: float = 0.0) -> float:
         return default
 
 
+def _extract_share_target_from_payload(work: Json, header: Json) -> tuple[float, bool]:
+    containers: list[Json] = []
+    for candidate in (
+        work,
+        work.get("targetHint"),
+        work.get("target_hint"),
+        work.get("hints"),
+        header,
+        header.get("targetHint"),
+        header.get("target_hint"),
+        header.get("hints"),
+    ):
+        if isinstance(candidate, dict):
+            containers.append(candidate)
+
+    for container in containers:
+        for key in (
+            "shareTarget",
+            "share_target",
+            "share_target_fraction",
+            "shareRatio",
+            "share_ratio",
+        ):
+            share_target = _parse_float(container.get(key), default=0.0)
+            if share_target > 0:
+                return share_target, True
+    return 0.0, False
+
+
 def _parse_decimal(value: Any, *, default: Decimal) -> Decimal:
     if value in (None, ""):
         return default
@@ -521,12 +550,11 @@ class MiningCoreAdapter:
             or header.get("theta_target_micro")
             or 0
         )
-        share_target = _parse_float(
-            work.get("shareTarget")
-            or work.get("share_target")
-            or work.get("share_target_fraction")
-            or 0.0
+        share_target, share_target_provided = _extract_share_target_from_payload(
+            work, header
         )
+        work["_shareTargetProvided"] = bool(share_target_provided)
+        work["_requestedShareTarget"] = float(share_target) if share_target_provided else None
         height = _parse_int(
             work.get("height") or header.get("number") or header.get("height") or 0
         )

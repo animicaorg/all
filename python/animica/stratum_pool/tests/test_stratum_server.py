@@ -77,6 +77,39 @@ async def test_on_new_job_clamps_theta_micro_difficulty_bounds():
 
 
 @pytest.mark.asyncio
+async def test_on_new_job_uses_min_difficulty_when_template_omits_share_target():
+    cfg = PoolConfig(min_difficulty=0.02, max_difficulty=1.0)
+    server = StratumPoolServer(
+        DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg)
+    )
+    server.stratum.set_global_difficulty = AsyncMock()
+    server.stratum.publish_job = AsyncMock()
+
+    job = MiningJob(
+        job_id="job-no-share-target",
+        header={"signBytes": "0x1234"},
+        theta_micro=1_000_000,
+        share_target=1.0,
+        height=7,
+        target="0x99",
+        sign_bytes="0x1234",
+        hints={"mixSeed": "0x55"},
+        raw={
+            "templateId": "job-no-share-target",
+            "header": {"signBytes": "0x1234"},
+            "_shareTargetProvided": False,
+        },
+    )
+
+    await server._on_new_job(job)
+
+    server.stratum.set_global_difficulty.assert_awaited_once_with(0.02, 1_000_000)
+    published_job = server.stratum.publish_job.await_args.args[0]
+    assert published_job.share_target == pytest.approx(0.02)
+    assert int(published_job.raw["_shareThresholdMicro"]) == 20_000
+
+
+@pytest.mark.asyncio
 async def test_share_target_auto_adjusts_down_and_up():
     cfg = PoolConfig(min_difficulty=100_000, max_difficulty=900_000)
     server = StratumPoolServer(

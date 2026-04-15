@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, replace
 
 import pytest
@@ -185,6 +186,7 @@ def _snapshot_miner_globals() -> dict[str, dict]:
                 "template_cache": dict(miner_methods._TEMPLATE_CACHE),
                 "local_head": dict(miner_methods._LOCAL_HEAD),
                 "head_state": dict(miner_methods._HEAD_STATE),
+                "mining_state": copy.deepcopy(miner_methods._MINING_STATE),
             }
 
 
@@ -196,6 +198,8 @@ def _restore_miner_globals(snapshot: dict[str, dict]) -> None:
         miner_methods._LOCAL_HEAD.update(snapshot["local_head"])
         miner_methods._HEAD_STATE.clear()
         miner_methods._HEAD_STATE.update(snapshot["head_state"])
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(snapshot["mining_state"])
         with miner_methods._TEMPLATE_CACHE_LOCK:
             miner_methods._TEMPLATE_CACHE.clear()
             miner_methods._TEMPLATE_CACHE.update(snapshot["template_cache"])
@@ -361,3 +365,45 @@ def test_target_block_time_helper_uses_60_seconds_from_config(
 
     monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
     assert miner_methods._target_block_time_s() == 60.0
+
+
+def test_stale_head_interval_triggers_once_per_target_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(
+            {
+                "last_block_time": None,
+                "block_times": [],
+                "theta_state": None,
+                "adjustment_enabled": True,
+                "last_network_height": 100,
+                "last_network_timestamp": 1_000,
+                "stale_head_hash": None,
+                "stale_head_bucket": 0,
+            }
+        )
+
+        monkeypatch.setattr(miner_methods, "_target_block_time_s", lambda default=60.0: 60.0)
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_100.0)
+
+        dt1 = miner_methods._stale_head_interval("0xabc", 1_000)
+        assert dt1 == pytest.approx(100.0)
+
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_119.0)
+        assert miner_methods._stale_head_interval("0xabc", 1_000) is None
+
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_125.0)
+        dt2 = miner_methods._stale_head_interval("0xabc", 1_000)
+        assert dt2 == pytest.approx(125.0)
+
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_130.0)
+        assert miner_methods._stale_head_interval("0xdef", 1_090) is None
+
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_151.0)
+        dt3 = miner_methods._stale_head_interval("0xdef", 1_090)
+        assert dt3 == pytest.approx(61.0)
+    finally:
+        _restore_miner_globals(snapshot)
