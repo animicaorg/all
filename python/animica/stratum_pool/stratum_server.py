@@ -190,6 +190,14 @@ class StratumPoolServer:
         ratio = float(max(1, int(threshold_micro))) / float(theta)
         return min(max(ratio, 1e-9), 1.0)
 
+    @staticmethod
+    def _coerce_positive_float(value: object, *, fallback: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        return parsed if parsed > 0.0 else fallback
+
     def _resolve_share_target(self, requested: float, theta_micro: int) -> tuple[float, int]:
         lower, upper = self._share_bounds_for_theta(theta_micro)
         requested_threshold = self._ratio_to_threshold_micro(theta_micro, requested)
@@ -236,8 +244,20 @@ class StratumPoolServer:
     async def _on_new_job(self, job: MiningJob) -> None:
         frozen_job = freeze_mining_job(job, fallback_chain_id=self._config.chain_id)
         issued_theta_micro = int(frozen_job.issued_theta_micro or frozen_job.theta_micro or 0)
+        raw_hint = dict(frozen_job.raw) if isinstance(frozen_job.raw, dict) else {}
+        requested_share_target = float(
+            frozen_job.share_target or self._config.min_difficulty
+        )
+        share_target_provided = raw_hint.get("_shareTargetProvided")
+        if share_target_provided is False:
+            requested_share_target = float(self._config.min_difficulty)
+        elif share_target_provided is True:
+            requested_share_target = self._coerce_positive_float(
+                raw_hint.get("_requestedShareTarget"),
+                fallback=requested_share_target,
+            )
         share_target, share_threshold_micro = self._resolve_share_target(
-            frozen_job.share_target or self._config.min_difficulty,
+            requested_share_target,
             issued_theta_micro,
         )
         self._current_share_threshold_micro = share_threshold_micro
