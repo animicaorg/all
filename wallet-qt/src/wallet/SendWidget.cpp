@@ -20,6 +20,7 @@
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QSettings>
+#include <QSet>
 #include <QStringListModel>
 #include <QVBoxLayout>
 #include <limits>
@@ -727,15 +728,26 @@ qint64 SendWidget::getAvailableBalance() const
                 const WalletTx tx = m_database->getTransaction(txid);
                 txStateCache.insert(txid, tx.state);
             }
-            const QString state = txStateCache.value(txid);
-            return state == "CREATED"
-                || state == "SIGNED"
-                || state == "BROADCAST"
-                || state == "MEMPOOL"
-                || state == "REORGED";
+            const QString state = txStateCache.value(txid).trimmed().toLower();
+            static const QSet<QString> kActiveReservationStates = {
+                "created",
+                "signed",
+                "broadcast",
+                "reserved",
+                "pending",
+                "pending_mempool",
+                "mempool",
+                "mempool_accepted",
+                "in_block_pending_confirm",
+                "reorged",
+            };
+            return kActiveReservationStates.contains(state);
         };
         for (const LedgerEntry& entry : entries) {
             if (entry.accountId != accountId) {
+                continue;
+            }
+            if (entry.asset != "ANM") {
                 continue;
             }
             if ((entry.type == "PENDING_OUT" || entry.type == "FEE_RESERVED") && entry.delta < 0) {
