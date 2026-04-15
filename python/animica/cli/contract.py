@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -103,6 +104,20 @@ def _is_hex_address(value: str) -> bool:
     return True
 
 
+def _is_hex_tx_hash(value: str) -> bool:
+    text = value.strip()
+    if not text.startswith(("0x", "0X")):
+        return False
+    raw = text[2:]
+    if len(raw) != 64:
+        return False
+    try:
+        bytes.fromhex(raw)
+    except Exception:
+        return False
+    return True
+
+
 def _is_address_like(value: str) -> bool:
     text = value.strip()
     return wallet_utils.is_animica_address(text) or _is_hex_address(text)
@@ -178,6 +193,109 @@ def _extract_contract_address(receipt: Optional[dict[str, Any]]) -> Optional[str
     return None
 
 
+def _fetch_receipt_once(rpc: RpcAdapter, tx_hash: str) -> Optional[dict[str, Any]]:
+    for method in ("tx.getTransactionReceipt", "tx.getReceipt", "tx.getInstantReceipt"):
+        try:
+            result = rpc.request(method, [tx_hash])
+        except Exception:
+            continue
+        if isinstance(result, dict) and result:
+            return result
+    return None
+
+
+def _poll_transaction_confirmation(
+    rpc: RpcAdapter,
+    tx_hash: str,
+    *,
+    wait_timeout_secs: float,
+    poll_interval_secs: float,
+) -> dict[str, Any]:
+    timeout = max(0.1, float(wait_timeout_secs))
+    interval = max(0.1, float(poll_interval_secs))
+    deadline = time.monotonic() + timeout
+
+    last_status: Optional[str] = None
+    last_block_height: Optional[int] = None
+
+    while True:
+        receipt = _fetch_receipt_once(rpc, tx_hash)
+        if isinstance(receipt, dict) and receipt:
+            tx_status = _first_str(receipt, "status", "tx_status")
+            block_height = _first_int(receipt, "blockNumber", "block_height", "height")
+
+            if tx_status is None or block_height is None:
+                status_view = get_tx_status(rpc, tx_hash)
+                if isinstance(status_view, dict):
+                    if tx_status is None:
+                        tx_status = _first_str(status_view, "status", "state", "tx_status")
+                    if block_height is None:
+                        block_height = _first_int(
+                            status_view,
+                            "included_height",
+                            "blockNumber",
+                            "block_height",
+                            "height",
+                        )
+
+            return {
+                "receipt": receipt,
+                "tx_status": tx_status,
+                "block_height": block_height,
+                "confirmed": True,
+                "success": _tx_status_is_success(tx_status),
+                "timed_out": False,
+            }
+
+        status_view = get_tx_status(rpc, tx_hash)
+        if isinstance(status_view, dict):
+            status_candidate = _first_str(status_view, "status", "state", "tx_status")
+            if status_candidate is not None:
+                last_status = status_candidate
+            block_candidate = _first_int(status_view, "included_height", "blockNumber", "block_height", "height")
+            if block_candidate is not None:
+                last_block_height = block_candidate
+
+            success = _tx_status_is_success(last_status)
+            if success is not None:
+                return {
+                    "receipt": None,
+                    "tx_status": last_status,
+                    "block_height": last_block_height,
+                    "confirmed": True,
+                    "success": success,
+                    "timed_out": False,
+                }
+
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(interval)
+
+    receipt_after_timeout = _fetch_receipt_once(rpc, tx_hash)
+    if isinstance(receipt_after_timeout, dict) and receipt_after_timeout:
+        tx_status = _first_str(receipt_after_timeout, "status", "tx_status") or last_status
+        block_height = (
+            _first_int(receipt_after_timeout, "blockNumber", "block_height", "height") or last_block_height
+        )
+        return {
+            "receipt": receipt_after_timeout,
+            "tx_status": tx_status,
+            "block_height": block_height,
+            "confirmed": True,
+            "success": _tx_status_is_success(tx_status),
+            "timed_out": False,
+        }
+
+    return {
+        "receipt": None,
+        "tx_status": last_status,
+        "block_height": last_block_height,
+        "confirmed": False,
+        "success": None,
+        "timed_out": True,
+    }
+
+
 def _derive_contract_address(
     tx_obj: Any,
     *,
@@ -218,6 +336,24 @@ def _deployment_lookup_key(rpc_url: Optional[str]) -> tuple[Optional[str], Optio
     chain_id = resolve_chain_id(adapter, None)
     network = resolve_network_hint()
     return deployment_store.network_key(chain_id=chain_id, network=network), chain_id, network
+
+
+def _resolve_deployment_context(
+    *,
+    rpc: Optional[str],
+    network_override: Optional[str],
+    chain_id_override: Optional[int],
+) -> tuple[str, Optional[int], Optional[str], str]:
+    rpc_url = resolve_rpc_url(rpc)
+    network_name = (network_override or "").strip() or resolve_network_hint()
+    chain_id: Optional[int] = int(chain_id_override) if chain_id_override is not None else None
+    if chain_id is None:
+        try:
+            chain_id = resolve_chain_id(RpcAdapter(rpc_url), None)
+        except Exception:
+            chain_id = None
+    deployment_key = deployment_store.network_key(chain_id=chain_id, network=network_name)
+    return deployment_key, chain_id, network_name, rpc_url
 
 
 def _resolve_contract_identifier(
@@ -679,6 +815,16 @@ def contract_deploy(
     abi: Optional[Path] = typer.Option(None, "--abi", help="Path to ABI JSON."),
     nonce: Optional[int] = typer.Option(None, "--nonce", help="Optional nonce override."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for receipt confirmation."),
+    wait_timeout_secs: int = typer.Option(
+        60,
+        "--wait-timeout-secs",
+        help="Maximum seconds to wait for confirmation when --wait is enabled.",
+    ),
+    poll_interval_secs: float = typer.Option(
+        1.0,
+        "--poll-interval-secs",
+        help="Polling interval in seconds while waiting for confirmation.",
+    ),
     save: bool = typer.Option(False, "--save", help="Persist deployment metadata locally."),
     name: Optional[str] = typer.Option(None, "--name", help="Saved deployment alias."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
@@ -696,6 +842,11 @@ def contract_deploy(
     chain_id = resolve_chain_id(rpc_adapter, None)
     network_name = resolve_network_hint()
     deployment_key = deployment_store.network_key(chain_id=chain_id, network=network_name)
+
+    if wait_timeout_secs <= 0:
+        raise typer.BadParameter("--wait-timeout-secs must be greater than zero")
+    if poll_interval_secs <= 0:
+        raise typer.BadParameter("--poll-interval-secs must be greater than zero")
 
     signer_resolution = wallet_utils.resolve_signer(
         from_value=from_,
@@ -717,9 +868,6 @@ def contract_deploy(
     input_path = Path(artifact_or_source).expanduser().resolve()
     if not input_path.exists() or not input_path.is_file():
         raise typer.BadParameter(f"artifact or source file not found: {artifact_or_source}")
-
-    if save and not wait:
-        raise typer.BadParameter("--save requires --wait so deployment success/address can be confirmed")
 
     if input_path.suffix.lower() == ".py":
         source_path = input_path
@@ -839,13 +987,36 @@ def contract_deploy(
     except Exception as exc:  # noqa: BLE001
         raise typer.BadParameter(f"contract deploy failed: {exc}") from exc
 
+    if not json_output:
+        typer.echo("Deploy submitted")
+        typer.echo(f"Submitted tx hash: {tx_hash}")
+        if wait:
+            typer.echo(
+                "Waiting for confirmation "
+                f"(timeout={wait_timeout_secs}s, poll={poll_interval_secs:.2f}s)..."
+            )
+
     receipt: Optional[dict[str, Any]] = None
-    wait_error: Optional[str] = None
+    tx_status: Optional[str] = None
+    confirmed = False
+    success: Optional[bool] = None
+    timed_out = False
+    block_height: Optional[int] = None
+
     if wait:
-        try:
-            receipt = wait_for_receipt(rpc_adapter, tx_hash, timeout_s=120.0, poll_interval_s=0.5)
-        except Exception as exc:  # noqa: BLE001
-            wait_error = str(exc)
+        polling_rpc_timeout = max(1.0, min(5.0, float(wait_timeout_secs)))
+        poll_result = _poll_transaction_confirmation(
+            RpcAdapter(rpc_url, timeout=polling_rpc_timeout),
+            tx_hash,
+            wait_timeout_secs=float(wait_timeout_secs),
+            poll_interval_secs=float(poll_interval_secs),
+        )
+        receipt = poll_result.get("receipt")
+        tx_status = poll_result.get("tx_status")
+        block_height = poll_result.get("block_height")
+        confirmed = bool(poll_result.get("confirmed"))
+        success = poll_result.get("success")
+        timed_out = bool(poll_result.get("timed_out"))
 
     contract_address = _extract_contract_address(receipt)
     if contract_address is None:
@@ -857,90 +1028,139 @@ def contract_deploy(
             receipt=receipt,
         )
 
-    block_height = _first_int(receipt or {}, "blockNumber", "block_height", "height")
+    block_height = block_height or _first_int(receipt or {}, "blockNumber", "block_height", "height")
     gas_used = _first_int(receipt or {}, "gasUsed", "gas_used")
-    tx_status = _first_str(receipt or {}, "status", "tx_status")
+    tx_status = tx_status or _first_str(receipt or {}, "status", "tx_status")
     if tx_status is None:
         status_view = get_tx_status(rpc_adapter, tx_hash)
         if isinstance(status_view, dict):
             tx_status = _first_str(status_view, "status", "state")
             if block_height is None:
                 block_height = _first_int(status_view, "included_height", "height")
+    if success is None:
+        success = _tx_status_is_success(tx_status)
 
     persisted_artifact_path: Optional[Path] = artifact_path
     persisted_abi_path: Optional[Path] = abi_path
     persisted_manifest_path: Optional[Path] = manifest_path
-    save_error: Optional[str] = None
+    deployment_name = (name or contract_name).strip() or contract_name
+    saved = False
+    save_warning: Optional[str] = None
+    fatal_save_error: Optional[str] = None
 
     if save:
-        try:
-            if wait_error:
-                raise RuntimeError(f"receipt wait failed: {wait_error}")
-            status_success = _tx_status_is_success(tx_status)
-            if status_success is False:
-                raise RuntimeError(f"transaction status indicates failure: {tx_status}")
-            if not contract_address:
-                raise RuntimeError(
-                    "contract address could not be resolved from receipt/metadata"
+        if not wait:
+            save_warning = (
+                "--save was requested with --no-wait, so deployment was not saved yet. "
+                f"Confirm first with `animica contract receipt {tx_hash} --wait --wait-timeout-secs {wait_timeout_secs}` "
+                "then save with "
+                f"`animica contract save-deployment --name {deployment_name} --address <contract_address> --tx-hash {tx_hash}`."
+            )
+        elif not confirmed:
+            if contract_address:
+                save_warning = (
+                    "--save was requested, but deployment was not confirmed before timeout; "
+                    "save was skipped pending confirmation."
+                )
+            else:
+                save_warning = (
+                    "--save was requested, but deployment was not confirmed before timeout and "
+                    "contract address is still unknown; save was skipped pending confirmation."
+                )
+        elif success is False:
+            save_warning = (
+                f"--save was requested, but deployment status is {tx_status or 'FAILED'}; "
+                "save was skipped."
+            )
+        else:
+            try:
+                if not contract_address:
+                    raise RuntimeError("contract address could not be resolved from receipt/metadata")
+
+                if persisted_artifact_path is None:
+                    persisted_artifact_path = artifact_store.default_artifact_path(contract_name, code_hash)
+                    if not persisted_artifact_path.exists():
+                        artifact_store.write_artifact_bytes(
+                            persisted_artifact_path,
+                            artifact_bytes,
+                            overwrite=False,
+                        )
+
+                if persisted_abi_path is None and abi_obj is not None:
+                    persisted_abi_path = artifact_store.default_abi_path(contract_name, code_hash)
+                    if not persisted_abi_path.exists():
+                        artifact_store.write_json_file(persisted_abi_path, abi_obj, overwrite=False)
+
+                if persisted_manifest_path is None:
+                    persisted_manifest_path = artifact_store.default_manifest_path(contract_name, code_hash)
+                    if not persisted_manifest_path.exists():
+                        artifact_store.write_json_file(persisted_manifest_path, manifest_obj, overwrite=False)
+
+                artifact_store.save_artifact_record(
+                    artifact_store.infer_artifact_metadata(
+                        artifact_path=persisted_artifact_path,
+                        source_path=source_path,
+                        code_hash=code_hash,
+                        contract_name=contract_name,
+                        abi_path=persisted_abi_path,
+                        manifest_path=persisted_manifest_path,
+                        compiler_meta={"compiled_during": "deploy"} if source_path is not None else {},
+                        optimize=True,
+                    )
                 )
 
-            if persisted_artifact_path is None:
-                persisted_artifact_path = artifact_store.default_artifact_path(contract_name, code_hash)
-                if not persisted_artifact_path.exists():
-                    artifact_store.write_artifact_bytes(persisted_artifact_path, artifact_bytes, overwrite=False)
-
-            if persisted_abi_path is None and abi_obj is not None:
-                persisted_abi_path = artifact_store.default_abi_path(contract_name, code_hash)
-                if not persisted_abi_path.exists():
-                    artifact_store.write_json_file(persisted_abi_path, abi_obj, overwrite=False)
-
-            if persisted_manifest_path is None:
-                persisted_manifest_path = artifact_store.default_manifest_path(contract_name, code_hash)
-                if not persisted_manifest_path.exists():
-                    artifact_store.write_json_file(persisted_manifest_path, manifest_obj, overwrite=False)
-
-            artifact_store.save_artifact_record(
-                artifact_store.infer_artifact_metadata(
-                    artifact_path=persisted_artifact_path,
-                    source_path=source_path,
-                    code_hash=code_hash,
-                    contract_name=contract_name,
-                    abi_path=persisted_abi_path,
-                    manifest_path=persisted_manifest_path,
-                    compiler_meta={"compiled_during": "deploy"} if source_path is not None else {},
-                    optimize=True,
+                deployment_store.save_deployment_record(
+                    {
+                        "name": deployment_name,
+                        "address": contract_address,
+                        "chain_id": chain_id,
+                        "network": network_name,
+                        "tx_hash": tx_hash,
+                        "block_height": block_height,
+                        "deployer": sender,
+                        "abi_path": str(persisted_abi_path) if persisted_abi_path else None,
+                        "artifact_path": str(persisted_artifact_path) if persisted_artifact_path else None,
+                        "manifest_path": str(persisted_manifest_path) if persisted_manifest_path else None,
+                        "code_hash": code_hash,
+                        "rpc_url": rpc_url,
+                        "created_at": _utc_now_iso(),
+                        "constructor_args": constructor_args,
+                        "constructor_method": constructor_method,
+                        "constructor_calldata": ("0x" + constructor_calldata.hex()) if constructor_calldata else None,
+                    },
+                    key=deployment_key,
                 )
-            )
+                saved = True
+            except Exception as exc:  # noqa: BLE001
+                fatal_save_error = str(exc)
 
-            deployment_name = (name or contract_name).strip() or contract_name
-            deployment_store.save_deployment_record(
-                {
-                    "name": deployment_name,
-                    "address": contract_address,
-                    "chain_id": chain_id,
-                    "network": network_name,
-                    "tx_hash": tx_hash,
-                    "block_height": block_height,
-                    "deployer": sender,
-                    "abi_path": str(persisted_abi_path) if persisted_abi_path else None,
-                    "artifact_path": str(persisted_artifact_path) if persisted_artifact_path else None,
-                    "manifest_path": str(persisted_manifest_path) if persisted_manifest_path else None,
-                    "code_hash": code_hash,
-                    "rpc_url": rpc_url,
-                    "created_at": _utc_now_iso(),
-                    "constructor_args": constructor_args,
-                    "constructor_method": constructor_method,
-                    "constructor_calldata": ("0x" + constructor_calldata.hex()) if constructor_calldata else None,
-                },
-                key=deployment_key,
-            )
-        except Exception as exc:  # noqa: BLE001
-            save_error = str(exc)
-
-    if save and save_error:
+    if save and fatal_save_error:
         raise typer.BadParameter(
-            f"deployment submitted (tx_hash={tx_hash}) but save failed: {save_error}"
+            f"deployment submitted (tx_hash={tx_hash}) but save failed: {fatal_save_error}"
         )
+
+    if wait:
+        if confirmed:
+            if success is True:
+                confirmation_state = "confirmed (success)"
+                message = "deployment confirmed successfully"
+            elif success is False:
+                confirmation_state = f"confirmed (failure: {tx_status or 'FAILED'})"
+                message = f"deployment confirmed with failure status: {tx_status or 'FAILED'}"
+            else:
+                confirmation_state = "confirmed"
+                message = "deployment confirmed"
+        else:
+            confirmation_state = f"not confirmed before timeout ({wait_timeout_secs}s)"
+            message = "deployment submitted but not confirmed before timeout"
+    else:
+        confirmation_state = "not requested (--no-wait)"
+        message = "deployment submitted without waiting for confirmation"
+
+    if save and saved:
+        message += f"; deployment alias '{deployment_name}' saved"
+    elif save and save_warning:
+        message += f"; {save_warning}"
 
     payload = {
         "status": "ok",
@@ -948,15 +1168,24 @@ def contract_deploy(
         "chain_id": chain_id,
         "network": network_name,
         "deployment_key": deployment_key,
+        "submitted": True,
+        "confirmed": bool(confirmed),
+        "success": success,
         "tx_hash": tx_hash,
         "contract_address": contract_address,
+        "deployment_name": deployment_name,
         "block_height": block_height,
         "gas_used": gas_used,
         "tx_status": tx_status,
         "waited": bool(wait),
-        "wait_error": wait_error,
-        "saved": bool(save),
-        "name": (name or contract_name),
+        "wait_timeout_secs": int(wait_timeout_secs),
+        "poll_interval_secs": float(poll_interval_secs),
+        "timed_out": bool(timed_out),
+        "wait_error": "timeout" if timed_out else None,
+        "save_requested": bool(save),
+        "saved": bool(saved),
+        "save_warning": save_warning,
+        "name": deployment_name,
         "deployer": sender,
         "artifact_path": str(persisted_artifact_path) if persisted_artifact_path else None,
         "abi_path": str(persisted_abi_path) if persisted_abi_path else None,
@@ -966,19 +1195,236 @@ def contract_deploy(
         "constructor_args": constructor_args,
         "constructor_calldata": ("0x" + constructor_calldata.hex()) if constructor_calldata else None,
         "receipt": receipt,
+        "message": message,
     }
 
     _text_or_json(
         payload=payload,
         json_output=json_output,
         lines=[
-            "Deploy submitted",
-            f"Tx hash:      {tx_hash}",
-            f"Address:      {contract_address or 'pending'}",
-            f"Block height: {block_height if block_height is not None else 'pending'}",
-            f"Gas used:     {gas_used if gas_used is not None else 'unknown'}",
-            f"Status:       {tx_status or ('pending' if not wait else 'unknown')}",
-            f"Saved:        {'yes' if save else 'no'}",
+            "Deployment result",
+            f"Submitted tx hash: {tx_hash}",
+            f"Confirmation:      {confirmation_state}",
+            f"Contract address:  {contract_address or 'pending'}",
+            f"Alias saved:       {'yes' if saved else 'no'}",
+            f"Alias name:        {deployment_name}",
+            f"Message:           {message}",
+        ],
+    )
+
+
+@app.command("receipt")
+def contract_receipt(
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)."),
+    rpc: Optional[str] = typer.Option(None, "--rpc", help="RPC endpoint URL."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for confirmation."),
+    wait_timeout_secs: int = typer.Option(
+        60,
+        "--wait-timeout-secs",
+        help="Maximum seconds to wait for confirmation when --wait is enabled.",
+    ),
+    poll_interval_secs: float = typer.Option(
+        1.0,
+        "--poll-interval-secs",
+        help="Polling interval in seconds while waiting for confirmation.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    tx_hash_value = tx_hash.strip()
+    if not _is_hex_tx_hash(tx_hash_value):
+        raise typer.BadParameter(f"invalid tx hash format: {tx_hash}")
+    if wait_timeout_secs <= 0:
+        raise typer.BadParameter("--wait-timeout-secs must be greater than zero")
+    if poll_interval_secs <= 0:
+        raise typer.BadParameter("--poll-interval-secs must be greater than zero")
+
+    rpc_url = resolve_rpc_url(rpc)
+    rpc_adapter = RpcAdapter(rpc_url)
+
+    receipt: Optional[dict[str, Any]] = None
+    tx_status: Optional[str] = None
+    block_height: Optional[int] = None
+    success: Optional[bool] = None
+    confirmed = False
+    timed_out = False
+
+    if wait:
+        poll_result = _poll_transaction_confirmation(
+            RpcAdapter(rpc_url, timeout=max(1.0, min(5.0, float(wait_timeout_secs)))),
+            tx_hash_value,
+            wait_timeout_secs=float(wait_timeout_secs),
+            poll_interval_secs=float(poll_interval_secs),
+        )
+        receipt = poll_result.get("receipt")
+        tx_status = poll_result.get("tx_status")
+        block_height = poll_result.get("block_height")
+        success = poll_result.get("success")
+        confirmed = bool(poll_result.get("confirmed"))
+        timed_out = bool(poll_result.get("timed_out"))
+    else:
+        receipt = _fetch_receipt_once(rpc_adapter, tx_hash_value)
+        tx_status = _first_str(receipt or {}, "status", "tx_status")
+        block_height = _first_int(receipt or {}, "blockNumber", "block_height", "height")
+        if tx_status is None:
+            status_view = get_tx_status(rpc_adapter, tx_hash_value)
+            if isinstance(status_view, dict):
+                tx_status = _first_str(status_view, "status", "state", "tx_status")
+                if block_height is None:
+                    block_height = _first_int(status_view, "included_height", "blockNumber", "block_height", "height")
+        success = _tx_status_is_success(tx_status)
+        confirmed = bool(receipt) or (success is not None)
+
+    gas_used = _first_int(receipt or {}, "gasUsed", "gas_used")
+    contract_address = _extract_contract_address(receipt)
+
+    if confirmed:
+        if success is True:
+            message = "transaction confirmed successfully"
+            confirmation_state = "confirmed (success)"
+        elif success is False:
+            message = f"transaction confirmed with failure status: {tx_status or 'FAILED'}"
+            confirmation_state = f"confirmed (failure: {tx_status or 'FAILED'})"
+        else:
+            message = "transaction appears confirmed, but outcome status is unknown"
+            confirmation_state = "confirmed (unknown outcome)"
+    else:
+        if wait and timed_out:
+            message = "transaction not confirmed before timeout"
+            confirmation_state = f"not confirmed before timeout ({wait_timeout_secs}s)"
+        else:
+            message = "transaction not confirmed yet"
+            confirmation_state = "not confirmed"
+
+    payload = {
+        "status": "ok",
+        "rpc_url": rpc_url,
+        "tx_hash": tx_hash_value,
+        "submitted": True,
+        "confirmed": bool(confirmed),
+        "success": success,
+        "tx_status": tx_status,
+        "contract_address": contract_address,
+        "block_height": block_height,
+        "gas_used": gas_used,
+        "waited": bool(wait),
+        "wait_timeout_secs": int(wait_timeout_secs),
+        "poll_interval_secs": float(poll_interval_secs),
+        "timed_out": bool(timed_out),
+        "receipt": receipt,
+        "message": message,
+    }
+
+    _text_or_json(
+        payload=payload,
+        json_output=json_output,
+        lines=[
+            "Transaction receipt status",
+            f"Tx hash:           {tx_hash_value}",
+            f"Confirmation:      {confirmation_state}",
+            f"Contract address:  {contract_address or 'pending'}",
+            f"Block height:      {block_height if block_height is not None else 'pending'}",
+            f"Status:            {tx_status or 'unknown'}",
+            f"Message:           {message}",
+        ],
+    )
+
+
+@app.command("save-deployment")
+def contract_save_deployment(
+    name: str = typer.Option(..., "--name", help="Deployment alias to save."),
+    address: str = typer.Option(..., "--address", help="Deployed contract address."),
+    abi: Optional[Path] = typer.Option(None, "--abi", help="Optional ABI JSON path."),
+    tx_hash: Optional[str] = typer.Option(None, "--tx-hash", help="Optional deployment transaction hash."),
+    rpc: Optional[str] = typer.Option(None, "--rpc", help="RPC endpoint URL for deployment scoping."),
+    network: Optional[str] = typer.Option(None, "--network", help="Explicit deployment network label."),
+    chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Explicit chain ID for deployment scoping."),
+    artifact_path: Optional[Path] = typer.Option(None, "--artifact-path", help="Optional artifact path."),
+    manifest_path: Optional[Path] = typer.Option(None, "--manifest-path", help="Optional manifest path."),
+    code_hash: Optional[str] = typer.Option(None, "--code-hash", help="Optional contract code hash."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    deployment_name = name.strip()
+    if not deployment_name:
+        raise typer.BadParameter("--name cannot be empty")
+
+    contract_address = address.strip()
+    if not _is_address_like(contract_address):
+        raise typer.BadParameter(f"invalid contract address: {address}")
+
+    tx_hash_value: Optional[str] = None
+    if tx_hash is not None and tx_hash.strip():
+        tx_hash_value = tx_hash.strip()
+        if not _is_hex_tx_hash(tx_hash_value):
+            raise typer.BadParameter(f"invalid tx hash format: {tx_hash}")
+
+    abi_path: Optional[Path] = None
+    if abi is not None:
+        abi_path = abi.expanduser().resolve()
+        _ = abi_utils.load_abi_document(abi_path)
+
+    artifact_resolved: Optional[Path] = None
+    if artifact_path is not None:
+        artifact_resolved = artifact_path.expanduser().resolve()
+        if not artifact_resolved.exists() or not artifact_resolved.is_file():
+            raise typer.BadParameter(f"artifact file not found: {artifact_path}")
+
+    manifest_resolved: Optional[Path] = None
+    if manifest_path is not None:
+        manifest_resolved = manifest_path.expanduser().resolve()
+        if not manifest_resolved.exists() or not manifest_resolved.is_file():
+            raise typer.BadParameter(f"manifest file not found: {manifest_path}")
+        _ = _load_json(manifest_resolved, label="manifest")
+
+    deployment_key, resolved_chain_id, resolved_network, rpc_url = _resolve_deployment_context(
+        rpc=rpc,
+        network_override=network,
+        chain_id_override=chain_id,
+    )
+
+    deployment_store.save_deployment_record(
+        {
+            "name": deployment_name,
+            "address": contract_address,
+            "chain_id": resolved_chain_id,
+            "network": resolved_network,
+            "tx_hash": tx_hash_value,
+            "abi_path": str(abi_path) if abi_path else None,
+            "artifact_path": str(artifact_resolved) if artifact_resolved else None,
+            "manifest_path": str(manifest_resolved) if manifest_resolved else None,
+            "code_hash": code_hash,
+            "rpc_url": rpc_url,
+            "created_at": _utc_now_iso(),
+        },
+        key=deployment_key,
+    )
+
+    payload = {
+        "status": "ok",
+        "saved": True,
+        "deployment_name": deployment_name,
+        "address": contract_address,
+        "tx_hash": tx_hash_value,
+        "abi_path": str(abi_path) if abi_path else None,
+        "artifact_path": str(artifact_resolved) if artifact_resolved else None,
+        "manifest_path": str(manifest_resolved) if manifest_resolved else None,
+        "code_hash": code_hash,
+        "network": resolved_network,
+        "chain_id": resolved_chain_id,
+        "deployment_key": deployment_key,
+        "rpc_url": rpc_url,
+        "message": f"saved deployment alias '{deployment_name}'",
+    }
+
+    _text_or_json(
+        payload=payload,
+        json_output=json_output,
+        lines=[
+            "Deployment alias saved",
+            f"Alias:            {deployment_name}",
+            f"Address:          {contract_address}",
+            f"Deployment key:   {deployment_key}",
+            f"Tx hash:          {tx_hash_value or 'not provided'}",
+            f"ABI path:         {abi_path or 'not provided'}",
         ],
     )
 
