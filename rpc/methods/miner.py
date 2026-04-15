@@ -1145,15 +1145,34 @@ def _min_block_spacing_s() -> float:
     return float(override) / 1000.0
 
 
+def _header_timestamp_seconds(header: Any) -> int:
+    if header is None:
+        return 0
+    if isinstance(header, dict):
+        for key in ("timestamp", "time", "ts"):
+            value = header.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except Exception:
+                    continue
+        return 0
+    for attr in ("timestamp", "time", "ts"):
+        value = getattr(header, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                continue
+    return 0
+
+
 def _head_timestamp_seconds() -> Optional[int]:
     snap = _current_head_snapshot()
     header = snap.get("header") if isinstance(snap, dict) else None
-    ts = getattr(header, "timestamp", None) if header is not None else None
-    if ts is not None:
-        try:
-            return int(ts)
-        except Exception:
-            return None
+    ts = _header_timestamp_seconds(header)
+    if ts > 0:
+        return ts
     hash_hex = snap.get("hash") if isinstance(snap, dict) else None
     if not hash_hex:
         return None
@@ -1170,7 +1189,7 @@ def _head_timestamp_seconds() -> Optional[int]:
     return None
 
 
-def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
+def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped: int = 1) -> int:
     """
     Dynamically adjust theta micro during mining based on observed block times.
     
@@ -1186,6 +1205,9 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
     
     Args:
         dt_seconds: Time elapsed since last block (seconds). If None, returns current theta.
+        blocks_skipped: Number of elapsed retarget intervals represented by dt_seconds.
+            Used to catch up theta updates when the miner has not requested work for
+            multiple stale-age buckets.
         
     Returns:
         int: Adjusted theta_micro value for next mining iteration (in micro-nats)
@@ -1258,14 +1280,28 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             if state is None:
                 return _resolve_theta()
         
-        # Validate dt_seconds (reject invalid and extreme values)
-        # Upper bound: 1 hour = 3600s (prevents overflow and unreasonable adjustments)
-        if dt_seconds <= 0 or not math.isfinite(dt_seconds) or dt_seconds > 3600.0:
+        try:
+            blocks_skipped = max(1, int(blocks_skipped))
+        except Exception:
+            blocks_skipped = 1
+
+        # Validate dt_seconds (reject invalid values)
+        if dt_seconds <= 0 or not math.isfinite(dt_seconds):
             log.warning(
                 f"Invalid dt_seconds for theta adjustment: {dt_seconds}, skipping update "
-                f"(must be in range (0, 3600] seconds)"
+                f"(must be > 0 and finite)"
             )
             return int(state.theta_micro)
+
+        # Clamp extreme dt_seconds instead of skipping so very slow periods still
+        # relax theta and unblock mining.
+        if dt_seconds > 3600.0:
+            original_dt = dt_seconds
+            dt_seconds = 3600.0
+            log.warning(
+                f"Large dt_seconds for theta adjustment: {original_dt:.2f}s; "
+                f"clamped to {dt_seconds:.1f}s"
+            )
         
         # Clamp dt_seconds to prevent extreme difficulty increases during rapid mining
         # When mining blocks very quickly (e.g., local devnet, testing), dt_seconds can be < 1s
@@ -1283,7 +1319,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             )
         
         # Apply retargeting update
-        new_state = update_theta(state, dt_seconds, blocks_skipped=1)
+        new_state = update_theta(state, dt_seconds, blocks_skipped=blocks_skipped)
         _MINING_STATE["theta_state"] = new_state
         
         # Track block times for monitoring (keep last 20)
@@ -1318,7 +1354,8 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
             avg_time = sum(recent_times) / len(recent_times) if recent_times else 0.0
             log.info(
                 f"Adjusted mining theta: {old_theta/1e6:.3f} → {new_theta/1e6:.3f} nats "
-                f"(dt={dt_seconds:.2f}s, avg_5={avg_time:.2f}s, target={state.params.target_block_time_s}s)"
+                f"(dt={dt_seconds:.2f}s, steps={blocks_skipped}, avg_5={avg_time:.2f}s, "
+                f"target={state.params.target_block_time_s}s)"
             )
         
         return int(new_theta)
@@ -1330,7 +1367,7 @@ def _adjust_theta_for_mining(dt_seconds: float | None = None) -> int:
         return _resolve_theta()
 
 
-def _network_block_interval(head_height: int, head_timestamp: int) -> float | None:
+def _network_block_interval(head_height: int, head_timestamp: int) -> tuple[float, int] | None:
     if head_height <= 0 or head_timestamp <= 0:
         _MINING_STATE["last_network_height"] = head_height
         _MINING_STATE["last_network_timestamp"] = head_timestamp
@@ -1346,7 +1383,8 @@ def _network_block_interval(head_height: int, head_timestamp: int) -> float | No
         _MINING_STATE["stale_head_hash"] = None
         _MINING_STATE["stale_head_bucket"] = 0
         return None
-    if int(last_height) == head_height:
+    height_delta = int(head_height) - int(last_height)
+    if height_delta <= 0:
         return None
 
     dt_seconds = int(head_timestamp) - int(last_timestamp)
@@ -1356,15 +1394,17 @@ def _network_block_interval(head_height: int, head_timestamp: int) -> float | No
     _MINING_STATE["stale_head_bucket"] = 0
     if dt_seconds <= 0:
         return None
-    return float(dt_seconds)
+    return float(dt_seconds), max(1, height_delta)
 
 
-def _stale_head_interval(head_hash: str | None, head_timestamp: int) -> float | None:
+def _stale_head_interval(head_hash: str | None, head_timestamp: int) -> tuple[float, int] | None:
     """
-    Return a synthetic dt when the chain head is unchanged for too long.
+    Return a synthetic dt and bucket count when the chain head is unchanged.
 
     To avoid call-frequency bias, we retarget at most once per target-time bucket
-    for a given head hash (e.g., once per ~60s bucket when target is 60s).
+    for a given head hash (e.g., once per ~60s bucket when target is 60s). If
+    multiple buckets elapsed between calls, we return the bucket delta so the
+    caller can catch up with multiple retarget steps.
     """
     if head_timestamp <= 0:
         _MINING_STATE["stale_head_hash"] = None
@@ -1387,8 +1427,9 @@ def _stale_head_interval(head_hash: str | None, head_timestamp: int) -> float | 
     if current_bucket <= last_bucket:
         return None
 
+    buckets_skipped = max(1, current_bucket - last_bucket)
     _MINING_STATE["stale_head_bucket"] = current_bucket
-    return float(min(age_s, 3600))
+    return float(min(age_s, 3600)), buckets_skipped
 
 
 def _bool_env_enabled(name: str) -> bool:
@@ -2992,7 +3033,7 @@ def _prune_template_cache(now: float | None = None) -> None:
 
 
 def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
-    parent_ts = int(getattr(parent_header, "timestamp", 0) or 0)
+    parent_ts = _header_timestamp_seconds(parent_header)
     min_spacing_ms = int(os.getenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0"))
     min_delta = int(math.ceil(min_spacing_ms / 1000)) if min_spacing_ms > 0 else 0
     timestamp_min = parent_ts + min_delta if parent_ts else int(time.time())
@@ -3677,12 +3718,13 @@ def _mine_once(
     if parent_header is None:
         # Build a minimal synthetic parent header so hashes/roots have sane defaults
         pq_root, poies_root = _policy_roots()
+        head_ts = _head_timestamp_seconds() or int(time.time())
         parent_header = Header(
             v=1,
             chainId=_ctx().cfg.chain_id,
             height=parent_height,
             parentHash=parent_hash_bytes,
-            timestamp=int(time.time()),
+            timestamp=int(head_ts),
             stateRoot=ZERO32,
             txsRoot=ZERO32,
             receiptsRoot=ZERO32,
@@ -3710,7 +3752,7 @@ def _mine_once(
     force_block_due_to_time = False
     max_block_time_s = float(os.getenv("ANIMICA_MAX_BLOCK_TIME_S", "3600"))  # 1 hour default
     if parent_header is not None and max_block_time_s > 0:
-        parent_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
+        parent_timestamp = _header_timestamp_seconds(parent_header)
         current_time = int(time.time())
         if parent_timestamp > 0:
             time_since_last_block = current_time - parent_timestamp
@@ -3726,13 +3768,19 @@ def _mine_once(
     # This adapts mining difficulty to network conditions (hash rate, block times)
     global _MINING_STATE
     network_dt_seconds = None
+    network_blocks_skipped = 1
     stale_dt_seconds = None
+    stale_blocks_skipped = 1
     if parent_header is not None:
-        head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
-        network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
-        if network_dt_seconds is None:
+        head_timestamp = _header_timestamp_seconds(parent_header)
+        network_dt = _network_block_interval(parent_height, head_timestamp)
+        if network_dt is not None:
+            network_dt_seconds, network_blocks_skipped = network_dt
+        else:
             head_hash = parent_hash_val if isinstance(parent_hash_val, str) else None
-            stale_dt_seconds = _stale_head_interval(head_hash, head_timestamp)
+            stale_dt = _stale_head_interval(head_hash, head_timestamp)
+            if stale_dt is not None:
+                stale_dt_seconds, stale_blocks_skipped = stale_dt
     # Force minimum theta if block is being forced due to time
     if force_block_due_to_time:
         # Use minimum theta to ensure block can be mined quickly
@@ -3756,24 +3804,30 @@ def _mine_once(
             except Exception as e2:
                 log.error(f"Fallback theta also failed: {e2}. Mining may be difficult.")
     elif network_dt_seconds is not None:
-        adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
+        adjusted_theta = _adjust_theta_for_mining(
+            network_dt_seconds, blocks_skipped=network_blocks_skipped
+        )
         try:
             header_template = replace(header_template, thetaMicro=adjusted_theta)
             log.debug(
-                "Applied dynamic theta adjustment: %.3f nats (network dt=%.2fs)",
+                "Applied dynamic theta adjustment: %.3f nats (network dt=%.2fs, steps=%d)",
                 adjusted_theta / 1e6,
                 network_dt_seconds,
+                network_blocks_skipped,
             )
         except Exception as e:
             log.warning(f"Failed to apply theta adjustment to header: {e}")
     elif stale_dt_seconds is not None:
-        adjusted_theta = _adjust_theta_for_mining(stale_dt_seconds)
+        adjusted_theta = _adjust_theta_for_mining(
+            stale_dt_seconds, blocks_skipped=stale_blocks_skipped
+        )
         try:
             header_template = replace(header_template, thetaMicro=adjusted_theta)
             log.debug(
-                "Applied dynamic theta adjustment: %.3f nats (stale head age=%.2fs)",
+                "Applied dynamic theta adjustment: %.3f nats (stale head age=%.2fs, steps=%d)",
                 adjusted_theta / 1e6,
                 stale_dt_seconds,
+                stale_blocks_skipped,
             )
         except Exception as e:
             log.warning(f"Failed to apply stale-head theta adjustment to header: {e}")
@@ -5772,12 +5826,13 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
         if parent_header is None:
             pq_root, poies_root = _policy_roots()
+            head_ts = _head_timestamp_seconds() or int(time.time())
             parent_header = Header(
                 v=1,
                 chainId=_ctx().cfg.chain_id,
                 height=parent_height,
                 parentHash=parent_hash_bytes,
-                timestamp=int(time.time()),
+                timestamp=int(head_ts),
                 stateRoot=ZERO32,
                 txsRoot=ZERO32,
                 receiptsRoot=ZERO32,
@@ -5799,23 +5854,33 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
 
         network_dt_seconds = None
+        network_blocks_skipped = 1
         stale_dt_seconds = None
+        stale_blocks_skipped = 1
         try:
-            head_timestamp = int(getattr(parent_header, "timestamp", 0) or 0)
-            network_dt_seconds = _network_block_interval(parent_height, head_timestamp)
-            if network_dt_seconds is None:
+            head_timestamp = _header_timestamp_seconds(parent_header)
+            network_dt = _network_block_interval(parent_height, head_timestamp)
+            if network_dt is not None:
+                network_dt_seconds, network_blocks_skipped = network_dt
+            else:
                 head_hash = parent_hash_val if isinstance(parent_hash_val, str) else None
-                stale_dt_seconds = _stale_head_interval(head_hash, head_timestamp)
+                stale_dt = _stale_head_interval(head_hash, head_timestamp)
+                if stale_dt is not None:
+                    stale_dt_seconds, stale_blocks_skipped = stale_dt
         except Exception:
             network_dt_seconds = None
         if network_dt_seconds is not None:
-            adjusted_theta = _adjust_theta_for_mining(network_dt_seconds)
+            adjusted_theta = _adjust_theta_for_mining(
+                network_dt_seconds, blocks_skipped=network_blocks_skipped
+            )
             try:
                 header_template = replace(header_template, thetaMicro=adjusted_theta)
             except Exception:
                 pass
         elif stale_dt_seconds is not None:
-            adjusted_theta = _adjust_theta_for_mining(stale_dt_seconds)
+            adjusted_theta = _adjust_theta_for_mining(
+                stale_dt_seconds, blocks_skipped=stale_blocks_skipped
+            )
             try:
                 header_template = replace(header_template, thetaMicro=adjusted_theta)
             except Exception:
