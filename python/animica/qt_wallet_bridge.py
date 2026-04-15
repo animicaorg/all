@@ -77,6 +77,13 @@ def _save_wallet_store(path: str | Path, store: Dict[str, Any]) -> None:
     _save_store(Path(path), store)
 
 
+def _resolve_rpc_endpoint(rpc_url: str | None) -> str:
+    resolved = _resolve_rpc_url(rpc_url)
+    if isinstance(resolved, tuple):
+        return str(resolved[0])
+    return str(resolved)
+
+
 def _ensure_store(path: str | Path) -> Dict[str, Any]:
     wallet_path = Path(path)
     parsed = load_store_canonical(wallet_path)
@@ -277,7 +284,7 @@ def validate_wallet_address(address: str) -> Dict[str, Any]:
 
 def wallet_overview(wallet_file: str, rpc_url: str | None = None) -> Dict[str, Any]:
     store = _ensure_store(wallet_file)
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     results: List[Dict[str, Any]] = []
     changed = False
     head_info: Optional[Dict[str, Any]] = None
@@ -468,7 +475,7 @@ def _submit_signed_tx(
 ) -> Dict[str, Any]:
     store = _ensure_store(wallet_file)
     sender_entry = _wallet_entry_by_address(store, from_address)
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     chain_resolution = tx_cli._get_chain_identity(rpc, chain_id_override=chain_id)
     resolved_chain_id = int(chain_id) if chain_id is not None else int(chain_resolution.identity.get("chainId"))
     chain_ctx = tx_cli._chain_context_from_identity(
@@ -611,7 +618,7 @@ def send_transaction(
 
 
 def transaction_status(rpc_url: str | None, tx_hash: str) -> Dict[str, Any]:
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     normalized = _normalize_hash(tx_hash)
     try:
         result = tx_cli._rpc(rpc, "tx.getStatus", [normalized])
@@ -631,7 +638,7 @@ def transaction_details(rpc_url: str | None, explorer_url: str | None, tx_hash: 
         payload = response.json()
         if isinstance(payload, dict):
             return payload
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     tx = _request_rpc("tx.getTransactionByHash", [normalized], rpc)
     receipt = None
     try:
@@ -818,7 +825,7 @@ def contract_read(
 
     if not is_valid_address(contract_address):
         raise ValueError(f"invalid contract address: {contract_address}")
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     client = _rpc_client(rpc)
     contract = ContractClient(rpc=client, address=contract_address, abi=abi, chain_id=int(chain_id))
     resolved_args = args
@@ -856,7 +863,7 @@ def raw_contract_read(
     sender: str | None = None,
     block: str | None = None,
 ) -> Dict[str, Any]:
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     payload = data_hex[2:] if data_hex.startswith("0x") else data_hex
     if not payload:
         raise ValueError("raw payload is empty")
@@ -906,7 +913,7 @@ def contract_write(
 
     if not is_valid_address(contract_address):
         raise ValueError(f"invalid contract address: {contract_address}")
-    rpc = _resolve_rpc_url(rpc_url)
+    rpc = _resolve_rpc_endpoint(rpc_url)
     client = _rpc_client(rpc)
     contract = ContractClient(rpc=client, address=contract_address, abi=abi, chain_id=int(chain_id))
     calldata = contract.encode_call_data(method, list(args.values()) if isinstance(args, dict) else list(args or []))
