@@ -1,4 +1,5 @@
 import { createMiningApiClient } from './api';
+import { extractMinerItems, rankMiners, resolveMinerHashrate } from './miners';
 import {
   mergeMiningStatus,
   normalizeMiningConfig,
@@ -118,7 +119,7 @@ export async function initMinePage(): Promise<void> {
     }
 
     if (minersResult.ok) {
-      state.miners = unwrapMinerItems(minersResult.data);
+      state.miners = extractMinerItems(minersResult.data);
     } else {
       state.errors.miners = minersResult.error;
       state.diagnostics.push(formatDiagnostic('miners', minersResult.error));
@@ -431,12 +432,14 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
   if (!elements.minerRows || !elements.minerEmpty) return;
 
   const query = elements.minerSearch?.value.trim().toLowerCase() ?? '';
-  const miners = state.miners.filter((item) => {
-    if (!query) return true;
-    const worker = String(item.worker_name ?? item.worker_id ?? '').toLowerCase();
-    const address = String(item.address ?? '').toLowerCase();
-    return worker.includes(query) || address.includes(query);
-  });
+  const miners = rankMiners(
+    state.miners.filter((item) => {
+      if (!query) return true;
+      const worker = String(item.worker_name ?? item.worker_id ?? '').toLowerCase();
+      const address = String(item.address ?? '').toLowerCase();
+      return worker.includes(query) || address.includes(query);
+    })
+  );
 
   if (miners.length === 0) {
     elements.minerRows.innerHTML = '';
@@ -455,7 +458,7 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
       const sharesAccepted = formatInteger(item.shares_accepted);
       const sharesRejected = formatInteger(item.shares_rejected);
       const blocks = formatInteger(item.blocks_found);
-      const hashrate = formatHashrate(item.hashrate_1m);
+      const hashrate = formatHashrate(resolveMinerHashrate(item));
       const credit = escapeHtml(String(item.credit_total ?? '0'));
       const mode = escapeHtml(String(item.pool_mode ?? state.config?.poolMode ?? 'pps').toUpperCase());
       return `
@@ -855,13 +858,6 @@ function formatLatestBlock(value: unknown): string {
 
 function hasLiveStatus(status: MiningPoolStatus): boolean {
   return ['miners', 'workers', 'height', 'pool_hashrate', 'latest_block'].some((key) => status[key] !== undefined);
-}
-
-function unwrapMinerItems(payload: unknown): MiningMinerItem[] {
-  if (!payload || typeof payload !== 'object') return [];
-  const data = payload as { items?: unknown };
-  if (!Array.isArray(data.items)) return [];
-  return data.items.filter((item): item is MiningMinerItem => typeof item === 'object' && item !== null);
 }
 
 function readTextContent(elementId: string): string {

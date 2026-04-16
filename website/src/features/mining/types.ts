@@ -96,10 +96,15 @@ export interface MiningMinerItem {
   worker_id?: string;
   worker_name?: string;
   address?: string;
-  shares_accepted?: number;
-  shares_rejected?: number;
-  blocks_found?: number;
-  hashrate_1m?: number;
+  shares_accepted?: number | string;
+  shares_rejected?: number | string;
+  blocks_found?: number | string;
+  hashrate_1m?: number | string;
+  hashrate_15m?: number | string;
+  hashrate_1h?: number | string;
+  hashrate?: number | string;
+  hashrate_hps?: number | string;
+  hashrate_hsps?: number | string;
   credit_total?: string | number;
   credit_pps?: string | number;
   credit_solo?: string | number;
@@ -109,7 +114,7 @@ export interface MiningMinerItem {
 
 export interface MiningMinersResponse {
   items?: MiningMinerItem[];
-  total?: number;
+  total?: number | string;
   [key: string]: unknown;
 }
 

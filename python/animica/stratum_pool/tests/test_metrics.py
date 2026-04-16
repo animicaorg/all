@@ -149,6 +149,46 @@ async def test_pps_accounting_credits_accepted_shares():
 
 
 @pytest.mark.asyncio
+async def test_pps_block_share_without_ratio_credits_full_reward():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Session(
+        session_id="s1",
+        writer=None,
+        worker="worker-pps-block",
+        address="anim1ppsblock",
+    )
+    job = StratumJob(
+        job_id="job-pps-block",
+        header={"number": 10},
+        share_target=0.01,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={},
+        ok=True,
+        reason=None,
+        is_block=True,
+        tx_count=1,
+    )
+
+    detail = metrics.miner_detail("worker-pps-block")
+    assert detail["pool_mode"] == "pps"
+    assert detail["credit_pps"] == "1000"
+    summary = metrics.accounting_summary()
+    assert summary["total_credit"] == "1000"
+    assert summary["accepted_blocks"] == 1
+
+
+@pytest.mark.asyncio
 async def test_solo_accounting_only_credits_blocks():
     job_manager = DummyJobManager()
     metrics = PoolMetrics(
