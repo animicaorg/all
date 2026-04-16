@@ -29,6 +29,9 @@ RELEVANT_ENV_VARS = [
     "ANIMICA_POOL_MODE",
     "ANIMICA_POOL_FEE_PERCENT",
     "ANIMICA_POOL_PAYOUT_MINIMUM",
+    "ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS",
+    "ANIMICA_POOL_PAYOUT_MIN_AMOUNT",
+    "ANIMICA_POOL_PAYOUT_WALLET",
     "ANIMICA_MINING_DOWNLOAD_DIR",
 ]
 
@@ -95,6 +98,18 @@ class DummyMetrics:
             "limit": limit,
         }
 
+    def payout_status(self) -> dict[str, object]:
+        return {
+            "payouts_enabled": True,
+            "payout_interval_seconds": 600.0,
+            "payout_min_amount": 100,
+            "next_payout_at": "2026-04-07T12:10:00+00:00",
+            "payout_countdown_seconds": 600,
+            "last_payout_at": "2026-04-07T12:00:00+00:00",
+            "last_payout_count": 0,
+            "last_payout_error": None,
+        }
+
 
 def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
@@ -140,9 +155,12 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert config_payload["host_source"] == "request_host"
         assert config_payload["status"]["network"] == "devnet"
         assert config_payload["pool_mode"] == "pps"
+        assert config_payload["payout_interval_seconds"] == 0.0
+        assert config_payload["payout_min_amount"] == 1
         assert config_payload["miner_executable"] == "animica-miner"
         assert "shares" in config_payload["pool_mode_instructions"].lower()
         assert config_payload["status"]["accounting"]["pool_mode"] == "pps"
+        assert config_payload["status"]["payout_countdown_seconds"] == 600
         assert any("Devnet" in warning for warning in config_payload["warnings"])
 
         manifest_res = await client.get("/api/mining/downloads")

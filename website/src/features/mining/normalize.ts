@@ -102,6 +102,14 @@ export function normalizeMiningConfig(input: {
       'Worker names are labels only. Keep them short and unique for each machine.',
     defaultWorker: readString(input.config.default_worker) ?? 'worker-01',
     defaultThreads: readNumber(input.config.default_threads) ?? 4,
+    payoutIntervalSeconds:
+      readNumber(input.config.payout_interval_seconds) ??
+      readNumber(status.payout_interval_seconds) ??
+      0,
+    payoutMinAmount:
+      readNumber(input.config.payout_min_amount) ??
+      readNumber(status.payout_min_amount) ??
+      1,
     manualCommands: normalizeManualCommands(input.config.manual_commands),
     status,
     warnings: uniqueStrings(warnings),
@@ -135,11 +143,11 @@ export function normalizeMiningDownloads(
 
 export function unwrapPoolStatus(payload: unknown): MiningPoolStatus {
   if (isRecord(payload) && isRecord(payload.status)) {
-    return payload.status as MiningPoolStatus;
+    return normalizePoolPayload(payload.status);
   }
 
   if (isRecord(payload)) {
-    return payload as MiningPoolStatus;
+    return normalizePoolPayload(payload);
   }
 
   return {};
@@ -147,11 +155,11 @@ export function unwrapPoolStatus(payload: unknown): MiningPoolStatus {
 
 export function unwrapPoolSummary(payload: unknown): MiningPoolSummary {
   if (isRecord(payload) && isRecord(payload.summary)) {
-    return payload.summary as MiningPoolSummary;
+    return normalizePoolPayload(payload.summary);
   }
 
   if (isRecord(payload)) {
-    return payload as MiningPoolSummary;
+    return normalizePoolPayload(payload);
   }
 
   return {};
@@ -316,6 +324,93 @@ function defaultLauncherLabel(platform: string): string {
 
 function defaultEntrypoint(platform: string): string {
   return platform === 'windows' ? 'animica-miner.exe' : 'animica-miner';
+}
+
+function normalizePoolPayload(payload: Record<string, unknown>): MiningPoolStatus {
+  const normalized: MiningPoolStatus = { ...payload };
+
+  const chainId = payload.chain_id ?? payload.chainId;
+  if (chainId !== undefined && chainId !== null) {
+    normalized.chain_id = chainId as string | number;
+  }
+
+  const miners = readNumber(payload.miners) ?? readNumber(payload.num_miners);
+  if (miners !== undefined) {
+    normalized.miners = miners;
+  }
+
+  const workers = readNumber(payload.workers) ?? readNumber(payload.num_workers);
+  if (workers !== undefined) {
+    normalized.workers = workers;
+  }
+
+  const latestBlock = readLatestBlock(payload.latest_block);
+  if (latestBlock !== undefined) {
+    normalized.latest_block = latestBlock;
+  } else {
+    const lastBlockHash = readString(payload.last_block_hash);
+    if (lastBlockHash) normalized.latest_block = lastBlockHash;
+  }
+
+  const stratumEndpoint = readString(payload.stratum_endpoint);
+  if (stratumEndpoint && !readString(payload.stratum_url)) {
+    normalized.stratum_url = stratumEndpoint;
+  }
+
+  const payoutIntervalSeconds = readNumber(payload.payout_interval_seconds);
+  if (payoutIntervalSeconds !== undefined) {
+    normalized.payout_interval_seconds = payoutIntervalSeconds;
+  }
+
+  const payoutMinAmount = readNumber(payload.payout_min_amount);
+  if (payoutMinAmount !== undefined) {
+    normalized.payout_min_amount = payoutMinAmount;
+  }
+
+  const payoutCountdownSeconds = readNumber(payload.payout_countdown_seconds);
+  if (payoutCountdownSeconds !== undefined) {
+    normalized.payout_countdown_seconds = payoutCountdownSeconds;
+  }
+
+  const lastPayoutCount = readNumber(payload.last_payout_count);
+  if (lastPayoutCount !== undefined) {
+    normalized.last_payout_count = lastPayoutCount;
+  }
+
+  const nextPayoutAt = readString(payload.next_payout_at);
+  if (nextPayoutAt) {
+    normalized.next_payout_at = nextPayoutAt;
+  }
+
+  const lastPayoutAt = readString(payload.last_payout_at);
+  if (lastPayoutAt) {
+    normalized.last_payout_at = lastPayoutAt;
+  }
+
+  if (typeof payload.payouts_enabled === 'boolean') {
+    normalized.payouts_enabled = payload.payouts_enabled;
+  }
+
+  if (payload.last_payout_error === null || typeof payload.last_payout_error === 'string') {
+    normalized.last_payout_error = payload.last_payout_error;
+  }
+
+  return normalized;
+}
+
+function readLatestBlock(value: unknown): string | number | undefined {
+  const text = readString(value);
+  if (text) return text;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (!isRecord(value)) return undefined;
+
+  const hash = readString(value.hash) ?? readString(value.job_id) ?? readString(value.block_hash);
+  if (hash) return hash;
+
+  const height = readNumber(value.height);
+  if (height !== undefined) return height;
+
+  return undefined;
 }
 
 function readBoolean(value: unknown): boolean {

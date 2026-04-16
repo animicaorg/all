@@ -24,6 +24,8 @@ def test_load_config_from_env_defaults(monkeypatch):
     assert cfg.network == "mainnet"
     assert cfg.rpc_timeout == 15.0
     assert cfg.pool_mode == "pps"
+    assert cfg.payout_interval_seconds == 0.0
+    assert cfg.payout_min_amount == 1
 
 
 def test_load_config_from_env_overrides(monkeypatch):
@@ -38,6 +40,9 @@ def test_load_config_from_env_overrides(monkeypatch):
     )
     monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
     monkeypatch.setenv("ANIMICA_POOL_MODE", "solo")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS", "90")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_MIN_AMOUNT", "42")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_WALLET", "pool-wallet")
     cfg = load_config_from_env(
         overrides={"min_difficulty": 0.5, "max_difficulty": 0.75}
     )
@@ -51,6 +56,9 @@ def test_load_config_from_env_overrides(monkeypatch):
     assert cfg.min_difficulty == 0.5
     assert cfg.max_difficulty == 0.75
     assert cfg.pool_mode == "solo"
+    assert cfg.payout_interval_seconds == 90.0
+    assert cfg.payout_min_amount == 42
+    assert cfg.payout_wallet == "pool-wallet"
 
 
 def test_invalid_pool_mode(monkeypatch):
@@ -113,3 +121,23 @@ def test_mixed_difficulty_units_allowed(monkeypatch):
     )
     assert cfg.min_difficulty == 15_000_000
     assert cfg.max_difficulty == 1.0
+
+
+def test_invalid_payout_interval(monkeypatch):
+    monkeypatch.setenv(
+        "ANIMICA_POOL_ADDRESS",
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    )
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS", "-1")
+    with pytest.raises(ValueError):
+        load_config_from_env()
+
+
+def test_invalid_payout_min_amount(monkeypatch):
+    monkeypatch.setenv(
+        "ANIMICA_POOL_ADDRESS",
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    )
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_MIN_AMOUNT", "0")
+    with pytest.raises(ValueError):
+        load_config_from_env()

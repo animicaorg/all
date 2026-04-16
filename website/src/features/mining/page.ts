@@ -32,6 +32,8 @@ type PageState = {
 };
 
 const formatter = new Intl.NumberFormat('en-US');
+let payoutCountdownTimer: number | undefined;
+let payoutCountdownTargetMs: number | undefined;
 
 const DEFAULT_RUNTIME: RuntimeConfig = {
   isDev: false,
@@ -156,6 +158,8 @@ function resolveElements() {
     poolHeight: document.getElementById('pool-height'),
     poolHashrate: document.getElementById('pool-hashrate'),
     latestFoundBlock: document.getElementById('latest-found-block'),
+    payoutInterval: document.getElementById('payout-interval'),
+    payoutCountdown: document.getElementById('payout-countdown'),
     payoutInstructions: document.getElementById('payout-instructions'),
     workerInstructions: document.getElementById('worker-instructions'),
     payoutAddress: document.getElementById('payout-address') as HTMLInputElement | null,
@@ -203,6 +207,8 @@ function renderStaticDefaults(
   if (elements.stratumPort) elements.stratumPort.textContent = 'Resolving...';
   if (elements.stratumUrl) elements.stratumUrl.textContent = 'Loading live pool endpoint...';
   if (elements.faqEndpoint) elements.faqEndpoint.textContent = 'Loading live pool endpoint...';
+  if (elements.payoutInterval) elements.payoutInterval.textContent = 'Loading...';
+  if (elements.payoutCountdown) elements.payoutCountdown.textContent = 'Loading...';
   if (elements.commandOutput) {
     elements.commandOutput.textContent =
       'Loading live mining configuration...\nThis panel updates when the pool API responds.';
@@ -300,8 +306,35 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
   }
 
   if (elements.latestFoundBlock) {
-    elements.latestFoundBlock.textContent = readStatusText(liveStatus.latest_block) ?? 'Unavailable';
+    elements.latestFoundBlock.textContent = formatLatestBlock(liveStatus.latest_block);
   }
+
+  const payoutIntervalSeconds =
+    readPositiveNumber(liveStatus.payout_interval_seconds) ??
+    readPositiveNumber(config?.payoutIntervalSeconds) ??
+    0;
+  const payoutMinAmount =
+    readPositiveNumber(liveStatus.payout_min_amount) ??
+    readPositiveNumber(config?.payoutMinAmount) ??
+    1;
+  const payoutsEnabled =
+    typeof liveStatus.payouts_enabled === 'boolean'
+      ? liveStatus.payouts_enabled
+      : payoutIntervalSeconds > 0;
+
+  if (elements.payoutInterval) {
+    if (!payoutsEnabled || payoutIntervalSeconds <= 0) {
+      elements.payoutInterval.textContent = 'Disabled';
+    } else {
+      elements.payoutInterval.textContent = `${formatDuration(payoutIntervalSeconds)} (min ${formatter.format(Math.trunc(payoutMinAmount))})`;
+    }
+  }
+
+  startPayoutCountdown(elements, {
+    enabled: payoutsEnabled && payoutIntervalSeconds > 0,
+    nextPayoutAt: liveStatus.next_payout_at,
+    countdownSeconds: liveStatus.payout_countdown_seconds,
+  });
 }
 
 function renderInstructions(
@@ -712,6 +745,84 @@ function formatInteger(value: unknown): string {
   return formatter.format(Math.trunc(numeric));
 }
 
+function readPositiveNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function resolveCountdownTargetMs(
+  nextPayoutAt: unknown,
+  countdownSeconds: unknown
+): number | undefined {
+  if (typeof nextPayoutAt === 'string' && nextPayoutAt.trim()) {
+    const parsed = Date.parse(nextPayoutAt);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const seconds = readPositiveNumber(countdownSeconds);
+  if (seconds !== undefined) {
+    return Date.now() + seconds * 1000;
+  }
+  return undefined;
+}
+
+function formatDuration(secondsRaw: number): string {
+  const seconds = Math.max(0, Math.trunc(secondsRaw));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function clearPayoutCountdownTimer(): void {
+  if (payoutCountdownTimer !== undefined) {
+    window.clearInterval(payoutCountdownTimer);
+    payoutCountdownTimer = undefined;
+  }
+  payoutCountdownTargetMs = undefined;
+}
+
+function startPayoutCountdown(
+  elements: ReturnType<typeof resolveElements>,
+  input: { enabled: boolean; nextPayoutAt?: unknown; countdownSeconds?: unknown }
+): void {
+  if (!elements.payoutCountdown) return;
+
+  if (!input.enabled) {
+    clearPayoutCountdownTimer();
+    elements.payoutCountdown.textContent = 'Disabled';
+    return;
+  }
+
+  const targetMs = resolveCountdownTargetMs(input.nextPayoutAt, input.countdownSeconds);
+  if (!targetMs) {
+    clearPayoutCountdownTimer();
+    elements.payoutCountdown.textContent = 'Pending';
+    return;
+  }
+
+  payoutCountdownTargetMs = targetMs;
+  const update = () => {
+    if (!elements.payoutCountdown || payoutCountdownTargetMs === undefined) return;
+    const remainingSeconds = Math.max(
+      0,
+      Math.ceil((payoutCountdownTargetMs - Date.now()) / 1000)
+    );
+    elements.payoutCountdown.textContent =
+      remainingSeconds > 0 ? formatDuration(remainingSeconds) : 'Due now';
+  };
+
+  update();
+  clearPayoutCountdownTimer();
+  payoutCountdownTargetMs = targetMs;
+  payoutCountdownTimer = window.setInterval(update, 1000);
+}
+
 function formatDiagnostic(label: string, error: MiningApiError): string {
   const attemptLines = error.attempts.map((attempt) => `- ${attempt.url}: ${attempt.message}`);
   return [`${label}: ${error.message}`, ...attemptLines].join('\n');
@@ -721,6 +832,25 @@ function readStatusText(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return undefined;
+}
+
+function formatLatestBlock(value: unknown): string {
+  const direct = readStatusText(value);
+  if (direct) return direct;
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const hash =
+      readStatusText(record.hash) ??
+      readStatusText(record.job_id) ??
+      readStatusText(record.block_hash);
+    if (hash) return hash;
+
+    const height = readStatusText(record.height);
+    if (height) return height;
+  }
+
+  return 'Unavailable';
 }
 
 function hasLiveStatus(status: MiningPoolStatus): boolean {

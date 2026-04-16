@@ -169,6 +169,8 @@ class ResolvedMiningConfig:
     device_type: str
     fee_percent: Optional[float]
     payout_minimum: Optional[str]
+    payout_interval_seconds: float
+    payout_min_amount: int
     download_base_url: Optional[str]
     warnings: tuple[str, ...]
 
@@ -273,6 +275,10 @@ def resolve_public_mining_config(
         pool_mode = "pps"
     fee_percent = _env_float("ANIMICA_POOL_FEE_PERCENT")
     payout_minimum = _read_env("ANIMICA_POOL_PAYOUT_MINIMUM")
+    payout_interval_seconds = max(
+        0.0, float(getattr(config, "payout_interval_seconds", 0.0) or 0.0)
+    )
+    payout_min_amount = max(1, int(getattr(config, "payout_min_amount", 1) or 1))
 
     algorithm = "Animica HashShare"
     device_type = "CPU miner"
@@ -315,6 +321,8 @@ def resolve_public_mining_config(
         device_type=device_type,
         fee_percent=fee_percent,
         payout_minimum=payout_minimum,
+        payout_interval_seconds=payout_interval_seconds,
+        payout_min_amount=payout_min_amount,
         download_base_url=download_base_url.rstrip("/") if download_base_url else None,
         warnings=tuple(warnings),
     )
@@ -512,6 +520,7 @@ Worker names are informational. This bundle uses `{bundle.worker}` by default. G
 - Mode: {resolved.pool_mode.upper()} ({'pay-per-share credits' if resolved.pool_mode == 'pps' else 'winner-takes-block credits'})
 - Fee: {resolved.fee_percent if resolved.fee_percent is not None else "not published"}%
 - Payout minimum: {resolved.payout_minimum or "not published"}
+- Payout cadence: {f"every {int(resolved.payout_interval_seconds)} seconds" if resolved.payout_interval_seconds > 0 else "manual / disabled"}
 - Host source: {resolved.host_source}
 
 ## Warnings
@@ -540,6 +549,7 @@ class MiningPortalService:
         summary = self._metrics.pool_summary()
         health = self._metrics.health()
         accounting = self._metrics.accounting_summary()
+        payout_status = self._metrics.payout_status()
         return {
             "online": bool(resolved.pool_enabled and health.get("status") == "ok"),
             "health": health,
@@ -556,6 +566,26 @@ class MiningPortalService:
             "height": summary.get("height", 0),
             "latest_block": summary.get("latest_block"),
             "stratum_endpoint": resolved.stratum_url,
+            "payout_interval_seconds": summary.get(
+                "payout_interval_seconds", payout_status.get("payout_interval_seconds")
+            ),
+            "payout_min_amount": summary.get(
+                "payout_min_amount", payout_status.get("payout_min_amount")
+            ),
+            "payouts_enabled": summary.get(
+                "payouts_enabled", payout_status.get("payouts_enabled")
+            ),
+            "next_payout_at": summary.get("next_payout_at", payout_status.get("next_payout_at")),
+            "payout_countdown_seconds": summary.get(
+                "payout_countdown_seconds", payout_status.get("payout_countdown_seconds")
+            ),
+            "last_payout_at": summary.get("last_payout_at", payout_status.get("last_payout_at")),
+            "last_payout_count": summary.get(
+                "last_payout_count", payout_status.get("last_payout_count")
+            ),
+            "last_payout_error": summary.get(
+                "last_payout_error", payout_status.get("last_payout_error")
+            ),
             "warnings": list(resolved.warnings),
             "last_update": summary.get("last_update"),
             "accounting": accounting,
@@ -613,6 +643,8 @@ class MiningPortalService:
             "default_threads": defaults.threads,
             "fee_percent": resolved.fee_percent,
             "payout_minimum": resolved.payout_minimum,
+            "payout_interval_seconds": resolved.payout_interval_seconds,
+            "payout_min_amount": resolved.payout_min_amount,
             "warnings": list(resolved.warnings),
             "payout_instructions": "Enter an address on the active Animica network. Pool rewards are credited to that payout address.",
             "worker_instructions": "Worker names are labels only. Use short, stable names like rig-01 or office-cpu.",

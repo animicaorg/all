@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from mining.stratum_server import Session, StratumJob, StratumServer
 
@@ -39,6 +39,18 @@ class PoolMetrics:
         self._started = time.time()
         self._db = self._init_db(config.db_url)
         self._db_lock = Lock()
+        self._payout_state_lock = Lock()
+        self._payout_interval_seconds = max(
+            0.0, float(getattr(config, "payout_interval_seconds", 0.0) or 0.0)
+        )
+        self._next_payout_at: Optional[float] = (
+            self._started + self._payout_interval_seconds
+            if self._payout_interval_seconds > 0
+            else None
+        )
+        self._last_payout_at: Optional[float] = None
+        self._last_payout_count: int = 0
+        self._last_payout_error: Optional[str] = None
 
     @property
     def config(self) -> PoolConfig:
@@ -94,6 +106,7 @@ class PoolMetrics:
                 total_credit INTEGER NOT NULL DEFAULT 0,
                 pps_credit INTEGER NOT NULL DEFAULT 0,
                 solo_credit INTEGER NOT NULL DEFAULT 0,
+                paid_out INTEGER NOT NULL DEFAULT 0,
                 accepted_shares INTEGER NOT NULL DEFAULT 0,
                 accepted_blocks INTEGER NOT NULL DEFAULT 0,
                 rejected_shares INTEGER NOT NULL DEFAULT 0,
@@ -117,9 +130,24 @@ class PoolMetrics:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS payouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                mode TEXT NOT NULL,
+                address TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                tx_hash TEXT,
+                status TEXT NOT NULL,
+                error TEXT
+            )
+            """
+        )
         self._ensure_column(conn, "blocks", "worker", "TEXT")
         self._ensure_column(conn, "blocks", "address", "TEXT")
         self._ensure_column(conn, "blocks", "reward", "INTEGER")
+        self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
         conn.commit()
         return conn
 
@@ -351,6 +379,7 @@ class PoolMetrics:
         address: str,
         pps_credit: int = 0,
         solo_credit: int = 0,
+        paid_out_delta: int = 0,
         accepted_shares_delta: int = 0,
         accepted_blocks_delta: int = 0,
         rejected_shares_delta: int = 0,
@@ -366,6 +395,7 @@ class PoolMetrics:
                 "total_credit": 0,
                 "pps_credit": 0,
                 "solo_credit": 0,
+                "paid_out": 0,
                 "accepted_shares": 0,
                 "accepted_blocks": 0,
                 "rejected_shares": 0,
@@ -377,6 +407,9 @@ class PoolMetrics:
         row["solo_credit"] = int(row.get("solo_credit") or 0) + int(solo_credit)
         row["total_credit"] = int(row.get("total_credit") or 0) + int(pps_credit) + int(
             solo_credit
+        )
+        row["paid_out"] = max(
+            0, int(row.get("paid_out") or 0) + int(paid_out_delta)
         )
         row["accepted_shares"] = int(row.get("accepted_shares") or 0) + int(
             accepted_shares_delta
@@ -395,13 +428,14 @@ class PoolMetrics:
             self._db.execute(
                 """
                 INSERT INTO worker_balances (
-                    mode, worker, address, total_credit, pps_credit, solo_credit,
+                    mode, worker, address, total_credit, pps_credit, solo_credit, paid_out,
                     accepted_shares, accepted_blocks, rejected_shares, updated_ts
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mode, worker, address) DO UPDATE SET
                     total_credit = worker_balances.total_credit + excluded.total_credit,
                     pps_credit = worker_balances.pps_credit + excluded.pps_credit,
                     solo_credit = worker_balances.solo_credit + excluded.solo_credit,
+                    paid_out = MAX(0, worker_balances.paid_out + excluded.paid_out),
                     accepted_shares = worker_balances.accepted_shares + excluded.accepted_shares,
                     accepted_blocks = worker_balances.accepted_blocks + excluded.accepted_blocks,
                     rejected_shares = worker_balances.rejected_shares + excluded.rejected_shares,
@@ -414,6 +448,7 @@ class PoolMetrics:
                     int(pps_credit) + int(solo_credit),
                     int(pps_credit),
                     int(solo_credit),
+                    int(paid_out_delta),
                     int(accepted_shares_delta),
                     int(accepted_blocks_delta),
                     int(rejected_shares_delta),
@@ -542,6 +577,8 @@ class PoolMetrics:
                     COALESCE(SUM(total_credit), 0),
                     COALESCE(SUM(pps_credit), 0),
                     COALESCE(SUM(solo_credit), 0),
+                    COALESCE(SUM(paid_out), 0),
+                    COALESCE(SUM(total_credit - paid_out), 0),
                     COALESCE(SUM(accepted_shares), 0),
                     COALESCE(SUM(accepted_blocks), 0),
                     COALESCE(SUM(rejected_shares), 0),
@@ -559,9 +596,11 @@ class PoolMetrics:
         if not totals:
             return {}
         (
-            total_credit,
+            gross_credit,
             pps_credit,
             solo_credit,
+            paid_out_total,
+            total_credit,
             accepted_shares,
             accepted_blocks,
             rejected_shares,
@@ -571,8 +610,10 @@ class PoolMetrics:
         return {
             "pool_mode": self._pool_mode,
             "total_credit": str(int(total_credit or 0)),
+            "gross_credit": str(int(gross_credit or 0)),
             "pps_credit": str(int(pps_credit or 0)),
             "solo_credit": str(int(solo_credit or 0)),
+            "paid_out_total": str(int(paid_out_total or 0)),
             "accepted_shares": int(accepted_shares or 0),
             "accepted_blocks": int(accepted_blocks or 0),
             "rejected_shares": int(rejected_shares or 0),
@@ -587,7 +628,9 @@ class PoolMetrics:
 
     def _accounting_summary_from_memory(self) -> Dict[str, object]:
         rows = [row for key, row in self._worker_balances_cache.items() if key[0] == self._pool_mode]
-        total_credit = sum(int(row.get("total_credit") or 0) for row in rows)
+        gross_credit = sum(int(row.get("total_credit") or 0) for row in rows)
+        paid_out_total = sum(int(row.get("paid_out") or 0) for row in rows)
+        total_credit = max(0, gross_credit - paid_out_total)
         pps_credit = sum(int(row.get("pps_credit") or 0) for row in rows)
         solo_credit = sum(int(row.get("solo_credit") or 0) for row in rows)
         accepted_shares = sum(int(row.get("accepted_shares") or 0) for row in rows)
@@ -597,8 +640,10 @@ class PoolMetrics:
         return {
             "pool_mode": self._pool_mode,
             "total_credit": str(int(total_credit)),
+            "gross_credit": str(int(gross_credit)),
             "pps_credit": str(int(pps_credit)),
             "solo_credit": str(int(solo_credit)),
+            "paid_out_total": str(int(paid_out_total)),
             "accepted_shares": int(accepted_shares),
             "accepted_blocks": int(accepted_blocks),
             "rejected_shares": int(rejected_shares),
@@ -720,6 +765,313 @@ class PoolMetrics:
             "found_by_pool": False,
         }
 
+    @staticmethod
+    def _iso_ts(ts: Optional[float]) -> Optional[str]:
+        if ts is None or ts <= 0:
+            return None
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+
+    @staticmethod
+    def _payout_eligible_address(address: str) -> bool:
+        text = str(address or "").strip()
+        if not text:
+            return False
+        if text.lower() == "unknown-address":
+            return False
+        return True
+
+    def set_next_payout_at(self, next_payout_at: Optional[float]) -> None:
+        with self._payout_state_lock:
+            self._next_payout_at = float(next_payout_at) if next_payout_at else None
+
+    def record_payout_cycle(
+        self,
+        *,
+        ts: Optional[float] = None,
+        count: int = 0,
+        error: Optional[str] = None,
+    ) -> None:
+        now = float(ts or time.time())
+        with self._payout_state_lock:
+            self._last_payout_at = now
+            self._last_payout_count = max(0, int(count or 0))
+            self._last_payout_error = str(error).strip() if error else None
+
+    def payout_status(self) -> Dict[str, object]:
+        now = time.time()
+        with self._payout_state_lock:
+            interval = float(self._payout_interval_seconds)
+            next_at = self._next_payout_at
+            last_at = self._last_payout_at
+            last_count = int(self._last_payout_count)
+            last_error = self._last_payout_error
+        countdown: Optional[int] = None
+        if next_at is not None:
+            countdown = max(0, int(next_at - now))
+        return {
+            "payouts_enabled": bool(interval > 0),
+            "payout_interval_seconds": interval,
+            "payout_min_amount": int(getattr(self._config, "payout_min_amount", 1) or 1),
+            "next_payout_at": self._iso_ts(next_at),
+            "payout_countdown_seconds": countdown,
+            "last_payout_at": self._iso_ts(last_at),
+            "last_payout_count": last_count,
+            "last_payout_error": last_error,
+        }
+
+    def payout_due_addresses(
+        self, *, min_amount: int, limit: int = 50
+    ) -> List[Dict[str, object]]:
+        min_amount = max(1, int(min_amount or 1))
+        limit = max(1, min(int(limit or 50), 500))
+        items: List[Dict[str, object]] = []
+
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    """
+                    SELECT address,
+                           SUM(total_credit - paid_out) as due_amount,
+                           COUNT(*) as worker_rows,
+                           MAX(updated_ts) as updated_ts
+                    FROM worker_balances
+                    WHERE mode = ?
+                    GROUP BY address
+                    HAVING SUM(total_credit - paid_out) >= ?
+                    ORDER BY due_amount DESC, address ASC
+                    LIMIT ?
+                    """,
+                    (self._pool_mode, min_amount, limit),
+                ).fetchall()
+            for address, due_amount, worker_rows, updated_ts in rows:
+                addr = str(address or "").strip()
+                amount = int(due_amount or 0)
+                if not self._payout_eligible_address(addr) or amount <= 0:
+                    continue
+                items.append(
+                    {
+                        "address": addr,
+                        "amount": amount,
+                        "workers": int(worker_rows or 0),
+                        "updated_at": self._iso_ts(float(updated_ts or 0.0)),
+                    }
+                )
+            return items
+
+        by_address: Dict[str, Dict[str, object]] = {}
+        for (mode, _worker, address), row in self._worker_balances_cache.items():
+            if mode != self._pool_mode:
+                continue
+            addr = str(address or "").strip()
+            if not self._payout_eligible_address(addr):
+                continue
+            gross = int(row.get("total_credit") or 0)
+            paid = int(row.get("paid_out") or 0)
+            available = max(0, gross - paid)
+            if available <= 0:
+                continue
+            current = by_address.get(addr)
+            if current is None:
+                by_address[addr] = {
+                    "address": addr,
+                    "amount": available,
+                    "workers": 1,
+                    "updated_ts": float(row.get("updated_ts") or 0.0),
+                }
+            else:
+                current["amount"] = int(current.get("amount") or 0) + available
+                current["workers"] = int(current.get("workers") or 0) + 1
+                current["updated_ts"] = max(
+                    float(current.get("updated_ts") or 0.0),
+                    float(row.get("updated_ts") or 0.0),
+                )
+
+        ordered = sorted(
+            by_address.values(),
+            key=lambda entry: (-int(entry.get("amount") or 0), str(entry.get("address") or "")),
+        )
+        for entry in ordered:
+            amount = int(entry.get("amount") or 0)
+            if amount < min_amount:
+                continue
+            items.append(
+                {
+                    "address": str(entry.get("address") or ""),
+                    "amount": amount,
+                    "workers": int(entry.get("workers") or 0),
+                    "updated_at": self._iso_ts(float(entry.get("updated_ts") or 0.0)),
+                }
+            )
+            if len(items) >= limit:
+                break
+        return items
+
+    def record_payout_sent(
+        self,
+        *,
+        address: str,
+        amount: int,
+        tx_hash: str,
+        ts: Optional[float] = None,
+    ) -> int:
+        addr = str(address or "").strip()
+        requested = max(0, int(amount or 0))
+        if requested <= 0 or not self._payout_eligible_address(addr):
+            return 0
+        now = float(ts or time.time())
+        applied = 0
+
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    """
+                    SELECT worker, total_credit, paid_out
+                    FROM worker_balances
+                    WHERE mode = ? AND address = ?
+                    ORDER BY updated_ts ASC, worker ASC
+                    """,
+                    (self._pool_mode, addr),
+                ).fetchall()
+
+                remaining = requested
+                for worker, total_credit, paid_out in rows:
+                    if remaining <= 0:
+                        break
+                    available = max(0, int(total_credit or 0) - int(paid_out or 0))
+                    if available <= 0:
+                        continue
+                    delta = min(available, remaining)
+                    self._db.execute(
+                        """
+                        UPDATE worker_balances
+                        SET paid_out = paid_out + ?, updated_ts = ?
+                        WHERE mode = ? AND worker = ? AND address = ?
+                        """,
+                        (delta, now, self._pool_mode, str(worker), addr),
+                    )
+                    details = json.dumps({"tx_hash": tx_hash}, sort_keys=True)
+                    self._db.execute(
+                        """
+                        INSERT INTO accounting_ledger (ts, mode, worker, address, event, amount, job_id, details)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            now,
+                            self._pool_mode,
+                            str(worker),
+                            addr,
+                            "payout_sent",
+                            int(delta),
+                            None,
+                            details,
+                        ),
+                    )
+                    self._accounting_events.appendleft(
+                        {
+                            "timestamp": now,
+                            "mode": self._pool_mode,
+                            "worker": str(worker),
+                            "address": addr,
+                            "event": "payout_sent",
+                            "amount": int(delta),
+                            "job_id": "",
+                            "details": {"tx_hash": tx_hash},
+                        }
+                    )
+                    remaining -= delta
+                    applied += delta
+
+                self._db.execute(
+                    """
+                    INSERT INTO payouts (ts, mode, address, amount, tx_hash, status, error)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        self._pool_mode,
+                        addr,
+                        int(applied),
+                        tx_hash,
+                        "submitted",
+                        None,
+                    ),
+                )
+                self._db.commit()
+            return applied
+
+        remaining = requested
+        for key, row in sorted(self._worker_balances_cache.items()):
+            mode, worker, row_addr = key
+            if mode != self._pool_mode or str(row_addr) != addr:
+                continue
+            if remaining <= 0:
+                break
+            available = max(
+                0,
+                int(row.get("total_credit") or 0) - int(row.get("paid_out") or 0),
+            )
+            if available <= 0:
+                continue
+            delta = min(available, remaining)
+            self._apply_balance_delta(
+                ts=now,
+                worker=str(worker),
+                address=addr,
+                paid_out_delta=delta,
+            )
+            self._record_accounting_event(
+                ts=now,
+                worker=str(worker),
+                address=addr,
+                event="payout_sent",
+                amount=delta,
+                job_id=None,
+                details={"tx_hash": tx_hash},
+            )
+            remaining -= delta
+            applied += delta
+        return applied
+
+    def record_payout_failed(
+        self,
+        *,
+        address: str,
+        amount: int,
+        error: str,
+        ts: Optional[float] = None,
+    ) -> None:
+        addr = str(address or "").strip()
+        now = float(ts or time.time())
+        message = str(error or "unknown payout failure")
+        self._record_accounting_event(
+            ts=now,
+            worker="__pool__",
+            address=addr if addr else "unknown-address",
+            event="payout_failed",
+            amount=max(0, int(amount or 0)),
+            job_id=None,
+            details={"error": message},
+        )
+        if self._db is None:
+            return
+        with self._db_lock:
+            self._db.execute(
+                """
+                INSERT INTO payouts (ts, mode, address, amount, tx_hash, status, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now,
+                    self._pool_mode,
+                    addr,
+                    max(0, int(amount or 0)),
+                    None,
+                    "failed",
+                    message,
+                ),
+            )
+            self._db.commit()
+
     def pool_summary(self) -> Dict[str, object]:
         stats = self._server.stats()
         job = self._job_manager.current_job()
@@ -730,6 +1082,7 @@ class PoolMetrics:
         latest_block = self._latest_block()
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
+        payout = self.payout_status()
         return {
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
@@ -755,6 +1108,7 @@ class PoolMetrics:
             "last_update": self._now_iso(),
             "latest_block": latest_block,
             "accounting": accounting,
+            **payout,
         }
 
     def _blocks_found_total(self) -> int:
@@ -787,6 +1141,7 @@ class PoolMetrics:
                            SUM(total_credit) as total_credit,
                            SUM(pps_credit) as pps_credit,
                            SUM(solo_credit) as solo_credit,
+                           SUM(paid_out) as paid_out,
                            SUM(accepted_shares) as accepted_shares,
                            SUM(accepted_blocks) as accepted_blocks,
                            SUM(rejected_shares) as rejected_shares,
@@ -803,16 +1158,22 @@ class PoolMetrics:
                 total_credit,
                 pps_credit,
                 solo_credit,
+                paid_out,
                 accepted_shares,
                 accepted_blocks,
                 rejected_shares,
                 updated_ts,
             ) in rows:
+                gross_credit = int(total_credit or 0)
+                paid_total = int(paid_out or 0)
+                available_credit = max(0, gross_credit - paid_total)
                 data[str(worker)] = {
                     "address": address or "",
-                    "total_credit": int(total_credit or 0),
+                    "total_credit": available_credit,
+                    "gross_credit": gross_credit,
                     "pps_credit": int(pps_credit or 0),
                     "solo_credit": int(solo_credit or 0),
+                    "paid_out": paid_total,
                     "accepted_shares": int(accepted_shares or 0),
                     "accepted_blocks": int(accepted_blocks or 0),
                     "rejected_shares": int(rejected_shares or 0),
@@ -827,6 +1188,8 @@ class PoolMetrics:
             total_credit = int(row.get("total_credit") or 0)
             pps_credit = int(row.get("pps_credit") or 0)
             solo_credit = int(row.get("solo_credit") or 0)
+            paid_out = int(row.get("paid_out") or 0)
+            available_credit = max(0, total_credit - paid_out)
             accepted_shares = int(row.get("accepted_shares") or 0)
             accepted_blocks = int(row.get("accepted_blocks") or 0)
             rejected_shares = int(row.get("rejected_shares") or 0)
@@ -834,18 +1197,22 @@ class PoolMetrics:
             if current is None:
                 data[worker] = {
                     "address": row.get("address") or "",
-                    "total_credit": total_credit,
+                    "total_credit": available_credit,
+                    "gross_credit": total_credit,
                     "pps_credit": pps_credit,
                     "solo_credit": solo_credit,
+                    "paid_out": paid_out,
                     "accepted_shares": accepted_shares,
                     "accepted_blocks": accepted_blocks,
                     "rejected_shares": rejected_shares,
                     "updated_ts": updated_ts,
                 }
             else:
-                current["total_credit"] = int(current.get("total_credit") or 0) + total_credit
+                current["total_credit"] = int(current.get("total_credit") or 0) + available_credit
+                current["gross_credit"] = int(current.get("gross_credit") or 0) + total_credit
                 current["pps_credit"] = int(current.get("pps_credit") or 0) + pps_credit
                 current["solo_credit"] = int(current.get("solo_credit") or 0) + solo_credit
+                current["paid_out"] = int(current.get("paid_out") or 0) + paid_out
                 current["accepted_shares"] = int(current.get("accepted_shares") or 0) + accepted_shares
                 current["accepted_blocks"] = int(current.get("accepted_blocks") or 0) + accepted_blocks
                 current["rejected_shares"] = int(current.get("rejected_shares") or 0) + rejected_shares
@@ -1261,4 +1628,5 @@ class PoolMetrics:
             "uptime": int(time.time() - self._started),
             "pool_mode": self._pool_mode,
             "accounting": self.accounting_summary(),
+            "payout": self.payout_status(),
         }

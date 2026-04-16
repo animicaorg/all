@@ -12,6 +12,14 @@ export interface MiningPoolStatus {
   latest_block?: string | number;
   stratum_endpoint?: string;
   accounting?: Record<string, unknown>;
+  payouts_enabled?: boolean;
+  payout_interval_seconds?: number;
+  payout_min_amount?: number;
+  next_payout_at?: string;
+  payout_countdown_seconds?: number;
+  last_payout_at?: string;
+  last_payout_count?: number;
+  last_payout_error?: string | null;
   warnings?: string[];
   last_update?: string;
   [key: string]: unknown;
@@ -38,6 +46,8 @@ export interface MiningConfigResponse {
   mode_examples?: Record<string, Partial<Record<MiningPlatform, string>>>;
   default_worker?: string;
   default_threads?: number;
+  payout_interval_seconds?: number;
+  payout_min_amount?: number;
   warnings?: string[];
   payout_instructions?: string;
   worker_instructions?: string;
@@ -219,6 +229,8 @@ export interface NormalizedMiningConfig {
   workerInstructions: string;
   defaultWorker: string;
   defaultThreads: number;
+  payoutIntervalSeconds: number;
+  payoutMinAmount: number;
   manualCommands: Partial<Record<MiningPlatform, string>>;
   status: MiningPoolStatus;
   warnings: string[];

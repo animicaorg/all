@@ -53,7 +53,7 @@ const mineRuntimeConfig = JSON.stringify({
               machine, and launch the miner executable with the detected host and port already wired in.
             </p>
 
-            <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+            <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-8">
               <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
                 <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Stratum Host</p>
                 <div class="mt-3 flex items-start justify-between gap-3">
@@ -93,6 +93,14 @@ const mineRuntimeConfig = JSON.stringify({
               <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
                 <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Active Workers</p>
                 <p id="active-workers" class="mt-3 text-lg font-semibold text-white">0</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Payout Interval</p>
+                <p id="payout-interval" class="mt-3 text-lg font-semibold text-white">Loading…</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Next Payout</p>
+                <p id="payout-countdown" class="mt-3 text-lg font-semibold text-white">Loading…</p>
               </div>
             </div>
 
