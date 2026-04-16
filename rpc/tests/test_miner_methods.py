@@ -754,6 +754,122 @@ def test_get_work_materializes_template_without_pending_for_theta_updates(
         _restore_miner_globals(snapshot)
 
 
+def test_get_work_returns_disabled_when_template_unavailable_with_pending(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Cfg:
+        chain_id = 1337
+
+    class _Snap:
+        entries = [object()]
+        total = 1
+
+    class _Mempool:
+        def snapshot(self, *, limit: int = 1000):
+            return _Snap()
+
+        def has_hash(self, _tx_hash: str) -> bool:
+            return False
+
+    class _Ctx:
+        cfg = _Cfg()
+        block_db = None
+        mempool = _Mempool()
+
+        def get_head(self):
+            return {
+                "height": 9,
+                "hash": "0x" + ("22" * 32),
+                "header": {"thetaMicro": 1_000_000},
+            }
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._HEAD_STATE.clear()
+        miner_methods._HEAD_STATE.update({"height": None, "hash": None, "generation": 0})
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: _Mempool())
+        monkeypatch.setattr(
+            miner_methods,
+            "miner_get_block_template",
+            lambda *_a, **_kw: {
+                "enabled": False,
+                "reason": "min_block_spacing",
+                "waitSeconds": 1.25,
+                "head": {"height": 9, "hash": "0x" + ("22" * 32)},
+            },
+        )
+
+        payout = "0x" + ("66" * 32)
+        result = miner_methods.miner_get_work({"address": payout, "include_mempool": True})
+
+        assert result["enabled"] is False
+        assert result["reason"] == "min_block_spacing"
+        assert float(result.get("waitSeconds") or 0.0) == pytest.approx(1.25)
+        assert isinstance(result.get("mempool"), dict)
+        assert int(result["mempool"]["pending"]) == 1
+        assert int(result["mempool"]["selected"]) == 0
+        assert int(result["mempool"]["rejected"]["min_block_spacing"]) == 1
+    finally:
+        _restore_miner_globals(snapshot)
+
+
+def test_get_work_returns_disabled_when_template_materialization_fails_with_pending(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Cfg:
+        chain_id = 1337
+
+    class _Snap:
+        entries = [object()]
+        total = 1
+
+    class _Mempool:
+        def snapshot(self, *, limit: int = 1000):
+            return _Snap()
+
+        def has_hash(self, _tx_hash: str) -> bool:
+            return False
+
+    class _Ctx:
+        cfg = _Cfg()
+        block_db = None
+        mempool = _Mempool()
+
+        def get_head(self):
+            return {
+                "height": 9,
+                "hash": "0x" + ("22" * 32),
+                "header": {"thetaMicro": 1_000_000},
+            }
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        miner_methods._HEAD_STATE.clear()
+        miner_methods._HEAD_STATE.update({"height": None, "hash": None, "generation": 0})
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: _Mempool())
+
+        def _raise_template_error(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(miner_methods, "miner_get_block_template", _raise_template_error)
+
+        payout = "0x" + ("77" * 32)
+        result = miner_methods.miner_get_work({"address": payout, "include_mempool": True})
+
+        assert result["enabled"] is False
+        assert result["reason"] == "template_materialization_failed"
+        assert isinstance(result.get("mempool"), dict)
+        assert int(result["mempool"]["pending"]) == 1
+        assert int(result["mempool"]["selected"]) == 0
+        assert int(result["mempool"]["rejected"]["template_materialization_failed"]) == 1
+    finally:
+        _restore_miner_globals(snapshot)
+
+
 def test_get_work_address_param_populates_coinbase_extra_without_client(
     monkeypatch: pytest.MonkeyPatch,
 ):

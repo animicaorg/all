@@ -1660,6 +1660,20 @@ def mine_blocks(
                             )
                             time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
                             continue
+
+                        if isinstance(reason, str) and reason == "min_block_spacing":
+                            wait_s = (
+                                float(template.get("waitSeconds", MIN_BLOCK_INTERVAL_SECONDS))
+                                if isinstance(template, dict)
+                                else float(MIN_BLOCK_INTERVAL_SECONDS)
+                            )
+                            wait_s = max(0.05, wait_s)
+                            typer.secho(
+                                f"Info: Waiting {wait_s:.3f}s for min block spacing...",
+                                fg=typer.colors.YELLOW,
+                            )
+                            time.sleep(wait_s)
+                            continue
                         
                         # REMOVED: sync_phase:* wait loop (lines 1218-1228 in original)
                         # The node no longer blocks templates based on sync_phase.
