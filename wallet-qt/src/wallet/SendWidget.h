@@ -140,8 +140,6 @@ private:
     QLabel* m_feeWarningLabel;
     QLabel* m_statusLabel;
     QFutureWatcher<QJsonObject>* m_sendWatcher;
-    
-    qint64 m_chainId;
 };
 
 #endif // SENDWIDGET_H

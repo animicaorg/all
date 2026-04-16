@@ -4,8 +4,6 @@
 #include "WalletDatabase.h"
 #include "WalletEngine.h"
 #include "../rpc/AnimicaRpcClient.h"
-#include "../rpc/RpcReply.h"
-#include "../rpc/RpcSettings.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -97,7 +95,6 @@ SendWidget::SendWidget(
     , m_monitor(monitor)
     , m_feeEstimator(new FeeEstimator(rpcClient, this))
     , m_sendWatcher(new QFutureWatcher<QJsonObject>(this))
-    , m_chainId(RpcSettings::canonicalChainId())
 {
     setupUI();
 
@@ -334,7 +331,6 @@ void SendWidget::onSendClicked()
     request["amount"] = amountText;
     request["gas_limit"] = static_cast<qint64>(gasLimit);
     request["max_fee"] = maxFeePerGas;
-    request["chain_id"] = m_chainId;
     if (!m_nonceEdit->text().trimmed().isEmpty()) {
         request["nonce"] = m_nonceEdit->text().trimmed().toLongLong();
     }
@@ -743,50 +739,8 @@ QString SendWidget::getCurrentAccountAddress() const
 
 qint64 SendWidget::getAvailableBalance() const
 {
-    const QString accountId = getCurrentAccountId();
     const QString address = getCurrentAccountAddress();
-    qint64 confirmed = static_cast<qint64>(m_walletEngine->getBalance(address).confirmed);
-    qint64 reserved = 0;
-    if (m_database && !accountId.isEmpty()) {
-        const QList<LedgerEntry> entries = m_database->listLedgerEntries();
-        QMap<QString, QString> txStateCache;
-        auto countsAsPendingReservation = [this, &txStateCache](const QString& txid) {
-            if (txid.isEmpty()) {
-                return true;
-            }
-            if (!txStateCache.contains(txid)) {
-                const WalletTx tx = m_database->getTransaction(txid);
-                txStateCache.insert(txid, tx.state);
-            }
-            const QString state = txStateCache.value(txid).trimmed().toLower();
-            static const QSet<QString> kActiveReservationStates = {
-                "created",
-                "signed",
-                "broadcast",
-                "reserved",
-                "pending",
-                "pending_mempool",
-                "mempool",
-                "mempool_accepted",
-                "reorged",
-            };
-            return kActiveReservationStates.contains(state);
-        };
-        for (const LedgerEntry& entry : entries) {
-            if (entry.accountId != accountId) {
-                continue;
-            }
-            if (entry.asset != "ANM") {
-                continue;
-            }
-            if ((entry.type == "PENDING_OUT" || entry.type == "FEE_RESERVED") && entry.delta < 0) {
-                if (countsAsPendingReservation(entry.txid)) {
-                    reserved += -entry.delta;
-                }
-            }
-        }
-    }
-    return qMax<qint64>(0, confirmed - reserved);
+    return static_cast<qint64>(m_walletEngine->getBalance(address).confirmed);
 }
 
 qint64 SendWidget::selectedMaxFee() const
