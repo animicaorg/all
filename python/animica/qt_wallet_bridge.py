@@ -457,6 +457,76 @@ def _format_rpc_submit_error(exc: tx_cli.RpcError) -> str:
     return " | ".join(pieces)
 
 
+def _env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    token = raw.strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _is_local_rpc_endpoint(rpc_endpoint: str) -> bool:
+    try:
+        parsed = urlparse(rpc_endpoint)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").strip().lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _try_auto_mine_local_pending_tx(rpc_endpoint: str, payout_address: str) -> Dict[str, Any]:
+    result: Dict[str, Any] = {"attempted": False, "success": False, "error": None}
+    if not _env_truthy("ANIMICA_QT_AUTO_MINE_LOCAL_TX", default=True):
+        return result
+    if not _is_local_rpc_endpoint(rpc_endpoint):
+        return result
+
+    result["attempted"] = True
+    mine_payload = {
+        "count": 1,
+        "address": payout_address,
+        "include_mempool": True,
+        "allow_offline_mining": True,
+    }
+    try:
+        tx_cli._rpc(rpc_endpoint, "miner.mine", [mine_payload])
+        result["success"] = True
+    except tx_cli.RpcError as exc:
+        result["error"] = f"rpc {exc.code}: {exc.message}"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def _pending_record_status(
+    *,
+    rpc_endpoint: str,
+    tx_hash: str,
+    in_mempool: bool,
+) -> str:
+    if in_mempool:
+        return "mempool_accepted"
+    try:
+        status = tx_cli._rpc(rpc_endpoint, "tx.getStatus", [tx_hash])
+    except Exception:
+        return "broadcast"
+
+    if not isinstance(status, dict):
+        return "broadcast"
+    token = str(status.get("state") or status.get("status") or "").strip().lower()
+    if token in {"included_block", "confirmed", "finalized", "mined", "success", "succeeded", "applied"}:
+        return "confirmed"
+    if token in {"in_block_pending_confirm", "included"}:
+        return "in_block_pending_confirm"
+    if token in {"pending_mempool", "pending", "mempool_accepted"}:
+        return "mempool_accepted"
+    return "broadcast"
+
+
 def _submit_signed_tx(
     *,
     wallet_file: str,
@@ -550,6 +620,14 @@ def _submit_signed_tx(
         raise RuntimeError(_format_rpc_submit_error(exc)) from exc
     tx_hash = _extract_send_hash(send_result)
     in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
+    auto_mine = _try_auto_mine_local_pending_tx(rpc, from_address) if in_mempool else {
+        "attempted": False,
+        "success": False,
+        "error": None,
+    }
+    if auto_mine.get("attempted"):
+        in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
+    record_status = _pending_record_status(rpc_endpoint=rpc, tx_hash=tx_hash, in_mempool=in_mempool)
     _record_pending_tx(
         wallet_file,
         from_addr=from_address,
@@ -559,7 +637,7 @@ def _submit_signed_tx(
         fee_base=fee_reserve,
         chain_id=resolved_chain_id,
         nonce=resolved_nonce,
-        status="mempool_accepted" if in_mempool else "broadcast",
+        status=record_status,
     )
     return {
         "tx_hash": tx_hash,
@@ -570,6 +648,10 @@ def _submit_signed_tx(
         "fee_reserve": fee_reserve,
         "mempool_admitted": in_mempool,
         "mempool_status": mempool_status,
+        "wallet_record_status": record_status,
+        "auto_mine_attempted": bool(auto_mine.get("attempted")),
+        "auto_mine_success": bool(auto_mine.get("success")),
+        "auto_mine_error": auto_mine.get("error"),
         "valid_after": resolved_valid_after,
         "valid_until": resolved_valid_until,
         "raw_transaction": raw_hex,
