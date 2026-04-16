@@ -4838,9 +4838,31 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
                     "sync_peer_mempools": False,
                 }
             )
-            if (
+            if isinstance(template_payload, dict) and not template_payload.get("enabled", True):
+                reason = str(template_payload.get("reason") or "template_unavailable")
+                if include_mempool_requested and int(pending_count) > 0:
+                    # Do not silently mine header-only work when we know there are pending txs.
+                    # Surface template unavailability so callers can wait/retry instead.
+                    return {
+                        "enabled": False,
+                        "reason": reason,
+                        "waitSeconds": template_payload.get("waitSeconds"),
+                        "head": template_payload.get("head"),
+                        "mempoolEnabled": True,
+                        "mempool": {
+                            "pending": int(pending_count),
+                            "selected": 0,
+                            "rejected": {reason: int(pending_count)},
+                            "rejectedByHash": {},
+                            "mempoolEnabled": True,
+                        },
+                    }
+                log.info(
+                    "miner.getWork template unavailable; using header-only work",
+                    extra={"reason": reason, "pending_count": int(pending_count)},
+                )
+            elif (
                 isinstance(template_payload, dict)
-                and template_payload.get("enabled", True)
                 and isinstance(template_payload.get("header"), dict)
                 and template_payload.get("target") is not None
             ):
@@ -4895,11 +4917,27 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
                 mempool_summary.setdefault("rejected", {})
                 mempool_summary.setdefault("rejectedByHash", {})
                 mempool_summary["mempoolEnabled"] = True
+            else:
+                raise ValueError("materialized template missing header/target")
         except Exception as exc:
             log.warning(
                 "miner.getWork failed to materialize block template; falling back to header-only work",
                 extra={"error": str(exc)},
             )
+            if include_mempool_requested and int(pending_count) > 0:
+                return {
+                    "enabled": False,
+                    "reason": "template_materialization_failed",
+                    "waitSeconds": None,
+                    "mempoolEnabled": True,
+                    "mempool": {
+                        "pending": int(pending_count),
+                        "selected": 0,
+                        "rejected": {"template_materialization_failed": int(pending_count)},
+                        "rejectedByHash": {},
+                        "mempoolEnabled": True,
+                    },
+                }
 
     share_target = _DEFAULT_SHARE_TARGET
     if share_microtarget is not None:
