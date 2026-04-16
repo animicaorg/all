@@ -340,6 +340,7 @@ def build_bundle_input(
 def build_config_document(resolved: ResolvedMiningConfig, bundle: BundleInput) -> str:
     return (
         "{\n"
+        f'  "pool_url": "{resolved.stratum_url}",\n'
         f'  "host": "{resolved.public_host}",\n'
         f'  "port": {resolved.public_port},\n'
         f'  "scheme": "{resolved.public_scheme}",\n'
@@ -361,8 +362,7 @@ def build_manual_commands(resolved: ResolvedMiningConfig, bundle: BundleInput) -
     quoted_address = bundle.address
     quoted_worker = bundle.worker
     common_args = (
-        f"--host {resolved.public_host} "
-        f"--port {resolved.public_port} "
+        f"--pool-url {resolved.stratum_url} "
         f"--address {quoted_address} "
         f"--worker {quoted_worker} "
         f"--threads {bundle.threads} "

@@ -55,10 +55,10 @@ Connect the reference Stratum miner:
 
 ```bash
 ./animica-miner \
-  --host 127.0.0.1 \
-  --port 3333 \
+  --pool-url stratum+tcp://127.0.0.1:3333 \
   --address anim1... \
-  --worker local-dev
+  --worker local-dev \
+  --pool-mode pps
 ```
 
 Build standalone miner executables (for website downloads / bundles):
@@ -70,6 +70,48 @@ Build standalone miner executables (for website downloads / bundles):
 This writes platform binaries under `artifacts/miners/bin/<platform>/`. The bundle builder will
 embed `animica-miner` / `animica-miner.exe` when present and fall back to `animica_cpu_miner.py`
 otherwise.
+
+Run the end-to-end smoke suite (block acceptance + PPS/SOLO accounting + CLI wiring):
+
+```bash
+bash scripts/smoke_pool_miner_e2e.sh
+```
+
+## Manual Smoke (Server)
+
+Start node:
+
+```bash
+animica node up --network testnet --rpc
+```
+
+Start pool:
+
+```bash
+animica miner run-pool \
+  --mode pps \
+  --pool-address anim1... \
+  --rpc-url http://127.0.0.1:8545/rpc
+```
+
+Run miner (Linux/macOS binary):
+
+```bash
+./animica-miner \
+  --pool-url stratum+tcp://127.0.0.1:3333 \
+  --address anim1... \
+  --worker rig-01 \
+  --threads 4 \
+  --pool-mode pps
+```
+
+Verify chain head and accounting:
+
+```bash
+curl -s http://127.0.0.1:8550/api/pool/summary | jq '.height,.pool_hashrate,.blocks_found_total'
+curl -s http://127.0.0.1:8550/api/pool/accounting | jq
+curl -s http://127.0.0.1:8545/rpc -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' -H 'content-type: application/json'
+```
 
 ## Operator Commands
 

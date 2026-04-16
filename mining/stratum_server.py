@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import secrets
@@ -10,11 +9,11 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation, ROUND_FLOOR, localcontext
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from .hash_search import (digest_to_int256, h_micro_from_digest,
-                          micro_threshold_to_target256)
+from .hash_search import digest_to_int256
+from .pow_validation import (derive_block_target_int, digest_from_sign_bytes,
+                             evaluate_digest, parse_hex_bytes)
 from .stratum_protocol import (InvalidParams, InvalidRequest, Method,
                                MethodNotFound, RpcErrorCodes, decode_lenpref,
                                decode_lines, encode_lenpref, encode_lines,
@@ -141,93 +140,70 @@ class ShareValidator:
         if not isinstance(body, dict):
             return False, "hashshare.body must be object", False, 0
 
-        # Ensure we have signBytes to recompute the digest; if absent, fall back to
-        # accepting shares (legacy behavior) so SHA-256 style templates remain usable.
-        sign_hex = (
-            job.sign_bytes or job.header.get("signBytes")
-            if isinstance(job.header, dict)
-            else None
-        )
-        if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-            return True, None, False, 0
-
-        try:
-            prefix = bytes.fromhex(sign_hex[2:])
-        except Exception:
-            return False, "invalid signBytes", False, 0
-
         try:
             nonce_int = int(nonce_hex, 16)
         except Exception:
             return False, "bad nonce", False, 0
 
-        # Compute digest(prefix || mixSeed || nonce_le8) and check against targets.
-        mix_hex = None
-        if isinstance(submit_params.get("hints"), dict):
-            mix_hex = submit_params.get("hints", {}).get("mixSeed")
-        if mix_hex is None and isinstance(job.hints, dict):
-            mix_hex = job.hints.get("mixSeed")
-        mix_seed = b""
-        if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
+        # Prefer canonical header hashing when a full template header is present.
+        digest: bytes | None = None
+        if isinstance(job.header, dict):
             try:
-                mix_seed = bytes.fromhex(mix_hex[2:])
+                from mining.template_block import hash_candidate_header
+
+                digest = hash_candidate_header(job.header, nonce=nonce_int).digest
             except Exception:
-                mix_seed = b""
+                digest = None
 
-        try:
-            from mining import nonce_domain as nd  # type: ignore
+        # Ensure we have signBytes to recompute the digest when header hashing is
+        # unavailable; if absent, fall back to accepting shares (legacy behavior)
+        # so SHA-256 style templates remain usable.
+        sign_hex = (
+            job.sign_bytes or job.header.get("signBytes")
+            if isinstance(job.header, dict)
+            else None
+        )
+        if digest is None and (not isinstance(sign_hex, str) or not sign_hex.startswith("0x")):
+            return True, None, False, 0
 
-            digest = nd.sha3_256(
-                prefix + mix_seed + nonce_int.to_bytes(8, "little", signed=False)
+        if digest is None:
+            try:
+                prefix = bytes.fromhex(sign_hex[2:])
+            except Exception:
+                return False, "invalid signBytes", False, 0
+
+            mix_hex = None
+            if isinstance(submit_params.get("hints"), dict):
+                mix_hex = submit_params.get("hints", {}).get("mixSeed")
+            if mix_hex is None and isinstance(job.hints, dict):
+                mix_hex = job.hints.get("mixSeed")
+            mix_seed = parse_hex_bytes(mix_hex, default=b"")
+            digest = digest_from_sign_bytes(
+                prefix,
+                mix_seed=mix_seed,
+                nonce_int=nonce_int,
+                nonce_byteorder="little",
             )
-        except Exception:
-            h = hashlib.sha3_256()
-            h.update(prefix)
-            h.update(mix_seed)
-            h.update(nonce_int.to_bytes(8, "little", signed=False))
-            digest = h.digest()
+
         digest_int = digest_to_int256(digest)
-        h_micro = h_micro_from_digest(digest)
-
-        theta_micro = int(job.theta_micro)
-        share_ratio_raw: Any = job.share_target or 0.0
-        try:
-            share_ratio = Decimal(str(share_ratio_raw))
-        except (InvalidOperation, TypeError, ValueError):
-            share_ratio = Decimal("0")
-        if share_ratio <= 0:
-            share_ratio = Decimal("1")
-        if share_ratio > 1:
-            share_ratio = Decimal("1")
-        t_share_micro = 0
-        if theta_micro > 0:
-            with localcontext() as ctx:
-                ctx.prec = 50
-                t_share_micro = int(
-                    (Decimal(theta_micro) * share_ratio).to_integral_value(
-                        rounding=ROUND_FLOOR
-                    )
-                )
-            t_share_micro = max(1, t_share_micro)
-        share_target256 = micro_threshold_to_target256(t_share_micro)
-        if digest_int > share_target256:
-            return False, "low difficulty share", False, 0
-
-        # Block predicate if a full block target is provided with the job
-        block_target_hex = (
+        block_target = (
             job.target or job.header.get("target")
             if isinstance(job.header, dict)
             else None
         )
-        is_block = False
-        if isinstance(block_target_hex, str) and block_target_hex.startswith("0x"):
-            try:
-                block_target_int = int(block_target_hex, 16)
-                is_block = digest_int <= block_target_int
-            except Exception:
-                pass
+        decision = evaluate_digest(
+            digest_int,
+            theta_micro=int(job.theta_micro),
+            share_ratio=job.share_target,
+            block_target=derive_block_target_int(block_target),
+            enforce_share_target=True,
+        )
+        if decision.share_target_int <= 0:
+            return False, "missing share target", False, 0
+        if not decision.share_ok:
+            return False, "low difficulty share", False, 0
 
-        return True, None, is_block, 0
+        return True, None, bool(decision.is_block), 0
 
 
 # --------------------------------------------------------------------------------------

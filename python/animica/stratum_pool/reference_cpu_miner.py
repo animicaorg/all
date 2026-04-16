@@ -398,9 +398,26 @@ def resolve_config(args: argparse.Namespace) -> MinerConfig:
     if args.config:
         file_data = load_json_config(Path(args.config))
 
-    host = str(args.host or file_data.get("host") or "127.0.0.1")
-    port = int(args.port or file_data.get("port") or 3333)
-    scheme = str(args.scheme or file_data.get("scheme") or "stratum+tcp")
+    pool_url = str(
+        getattr(args, "pool_url", None) or file_data.get("pool_url") or ""
+    ).strip()
+    parsed_host: Optional[str] = None
+    parsed_port: Optional[int] = None
+    parsed_scheme: Optional[str] = None
+    if pool_url:
+        parsed = urllib_parse.urlsplit(
+            pool_url if "://" in pool_url else f"stratum+tcp://{pool_url}"
+        )
+        parsed_host = parsed.hostname
+        parsed_scheme = parsed.scheme or None
+        try:
+            parsed_port = parsed.port
+        except ValueError:
+            parsed_port = None
+
+    host = str(args.host or parsed_host or file_data.get("host") or "127.0.0.1")
+    port = int(args.port or parsed_port or file_data.get("port") or 3333)
+    scheme = str(args.scheme or parsed_scheme or file_data.get("scheme") or "stratum+tcp")
     tls = bool(args.tls or file_data.get("tls") or scheme in {"stratum+tls", "stratum+ssl"})
     address = str(args.address or file_data.get("address") or "").strip()
     if not address or address == PLACEHOLDER_ADDRESS:
@@ -953,6 +970,10 @@ class StratumCpuMiner:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Animica CPU Stratum miner")
     parser.add_argument("--config", help="Path to miner JSON config")
+    parser.add_argument(
+        "--pool-url",
+        help="Pool URL (for example stratum+tcp://pool.animica.org:3333)",
+    )
     parser.add_argument("--host")
     parser.add_argument("--port", type=int)
     parser.add_argument("--scheme")

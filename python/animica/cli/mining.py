@@ -16,6 +16,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 import asyncio
 import logging
@@ -738,6 +739,54 @@ def run_pool(
         f"(mode={resolved_cfg.pool_mode}, profile={resolved_cfg.profile}, "
         f"stratum={resolved_cfg.host}:{resolved_cfg.port}, api={resolved_cfg.api_host}:{resolved_cfg.api_port})",
         fg=typer.colors.GREEN,
+    )
+    public_stratum_url = os.getenv("ANIMICA_PUBLIC_STRATUM_URL")
+    if public_stratum_url:
+        stratum_url = public_stratum_url
+    else:
+        display_host = str(resolved_cfg.host)
+        if display_host in {"0.0.0.0", "::", "[::]"}:
+            display_host = (
+                os.getenv("ANIMICA_PUBLIC_STRATUM_HOST")
+                or os.getenv("ANIMICA_PUBLIC_DOMAIN")
+                or "127.0.0.1"
+            )
+        stratum_url = f"stratum+tcp://{display_host}:{resolved_cfg.port}"
+
+    api_host_display = str(resolved_cfg.api_host)
+    if api_host_display in {"0.0.0.0", "::", "[::]"}:
+        api_host_display = (
+            os.getenv("ANIMICA_PUBLIC_POOL_API_HOST")
+            or os.getenv("ANIMICA_PUBLIC_DOMAIN")
+            or "127.0.0.1"
+        )
+    api_url = f"http://{api_host_display}:{resolved_cfg.api_port}"
+    mode_notes = {
+        "pps": "PPS credits accepted shares immediately (deterministic per-share accounting).",
+        "solo": "SOLO credits only accepted full blocks to the submitting miner.",
+    }
+    typer.echo(f"Stratum endpoint: {stratum_url}")
+    typer.echo(f"Pool API: {api_url}")
+    typer.echo(f"Pool payout address: {resolved_cfg.pool_address}")
+    typer.echo(f"Payout mode: {resolved_cfg.pool_mode.upper()} - {mode_notes.get(resolved_cfg.pool_mode, '')}")
+    typer.echo("Miner examples:")
+    pool_url_for_examples = stratum_url
+    if "://" not in pool_url_for_examples:
+        parsed = urlsplit(f"stratum+tcp://{pool_url_for_examples}")
+        pool_url_for_examples = (
+            f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+            if parsed.hostname and parsed.port
+            else stratum_url
+        )
+    typer.echo(
+        "  Linux/macOS: "
+        f"./animica-miner --pool-url {pool_url_for_examples} --address <anim1...> "
+        f"--worker worker-01 --threads 4 --pool-mode {resolved_cfg.pool_mode}"
+    )
+    typer.echo(
+        "  Windows: "
+        f"animica-miner.exe --pool-url {pool_url_for_examples} --address <anim1...> "
+        f"--worker worker-01 --threads 4 --pool-mode {resolved_cfg.pool_mode}"
     )
 
     for key, value in env_overrides.items():
@@ -1520,20 +1569,20 @@ def mine_blocks(
                         template_id_dbg = (
                             summary.get("template", {}).get("id")
                             or template.get("id")
-                            or template_view.get("templateId")
-                            or template_view.get("jobId")
+                            or template.get("templateId")
+                            or template.get("jobId")
                         )
                         template_height_dbg = (
                             template.get("height")
                             or template.get("number")
-                            or template_view.get("height")
-                            or template_view.get("number")
+                            or header_view.get("height")
+                            or header_view.get("number")
                         )
                         template_parent_dbg = (
                             template.get("parent", {}).get("hash")
                             or template.get("parent_hash")
-                            or template_view.get("parentHash")
-                            or template_view.get("parent_hash")
+                            or header_view.get("parentHash")
+                            or header_view.get("parent_hash")
                         )
                         head_height_dbg = head_now.get("height")
                         if head_height_dbg is None:
@@ -1583,38 +1632,111 @@ def mine_blocks(
                         if verbose:
                             typer.echo(f"  [Fallback] Fetching work via local RPC at {url}")
 
-                        attempts = [
+                        def _is_param_shape_error(
+                            code: int | None, detail_text: str
+                        ) -> bool:
+                            return code == -32602 and any(
+                                token in detail_text
+                                for token in (
+                                    "unexpected",
+                                    "unknown",
+                                    "keyword",
+                                    "too many positional arguments",
+                                    "missing",
+                                    "address",
+                                    "payout_address",
+                                    "payoutAddress",
+                                )
+                            )
+
+                        def _is_usable_template_payload(response: object) -> bool:
+                            if not isinstance(response, dict):
+                                return False
+                            if not response.get("enabled", True):
+                                return True
+                            return (
+                                isinstance(response.get("header"), dict)
+                                and response.get("target") is not None
+                            )
+
+                        get_work_attempts = [
                             [resolved_address],
                             {"address": resolved_address},
                             {"payout_address": resolved_address},
                             {"payoutAddress": resolved_address},
                             [resolved_address, include_mempool],
                         ]
+                        block_template_attempts = [
+                            {
+                                "address": resolved_address,
+                                "include_mempool": include_mempool,
+                                "ttlSeconds": int(template_ttl_s),
+                            },
+                            {
+                                "payout_address": resolved_address,
+                                "include_mempool": include_mempool,
+                                "ttlSeconds": int(template_ttl_s),
+                            },
+                            {"address": resolved_address},
+                            [resolved_address],
+                        ]
 
                         last_exc = None
-                        for payload in attempts:
+                        for payload in get_work_attempts:
                             try:
-                                return client.request("miner.getWork", payload)
+                                response = client.request("miner.getWork", payload)
+                                if _is_usable_template_payload(response):
+                                    return response
+                                # Some legacy/mock implementations return None for
+                                # unsupported methods instead of raising.
+                                if response is None:
+                                    continue
+                                if isinstance(response, dict):
+                                    last_exc = ValueError(
+                                        "miner.getWork returned dict without required "
+                                        "template fields (enabled/header/target)"
+                                    )
+                                    continue
+                                last_exc = TypeError(
+                                    f"miner.getWork returned non-dict payload: {type(response).__name__}"
+                                )
+                                continue
                             except Exception as exc:
                                 last_exc = exc
                                 code, message, data = _rpc_error_details(exc)
                                 detail_text = _rpc_error_detail_text(message, data)
-                                if code == -32602 and any(
-                                    token in detail_text
-                                    for token in (
-                                        "unexpected",
-                                        "unknown",
-                                        "keyword",
-                                        "too many positional arguments",
-                                        "missing",
-                                        "address",
-                                        "payout_address",
-                                        "payoutAddress",
-                                    )
-                                ):
+                                if _is_param_shape_error(code, detail_text):
                                     continue
-                                _handle_template_rpc_error(exc)
-                                raise
+
+                        for payload in block_template_attempts:
+                            try:
+                                if verbose:
+                                    typer.echo(
+                                        "  [Fallback] miner.getWork unavailable; "
+                                        "trying miner.getBlockTemplate"
+                                    )
+                                response = client.request("miner.getBlockTemplate", payload)
+                                if _is_usable_template_payload(response):
+                                    return response
+                                if response is None:
+                                    continue
+                                if isinstance(response, dict):
+                                    last_exc = ValueError(
+                                        "miner.getBlockTemplate returned dict without "
+                                        "required template fields (enabled/header/target)"
+                                    )
+                                    continue
+                                last_exc = TypeError(
+                                    "miner.getBlockTemplate returned non-dict payload: "
+                                    f"{type(response).__name__}"
+                                )
+                                continue
+                            except Exception as exc:
+                                last_exc = exc
+                                code, message, data = _rpc_error_details(exc)
+                                detail_text = _rpc_error_detail_text(message, data)
+                                if _is_param_shape_error(code, detail_text):
+                                    continue
 
                         if last_exc is not None:
                             _handle_template_rpc_error(last_exc)
@@ -1853,8 +1975,8 @@ def mine_blocks(
                             "jobId": (
                                 summary.get("template", {}).get("id")
                                 or template.get("id")
-                                or template_view.get("templateId")
-                                or template_view.get("jobId")
+                                or template.get("templateId")
+                                or template.get("jobId")
                             ),
                             "nonce": nonce,
                         }
@@ -1870,38 +1992,94 @@ def mine_blocks(
                             )
                         else:
                             submit_result = client.request("miner.submitWork", submit_payload)
+                        if submit_result is None or (
+                            isinstance(submit_result, dict) and not submit_result
+                        ):
+                            raise RuntimeError(
+                                "miner.submitWork returned empty response (falling back)"
+                            )
                     except Exception as submit_error:
-                        error_str = _format_rpc_error(submit_error)
-                        error_data = getattr(submit_error, "data", None)
-                        rejection_reason = None
-                        if isinstance(error_data, dict):
-                            rejection_reason = error_data.get("reason")
-
-                        is_stale = (
-                            isinstance(rejection_reason, str) and "stale" in rejection_reason.lower()
-                        ) or ("stale" in error_str.lower())
-
-                        if is_stale:
-                            _emit_stale_diff_debug()
-
-                        _emit_mining_summary(summary, verbose=verbose, force=True)
-                        typer.secho(
-                            f"  REJECTED: Block {total_mined + 1}/{count} (reason: {rejection_reason or error_str})",
-                            fg=typer.colors.RED,
+                        code, message, data = _rpc_error_details(submit_error)
+                        detail_text = _rpc_error_detail_text(message, data)
+                        should_fallback_submit_block = (
+                            code == -32601
+                            or (
+                                "submitwork" in detail_text
+                                and any(
+                                    token in detail_text
+                                    for token in (
+                                        "unexpected method",
+                                        "method not found",
+                                        "unknown method",
+                                        "not supported",
+                                        "empty response",
+                                    )
+                                )
+                            )
                         )
 
-                        if is_stale and stale_attempts < 1:
-                            stale_attempts += 1
+                        if should_fallback_submit_block:
+                            if verbose:
+                                typer.echo(
+                                    "  submitWork unavailable; falling back to miner.submitBlock"
+                                )
+                            try:
+                                if proxy:
+                                    submit_result = proxy.sync_forward_request(
+                                        "miner.submitBlock",
+                                        block_payload,
+                                        fallback_handler=lambda: client.request(
+                                            "miner.submitBlock", block_payload
+                                        ),
+                                    )
+                                else:
+                                    submit_result = client.request(
+                                        "miner.submitBlock", block_payload
+                                    )
+                            except Exception as submit_block_error:
+                                submit_error = submit_block_error
+                            else:
+                                submit_error = None
+
+                        if submit_error is None:
+                            pass
+                        else:
+                            error_str = _format_rpc_error(submit_error)
+                            error_data = getattr(submit_error, "data", None)
+                            rejection_reason = None
+                            if isinstance(error_data, dict):
+                                rejection_reason = error_data.get("reason")
+
+                            is_stale = (
+                                isinstance(rejection_reason, str) and "stale" in rejection_reason.lower()
+                            ) or ("stale" in error_str.lower())
+
+                            if is_stale:
+                                _emit_stale_diff_debug()
+
+                            _emit_mining_summary(summary, verbose=verbose, force=True)
                             typer.secho(
-                                f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
-                                fg=typer.colors.YELLOW,
+                                f"  REJECTED: Block {total_mined + 1}/{count} (reason: {rejection_reason or error_str})",
+                                fg=typer.colors.RED,
                             )
-                            continue
 
-                        if is_stale:
-                            _apply_stale_template_cooldown()
-                            _stale_cooldown_applied = True
+                            if is_stale and stale_attempts < 1:
+                                stale_attempts += 1
+                                typer.secho(
+                                    f"  Retrying with fresh template (stale attempt {stale_attempts}/1)",
+                                    fg=typer.colors.YELLOW,
+                                )
+                                continue
 
+                            if is_stale:
+                                _apply_stale_template_cooldown()
+                                _stale_cooldown_applied = True
+
+                            blocks_attempted += 1
+                            stale_attempts = 0
+                            break
+
+                    if submit_result is None:
                         blocks_attempted += 1
                         stale_attempts = 0
                         break
@@ -2150,6 +2328,19 @@ def mine_blocks(
 
                     if block_reward is None and isinstance(credited_delta, int) and credited_delta > 0:
                         block_reward = int(credited_delta)
+
+                    if block_reward is None:
+                        try:
+                            coinbase_amount = int(
+                                (template.get("coinbase") or {}).get("amount") or 0
+                            )
+                            if coinbase_amount > 0:
+                                block_reward = coinbase_amount
+                        except Exception:
+                            pass
+
+                    if credited_display is None and isinstance(block_reward, int) and block_reward > 0:
+                        credited_display = block_reward
 
                     if block_reward is not None and block_reward > 0:
                         total_reward += int(block_reward)
