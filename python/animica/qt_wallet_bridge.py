@@ -620,14 +620,17 @@ def _submit_signed_tx(
         raise RuntimeError(_format_rpc_submit_error(exc)) from exc
     tx_hash = _extract_send_hash(send_result)
     in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
-    auto_mine = _try_auto_mine_local_pending_tx(rpc, from_address) if in_mempool else {
+    record_status = _pending_record_status(rpc_endpoint=rpc, tx_hash=tx_hash, in_mempool=in_mempool)
+    auto_mine = {
         "attempted": False,
         "success": False,
         "error": None,
     }
-    if auto_mine.get("attempted"):
-        in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
-    record_status = _pending_record_status(rpc_endpoint=rpc, tx_hash=tx_hash, in_mempool=in_mempool)
+    if record_status in {"mempool_accepted", "broadcast"}:
+        auto_mine = _try_auto_mine_local_pending_tx(rpc, from_address)
+        if auto_mine.get("attempted"):
+            in_mempool, mempool_status = tx_cli._get_mempool_status(rpc, tx_hash, verbose=False)
+            record_status = _pending_record_status(rpc_endpoint=rpc, tx_hash=tx_hash, in_mempool=in_mempool)
     _record_pending_tx(
         wallet_file,
         from_addr=from_address,

@@ -83,6 +83,18 @@ def _restore_miner_globals(snapshot: dict[str, dict]) -> None:
             miner_methods._TEMPLATE_CACHE.update(snapshot["template_cache"])
 
 
+def test_mempool_pending_count_uses_snapshot_total():
+    class _Snapshot:
+        entries = [object()]
+        total = 4096
+
+    class _Mempool:
+        def snapshot(self, *, limit: int = 1000):
+            return _Snapshot()
+
+    assert miner_methods._mempool_pending_count(_Mempool()) == 4096
+
+
 def test_get_work_returns_template():
     client, cfg, _ = new_test_client()
     res = rpc_call(client, "miner.getWork")
@@ -1374,3 +1386,105 @@ def test_get_block_template_with_mempool_disabled(monkeypatch: pytest.MonkeyPatc
     assert res["result"] is not None
     assert "templateId" in res["result"]
     assert "header" in res["result"]
+
+
+def test_get_block_template_scales_selection_to_pending_count(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    class _Cfg:
+        chain_id = 1337
+        genesis_path = None
+
+    parent_header = Header(
+        v=1,
+        chainId=1337,
+        height=1,
+        parentHash=miner_methods.ZERO32,
+        timestamp=1_700_000_000,
+        stateRoot=miner_methods.ZERO32,
+        txsRoot=miner_methods.ZERO32,
+        receiptsRoot=miner_methods.ZERO32,
+        proofsRoot=miner_methods.ZERO32,
+        daRoot=miner_methods.ZERO32,
+        mixSeed=miner_methods.ZERO32,
+        poiesPolicyRoot=miner_methods.ZERO32,
+        pqAlgPolicyRoot=miner_methods.ZERO32,
+        thetaMicro=1_000_000,
+        nonce=0,
+        extra=b"",
+    )
+
+    class _Ctx:
+        cfg = _Cfg()
+        params = {}
+        state_db = None
+        tx_index = None
+
+    class _Adapter:
+        def get_head(self):
+            return {
+                "height": 1,
+                "hash": "0x" + ("11" * 32),
+                "obj": parent_header,
+            }
+
+    class _Mempool:
+        def stats(self):
+            return {"count": 1500}
+
+    captured: dict[str, int] = {}
+
+    def _fake_collect(*, ctx, adapter, limit: int = 1000):
+        captured["collect_limit"] = int(limit)
+        entries = [
+            miner_methods.PendingTxEntry(
+                hash_hex=f"0x{i:064x}",
+                raw=b"",
+                tx=None,
+            )
+            for i in range(1500)
+        ]
+        return entries, {}, 1500
+
+    class _Selection:
+        def __init__(self, total_pending: int):
+            self.selected = []
+            self.selected_hashes = []
+            self.rejected = {}
+            self.rejected_by_hash = {}
+            self.rejected_details_by_hash = {}
+            self.total_pending = total_pending
+
+    def _fake_select_for_block(*, limits, pending, **_kwargs):
+        captured["max_txs"] = int(limits.get("max_txs") or 0)
+        pending_count = len(pending) if isinstance(pending, list) else sum(1 for _ in pending)
+        return _Selection(total_pending=pending_count)
+
+    monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+    monkeypatch.setattr(miner_methods, "_adapter", lambda: _Adapter())
+    monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kwargs: (True, None))
+    monkeypatch.setattr(miner_methods, "_min_block_spacing_s", lambda: 0.0)
+    monkeypatch.setattr(
+        miner_methods,
+        "_current_head_snapshot",
+        lambda: {
+            "height": 1,
+            "hash": "0x" + ("11" * 32),
+            "header": parent_header,
+        },
+    )
+    monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: _Mempool())
+    monkeypatch.setattr(miner_methods, "_collect_mempool_entries", _fake_collect)
+    monkeypatch.setattr(miner_methods, "select_for_block", _fake_select_for_block)
+
+    res = miner_methods.miner_get_block_template(
+        address=payout_address,
+        include_mempool=True,
+        sync_peer_mempools=False,
+    )
+
+    assert captured["collect_limit"] >= 1500
+    assert captured["max_txs"] >= 1500
+    assert int(res["mempool"]["pending"]) == 1500

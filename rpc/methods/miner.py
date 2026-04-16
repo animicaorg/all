@@ -2389,7 +2389,10 @@ def _mempool_pending_count(mempool_service: Any) -> int:
     try:
         snapshot_fn = getattr(mempool_service, "snapshot", None)
         if callable(snapshot_fn):
-            snapshot = snapshot_fn(limit=1000)
+            snapshot = snapshot_fn(limit=1)
+            total = getattr(snapshot, "total", None)
+            if total is not None:
+                return int(total)
             entries = getattr(snapshot, "entries", None)
             if isinstance(entries, list):
                 return len(entries)
@@ -2407,6 +2410,17 @@ def _mempool_pending_count(mempool_service: Any) -> int:
     except Exception:
         pass
     return 0
+
+
+def _mempool_snapshot_limit(
+    mempool_service: Any,
+    *,
+    default_limit: int = 1000,
+) -> int:
+    pending = _mempool_pending_count(mempool_service)
+    if pending <= 0:
+        return int(default_limit)
+    return max(int(default_limit), int(pending))
 
 
 def _extract_template_raw_txs(template_payload: dict[str, Any]) -> list[str]:
@@ -2848,8 +2862,19 @@ def _collect_mempool_entries(
     if mempool_service is not None:
         _log_mempool_binding("miner", ctx, mempool_service)
         snapshot = mempool_service.snapshot(limit=limit)
-        total = int(snapshot.total)
-        for entry in snapshot.entries:
+        entries = list(getattr(snapshot, "entries", []) or [])
+        total = int(getattr(snapshot, "total", len(entries)) or 0)
+        if total > len(entries) and total > int(limit):
+            try:
+                expanded_snapshot = mempool_service.snapshot(limit=total)
+                expanded_entries = list(getattr(expanded_snapshot, "entries", []) or [])
+                if len(expanded_entries) > len(entries):
+                    snapshot = expanded_snapshot
+                    entries = expanded_entries
+                    total = int(getattr(snapshot, "total", len(entries)) or 0)
+            except Exception:
+                pass
+        for entry in entries:
             raw_candidate = snapshot.raw_by_hash.get(entry.hash_hex, entry.raw)
             if not raw_candidate and isinstance(entry.tx, dict):
                 raw_candidate = entry.tx
@@ -2902,7 +2927,7 @@ def _collect_mempool_entries(
             extra={
                 "mempool_id": id(mempool_service),
                 "total": total,
-                "entries": len(snapshot.entries),
+                "entries": len(entries),
             },
         )
         return pending_entries, pending_raw_by_hash, total
@@ -3486,7 +3511,7 @@ def _mine_once(
 
     ctx = _ctx()
     adapter = _adapter()
-    mempool_service = getattr(ctx, "mempool", None)
+    mempool_service = _resolve_mempool_service(ctx)
     pending_entries: list[PendingTxEntry] = []
     pending_raw_by_hash: dict[str, bytes] = {}
     selection_summary: dict[str, Any] = {
@@ -3498,12 +3523,13 @@ def _mine_once(
     }
 
     if include_mempool:
+        snapshot_limit = _mempool_snapshot_limit(mempool_service)
         log.info("_mine_once: Starting transaction collection from mempool adapter")
         log.info(f"_mine_once: Adapter has miner_feed: {adapter.miner_feed is not None}")
         pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
             ctx=ctx,
             adapter=adapter,
-            limit=1000,
+            limit=snapshot_limit,
         )
         log.info(
             "_mine_once: mempool collection summary",
@@ -3521,11 +3547,14 @@ def _mine_once(
                     extra={"requested": requested},
                 )
                 time.sleep(0.25)
+                snapshot_limit = _mempool_snapshot_limit(
+                    mempool_service, default_limit=snapshot_limit
+                )
                 pending_entries, pending_raw_by_hash, pending_total = (
                     _collect_mempool_entries(
                         ctx=ctx,
                         adapter=adapter,
-                        limit=1000,
+                        limit=snapshot_limit,
                     )
                 )
                 log.info(
@@ -3646,7 +3675,7 @@ def _mine_once(
             limits={
                 "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                 "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
-                "max_txs": 1000,
+                "max_txs": max(1000, int(pending_total or 0), len(normalized_entries)),
             },
             pending=normalized_entries,
             decode=decode_fn,
@@ -5643,6 +5672,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         }
 
         if include_mempool_flag:
+            snapshot_limit = _mempool_snapshot_limit(mempool_service)
             if sync_peer_mempools:
                 # Sync mempools from peers to improve template completeness for external miners.
                 synced_peers = _sync_all_peer_mempools(timeout_s=1.5)
@@ -5655,7 +5685,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             pending_entries, pending_raw_by_hash, pending_total = _collect_mempool_entries(
                 ctx=ctx,
                 adapter=adapter,
-                limit=1000,
+                limit=snapshot_limit,
             )
             log.info(
                 "block template mempool collection",
@@ -5674,11 +5704,14 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                         extra={"requested": requested},
                     )
                     time.sleep(0.25)
+                    snapshot_limit = _mempool_snapshot_limit(
+                        mempool_service, default_limit=snapshot_limit
+                    )
                     pending_entries, pending_raw_by_hash, pending_total = (
                         _collect_mempool_entries(
                             ctx=ctx,
                             adapter=adapter,
-                            limit=1000,
+                            limit=snapshot_limit,
                         )
                     )
                     log.info(
@@ -5790,7 +5823,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 limits={
                     "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                     "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
-                    "max_txs": 1000,
+                    "max_txs": max(1000, int(pending_total or 0), len(normalized_entries)),
                 },
                 pending=normalized_entries,
                 decode=decode_fn,

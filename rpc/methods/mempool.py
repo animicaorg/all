@@ -107,6 +107,52 @@ def _iter_pending() -> Iterable[tuple[str, bytes, float | None]]:
     return ((h, raw, ts_cache.get(h)) for h, raw in cache.items())
 
 
+def _selection_head_height() -> int:
+    try:
+        from rpc.mempool_service import _current_height as _mempool_current_height
+    except Exception:
+        _mempool_current_height = None
+
+    if callable(_mempool_current_height):
+        try:
+            return int(_mempool_current_height())
+        except Exception:
+            pass
+
+    try:
+        snap = deps.get_head()
+    except Exception:
+        return 0
+
+    def _coerce(value: Any) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    if isinstance(snap, dict):
+        for key in ("height", "canonicalHeight", "head_height", "block_height", "number"):
+            parsed = _coerce(snap.get(key))
+            if parsed is not None:
+                return parsed
+        header = snap.get("header")
+        if header is not None:
+            if isinstance(header, dict):
+                parsed = _coerce(header.get("height", header.get("number")))
+                if parsed is not None:
+                    return parsed
+            else:
+                parsed = _coerce(getattr(header, "height", getattr(header, "number", None)))
+                if parsed is not None:
+                    return parsed
+        return 0
+    if isinstance(snap, (tuple, list)) and snap:
+        parsed = _coerce(snap[0])
+        if parsed is not None:
+            return parsed
+    return 0
+
+
 def _format_sender(sender: Any) -> str | None:
     if sender is None:
         return None
@@ -361,11 +407,18 @@ def mempool_explain(tx_hash: str) -> dict:
     raw = None
     mempool_service = _get_mempool_service()
     if mempool_service is not None:
+        getter = getattr(mempool_service, "get_raw", None)
+        if callable(getter):
+            try:
+                raw = getter(target)
+            except Exception:
+                raw = None
         snapshot = mempool_service.snapshot(limit=1000)
-        for entry in snapshot.entries:
-            if entry.hash_hex == target:
-                raw = entry.raw
-                break
+        if raw is None:
+            for entry in snapshot.entries:
+                if entry.hash_hex == target:
+                    raw = entry.raw
+                    break
         if raw is None:
             rejection = getattr(mempool_service, "get_rejection", None)
             if callable(rejection):
@@ -447,7 +500,7 @@ def mempool_explain(tx_hash: str) -> dict:
             pass
 
     selection = select_for_block(
-        head_state={"chain_id": chain_id},
+        head_state={"chain_id": chain_id, "height": _selection_head_height()},
         limits={"max_gas": 0, "max_bytes": 0, "max_txs": 1},
         pending=[PendingTxEntry(hash_hex=target, raw=raw, tx=tx_obj)],
         decode=_decode,
@@ -486,6 +539,18 @@ def mempool_get_status(tx_hash: str) -> dict:
     target = tx_hash if tx_hash.startswith("0x") else f"0x{tx_hash}"
     mempool_service = _get_mempool_service()
     if mempool_service is not None:
+        has_hash = getattr(mempool_service, "has_hash", None)
+        if callable(has_hash):
+            try:
+                if has_hash(target):
+                    return {
+                        "hash": target,
+                        "known": True,
+                        "state": "pending",
+                        "reason": None,
+                    }
+            except Exception:
+                pass
         snapshot = mempool_service.snapshot(limit=1000)
         for entry in snapshot.entries:
             if entry.hash_hex == target:

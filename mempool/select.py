@@ -171,6 +171,36 @@ def _tx_valid_until(tx: Any) -> int | None:
     return None
 
 
+def _tx_version(tx: Any) -> int | None:
+    if hasattr(tx, "unsigned"):
+        unsigned = getattr(tx, "unsigned", None)
+        if unsigned is not None:
+            for attr in ("version", "v"):
+                value = getattr(unsigned, attr, None)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except Exception:
+                        return None
+    for attr in ("version", "v"):
+        value = getattr(tx, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                return None
+    if isinstance(tx, dict):
+        body = tx.get("body", tx.get("tx", tx))
+        if isinstance(body, dict):
+            value = body.get("v", body.get("version"))
+            if value is not None:
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+    return None
+
+
 def _tx_hash_bytes(entry: PendingTxEntry, tx: Any) -> bytes | None:
     if entry.hash_hex:
         try:
@@ -474,29 +504,36 @@ def select_for_block(
                 )
                 continue
 
+        tx_version = _tx_version(tx)
         valid_after = _tx_valid_after(tx)
         valid_until = _tx_valid_until(tx)
-        if valid_after is None or valid_until is None:
-            _bump_reject(result, hash_hex, "missing_validity", tx_kind=tx_kind)
-            continue
-        if current_height < valid_after:
-            _bump_reject(
-                result,
-                hash_hex,
-                "not_yet_valid",
-                details={"valid_after": valid_after, "current_height": current_height},
-                tx_kind=tx_kind,
-            )
-            continue
-        if current_height > valid_until:
-            _bump_reject(
-                result,
-                hash_hex,
-                "expired",
-                details={"valid_until": valid_until, "current_height": current_height},
-                tx_kind=tx_kind,
-            )
-            continue
+        enforce_validity = bool(
+            tx_version == 2
+            or valid_after is not None
+            or valid_until is not None
+        )
+        if enforce_validity:
+            if valid_after is None or valid_until is None:
+                _bump_reject(result, hash_hex, "missing_validity", tx_kind=tx_kind)
+                continue
+            if current_height < valid_after:
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "not_yet_valid",
+                    details={"valid_after": valid_after, "current_height": current_height},
+                    tx_kind=tx_kind,
+                )
+                continue
+            if current_height > valid_until:
+                _bump_reject(
+                    result,
+                    hash_hex,
+                    "expired",
+                    details={"valid_until": valid_until, "current_height": current_height},
+                    tx_kind=tx_kind,
+                )
+                continue
 
         gas_price = _tx_gas_price(tx)
         if min_gas_price and gas_price < min_gas_price:
