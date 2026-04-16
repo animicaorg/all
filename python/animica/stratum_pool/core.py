@@ -31,9 +31,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation, ROUND_FLOOR, localcontext
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from mining.pow_validation import (derive_block_target_int as _pow_block_target_int,
+                                   derive_share_target_int as _pow_share_target_int,
+                                   derive_share_threshold_micro as _pow_share_threshold_micro,
+                                   evaluate_digest as _pow_evaluate_digest,
+                                   normalize_share_ratio as _pow_normalize_share_ratio)
 from mining.share_submitter import JsonRpcClient, RpcError
 from mining.stratum_server import ShareValidator, StratumJob
 from mining.template_block import (build_submit_block_payload,
@@ -44,8 +48,6 @@ from mining.template_block import (build_submit_block_payload,
                                    template_tx_count)
 
 Json = Dict[str, Any]
-_ONE_DECIMAL = Decimal("1")
-_ZERO_DECIMAL = Decimal("0")
 
 
 class TemplateUnavailable(RuntimeError):
@@ -109,53 +111,16 @@ def _extract_share_target_from_payload(work: Json, header: Json) -> tuple[float,
     return 0.0, False
 
 
-def _parse_decimal(value: Any, *, default: Decimal) -> Decimal:
-    if value in (None, ""):
-        return default
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
-        return default
-
-
-def _normalize_share_ratio(value: Any, *, default: Decimal = _ONE_DECIMAL) -> Decimal:
-    ratio = _parse_decimal(value, default=default)
-    if ratio <= _ZERO_DECIMAL:
-        ratio = default
-    if ratio <= _ZERO_DECIMAL:
-        ratio = _ONE_DECIMAL
-    if ratio > _ONE_DECIMAL:
-        ratio = _ONE_DECIMAL
-    return ratio
-
-
 def _derive_share_threshold_micro(theta_micro: int, share_ratio: Any) -> int:
-    theta = max(int(theta_micro), 0)
-    if theta <= 0:
-        return 0
-    ratio = _normalize_share_ratio(share_ratio)
-    with localcontext() as ctx:
-        ctx.prec = 50
-        threshold = (Decimal(theta) * ratio).to_integral_value(rounding=ROUND_FLOOR)
-    return max(1, int(threshold))
+    return _pow_share_threshold_micro(theta_micro, share_ratio)
 
 
 def _derive_share_target_int(theta_micro: int, share_ratio: Any) -> int:
-    threshold = _derive_share_threshold_micro(theta_micro, share_ratio)
-    if threshold <= 0:
-        return 0
-    try:
-        from core.utils.pow import micro_threshold_to_target256
-
-        return int(micro_threshold_to_target256(int(threshold)))
-    except Exception:
-        return 0
+    return _pow_share_target_int(theta_micro, share_ratio)
 
 
 def _derive_block_target_int(target_value: Any) -> int:
-    return max(0, int_from_value(target_value))
+    return _pow_block_target_int(target_value)
 
 
 def _normalize_hex(value: Any) -> Optional[str]:
@@ -343,7 +308,7 @@ def freeze_mining_job(job: MiningJob, *, fallback_chain_id: int) -> MiningJob:
             default=0,
         )
     )
-    share_ratio = float(job.share_target or 0.0) if float(job.share_target or 0.0) > 0 else 1.0
+    share_ratio = _pow_normalize_share_ratio(job.share_target, default=1.0)
     share_threshold_micro = int(job.share_threshold_micro or 0) or _derive_share_threshold_micro(
         issued_theta_micro,
         share_ratio,
@@ -743,17 +708,19 @@ class MiningCoreAdapter:
         template_parent_hash = job.parent_hash or _template_parent_hash(template, header_view)
         template_height = int(job.height or _parse_int(header_view.get("height") or header_view.get("number"), default=0))
         theta_micro = int(job.issued_theta_micro or job.theta_micro or 0)
-        share_threshold_micro = int(job.share_threshold_micro or 0) or _derive_share_threshold_micro(
-            theta_micro,
-            job.share_target,
-        )
-        share_target_int = int(job.share_target_int or 0) or _derive_share_target_int(
-            theta_micro,
-            job.share_target,
-        )
         block_target = int(job.block_target_int or 0) or _derive_block_target_int(
             job.target or template.get("target") or header_view.get("target")
         )
+        decision = _pow_evaluate_digest(
+            digest_int,
+            theta_micro=theta_micro,
+            share_ratio=job.share_target,
+            block_target=block_target,
+            enforce_share_target=True,
+        )
+        share_threshold_micro = int(decision.share_threshold_micro)
+        share_target_int = int(decision.share_target_int)
+        block_target = int(decision.block_target_int)
 
         if theta_micro <= 0:
             self._log_share_reject(
@@ -823,6 +790,9 @@ class MiningCoreAdapter:
         self._log.info(
             "stratum_submit_share_target_compare",
             extra={
+                "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                "session_id": submit_params.get("_session_id"),
+                "address": submit_params.get("_address"),
                 "job_id": job.job_id,
                 "source_job_id": job.source_job_id,
                 "template_id": job.template_id,
@@ -833,10 +803,12 @@ class MiningCoreAdapter:
                 "share_ratio": float(job.share_target),
                 "theta_micro": theta_micro,
                 "share_threshold_micro": share_threshold_micro,
-                "pass": share_ok,
+                "block_target": hex(int(block_target)) if block_target > 0 else "0x0",
+                "pass": bool(decision.share_ok),
             },
         )
 
+        share_ok = bool(decision.share_ok)
         if not share_ok:
             self._log_share_reject(
                 submit_params=submit_params,
@@ -858,10 +830,13 @@ class MiningCoreAdapter:
             )
             return False, "low difficulty share", False, 0
 
-        is_block = block_target > 0 and digest_int <= block_target
+        is_block = bool(decision.is_block)
         self._log.info(
             "stratum_submit_block_target_compare",
             extra={
+                "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                "session_id": submit_params.get("_session_id"),
+                "address": submit_params.get("_address"),
                 "job_id": job.job_id,
                 "source_job_id": job.source_job_id,
                 "template_id": job.template_id,
@@ -869,6 +844,8 @@ class MiningCoreAdapter:
                 "share_hash": "0x" + candidate_hash.digest.hex(),
                 "share_hash_int": hex(digest_int),
                 "block_target": hex(int(block_target)) if block_target > 0 else "0x0",
+                "theta_micro": theta_micro,
+                "share_threshold_micro": share_threshold_micro,
                 "pass": is_block,
             },
         )

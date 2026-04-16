@@ -58,6 +58,8 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
     )
     assert result.exit_code == 0
     assert called["argv"] == []
+    assert "Stratum endpoint: stratum+tcp://127.0.0.1:3333" in result.output
+    assert "Payout mode: PPS" in result.output
     import os
 
     assert os.getenv("ANIMICA_RPC_URL") == "http://node"
@@ -121,6 +123,7 @@ def test_run_pool_sets_solo_mode(monkeypatch: Any) -> None:
     )
     assert result.exit_code == 0
     assert called["argv"] == []
+    assert "Payout mode: SOLO" in result.output
     import os
 
     assert os.getenv("ANIMICA_POOL_MODE") == "solo"
@@ -546,6 +549,78 @@ def test_mine_blocks_template_param_fallback(monkeypatch: Any) -> None:
 
     assert result.exit_code == 0
     assert "Successfully mined" in result.output
+
+
+def test_mine_blocks_ignores_empty_getwork_submitwork(monkeypatch: Any) -> None:
+    """Test that empty getWork/submitWork responses fall back to block template/block submit."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request(self, method: str, params: Any):
+            if method == "miner.getWork":
+                # Legacy/buggy servers can return empty dict instead of method-not-found.
+                return {}
+            if method == "miner.getBlockTemplate":
+                return {
+                    "enabled": True,
+                    "header": {
+                        "v": 1,
+                        "chainId": 1337,
+                        "height": 103,
+                        "parentHash": "0x" + "00" * 32,
+                        "timestamp": 0,
+                        "stateRoot": "0x" + "00" * 32,
+                        "txsRoot": "0x" + "00" * 32,
+                        "receiptsRoot": "0x" + "00" * 32,
+                        "proofsRoot": "0x" + "00" * 32,
+                        "daRoot": "0x" + "00" * 32,
+                        "mixSeed": "0x" + "00" * 32,
+                        "poiesPolicyRoot": "0x" + "00" * 32,
+                        "pqAlgPolicyRoot": "0x" + "00" * 32,
+                        "thetaMicro": 1,
+                        "nonce": 0,
+                    },
+                    "target": hex((1 << 256) - 1),
+                    "coinbase": {"amount": 0},
+                    "txs": [],
+                    "mempool": {"pending": 0, "selected": 0, "rejected": {}, "rejectedByHash": {}},
+                }
+            if method == "miner.submitWork":
+                return {}
+            if method == "miner.submitBlock":
+                return {"accepted": True}
+            if method in {"chain.getHead", "state.getBalance", "mining.getCredits"}:
+                return {}
+            raise AssertionError(f"Unexpected method {method}")
+
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Successfully mined 1 block(s)" in result.output
 
 
 def test_mine_blocks_missing_method(monkeypatch: Any) -> None:

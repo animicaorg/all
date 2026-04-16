@@ -6341,62 +6341,102 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         return {"accepted": False, "reason": "stale job (parent mismatch)"}
 
     nonce = share.get("nonce") or share.get("nonce64") or share.get("n")
-    try:
-        nonce_int = int(nonce, 16) if isinstance(nonce, str) else int(nonce)
-    except Exception:
+    from mining.pow_validation import (derive_block_target_int, digest_from_sign_bytes,
+                                       evaluate_digest, parse_hex_bytes,
+                                       parse_nonce_int)
+
+    nonce_int = parse_nonce_int(nonce, default=-1)
+    if nonce_int < 0:
         return {"accepted": False, "reason": "invalid nonce"}
 
-    sign_bytes = cached.get("sign_bytes")
-    if not isinstance(sign_bytes, (bytes, bytearray)):
-        return {"accepted": False, "reason": "missing sign bytes"}
+    mix_seed = share.get("mixSeed") or share.get("mix_seed") or cached.get("mix_seed")
+    mix_seed_bytes = parse_hex_bytes(mix_seed, default=b"")
+    if not mix_seed_bytes and isinstance(cached.get("mix_seed"), (bytes, bytearray)):
+        mix_seed_bytes = bytes(cached.get("mix_seed"))
 
-    mix_seed = share.get("mixSeed") or share.get("mix_seed")
+    digest: bytes | None = None
+    digest_source = "header"
     try:
-        if isinstance(mix_seed, str) and mix_seed.startswith("0x"):
-            mix_seed_bytes = bytes.fromhex(mix_seed[2:])
-        elif isinstance(mix_seed, (bytes, bytearray)):
-            mix_seed_bytes = bytes(mix_seed)
-        else:
-            mix_seed_bytes = b""
+        header = _header_from_cached_job(cached, nonce=nonce_int)
+        digest = header.hash()
     except Exception:
-        mix_seed_bytes = b""
+        digest = None
 
-    try:
-        from mining import nonce_domain as nd  # type: ignore
-
-        digest = nd.sha3_256(
-            sign_bytes + mix_seed_bytes + nonce_int.to_bytes(8, "little")
+    if digest is None:
+        digest_source = "sign_bytes"
+        sign_bytes = cached.get("sign_bytes")
+        if not isinstance(sign_bytes, (bytes, bytearray)):
+            return {"accepted": False, "reason": "missing sign bytes"}
+        digest = digest_from_sign_bytes(
+            bytes(sign_bytes),
+            mix_seed=mix_seed_bytes,
+            nonce_int=nonce_int,
+            nonce_byteorder="little",
         )
-        digest_int = int.from_bytes(digest, "big")
-    except Exception:
-        import hashlib
 
-        h = hashlib.sha3_256()
-        h.update(sign_bytes)
-        h.update(mix_seed_bytes)
-        h.update(nonce_int.to_bytes(8, "little", signed=False))
-        digest = h.digest()
-        digest_int = int.from_bytes(digest, "big")
-
-    share_target = float(
-        share.get("shareTarget") or cached.get("share_target") or 0.0
-    )
+    header_override = cached.get("header_override")
+    theta_default = 0
     if cached.get("job"):
-        theta_default = cached["job"].theta_target_micro
-    else:
-        theta_default = 0
-    theta_micro = int(share.get("thetaMicro") or theta_default)
-    t_share_micro = max(0, int(theta_micro * share_target))
-    try:
-        from mining.hash_search import micro_threshold_to_target256
+        theta_default = int(getattr(cached["job"], "theta_target_micro", 0) or 0)
+    if theta_default <= 0 and isinstance(header_override, dict):
+        theta_default = int(
+            header_override.get("thetaMicro")
+            or header_override.get("thetaTargetMicro")
+            or header_override.get("theta_target_micro")
+            or 0
+        )
+    theta_micro = int(share.get("thetaMicro") or theta_default or 0)
+    if theta_micro <= 0:
+        return {"accepted": False, "reason": "missing thetaMicro"}
 
-        share_target_int = micro_threshold_to_target256(t_share_micro)
-    except Exception:
-        share_target_int = 0
-    if share_target_int and digest_int > share_target_int:
+    share_target = float(share.get("shareTarget") or cached.get("share_target") or 0.0)
+    decision = evaluate_digest(
+        digest,
+        theta_micro=theta_micro,
+        share_ratio=share_target,
+        block_target=derive_block_target_int(cached.get("block_target") or 0),
+        enforce_share_target=True,
+    )
+    if decision.share_target_int <= 0:
+        return {"accepted": False, "reason": "missing share target"}
+
+    log.info(
+        "miner_submit_share_target_compare",
+        extra={
+            "job_id": str(job_id),
+            "worker": share.get("worker"),
+            "address": share.get("minerAddress") or share.get("miner_address"),
+            "nonce": int(nonce_int),
+            "hash": decision.digest_hex,
+            "hash_int": hex(decision.digest_int),
+            "share_target": hex(decision.share_target_int),
+            "share_ratio": float(decision.share_ratio),
+            "theta_micro": int(decision.theta_micro),
+            "share_threshold_micro": int(decision.share_threshold_micro),
+            "source": digest_source,
+            "pass": bool(decision.share_ok),
+        },
+    )
+    if not decision.share_ok:
         return {"accepted": False, "reason": "low difficulty share"}
 
-    is_block = digest_int <= int(cached.get("block_target") or 0)
+    is_block = bool(decision.is_block)
+    log.info(
+        "miner_submit_block_target_compare",
+        extra={
+            "job_id": str(job_id),
+            "worker": share.get("worker"),
+            "address": share.get("minerAddress") or share.get("miner_address"),
+            "nonce": int(nonce_int),
+            "hash": decision.digest_hex,
+            "hash_int": hex(decision.digest_int),
+            "block_target": hex(decision.block_target_int)
+            if decision.block_target_int > 0
+            else "0x0",
+            "source": digest_source,
+            "pass": bool(is_block),
+        },
+    )
     
     # Process attached useful work proofs (Phase 2)
     proof_results = []
@@ -6418,7 +6458,7 @@ def miner_submit_share(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         "reason": None,
         "jobId": job_id,
         "isBlock": is_block,
-        "hash": "0x" + digest.hex(),
+        "hash": decision.digest_hex,
         "height": int(cached.get("height") or 0),
     }
     

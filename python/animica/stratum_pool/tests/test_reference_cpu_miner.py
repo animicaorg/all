@@ -161,6 +161,45 @@ def test_resolve_config_rejects_invalid_address(tmp_path: Path):
         )
 
 
+def test_resolve_config_accepts_pool_url_override(tmp_path: Path):
+    config_path = tmp_path / "miner-pool-url.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "pool_url": "stratum+tls://pool.animica.test:4444",
+                "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+                "worker": "office-rig",
+                "threads": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_config(
+        argparse.Namespace(
+            config=str(config_path),
+            pool_url=None,
+            host=None,
+            port=None,
+            scheme=None,
+            tls=False,
+            api_base_url=None,
+            address=None,
+            worker=None,
+            pool_mode=None,
+            threads=None,
+            scan_window=None,
+            stats_interval=None,
+            log_level=None,
+        )
+    )
+
+    assert resolved.host == "pool.animica.test"
+    assert resolved.port == 4444
+    assert resolved.scheme == "stratum+tls"
+    assert resolved.tls is True
+
+
 @pytest.mark.asyncio
 async def test_mine_job_stops_after_stale_submit(monkeypatch: pytest.MonkeyPatch):
     miner = StratumCpuMiner(

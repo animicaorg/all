@@ -161,7 +161,9 @@ async def test_api_mining_endpoints_reflect_request_host(
         )
         assert generated_res.status_code == 200
         generated = generated_res.json()
-        assert generated["commands"]["windows"].startswith("animica-miner.exe --host mine.animica.test")
+        assert generated["commands"]["windows"].startswith(
+            "animica-miner.exe --pool-url stratum+tcp://mine.animica.test:3333"
+        )
         assert generated["worker"] == "office-rig"
         assert generated["threads"] == 6
         assert '"api_base_url": "https://mine.animica.test"' in generated["config"]["content"]
