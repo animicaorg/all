@@ -33,6 +33,9 @@ class PoolConfig:
     profile: str = "hashshare"
     extranonce2_size: int = 4
     pool_mode: str = "pps"
+    payout_interval_seconds: float = 0.0
+    payout_min_amount: int = 1
+    payout_wallet: str = ""
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -108,6 +111,19 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         .strip()
         .lower()
     )
+    payout_interval_seconds = float(
+        overrides.get("payout_interval_seconds")
+        or _env("ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS", "0")
+    )
+    payout_min_amount = int(
+        overrides.get("payout_min_amount")
+        or _env("ANIMICA_POOL_PAYOUT_MIN_AMOUNT", "1")
+    )
+    payout_wallet = str(
+        overrides.get("payout_wallet")
+        or _env("ANIMICA_POOL_PAYOUT_WALLET", pool_address)
+        or ""
+    ).strip()
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -146,6 +162,14 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         raise ValueError(
             f"pool_mode must be one of {', '.join(sorted(VALID_POOL_MODES))}"
         )
+    if payout_interval_seconds < 0:
+        raise ValueError("payout_interval_seconds must be >= 0")
+    if payout_min_amount <= 0:
+        raise ValueError("payout_min_amount must be positive")
+    if payout_interval_seconds > 0 and not payout_wallet:
+        raise ValueError(
+            "payout_wallet is required when payout_interval_seconds is enabled"
+        )
 
     return PoolConfig(
         host=host,
@@ -165,4 +189,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         profile=profile,
         extranonce2_size=extranonce2_size,
         pool_mode=pool_mode,
+        payout_interval_seconds=payout_interval_seconds,
+        payout_min_amount=payout_min_amount,
+        payout_wallet=payout_wallet,
     )

@@ -13,6 +13,7 @@ from .config import PoolConfig, load_config_from_env
 from .core import MiningCoreAdapter
 from .job_manager import JobManager
 from .metrics import PoolMetrics
+from .payouts import PoolPayoutScheduler
 from .stratum_server import StratumPoolServer
 
 
@@ -90,6 +91,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Payout/accounting mode (pps|solo)",
     )
     parser.add_argument(
+        "--payout-interval-seconds",
+        dest="payout_interval_seconds",
+        type=float,
+        default=None,
+        help="Automatic payout interval in seconds (0 disables timer payouts)",
+    )
+    parser.add_argument(
+        "--payout-min-amount",
+        dest="payout_min_amount",
+        type=int,
+        default=None,
+        help="Minimum credited amount (base units) before a worker address is paid",
+    )
+    parser.add_argument(
+        "--payout-wallet",
+        dest="payout_wallet",
+        default=None,
+        help="Wallet label/address used to sign pool payouts (defaults to pool address)",
+    )
+    parser.add_argument(
         "--profile",
         dest="profile",
         default=None,
@@ -130,6 +151,9 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
             "pool_address": config.pool_address,
             "min_difficulty": config.min_difficulty,
             "max_difficulty": config.max_difficulty,
+            "payout_interval_seconds": config.payout_interval_seconds,
+            "payout_min_amount": config.payout_min_amount,
+            "payout_wallet": config.payout_wallet,
         },
     )
 
@@ -175,6 +199,10 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
     )
 
     api_task = asyncio.create_task(api_server.serve())
+    payout_task: Optional[asyncio.Task[None]] = None
+    if float(config.payout_interval_seconds or 0.0) > 0:
+        payout_runner = PoolPayoutScheduler(config=config, metrics=metrics, logger=logger)
+        payout_task = asyncio.create_task(payout_runner.run())
     await server.start()
     logger.info(
         "Stratum pool listening",
@@ -184,6 +212,8 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
             "rpc": config.rpc_url,
             "api_port": config.api_port,
             "mode": config.pool_mode,
+            "payout_interval_seconds": config.payout_interval_seconds,
+            "payout_min_amount": config.payout_min_amount,
         },
     )
     try:
@@ -191,6 +221,12 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
     except asyncio.CancelledError:  # noqa: BLE001
         pass
     finally:
+        if payout_task is not None:
+            payout_task.cancel()
+            try:
+                await payout_task
+            except asyncio.CancelledError:  # noqa: BLE001
+                pass
         await server.stop()
         api_server.should_exit = True
         await api_task

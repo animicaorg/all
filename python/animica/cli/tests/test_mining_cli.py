@@ -54,12 +54,19 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
             "0.0.0.0:8082",
             "--log-level",
             "debug",
+            "--payout-interval-seconds",
+            "120",
+            "--payout-min-amount",
+            "500",
+            "--payout-wallet",
+            "pool-hot",
         ],
     )
     assert result.exit_code == 0
     assert called["argv"] == []
     assert "Stratum endpoint: stratum+tcp://127.0.0.1:3333" in result.output
     assert "Payout mode: PPS" in result.output
+    assert "Automated payouts: enabled every 120s" in result.output
     import os
 
     assert os.getenv("ANIMICA_RPC_URL") == "http://node"
@@ -69,6 +76,9 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
     assert os.getenv("ANIMICA_MINING_POOL_LOG_LEVEL") == "debug"
     assert os.getenv("ANIMICA_POOL_MODE") == "pps"
     assert os.getenv("ANIMICA_POOL_ADDRESS") == "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    assert os.getenv("ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS") == "120.0"
+    assert os.getenv("ANIMICA_POOL_PAYOUT_MIN_AMOUNT") == "500"
+    assert os.getenv("ANIMICA_POOL_PAYOUT_WALLET") == "pool-hot"
     for key in [
         "ANIMICA_RPC_URL",
         "ANIMICA_MINING_POOL_DB_URL",
@@ -77,6 +87,9 @@ def test_run_pool_sets_env(monkeypatch: Any) -> None:
         "ANIMICA_MINING_POOL_LOG_LEVEL",
         "ANIMICA_POOL_MODE",
         "ANIMICA_POOL_ADDRESS",
+        "ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS",
+        "ANIMICA_POOL_PAYOUT_MIN_AMOUNT",
+        "ANIMICA_POOL_PAYOUT_WALLET",
     ]:
         os.environ.pop(key, None)
 

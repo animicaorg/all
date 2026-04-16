@@ -29,6 +29,8 @@ def _resolved() -> ResolvedMiningConfig:
         device_type="CPU miner",
         fee_percent=None,
         payout_minimum=None,
+        payout_interval_seconds=0.0,
+        payout_min_amount=1,
         download_base_url="https://pool.animica.org",
         warnings=(),
     )

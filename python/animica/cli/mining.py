@@ -40,6 +40,9 @@ STRATUM_BIND_ENV = "ANIMICA_STRATUM_BIND"
 API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 POOL_MODE_ENV = "ANIMICA_POOL_MODE"
 POOL_ADDRESS_ENV = "ANIMICA_POOL_ADDRESS"
+POOL_PAYOUT_INTERVAL_ENV = "ANIMICA_POOL_PAYOUT_INTERVAL_SECONDS"
+POOL_PAYOUT_MIN_AMOUNT_ENV = "ANIMICA_POOL_PAYOUT_MIN_AMOUNT"
+POOL_PAYOUT_WALLET_ENV = "ANIMICA_POOL_PAYOUT_WALLET"
 
 # Supported mining device backends
 SUPPORTED_DEVICES = ["cpu", "cuda", "rocm", "opencl", "metal", "auto"]
@@ -627,6 +630,24 @@ def run_pool(
         help="Node RPC timeout seconds",
         envvar="ANIMICA_STRATUM_RPC_TIMEOUT",
     ),
+    payout_interval_seconds: Optional[float] = typer.Option(
+        None,
+        "--payout-interval-seconds",
+        help="Automatic payout interval seconds (0 disables timer payouts)",
+        envvar=POOL_PAYOUT_INTERVAL_ENV,
+    ),
+    payout_min_amount: Optional[int] = typer.Option(
+        None,
+        "--payout-min-amount",
+        help="Minimum credited amount (base units) before an address is paid",
+        envvar=POOL_PAYOUT_MIN_AMOUNT_ENV,
+    ),
+    payout_wallet: Optional[str] = typer.Option(
+        None,
+        "--payout-wallet",
+        help="Wallet label/address used to sign payouts (defaults to pool address)",
+        envvar=POOL_PAYOUT_WALLET_ENV,
+    ),
     chain_id: Optional[int] = typer.Option(
         None,
         "--chain-id",
@@ -717,6 +738,15 @@ def run_pool(
     if rpc_timeout is not None:
         cfg_overrides["rpc_timeout"] = float(rpc_timeout)
         env_overrides["ANIMICA_STRATUM_RPC_TIMEOUT"] = str(float(rpc_timeout))
+    if payout_interval_seconds is not None:
+        cfg_overrides["payout_interval_seconds"] = float(payout_interval_seconds)
+        env_overrides[POOL_PAYOUT_INTERVAL_ENV] = str(float(payout_interval_seconds))
+    if payout_min_amount is not None:
+        cfg_overrides["payout_min_amount"] = int(payout_min_amount)
+        env_overrides[POOL_PAYOUT_MIN_AMOUNT_ENV] = str(int(payout_min_amount))
+    if payout_wallet is not None:
+        cfg_overrides["payout_wallet"] = str(payout_wallet)
+        env_overrides[POOL_PAYOUT_WALLET_ENV] = str(payout_wallet)
     if chain_id is not None:
         cfg_overrides["chain_id"] = int(chain_id)
         env_overrides["ANIMICA_CHAIN_ID"] = str(int(chain_id))
@@ -769,6 +799,15 @@ def run_pool(
     typer.echo(f"Pool API: {api_url}")
     typer.echo(f"Pool payout address: {resolved_cfg.pool_address}")
     typer.echo(f"Payout mode: {resolved_cfg.pool_mode.upper()} - {mode_notes.get(resolved_cfg.pool_mode, '')}")
+    payout_interval = float(getattr(resolved_cfg, "payout_interval_seconds", 0.0) or 0.0)
+    payout_min = int(getattr(resolved_cfg, "payout_min_amount", 1) or 1)
+    if payout_interval > 0:
+        typer.echo(
+            f"Automated payouts: enabled every {payout_interval:.0f}s "
+            f"(minimum {payout_min} base units, wallet={resolved_cfg.payout_wallet})"
+        )
+    else:
+        typer.echo("Automated payouts: disabled (set --payout-interval-seconds > 0 to enable)")
     typer.echo("Miner examples:")
     pool_url_for_examples = stratum_url
     if "://" not in pool_url_for_examples:

@@ -353,19 +353,71 @@ function buildLegacyLinuxCard(): WalletPlatformCard | null {
   };
 }
 
-export function loadWalletDownloadPageData(): WalletDownloadPageData {
-  const manifest = readManifestFile();
-  const manifestCards = normalizeWalletManifest(manifest);
-  if (manifestCards.length > 0) {
-    return {
-      versionLabel: manifest?.version,
-      generatedAt: manifest?.generated_at,
-      platformCards: manifestCards,
-    };
+function buildLegacyWindowsCard(): WalletPlatformCard | null {
+  const downloads = [
+    hasPublicWalletFile('animicawallersetup.exe')
+      ? normalizeDownload(
+          '/wallet/animicawallersetup.exe',
+          'animicawallersetup.exe',
+          'Windows Installer (.exe)',
+          undefined,
+          undefined,
+          true,
+        )
+      : null,
+  ].filter((entry): entry is WalletDownloadEntry => entry !== null);
+
+  if (downloads.length === 0) {
+    return null;
   }
 
-  const legacyLinuxCard = buildLegacyLinuxCard();
+  const checksums: WalletChecksumLink[] = [];
+  if (hasPublicWalletFile('animicawallersetup.sha256')) {
+    checksums.push({ href: '/wallet/animicawallersetup.sha256', label: 'SHA-256 checksum' });
+  }
+
   return {
-    platformCards: legacyLinuxCard ? [legacyLinuxCard] : [],
+    key: 'windows',
+    title: 'Windows',
+    description: 'Legacy website wallet files detected without a generated Windows manifest entry.',
+    architecture: 'x86_64',
+    downloads,
+    checksums,
+    instructions: [
+      'Download the installer and run it on Windows.',
+      'If SmartScreen warns because the build is unsigned, click “More info” and verify the SHA-256 checksum before running.',
+      'Install into your standard user profile unless your organization requires a custom path.',
+    ],
+  };
+}
+
+export function loadWalletDownloadPageData(): WalletDownloadPageData {
+  const manifest = readManifestFile();
+  const cardsByKey = new Map(
+    normalizeWalletManifest(manifest).map((card) => [card.key, card] as const),
+  );
+
+  if (!cardsByKey.has('windows')) {
+    const legacyWindowsCard = buildLegacyWindowsCard();
+    if (legacyWindowsCard) {
+      cardsByKey.set('windows', legacyWindowsCard);
+    }
+  }
+
+  if (!cardsByKey.has('linux')) {
+    const legacyLinuxCard = buildLegacyLinuxCard();
+    if (legacyLinuxCard) {
+      cardsByKey.set('linux', legacyLinuxCard);
+    }
+  }
+
+  const platformCards: WalletPlatformCard[] = (['windows', 'macos', 'linux'] as const)
+    .map((key) => cardsByKey.get(key))
+    .filter((card): card is WalletPlatformCard => card !== undefined);
+
+  return {
+    versionLabel: manifest?.version,
+    generatedAt: manifest?.generated_at,
+    platformCards,
   };
 }

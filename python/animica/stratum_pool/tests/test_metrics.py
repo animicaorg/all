@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -190,3 +191,71 @@ async def test_solo_accounting_only_credits_blocks():
     summary = metrics.accounting_summary()
     assert summary["total_credit"] == "5000"
     assert summary["accepted_blocks"] == 1
+
+
+@pytest.mark.asyncio
+async def test_payout_debits_available_credit_and_tracks_due_amount():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Session(
+        session_id="s1",
+        writer=None,
+        worker="worker-pay",
+        address="anim1pay",
+    )
+    job = StratumJob(
+        job_id="job-pay",
+        header={"number": 12},
+        share_target=0.5,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 0.5},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    due_before = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due_before
+    assert due_before[0]["address"] == "anim1pay"
+    assert due_before[0]["amount"] == 500
+
+    applied = metrics.record_payout_sent(
+        address="anim1pay",
+        amount=300,
+        tx_hash="0x" + "ab" * 32,
+    )
+    assert applied == 300
+
+    summary = metrics.accounting_summary()
+    assert summary["gross_credit"] == "500"
+    assert summary["paid_out_total"] == "300"
+    assert summary["total_credit"] == "200"
+
+    due_after = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due_after
+    assert due_after[0]["amount"] == 200
+
+
+def test_payout_status_includes_interval_and_countdown():
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", payout_interval_seconds=60, payout_min_amount=10),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    metrics.set_next_payout_at(time.time() + 25)
+    status = metrics.payout_status()
+    assert status["payouts_enabled"] is True
+    assert status["payout_interval_seconds"] == 60.0
+    assert status["payout_min_amount"] == 10
+    countdown = int(status["payout_countdown_seconds"] or 0)
+    assert 0 <= countdown <= 25
