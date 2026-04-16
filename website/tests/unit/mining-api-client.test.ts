@@ -125,5 +125,63 @@ describe('createMiningApiClient', () => {
     if (result.ok) {
       expect(result.data.items?.[0]?.worker_name).toBe('rig-01');
     }
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://pool.animica.org/api/miners?page=1&page_size=200');
+  });
+
+  it('requests additional miner pages until all miners are loaded', async () => {
+    const pageOneItems = Array.from({ length: 200 }, (_, index) => ({
+      worker_id: `rig-${index + 1}`,
+      worker_name: `rig-${index + 1}`,
+      hashrate_1m: 1000 + index,
+    }));
+    const pageTwoItems = Array.from({ length: 3 }, (_, index) => ({
+      worker_id: `rig-${index + 201}`,
+      worker_name: `rig-${index + 201}`,
+      hashrate_1m: 500 + index,
+    }));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: pageOneItems,
+            total: 203,
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: pageTwoItems,
+            total: 203,
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        )
+      );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createMiningApiClient({
+      resolution: baseResolution,
+      currentOrigin: 'https://animica.org',
+    });
+
+    const result = await client.fetchMiners();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items).toHaveLength(203);
+      expect(result.data.total).toBe(203);
+    }
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://pool.animica.org/api/miners?page=1&page_size=200');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://pool.animica.org/api/miners?page=2&page_size=200');
   });
 });

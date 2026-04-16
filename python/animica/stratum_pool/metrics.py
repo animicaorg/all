@@ -175,11 +175,17 @@ class PoolMetrics:
         reward = self._expected_reward(job)
         worker = self._normalize_worker(session.worker, session.session_id)
         address = self._normalize_address(session.address)
-        difficulty = float(
-            submit_params.get("d_ratio")
-            or submit_params.get("shareTarget")
-            or job.share_target
-        )
+        accepted_block = bool(ok and is_block)
+        difficulty_value = submit_params.get("d_ratio")
+        if difficulty_value in (None, ""):
+            difficulty_value = submit_params.get("shareTarget")
+        if difficulty_value in (None, ""):
+            difficulty_value = 1.0 if accepted_block else job.share_target
+        difficulty = float(difficulty_value)
+        if accepted_block:
+            # Block-winning shares should be credited at full ratio even when
+            # legacy submit payloads omit d_ratio.
+            difficulty = max(1.0, difficulty)
         event: ShareEvent = {
             "timestamp": now,
             "session_id": session.session_id,
@@ -193,7 +199,6 @@ class PoolMetrics:
             or job.header.get("number")
             or job.header.get("height"),
         }
-        accepted_block = bool(ok and is_block)
         self._share_events.append(event)
         self._persist_share(
             event,

@@ -14,6 +14,8 @@ import type {
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 6_000;
+const MINERS_PAGE_SIZE = 200;
+const MAX_MINER_PAGES = 50;
 
 const ENDPOINTS = {
   config: 'api/mining/config',
@@ -90,8 +92,49 @@ export function createMiningApiClient(input: {
     fetchSummary() {
       return request<MiningPoolSummary>(ENDPOINTS.summary);
     },
-    fetchMiners() {
-      return request<MiningMinersResponse>(ENDPOINTS.miners);
+    async fetchMiners() {
+      const allItems: NonNullable<MiningMinersResponse['items']> = [];
+      let reportedTotal: number | undefined;
+      let page = 1;
+      let successMeta: { candidate: string; url: string } | undefined;
+
+      while (page <= MAX_MINER_PAGES) {
+        const pageResult = await request<MiningMinersResponse>(ENDPOINTS.miners, {
+          page,
+          page_size: MINERS_PAGE_SIZE,
+        });
+
+        if (!pageResult.ok) {
+          return pageResult;
+        }
+
+        successMeta ??= pageResult.meta;
+        const pageItems = Array.isArray(pageResult.data.items) ? pageResult.data.items : [];
+        allItems.push(...pageItems);
+
+        const total = toFiniteNumber(pageResult.data.total);
+        if (total !== undefined) reportedTotal = total;
+
+        if (pageItems.length === 0) break;
+        if (reportedTotal !== undefined && allItems.length >= reportedTotal) break;
+        if (pageItems.length < MINERS_PAGE_SIZE) break;
+
+        page += 1;
+      }
+
+      const data: MiningMinersResponse =
+        reportedTotal !== undefined
+          ? { items: allItems, total: reportedTotal }
+          : { items: allItems };
+
+      return {
+        ok: true,
+        data,
+        meta: successMeta ?? {
+          candidate: 'unknown',
+          url: ENDPOINTS.miners,
+        },
+      };
     },
     generateStarter(query) {
       return request<MiningGenerateResponse>(ENDPOINTS.generate, query);
@@ -167,3 +210,12 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 type MiningApiClientCandidate = MiningApiResolution['requestBases'][number];
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return undefined;
+}
