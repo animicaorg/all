@@ -598,11 +598,68 @@ def _tx_transfer_recipient_key(tx: Any) -> bytes | None:
         return None
 
 
+def _coerce_nonnegative_height(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        height = int(value)
+    except Exception:
+        return None
+    return height if height >= 0 else None
+
+
+def _head_height_candidates(head: Any) -> list[int]:
+    candidates: list[int] = []
+    if isinstance(head, dict):
+        for key in (
+            "height",
+            "canonicalHeight",
+            "head_height",
+            "headHeight",
+            "block_height",
+            "blockHeight",
+            "number",
+        ):
+            height = _coerce_nonnegative_height(head.get(key))
+            if height is not None:
+                candidates.append(height)
+        header = head.get("header")
+        if isinstance(header, dict):
+            for key in ("height", "canonicalHeight", "number", "blockHeight"):
+                height = _coerce_nonnegative_height(header.get(key))
+                if height is not None:
+                    candidates.append(height)
+        else:
+            for attr in ("height", "canonicalHeight", "number", "blockHeight"):
+                height = _coerce_nonnegative_height(getattr(header, attr, None))
+                if height is not None:
+                    candidates.append(height)
+        return candidates
+    if isinstance(head, (tuple, list)):
+        if head:
+            height = _coerce_nonnegative_height(head[0])
+            if height is not None:
+                candidates.append(height)
+        if len(head) >= 2:
+            candidates.extend(_head_height_candidates(head[1]))
+        return candidates
+    height = _coerce_nonnegative_height(head)
+    if height is not None:
+        candidates.append(height)
+    return candidates
+
+
+def _extract_head_height(head: Any) -> int | None:
+    candidates = _head_height_candidates(head)
+    return max(candidates) if candidates else None
+
+
 def _current_height() -> int:
     try:
         ctx = deps.get_ctx()
     except Exception:
         return 0
+
     head = None
     try:
         getter = getattr(ctx, "get_head", None)
@@ -610,13 +667,28 @@ def _current_height() -> int:
             head = getter()
     except Exception:
         head = None
-    if isinstance(head, dict):
-        height = head.get("height")
-        if height is not None:
-            try:
-                return int(height)
-            except Exception:
-                return 0
+
+    parsed = _extract_head_height(head)
+    if parsed is not None:
+        return parsed
+
+    block_db = getattr(ctx, "block_db", None)
+    if block_db is not None:
+        try:
+            db_head = block_db.get_head()
+        except Exception:
+            db_head = None
+        parsed = _extract_head_height(db_head)
+        if parsed is not None:
+            return parsed
+        try:
+            canonical_height = block_db.get_canonical_height()
+        except Exception:
+            canonical_height = None
+        parsed = _coerce_nonnegative_height(canonical_height)
+        if parsed is not None:
+            return parsed
+
     return 0
 
 
