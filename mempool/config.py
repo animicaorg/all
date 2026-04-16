@@ -12,7 +12,7 @@ Configuration for the Animica mempool:
 The loader supports environment variables and optional YAML/JSON files.
 
 ENV overrides (all optional; examples shown as defaults):
-  MEMPOOL_MAX_TXS=100000
+  MEMPOOL_MAX_TXS=150000
   MEMPOOL_MAX_BYTES=536870912              # 512 MiB
   MEMPOOL_MAX_TX_SIZE=1048576              # 1 MiB
   MEMPOOL_PER_SENDER_MAX_TXS=1024
@@ -93,7 +93,7 @@ def wei_to_gwei(w: int) -> float:
 @dataclass(frozen=True)
 class Limits:
     # Global bounds
-    max_txs: int = 100_000
+    max_txs: int = 150_000
     max_bytes: int = 512 * 1024 * 1024  # 512 MiB
     max_tx_size_bytes: int = 1 * 1024 * 1024  # 1 MiB
 

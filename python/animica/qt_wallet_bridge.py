@@ -491,6 +491,7 @@ def _try_auto_mine_local_pending_tx(rpc_endpoint: str, payout_address: str) -> D
         "address": payout_address,
         "include_mempool": True,
         "allow_offline_mining": True,
+        "instant_block": True,
     }
     try:
         tx_cli._rpc(rpc_endpoint, "miner.mine", [mine_payload])

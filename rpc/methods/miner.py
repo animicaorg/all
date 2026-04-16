@@ -125,6 +125,7 @@ MAX_DISPLAYED_TX_HASHES = 3  # Maximum number of transaction hashes to display i
 # Mempool drain limits for block building
 DEFAULT_BLOCK_GAS_LIMIT = 100_000_000_000  # 100 billion gas (very high limit for devnet)
 DEFAULT_BLOCK_BYTE_LIMIT = 1_000_000_000  # 1GB block size limit
+DEFAULT_BLOCK_TX_LIMIT = int(os.getenv("ANIMICA_MAX_TXS_PER_BLOCK", "150000"))
 
 # Receipt index prefix (matches PFX_RXI from core/db/block_db.py)
 # Used for re-indexing receipts with canonical tx hashes
@@ -2417,10 +2418,12 @@ def _mempool_snapshot_limit(
     *,
     default_limit: int = 1000,
 ) -> int:
+    base_limit = max(1, int(default_limit))
+    max_limit = max(1, int(DEFAULT_BLOCK_TX_LIMIT))
     pending = _mempool_pending_count(mempool_service)
     if pending <= 0:
-        return int(default_limit)
-    return max(int(default_limit), int(pending))
+        return min(base_limit, max_limit)
+    return min(max_limit, max(base_limit, int(pending)))
 
 
 def _extract_template_raw_txs(template_payload: dict[str, Any]) -> list[str]:
@@ -2682,8 +2685,10 @@ def _adapter() -> CoreChainAdapter:
                             # Try to get a snapshot from the mempool service
                             if hasattr(mempool_svc, "snapshot") and callable(mempool_svc.snapshot):
                                 try:
-                                    # Calculate reasonable limit based on max_gas (avoid division by zero)
+                                    # Calculate reasonable limit based on max_gas (avoid division by zero),
+                                    # but never exceed the configured per-block transaction cap.
                                     tx_limit = max(1000, int(max_gas // 21000)) if max_gas > 0 else 1000
+                                    tx_limit = min(int(DEFAULT_BLOCK_TX_LIMIT), int(tx_limit))
                                     snapshot = mempool_svc.snapshot(limit=tx_limit)
                                     entries = getattr(snapshot, "entries", [])
                                     raw_by_hash = getattr(snapshot, "raw_by_hash", {})
@@ -3675,7 +3680,10 @@ def _mine_once(
             limits={
                 "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                 "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
-                "max_txs": max(1000, int(pending_total or 0), len(normalized_entries)),
+                "max_txs": min(
+                    int(DEFAULT_BLOCK_TX_LIMIT),
+                    max(1000, int(pending_total or 0), len(normalized_entries)),
+                ),
             },
             pending=normalized_entries,
             decode=decode_fn,
@@ -5823,7 +5831,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 limits={
                     "max_gas": DEFAULT_BLOCK_GAS_LIMIT,
                     "max_bytes": DEFAULT_BLOCK_BYTE_LIMIT,
-                    "max_txs": max(1000, int(pending_total or 0), len(normalized_entries)),
+                    "max_txs": min(
+                        int(DEFAULT_BLOCK_TX_LIMIT),
+                        max(1000, int(pending_total or 0), len(normalized_entries)),
+                    ),
                 },
                 pending=normalized_entries,
                 decode=decode_fn,

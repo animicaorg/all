@@ -13,6 +13,11 @@
 #include "../src/wallet/WalletWidget.h"
 
 #include <QComboBox>
+#include <QDateTime>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
@@ -99,6 +104,55 @@ private slots:
         WalletTestContext ctx;
         TransactionHistoryWidget history(&ctx.engine);
         QVERIFY(history.findChild<QTableWidget*>());
+    }
+
+    void testHistoryWidgetShowsPendingEntriesWithDefaultStatusFilter()
+    {
+        WalletTestContext ctx;
+        const QString walletPath = ctx.engine.walletFilePath();
+        QFile walletFile(walletPath);
+        QVERIFY(walletFile.open(QIODevice::ReadOnly));
+        const QJsonDocument doc = QJsonDocument::fromJson(walletFile.readAll());
+        walletFile.close();
+        QVERIFY(doc.isObject());
+
+        QJsonObject root = doc.object();
+        QJsonArray wallets = root.value("wallets").toArray();
+        QVERIFY(!wallets.isEmpty());
+        QJsonObject wallet = wallets.first().toObject();
+        const QString fromAddress = wallet.value("address").toString();
+        QVERIFY(!fromAddress.isEmpty());
+
+        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        QJsonObject pendingTx;
+        pendingTx["tx_hash"] = "0xabc123";
+        pendingTx["from"] = fromAddress;
+        pendingTx["to"] = "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+        pendingTx["value"] = 1'250'000'000;
+        pendingTx["fee_reserved"] = 25'000'000;
+        pendingTx["reserve_amount"] = 1'275'000'000;
+        pendingTx["nonce"] = 7;
+        pendingTx["chain_id"] = 1;
+        pendingTx["status"] = "mempool_accepted";
+        pendingTx["created_at"] = now;
+        pendingTx["updated_at"] = now;
+
+        QJsonArray pending;
+        pending.append(pendingTx);
+        wallet["pending_txs"] = pending;
+        wallets[0] = wallet;
+        root["wallets"] = wallets;
+
+        QVERIFY(walletFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        walletFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        walletFile.close();
+
+        TransactionHistoryWidget history(&ctx.engine);
+        QTableWidget* table = history.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+
+        history.refresh();
+        QTRY_COMPARE(table->rowCount(), 1);
     }
 
     void testContractWidgetInitializes()

@@ -268,12 +268,14 @@ def test_submit_signed_tx_attempts_auto_mine_for_local_rpc(
     monkeypatch.setattr(bridge.tx_cli, "_build_raw_tx", lambda **_kwargs: b"\xaa")
 
     rpc_calls: list[str] = []
+    mine_payloads: list[object] = []
 
-    def _rpc(method_rpc: str, method: str, _params: object) -> object:
+    def _rpc(method_rpc: str, method: str, params: object) -> object:
         rpc_calls.append(method)
         if method == "tx.sendRawTransaction":
             return "0xabc123"
         if method == "miner.mine":
+            mine_payloads.append(params)
             return {"mined": 1}
         if method == "tx.getStatus":
             return {"status": "confirmed", "state": "included_block", "confirmations": 1}
@@ -313,6 +315,17 @@ def test_submit_signed_tx_attempts_auto_mine_for_local_rpc(
     assert result["auto_mine_success"] is True
     assert result["wallet_record_status"] == "confirmed"
     assert rpc_calls.count("miner.mine") == 1
+    assert mine_payloads == [
+        [
+            {
+                "count": 1,
+                "address": from_address,
+                "include_mempool": True,
+                "allow_offline_mining": True,
+                "instant_block": True,
+            }
+        ]
+    ]
 
 
 def test_submit_signed_tx_auto_mines_local_tx_when_initial_mempool_probe_misses(
@@ -359,16 +372,18 @@ def test_submit_signed_tx_auto_mines_local_tx_when_initial_mempool_probe_misses(
     monkeypatch.setattr(bridge.tx_cli, "_build_raw_tx", lambda **_kwargs: b"\xaa")
 
     rpc_calls: list[str] = []
+    mine_payloads: list[object] = []
     status_responses = [
         {"status": "pending", "state": "pending_mempool"},
         {"status": "confirmed", "state": "included_block", "confirmations": 1},
     ]
 
-    def _rpc(method_rpc: str, method: str, _params: object) -> object:
+    def _rpc(method_rpc: str, method: str, params: object) -> object:
         rpc_calls.append(method)
         if method == "tx.sendRawTransaction":
             return "0xabc123"
         if method == "miner.mine":
+            mine_payloads.append(params)
             return {"mined": 1}
         if method == "tx.getStatus":
             return status_responses.pop(0)
@@ -411,3 +426,14 @@ def test_submit_signed_tx_auto_mines_local_tx_when_initial_mempool_probe_misses(
     assert result["auto_mine_success"] is True
     assert result["wallet_record_status"] == "confirmed"
     assert rpc_calls.count("miner.mine") == 1
+    assert mine_payloads == [
+        [
+            {
+                "count": 1,
+                "address": from_address,
+                "include_mempool": True,
+                "allow_offline_mining": True,
+                "instant_block": True,
+            }
+        ]
+    ]

@@ -126,7 +126,7 @@ void TransactionHistoryWidget::refresh()
         filters["wallet_id"] = m_walletFilter->currentData().toString();
     }
     filters["direction"] = m_directionFilter->currentData().toString();
-    filters["status"] = m_statusFilter->currentText();
+    filters["status"] = m_statusFilter->currentData().toString();
     filters["search"] = m_searchEdit->text().trimmed();
     if (m_useDateFilter->isChecked()) {
         filters["start_time"] = QDateTime(m_fromDateEdit->date(), QTime(0, 0), Qt::UTC).toString(Qt::ISODate);
