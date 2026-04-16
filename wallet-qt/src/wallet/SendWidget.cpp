@@ -63,6 +63,24 @@ qint64 feeReserveForTransfer(qint64 gasLimit, qint64 maxFeePerGas)
 {
     return safeMul(gasLimit, maxFeePerGas);
 }
+
+bool isMinedWalletRecordStatus(const QString& status)
+{
+    static const QSet<QString> kMinedStatuses = {
+        "in_block_pending_confirm",
+        "confirmed",
+        "included",
+        "included_block",
+        "instant_confirmed",
+        "mined",
+        "finalized",
+        "final",
+        "success",
+        "succeeded",
+        "applied",
+    };
+    return kMinedStatuses.contains(status.trimmed().toLower());
+}
 }
 
 SendWidget::SendWidget(
@@ -91,6 +109,14 @@ SendWidget::SendWidget(
     connect(m_walletEngine, &WalletEngine::contactAdded, this, [this](const Contact&) { updateRecipientCompleter(); });
     connect(m_walletEngine, &WalletEngine::contactUpdated, this, [this](const Contact&) { updateRecipientCompleter(); });
     connect(m_walletEngine, &WalletEngine::contactRemoved, this, [this](const QString&) { updateRecipientCompleter(); });
+    if (m_database) {
+        connect(m_database, &WalletDatabase::ledgerUpdated, this, [this](const QString& accountId) {
+            if (accountId == getCurrentAccountId()) {
+                updateBalanceLabel();
+                validateInputs();
+            }
+        }, Qt::QueuedConnection);
+    }
 
     refreshAccounts();
 }
@@ -362,6 +388,7 @@ void SendWidget::handleSendFinished()
     const QString toAddress = m_sendWatcher->property("toAddress").toString();
     const qint64 amountBase = m_sendWatcher->property("amountBase").toLongLong();
     const qint64 feeReserve = m_sendWatcher->property("feeReserve").toLongLong();
+    const bool alreadyMined = isMinedWalletRecordStatus(result.value("wallet_record_status").toString());
 
     if (m_database) {
         WalletTx tx;
@@ -371,28 +398,31 @@ void SendWidget::handleSendFinished()
         tx.toAddress = toAddress;
         tx.amount = amountBase;
         tx.fee = feeReserve;
-        tx.state = result.value("mempool_admitted").toBool() ? "MEMPOOL" : "BROADCAST";
+        tx.state = alreadyMined ? "CONFIRMED" : (result.value("mempool_admitted").toBool() ? "MEMPOOL" : "BROADCAST");
+        tx.confirmations = alreadyMined ? 1 : 0;
         tx.firstSeenAt = QDateTime::currentMSecsSinceEpoch();
         tx.lastUpdateAt = tx.firstSeenAt;
         const QString rawTx = result.value("raw_transaction").toString();
         tx.rawTx = rawTx.startsWith("0x") ? QByteArray::fromHex(rawTx.mid(2).toLatin1()) : QByteArray::fromHex(rawTx.toLatin1());
         m_database->addTransaction(tx);
 
-        LedgerEntry pendingOut;
-        pendingOut.txid = txHash;
-        pendingOut.accountId = accountId;
-        pendingOut.asset = "ANM";
-        pendingOut.type = "PENDING_OUT";
-        pendingOut.delta = -amountBase;
-        pendingOut.stateVersion = m_database->nextStateVersion();
-        pendingOut.createdAt = tx.firstSeenAt;
-        m_database->addLedgerEntry(pendingOut);
+        if (!alreadyMined) {
+            LedgerEntry pendingOut;
+            pendingOut.txid = txHash;
+            pendingOut.accountId = accountId;
+            pendingOut.asset = "ANM";
+            pendingOut.type = "PENDING_OUT";
+            pendingOut.delta = -amountBase;
+            pendingOut.stateVersion = m_database->nextStateVersion();
+            pendingOut.createdAt = tx.firstSeenAt;
+            m_database->addLedgerEntry(pendingOut);
 
-        LedgerEntry feeReserved = pendingOut;
-        feeReserved.type = "FEE_RESERVED";
-        feeReserved.delta = -feeReserve;
-        feeReserved.stateVersion = m_database->nextStateVersion();
-        m_database->addLedgerEntry(feeReserved);
+            LedgerEntry feeReserved = pendingOut;
+            feeReserved.type = "FEE_RESERVED";
+            feeReserved.delta = -feeReserve;
+            feeReserved.stateVersion = m_database->nextStateVersion();
+            m_database->addLedgerEntry(feeReserved);
+        }
     }
 
     if (m_monitor) {
@@ -738,7 +768,6 @@ qint64 SendWidget::getAvailableBalance() const
                 "pending_mempool",
                 "mempool",
                 "mempool_accepted",
-                "in_block_pending_confirm",
                 "reorged",
             };
             return kActiveReservationStates.contains(state);

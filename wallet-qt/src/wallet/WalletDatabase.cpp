@@ -670,11 +670,30 @@ QList<LedgerEntry> WalletDatabase::listLedgerEntries()
 bool WalletDatabase::deleteLedgerEntry(qint64 ledgerId)
 {
     QMutexLocker locker(&m_mutex);
-    
+
+    QString accountId;
+    {
+        QSqlQuery lookup(m_db);
+        lookup.prepare("SELECT account_id FROM wallet_ledger_entry WHERE entry_id = :entry_id");
+        lookup.bindValue(":entry_id", ledgerId);
+        if (!lookup.exec()) {
+            QString errorMsg = QString("Failed to fetch ledger entry %1: %2")
+                .arg(ledgerId)
+                .arg(lookup.lastError().text());
+            qWarning() << errorMsg;
+            emit error(errorMsg);
+            return false;
+        }
+        if (!lookup.next()) {
+            return true;
+        }
+        accountId = lookup.value(0).toString();
+    }
+
     QSqlQuery query(m_db);
     query.prepare("DELETE FROM wallet_ledger_entry WHERE entry_id = :entry_id");
     query.bindValue(":entry_id", ledgerId);
-    
+
     if (!query.exec()) {
         QString errorMsg = QString("Failed to delete ledger entry %1: %2")
             .arg(ledgerId)
@@ -683,7 +702,11 @@ bool WalletDatabase::deleteLedgerEntry(qint64 ledgerId)
         emit error(errorMsg);
         return false;
     }
-    
+
+    if (!accountId.isEmpty()) {
+        emit ledgerUpdated(accountId);
+    }
+
     return true;
 }
 
