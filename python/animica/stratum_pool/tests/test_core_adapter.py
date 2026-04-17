@@ -113,6 +113,27 @@ def _find_nonce_above_target(
     raise AssertionError("unable to find nonce above target")
 
 
+def _find_nonce_passes_new_timestamp_only(
+    header_view: dict,
+    *,
+    target_int: int,
+    new_timestamp: int,
+    limit: int = 200_000,
+) -> int:
+    old_header = _header_obj(header_view)
+    new_header = replace(old_header, timestamp=int(new_timestamp))
+    for nonce in range(limit):
+        digest_new = sha3_256(serialize_header(replace(new_header, nonce=nonce)))
+        digest_new_int = int.from_bytes(digest_new, "big", signed=False)
+        if digest_new_int > target_int:
+            continue
+        digest_old = sha3_256(serialize_header(replace(old_header, nonce=nonce)))
+        digest_old_int = int.from_bytes(digest_old, "big", signed=False)
+        if digest_old_int > target_int:
+            return nonce
+    raise AssertionError("unable to find nonce that only passes submitted ntime")
+
+
 @pytest.mark.asyncio
 async def test_get_new_job_prefers_first_success(monkeypatch):
     payload = {
@@ -646,6 +667,77 @@ async def test_template_block_share_uses_submit_block(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_template_block_share_honors_submitted_ntime(monkeypatch):
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "chain.getHead":
+                return {"height": 6, "hash": "0x" + "11" * 32}
+            if method == "miner.submitBlock":
+                return {"accepted": True, "reason": None}
+            raise AssertionError(f"unexpected RPC call: {method}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    header = _full_header_template()
+    theta_micro = int(header["thetaMicro"])
+    share_target_int = micro_threshold_to_target256(theta_micro)
+    target_hex = hex(share_target_int)
+    submitted_timestamp = int(header["timestamp"]) + 137
+    nonce = _find_nonce_passes_new_timestamp_only(
+        header,
+        target_int=share_target_int,
+        new_timestamp=submitted_timestamp,
+    )
+
+    mining_job = MiningJob(
+        job_id="template-ntime-override",
+        header=header,
+        theta_micro=theta_micro,
+        share_target=1.0,
+        height=7,
+        target=target_hex,
+        hints={"mixSeed": header["mixSeed"]},
+        template_id="template-ntime-override",
+        parent_hash=header["parentHash"],
+        raw={
+            "templateId": "template-ntime-override",
+            "header": dict(header),
+            "target": target_hex,
+            "parent": {"height": 6, "hash": header["parentHash"]},
+            "txs": [],
+        },
+    )
+
+    accepted, reason, is_block, tx_count = await adapter.validate_and_submit_share(
+        mining_job,
+        {
+            "hashshare": {
+                "nonce": hex(nonce),
+                "body": {"ntime": f"{submitted_timestamp:08x}"},
+            },
+        },
+    )
+
+    assert accepted is True
+    assert reason is None
+    assert is_block is True
+    assert tx_count == 0
+    assert [call[0] for call in rpc.calls] == ["chain.getHead", "miner.submitBlock"]
+    submit_payload = rpc.calls[1][1]
+    assert int(submit_payload["header"]["timestamp"]) == submitted_timestamp
+
+
+@pytest.mark.asyncio
 async def test_template_block_share_rejects_stale_head_locally(monkeypatch):
     class DummyRpc:
         def __init__(self):
@@ -1075,6 +1167,37 @@ def test_freeze_job_integer_target_derivation_for_diff_point_zero_zero_one():
     frozen = freeze_mining_job(job, fallback_chain_id=1)
     assert frozen.share_threshold_micro == 120_767
     assert frozen.share_target_int == micro_threshold_to_target256(120_767)
+
+
+def test_freeze_job_normalizes_header_theta_from_issued_theta():
+    header = _full_header_template()
+    header["thetaMicro"] = 1_000_000
+    header["thetaTargetMicro"] = 1_000_000
+    header["theta_target_micro"] = 1_000_000
+
+    job = MiningJob(
+        job_id="job-theta-normalize",
+        source_job_id="job-theta-normalize",
+        header=header,
+        theta_micro=1_250_000,
+        issued_theta_micro=1_250_000,
+        share_target=1.0,
+        height=141,
+        target="0x" + "ff" * 32,
+        raw={
+            "templateId": "job-theta-normalize",
+            "header": dict(header),
+            "target": "0x" + "ff" * 32,
+            "parent": {"height": 140, "hash": header["parentHash"]},
+        },
+    )
+
+    frozen = freeze_mining_job(job, fallback_chain_id=1)
+    assert int(frozen.theta_micro) == 1_250_000
+    assert int(frozen.header["thetaMicro"]) == 1_250_000
+    assert int(frozen.header["thetaTargetMicro"]) == 1_250_000
+    assert int(frozen.header["theta_target_micro"]) == 1_250_000
+    assert int(frozen.raw["header"]["thetaMicro"]) == 1_250_000
 
 
 @pytest.mark.asyncio
