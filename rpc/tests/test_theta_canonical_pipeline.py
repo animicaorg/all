@@ -507,6 +507,7 @@ def test_get_block_template_disable_block_time_limits_bypasses_spacing_gate(
         assert result["disableBlockTimeLimits"] is True
         assert result["timestampMin"] == 1_000
         assert result["timestampMax"] is None
+        assert int(result["header"]["timestamp"]) == 1_005
     finally:
         _restore_miner_globals(snapshot)
 
@@ -594,6 +595,7 @@ def test_get_block_template_positional_disable_block_time_limits_bypasses_spacin
         assert result["disableBlockTimeLimits"] is True
         assert result["timestampMin"] == 1_000
         assert result["timestampMax"] is None
+        assert int(result["header"]["timestamp"]) == 1_005
     finally:
         _restore_miner_globals(snapshot)
 
