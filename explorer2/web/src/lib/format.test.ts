@@ -1,5 +1,58 @@
-import { describe, it, expect } from 'vitest'
-import { formatBalance } from './format'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatBalance, timeAgo, timeAgoNoSeconds } from './format'
+
+describe('timeAgo', () => {
+  const NOW = new Date('2026-04-17T12:00:00Z')
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('renders second-level precision for recent events', () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000)
+    expect(timeAgo(nowSec - 12)).toBe('12s ago')
+  })
+
+  it('renders minute + second precision under one hour', () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000)
+    expect(timeAgo(nowSec - 95)).toBe('1m 35s ago')
+    expect(timeAgo(nowSec - 120)).toBe('2m ago')
+  })
+
+  it('renders hour + minute precision under one day', () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000)
+    expect(timeAgo(nowSec - (3 * 3600 + 7 * 60))).toBe('3h 7m ago')
+  })
+})
+
+describe('timeAgoNoSeconds', () => {
+  const NOW = new Date('2026-04-17T12:00:00Z')
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('uses just now for sub-minute events', () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000)
+    expect(timeAgoNoSeconds(nowSec - 12)).toBe('just now')
+  })
+
+  it('rounds to minute precision under one hour', () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000)
+    expect(timeAgoNoSeconds(nowSec - 95)).toBe('1m ago')
+    expect(timeAgoNoSeconds(nowSec - 120)).toBe('2m ago')
+  })
+})
 
 describe('formatBalance', () => {
   it('should convert 5 nANM to ANM', () => {

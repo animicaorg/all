@@ -5,6 +5,7 @@ import logging
 import time
 import typing as t
 
+from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from rpc import deps
 from rpc.hashrate import difficulty_to_work, work_to_hashshare_rate
 from rpc.methods import method
@@ -197,10 +198,7 @@ def _header_timestamp(header: t.Any) -> int | None:
         ts = header.get("timestamp", ts)
     if ts is None:
         return None
-    try:
-        return int(ts)
-    except (TypeError, ValueError):
-        return None
+    return maybe_normalize_unix_timestamp_seconds(ts)
 
 
 def _header_theta_micro(header: t.Any) -> int | None:

@@ -96,6 +96,42 @@ class Session:
         self.last_seen = time.time()
 
 
+def _parse_worker_identity(raw_worker: Any) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parse Stratum username identity into `(worker, address)`.
+
+    Accepted forms:
+    - `anim1...` -> worker=`anim1...`, address=`anim1...`
+    - `anim1....worker` (or `/`, `:` delimiter) -> worker=`worker`, address=`anim1...`
+    - fallback -> worker=`raw`, address=None
+    """
+    text = str(raw_worker or "").strip()
+    if not text:
+        return None, None
+
+    split_pos = -1
+    for delim in (".", "/", ":"):
+        idx = text.find(delim)
+        if idx > 0 and (split_pos < 0 or idx < split_pos):
+            split_pos = idx
+
+    if split_pos > 0:
+        head = text[:split_pos].strip()
+        tail = text[split_pos + 1 :].strip()
+    else:
+        head = text
+        tail = ""
+
+    if head.startswith("anim1"):
+        worker = tail or text
+        return worker, head
+
+    if text.startswith("anim1"):
+        return text, text
+
+    return text, None
+
+
 # --------------------------------------------------------------------------------------
 # Validator interface (pluggable)
 # --------------------------------------------------------------------------------------
@@ -240,6 +276,7 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         keepalive_secs: float = 45.0,
+        send_timeout_secs: float = 1.0,
         max_cached_jobs: int = 64,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
@@ -262,6 +299,7 @@ class StratumServer:
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
         self._keepalive_secs = float(keepalive_secs)
+        self._send_timeout_secs = max(float(send_timeout_secs), 0.0)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
 
@@ -392,22 +430,26 @@ class StratumServer:
         self._default_theta_micro = int(theta_micro)
         difficulty = share_target_to_difficulty(theta_micro, share_target)
         msg = push_set_difficulty(share_target=share_target, theta_micro=theta_micro)
-        for s in self._sessions.values():
+        sends: List[Tuple[str, Session, JSON]] = []
+        for sid, s in list(self._sessions.items()):
             s.share_target = share_target
             s.theta_micro = theta_micro
             s.current_difficulty = difficulty if s.is_v1 else share_target
             if s.is_v1:
-                await self._send(s, push_set_difficulty_v1(difficulty))
+                sends.append((sid, s, push_set_difficulty_v1(difficulty)))
             else:
-                await self._send(s, msg)
+                sends.append((sid, s, msg))
+        dead = await self._send_batch(sends, context="set_difficulty")
+        for sid in dead:
+            await self._drop_session(sid)
         log.info(
             f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro} diff={difficulty}"
         )
 
     async def _broadcast_job(self, job: StratumJob, clean_jobs: bool) -> None:
         """Send a job to each session in the format it expects."""
-        dead: List[str] = []
-        for sid, s in self._sessions.items():
+        sends: List[Tuple[str, Session, JSON]] = []
+        for sid, s in list(self._sessions.items()):
             try:
                 if s.is_v1:
                     if job.job_id in s.jobs_seen and not clean_jobs:
@@ -423,25 +465,16 @@ class StratumServer:
                         clean_jobs=clean_jobs,
                         hints=job.hints or {},
                     )
-                await self._send(s, msg)
-                s.jobs_seen.append(job.job_id)
-                s.jobs_seen = s.jobs_seen[-16:]
-                log.debug(
-                    "[Stratum] sent job=%s to worker=%s session=%s clean=%s diff=%s",
-                    job.job_id,
-                    s.worker,
-                    sid,
-                    clean_jobs,
-                    s.current_difficulty,
-                )
+                sends.append((sid, s, msg))
             except Exception as e:  # pragma: no cover
-                log.warning(f"[Stratum] broadcast job to {sid} failed: {e}")
-                dead.append(sid)
+                log.warning(f"[Stratum] build job payload for {sid} failed: {e}")
+        dead = await self._send_batch(
+            sends,
+            context=f"broadcast job={job.job_id}",
+            on_success=lambda sid, s: self._mark_job_seen(s, job.job_id, sid, clean_jobs),
+        )
         for sid in dead:
-            self._sessions.pop(sid, None)
-            task = self._heartbeats.pop(sid, None)
-            if task:
-                task.cancel()
+            await self._drop_session(sid)
 
     def _build_v1_notify(self, job: StratumJob, *, clean_jobs: bool) -> JSON:
         header = job.header or {}
@@ -499,15 +532,76 @@ class StratumServer:
         return s
 
     async def _broadcast(self, obj: JSON) -> None:
-        dead: List[str] = []
-        for sid, s in self._sessions.items():
-            try:
-                await self._send(s, obj)
-            except Exception as e:  # pragma: no cover - best-effort
-                log.warning(f"[Stratum] broadcast to {sid} failed: {e}")
-                dead.append(sid)
+        sends = [(sid, s, obj) for sid, s in list(self._sessions.items())]
+        dead = await self._send_batch(sends, context="broadcast")
         for sid in dead:
-            self._sessions.pop(sid, None)
+            await self._drop_session(sid)
+
+    async def _send_batch(
+        self,
+        sends: List[Tuple[str, Session, JSON]],
+        *,
+        context: str,
+        on_success: Optional[Callable[[str, Session], None]] = None,
+    ) -> List[str]:
+        if not sends:
+            return []
+        outcomes = await asyncio.gather(
+            *(
+                self._send_with_timeout(sid, session, payload, context=context)
+                for sid, session, payload in sends
+            )
+        )
+        dead: List[str] = []
+        for (sid, session, _), ok in zip(sends, outcomes):
+            if ok:
+                if on_success is not None:
+                    on_success(sid, session)
+            else:
+                dead.append(sid)
+        return dead
+
+    async def _send_with_timeout(
+        self,
+        sid: str,
+        session: Session,
+        payload: JSON,
+        *,
+        context: str,
+    ) -> bool:
+        try:
+            if self._send_timeout_secs > 0:
+                await asyncio.wait_for(
+                    self._send(session, payload),
+                    timeout=self._send_timeout_secs,
+                )
+            else:
+                await self._send(session, payload)
+            return True
+        except Exception as e:  # pragma: no cover - best-effort
+            log.warning(f"[Stratum] {context} to {sid} failed: {e}")
+            return False
+
+    @staticmethod
+    def _mark_job_seen(session: Session, job_id: str, sid: str, clean_jobs: bool) -> None:
+        session.jobs_seen.append(job_id)
+        session.jobs_seen = session.jobs_seen[-16:]
+        log.debug(
+            "[Stratum] sent job=%s to worker=%s session=%s clean=%s diff=%s",
+            job_id,
+            session.worker,
+            sid,
+            clean_jobs,
+            session.current_difficulty,
+        )
+
+    async def _drop_session(self, sid: str) -> None:
+        self._sessions.pop(sid, None)
+        task = self._heartbeats.pop(sid, None)
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def _send(self, session: Session, obj: JSON) -> None:
         if session.framing == "lenpref":
@@ -674,7 +768,10 @@ class StratumServer:
                 return
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
-                session.worker = raw_params[0] if raw_params else None
+                identity = raw_params[0] if raw_params else None
+                worker, address = _parse_worker_identity(identity)
+                session.worker = worker
+                session.address = address
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
                 return
@@ -750,8 +847,15 @@ class StratumServer:
                 )
 
         elif method == Method.AUTHORIZE:
-            session.worker = params.get("worker")
-            session.address = params.get("address")
+            worker_input = params.get("worker")
+            address_input = params.get("address")
+            parsed_worker, parsed_address = _parse_worker_identity(worker_input)
+            session.worker = str(worker_input).strip() if worker_input else parsed_worker
+            session.address = (
+                str(address_input).strip()
+                if address_input
+                else parsed_address
+            )
             session.authorized = (
                 True  # Add real checks here if desired (e.g., bech32 format)
             )
@@ -807,9 +911,16 @@ class StratumServer:
                 self._current_job_id,
             )
             params_with_context = dict(params)
+            resolved_address = (
+                str(session.address).strip() if session.address else None
+            )
+            if not resolved_address:
+                _worker, resolved_address = _parse_worker_identity(session.worker)
+                if resolved_address:
+                    session.address = resolved_address
             params_with_context["_session_id"] = session.session_id
             params_with_context["_worker"] = session.worker
-            params_with_context["_address"] = session.address
+            params_with_context["_address"] = resolved_address
             ok, reason, is_block, tx_count = await self._validator.validate(
                 job, params_with_context
             )

@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from animica.stratum_pool.config import PoolConfig
+from animica.stratum_pool.asic import Sha256Job, Sha256Session
 from animica.stratum_pool.metrics import PoolMetrics
 from mining.stratum_server import Session, StratumJob
 
@@ -146,6 +147,53 @@ async def test_pps_accounting_credits_accepted_shares():
     summary = metrics.accounting_summary()
     assert summary["total_credit"] == "250"
     assert summary["accepted_shares"] == 1
+
+
+@pytest.mark.asyncio
+async def test_record_share_parses_address_from_v1_style_worker_identity():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Sha256Session(
+        writer=None,
+        extranonce1="abcd1234",
+        extranonce2_size=4,
+        difficulty=1.0,
+        worker="anim1asicpay.worker-02",
+    )
+    job = Sha256Job(
+        job_id="job-asic",
+        prevhash="00" * 32,
+        coinb1="",
+        coinb2="",
+        merkle_branch=[],
+        version="20000000",
+        nbits="1d00ffff",
+        ntime="00000000",
+        clean_jobs=True,
+        target=1,
+        difficulty=1.0,
+        height=30,
+        raw={"coinbaseValue": 2000},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"shareTarget": 0.5},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    due = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due
+    assert due[0]["address"] == "anim1asicpay"
+    assert due[0]["amount"] == 1000
 
 
 @pytest.mark.asyncio
@@ -324,6 +372,28 @@ def test_mined_reward_in_window_counts_only_recent_pool_blocks():
     assert metrics.mined_reward_in_window(window_seconds=60, now=now) == 500
 
 
+def test_payout_available_budget_is_mined_minus_paid():
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": 100.0, "reward": 900, "found_by_pool": True}
+    )
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": 110.0, "reward": 200, "found_by_pool": False}
+    )
+    metrics._worker_balances_cache[("pps", "worker-a", "anim1aaa")] = {  # noqa: SLF001
+        "paid_out": 250
+    }
+    metrics._worker_balances_cache[("pps", "worker-b", "anim1bbb")] = {  # noqa: SLF001
+        "paid_out": 150
+    }
+
+    assert metrics.payout_available_budget() == 500
+
+
 @pytest.mark.asyncio
 async def test_payout_due_addresses_respects_max_total_amount():
     metrics = PoolMetrics(
@@ -375,7 +445,7 @@ async def test_payout_due_addresses_respects_max_total_amount():
         limit=10,
         max_total_amount=1500,
     )
-    assert [item["amount"] for item in capped] == [1000, 500]
+    assert [item["amount"] for item in capped] == [750, 750]
     assert sum(int(item["amount"]) for item in capped) == 1500
 
     below_min = metrics.payout_due_addresses(

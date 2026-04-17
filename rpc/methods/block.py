@@ -4,6 +4,7 @@ import dataclasses as _dc
 import logging
 import typing as t
 
+from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from rpc import deps
 from rpc.methods import method
 
@@ -351,6 +352,8 @@ def _block_view(
     if chain_id is None and chain_id_fallback is not None:
         chain_id = chain_id_fallback
 
+    timestamp_seconds = maybe_normalize_unix_timestamp_seconds(timestamp)
+
     v: dict[str, t.Any] = {
         "number": int(height) if height is not None else None,
         "hash": computed_hash,
@@ -359,7 +362,7 @@ def _block_view(
             if isinstance(parent_hash, (bytes, bytearray))
             else parent_hash
         ),
-        "timestamp": int(timestamp) if timestamp is not None else None,
+        "timestamp": int(timestamp_seconds) if timestamp_seconds is not None else None,
         "chainId": int(chain_id) if chain_id is not None else None,
         "thetaMicro": int(theta_micro) if theta_micro is not None else None,
         "mixSeed": (
@@ -462,6 +465,14 @@ def _construct_pending_block(include_txs: bool = False, include_receipts: bool =
             ctx = deps.get_ctx()
             timestamp = int(ctx.get_time() if hasattr(ctx, "get_time") else 0)
         except Exception:
+            import time
+            timestamp = int(time.time())
+        timestamp = (
+            maybe_normalize_unix_timestamp_seconds(timestamp)
+            if timestamp is not None
+            else None
+        )
+        if timestamp is None:
             import time
             timestamp = int(time.time())
         

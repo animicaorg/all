@@ -9,20 +9,58 @@ export function formatNumber(value?: number | null): string {
   return new Intl.NumberFormat('en-US').format(value)
 }
 
+const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit'
+})
+
 export function formatTimestamp(seconds?: number | null): string {
   if (!seconds) return '—'
   const date = new Date(seconds * 1000)
-  return date.toLocaleString()
+  return timestampFormatter.format(date)
 }
 
 export function timeAgo(seconds?: number | null): string {
   if (!seconds) return '—'
-  const diff = Date.now() - seconds * 1000
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
+  const diffMs = Math.max(0, Date.now() - seconds * 1000)
+  const totalSeconds = Math.floor(diffMs / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s ago`
+
+  const mins = Math.floor(totalSeconds / 60)
+  const secRemainder = totalSeconds % 60
+  if (mins < 60) {
+    return secRemainder > 0 ? `${mins}m ${secRemainder}s ago` : `${mins}m ago`
+  }
+
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
+  const minRemainder = mins % 60
+  if (hours < 24) {
+    return minRemainder > 0 ? `${hours}h ${minRemainder}m ago` : `${hours}h ago`
+  }
+
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+export function timeAgoNoSeconds(seconds?: number | null): string {
+  if (!seconds) return '—'
+  const diffMs = Math.max(0, Date.now() - seconds * 1000)
+  const totalSeconds = Math.floor(diffMs / 1000)
+  if (totalSeconds < 60) return 'just now'
+
+  const mins = Math.floor(totalSeconds / 60)
+  if (mins < 60) return `${mins}m ago`
+
+  const hours = Math.floor(mins / 60)
+  const minRemainder = mins % 60
+  if (hours < 24) {
+    return minRemainder > 0 ? `${hours}h ${minRemainder}m ago` : `${hours}h ago`
+  }
+
   const days = Math.floor(hours / 24)
   return `${days}d ago`
 }

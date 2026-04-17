@@ -8,6 +8,7 @@ from core.types.block import Block
 from core.types.header import Header
 from core.types.tx import Tx
 from core.utils.hash import sha3_256
+from core.utils.time import normalize_unix_timestamp_seconds
 
 from p2p.deps import P2PDeps
 
@@ -16,7 +17,12 @@ log = logging.getLogger("animica.p2p.core_p2p")
 
 def _encode_header(header: Header) -> bytes:
     height = int(header.height).to_bytes(4, "little", signed=False)
-    timestamp = int(header.timestamp).to_bytes(4, "little", signed=False)
+    timestamp_seconds = normalize_unix_timestamp_seconds(getattr(header, "timestamp", 0))
+    if timestamp_seconds < 0:
+        timestamp_seconds = 0
+    if timestamp_seconds > 0xFFFFFFFF:
+        timestamp_seconds = 0xFFFFFFFF
+    timestamp = int(timestamp_seconds).to_bytes(4, "little", signed=False)
     parent_hash = bytes(header.parentHash)
     header_hash = bytes(header.hash())
     return height + timestamp + parent_hash + header_hash + (b"\x00" * 8)

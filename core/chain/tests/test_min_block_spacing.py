@@ -9,6 +9,7 @@ import os
 import pytest
 
 from core.chain.block_import import BlockImporter
+from core.types.header import Header
 from core.types.params import ChainParams, BlockLimits, RetargetParams, RetargetBounds
 
 
@@ -50,6 +51,27 @@ class MockBlockDB:
     
     def get_header_by_height(self, height):
         return None
+
+
+def _make_header(*, timestamp: int, height: int, parent_hash: bytes) -> Header:
+    return Header(
+        v=1,
+        chainId=1337,
+        height=height,
+        parentHash=parent_hash,
+        timestamp=timestamp,
+        stateRoot=b"\x00" * 32,
+        txsRoot=b"\x00" * 32,
+        receiptsRoot=b"\x00" * 32,
+        proofsRoot=b"\x00" * 32,
+        daRoot=b"\x00" * 32,
+        mixSeed=b"\x00" * 32,
+        poiesPolicyRoot=b"\x00" * 32,
+        pqAlgPolicyRoot=b"\x00" * 32,
+        thetaMicro=1_000_000,
+        nonce=0,
+        extra=b"",
+    )
 
 
 def test_min_block_spacing_read_from_config():
@@ -205,6 +227,29 @@ def test_min_block_spacing_validation_rejects_negative():
             os.environ["ANIMICA_MIN_BLOCK_SPACING_MS"] = old_value
         else:
             os.environ.pop("ANIMICA_MIN_BLOCK_SPACING_MS", None)
+
+
+def test_timestamp_sanity_accepts_seconds_after_millisecond_parent():
+    """
+    Backward compatibility: treat legacy millisecond parent timestamps as the
+    same logical Unix time when evaluating monotonicity/spacing.
+    """
+    params = make_test_params()
+    block_db = MockBlockDB()
+    importer = BlockImporter(params=params, block_db=block_db)
+
+    parent = _make_header(
+        timestamp=1_700_000_000_000,  # legacy ms encoding
+        height=0,
+        parent_hash=b"\x00" * 32,
+    )
+    child = _make_header(
+        timestamp=1_700_000_020,  # canonical seconds encoding (+20s)
+        height=1,
+        parent_hash=parent.hash(),
+    )
+
+    assert importer._timestamp_sanity(child, parent, {}) is None
 
 
 if __name__ == "__main__":

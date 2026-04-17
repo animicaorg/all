@@ -62,13 +62,21 @@ async def test_v1_handshake_and_submit_round_trip():
 
         # Authorize
         await _send(
-            {"id": 2, "method": "mining.authorize", "params": ["worker.test", "p"]}
+            {
+                "id": 2,
+                "method": "mining.authorize",
+                "params": ["anim1v1rig.worker-test", "p"],
+            }
         )
         auth_res = await _recv()
         auth_result = auth_res.get("result")
         assert auth_result is True or (
             isinstance(auth_result, dict) and auth_result.get("authorized")
         )
+        snapshots = server.session_snapshots()
+        assert snapshots
+        assert snapshots[0]["address"] == "anim1v1rig"
+        assert snapshots[0]["worker"] == "worker-test"
 
         # Submit a share
         ntime = notify_msg["params"][7]
@@ -76,7 +84,13 @@ async def test_v1_handshake_and_submit_round_trip():
             {
                 "id": 3,
                 "method": "mining.submit",
-                "params": ["worker.test", job.job_id, "00000001", ntime, "00000000"],
+                "params": [
+                    "anim1v1rig.worker-test",
+                    job.job_id,
+                    "00000001",
+                    ntime,
+                    "00000000",
+                ],
             }
         )
         submit_res = await _recv()
@@ -87,7 +101,13 @@ async def test_v1_handshake_and_submit_round_trip():
             {
                 "id": 4,
                 "method": "mining.submit",
-                "params": ["worker.test", "stale", "00000001", ntime, "00000000"],
+                "params": [
+                    "anim1v1rig.worker-test",
+                    "stale",
+                    "00000001",
+                    ntime,
+                    "00000000",
+                ],
             }
         )
         stale_res = await _recv()

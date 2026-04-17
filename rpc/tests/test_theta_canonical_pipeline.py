@@ -390,6 +390,21 @@ def test_timestamp_bounds_reads_timestamp_from_dict_header(
     assert timestamp_min == 1_000
 
 
+def test_timestamp_bounds_normalizes_millisecond_parent_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(miner_methods.time, "time", lambda: 1_700_000_100.0)
+    monkeypatch.setenv("ANIMICA_MIN_BLOCK_SPACING_MS", "0")
+    monkeypatch.setenv("ANIMICA_MAX_FUTURE_SECONDS", "5")
+
+    timestamp_min, timestamp_max, candidate = miner_methods._timestamp_bounds(
+        {"timestamp": 1_700_000_000_000}
+    )
+    assert timestamp_min == 1_700_000_000
+    assert timestamp_max == 1_700_000_105
+    assert candidate == 1_700_000_100
+
+
 def test_timestamp_bounds_uses_configured_min_block_spacing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
