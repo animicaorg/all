@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from mining.stratum_server import StratumServer
 
@@ -36,12 +37,22 @@ class PoolMetrics:
         self._block_events: Deque[Dict[str, object]] = deque(maxlen=200)
         self._accounting_events: Deque[AccountingEvent] = deque(maxlen=5000)
         self._worker_balances_cache: Dict[tuple[str, str, str], Dict[str, object]] = {}
+        self._payout_records: list[dict[str, object]] = []
+        self._payout_record_seq: int = 0
         self._started = time.time()
         self._db = self._init_db(config.db_url)
         self._db_lock = Lock()
         self._payout_state_lock = Lock()
         self._payout_interval_seconds = max(
             0.0, float(getattr(config, "payout_interval_seconds", 0.0) or 0.0)
+        )
+        self._inactive_share_grace_seconds = max(
+            0.0,
+            float(os.getenv("ANIMICA_POOL_INACTIVE_SHARE_GRACE_SECONDS", "300")),
+        )
+        self._inactive_share_halflife_seconds = max(
+            0.0,
+            float(os.getenv("ANIMICA_POOL_INACTIVE_SHARE_HALFLIFE_SECONDS", "1800")),
         )
         self._next_payout_at: Optional[float] = (
             self._started + self._payout_interval_seconds
@@ -139,8 +150,14 @@ class PoolMetrics:
                 address TEXT NOT NULL,
                 amount INTEGER NOT NULL,
                 tx_hash TEXT,
+                raw_tx TEXT,
+                nonce INTEGER,
                 status TEXT NOT NULL,
-                error TEXT
+                error TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_retry_ts REAL,
+                next_retry_ts REAL,
+                confirmed_ts REAL
             )
             """
         )
@@ -148,6 +165,18 @@ class PoolMetrics:
         self._ensure_column(conn, "blocks", "address", "TEXT")
         self._ensure_column(conn, "blocks", "reward", "INTEGER")
         self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "payouts", "raw_tx", "TEXT")
+        self._ensure_column(conn, "payouts", "nonce", "INTEGER")
+        self._ensure_column(conn, "payouts", "retry_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "payouts", "last_retry_ts", "REAL")
+        self._ensure_column(conn, "payouts", "next_retry_ts", "REAL")
+        self._ensure_column(conn, "payouts", "confirmed_ts", "REAL")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_payouts_mode_status_ts ON payouts(mode, status, ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_payouts_mode_tx_hash ON payouts(mode, tx_hash)"
+        )
         conn.commit()
         return conn
 
@@ -430,6 +459,7 @@ class PoolMetrics:
         ts: float,
         worker: str,
         address: str,
+        last_share_ts: Optional[float] = None,
         pps_credit: int = 0,
         solo_credit: int = 0,
         paid_out_delta: int = 0,
@@ -453,6 +483,7 @@ class PoolMetrics:
                 "accepted_blocks": 0,
                 "rejected_shares": 0,
                 "updated_ts": ts,
+                "last_share_ts": 0.0,
             }
             self._worker_balances_cache[key] = row
 
@@ -474,6 +505,11 @@ class PoolMetrics:
             rejected_shares_delta
         )
         row["updated_ts"] = ts
+        if last_share_ts is not None:
+            row["last_share_ts"] = max(
+                float(row.get("last_share_ts") or 0.0),
+                float(last_share_ts),
+            )
 
         if self._db is None:
             return
@@ -597,6 +633,7 @@ class PoolMetrics:
                 ts=ts,
                 worker=worker,
                 address=address,
+                last_share_ts=ts,
                 pps_credit=pps_credit,
                 solo_credit=solo_credit,
                 accepted_shares_delta=1,
@@ -608,6 +645,7 @@ class PoolMetrics:
             ts=ts,
             worker=worker,
             address=address,
+            last_share_ts=ts,
             rejected_shares_delta=1,
         )
         self._record_accounting_event(
@@ -833,6 +871,59 @@ class PoolMetrics:
             return False
         return True
 
+    def _connected_payout_addresses(self) -> set[str]:
+        addresses: set[str] = set()
+        snapshots = getattr(self._server, "session_snapshots", None)
+        if not callable(snapshots):
+            return addresses
+        try:
+            sessions = snapshots() or []
+        except Exception:
+            return addresses
+        for session in sessions:
+            if isinstance(session, dict):
+                raw_address = session.get("address")
+                worker_hint = session.get("worker") or session.get("session_id")
+            else:
+                raw_address = getattr(session, "address", None)
+                worker_hint = getattr(session, "worker", None) or getattr(
+                    session, "session_id", None
+                )
+            address = self._normalize_address(raw_address)
+            if not self._payout_eligible_address(address):
+                _worker, parsed_address = self._parse_worker_identity(worker_hint)
+                address = self._normalize_address(parsed_address)
+            if self._payout_eligible_address(address):
+                addresses.add(address)
+        return addresses
+
+    def _effective_due_amount(
+        self,
+        *,
+        amount: int,
+        address: str,
+        last_share_ts: float,
+        connected_addresses: set[str],
+        now_ts: float,
+    ) -> int:
+        base_amount = max(0, int(amount or 0))
+        if base_amount <= 0:
+            return 0
+        if address in connected_addresses:
+            return base_amount
+        half_life = float(self._inactive_share_halflife_seconds)
+        if half_life <= 0:
+            return base_amount
+        share_ts = float(last_share_ts or 0.0)
+        if share_ts <= 0:
+            return base_amount
+        age_seconds = max(0.0, now_ts - share_ts)
+        age_after_grace = age_seconds - float(self._inactive_share_grace_seconds)
+        if age_after_grace <= 0:
+            return base_amount
+        decay_factor = 0.5 ** (age_after_grace / half_life)
+        return max(0, int(base_amount * decay_factor))
+
     def set_next_payout_at(self, next_payout_at: Optional[float]) -> None:
         with self._payout_state_lock:
             self._next_payout_at = float(next_payout_at) if next_payout_at else None
@@ -887,6 +978,8 @@ class PoolMetrics:
             if max_total_amount is not None
             else None
         )
+        now_ts = float(time.time())
+        connected_addresses = self._connected_payout_addresses()
 
         if self._db is not None:
             with self._db_lock:
@@ -901,14 +994,39 @@ class PoolMetrics:
                     GROUP BY address
                     HAVING SUM(total_credit - paid_out) >= ?
                     ORDER BY due_amount DESC, address ASC
-                    LIMIT ?
                     """,
-                    (self._pool_mode, min_amount, limit),
+                    (self._pool_mode, min_amount),
                 ).fetchall()
+                share_rows = self._db.execute(
+                    """
+                    SELECT address, MAX(ts) as last_share_ts
+                    FROM shares
+                    GROUP BY address
+                    """
+                ).fetchall()
+            share_ts_by_address = {
+                str(address or "").strip(): float(last_share_ts or 0.0)
+                for address, last_share_ts in share_rows
+                if str(address or "").strip()
+            }
             for address, due_amount, worker_rows, updated_ts in rows:
                 addr = str(address or "").strip()
                 amount = int(due_amount or 0)
-                if not self._payout_eligible_address(addr) or amount <= 0:
+                last_share_ts = float(
+                    share_ts_by_address.get(addr) or float(updated_ts or 0.0)
+                )
+                amount = self._effective_due_amount(
+                    amount=amount,
+                    address=addr,
+                    last_share_ts=last_share_ts,
+                    connected_addresses=connected_addresses,
+                    now_ts=now_ts,
+                )
+                if (
+                    not self._payout_eligible_address(addr)
+                    or amount <= 0
+                    or amount < min_amount
+                ):
                     continue
                 items.append(
                     {
@@ -918,12 +1036,28 @@ class PoolMetrics:
                         "updated_at": self._iso_ts(float(updated_ts or 0.0)),
                     }
                 )
+            items.sort(
+                key=lambda entry: (
+                    -int(entry.get("amount") or 0),
+                    str(entry.get("address") or ""),
+                )
+            )
             return self._cap_due_items(
                 items=items,
                 min_amount=min_amount,
                 limit=limit,
                 max_total=max_total,
             )
+
+        share_ts_by_address: Dict[str, float] = {}
+        for event in self._share_events:
+            addr = str(event.get("address") or "").strip()
+            if not addr:
+                continue
+            ts = float(event.get("timestamp") or 0.0)
+            current = share_ts_by_address.get(addr, 0.0)
+            if ts > current:
+                share_ts_by_address[addr] = ts
 
         by_address: Dict[str, Dict[str, object]] = {}
         for (mode, _worker, address), row in self._worker_balances_cache.items():
@@ -937,6 +1071,11 @@ class PoolMetrics:
             available = max(0, gross - paid)
             if available <= 0:
                 continue
+            row_last_share_ts = float(
+                share_ts_by_address.get(addr)
+                or float(row.get("last_share_ts") or 0.0)
+                or float(row.get("updated_ts") or 0.0)
+            )
             current = by_address.get(addr)
             if current is None:
                 by_address[addr] = {
@@ -944,6 +1083,7 @@ class PoolMetrics:
                     "amount": available,
                     "workers": 1,
                     "updated_ts": float(row.get("updated_ts") or 0.0),
+                    "last_share_ts": row_last_share_ts,
                 }
             else:
                 current["amount"] = int(current.get("amount") or 0) + available
@@ -952,13 +1092,19 @@ class PoolMetrics:
                     float(current.get("updated_ts") or 0.0),
                     float(row.get("updated_ts") or 0.0),
                 )
+                current["last_share_ts"] = max(
+                    float(current.get("last_share_ts") or 0.0),
+                    row_last_share_ts,
+                )
 
-        ordered = sorted(
-            by_address.values(),
-            key=lambda entry: (-int(entry.get("amount") or 0), str(entry.get("address") or "")),
-        )
-        for entry in ordered:
-            amount = int(entry.get("amount") or 0)
+        for entry in by_address.values():
+            amount = self._effective_due_amount(
+                amount=int(entry.get("amount") or 0),
+                address=str(entry.get("address") or ""),
+                last_share_ts=float(entry.get("last_share_ts") or 0.0),
+                connected_addresses=connected_addresses,
+                now_ts=now_ts,
+            )
             if amount < min_amount:
                 continue
             items.append(
@@ -969,8 +1115,12 @@ class PoolMetrics:
                     "updated_at": self._iso_ts(float(entry.get("updated_ts") or 0.0)),
                 }
             )
-            if len(items) >= limit:
-                break
+        items.sort(
+            key=lambda entry: (
+                -int(entry.get("amount") or 0),
+                str(entry.get("address") or ""),
+            )
+        )
         return self._cap_due_items(
             items=items,
             min_amount=min_amount,
@@ -987,7 +1137,7 @@ class PoolMetrics:
         max_total: Optional[int],
     ) -> List[Dict[str, object]]:
         if max_total is None:
-            return items
+            return items[:limit]
         if max_total < min_amount:
             return []
 
@@ -1081,7 +1231,7 @@ class PoolMetrics:
         return max(0, int(total))
 
     def payout_available_budget(self) -> int:
-        """Return mined reward that has not already been submitted as payouts."""
+        """Return mined reward that has not already been committed to payouts."""
         if self._db is not None:
             with self._db_lock:
                 mined_row = self._db.execute(
@@ -1095,9 +1245,9 @@ class PoolMetrics:
                     """
                     SELECT COALESCE(SUM(amount), 0)
                     FROM payouts
-                    WHERE mode = ? AND status = ?
+                    WHERE mode = ? AND status IN (?, ?)
                     """,
-                    (self._pool_mode, "submitted"),
+                    (self._pool_mode, "submitted", "confirmed"),
                 ).fetchone()
             mined_total = int((mined_row or [0])[0] or 0)
             paid_total = int((paid_row or [0])[0] or 0)
@@ -1122,12 +1272,19 @@ class PoolMetrics:
         address: str,
         amount: int,
         tx_hash: str,
+        raw_tx: Optional[str] = None,
+        nonce: Optional[int] = None,
         ts: Optional[float] = None,
     ) -> int:
         addr = str(address or "").strip()
         requested = max(0, int(amount or 0))
         if requested <= 0 or not self._payout_eligible_address(addr):
             return 0
+        norm_hash = str(tx_hash or "").strip().lower()
+        if norm_hash and not norm_hash.startswith("0x"):
+            norm_hash = "0x" + norm_hash
+        raw_payload = str(raw_tx or "").strip() if raw_tx is not None else None
+        nonce_value = int(nonce) if nonce is not None else None
         now = float(ts or time.time())
         applied = 0
 
@@ -1159,7 +1316,7 @@ class PoolMetrics:
                         """,
                         (delta, now, self._pool_mode, str(worker), addr),
                     )
-                    details = json.dumps({"tx_hash": tx_hash}, sort_keys=True)
+                    details = json.dumps({"tx_hash": norm_hash}, sort_keys=True)
                     self._db.execute(
                         """
                         INSERT INTO accounting_ledger (ts, mode, worker, address, event, amount, job_id, details)
@@ -1185,7 +1342,7 @@ class PoolMetrics:
                             "event": "payout_sent",
                             "amount": int(delta),
                             "job_id": "",
-                            "details": {"tx_hash": tx_hash},
+                            "details": {"tx_hash": norm_hash},
                         }
                     )
                     remaining -= delta
@@ -1193,16 +1350,25 @@ class PoolMetrics:
 
                 self._db.execute(
                     """
-                    INSERT INTO payouts (ts, mode, address, amount, tx_hash, status, error)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO payouts (
+                        ts, mode, address, amount, tx_hash, raw_tx, nonce,
+                        status, error, retry_count, last_retry_ts, next_retry_ts, confirmed_ts
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
                         self._pool_mode,
                         addr,
                         int(applied),
-                        tx_hash,
+                        norm_hash,
+                        raw_payload,
+                        nonce_value,
                         "submitted",
+                        None,
+                        0,
+                        None,
+                        None,
                         None,
                     ),
                 )
@@ -1236,11 +1402,567 @@ class PoolMetrics:
                 event="payout_sent",
                 amount=delta,
                 job_id=None,
-                details={"tx_hash": tx_hash},
+                details={"tx_hash": norm_hash},
             )
             remaining -= delta
             applied += delta
+        self._payout_record_seq += 1
+        self._payout_records.append(
+            {
+                "id": int(self._payout_record_seq),
+                "timestamp": now,
+                "mode": self._pool_mode,
+                "address": addr,
+                "amount": int(applied),
+                "tx_hash": norm_hash,
+                "raw_tx": raw_payload,
+                "nonce": nonce_value,
+                "status": "submitted",
+                "error": None,
+                "retry_count": 0,
+                "last_retry_ts": None,
+                "next_retry_ts": None,
+                "confirmed_ts": None,
+            }
+        )
         return applied
+
+    def pending_payout_submissions(self, *, limit: int = 200) -> List[Dict[str, object]]:
+        max_rows = max(1, min(int(limit or 200), 2000))
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    """
+                    SELECT
+                        id, ts, address, amount, tx_hash, raw_tx, nonce, status, error,
+                        retry_count, last_retry_ts, next_retry_ts, confirmed_ts
+                    FROM payouts
+                    WHERE mode = ? AND status = ? AND tx_hash IS NOT NULL AND tx_hash != ''
+                    ORDER BY ts ASC, id ASC
+                    LIMIT ?
+                    """,
+                    (self._pool_mode, "submitted", max_rows),
+                ).fetchall()
+            items: List[Dict[str, object]] = []
+            for (
+                row_id,
+                ts,
+                address,
+                amount,
+                tx_hash,
+                raw_tx,
+                nonce,
+                status,
+                error,
+                retry_count,
+                last_retry_ts,
+                next_retry_ts,
+                confirmed_ts,
+            ) in rows:
+                items.append(
+                    {
+                        "id": int(row_id or 0),
+                        "timestamp": float(ts or 0.0),
+                        "address": str(address or ""),
+                        "amount": int(amount or 0),
+                        "tx_hash": str(tx_hash or "").lower(),
+                        "raw_tx": str(raw_tx) if raw_tx is not None else None,
+                        "nonce": int(nonce) if nonce is not None else None,
+                        "status": str(status or "submitted"),
+                        "error": str(error) if error is not None else None,
+                        "retry_count": int(retry_count or 0),
+                        "last_retry_ts": (
+                            float(last_retry_ts) if last_retry_ts is not None else None
+                        ),
+                        "next_retry_ts": (
+                            float(next_retry_ts) if next_retry_ts is not None else None
+                        ),
+                        "confirmed_ts": (
+                            float(confirmed_ts) if confirmed_ts is not None else None
+                        ),
+                    }
+                )
+            return items
+
+        items: List[Dict[str, object]] = []
+        for record in self._payout_records:
+            if str(record.get("mode") or "") != self._pool_mode:
+                continue
+            if str(record.get("status") or "") != "submitted":
+                continue
+            tx_hash = str(record.get("tx_hash") or "").strip().lower()
+            if not tx_hash:
+                continue
+            items.append(dict(record))
+            if len(items) >= max_rows:
+                break
+        return items
+
+    def mark_payout_confirmed(
+        self,
+        *,
+        tx_hash: str,
+        ts: Optional[float] = None,
+        details: Optional[Dict[str, object]] = None,
+    ) -> bool:
+        norm_hash = str(tx_hash or "").strip().lower()
+        if not norm_hash:
+            return False
+        if not norm_hash.startswith("0x"):
+            norm_hash = "0x" + norm_hash
+        now = float(ts or time.time())
+        payload = dict(details or {})
+        payload.setdefault("tx_hash", norm_hash)
+
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    """
+                    SELECT id, address, amount
+                    FROM payouts
+                    WHERE mode = ? AND LOWER(tx_hash) = LOWER(?) AND status = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (self._pool_mode, norm_hash, "submitted"),
+                ).fetchone()
+                if row is None:
+                    return False
+                payout_id, address, amount = row
+                self._db.execute(
+                    """
+                    UPDATE payouts
+                    SET status = ?, error = NULL, confirmed_ts = ?, next_retry_ts = NULL
+                    WHERE id = ?
+                    """,
+                    ("confirmed", now, int(payout_id)),
+                )
+                self._db.commit()
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(address or "unknown-address"),
+                event="payout_confirmed",
+                amount=max(0, int(amount or 0)),
+                job_id=None,
+                details=payload,
+            )
+            return True
+
+        for record in reversed(self._payout_records):
+            if str(record.get("mode") or "") != self._pool_mode:
+                continue
+            if str(record.get("status") or "") != "submitted":
+                continue
+            if str(record.get("tx_hash") or "").lower() != norm_hash:
+                continue
+            record["status"] = "confirmed"
+            record["error"] = None
+            record["confirmed_ts"] = now
+            record["next_retry_ts"] = None
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(record.get("address") or "unknown-address"),
+                event="payout_confirmed",
+                amount=max(0, int(record.get("amount") or 0)),
+                job_id=None,
+                details=payload,
+            )
+            return True
+        return False
+
+    def record_payout_rebroadcast(
+        self,
+        *,
+        tx_hash: str,
+        new_tx_hash: Optional[str] = None,
+        raw_tx: Optional[str] = None,
+        nonce: Optional[int] = None,
+        next_retry_ts: Optional[float] = None,
+        ts: Optional[float] = None,
+        details: Optional[Dict[str, object]] = None,
+    ) -> bool:
+        norm_hash = str(tx_hash or "").strip().lower()
+        if not norm_hash:
+            return False
+        if not norm_hash.startswith("0x"):
+            norm_hash = "0x" + norm_hash
+        target_hash = str(new_tx_hash or norm_hash).strip().lower()
+        if target_hash and not target_hash.startswith("0x"):
+            target_hash = "0x" + target_hash
+        now = float(ts or time.time())
+        retry_at = float(next_retry_ts) if next_retry_ts is not None else None
+        payload = dict(details or {})
+        payload.setdefault("tx_hash", target_hash)
+        payload.setdefault("previous_tx_hash", norm_hash)
+
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    """
+                    SELECT id, address, amount, retry_count
+                    FROM payouts
+                    WHERE mode = ? AND LOWER(tx_hash) = LOWER(?) AND status = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (self._pool_mode, norm_hash, "submitted"),
+                ).fetchone()
+                if row is None:
+                    return False
+                payout_id, address, amount, retry_count = row
+                next_count = int(retry_count or 0) + 1
+                self._db.execute(
+                    """
+                    UPDATE payouts
+                    SET tx_hash = ?, raw_tx = COALESCE(?, raw_tx), nonce = COALESCE(?, nonce),
+                        retry_count = ?, last_retry_ts = ?, next_retry_ts = ?, error = NULL
+                    WHERE id = ?
+                    """,
+                    (
+                        target_hash,
+                        raw_tx,
+                        int(nonce) if nonce is not None else None,
+                        next_count,
+                        now,
+                        retry_at,
+                        int(payout_id),
+                    ),
+                )
+                self._db.commit()
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(address or "unknown-address"),
+                event="payout_rebroadcast",
+                amount=max(0, int(amount or 0)),
+                job_id=None,
+                details=payload,
+            )
+            return True
+
+        for record in reversed(self._payout_records):
+            if str(record.get("mode") or "") != self._pool_mode:
+                continue
+            if str(record.get("status") or "") != "submitted":
+                continue
+            if str(record.get("tx_hash") or "").lower() != norm_hash:
+                continue
+            record["tx_hash"] = target_hash
+            if raw_tx is not None:
+                record["raw_tx"] = str(raw_tx)
+            if nonce is not None:
+                record["nonce"] = int(nonce)
+            record["retry_count"] = int(record.get("retry_count") or 0) + 1
+            record["last_retry_ts"] = now
+            record["next_retry_ts"] = retry_at
+            record["error"] = None
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(record.get("address") or "unknown-address"),
+                event="payout_rebroadcast",
+                amount=max(0, int(record.get("amount") or 0)),
+                job_id=None,
+                details=payload,
+            )
+            return True
+        return False
+
+    def record_payout_retry(
+        self,
+        *,
+        tx_hash: str,
+        error: str,
+        next_retry_ts: Optional[float] = None,
+        ts: Optional[float] = None,
+    ) -> bool:
+        norm_hash = str(tx_hash or "").strip().lower()
+        if not norm_hash:
+            return False
+        if not norm_hash.startswith("0x"):
+            norm_hash = "0x" + norm_hash
+        now = float(ts or time.time())
+        retry_at = float(next_retry_ts) if next_retry_ts is not None else None
+        message = str(error or "retry scheduled")
+
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    """
+                    SELECT id, address, amount, retry_count
+                    FROM payouts
+                    WHERE mode = ? AND LOWER(tx_hash) = LOWER(?) AND status = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (self._pool_mode, norm_hash, "submitted"),
+                ).fetchone()
+                if row is None:
+                    return False
+                payout_id, address, amount, retry_count = row
+                next_count = int(retry_count or 0) + 1
+                self._db.execute(
+                    """
+                    UPDATE payouts
+                    SET retry_count = ?, last_retry_ts = ?, next_retry_ts = ?, error = ?
+                    WHERE id = ?
+                    """,
+                    (next_count, now, retry_at, message, int(payout_id)),
+                )
+                self._db.commit()
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(address or "unknown-address"),
+                event="payout_retry_scheduled",
+                amount=max(0, int(amount or 0)),
+                job_id=None,
+                details={"tx_hash": norm_hash, "error": message, "next_retry_ts": retry_at},
+            )
+            return True
+
+        for record in reversed(self._payout_records):
+            if str(record.get("mode") or "") != self._pool_mode:
+                continue
+            if str(record.get("status") or "") != "submitted":
+                continue
+            if str(record.get("tx_hash") or "").lower() != norm_hash:
+                continue
+            record["retry_count"] = int(record.get("retry_count") or 0) + 1
+            record["last_retry_ts"] = now
+            record["next_retry_ts"] = retry_at
+            record["error"] = message
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(record.get("address") or "unknown-address"),
+                event="payout_retry_scheduled",
+                amount=max(0, int(record.get("amount") or 0)),
+                job_id=None,
+                details={"tx_hash": norm_hash, "error": message, "next_retry_ts": retry_at},
+            )
+            return True
+        return False
+
+    def _release_paid_out_credit(
+        self,
+        *,
+        address: str,
+        amount: int,
+        tx_hash: str,
+        reason: str,
+        ts: float,
+    ) -> int:
+        addr = str(address or "").strip()
+        remaining = max(0, int(amount or 0))
+        if remaining <= 0 or not self._payout_eligible_address(addr):
+            return 0
+
+        released = 0
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    """
+                    SELECT worker, paid_out
+                    FROM worker_balances
+                    WHERE mode = ? AND address = ? AND paid_out > 0
+                    ORDER BY updated_ts DESC, worker DESC
+                    """,
+                    (self._pool_mode, addr),
+                ).fetchall()
+                for worker, paid_out in rows:
+                    if remaining <= 0:
+                        break
+                    available = max(0, int(paid_out or 0))
+                    if available <= 0:
+                        continue
+                    delta = min(available, remaining)
+                    self._db.execute(
+                        """
+                        UPDATE worker_balances
+                        SET paid_out = MAX(0, paid_out - ?), updated_ts = ?
+                        WHERE mode = ? AND worker = ? AND address = ?
+                        """,
+                        (delta, ts, self._pool_mode, str(worker), addr),
+                    )
+                    details = json.dumps(
+                        {"tx_hash": tx_hash, "reason": reason},
+                        sort_keys=True,
+                    )
+                    self._db.execute(
+                        """
+                        INSERT INTO accounting_ledger (ts, mode, worker, address, event, amount, job_id, details)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ts,
+                            self._pool_mode,
+                            str(worker),
+                            addr,
+                            "payout_reverted",
+                            int(delta),
+                            None,
+                            details,
+                        ),
+                    )
+                    self._accounting_events.appendleft(
+                        {
+                            "timestamp": ts,
+                            "mode": self._pool_mode,
+                            "worker": str(worker),
+                            "address": addr,
+                            "event": "payout_reverted",
+                            "amount": int(delta),
+                            "job_id": "",
+                            "details": {"tx_hash": tx_hash, "reason": reason},
+                        }
+                    )
+                    remaining -= delta
+                    released += delta
+                self._db.commit()
+            return released
+
+        candidates = [
+            (key, row)
+            for key, row in self._worker_balances_cache.items()
+            if key[0] == self._pool_mode
+            and str(key[2] or "").strip() == addr
+            and int(row.get("paid_out") or 0) > 0
+        ]
+        candidates.sort(
+            key=lambda item: (
+                float(item[1].get("updated_ts") or 0.0),
+                str(item[0][1]),
+            ),
+            reverse=True,
+        )
+        for (mode, worker, _), row in candidates:
+            if remaining <= 0:
+                break
+            available = max(0, int(row.get("paid_out") or 0))
+            if available <= 0:
+                continue
+            delta = min(available, remaining)
+            self._apply_balance_delta(
+                ts=ts,
+                worker=str(worker),
+                address=addr,
+                paid_out_delta=-delta,
+            )
+            self._record_accounting_event(
+                ts=ts,
+                worker=str(worker),
+                address=addr,
+                event="payout_reverted",
+                amount=delta,
+                job_id=None,
+                details={"tx_hash": tx_hash, "reason": reason},
+            )
+            remaining -= delta
+            released += delta
+        return released
+
+    def mark_payout_dropped(
+        self,
+        *,
+        tx_hash: str,
+        error: str,
+        release_credit: bool = True,
+        ts: Optional[float] = None,
+    ) -> bool:
+        norm_hash = str(tx_hash or "").strip().lower()
+        if not norm_hash:
+            return False
+        if not norm_hash.startswith("0x"):
+            norm_hash = "0x" + norm_hash
+        now = float(ts or time.time())
+        message = str(error or "dropped")
+
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    """
+                    SELECT id, address, amount
+                    FROM payouts
+                    WHERE mode = ? AND LOWER(tx_hash) = LOWER(?) AND status = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (self._pool_mode, norm_hash, "submitted"),
+                ).fetchone()
+                if row is None:
+                    return False
+                payout_id, address, amount = row
+                self._db.execute(
+                    """
+                    UPDATE payouts
+                    SET status = ?, error = ?, last_retry_ts = ?, next_retry_ts = NULL
+                    WHERE id = ?
+                    """,
+                    ("dropped", message, now, int(payout_id)),
+                )
+                self._db.commit()
+            released = 0
+            if release_credit:
+                released = self._release_paid_out_credit(
+                    address=str(address or ""),
+                    amount=max(0, int(amount or 0)),
+                    tx_hash=norm_hash,
+                    reason=message,
+                    ts=now,
+                )
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(address or "unknown-address"),
+                event="payout_dropped",
+                amount=max(0, int(amount or 0)),
+                job_id=None,
+                details={
+                    "tx_hash": norm_hash,
+                    "error": message,
+                    "released_credit": int(released),
+                },
+            )
+            return True
+
+        for record in reversed(self._payout_records):
+            if str(record.get("mode") or "") != self._pool_mode:
+                continue
+            if str(record.get("status") or "") != "submitted":
+                continue
+            if str(record.get("tx_hash") or "").lower() != norm_hash:
+                continue
+            record["status"] = "dropped"
+            record["error"] = message
+            record["last_retry_ts"] = now
+            record["next_retry_ts"] = None
+            released = 0
+            if release_credit:
+                released = self._release_paid_out_credit(
+                    address=str(record.get("address") or ""),
+                    amount=max(0, int(record.get("amount") or 0)),
+                    tx_hash=norm_hash,
+                    reason=message,
+                    ts=now,
+                )
+            self._record_accounting_event(
+                ts=now,
+                worker="__pool__",
+                address=str(record.get("address") or "unknown-address"),
+                event="payout_dropped",
+                amount=max(0, int(record.get("amount") or 0)),
+                job_id=None,
+                details={
+                    "tx_hash": norm_hash,
+                    "error": message,
+                    "released_credit": int(released),
+                },
+            )
+            return True
+        return False
 
     def record_payout_failed(
         self,

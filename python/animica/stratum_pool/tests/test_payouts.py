@@ -70,7 +70,7 @@ def _config() -> PoolConfig:
     )
 
 
-def _install_omni_sdk_stubs(monkeypatch, *, submit_raw):
+def _install_omni_sdk_stubs(monkeypatch, *, submit_raw, request_handler=None):
     class _RpcClient:
         def __init__(self, _url: str, timeout: float = 0.0) -> None:
             self.timeout = float(timeout)
@@ -81,10 +81,12 @@ def _install_omni_sdk_stubs(monkeypatch, *, submit_raw):
         def __exit__(self, _exc_type, _exc, _tb):
             return False
 
-        def request(self, method: str, _params: object) -> int:
-            if method != "state.getNonce":
-                raise RuntimeError(f"unexpected method: {method}")
-            return 7
+        def request(self, method: str, params: object) -> object:
+            if callable(request_handler):
+                return request_handler(method, params)
+            if method == "state.getNonce":
+                return 7
+            raise RuntimeError(f"unexpected method: {method}")
 
     rpc_http_module = types.ModuleType("omni_sdk.rpc.http")
     rpc_http_module.RpcClient = _RpcClient
@@ -192,3 +194,66 @@ def test_process_once_retries_transient_submission_failure(monkeypatch):
         }
     ]
     assert metrics.failed_calls == []
+
+
+def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_DROP_GRACE_SECONDS", "0")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_RETRY_BACKOFF_SECONDS", "0")
+
+    rebroadcast_submit_calls: list[str] = []
+
+    def _submit_raw(_rpc, raw_tx: str) -> str:
+        rebroadcast_submit_calls.append(str(raw_tx))
+        return "0x" + ("cd" * 32)
+
+    def _request_handler(method: str, params: object) -> object:
+        if method == "state.getNonce":
+            return 7
+        if method == "tx.getStatus":
+            return {
+                "hash": str((params or [""])[0]),
+                "status": "evicted",
+                "state": "evicted",
+            }
+        raise RuntimeError(f"unexpected method: {method}")
+
+    _install_omni_sdk_stubs(
+        monkeypatch,
+        submit_raw=_submit_raw,
+        request_handler=_request_handler,
+    )
+
+    class _ReconcileMetrics(StubMetrics):
+        def __init__(self) -> None:
+            super().__init__(budget=0, due_items=[])
+            self.rebroadcast_calls: list[dict[str, object]] = []
+
+        def pending_payout_submissions(self, *, limit: int = 200) -> list[dict[str, object]]:
+            _ = limit
+            return [
+                {
+                    "tx_hash": "0x" + ("ab" * 32),
+                    "address": "anim1miner",
+                    "amount": 25,
+                    "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:7:15",
+                    "retry_count": 0,
+                    "timestamp": 0.0,
+                    "nonce": 7,
+                    "next_retry_ts": None,
+                }
+            ]
+
+        def record_payout_rebroadcast(self, **kwargs: object) -> bool:
+            self.rebroadcast_calls.append(dict(kwargs))
+            return True
+
+    metrics = _ReconcileMetrics()
+    scheduler = PoolPayoutScheduler(config=_config(), metrics=metrics)
+
+    sent = scheduler._process_once()  # noqa: SLF001
+
+    assert sent == 0
+    assert rebroadcast_submit_calls == ["raw:1:anim1poolwallet:anim1miner:25:7:15"]
+    assert len(metrics.rebroadcast_calls) == 1
+    assert metrics.rebroadcast_calls[0]["tx_hash"] == "0x" + ("ab" * 32)
+    assert metrics.rebroadcast_calls[0]["new_tx_hash"] == "0x" + ("cd" * 32)
