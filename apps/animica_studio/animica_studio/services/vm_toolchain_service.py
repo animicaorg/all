@@ -419,31 +419,40 @@ class VmToolchainService:
         self, entry: Path, config: dict[str, Any]
     ) -> CompileResult | None:
         """Attempt compile via ``python -m vm_py.cli.compile``."""
+        manifest = Path(str(config.get("manifest") or (entry.parent / "manifest.json"))).expanduser()
+        out_dir_raw = str(config.get("out_dir") or "").strip()
+        persist_artifact = bool(out_dir_raw)
+        out_dir = Path(out_dir_raw).expanduser() if persist_artifact else None
+        if out_dir is not None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        artifact_name = f"{entry.stem}.ir"
+        meta_name = f"{entry.stem}.compile-meta.json"
         try:
-            with tempfile.TemporaryDirectory() as out_dir:
-                manifest = config.get("manifest") or str(entry.parent / "manifest.json")
-                cmd = [
-                    sys.executable, "-m", "vm_py.cli.compile",
-                    "--manifest", manifest,
-                    "--out", out_dir,
-                ]
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                scratch_dir = out_dir if out_dir is not None else Path(tmp_dir)
+                artifact_path = scratch_dir / artifact_name
+                meta_path = scratch_dir / meta_name
+                cmd = [sys.executable, "-m", "vm_py.cli.compile"]
+                if manifest.exists() and self._manifest_looks_runnable(manifest):
+                    cmd.extend(["--manifest", str(manifest)])
+                else:
+                    cmd.append(str(entry))
+                cmd.extend(["--out", str(artifact_path), "--meta", str(meta_path)])
                 proc = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=30
                 )
                 if proc.returncode == 0:
-                    artifacts = list(Path(out_dir).glob("**/*"))
                     bytecode_hash = ""
-                    artifact_path = ""
-                    for a in artifacts:
-                        if a.suffix in (".ir", ".bin", ".wasm"):
-                            artifact_path = str(a)
-                            bytecode_hash = hashlib.sha256(a.read_bytes()).hexdigest()
-                            break
+                    persisted_artifact_path = ""
+                    if artifact_path.exists():
+                        bytecode_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+                        if persist_artifact:
+                            persisted_artifact_path = str(artifact_path)
                     return CompileResult(
                         success=True,
-                        artifact_path=artifact_path,
+                        artifact_path=persisted_artifact_path,
                         bytecode_hash=bytecode_hash,
-                        raw_output=proc.stdout,
+                        raw_output=(proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else ""),
                     )
                 else:
                     error_output = proc.stderr or proc.stdout or ""
@@ -499,6 +508,19 @@ class VmToolchainService:
             log.debug("API compile failed: %s", exc)
         return None
 
+    def _manifest_looks_runnable(self, manifest_path: Path) -> bool:
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(raw, dict):
+            return False
+        for key in ("source", "entry", "contract", "contract_path", "path"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Build package
     # ------------------------------------------------------------------
@@ -524,6 +546,8 @@ class VmToolchainService:
 
         # Find manifest
         manifest_path = root / "manifest.json"
+        build_dir = root / "build"
+        build_dir.mkdir(exist_ok=True)
         entry_file = self._find_entry_file(root)
         if entry_file is None:
             return BuildPackageResult(
@@ -537,7 +561,10 @@ class VmToolchainService:
                 ],
             )
 
-        compile_result = self.compile_contract(entry_file, {"manifest": str(manifest_path)})
+        compile_result = self.compile_contract(
+            entry_file,
+            {"manifest": str(manifest_path), "out_dir": str(build_dir)},
+        )
         build_info: dict[str, Any] = {
             "toolchain": self.get_vm_version(),
             "entry": str(entry_file.relative_to(root)),
@@ -552,15 +579,32 @@ class VmToolchainService:
             )
 
         # Write build-info.json
-        build_info_path = root / "build" / "build-info.json"
-        build_info_path.parent.mkdir(exist_ok=True)
+        build_info_path = build_dir / "build-info.json"
         build_info_path.write_text(
             json.dumps(build_info, indent=2), encoding="utf-8"
         )
 
+        exported_manifest = self.export_manifest(root)
+        built_manifest_path = build_dir / "manifest.json"
+        built_manifest_path.write_text(json.dumps(exported_manifest, indent=2), encoding="utf-8")
+
+        abi_path = ""
+        abi_payload: Any = exported_manifest.get("abi") if isinstance(exported_manifest, dict) else None
+        root_abi_path = root / "abi.json"
+        if root_abi_path.exists():
+            try:
+                abi_payload = json.loads(root_abi_path.read_text(encoding="utf-8"))
+            except Exception:
+                abi_payload = abi_payload
+        if abi_payload:
+            built_abi_path = build_dir / "abi.json"
+            built_abi_path.write_text(json.dumps(abi_payload, indent=2), encoding="utf-8")
+            abi_path = str(built_abi_path)
+
         return BuildPackageResult(
             success=True,
-            manifest_path=str(manifest_path) if manifest_path.exists() else "",
+            manifest_path=str(built_manifest_path),
+            abi_path=abi_path,
             bytecode_hash=compile_result.bytecode_hash,
             package_path=compile_result.artifact_path,
             build_info=build_info,

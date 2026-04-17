@@ -1,9 +1,11 @@
 """IDE page — Monaco editor embedded via QWebEngineView with QWebChannel bridge."""
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 from animica_studio.services.ide_service import IdeService
 from animica_studio.services.template_service import TemplateService
 from animica_studio.services.token_template_service import TokenTemplateService
+from animica_studio.services.vm_toolchain_service import VmToolchainService
 from animica_studio.storage.config import load_config, save_config
 from animica_studio.ui.dialogs.template_dialog import NewFromTemplateDialog
 from animica_studio.ui.dialogs.token_template_wizard import TokenTemplateWizard
@@ -70,6 +73,7 @@ class IdePage(QWidget):
         self._template_service.load_builtin_templates()
         self._template_service.load_user_templates()
         self._token_template_service = TokenTemplateService()
+        self._toolchain = VmToolchainService()
         self._current_rel_path = ""
         self._QWebEngineView, self._QWebEngineSettings, self._QWebChannel = _try_import_webengine()
         self._webview = None
@@ -143,7 +147,15 @@ class IdePage(QWidget):
         self._save_btn.clicked.connect(self._on_save)
         row.addWidget(self._save_btn)
 
-        self._run_btn = QPushButton("▶ Run Script")
+        self._save_all_btn = QPushButton("💾 Save All")
+        self._save_all_btn.clicked.connect(self._on_save_all)
+        row.addWidget(self._save_all_btn)
+
+        self._compile_btn = QPushButton("🧱 Compile")
+        self._compile_btn.clicked.connect(self._on_compile_current)
+        row.addWidget(self._compile_btn)
+
+        self._run_btn = QPushButton("▶ Run")
         self._run_btn.clicked.connect(self._on_run_script)
         row.addWidget(self._run_btn)
 
@@ -295,7 +307,9 @@ class IdePage(QWidget):
         return cursor.blockNumber() + 1, cursor.positionInBlock() + 1
 
     def _get_open_tabs(self) -> list[str]:
-        return [info.rel_path for info in self._open_tabs.values()]
+        if self._open_tabs:
+            return [info.rel_path for info in self._open_tabs.values()]
+        return list(self._cfg.ide_open_tabs or [])
 
     def _build_status_bar(self) -> QWidget:
         bar = QWidget()
@@ -304,6 +318,9 @@ class IdePage(QWidget):
         self._status_bar_label = QLabel("Ready")
         self._status_bar_label.setObjectName("headerMeta")
         row.addWidget(self._status_bar_label)
+        self._status_meta = QLabel(f"VM: {self._toolchain.get_vm_version()}")
+        self._status_meta.setObjectName("headerMeta")
+        row.addWidget(self._status_meta)
         row.addStretch()
         return bar
 
@@ -333,14 +350,76 @@ class IdePage(QWidget):
         self._refresh_tree()
         if self._bridge is not None:
             self._bridge.setWorkspace(configured)
+        self._restore_editor_session_from_config()
 
     def _persist_workspace(self, path: str) -> None:
         self._cfg.ide_workspace_root = path
         self._cfg.workspace_root = path
+        self._persist_editor_state()
+
+    def _persist_editor_state(self) -> None:
+        if self._open_tabs:
+            self._cfg.ide_open_tabs = [info.rel_path for info in self._open_tabs.values()]
+        if self._current_rel_path:
+            self._cfg.ide_last_active_file = self._current_rel_path
         try:
             save_config(self._cfg)
         except Exception as exc:  # noqa: BLE001
-            log.debug("IdePage: failed to persist workspace %s: %s", path, exc)
+            log.debug("IdePage: failed to persist editor state: %s", exc)
+
+    def _restore_editor_session_from_config(self) -> None:
+        ws = self._svc.workspace
+        if ws is None:
+            return
+        restored_any = False
+        for rel_path in list(self._cfg.ide_open_tabs or [])[:8]:
+            if not rel_path:
+                continue
+            target = ws / rel_path
+            if target.exists() and target.is_file():
+                self.open_file_in_editor(rel_path, focus=False)
+                restored_any = True
+        active = str(self._cfg.ide_last_active_file or "").strip()
+        if active:
+            target = ws / active
+            if target.exists() and target.is_file():
+                self.open_file_in_editor(active, focus=True)
+                return
+        if restored_any and self._cfg.ide_open_tabs:
+            self.open_file_in_editor(self._cfg.ide_open_tabs[0], focus=True)
+
+    def _remember_open_file(self, rel_path: str) -> None:
+        rel_path = str(rel_path or "").strip()
+        if not rel_path:
+            return
+        self._current_rel_path = rel_path
+        recent = [rel_path]
+        recent.extend(item for item in list(self._cfg.ide_recent_files or []) if item != rel_path)
+        self._cfg.ide_recent_files = recent[:20]
+        tracked_tabs = [item for item in list(self._cfg.ide_open_tabs or []) if item != rel_path]
+        tracked_tabs.append(rel_path)
+        self._cfg.ide_open_tabs = tracked_tabs[:12]
+        self._cfg.ide_last_active_file = rel_path
+        self._persist_editor_state()
+
+    def _reset_editor_session(self, *, persist: bool = True) -> None:
+        self._current_rel_path = ""
+        self._cfg.ide_open_tabs = []
+        self._cfg.ide_last_active_file = None
+        if self._webview is not None:
+            self._webview.page().runJavaScript(
+                "if(window.resetStudioEditor){window.resetStudioEditor();}"
+            )
+        if self._editor_tabs is not None:
+            while self._editor_tabs.count():
+                widget = self._editor_tabs.widget(0)
+                self._editor_tabs.removeTab(0)
+                if widget is not None:
+                    widget.deleteLater()
+            self._open_tabs.clear()
+        self._status_bar_label.setText("Ready")
+        if persist:
+            self._persist_editor_state()
 
     def _on_change_workspace(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Workspace Folder")
@@ -351,6 +430,7 @@ class IdePage(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid Workspace", str(exc))
             return
+        self._reset_editor_session(persist=False)
         self._ws_label.setText(path)
         self._ws_label.setToolTip(path)
         self._refresh_tree()
@@ -437,6 +517,7 @@ class IdePage(QWidget):
             self._current_rel_path = rel_path
             self._status_bar_label.setText(rel_path)
             self._sync_tree_selection(rel_path)
+            self._remember_open_file(rel_path)
             return
 
         if self._editor_tabs is None:
@@ -452,6 +533,7 @@ class IdePage(QWidget):
                 self._current_rel_path = existing.rel_path
                 self._status_bar_label.setText(existing.rel_path)
                 self._sync_tree_selection(existing.rel_path)
+                self._remember_open_file(existing.rel_path)
             return
 
         try:
@@ -474,19 +556,10 @@ class IdePage(QWidget):
         self._current_rel_path = rel_path
         self._status_bar_label.setText(rel_path)
         self._sync_tree_selection(rel_path)
+        self._remember_open_file(rel_path)
 
     def _open_relative_file(self, rel_path: str) -> None:
-        content = self._svc.read_file(rel_path)
-        if self._webview is not None and self._bridge is not None:
-            req_id = "open_" + rel_path.replace("/", "_").replace("\\", "_")
-            self._bridge.readFile(req_id, rel_path)
-            self._status_bar_label.setText(rel_path)
-            self._current_rel_path = rel_path
-            return
-        if self._plain_editor is not None:
-            self._plain_editor.setPlainText(content)
-        self._status_bar_label.setText(rel_path)
-        self._current_rel_path = rel_path
+        self.open_file_in_editor(rel_path, focus=True)
 
     def _on_tree_context_menu(self, pos: "QPoint") -> None:
         from PySide6.QtWidgets import QMenu  # noqa: PLC0415
@@ -667,6 +740,8 @@ class IdePage(QWidget):
     def _on_save(self) -> None:
         if self._webview is not None:
             self._webview.page().runJavaScript("if(window.saveCurrentFile) saveCurrentFile();")
+            if self._current_rel_path:
+                self._remember_open_file(self._current_rel_path)
             return
         current = self._current_tab_info()
         if current is None:
@@ -677,6 +752,7 @@ class IdePage(QWidget):
             self._svc.write_file(current.rel_path, content)
             self._mark_tab_dirty(self._abs_path(current.rel_path), False)
             self._status_bar_label.setText(f"{current.rel_path} [saved]")
+            self._remember_open_file(current.rel_path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Save Error", str(exc))
 
@@ -690,28 +766,161 @@ class IdePage(QWidget):
             try:
                 self._svc.write_file(tab_info.rel_path, tab_info.editor.toPlainText())
                 self._mark_tab_dirty(abs_path, False)
+                self._remember_open_file(tab_info.rel_path)
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Save Error", f"{tab_info.rel_path}: {exc}")
 
-    def _on_run_script(self) -> None:
-        """Run the currently open file via DeterministicRunner."""
+    def _with_current_file_saved(self, action_title: str, callback) -> None:  # type: ignore[no-untyped-def]
         if self._webview is not None:
             self._webview.page().runJavaScript(
-                "window.currentFilePath || ''",
-                lambda path: (
-                    self._do_run_script(path) if path
-                    else QMessageBox.information(self, "Run Script", "No file open in editor.")
-                ),
+                "window.getCurrentEditorState ? window.getCurrentEditorState() : ''",
+                lambda raw: self._handle_web_editor_state(raw, action_title, callback),
             )
-        else:
-            if self._editor_tabs is None:
-                return
-            rel_path = self._status_bar_label.text().replace(" [saved]", "")
-            if not rel_path or rel_path == "Ready":
-                QMessageBox.information(self, "Run Script", "No file open.")
-                return
-            self._current_rel_path = rel_path
-            self._do_run_script(rel_path)
+            return
+        current = self._current_tab_info()
+        if current is None:
+            QMessageBox.information(self, action_title, "No file open.")
+            return
+        try:
+            self._svc.write_file(current.rel_path, current.editor.toPlainText())
+            self._mark_tab_dirty(self._abs_path(current.rel_path), False)
+            self._status_bar_label.setText(f"{current.rel_path} [saved]")
+            self._remember_open_file(current.rel_path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, f"{action_title} Error", str(exc))
+            return
+        callback(current.rel_path)
+
+    def _handle_web_editor_state(self, raw: object, action_title: str, callback) -> None:  # type: ignore[no-untyped-def]
+        try:
+            payload = json.loads(str(raw or "{}"))
+        except Exception:
+            payload = {}
+        rel_path = str(payload.get("path") or "").strip()
+        content = str(payload.get("content") or "")
+        if not rel_path:
+            QMessageBox.information(self, action_title, "No file open in editor.")
+            return
+        try:
+            self._svc.write_file(rel_path, content)
+            self._status_bar_label.setText(f"{rel_path} [saved]")
+            self._remember_open_file(rel_path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, f"{action_title} Error", str(exc))
+            return
+        callback(rel_path)
+
+    def _on_compile_current(self) -> None:
+        self._with_current_file_saved("Compile", self._compile_file)
+
+    def _compile_file(self, rel_path: str) -> None:
+        ws = self._svc.workspace
+        if ws is None:
+            QMessageBox.warning(self, "Compile", "No workspace selected.")
+            return
+
+        full_path = ws / rel_path
+        self._output.clear()
+        self._output.set_running(True)
+        self._output.append_system(f"Compiling {rel_path}")
+        self._status_meta.setText(f"VM: {self._toolchain.get_vm_version()} | compiling")
+
+        def _task() -> dict[str, object]:
+            started = time.perf_counter()
+            compile_result = self._toolchain.compile_contract(
+                full_path,
+                {"manifest": str(ws / "manifest.json"), "out_dir": str(ws / "build")},
+            )
+            build_result = None
+            if Path(rel_path).name in {"contract.py", "main.py"}:
+                build_result = self._toolchain.build_package(ws)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            return {
+                "compile": compile_result,
+                "build": build_result,
+                "duration_ms": duration_ms,
+                "target": rel_path,
+            }
+
+        from animica_studio.services.workers import WorkerThread  # noqa: PLC0415
+
+        worker = WorkerThread(_task)
+        worker.worker.result.connect(self._on_compile_result)
+        worker.worker.error.connect(self._on_compile_error)
+        worker.start()
+
+    def _on_compile_result(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        compile_result = data.get("compile")
+        build_result = data.get("build")
+        duration_ms = int(data.get("duration_ms") or 0)
+        target = str(data.get("target") or self._current_rel_path or "(unknown)")
+
+        self._output.append_system(f"Compile target: {target}")
+        if compile_result is not None:
+            success = bool(getattr(compile_result, "success", False))
+            bytecode_hash = str(getattr(compile_result, "bytecode_hash", "") or "")
+            raw_output = str(getattr(compile_result, "raw_output", "") or "").strip()
+            diagnostics = list(getattr(compile_result, "diagnostics", []) or [])
+            if success:
+                self._output.append_system("Compile succeeded.")
+                if bytecode_hash:
+                    self._output.append_system(f"Bytecode hash: {bytecode_hash}")
+            else:
+                self._output.append_error("Compile failed.")
+            for line in self._format_diagnostics(diagnostics):
+                self._output.append_line(line)
+            if raw_output:
+                self._output.append_system(raw_output)
+            if build_result is not None and getattr(build_result, "success", False):
+                package_path = str(getattr(build_result, "package_path", "") or "")
+                manifest_path = str(getattr(build_result, "manifest_path", "") or "")
+                if package_path:
+                    self._output.append_system(f"Artifact: {package_path}")
+                if manifest_path:
+                    self._output.append_system(f"Build manifest: {manifest_path}")
+            self._output.set_exit_status(0 if success else 1, duration_ms, False)
+            self._status_meta.setText(
+                f"VM: {self._toolchain.get_vm_version()} | {'ready' if success else 'compile error'}"
+            )
+            return
+
+        self._output.append_error("Compile returned no result.")
+        self._output.set_exit_status(1, duration_ms, False)
+        self._status_meta.setText(f"VM: {self._toolchain.get_vm_version()} | compile error")
+
+    def _on_compile_error(self, message: str, traceback_text: str) -> None:
+        self._output.append_error(message)
+        if traceback_text:
+            self._output.append_line(traceback_text)
+        self._output.set_exit_status(1, 0, False)
+        self._status_meta.setText(f"VM: {self._toolchain.get_vm_version()} | compile error")
+
+    def _format_diagnostics(self, diagnostics: list[object]) -> list[str]:
+        lines: list[str] = []
+        for diag in diagnostics:
+            file = str(getattr(diag, "file", "") or "")
+            line = int(getattr(diag, "line", 0) or 0)
+            column = int(getattr(diag, "column", 0) or 0)
+            severity = str(getattr(diag, "severity", "info") or "info").upper()
+            code = str(getattr(diag, "code", "") or "")
+            message = str(getattr(diag, "message", "") or "").strip()
+            hint = str(getattr(diag, "hint", "") or "").strip()
+            location = ""
+            if file:
+                location = file
+                if line > 0:
+                    location += f":{line}"
+                    if column > 0:
+                        location += f":{column}"
+            prefix = " ".join(part for part in [severity, code, location] if part).strip()
+            lines.append(f"{prefix} {message}".strip())
+            if hint:
+                lines.append(f"HINT {hint}")
+        return lines
+
+    def _on_run_script(self) -> None:
+        self._with_current_file_saved("Run", self._do_run_script)
 
     def _do_run_script(self, rel_path: str) -> None:
         from animica_studio.services.deterministic_runner import DeterministicRunner  # noqa: PLC0415
@@ -729,6 +938,8 @@ class IdePage(QWidget):
         self._output.set_cancel_token(token)
         self._output.set_running(True)
         output = self._output
+        output.append_system(f"Running {rel_path}")
+        self._status_meta.setText(f"VM: {self._toolchain.get_vm_version()} | running")
 
         runner = DeterministicRunner()
 
@@ -741,9 +952,19 @@ class IdePage(QWidget):
 
         worker = WorkerThread(_task)
         worker.worker.result.connect(
-            lambda r: output.set_exit_status(r.exit_code, r.duration_ms, r.cancelled)
+            lambda r: (
+                output.set_exit_status(r.exit_code, r.duration_ms, r.cancelled),
+                self._status_meta.setText(
+                    f"VM: {self._toolchain.get_vm_version()} | {'ready' if r.success else 'run error'}"
+                ),
+            )
         )
-        worker.worker.error.connect(lambda msg, _tb: output.append_line(f"[error] {msg}"))
+        worker.worker.error.connect(
+            lambda msg, _tb: (
+                output.append_line(f"[error] {msg}"),
+                self._status_meta.setText(f"VM: {self._toolchain.get_vm_version()} | run error"),
+            )
+        )
         worker.start()
 
     def _on_open_folder(self) -> None:
@@ -807,6 +1028,12 @@ class IdePage(QWidget):
 
         self._editor_tabs.removeTab(index)
         self._open_tabs.pop(abs_path, None)
+        remaining = [info.rel_path for info in self._open_tabs.values()]
+        self._cfg.ide_open_tabs = remaining
+        if self._current_rel_path == tab_info.rel_path:
+            self._current_rel_path = remaining[0] if remaining else ""
+            self._cfg.ide_last_active_file = self._current_rel_path or None
+        self._persist_editor_state()
 
     def _on_tab_changed(self, _index: int) -> None:
         info = self._current_tab_info()
@@ -818,6 +1045,7 @@ class IdePage(QWidget):
         cursor.setPosition(info.cursor_pos)
         info.editor.setTextCursor(cursor)
         self._sync_tree_selection(info.rel_path)
+        self._remember_open_file(info.rel_path)
 
     def _mark_tab_dirty(self, abs_path: str, dirty: bool) -> None:
         info = self._open_tabs.get(abs_path)

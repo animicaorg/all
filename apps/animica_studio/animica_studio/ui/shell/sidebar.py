@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 
 class Sidebar(QFrame):
@@ -18,6 +18,7 @@ class Sidebar(QFrame):
         self._buttons: list[QPushButton] = []
         self._button_indices: list[int] = []
         self._full_labels: list[str] = []
+        self._section_labels: list[QLabel] = []
         self._anim: QPropertyAnimation | None = None
 
         outer = QVBoxLayout(self)
@@ -46,6 +47,12 @@ class Sidebar(QFrame):
 
         self.setFixedWidth(self._EXPANDED_W)
 
+    def add_section(self, label: str) -> None:
+        heading = QLabel(label)
+        heading.setProperty("navSection", "true")
+        self._layout.addWidget(heading)
+        self._section_labels.append(heading)
+
     def add_item(self, label: str, icon: str, index: int) -> None:
         btn = QPushButton(f"{icon}  {label}")
         btn.setCheckable(True)
@@ -70,6 +77,8 @@ class Sidebar(QFrame):
             else:
                 # Keep only the icon character (before the first space)
                 b.setText(self._full_labels[i].split("  ")[0])
+        for label in self._section_labels:
+            label.setVisible(self._expanded)
         if animate:
             if self._anim is not None:
                 self._anim.stop()
