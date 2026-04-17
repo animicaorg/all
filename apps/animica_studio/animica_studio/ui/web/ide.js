@@ -196,6 +196,33 @@ window.openFileFromHost = function(relPath, absPath) {
   openFile(relPath, absPath);
 };
 
+window.getCurrentEditorState = function() {
+  if (activeTab < 0 || !tabs[activeTab]) return JSON.stringify({ok: false});
+  var tab = tabs[activeTab];
+  var content = tab.model ? tab.model.getValue() : (editor ? editor.getValue() : (tab.content || ''));
+  return JSON.stringify({
+    ok: true,
+    path: tab.path,
+    absPath: tab.absPath,
+    content: content
+  });
+};
+
+window.resetStudioEditor = function() {
+  tabs.forEach(function(tab) {
+    if (tab && tab.model) tab.model.dispose();
+  });
+  tabs = [];
+  openTabs = {};
+  activeTab = -1;
+  window.currentFilePath = null;
+  if (editor && typeof monaco !== 'undefined') {
+    var model = monaco.editor.createModel('', 'python');
+    editor.setModel(model);
+  }
+  renderTabs();
+};
+
 function detectLanguage(path) {
   var ext = path.split('.').pop().toLowerCase();
   var map = {py: 'python', js: 'javascript', ts: 'typescript', json: 'json', md: 'markdown', yaml: 'yaml', yml: 'yaml', html: 'html', css: 'css', sh: 'shell', toml: 'toml', rs: 'rust'};

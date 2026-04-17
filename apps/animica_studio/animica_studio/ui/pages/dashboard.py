@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -56,7 +57,7 @@ class DashboardPage(QWidget):
         title_box = QVBoxLayout()
         self._hero_title = QLabel("Animica Studio")
         self._hero_title.setStyleSheet("font-size: 28px; font-weight: 700;")
-        self._hero_subtitle = QLabel("Checking wallet and node status…")
+        self._hero_subtitle = QLabel("Checking Studio services, workspace, and node status…")
         self._hero_subtitle.setStyleSheet("color: #8f99a5;")
         title_box.addWidget(self._hero_title)
         title_box.addWidget(self._hero_subtitle)
@@ -65,7 +66,7 @@ class DashboardPage(QWidget):
         top_row.addWidget(self._hero_badge, alignment=Qt.AlignmentFlag.AlignTop)
         hero.layout().addLayout(top_row)
 
-        self._hero_metrics = QLabel("Wallets: — | Balance: — | Sync: — | Peers: —")
+        self._hero_metrics = QLabel("Workspace: — | Wallets: — | Sync: — | Assistant: —")
         self._hero_metrics.setStyleSheet("font-size: 15px; font-weight: 600;")
         hero.layout().addWidget(self._hero_metrics)
         root.addWidget(hero)
@@ -74,17 +75,17 @@ class DashboardPage(QWidget):
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
 
-        self._wallet_card = self._make_status_card("Wallet", "Loading…")
+        self._ide_card = self._make_status_card("IDE", "Loading…")
         self._node_card = self._make_status_card("Node", "Loading…")
-        self._mining_card = self._make_status_card("Mining", "Loading…")
+        self._wallet_card = self._make_status_card("Wallet", "Loading…")
         self._ena_card = self._make_status_card("ENA", "Loading…")
         self._aicf_card = self._make_status_card("AICF", "Loading…")
         self._da_card = self._make_status_card("DA", "Loading…")
 
         cards = [
-            self._wallet_card,
+            self._ide_card,
             self._node_card,
-            self._mining_card,
+            self._wallet_card,
             self._ena_card,
             self._aicf_card,
             self._da_card,
@@ -99,12 +100,13 @@ class DashboardPage(QWidget):
         quick = Card()
         quick.layout().addWidget(QLabel("Quick Actions"))
         for label, action_id in [
+            ("Open IDE", "ide_open"),
+            ("Open Animica ENA", "ena_open"),
+            ("Open Node", "node_open"),
             ("Create Wallet", "wallet_create"),
-            ("Receive", "wallet_receive"),
             ("Send", "wallet_send"),
             ("Start Node", "node_start"),
-            ("Start Mining", "mining_open"),
-            ("Open ENA", "ena_open"),
+            ("Settings", "settings_open"),
             ("Open Logs", "logs_open"),
         ]:
             btn = QPushButton(label)
@@ -173,21 +175,43 @@ class DashboardPage(QWidget):
     def _apply_snapshot(self, snapshot: StudioSnapshot) -> None:
         self._snapshot = snapshot
         node_state = snapshot.node.sync.state or "UNKNOWN"
+        workspace_root = str(self._config.ide_workspace_root or self._config.workspace_root or "").strip()
+        workspace_name = Path(workspace_root).name if workspace_root else "No workspace"
+        assistant_mode = str(
+            (self._config.ena or {}).get("mode")
+            or (self._config.ena or {}).get("provider")
+            or "not configured"
+        ).replace("_", " ")
         badge_label = "Ready" if snapshot.node.rpc_reachable else "Needs setup"
         if snapshot.issues:
             badge_label = f"{len(snapshot.issues)} issue(s)"
         self._hero_badge.setText(badge_label)
-        self._hero_title.setText(snapshot.profile_name or "Animica Studio")
+        self._hero_title.setText("Animica Studio")
         self._hero_subtitle.setText(
-            f"{snapshot.network_name or 'Network unknown'} | {snapshot.rpc_url or 'RPC not configured'}"
+            "Profile: {profile} | Network: {network} | RPC: {rpc}".format(
+                profile=snapshot.profile_name or "Default",
+                network=snapshot.network_name or "Network unknown",
+                rpc=snapshot.rpc_url or "RPC not configured",
+            )
         )
         self._hero_metrics.setText(
-            "Wallets: {wallets} | Balance: {balance} | Sync: {sync} | Peers: {peers}".format(
+            "Workspace: {workspace} | Wallets: {wallets} | Sync: {sync} | Assistant: {assistant}".format(
+                workspace=workspace_name,
                 wallets=snapshot.wallet.wallet_count,
-                balance=snapshot.wallet.total_balance_text,
                 sync=node_state,
-                peers=snapshot.node.peer_count if snapshot.node.peer_count is not None else "—",
+                assistant=assistant_mode,
             )
+        )
+        active_file = str(self._config.ide_last_active_file or "").strip()
+        self._update_card(
+            self._ide_card,
+            "Ready" if workspace_root else "Needs setup",
+            (
+                f"Workspace: {workspace_root}\n"
+                f"Last file: {active_file or 'No file open yet.'}"
+            )
+            if workspace_root
+            else "Select a project workspace in IDE to persist files and sessions.",
         )
         self._update_card(
             self._wallet_card,
@@ -199,8 +223,14 @@ class DashboardPage(QWidget):
             "Online" if snapshot.node.rpc_reachable else ("Running" if snapshot.node.running else "Offline"),
             snapshot.node.sync.detail or (snapshot.node.last_error or "RPC is unreachable."),
         )
-        self._update_feature_card(self._mining_card, snapshot.mining)
-        self._update_feature_card(self._ena_card, snapshot.ena)
+        self._update_card(
+            self._ena_card,
+            snapshot.ena.state.replace("_", " ").title(),
+            "{detail}\nMode: {mode}".format(
+                detail=snapshot.ena.detail,
+                mode=assistant_mode,
+            ),
+        )
         self._update_feature_card(self._aicf_card, snapshot.aicf)
         self._update_feature_card(self._da_card, snapshot.da)
         self._render_warnings(snapshot)

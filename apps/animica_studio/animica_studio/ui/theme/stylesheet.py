@@ -50,6 +50,14 @@ QLabel[badge="true"] {{
   font-size: 11px;
   font-weight: 600;
 }}
+QLabel[navSection="true"] {{
+  color: {p.muted};
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  padding: 10px 8px 4px 8px;
+}}
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 QPushButton {{

@@ -88,7 +88,17 @@ class MainWindow(QMainWindow):
         self._nav_entries: list[_NavEntry] = []
         self._page_cache: dict[str, QWidget] = {}
         self._shutdown = ShutdownManager.instance()
-        self._lazy_page_labels = {"Mining", "AICF", "DA", "ENA", "Logs", "Settings", "Console", "IDE", "Quantum"}
+        self._lazy_page_labels = {
+            "IDE",
+            "ENA Assistant",
+            "Mining",
+            "AICF",
+            "DA",
+            "Logs",
+            "Settings",
+            "Console",
+            "Quantum",
+        }
         self._health_worker = None
         self._last_rpc_error: str | None = None
         self._last_actual_chain_id: int | None = None
@@ -167,22 +177,50 @@ class MainWindow(QMainWindow):
 
         self._nav_entries = [
             _NavEntry("Home", "◈", lambda: self._dashboard_page),
-            _NavEntry("Wallet", "◉", lambda: self._wallet_page),
+            _NavEntry("IDE", "✎", lambda: self._build_ide_page_safe()),
+            _NavEntry(
+                "ENA Assistant",
+                "✦",
+                lambda: EnaHubPage(
+                    config=self._config,
+                    service=self._ena_service,
+                    contrib_engine=self._ena_contrib_engine,
+                    full_auto_engine=self._ena_full_auto_engine,
+                ),
+            ),
             _NavEntry("Node", "◍", lambda: self._node_page),
+            _NavEntry("Wallet", "◉", lambda: self._wallet_page),
             _NavEntry("Mining", "◎", lambda: MiningPage(config=self._config)),
-            _NavEntry("ENA", "✦", lambda: EnaHubPage(config=self._config, service=self._ena_service, contrib_engine=self._ena_contrib_engine, full_auto_engine=self._ena_full_auto_engine)),
             _NavEntry("AICF", "◇", lambda: AicfPage(config=self._config)),
             _NavEntry("DA", "◌", lambda: DaPage(config=self._config)),
             _NavEntry("Settings", "⚙", lambda: self._settings_page),
             _NavEntry("Logs", "▣", lambda: self._diagnostics_page),
             _NavEntry("Console", "⌘", lambda: ConsolePage(config=self._config), visible=False),
-            _NavEntry("IDE", "✎", lambda: self._build_ide_page_safe(), visible=False),
             _NavEntry("Quantum", "⬡", lambda: QuantumPage(config=self._config), visible=False),
         ]
 
+        nav_sections = {
+            "Home": "Workspace",
+            "IDE": "Workspace",
+            "ENA Assistant": "Workspace",
+            "Node": "Runtime",
+            "Wallet": "Operations",
+            "Mining": "Operations",
+            "AICF": "Operations",
+            "DA": "Operations",
+            "Settings": "System",
+            "Logs": "System",
+            "Console": "Advanced",
+            "Quantum": "Advanced",
+        }
+        current_section: str | None = None
         for index, entry in enumerate(self._nav_entries):
             self._stack.addWidget(self._initial_page_widget(entry))
             if entry.visible:
+                section = nav_sections.get(entry.label)
+                if section and section != current_section:
+                    self._sidebar.add_section(section)
+                    current_section = section
                 self._sidebar.add_item(entry.label, entry.icon, index)
         self._sidebar.navigate.connect(self._navigate)
         self._dashboard_page.action_requested.connect(self._handle_home_action)
@@ -210,7 +248,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(wizard_action)
 
         tools_menu = self.menuBar().addMenu("Tools")
-        for label in ("Console", "IDE", "Quantum"):
+        for label in ("IDE", "Console", "Quantum"):
             action = QAction(label, self)
             action.triggered.connect(lambda _checked=False, name=label: self._navigate(self._nav_index(name)))
             tools_menu.addAction(action)
@@ -268,6 +306,9 @@ class MainWindow(QMainWindow):
             self._navigate(self._nav_index("Wallet"))
             self._wallet_page.focus_receive()
             return
+        if action_id == "node_open":
+            self._navigate(self._nav_index("Node"))
+            return
         if action_id == "node_start":
             self._navigate(self._nav_index("Node"))
             self._node_page._run_start()  # noqa: SLF001
@@ -275,8 +316,14 @@ class MainWindow(QMainWindow):
         if action_id == "mining_open":
             self._navigate(self._nav_index("Mining"))
             return
+        if action_id == "ide_open":
+            self._navigate(self._nav_index("IDE"))
+            return
         if action_id == "ena_open":
-            self._navigate(self._nav_index("ENA"))
+            self._navigate(self._nav_index("ENA Assistant"))
+            return
+        if action_id == "settings_open":
+            self._navigate(self._nav_index("Settings"))
             return
         if action_id == "logs_open":
             self._navigate(self._nav_index("Logs"))

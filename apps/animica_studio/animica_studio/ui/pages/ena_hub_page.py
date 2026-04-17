@@ -36,6 +36,7 @@ from animica_studio.storage.config import Config
 from animica_studio.ui.pages.checkpoints_page import CheckpointsPage
 from animica_studio.ui.pages.contribute_page import ContributePage
 from animica_studio.ui.pages.ena_contribute_page import EnaContributePage
+from animica_studio.ui.pages.ena_page import EnaPage
 from animica_studio.ui.pages.infer_page import InferPage
 from animica_studio.ui.pages.publish_page import PublishPage
 from animica_studio.ui.pages.train_page import TrainPage
@@ -62,21 +63,23 @@ class EnaHubPage(QWidget):
 
     Tabs
     ----
-    0 – Overview    : capabilities display + quick-launch shortcuts
-    1 – Contribute  : CPU contribution flow
-    2 – Checkpoints : fetch/verify checkpoints
-    3 – Train       : local training
-    4 – Publish     : publish checkpoint to DA network
-    5 – Infer       : run inference
+    0 – Assistant   : ENA chat + tool-using agent workflow
+    1 – Overview    : capabilities display + quick-launch shortcuts
+    2 – Contribute  : CPU contribution flow
+    3 – Checkpoints : fetch/verify checkpoints
+    4 – Train       : local training
+    5 – Publish     : publish checkpoint to DA network
+    6 – Infer       : run inference
     """
 
-    TAB_OVERVIEW = 0
-    TAB_CONTRIBUTE = 1
-    TAB_CHECKPOINTS = 2
-    TAB_TRAIN = 3
-    TAB_PUBLISH = 4
-    TAB_INFER = 5
-    TAB_ALWAYS_ON = 6
+    TAB_ASSISTANT = 0
+    TAB_OVERVIEW = 1
+    TAB_CONTRIBUTE = 2
+    TAB_CHECKPOINTS = 3
+    TAB_TRAIN = 4
+    TAB_PUBLISH = 5
+    TAB_INFER = 6
+    TAB_ALWAYS_ON = 7
 
     def __init__(self, config: Config, service: EnaService | None = None, contrib_engine: EnaContributionEngine | None = None, full_auto_engine: EnaFullAutoEngine | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -94,6 +97,7 @@ class EnaHubPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._tabs)
 
+        self._tabs.addTab(EnaPage(config), "Assistant")
         self._tabs.addTab(self._build_overview(), "Overview")
         self._tabs.addTab(ContributePage(self._service), "Contribute")
         self._tabs.addTab(CheckpointsPage(self._service), "Checkpoints")
@@ -112,12 +116,13 @@ class EnaHubPage(QWidget):
     def _build_overview(self) -> QWidget:
         w = QWidget()
         root = QVBoxLayout(w)
-        root.addWidget(QLabel("ENA Multimodal (Text + Image + Video)"))
-        root.addWidget(QLabel("ENA Guided Automation"))
+        root.addWidget(QLabel("Animica ENA orchestration"))
+        root.addWidget(QLabel("Assistant, checkpoints, training, publish, and inference in one workspace."))
         if self._full_auto_engine is not None:
             root.addWidget(EnaFullAutoPanel(self._config, self._full_auto_engine))
         root.addWidget(self._cap_label)
         for label, tab_idx in [
+            ("Open Assistant", self.TAB_ASSISTANT),
             ("Contribute (CPU)", self.TAB_CONTRIBUTE),
             ("Watch & Fetch Checkpoints", self.TAB_CHECKPOINTS),
             ("Train Locally (CPU)", self.TAB_TRAIN),
