@@ -3073,9 +3073,18 @@ def _sync_all_peer_mempools(*, timeout_s: float = 2.0) -> int:
 
 
 def _build_child_header(
-    parent_height: int, parent_hash: bytes, parent_header: Any, *, coinbase: bytes | None = None, instant_block: bool = False
+    parent_height: int,
+    parent_hash: bytes,
+    parent_header: Any,
+    *,
+    coinbase: bytes | None = None,
+    instant_block: bool = False,
+    disable_block_time_limits: bool = False,
 ) -> Header:
-    timestamp_min, timestamp_max, timestamp = _timestamp_bounds(parent_header)
+    _, _, timestamp = _timestamp_bounds(
+        parent_header,
+        disable_block_time_limits=disable_block_time_limits,
+    )
     theta = getattr(
         parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None)
     )
@@ -6030,7 +6039,13 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         # Convert payout address to bytes for coinbase (strict/no zero fallback)
         coinbase_bytes = _require_payout_address_bytes(payout_address)
         
-        header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header, coinbase=coinbase_bytes)
+        header_template = _build_child_header(
+            parent_height,
+            parent_hash_bytes,
+            parent_header,
+            coinbase=coinbase_bytes,
+            disable_block_time_limits=disable_block_time_limits,
+        )
 
         network_dt_seconds = None
         network_blocks_skipped = 1
