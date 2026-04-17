@@ -3135,12 +3135,18 @@ def _prune_template_cache(now: float | None = None) -> None:
             _TEMPLATE_CACHE.pop(key, None)
 
 
-def _timestamp_bounds(parent_header: Any) -> tuple[int, int | None, int]:
+def _timestamp_bounds(
+    parent_header: Any,
+    *,
+    disable_block_time_limits: bool = False,
+) -> tuple[int, int | None, int]:
     parent_ts = _header_timestamp_seconds(parent_header)
-    min_delta = int(math.ceil(_min_block_spacing_s()))
+    min_delta = 0 if disable_block_time_limits else int(math.ceil(_min_block_spacing_s()))
     timestamp_min = parent_ts + min_delta if parent_ts else int(time.time())
     now = int(time.time())
-    max_future = int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
+    max_future = (
+        0 if disable_block_time_limits else int(os.getenv("ANIMICA_MAX_FUTURE_SECONDS", "5"))
+    )
     timestamp_max = now + max_future if max_future > 0 else None
     if timestamp_max is not None and parent_ts > timestamp_max:
         timestamp_max = parent_ts
@@ -5553,6 +5559,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     allow_unsynced_mining = False
     include_aicf = False
     force_empty_template = False
+    disable_block_time_limits = False
     sync_peer_mempools = True
     raw_params: dict[str, Any] | list[Any] | None = None
     template_ttl_s = _TEMPLATE_TTL_S
@@ -5562,11 +5569,13 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         if len(args) == 1 and isinstance(args[0], dict):
             payload = args[0]
         else:
-            if len(args) > 2:
-                raise rpc_errors.InvalidParams("expected at most 2 positional arguments")
+            if len(args) > 3:
+                raise rpc_errors.InvalidParams("expected at most 3 positional arguments")
             payout_address = args[0]
             if len(args) > 1:
                 include_mempool_flag = bool(args[1])
+            if len(args) > 2:
+                disable_block_time_limits = bool(args[2])
     elif kwargs:
         raw_params = dict(kwargs)
         if "payload" in kwargs:
@@ -5592,6 +5601,12 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         force_empty_template = bool(
             payload.get("force_empty_template", payload.get("forceEmptyTemplate", False))
         )
+        disable_block_time_limits = bool(
+            payload.get(
+                "disable_block_time_limits",
+                payload.get("disableBlockTimeLimits", False),
+            )
+        )
         include_aicf = bool(
             payload.get("include_aicf", payload.get("includeAicf", False))
         )
@@ -5614,6 +5629,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allowUnsyncedMining",
             "force_empty_template",
             "forceEmptyTemplate",
+            "disable_block_time_limits",
+            "disableBlockTimeLimits",
             "ttl_seconds",
             "ttlSeconds",
             "include_aicf",
@@ -5653,6 +5670,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "allow_offline_mining": allow_offline_mining,
             "allow_unsynced_mining": allow_unsynced_mining,
             "force_empty_template": force_empty_template,
+            "disable_block_time_limits": disable_block_time_limits,
             "payout_address": payout_address,
             "template_ttl_s": template_ttl_s,
         },
@@ -5678,7 +5696,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         return {"enabled": False, "reason": reason}
 
     min_spacing_s = _min_block_spacing_s()
-    if min_spacing_s > 0:
+    if min_spacing_s > 0 and not disable_block_time_limits:
         head_ts = _head_timestamp_seconds()
         if head_ts is not None:
             now = time.time()
@@ -6003,7 +6021,10 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 extra=b"",
             )
 
-        timestamp_min, timestamp_max, _ = _timestamp_bounds(parent_header)
+        timestamp_min, timestamp_max, _ = _timestamp_bounds(
+            parent_header,
+            disable_block_time_limits=disable_block_time_limits,
+        )
         
         # Convert payout address to bytes for coinbase (strict/no zero fallback)
         coinbase_bytes = _require_payout_address_bytes(payout_address)
@@ -6042,6 +6063,17 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 header_template = replace(header_template, thetaMicro=adjusted_theta)
             except Exception:
                 pass
+        else:
+            last_block_time = _MINING_STATE.get("last_block_time")
+            if last_block_time is not None:
+                dt_seconds = time.time() - float(last_block_time)
+                adjusted_theta = _adjust_theta_for_mining(dt_seconds)
+                try:
+                    header_template = replace(header_template, thetaMicro=adjusted_theta)
+                except Exception:
+                    pass
+            else:
+                _adjust_theta_for_mining(dt_seconds=None)
 
         if txs:
             leaves = []
@@ -6159,6 +6191,7 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
                 "tx_hashes": frozen_tx_hashes,
                 "mempool_version": int(selection_summary.get("mempoolVersion") or selection_summary.get("version") or 0),
                 "chain_identity": f"{ctx.cfg.chain_id}:{getattr(ctx.cfg, 'genesis_path', None)}",
+                "disable_block_time_limits": bool(disable_block_time_limits),
             }
         _metric_inc("templates_issued")
         log.info("template_issued", extra={"template_id": template_id, "parent_hash": _to_hex(parent_hash_bytes), "parent_height": parent_height, "head_hash_at_issue": head_at_issue.get("hash"), "issued_at": int(issued_at), "expires_at": int(expires_at)})
@@ -6181,6 +6214,8 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             "mempool": selection_summary,
             "address": payout_address,
             "payout_address": payout_address,
+            "disableBlockTimeLimits": bool(disable_block_time_limits),
+            "disable_block_time_limits": bool(disable_block_time_limits),
             "usefulWorkPayload": _build_useful_work_payload() if include_aicf else None,
         }
     except NameError as exc:
@@ -6489,6 +6524,9 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     if not isinstance(block, dict):
         raise rpc_errors.InvalidParams("invalid block payload")
     template_id = block.get("templateId") or block.get("template_id")
+    disable_block_time_limits = bool(
+        block.get("disable_block_time_limits") or block.get("disableBlockTimeLimits")
+    )
     raw_txs_hex: list[str] = []
     parent_hash_field = block.get("parentHash") or block.get("parent_hash")
     if isinstance(block.get("header"), dict):
@@ -6546,6 +6584,11 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
     if template_id:
         with _TEMPLATE_CACHE_LOCK:
             cached = _TEMPLATE_CACHE.get(str(template_id))
+        if isinstance(cached, dict):
+            disable_block_time_limits = bool(
+                disable_block_time_limits
+                or cached.get("disable_block_time_limits")
+            )
         _metric_inc("templates_submitted")
         if not cached:
             _metric_inc("stale_rejects")
@@ -6654,7 +6697,48 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         importer = block_import_mod._get_importer(  # type: ignore[attr-defined]
             ctx.block_db, ctx.state_db, ctx.tx_index, params
         )
-        result = importer.import_block(block)
+        restore_min_block_spacing_ms = None
+        restore_max_future_seconds = None
+        if disable_block_time_limits:
+            if hasattr(importer, "_min_block_spacing_ms"):
+                try:
+                    restore_min_block_spacing_ms = int(
+                        getattr(importer, "_min_block_spacing_ms")
+                    )
+                except Exception:
+                    restore_min_block_spacing_ms = None
+                try:
+                    setattr(importer, "_min_block_spacing_ms", 0)
+                except Exception:
+                    pass
+            if hasattr(importer, "_max_future_seconds"):
+                try:
+                    restore_max_future_seconds = int(
+                        getattr(importer, "_max_future_seconds")
+                    )
+                except Exception:
+                    restore_max_future_seconds = None
+                try:
+                    setattr(importer, "_max_future_seconds", 0)
+                except Exception:
+                    pass
+            log.info(
+                "miner.submitBlock disabling block-time guardrails for this submission",
+                extra={"template_id": template_id, "parent_hash": parent_hash_hex},
+            )
+        try:
+            result = importer.import_block(block)
+        finally:
+            if restore_min_block_spacing_ms is not None:
+                try:
+                    setattr(importer, "_min_block_spacing_ms", int(restore_min_block_spacing_ms))
+                except Exception:
+                    pass
+            if restore_max_future_seconds is not None:
+                try:
+                    setattr(importer, "_max_future_seconds", int(restore_max_future_seconds))
+                except Exception:
+                    pass
 
         accepted = result.code in (
             block_import_mod.ImportErrorCode.ACCEPTED,
@@ -6722,6 +6806,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         if result.code == block_import_mod.ImportErrorCode.ACCEPTED:
             _metric_inc("imports_ok")
             _mark_head_progress()
+            _MINING_STATE["last_block_time"] = time.time()
             try:
                 block_obj, _ = block_import_mod.decode_block(block)
             except Exception as e:

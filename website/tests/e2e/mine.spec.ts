@@ -51,7 +51,8 @@ test.describe('/mine', () => {
             online: true,
             miners: 18,
             workers: 24,
-            pool_hashrate: 1250000,
+            pool_hashrate: 125000,
+            hashrate_1m: 1250000,
             height: 4242,
             latest_block: '0xfeedbeef',
             payouts_enabled: true,
@@ -85,7 +86,8 @@ test.describe('/mine', () => {
           online: true,
           miners: 18,
           workers: 24,
-          pool_hashrate: 1250000,
+          pool_hashrate: 125000,
+          hashrate_1m: 1250000,
           height: 4242,
           latest_block: '0xfeedbeef',
           payouts_enabled: true,
@@ -99,7 +101,8 @@ test.describe('/mine', () => {
         body: {
           miners: 18,
           workers: 24,
-          pool_hashrate: 1250000,
+          pool_hashrate: 125000,
+          hashrate_1m: 1250000,
           height: 4242,
           latest_block: '0xfeedbeef',
           payouts_enabled: true,
@@ -133,6 +136,7 @@ test.describe('/mine', () => {
     await expect(page.getByTestId('mine-status-badge')).toContainText('Pool online');
     await expect(page.locator('#stratum-url')).toContainText('stratum+tcp://pool.animica.org:3333');
     await expect(page.getByTestId('mine-active-miners')).toContainText('18');
+    await expect(page.locator('#pool-hashrate')).toContainText('1.25 MH/s');
     await expect(page.locator('#payout-interval')).toContainText('10m 0s');
     await expect(page.getByTestId('mine-pool-height')).toContainText('4,242');
     await page.getByRole('button', { name: 'Windows' }).click();

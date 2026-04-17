@@ -303,7 +303,7 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
   }
 
   if (elements.poolHashrate) {
-    elements.poolHashrate.textContent = formatHashrate(liveStatus.pool_hashrate);
+    elements.poolHashrate.textContent = formatHashrate(resolvePoolHashrateForDisplay(liveStatus));
   }
 
   if (elements.latestFoundBlock) {
@@ -748,11 +748,39 @@ function formatInteger(value: unknown): string {
   return formatter.format(Math.trunc(numeric));
 }
 
+function resolvePoolHashrateForDisplay(status: MiningPoolStatus): number {
+  const preferredValues: unknown[] = [
+    status.hashrate_1m,
+    status.pool_hashrate,
+    status.hashrate_15m,
+    status.hashrate_1h,
+    status.hashrate,
+    status.hashrate_hps,
+    status.hashrate_hsps,
+  ];
+
+  for (const value of preferredValues) {
+    const parsed = readNonNegativeNumber(value);
+    if (parsed !== undefined) return parsed;
+  }
+
+  return 0;
+}
+
 function readPositiveNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function readNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return undefined;
 }

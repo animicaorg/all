@@ -153,6 +153,20 @@ def test_get_block_template_accepts_positional_address(monkeypatch: pytest.Monke
     assert res["result"]["payout_address"] == payout_address
 
 
+def test_get_block_template_accepts_positional_disable_block_time_limits(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ANIMICA_MINING_FORCE", "1")
+    client, _, _ = new_test_client()
+    payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+
+    res = rpc_call(client, "miner.getBlockTemplate", [payout_address, True, True])
+
+    assert res["result"]["coinbase"]["address"] == payout_address
+    assert res["result"]["disableBlockTimeLimits"] is True
+    assert res["result"]["disable_block_time_limits"] is True
+
+
 def test_get_block_template_requires_address():
     client, _, _ = new_test_client()
 

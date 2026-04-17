@@ -6,6 +6,12 @@ export interface MiningPoolStatus {
   chain_id?: string | number;
   pool_mode?: string;
   pool_hashrate?: number;
+  hashrate_1m?: number | string;
+  hashrate_15m?: number | string;
+  hashrate_1h?: number | string;
+  hashrate?: number | string;
+  hashrate_hps?: number | string;
+  hashrate_hsps?: number | string;
   miners?: number;
   workers?: number;
   height?: number;
@@ -83,6 +89,9 @@ export interface MiningPoolSummary {
   miners?: number;
   workers?: number;
   pool_hashrate?: number;
+  hashrate_1m?: number | string;
+  hashrate_15m?: number | string;
+  hashrate_1h?: number | string;
   height?: number;
   latest_block?: string | number;
   network?: string;
