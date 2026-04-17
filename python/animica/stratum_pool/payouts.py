@@ -95,9 +95,15 @@ class PoolPayoutScheduler:
     def _process_once(self) -> int:
         if self._interval <= 0:
             return 0
+        payout_budget = self._metrics.mined_reward_in_window(
+            window_seconds=self._interval
+        )
+        if payout_budget <= 0:
+            return 0
         due = self._metrics.payout_due_addresses(
             min_amount=self._min_amount,
             limit=self._max_recipients,
+            max_total_amount=payout_budget,
         )
         if not due:
             return 0

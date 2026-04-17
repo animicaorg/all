@@ -299,3 +299,88 @@ def test_payout_status_includes_interval_and_countdown():
     assert status["payout_min_amount"] == 10
     countdown = int(status["payout_countdown_seconds"] or 0)
     assert 0 <= countdown <= 25
+
+
+def test_mined_reward_in_window_counts_only_recent_pool_blocks():
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    now = 1_700_000_000.0
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": now - 10, "reward": 300, "found_by_pool": True}
+    )
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": now - 50, "reward": 200, "found_by_pool": True}
+    )
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": now - 5, "reward": 900, "found_by_pool": False}
+    )
+    metrics._block_events.appendleft(  # noqa: SLF001
+        {"timestamp": now - 120, "reward": 500, "found_by_pool": True}
+    )
+
+    assert metrics.mined_reward_in_window(window_seconds=60, now=now) == 500
+
+
+@pytest.mark.asyncio
+async def test_payout_due_addresses_respects_max_total_amount():
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    job_a = StratumJob(
+        job_id="job-cap-a",
+        header={"number": 20},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    job_b = StratumJob(
+        job_id="job-cap-b",
+        header={"number": 21},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    session_a = Session(session_id="sa", writer=None, worker="worker-a", address="anim1aaa")
+    session_b = Session(session_id="sb", writer=None, worker="worker-b", address="anim1bbb")
+
+    await metrics.record_share(
+        session_a,
+        job_a,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    await metrics.record_share(
+        session_b,
+        job_b,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    uncapped = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert [item["amount"] for item in uncapped] == [1000, 1000]
+
+    capped = metrics.payout_due_addresses(
+        min_amount=1,
+        limit=10,
+        max_total_amount=1500,
+    )
+    assert [item["amount"] for item in capped] == [1000, 500]
+    assert sum(int(item["amount"]) for item in capped) == 1500
+
+    below_min = metrics.payout_due_addresses(
+        min_amount=200,
+        limit=10,
+        max_total_amount=150,
+    )
+    assert below_min == []

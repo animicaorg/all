@@ -496,6 +496,93 @@ def test_get_block_template_disable_block_time_limits_bypasses_spacing_gate(
         _restore_miner_globals(snapshot)
 
 
+def test_get_block_template_positional_disable_block_time_limits_bypasses_spacing_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot_miner_globals()
+    try:
+        class _Cfg:
+            chain_id = 1337
+            genesis_path = None
+
+        parent_header = Header(
+            v=1,
+            chainId=1337,
+            height=1,
+            parentHash=ZERO32,
+            timestamp=1_000,
+            stateRoot=ZERO32,
+            txsRoot=ZERO32,
+            receiptsRoot=ZERO32,
+            proofsRoot=ZERO32,
+            daRoot=ZERO32,
+            mixSeed=ZERO32,
+            poiesPolicyRoot=ZERO32,
+            pqAlgPolicyRoot=ZERO32,
+            thetaMicro=1_000_000,
+            nonce=0,
+            extra=b"",
+        )
+
+        class _Ctx:
+            cfg = _Cfg()
+            params = {}
+            state_db = None
+            tx_index = None
+
+        class _Adapter:
+            def get_head(self):
+                return {
+                    "height": 1,
+                    "hash": "0x" + ("11" * 32),
+                    "obj": parent_header,
+                }
+
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(
+            {
+                "last_block_time": None,
+                "block_times": [],
+                "theta_state": None,
+                "adjustment_enabled": True,
+                "last_network_height": None,
+                "last_network_timestamp": None,
+                "stale_head_hash": None,
+                "stale_head_bucket": 0,
+            }
+        )
+
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_adapter", lambda: _Adapter())
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: None)
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_min_block_spacing_s", lambda: 60.0)
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_005.0)
+        monkeypatch.setattr(
+            miner_methods,
+            "_current_head_snapshot",
+            lambda: {"height": 1, "hash": "0x" + ("11" * 32), "header": parent_header},
+        )
+        monkeypatch.setattr(
+            miner_methods,
+            "_adjust_theta_for_mining",
+            lambda dt_seconds=None, *, blocks_skipped=1: 1_000_000,
+        )
+
+        result = miner_methods.miner_get_block_template(
+            "0x" + ("22" * 32),
+            False,
+            True,
+        )
+
+        assert result["enabled"] is True
+        assert result["disableBlockTimeLimits"] is True
+        assert result["timestampMin"] == 1_000
+        assert result["timestampMax"] is None
+    finally:
+        _restore_miner_globals(snapshot)
+
+
 def test_get_block_template_uses_last_block_time_for_theta_when_network_dt_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

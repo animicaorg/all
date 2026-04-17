@@ -284,6 +284,58 @@ async def test_get_new_job_positional_fallback_preserves_disable_flag(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_get_new_job_retries_when_first_variant_returns_disabled(monkeypatch):
+    payload = {
+        "templateId": "tpl-after-disabled",
+        "header": _full_header_template(),
+        "target": "0x" + "ff" * 32,
+        "parent": {"height": 6, "hash": "0x" + "aa" * 32},
+        "txs": [],
+        "height": 7,
+    }
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "miner.getBlockTemplate":
+                if params == {
+                    "address": "anim1pool",
+                    "include_mempool": True,
+                    "disable_block_time_limits": True,
+                }:
+                    return {
+                        "enabled": False,
+                        "reason": "min_block_spacing",
+                        "waitSeconds": 59.5,
+                    }
+                if params == {
+                    "payout_address": "anim1pool",
+                    "include_mempool": True,
+                    "disable_block_time_limits": True,
+                }:
+                    return payload
+            raise AssertionError(f"unexpected RPC call: {method} {params}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    job = await adapter.get_new_job()
+
+    assert job.job_id == "tpl-after-disabled"
+    assert len(rpc.calls) == 2
+    assert rpc.calls[0][1]["address"] == "anim1pool"
+    assert rpc.calls[1][1]["payout_address"] == "anim1pool"
+
+
+@pytest.mark.asyncio
 async def test_get_new_job_omits_empty_pool_address(monkeypatch):
     payload = {
         "jobId": "abc",

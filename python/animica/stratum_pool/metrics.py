@@ -825,11 +825,20 @@ class PoolMetrics:
         }
 
     def payout_due_addresses(
-        self, *, min_amount: int, limit: int = 50
+        self,
+        *,
+        min_amount: int,
+        limit: int = 50,
+        max_total_amount: Optional[int] = None,
     ) -> List[Dict[str, object]]:
         min_amount = max(1, int(min_amount or 1))
         limit = max(1, min(int(limit or 50), 500))
         items: List[Dict[str, object]] = []
+        max_total = (
+            max(0, int(max_total_amount))
+            if max_total_amount is not None
+            else None
+        )
 
         if self._db is not None:
             with self._db_lock:
@@ -861,7 +870,12 @@ class PoolMetrics:
                         "updated_at": self._iso_ts(float(updated_ts or 0.0)),
                     }
                 )
-            return items
+            return self._cap_due_items(
+                items=items,
+                min_amount=min_amount,
+                limit=limit,
+                max_total=max_total,
+            )
 
         by_address: Dict[str, Dict[str, object]] = {}
         for (mode, _worker, address), row in self._worker_balances_cache.items():
@@ -909,7 +923,73 @@ class PoolMetrics:
             )
             if len(items) >= limit:
                 break
-        return items
+        return self._cap_due_items(
+            items=items,
+            min_amount=min_amount,
+            limit=limit,
+            max_total=max_total,
+        )
+
+    @staticmethod
+    def _cap_due_items(
+        *,
+        items: List[Dict[str, object]],
+        min_amount: int,
+        limit: int,
+        max_total: Optional[int],
+    ) -> List[Dict[str, object]]:
+        if max_total is None:
+            return items
+        if max_total < min_amount:
+            return []
+
+        remaining = int(max_total)
+        capped: List[Dict[str, object]] = []
+        for item in items:
+            if remaining < min_amount or len(capped) >= limit:
+                break
+            amount = int(item.get("amount") or 0)
+            if amount <= 0:
+                continue
+            applied = min(amount, remaining)
+            if applied < min_amount:
+                break
+            next_item = dict(item)
+            next_item["amount"] = int(applied)
+            capped.append(next_item)
+            remaining -= applied
+        return capped
+
+    def mined_reward_in_window(
+        self, *, window_seconds: float, now: Optional[float] = None
+    ) -> int:
+        window = max(0.0, float(window_seconds or 0.0))
+        if window <= 0:
+            return 0
+        now_ts = float(now) if now is not None else float(time.time())
+        cutoff = now_ts - window
+
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    """
+                    SELECT COALESCE(SUM(reward), 0)
+                    FROM blocks
+                    WHERE found_by_pool = 1 AND ts > ? AND ts <= ?
+                    """,
+                    (cutoff, now_ts),
+                ).fetchone()
+            return max(0, int((row or [0])[0] or 0))
+
+        total = 0
+        for blk in self._block_events:
+            ts = float(blk.get("timestamp") or 0.0)
+            if ts <= cutoff or ts > now_ts:
+                continue
+            if not bool(blk.get("found_by_pool", True)):
+                continue
+            total += int(blk.get("reward") or 0)
+        return max(0, int(total))
 
     def record_payout_sent(
         self,
