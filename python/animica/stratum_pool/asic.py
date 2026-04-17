@@ -29,6 +29,59 @@ def _bits_to_target(bits_hex: str) -> int:
     return mantissa * (1 << (8 * (exponent - 3)))
 
 
+def _target_for_difficulty(difficulty: float) -> int:
+    numeric = float(difficulty or 0.0)
+    if numeric <= 0:
+        numeric = 1e-12
+    target = int(D1_TARGET / numeric)
+    max_target = 2**256 - 1
+    return min(target, max_target)
+
+
+def _share_ratio_for_payout(difficulty: float, nbits_hex: str) -> float:
+    """Return share-work ratio against full block difficulty for PPS crediting."""
+    try:
+        block_target = _bits_to_target(str(nbits_hex))
+    except Exception:
+        return 1.0
+    share_target = _target_for_difficulty(difficulty)
+    if share_target <= 0:
+        return 1.0
+    ratio = float(block_target) / float(share_target)
+    if ratio <= 0.0:
+        return 0.0
+    if ratio >= 1.0:
+        return 1.0
+    return ratio
+
+
+def _parse_worker_identity(raw_worker: Any) -> tuple[Optional[str], Optional[str]]:
+    """Parse username into `(worker, payout_address)` when possible."""
+    text = str(raw_worker or "").strip()
+    if not text:
+        return None, None
+
+    split_pos = -1
+    for delim in (".", "/", ":"):
+        idx = text.find(delim)
+        if idx > 0 and (split_pos < 0 or idx < split_pos):
+            split_pos = idx
+
+    if split_pos > 0:
+        head = text[:split_pos].strip()
+        tail = text[split_pos + 1 :].strip()
+    else:
+        head = text
+        tail = ""
+
+    if head.startswith("anim1"):
+        worker = tail or text
+        return worker, head
+    if text.startswith("anim1"):
+        return text, text
+    return text, None
+
+
 @dataclass
 class Sha256Job:
     job_id: str
@@ -43,6 +96,7 @@ class Sha256Job:
     target: int
     difficulty: float
     height: int = 0
+    raw: Optional[Dict[str, Any]] = None
 
     @property
     def header(self) -> Dict[str, Any]:
@@ -73,6 +127,7 @@ class Sha256RpcAdapter:
         payload = await self._rpc_call(
             "miner.get_sha256_job", [{"address": self._pool_address}]
         )
+        raw_payload = dict(payload) if isinstance(payload, dict) else {}
         return Sha256Job(
             job_id=payload.get("jobId") or uuid.uuid4().hex,
             prevhash=str(payload.get("prevhash") or "0" * 64),
@@ -90,6 +145,7 @@ class Sha256RpcAdapter:
             ),
             difficulty=float(payload.get("difficulty") or 1.0),
             height=int(payload.get("height") or 0),
+            raw=raw_payload,
         )
 
     async def submit_block(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -121,13 +177,6 @@ class Sha256ShareValidator:
         header = version + prevhash + merkle_le + ntime + nbits + nonce
         return _double_sha(header)
 
-    def _target_for_difficulty(self, difficulty: float) -> int:
-        if difficulty <= 0:
-            difficulty = 1e-12
-        target = int(D1_TARGET / difficulty)
-        max_target = 2**256 - 1
-        return min(target, max_target)
-
     def validate(
         self, job: Sha256Job, session: "Sha256Session", submit_params: List[Any]
     ) -> tuple[bool, Optional[str], bool]:
@@ -148,7 +197,7 @@ class Sha256ShareValidator:
         header_hash = self._header_hash(job, merkle_root, ntime, nonce)
         hash_int = int.from_bytes(header_hash, "big")
 
-        share_target = self._target_for_difficulty(session.difficulty)
+        share_target = _target_for_difficulty(session.difficulty)
         block_target = _bits_to_target(job.nbits)
         is_block = hash_int <= block_target
 
@@ -164,7 +213,9 @@ class Sha256Session:
     extranonce1: str
     extranonce2_size: int
     difficulty: float
+    session_id: str = ""
     worker: Optional[str] = None
+    address: Optional[str] = None
     authorized: bool = False
     shares_accepted: int = 0
     shares_rejected: int = 0
@@ -173,9 +224,9 @@ class Sha256Session:
 
     def snapshot(self) -> Dict[str, Any]:
         return {
-            "session_id": self.extranonce1,
+            "session_id": self.session_id or self.extranonce1,
             "worker": self.worker,
-            "address": self.worker,
+            "address": self.address,
             "authorized": self.authorized,
             "share_target": self.difficulty,
             "theta_micro": 0,
@@ -324,6 +375,7 @@ class Sha256StratumServer:
         extranonce1 = secrets.token_hex(4)
         session = Sha256Session(
             writer=writer,
+            session_id=uuid.uuid4().hex,
             extranonce1=extranonce1,
             extranonce2_size=self._extranonce2_size,
             difficulty=self._default_difficulty,
@@ -397,14 +449,18 @@ class Sha256StratumServer:
             )
 
         elif method == "mining.authorize":
-            session.worker = params[0] if params else None
+            identity = params[0] if params else None
+            worker, address = _parse_worker_identity(identity)
+            session.worker = worker
+            session.address = address
             session.authorized = True
             await self._send(
                 session.writer, {"id": msg_id, "result": True, "error": None}
             )
             self._log.info(
-                "[ASIC] authorize worker=%s peer=%s",
+                "[ASIC] authorize worker=%s address=%s peer=%s",
                 session.worker,
+                session.address,
                 session.writer.get_extra_info("peername"),
             )
 
@@ -449,6 +505,7 @@ class Sha256StratumServer:
                 "job_id": job.job_id,
                 "params": params,
                 "shareTarget": session.difficulty,
+                "d_ratio": _share_ratio_for_payout(session.difficulty, job.nbits),
                 "height": job.height,
             }
 

@@ -5,7 +5,7 @@ import time
 import pytest
 
 from mining.stratum_client import StratumClient
-from mining.stratum_server import StratumJob, StratumServer
+from mining.stratum_server import Session, StratumJob, StratumServer
 
 
 def _free_port() -> int:
@@ -162,3 +162,42 @@ async def test_stratum_block_submit_hook_called():
 
     await client.close()
     await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_publish_job_does_not_block_fast_miners_on_stalled_peer():
+    server = StratumServer(send_timeout_secs=0.05)
+
+    slow = Session(session_id="slow", writer=object())  # type: ignore[arg-type]
+    fast = Session(session_id="fast", writer=object())  # type: ignore[arg-type]
+    server._sessions = {"slow": slow, "fast": fast}
+
+    sent_to: list[str] = []
+
+    async def _fake_send(session: Session, _obj: dict) -> None:
+        if session.session_id == "slow":
+            await asyncio.sleep(1.0)
+            return
+        sent_to.append(session.session_id)
+
+    server._send = _fake_send  # type: ignore[assignment]
+
+    job = StratumJob(
+        job_id="job-fanout",
+        header={"signBytes": "0x" + "00" * 32},
+        share_target=1.0,
+        theta_micro=1,
+        hints={"mixSeed": "0x" + "00" * 32},
+        target="0x" + "ff" * 32,
+        sign_bytes="0x" + "00" * 32,
+        height=1,
+        parent_hash="0x" + "11" * 32,
+        parent_height=0,
+        chain_id=1,
+    )
+
+    await asyncio.wait_for(server.publish_job(job), timeout=0.5)
+
+    assert "fast" in sent_to
+    assert fast.jobs_seen[-1] == "job-fanout"
+    assert "slow" not in server._sessions

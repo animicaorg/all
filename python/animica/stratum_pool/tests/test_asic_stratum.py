@@ -4,7 +4,8 @@ import time
 
 import pytest
 from animica.stratum_pool.asic import (Sha256Job, Sha256StratumServer,
-                                       _bits_to_target, _double_sha)
+                                       _bits_to_target, _double_sha,
+                                       _share_ratio_for_payout)
 
 
 class DummyAdapter:
@@ -14,6 +15,27 @@ class DummyAdapter:
     async def submit_block(self, payload):
         self.submissions.append(payload)
         return {"accepted": True, "payload": payload}
+
+
+class _FakeWriter:
+    def __init__(self) -> None:
+        self.messages: list[dict] = []
+
+    def write(self, payload: bytes) -> None:
+        self.messages.append(json.loads(payload.decode().strip()))
+
+    async def drain(self) -> None:
+        return None
+
+    def get_extra_info(self, key: str):
+        if key == "peername":
+            return ("127.0.0.1", 0)
+        return None
+
+
+class _AlwaysAcceptValidator:
+    def validate(self, _job, _session, _submit_params):
+        return True, None, False
 
 
 async def _read_json(reader):
@@ -51,6 +73,76 @@ class AntminerHarness:
 
     async def _recv(self) -> dict:
         return await _read_json(self._reader)
+
+
+def test_share_ratio_for_payout_is_normalized():
+    assert _share_ratio_for_payout(64.0, "1d00ffff") == 1.0
+    ratio = _share_ratio_for_payout(1.0, "1b0404cb")
+    assert 0.0 < ratio < 1.0
+
+
+@pytest.mark.asyncio
+async def test_submit_payload_includes_normalized_share_ratio():
+    adapter = DummyAdapter()
+    server = Sha256StratumServer(
+        host="127.0.0.1",
+        port=0,
+        adapter=adapter,
+        extranonce2_size=4,
+        default_difficulty=1.0,
+    )
+    server._validator = _AlwaysAcceptValidator()  # noqa: SLF001
+
+    writer = _FakeWriter()
+    session = server._alloc_session(writer)  # noqa: SLF001
+    session.worker = "anim1miner.worker-01"
+    session.address = "anim1miner"
+    session.authorized = True
+    job = Sha256Job(
+        job_id="job-ratio",
+        prevhash="00" * 32,
+        coinb1="",
+        coinb2="",
+        merkle_branch=[],
+        version="20000000",
+        nbits="1b0404cb",
+        ntime="00000000",
+        clean_jobs=True,
+        target=_bits_to_target("1b0404cb"),
+        difficulty=16384.0,
+        height=99,
+    )
+    server._jobs[job.job_id] = job  # noqa: SLF001
+    server._current_job = job  # noqa: SLF001
+
+    captured: dict[str, object] = {}
+
+    async def _capture_submit(
+        _session, _job, submit_payload, _accepted, _reason, _is_block, _tx_count
+    ) -> None:
+        captured["payload"] = dict(submit_payload)
+
+    server.set_submit_hook(_capture_submit)
+    await server._process_message(  # noqa: SLF001
+        session,
+        {
+            "id": 7,
+            "method": "mining.submit",
+            "params": [
+                "anim1miner.worker-01",
+                "job-ratio",
+                "00" * server._extranonce2_size,  # noqa: SLF001
+                "00000000",
+                "00000000",
+            ],
+        },
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    expected_ratio = _share_ratio_for_payout(session.difficulty, job.nbits)
+    assert payload["d_ratio"] == pytest.approx(expected_ratio)
+    assert 0.0 < float(payload["d_ratio"]) < 1.0
 
 
 @pytest.mark.asyncio
@@ -172,8 +264,12 @@ async def test_antminer_harness_round_trip():
     assert diff_msg["params"][0] >= 1e-12
     assert notify["params"][0] == job.job_id
 
-    auth_res = await harness.authorize("worker.antminer")
+    auth_res = await harness.authorize("anim1antminer.worker-ant")
     assert auth_res["result"] is True
+    snapshots = server.session_snapshots()
+    assert snapshots
+    assert snapshots[0]["address"] == "anim1antminer"
+    assert snapshots[0]["worker"] == "worker-ant"
 
     extranonce2 = "00" * server._extranonce2_size
     coinbase = bytes.fromhex(job.coinb1 + extranonce1 + extranonce2 + job.coinb2)
@@ -189,12 +285,12 @@ async def test_antminer_harness_round_trip():
     _double_sha(header)
 
     submit_res = await harness.submit(
-        ["worker.antminer", job.job_id, extranonce2, job.ntime, "00000000"]
+        ["anim1antminer.worker-ant", job.job_id, extranonce2, job.ntime, "00000000"]
     )
     assert submit_res["result"] is True
 
     stale_res = await harness.submit(
-        ["worker.antminer", "missing", extranonce2, job.ntime, "00000000"]
+        ["anim1antminer.worker-ant", "missing", extranonce2, job.ntime, "00000000"]
     )
     assert stale_res["error"][0] == 21
 

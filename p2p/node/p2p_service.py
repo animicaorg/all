@@ -38,6 +38,7 @@ from p2p.wire.encoding import decode_payload, encode_payload
 from p2p.wire.frames import Framer, unpack_frame
 from p2p.wire.message_ids import MsgID
 from rpc.instant_tx import get_instant_tx_service_singleton, instant_enabled
+from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from p2p.messages_tx import (
     TxData,
     TxGet,
@@ -8906,7 +8907,9 @@ class P2PService:
             return None
         try:
             height = int(getattr(hdr, "height"))
-            ts = int(getattr(hdr, "timestamp", 0))
+            ts = maybe_normalize_unix_timestamp_seconds(getattr(hdr, "timestamp", 0))
+            if ts is None:
+                ts = 0
             return height, ts
         except Exception:
             return None
@@ -8963,21 +8966,27 @@ class P2PService:
         return summary
 
     def _header_from_compact(self, hc: HeaderCompact) -> _SyncHeader:
+        ts = maybe_normalize_unix_timestamp_seconds(getattr(hc, "timestamp", 0))
+        if ts is None:
+            ts = 0
         return _SyncHeader(
             hash=bytes(hc.hash),
             parent_hash=bytes(hc.parent),
             height=int(hc.height),
             theta_micro=int(hc.theta_micro),
-            timestamp=int(hc.timestamp),
+            timestamp=int(ts),
         )
 
     def _sync_header_from_db(self, hdr: Any) -> _SyncHeader:
+        ts = maybe_normalize_unix_timestamp_seconds(getattr(hdr, "timestamp", 0))
+        if ts is None:
+            ts = 0
         return _SyncHeader(
             hash=hdr.hash(),
             parent_hash=bytes(hdr.parentHash),
             height=int(hdr.height),
             theta_micro=int(getattr(hdr, "thetaMicro", 0)),
-            timestamp=int(getattr(hdr, "timestamp", 0)),
+            timestamp=int(ts),
         )
 
     def _sync_header_by_hash(self, h: bytes) -> Optional[_SyncHeader]:
@@ -13472,7 +13481,9 @@ class P2PService:
                         height=int(hdr.height),
                         parent=bytes(hdr.parent_hash),
                         theta_micro=int(hdr.theta_micro),
-                        timestamp=int(hdr.timestamp),
+                        timestamp=int(
+                            maybe_normalize_unix_timestamp_seconds(hdr.timestamp) or 0
+                        ),
                     )
                 )
                 continue
@@ -13487,7 +13498,12 @@ class P2PService:
                     height=int(hdr.height),
                     parent=bytes(hdr.parentHash),
                     theta_micro=int(getattr(hdr, "thetaMicro", 0)),
-                    timestamp=int(getattr(hdr, "timestamp", 0)),
+                    timestamp=int(
+                        maybe_normalize_unix_timestamp_seconds(
+                            getattr(hdr, "timestamp", 0)
+                        )
+                        or 0
+                    ),
                 )
             )
         return out
@@ -13770,12 +13786,15 @@ class P2PService:
             parent_bytes = self._parse_hash_bytes(payload.get("parent_hash"))
             if not hash_bytes or not parent_bytes:
                 return None
+            ts = maybe_normalize_unix_timestamp_seconds(payload.get("timestamp") or 0)
+            if ts is None:
+                ts = 0
             return _SyncHeader(
                 hash=hash_bytes,
                 parent_hash=parent_bytes,
                 height=int(payload.get("height") or 0),
                 theta_micro=int(payload.get("theta_micro") or 0),
-                timestamp=int(payload.get("timestamp") or 0),
+                timestamp=int(ts),
             )
         except Exception:
             return None

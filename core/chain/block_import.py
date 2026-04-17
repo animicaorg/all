@@ -67,6 +67,7 @@ from core.types.params import ChainParams
 from core.types.receipt import \
     Receipt  # imported for type completeness; not used here
 from core.types.tx import PqSignature, Tx, TxKind, UnsignedTx
+from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
@@ -192,12 +193,18 @@ def _timestamp_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> O
     if hasattr(header, "timestamp"):
         ts = getattr(header, "timestamp")
         if ts is not None:
-            return int(ts)
+            normalized = maybe_normalize_unix_timestamp_seconds(ts)
+            if normalized is not None:
+                return normalized
     if payload:
         if "timestamp" in payload and payload["timestamp"] is not None:
-            return int(payload["timestamp"])
+            normalized = maybe_normalize_unix_timestamp_seconds(payload["timestamp"])
+            if normalized is not None:
+                return normalized
         if "time" in payload and payload["time"] is not None:
-            return int(payload["time"])
+            normalized = maybe_normalize_unix_timestamp_seconds(payload["time"])
+            if normalized is not None:
+                return normalized
     return None
 
 

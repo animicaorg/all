@@ -21,6 +21,8 @@ from .service_runtime import (is_running, read_metadata, read_pid,
 
 app = typer.Typer(help="Stratum pool lifecycle commands.")
 console = Console()
+POOL_DB_URL_ENV = "ANIMICA_MINING_POOL_DB_URL"
+DEFAULT_POOL_DB_URL = "sqlite:///animica_pool.db"
 
 
 def _repo_root() -> Path:
@@ -46,6 +48,36 @@ def _api_url(metadata: dict[str, object]) -> str:
         return api_url
     cfg = load_config_from_env()
     return f"http://{cfg.api_host}:{cfg.api_port}"
+
+
+def _resolve_pool_db_url(explicit: Optional[str] = None) -> str:
+    candidate = explicit if explicit is not None else os.environ.get(POOL_DB_URL_ENV)
+    if candidate is None:
+        return DEFAULT_POOL_DB_URL
+    value = str(candidate).strip()
+    return value or DEFAULT_POOL_DB_URL
+
+
+def _resolve_sqlite_db_path(db_url: str) -> Path:
+    if not db_url.startswith("sqlite"):
+        raise ValueError("only sqlite URLs are supported")
+    # Keep path parsing aligned with PoolMetrics._init_db.
+    path = db_url.replace("sqlite:///", "", 1)
+    if path.startswith("//"):
+        path = path[1:]
+    if not path.strip():
+        raise ValueError("database path cannot be empty")
+    return Path(path).expanduser()
+
+
+def _pool_db_candidates(db_path: Path) -> list[Path]:
+    base = str(db_path)
+    return [
+        db_path,
+        Path(f"{base}-wal"),
+        Path(f"{base}-shm"),
+        Path(f"{base}-journal"),
+    ]
 
 
 def _rpc_json_call(
@@ -278,6 +310,82 @@ def config() -> None:
 def show_config() -> None:
     """Alias for `animica stratum config`."""
     config()
+
+
+@app.command("reset")
+def reset(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Actually delete pool DB files (default is dry-run)",
+    ),
+    stop: bool = typer.Option(
+        False,
+        "--stop",
+        help="Stop managed pool before deleting DB files if it is running",
+    ),
+    db_url: Optional[str] = typer.Option(
+        None,
+        "--db-url",
+        help=f"Override DB URL (default: {POOL_DB_URL_ENV} or {DEFAULT_POOL_DB_URL})",
+    ),
+) -> None:
+    """Reset Stratum pool accounting DB files (shares, blocks, payouts)."""
+    resolved_db_url = _resolve_pool_db_url(db_url)
+    try:
+        db_path = _resolve_sqlite_db_path(resolved_db_url)
+    except ValueError as exc:
+        console.print(f"[red]Unsupported DB URL[/red] {resolved_db_url} ({exc})")
+        raise typer.Exit(2) from exc
+
+    files = _pool_db_candidates(db_path)
+    state = _service_state()
+    pid = read_pid(state)
+    running = is_running(pid)
+
+    console.print("[bold]Pool DB Reset Plan[/bold]\n")
+    console.print(f"DB URL: {resolved_db_url}")
+    console.print(f"DB path: {db_path}")
+    if running:
+        console.print(f"Pool process: [yellow]running[/yellow] (pid {pid})")
+    else:
+        console.print("Pool process: [green]stopped[/green]")
+    for candidate in files:
+        status = "exists" if candidate.exists() else "missing"
+        console.print(f" - [{status}] {candidate}")
+
+    if not force:
+        console.print(
+            "[yellow]Dry-run only.[/yellow] Re-run with [bold]--force[/bold] to delete these files."
+        )
+        return
+
+    if running:
+        if not stop:
+            console.print(
+                "[red]Refusing to reset while pool is running.[/red] Use [bold]animica pool down[/bold] or pass [bold]--stop[/bold]."
+            )
+            raise typer.Exit(1)
+        stop_daemon(state)
+        console.print(f"[green]✓ Stopped Stratum pool (pid {pid})[/green]")
+
+    removed: list[Path] = []
+    for candidate in files:
+        if not candidate.exists():
+            continue
+        if candidate.is_dir():
+            console.print(f"[red]Refusing to delete directory[/red] {candidate}")
+            raise typer.Exit(1)
+        candidate.unlink()
+        removed.append(candidate)
+
+    if not removed:
+        console.print("[green]✓ Pool DB already clean[/green] (no files removed)")
+        return
+
+    for candidate in removed:
+        console.print(f"[green]removed[/green] {candidate}")
+    console.print(f"[green]✓ Pool DB reset complete[/green] ({len(removed)} files removed)")
 
 
 @app.command("init")

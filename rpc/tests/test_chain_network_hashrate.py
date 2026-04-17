@@ -8,6 +8,7 @@ from core.types.block import Block
 from core.utils.hash import ZERO32
 from rpc import deps
 from rpc.hashrate import difficulty_to_work, work_to_hashshare_rate
+from rpc.methods import chain as chain_methods
 from rpc.tests import new_test_client, rpc_call
 
 
@@ -59,6 +60,44 @@ def test_chain_get_network_hashrate_computes_from_headers():
     dt = header2.timestamp - genesis.timestamp
     assert result["hashrate_hsps"] == pytest.approx(
         work_to_hashshare_rate(expected_work / dt), rel=1e-6
+    )
+
+
+def test_chain_get_network_hashrate_normalizes_mixed_timestamp_units():
+    client, _, _ = new_test_client()
+    ctx = deps.get_ctx()
+    block_db = ctx.block_db
+    genesis = block_db.get_header_by_height(0)
+    assert genesis is not None
+
+    # Ensure no stale cache leaks between tests.
+    chain_methods._NETWORK_HASHRATE_CACHE.update(
+        {"at": 0.0, "key": None, "payload": None}
+    )
+
+    theta_micro = 1_000_000
+    base_ts = int(getattr(genesis, "timestamp", 0) or 0)
+    header1 = _append_block(
+        block_db,
+        genesis,
+        timestamp=(base_ts + 10) * 1_000,  # milliseconds
+        theta_micro=theta_micro,
+    )
+    _append_block(
+        block_db,
+        header1,
+        timestamp=(base_ts + 20) * 1_000_000,  # microseconds
+        theta_micro=theta_micro,
+    )
+
+    res = rpc_call(client, "chain.getNetworkHashrate", params={"window_blocks": 3})
+    result = res["result"]
+    expected_work = 3 * difficulty_to_work(theta_micro)
+    expected_dt = 20.0
+
+    assert result["window_seconds"] == pytest.approx(expected_dt, rel=1e-6)
+    assert result["hashrate_hsps"] == pytest.approx(
+        work_to_hashshare_rate(expected_work / expected_dt), rel=1e-6
     )
 
 

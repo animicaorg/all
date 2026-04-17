@@ -130,3 +130,75 @@ def test_doctor_reports_success(tmp_path: Path, monkeypatch: Any) -> None:
     assert "PASS node_rpc" in result.output
     assert "PASS template" in result.output
     assert "PASS pool_api" in result.output
+
+
+def test_pool_db_reset_dry_run_by_default(tmp_path: Path, monkeypatch: Any) -> None:
+    db_path = tmp_path / "animica_pool.db"
+    db_path.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setenv("ANIMICA_MINING_POOL_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ANIMICA_SERVICE_STATE_DIR", str(tmp_path / "svc"))
+
+    result = runner.invoke(stratum.app, ["reset"])
+
+    assert result.exit_code == 0
+    assert "Dry-run only" in result.output
+    assert db_path.exists()
+
+
+def test_pool_db_reset_force_removes_db_and_sidecars(tmp_path: Path, monkeypatch: Any) -> None:
+    db_path = tmp_path / "animica_pool.db"
+    wal_path = Path(f"{db_path}-wal")
+    shm_path = Path(f"{db_path}-shm")
+    journal_path = Path(f"{db_path}-journal")
+    db_path.write_text("db", encoding="utf-8")
+    wal_path.write_text("wal", encoding="utf-8")
+    shm_path.write_text("shm", encoding="utf-8")
+    journal_path.write_text("journal", encoding="utf-8")
+    monkeypatch.setenv("ANIMICA_MINING_POOL_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ANIMICA_SERVICE_STATE_DIR", str(tmp_path / "svc"))
+    monkeypatch.setattr(stratum, "read_pid", lambda _state: None)
+    monkeypatch.setattr(stratum, "is_running", lambda pid: False)
+
+    result = runner.invoke(stratum.app, ["reset", "--force"])
+
+    assert result.exit_code == 0
+    assert not db_path.exists()
+    assert not wal_path.exists()
+    assert not shm_path.exists()
+    assert not journal_path.exists()
+
+
+def test_pool_db_reset_refuses_running_pool_without_stop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    db_path = tmp_path / "animica_pool.db"
+    db_path.write_text("db", encoding="utf-8")
+    monkeypatch.setenv("ANIMICA_MINING_POOL_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ANIMICA_SERVICE_STATE_DIR", str(tmp_path / "svc"))
+    monkeypatch.setattr(stratum, "read_pid", lambda _state: 1234)
+    monkeypatch.setattr(stratum, "is_running", lambda pid: bool(pid))
+    stop_calls: list[bool] = []
+    monkeypatch.setattr(stratum, "stop_daemon", lambda _state: stop_calls.append(True))
+
+    result = runner.invoke(stratum.app, ["reset", "--force"])
+
+    assert result.exit_code == 1
+    assert db_path.exists()
+    assert stop_calls == []
+
+
+def test_pool_db_reset_can_stop_running_pool(tmp_path: Path, monkeypatch: Any) -> None:
+    db_path = tmp_path / "animica_pool.db"
+    db_path.write_text("db", encoding="utf-8")
+    monkeypatch.setenv("ANIMICA_MINING_POOL_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ANIMICA_SERVICE_STATE_DIR", str(tmp_path / "svc"))
+    monkeypatch.setattr(stratum, "read_pid", lambda _state: 1234)
+    monkeypatch.setattr(stratum, "is_running", lambda pid: bool(pid))
+    stop_calls: list[bool] = []
+    monkeypatch.setattr(stratum, "stop_daemon", lambda _state: stop_calls.append(True))
+
+    result = runner.invoke(stratum.app, ["reset", "--force", "--stop"])
+
+    assert result.exit_code == 0
+    assert stop_calls == [True]
+    assert not db_path.exists()

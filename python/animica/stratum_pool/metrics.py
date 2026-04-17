@@ -7,9 +7,9 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
-from mining.stratum_server import Session, StratumJob, StratumServer
+from mining.stratum_server import StratumServer
 
 from .config import PoolConfig
 from .job_manager import JobManager
@@ -163,8 +163,8 @@ class PoolMetrics:
 
     async def record_share(
         self,
-        session: Session,
-        job: StratumJob,
+        session: object,
+        job: object,
         submit_params: Dict[str, object],
         ok: bool,
         reason: Optional[str],
@@ -173,31 +173,47 @@ class PoolMetrics:
     ) -> None:
         now = time.time()
         reward = self._expected_reward(job)
-        worker = self._normalize_worker(session.worker, session.session_id)
-        address = self._normalize_address(session.address)
+        session_id = str(
+            getattr(session, "session_id", None)
+            or getattr(session, "extranonce1", None)
+            or ""
+        ).strip()
+        worker_hint = getattr(session, "worker", None)
+        parsed_worker, parsed_address = self._parse_worker_identity(worker_hint)
+        worker = self._normalize_worker(worker_hint or parsed_worker, session_id)
+        address_hint = getattr(session, "address", None) or parsed_address
+        address = self._normalize_address(address_hint)
+
         accepted_block = bool(ok and is_block)
         difficulty_value = submit_params.get("d_ratio")
         if difficulty_value in (None, ""):
             difficulty_value = submit_params.get("shareTarget")
         if difficulty_value in (None, ""):
-            difficulty_value = 1.0 if accepted_block else job.share_target
+            difficulty_value = (
+                1.0 if accepted_block else float(getattr(job, "share_target", 0.0))
+            )
         difficulty = float(difficulty_value)
         if accepted_block:
             # Block-winning shares should be credited at full ratio even when
             # legacy submit payloads omit d_ratio.
             difficulty = max(1.0, difficulty)
+        job_id = str(
+            getattr(job, "job_id", None) or submit_params.get("jobId") or "unknown-job"
+        )
+        header = getattr(job, "header", None)
+        header_map = header if isinstance(header, dict) else {}
         event: ShareEvent = {
             "timestamp": now,
-            "session_id": session.session_id,
+            "session_id": session_id or "unknown-session",
             "worker": worker,
             "address": address,
             "difficulty": difficulty,
             "status": "accepted" if ok else "rejected",
             "reason": reason,
-            "job_id": job.job_id,
+            "job_id": job_id,
             "height": submit_params.get("height")
-            or job.header.get("number")
-            or job.header.get("height"),
+            or header_map.get("number")
+            or header_map.get("height"),
         }
         self._share_events.append(event)
         self._persist_share(
@@ -210,7 +226,7 @@ class PoolMetrics:
             ts=now,
             worker=worker,
             address=address,
-            job_id=job.job_id,
+            job_id=job_id,
             ok=ok,
             is_block=accepted_block,
             reward=reward,
@@ -230,7 +246,7 @@ class PoolMetrics:
                 {
                     "found_by_pool": True,
                     "timestamp": now,
-                    "job_id": job.job_id,
+                    "job_id": job_id,
                     "height": event["height"],
                     "reward": reward,
                     "tx_count": tx_count,
@@ -338,10 +354,42 @@ class PoolMetrics:
             amount = self._int_value(coinbase.get("amount"))
             if amount > 0:
                 return amount
-        return self._int_value(raw.get("reward") or raw.get("blockReward"))
+        return self._int_value(
+            raw.get("reward")
+            or raw.get("blockReward")
+            or raw.get("coinbaseValue")
+            or raw.get("coinbase_value")
+            or raw.get("coinbasevalue")
+        )
 
-    def _expected_reward(self, job: StratumJob) -> int:
-        return self._reward_from_raw(job.raw)
+    def _expected_reward(self, job: object) -> int:
+        return self._reward_from_raw(getattr(job, "raw", None))
+
+    @staticmethod
+    def _parse_worker_identity(raw_worker: object) -> tuple[Optional[str], Optional[str]]:
+        text = str(raw_worker or "").strip()
+        if not text:
+            return None, None
+
+        split_pos = -1
+        for delim in (".", "/", ":"):
+            idx = text.find(delim)
+            if idx > 0 and (split_pos < 0 or idx < split_pos):
+                split_pos = idx
+
+        if split_pos > 0:
+            head = text[:split_pos].strip()
+            tail = text[split_pos + 1 :].strip()
+        else:
+            head = text
+            tail = ""
+
+        if head.startswith("anim1"):
+            worker = tail or text
+            return worker, head
+        if text.startswith("anim1"):
+            return text, text
+        return text, None
 
     @staticmethod
     def _normalize_worker(worker: Optional[str], session_id: Optional[str] = None) -> str:
@@ -943,21 +991,62 @@ class PoolMetrics:
         if max_total < min_amount:
             return []
 
-        remaining = int(max_total)
-        capped: List[Dict[str, object]] = []
+        eligible: List[Dict[str, object]] = []
+        amounts: List[int] = []
         for item in items:
-            if remaining < min_amount or len(capped) >= limit:
-                break
             amount = int(item.get("amount") or 0)
             if amount <= 0:
                 continue
-            applied = min(amount, remaining)
+            eligible.append(item)
+            amounts.append(amount)
+        if not eligible:
+            return []
+
+        budget = int(max_total)
+        total_due = int(sum(amounts))
+        if total_due <= budget:
+            return eligible[:limit]
+
+        # Pro-rate the available budget across all due addresses so no single
+        # largest balance can monopolize each payout cycle.
+        scale = float(budget) / float(total_due)
+        allocated: List[int] = []
+        fractions: List[float] = []
+        for amount in amounts:
+            scaled = float(amount) * scale
+            base = min(amount, int(scaled))
+            allocated.append(base)
+            fractions.append(scaled - float(base))
+
+        remaining = budget - sum(allocated)
+        if remaining > 0:
+            order = sorted(
+                range(len(eligible)),
+                key=lambda idx: (
+                    fractions[idx],
+                    str(eligible[idx].get("address") or ""),
+                    -idx,
+                ),
+                reverse=True,
+            )
+            for idx in order:
+                if remaining <= 0:
+                    break
+                room = amounts[idx] - allocated[idx]
+                if room <= 0:
+                    continue
+                allocated[idx] += 1
+                remaining -= 1
+
+        capped: List[Dict[str, object]] = []
+        for item, applied in zip(eligible, allocated):
             if applied < min_amount:
-                break
+                continue
             next_item = dict(item)
             next_item["amount"] = int(applied)
             capped.append(next_item)
-            remaining -= applied
+            if len(capped) >= limit:
+                break
         return capped
 
     def mined_reward_in_window(
@@ -990,6 +1079,42 @@ class PoolMetrics:
                 continue
             total += int(blk.get("reward") or 0)
         return max(0, int(total))
+
+    def payout_available_budget(self) -> int:
+        """Return mined reward that has not already been submitted as payouts."""
+        if self._db is not None:
+            with self._db_lock:
+                mined_row = self._db.execute(
+                    """
+                    SELECT COALESCE(SUM(reward), 0)
+                    FROM blocks
+                    WHERE found_by_pool = 1
+                    """
+                ).fetchone()
+                paid_row = self._db.execute(
+                    """
+                    SELECT COALESCE(SUM(amount), 0)
+                    FROM payouts
+                    WHERE mode = ? AND status = ?
+                    """,
+                    (self._pool_mode, "submitted"),
+                ).fetchone()
+            mined_total = int((mined_row or [0])[0] or 0)
+            paid_total = int((paid_row or [0])[0] or 0)
+            return max(0, mined_total - paid_total)
+
+        mined_total = 0
+        for blk in self._block_events:
+            if not bool(blk.get("found_by_pool", True)):
+                continue
+            mined_total += int(blk.get("reward") or 0)
+
+        paid_total = 0
+        for (mode, _worker, _address), row in self._worker_balances_cache.items():
+            if mode != self._pool_mode:
+                continue
+            paid_total += int(row.get("paid_out") or 0)
+        return max(0, mined_total - paid_total)
 
     def record_payout_sent(
         self,

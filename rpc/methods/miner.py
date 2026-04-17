@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from core.types.block import Block
 from core.types.header import Header
 from core.types.tx import Tx
+from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.merkle import merkle_root
 from core.utils.tx import TxNormalizationError, normalize_tx, normalize_tx_bytes, normalize_tx_envelope
 from mining.adapters.core_chain import CoreChainAdapter
@@ -1179,18 +1180,16 @@ def _header_timestamp_seconds(header: Any) -> int:
         for key in ("timestamp", "time", "ts"):
             value = header.get(key)
             if value is not None:
-                try:
-                    return int(value)
-                except Exception:
-                    continue
+                normalized = maybe_normalize_unix_timestamp_seconds(value)
+                if normalized is not None:
+                    return normalized
         return 0
     for attr in ("timestamp", "time", "ts"):
         value = getattr(header, attr, None)
         if value is not None:
-            try:
-                return int(value)
-            except Exception:
-                continue
+            normalized = maybe_normalize_unix_timestamp_seconds(value)
+            if normalized is not None:
+                return normalized
     return 0
 
 
@@ -1210,7 +1209,9 @@ def _head_timestamp_seconds() -> Optional[int]:
             header = ctx.block_db.get_header_by_hash(h_bytes)
             ts = getattr(header, "timestamp", None) if header is not None else None
             if ts is not None:
-                return int(ts)
+                normalized = maybe_normalize_unix_timestamp_seconds(ts)
+                if normalized is not None:
+                    return normalized
     except Exception:
         return None
     return None
