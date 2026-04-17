@@ -5,12 +5,38 @@ const HEX_PREFIX = /^0x/i
 function toNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
-    if (HEX_PREFIX.test(value)) {
-      const parsed = Number.parseInt(value, 16)
+    const trimmed = value.trim()
+    if (!trimmed) return undefined
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) {
+      const parsed = Number.parseInt(trimmed, 16)
       return Number.isNaN(parsed) ? undefined : parsed
     }
-    const parsed = Number.parseInt(value, 10)
+    if (!/^-?[0-9]+$/.test(trimmed)) return undefined
+    const parsed = Number.parseInt(trimmed, 10)
     return Number.isNaN(parsed) ? undefined : parsed
+  }
+  return undefined
+}
+
+function toTimestampSeconds(value: unknown): number | undefined {
+  const parsed = toNumber(value)
+  if (parsed === undefined) return undefined
+
+  const abs = Math.abs(parsed)
+  // Normalize common epoch encodings to seconds.
+  // - >= 1e18: nanoseconds
+  // - >= 1e15: microseconds
+  // - >= 1e12: milliseconds
+  if (abs >= 1e18) return Math.trunc(parsed / 1_000_000_000)
+  if (abs >= 1e15) return Math.trunc(parsed / 1_000_000)
+  if (abs >= 1e12) return Math.trunc(parsed / 1_000)
+  return Math.trunc(parsed)
+}
+
+function firstTimestampSeconds(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const normalized = toTimestampSeconds(value)
+    if (normalized !== undefined) return normalized
   }
   return undefined
 }
@@ -46,7 +72,15 @@ export function normalizeHead(head: any): HeadView {
     height: toNumber(head?.height ?? head?.number) ?? 0,
     canonicalHeight: toNumber(head?.canonicalHeight ?? head?.canonical_height),
     hash: head?.hash ?? head?.headerHash ?? '0x0',
-    time: toNumber(head?.time ?? head?.timestamp ?? head?.header?.time) ?? 0,
+    time:
+      firstTimestampSeconds(
+        head?.time,
+        head?.timestamp,
+        head?.ts,
+        head?.header?.time,
+        head?.header?.timestamp,
+        head?.header?.ts
+      ) ?? 0,
     chainId: toNumber(head?.chainId),
     thetaMicro: toNumber(
       head?.thetaMicro ??
@@ -62,7 +96,15 @@ export function normalizeBlockSummary(block: any): BlockSummary {
   const height = toNumber(header?.height ?? header?.number ?? block?.number) ?? 0
   const canonicalHeight = toNumber(header?.canonicalHeight ?? header?.canonical_height ?? block?.canonicalHeight ?? block?.canonical_height)
   const hash = header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0'
-  const time = toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0
+  const time =
+    firstTimestampSeconds(
+      header?.time,
+      header?.timestamp,
+      header?.ts,
+      block?.time,
+      block?.timestamp,
+      block?.ts
+    ) ?? 0
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
   return {
     height,
@@ -101,7 +143,15 @@ export function normalizeBlockDetail(block: any): BlockDetail {
     canonicalHeight: toNumber(header?.canonicalHeight ?? header?.canonical_height ?? block?.canonicalHeight ?? block?.canonical_height),
     hash: header?.hash ?? header?.headerHash ?? block?.hash ?? '0x0',
     parentHash: header?.parentHash ?? header?.parent ?? header?.prevHash,
-    time: toNumber(header?.time ?? header?.timestamp ?? block?.time) ?? 0,
+    time:
+      firstTimestampSeconds(
+        header?.time,
+        header?.timestamp,
+        header?.ts,
+        block?.time,
+        block?.timestamp,
+        block?.ts
+      ) ?? 0,
     chainId: toNumber(header?.chainId),
     difficulty: header?.difficulty ?? header?.target ?? header?.thetaMicro ?? null,
     nonce: toNumber(header?.nonce),

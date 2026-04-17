@@ -6,10 +6,18 @@ const TX_HASH = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 describe('transaction lookup lifecycle', () => {
   it('pending -> confirmed transition returns included data and confirmations', async () => {
     let confirmed = false
+    const confirmedBlockTime = 1_700_000_148
 
     const service = new ExplorerService({
       getHead: async () => ({ height: 150, hash: '0x' + 'f'.repeat(64), time: 1700000000 }),
-      getBlockByNumber: vi.fn(),
+      getBlockByNumber: async (height: number | string) => ({
+        header: {
+          height: Number(height),
+          hash: '0x' + (Number(height) === 148 ? 'b' : 'e').repeat(64),
+          time: Number(height) === 148 ? confirmedBlockTime : 1_700_000_000 + Number(height)
+        },
+        txs: []
+      }),
       getBlockByHash: vi.fn(),
       getTransactionByHash: async () => confirmed ? ({ hash: TX_HASH, from: 'anim1a', to: 'anim1b', value: '0x1', blockNumber: 148, blockHash: '0x' + 'b'.repeat(64) }) : null,
       getTransactionReceipt: async () => confirmed ? ({ txHash: TX_HASH, blockHash: '0x' + 'b'.repeat(64), blockNumber: 148, status: 'SUCCESS' }) : null,
@@ -31,6 +39,7 @@ describe('transaction lookup lifecycle', () => {
     expect(confirmedTx.included_height).toBe(148)
     expect(confirmedTx.included_block_hash).toBe('0x' + 'b'.repeat(64))
     expect(confirmedTx.confirmations).toBe(3)
+    expect(confirmedTx.timestamp).toBe(confirmedBlockTime)
   })
 
   it('confirmed ingestion from block stores tx body fields for later lookup', async () => {

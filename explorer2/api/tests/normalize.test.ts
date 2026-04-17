@@ -38,6 +38,15 @@ describe('normalizeHead', () => {
     })
     expect(nested.thetaMicro).toBe(2_000_000)
   })
+
+  it('falls back to nested header timestamp and normalizes milliseconds to seconds', () => {
+    const head = normalizeHead({
+      height: 12,
+      hash: '0xaaa',
+      header: { timestamp: 1_700_000_123_000 }
+    })
+    expect(head.time).toBe(1_700_000_123)
+  })
 })
 
 describe('normalizeBlockSummary', () => {
@@ -78,6 +87,25 @@ describe('normalizeBlockSummary', () => {
     })
     expect(block.thetaMicro).toBe(2_000_000)
   })
+
+  it('falls back to block.timestamp when header time fields are missing', () => {
+    const block = normalizeBlockSummary({
+      number: 12,
+      hash: '0xblock12',
+      timestamp: 1_700_000_120,
+      transactions: []
+    })
+    expect(block.height).toBe(12)
+    expect(block.time).toBe(1_700_000_120)
+  })
+
+  it('normalizes microsecond timestamps to seconds', () => {
+    const block = normalizeBlockSummary({
+      header: { height: 13, hash: '0xblock13', timestamp: 1_700_000_130_000_000 },
+      txs: []
+    })
+    expect(block.time).toBe(1_700_000_130)
+  })
 })
 
 describe('normalizeBlockDetail', () => {
@@ -113,6 +141,18 @@ describe('normalizeBlockDetail', () => {
     })
     expect(block.height).toBe(10)
     expect(block.nonce).toBe(0)
+  })
+
+  it('falls back to block.timestamp and normalizes nanoseconds to seconds', () => {
+    const block = normalizeBlockDetail({
+      number: 14,
+      hash: '0x14',
+      parentHash: '0x13',
+      timestamp: 1_700_000_140_000_000_000,
+      txs: []
+    })
+    expect(block.height).toBe(14)
+    expect(block.time).toBe(1_700_000_140)
   })
 })
 

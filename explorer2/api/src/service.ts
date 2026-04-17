@@ -211,6 +211,9 @@ export class ExplorerService {
         const includedBlockHash = detail.blockHash ? String(detail.blockHash) : null
         const hasIncludedHeight = isDefinedNumber(includedHeight)
         const confirmations = hasIncludedHeight ? Math.max(0, head.height - includedHeight + 1) : 0
+        const confirmedTimestamp = hasIncludedHeight
+          ? await this.resolveIncludedTxTimestamp(includedHeight, includedBlockHash)
+          : null
 
         if (hasIncludedHeight) {
           this.txLifecycle.upsertConfirmed({
@@ -218,7 +221,7 @@ export class ExplorerService {
             includedHeight,
             includedBlockHash: includedBlockHash ?? normalizedHash,
             includedIndex: 0,
-            timestamp: head.time,
+            timestamp: confirmedTimestamp,
             from: detail.from,
             to: detail.to,
             value: detail.value,
@@ -243,7 +246,7 @@ export class ExplorerService {
           included_height: includedHeight,
           included_block_hash: includedBlockHash,
           confirmations,
-          timestamp: hasIncludedHeight ? head.time : null,
+          timestamp: hasIncludedHeight ? confirmedTimestamp : null,
           explorer_head_height: head.height,
           fee: detail.feePaid
         })
@@ -1059,6 +1062,23 @@ export class ExplorerService {
           timestamp: isDefinedNumber(detail.time) ? detail.time : null
         }
       }
+    }
+
+    return null
+  }
+
+  private async resolveIncludedTxTimestamp(includedHeight: number, includedBlockHash: string | null): Promise<number | null> {
+    const blockLoaders: Array<() => Promise<unknown>> = []
+    if (includedBlockHash) {
+      blockLoaders.push(() => this.rpc.getBlockByHash(includedBlockHash, false, false))
+    }
+    blockLoaders.push(() => this.rpc.getBlockByNumber(includedHeight, false, false))
+
+    for (const loadBlock of blockLoaders) {
+      const rawBlock = await this.safeRpc(loadBlock).catch(() => null)
+      if (!rawBlock) continue
+      const summary = normalizeBlockSummary(rawBlock)
+      if (isDefinedNumber(summary.time) && summary.time > 0) return summary.time
     }
 
     return null

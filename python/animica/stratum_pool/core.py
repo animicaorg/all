@@ -455,6 +455,7 @@ class MiningCoreAdapter:
         work: Optional[Json] = None
 
         if self._pool_address:
+            deferred_template_unavailable: Optional[TemplateUnavailable] = None
             for template_params in self._block_template_param_variants(self._pool_address):
                 try:
                     template = await self._rpc_call(
@@ -463,9 +464,8 @@ class MiningCoreAdapter:
                     )
                     if isinstance(template, dict):
                         if template.get("enabled") is False:
-                            reason = str(template.get("reason") or "disabled")
-                            raise TemplateUnavailable(
-                                reason,
+                            deferred_template_unavailable = TemplateUnavailable(
+                                str(template.get("reason") or "disabled"),
                                 wait_seconds=_parse_float(
                                     template.get("waitSeconds"), default=0.0
                                 ),
@@ -475,6 +475,7 @@ class MiningCoreAdapter:
                                     else {}
                                 ),
                             )
+                            continue
                         if looks_like_block_template(template):
                             work = template
                             break
@@ -490,6 +491,8 @@ class MiningCoreAdapter:
                     last_exc = exc
                     raise
             if work is None:
+                if deferred_template_unavailable is not None:
+                    raise deferred_template_unavailable
                 raise RuntimeError(
                     f"unable to fetch block template for pool mining: {last_exc}"
                 )
