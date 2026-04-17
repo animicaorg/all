@@ -48,6 +48,41 @@ async def test_on_new_job_updates_theta_and_broadcasts_difficulty():
 
 
 @pytest.mark.asyncio
+async def test_on_new_job_overrides_stale_header_theta_with_issued_theta():
+    server = StratumPoolServer(
+        DummyAdapter(), PoolConfig(), JobManager(DummyAdapter(), PoolConfig())
+    )
+    server.stratum.set_global_difficulty = AsyncMock()
+    server.stratum.publish_job = AsyncMock()
+
+    job = MiningJob(
+        job_id="job-theta-override",
+        header={
+            "signBytes": "0x1234",
+            "thetaMicro": 900_000,
+            "thetaTargetMicro": 900_000,
+            "theta_target_micro": 900_000,
+        },
+        theta_micro=1_200_000,
+        issued_theta_micro=1_200_000,
+        share_target=0.5,
+        height=7,
+        target="0x99",
+        sign_bytes="0x1234",
+        hints={"mixSeed": "0x55"},
+        raw={"templateId": "job-theta-override"},
+    )
+
+    await server._on_new_job(job)
+
+    published_job = server.stratum.publish_job.await_args.args[0]
+    assert int(published_job.theta_micro) == 1_200_000
+    assert int(published_job.header["thetaMicro"]) == 1_200_000
+    assert int(published_job.header["thetaTargetMicro"]) == 1_200_000
+    assert int(published_job.header["theta_target_micro"]) == 1_200_000
+
+
+@pytest.mark.asyncio
 async def test_on_new_job_clamps_theta_micro_difficulty_bounds():
     cfg = PoolConfig(min_difficulty=120_000, max_difficulty=240_000)
     server = StratumPoolServer(

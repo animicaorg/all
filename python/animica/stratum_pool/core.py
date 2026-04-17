@@ -198,6 +198,47 @@ def _extract_submit_nonce(params: Json) -> int:
     return int_from_value(nonce, default=-1)
 
 
+def _parse_submit_timestamp_value(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        lowered = text.lower()
+        try:
+            if lowered.startswith("0x"):
+                parsed = int(lowered, 16)
+            elif len(lowered) == 8 and all(ch in "0123456789abcdef" for ch in lowered):
+                # Stratum V1 ntime is commonly an 8-hex-digit field.
+                parsed = int(lowered, 16)
+            else:
+                parsed = int_from_value(text, default=-1)
+        except Exception:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _extract_submit_timestamp(params: Json) -> Optional[int]:
+    hashshare = params.get("hashshare") or {}
+    body = hashshare.get("body") if isinstance(hashshare, dict) else {}
+    for candidate in (
+        hashshare.get("ntime"),
+        body.get("ntime") if isinstance(body, dict) else None,
+        params.get("ntime"),
+        params.get("timestamp"),
+        params.get("time"),
+    ):
+        parsed = _parse_submit_timestamp_value(candidate)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 @dataclass
 class MiningJob:
     job_id: str
@@ -269,11 +310,6 @@ def freeze_mining_job(job: MiningJob, *, fallback_chain_id: int) -> MiningJob:
     raw_template["header"] = dict(header_view)
 
     sign_bytes = job.sign_bytes
-    if sign_bytes is None and isinstance(header_view, dict):
-        try:
-            sign_bytes = "0x" + header_sign_bytes_from_template_view(header_view).hex()
-        except Exception:
-            sign_bytes = None
 
     hints = dict(job.hints) if isinstance(job.hints, dict) else {}
     mix_seed = _normalize_hex(
@@ -308,6 +344,16 @@ def freeze_mining_job(job: MiningJob, *, fallback_chain_id: int) -> MiningJob:
             default=0,
         )
     )
+    if issued_theta_micro > 0:
+        header_view["thetaMicro"] = issued_theta_micro
+        header_view["thetaTargetMicro"] = issued_theta_micro
+        header_view["theta_target_micro"] = issued_theta_micro
+        raw_template["header"] = dict(header_view)
+    if sign_bytes is None:
+        try:
+            sign_bytes = "0x" + header_sign_bytes_from_template_view(header_view).hex()
+        except Exception:
+            pass
     share_ratio = _pow_normalize_share_ratio(job.share_target, default=1.0)
     share_threshold_micro = int(job.share_threshold_micro or 0) or _derive_share_threshold_micro(
         issued_theta_micro,
@@ -710,6 +756,12 @@ class MiningCoreAdapter:
                 share_threshold_micro=int(job.share_threshold_micro or 0),
             )
             return False, "invalid nonce", False, 0
+
+        submit_timestamp = _extract_submit_timestamp(submit_params)
+        if submit_timestamp is not None:
+            header_view = dict(header_view)
+            header_view["timestamp"] = int(submit_timestamp)
+            template["header"] = dict(header_view)
 
         try:
             candidate_hash = hash_candidate_header(header_view, nonce=nonce_int)
