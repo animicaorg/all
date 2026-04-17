@@ -155,6 +155,9 @@ async def test_api_mining_endpoints_reflect_request_host(
         assert config_payload["host_source"] == "request_host"
         assert config_payload["status"]["network"] == "devnet"
         assert config_payload["pool_mode"] == "pps"
+        assert config_payload["status"]["hashrate_1m"] == 12.5
+        assert config_payload["status"]["hashrate_15m"] == 10.0
+        assert config_payload["status"]["hashrate_1h"] == 9.5
         assert config_payload["payout_interval_seconds"] == 0.0
         assert config_payload["payout_min_amount"] == 1
         assert config_payload["miner_executable"] == "animica-miner"

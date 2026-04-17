@@ -103,6 +103,7 @@ def test_submit_block_accepts_template(monkeypatch: pytest.MonkeyPatch) -> None:
 
     client, _cfg, _tmp = new_test_client()
     payout_address = MAINNET_PREMINE_DISTRIBUTION[0][0]
+    miner_methods._MINING_STATE["last_block_time"] = None
 
     head_before = rpc_call(client, "chain.getHead")["result"]
     balance_before = _parse_balance(
@@ -135,6 +136,7 @@ def test_submit_block_accepts_template(monkeypatch: pytest.MonkeyPatch) -> None:
 
     submit = rpc_call(client, "miner.submitBlock", block_payload)["result"]
     assert submit["accepted"] is True
+    assert miner_methods._MINING_STATE.get("last_block_time") is not None
 
     head_after = rpc_call(client, "chain.getHead")["result"]
     assert int(head_after.get("height", 0)) == int(head_before.get("height", 0)) + 1

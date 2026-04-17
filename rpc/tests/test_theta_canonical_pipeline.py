@@ -408,6 +408,187 @@ def test_timestamp_bounds_uses_configured_min_block_spacing(
     assert candidate == 1_100
 
 
+def test_get_block_template_disable_block_time_limits_bypasses_spacing_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot_miner_globals()
+    try:
+        class _Cfg:
+            chain_id = 1337
+            genesis_path = None
+
+        parent_header = Header(
+            v=1,
+            chainId=1337,
+            height=1,
+            parentHash=ZERO32,
+            timestamp=1_000,
+            stateRoot=ZERO32,
+            txsRoot=ZERO32,
+            receiptsRoot=ZERO32,
+            proofsRoot=ZERO32,
+            daRoot=ZERO32,
+            mixSeed=ZERO32,
+            poiesPolicyRoot=ZERO32,
+            pqAlgPolicyRoot=ZERO32,
+            thetaMicro=1_000_000,
+            nonce=0,
+            extra=b"",
+        )
+
+        class _Ctx:
+            cfg = _Cfg()
+            params = {}
+            state_db = None
+            tx_index = None
+
+        class _Adapter:
+            def get_head(self):
+                return {
+                    "height": 1,
+                    "hash": "0x" + ("11" * 32),
+                    "obj": parent_header,
+                }
+
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(
+            {
+                "last_block_time": None,
+                "block_times": [],
+                "theta_state": None,
+                "adjustment_enabled": True,
+                "last_network_height": None,
+                "last_network_timestamp": None,
+                "stale_head_hash": None,
+                "stale_head_bucket": 0,
+            }
+        )
+
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_adapter", lambda: _Adapter())
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: None)
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_min_block_spacing_s", lambda: 60.0)
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_005.0)
+        monkeypatch.setattr(
+            miner_methods,
+            "_current_head_snapshot",
+            lambda: {"height": 1, "hash": "0x" + ("11" * 32), "header": parent_header},
+        )
+        monkeypatch.setattr(
+            miner_methods,
+            "_adjust_theta_for_mining",
+            lambda dt_seconds=None, *, blocks_skipped=1: 1_000_000,
+        )
+
+        result = miner_methods.miner_get_block_template(
+            address="0x" + ("22" * 32),
+            include_mempool=False,
+            sync_peer_mempools=False,
+            disable_block_time_limits=True,
+        )
+
+        assert result["enabled"] is True
+        assert result["disableBlockTimeLimits"] is True
+        assert result["timestampMin"] == 1_000
+        assert result["timestampMax"] is None
+    finally:
+        _restore_miner_globals(snapshot)
+
+
+def test_get_block_template_uses_last_block_time_for_theta_when_network_dt_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot_miner_globals()
+    try:
+        class _Cfg:
+            chain_id = 1337
+            genesis_path = None
+
+        parent_header = Header(
+            v=1,
+            chainId=1337,
+            height=1,
+            parentHash=ZERO32,
+            timestamp=1_100,
+            stateRoot=ZERO32,
+            txsRoot=ZERO32,
+            receiptsRoot=ZERO32,
+            proofsRoot=ZERO32,
+            daRoot=ZERO32,
+            mixSeed=ZERO32,
+            poiesPolicyRoot=ZERO32,
+            pqAlgPolicyRoot=ZERO32,
+            thetaMicro=1_000_000,
+            nonce=0,
+            extra=b"",
+        )
+
+        class _Ctx:
+            cfg = _Cfg()
+            params = {}
+            state_db = None
+            tx_index = None
+
+        class _Adapter:
+            def get_head(self):
+                return {
+                    "height": 1,
+                    "hash": "0x" + ("33" * 32),
+                    "obj": parent_header,
+                }
+
+        miner_methods._MINING_STATE.clear()
+        miner_methods._MINING_STATE.update(
+            {
+                "last_block_time": 1_090.0,
+                "block_times": [],
+                "theta_state": None,
+                "adjustment_enabled": True,
+                "last_network_height": 1,
+                "last_network_timestamp": 1_100,
+                "stale_head_hash": None,
+                "stale_head_bucket": 0,
+            }
+        )
+
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: _Ctx())
+        monkeypatch.setattr(miner_methods, "_adapter", lambda: _Adapter())
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: None)
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_min_block_spacing_s", lambda: 0.0)
+        monkeypatch.setattr(miner_methods.time, "time", lambda: 1_100.0)
+        monkeypatch.setattr(
+            miner_methods,
+            "_current_head_snapshot",
+            lambda: {"height": 1, "hash": "0x" + ("33" * 32), "header": parent_header},
+        )
+        monkeypatch.setattr(miner_methods, "_network_block_interval", lambda *_a, **_kw: None)
+        monkeypatch.setattr(miner_methods, "_stale_head_interval", lambda *_a, **_kw: None)
+
+        calls: list[float | None] = []
+
+        def _fake_adjust_theta(dt_seconds=None, *, blocks_skipped=1):
+            calls.append(dt_seconds)
+            if dt_seconds is None:
+                return 1_000_000
+            return 1_111_111
+
+        monkeypatch.setattr(miner_methods, "_adjust_theta_for_mining", _fake_adjust_theta)
+
+        result = miner_methods.miner_get_block_template(
+            address="0x" + ("44" * 32),
+            include_mempool=False,
+            sync_peer_mempools=False,
+        )
+
+        assert result["enabled"] is True
+        assert int(result["thetaMicro"]) == 1_111_111
+        assert calls and calls[-1] == pytest.approx(10.0)
+    finally:
+        _restore_miner_globals(snapshot)
+
+
 def test_stale_head_interval_triggers_once_per_target_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

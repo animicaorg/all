@@ -418,9 +418,35 @@ class MiningCoreAdapter:
         address = str(pool_address).strip()
         if not address:
             return ()
+        payload_snake = {
+            "address": address,
+            "include_mempool": True,
+            "disable_block_time_limits": True,
+        }
+        payload_snake_payout = {
+            "payout_address": address,
+            "include_mempool": True,
+            "disable_block_time_limits": True,
+        }
+        payload_camel = {
+            "address": address,
+            "includeMempool": True,
+            "disableBlockTimeLimits": True,
+        }
+        payload_camel_payout = {
+            "payout_address": address,
+            "includeMempool": True,
+            "disableBlockTimeLimits": True,
+        }
         return (
-            {"address": address, "include_mempool": True},
-            {"payout_address": address, "include_mempool": True},
+            payload_snake,
+            payload_snake_payout,
+            payload_camel,
+            payload_camel_payout,
+            [payload_snake],
+            [payload_camel],
+            [address, True, True],
+            [address, True],
             [address],
         )
 
@@ -986,6 +1012,11 @@ class MiningCoreAdapter:
             return False, reason, True, tx_count
 
         payload = build_submit_block_payload(template, nonce=nonce_int)
+        if bool(
+            template.get("disable_block_time_limits")
+            or template.get("disableBlockTimeLimits")
+        ):
+            payload["disable_block_time_limits"] = True
         try:
             result: Json = await self._rpc_call("miner.submitBlock", payload)
         except RpcError as exc:

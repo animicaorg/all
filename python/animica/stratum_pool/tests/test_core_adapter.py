@@ -161,9 +161,17 @@ async def test_get_new_job_retries_block_template_param_variants(monkeypatch):
         def call(self, method, params):
             self.calls.append((method, params))
             if method == "miner.getBlockTemplate":
-                if params == {"address": "anim1pool", "include_mempool": True}:
+                if params == {
+                    "address": "anim1pool",
+                    "include_mempool": True,
+                    "disable_block_time_limits": True,
+                }:
                     raise RpcError(-32602, "invalid params")
-                if params == {"payout_address": "anim1pool", "include_mempool": True}:
+                if params == {
+                    "payout_address": "anim1pool",
+                    "include_mempool": True,
+                    "disable_block_time_limits": True,
+                }:
                     return payload
             raise AssertionError(f"unexpected RPC call: {method} {params}")
 
@@ -180,11 +188,99 @@ async def test_get_new_job_retries_block_template_param_variants(monkeypatch):
     assert job.job_id == "tpl-1"
     assert job.height == 7
     assert rpc.calls[0][0] == "miner.getBlockTemplate"
-    assert rpc.calls[0][1] == {"address": "anim1pool", "include_mempool": True}
+    assert rpc.calls[0][1] == {
+        "address": "anim1pool",
+        "include_mempool": True,
+        "disable_block_time_limits": True,
+    }
     assert rpc.calls[1][1] == {
         "payout_address": "anim1pool",
         "include_mempool": True,
+        "disable_block_time_limits": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_new_job_retries_with_camelcase_template_flags(monkeypatch):
+    payload = {
+        "templateId": "tpl-camel",
+        "header": _full_header_template(),
+        "target": "0x" + "ff" * 32,
+        "parent": {"height": 6, "hash": "0x" + "aa" * 32},
+        "txs": [],
+        "height": 7,
+    }
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "miner.getBlockTemplate":
+                if isinstance(params, dict) and "include_mempool" in params:
+                    raise RpcError(-32602, "legacy node expects camelCase fields")
+                if params == {
+                    "address": "anim1pool",
+                    "includeMempool": True,
+                    "disableBlockTimeLimits": True,
+                }:
+                    return payload
+            raise AssertionError(f"unexpected RPC call: {method} {params}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    job = await adapter.get_new_job()
+
+    assert job.job_id == "tpl-camel"
+    assert rpc.calls[2][1] == {
+        "address": "anim1pool",
+        "includeMempool": True,
+        "disableBlockTimeLimits": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_new_job_positional_fallback_preserves_disable_flag(monkeypatch):
+    payload = {
+        "templateId": "tpl-positional",
+        "header": _full_header_template(),
+        "target": "0x" + "ff" * 32,
+        "parent": {"height": 6, "hash": "0x" + "aa" * 32},
+        "txs": [],
+        "height": 7,
+    }
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if method == "miner.getBlockTemplate":
+                if params == ["anim1pool", True, True]:
+                    return payload
+                raise RpcError(-32602, "invalid params")
+            raise AssertionError(f"unexpected RPC call: {method} {params}")
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 1, "anim1pool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    job = await adapter.get_new_job()
+
+    assert job.job_id == "tpl-positional"
+    assert rpc.calls[-1][1] == ["anim1pool", True, True]
 
 
 @pytest.mark.asyncio
@@ -474,6 +570,7 @@ async def test_template_block_share_uses_submit_block(monkeypatch):
             "templateId": "template-3",
             "header": header,
             "target": "0x" + "ff" * 32,
+            "disableBlockTimeLimits": True,
             "parent": {"height": 6, "hash": header["parentHash"]},
             "txs": [{"hash": "0xabc", "raw": "0x0102"}],
         },
@@ -491,6 +588,7 @@ async def test_template_block_share_uses_submit_block(monkeypatch):
     assert rpc.calls[0][0] == "chain.getHead"
     assert rpc.calls[1][0] == "miner.submitBlock"
     assert rpc.calls[1][1]["templateId"] == "template-3"
+    assert rpc.calls[1][1]["disable_block_time_limits"] is True
     assert rpc.calls[1][1]["header"]["nonce"] == 1
     assert rpc.calls[1][1]["txs"] == ["0x0102"]
 

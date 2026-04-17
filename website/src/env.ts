@@ -37,7 +37,7 @@ const DEFAULTS = {
   ANIMICA_FAUCET_URL: '',
   ANIMICA_POOL_URL: '',
   ANIMICA_MINING_API_BASE_URL: '',
-  ANIMICA_DISCORD_URL: 'https://discord.gg/animica',
+  ANIMICA_DISCORD_URL: 'https://discord.gg/vQHJc2jWUJ',
   ANIMICA_TELEGRAM_URL: '',
   ANIMICA_X_URL: 'https://x.com/animica',
   ANIMICA_STUDIO_URL: 'https://studio.animica.org',
