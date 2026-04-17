@@ -33,6 +33,14 @@ class DummyServer:
         return []
 
 
+class StaticSessionServer(DummyServer):
+    def __init__(self, snapshots):
+        self._snapshots = list(snapshots)
+
+    def session_snapshots(self):
+        return list(self._snapshots)
+
+
 @pytest.mark.asyncio
 async def test_record_share_only_tracks_accepted_blocks():
     job_manager = DummyJobManager()
@@ -334,6 +342,100 @@ async def test_payout_debits_available_credit_and_tracks_due_amount():
     assert due_after[0]["amount"] == 200
 
 
+@pytest.mark.asyncio
+async def test_mark_payout_dropped_releases_reserved_credit():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        job_manager,
+        DummyServer(),
+    )
+    session = Session(
+        session_id="s1",
+        writer=None,
+        worker="worker-drop",
+        address="anim1drop",
+    )
+    job = StratumJob(
+        job_id="job-drop",
+        header={"number": 18},
+        share_target=0.5,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 0.5},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    applied = metrics.record_payout_sent(
+        address="anim1drop",
+        amount=300,
+        tx_hash="0x" + "ab" * 32,
+        raw_tx="raw-payout",
+        nonce=9,
+    )
+    assert applied == 300
+    due_before = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due_before and due_before[0]["amount"] == 200
+
+    dropped = metrics.mark_payout_dropped(
+        tx_hash="0x" + "ab" * 32,
+        error="evicted from mempool",
+        release_credit=True,
+    )
+    assert dropped is True
+
+    summary = metrics.accounting_summary()
+    assert summary["paid_out_total"] == "0"
+    assert summary["total_credit"] == "500"
+    due_after = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due_after and due_after[0]["amount"] == 500
+    assert metrics.pending_payout_submissions(limit=10) == []
+
+
+def test_pending_payout_submissions_round_trip_with_sqlite(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'pool_metrics.db'}"
+
+    metrics = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    metrics._apply_balance_delta(  # noqa: SLF001
+        ts=time.time(),
+        worker="worker-sqlite",
+        address="anim1sqlite",
+        pps_credit=800,
+    )
+    applied = metrics.record_payout_sent(
+        address="anim1sqlite",
+        amount=250,
+        tx_hash="0x" + "cd" * 32,
+        raw_tx="raw-sqlite",
+        nonce=11,
+    )
+    assert applied == 250
+
+    reloaded = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    pending = reloaded.pending_payout_submissions(limit=10)
+    assert len(pending) == 1
+    assert pending[0]["tx_hash"] == "0x" + "cd" * 32
+    assert pending[0]["raw_tx"] == "raw-sqlite"
+    assert pending[0]["nonce"] == 11
+    assert pending[0]["amount"] == 250
+
+
 def test_payout_status_includes_interval_and_countdown():
     metrics = PoolMetrics(
         PoolConfig(db_url="", payout_interval_seconds=60, payout_min_amount=10),
@@ -454,3 +556,89 @@ async def test_payout_due_addresses_respects_max_total_amount():
         max_total_amount=150,
     )
     assert below_min == []
+
+
+@pytest.mark.asyncio
+async def test_payout_due_addresses_decays_disconnected_workers(monkeypatch):
+    monkeypatch.setenv("ANIMICA_POOL_INACTIVE_SHARE_GRACE_SECONDS", "0")
+    monkeypatch.setenv("ANIMICA_POOL_INACTIVE_SHARE_HALFLIFE_SECONDS", "1200")
+    clock = [1_000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    job = StratumJob(
+        job_id="job-decay",
+        header={"number": 30},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    session = Session(
+        session_id="sd",
+        writer=None,
+        worker="worker-decay",
+        address="anim1decay",
+    )
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    clock[0] += 3600.0
+    due = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due
+    assert due[0]["address"] == "anim1decay"
+    assert due[0]["amount"] == 125
+
+
+@pytest.mark.asyncio
+async def test_payout_due_addresses_keeps_connected_workers_at_full_credit(monkeypatch):
+    monkeypatch.setenv("ANIMICA_POOL_INACTIVE_SHARE_GRACE_SECONDS", "0")
+    monkeypatch.setenv("ANIMICA_POOL_INACTIVE_SHARE_HALFLIFE_SECONDS", "1200")
+    clock = [1_000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        StaticSessionServer(
+            [{"worker": "worker-live", "session_id": "live", "address": "anim1live"}]
+        ),
+    )
+    job = StratumJob(
+        job_id="job-live",
+        header={"number": 31},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    session = Session(
+        session_id="sl",
+        writer=None,
+        worker="worker-live",
+        address="anim1live",
+    )
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    clock[0] += 3600.0
+    due = metrics.payout_due_addresses(min_amount=1, limit=10)
+    assert due
+    assert due[0]["address"] == "anim1live"
+    assert due[0]["amount"] == 1000
