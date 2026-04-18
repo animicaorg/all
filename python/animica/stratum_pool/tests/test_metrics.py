@@ -123,6 +123,54 @@ async def test_record_share_stale_template_requests_refresh():
 
 
 @pytest.mark.asyncio
+async def test_address_attribution_aggregates_across_worker_names():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(PoolConfig(db_url=""), job_manager, DummyServer())
+    job = StratumJob(
+        job_id="job-addr-agg",
+        header={"number": 9},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    session_a = Session(session_id="sa", writer=None, worker="rig-a", address="anim1agg")
+    session_b = Session(session_id="sb", writer=None, worker="rig-b", address="anim1agg")
+
+    await metrics.record_share(
+        session_a,
+        job,
+        submit_params={},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    await metrics.record_share(
+        session_b,
+        job,
+        submit_params={},
+        ok=True,
+        reason=None,
+        is_block=True,
+        tx_count=1,
+    )
+
+    by_worker = metrics.miner_detail("rig-a")
+    by_address = metrics.miner_detail("anim1agg")
+    assert by_worker["address"] == "anim1agg"
+    assert by_worker["shares_accepted"] == 2
+    assert by_worker["blocks_found"] == 1
+    assert by_address["shares_accepted"] == 2
+    assert by_address["blocks_found"] == 1
+
+    miners = metrics.miners()
+    assert miners["total"] == 1
+    assert miners["items"][0]["worker_id"] == "anim1agg"
+    assert miners["items"][0]["shares_accepted"] == 2
+    assert miners["items"][0]["blocks_found"] == 1
+
+
+@pytest.mark.asyncio
 async def test_pps_accounting_credits_accepted_shares():
     job_manager = DummyJobManager()
     metrics = PoolMetrics(
@@ -202,6 +250,9 @@ async def test_record_share_parses_address_from_v1_style_worker_identity():
     assert due
     assert due[0]["address"] == "anim1asicpay"
     assert due[0]["amount"] == 1000
+    detail = metrics.miner_detail("worker-02")
+    assert detail["address"] == "anim1asicpay"
+    assert detail["shares_accepted"] == 1
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,11 @@ class PoolMetrics:
         self._db = self._init_db(config.db_url)
         self._db_lock = Lock()
         self._payout_state_lock = Lock()
+        self._read_cache_ttl = max(
+            0.0,
+            float(os.getenv("ANIMICA_POOL_READ_CACHE_TTL", "0.5") or 0.5),
+        )
+        self._read_cache: Dict[str, Tuple[float, object]] = {}
         self._payout_interval_seconds = max(
             0.0, float(getattr(config, "payout_interval_seconds", 0.0) or 0.0)
         )
@@ -189,6 +194,31 @@ class PoolMetrics:
         if column in existing:
             return
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+    def _read_cache_get(self, key: str) -> Optional[object]:
+        ttl = float(self._read_cache_ttl)
+        if ttl <= 0:
+            return None
+        cached = self._read_cache.get(key)
+        if cached is None:
+            return None
+        ts, value = cached
+        if (time.time() - float(ts)) > ttl:
+            self._read_cache.pop(key, None)
+            return None
+        return value
+
+    def _read_cache_set(self, key: str, value: object) -> None:
+        ttl = float(self._read_cache_ttl)
+        if ttl <= 0:
+            return
+        now = time.time()
+        self._read_cache[key] = (now, value)
+        if len(self._read_cache) > 1024:
+            cutoff = now - ttl
+            stale_keys = [k for k, (ts, _v) in self._read_cache.items() if ts < cutoff]
+            for stale in stale_keys:
+                self._read_cache.pop(stale, None)
 
     async def record_share(
         self,
@@ -432,6 +462,186 @@ class PoolMetrics:
     def _normalize_address(address: Optional[str]) -> str:
         value = str(address or "").strip()
         return value or "unknown-address"
+
+    @staticmethod
+    def _looks_like_address(value: object) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+        return text.startswith("anim1") or text.startswith("0x") or text.startswith(
+            "system:"
+        )
+
+    def _session_snapshots(self) -> List[object]:
+        snapshots = getattr(self._server, "session_snapshots", None)
+        if not callable(snapshots):
+            return []
+        try:
+            sessions = snapshots() or []
+        except Exception:
+            return []
+        return list(sessions)
+
+    def _session_worker_and_address(self, session: object) -> tuple[str, str]:
+        if isinstance(session, dict):
+            raw_worker = session.get("worker") or session.get("session_id")
+            raw_address = session.get("address")
+            session_id = session.get("session_id")
+        else:
+            raw_worker = getattr(session, "worker", None) or getattr(
+                session, "session_id", None
+            )
+            raw_address = getattr(session, "address", None)
+            session_id = getattr(session, "session_id", None)
+
+        parsed_worker, parsed_address = self._parse_worker_identity(raw_worker)
+        worker = self._normalize_worker(raw_worker or parsed_worker, str(session_id or ""))
+        address = self._normalize_address(raw_address or parsed_address)
+        return worker, address
+
+    def _session_summary_by_address(self) -> Dict[str, Dict[str, object]]:
+        summary: Dict[str, Dict[str, object]] = {}
+        for session in self._session_snapshots():
+            worker, address = self._session_worker_and_address(session)
+            if not address:
+                continue
+
+            if isinstance(session, dict):
+                shares_accepted = self._int_value(session.get("shares_accepted"))
+                shares_rejected = self._int_value(session.get("shares_rejected"))
+                last_share_at = float(session.get("last_share_at") or 0.0)
+                difficulty = session.get("current_difficulty") or session.get(
+                    "share_target"
+                )
+                connected_since = float(session.get("connected_since") or 0.0)
+            else:
+                shares_accepted = self._int_value(
+                    getattr(session, "shares_accepted", 0)
+                )
+                shares_rejected = self._int_value(
+                    getattr(session, "shares_rejected", 0)
+                )
+                last_share_at = float(getattr(session, "last_share_at", 0.0) or 0.0)
+                difficulty = getattr(session, "current_difficulty", None) or getattr(
+                    session, "share_target", None
+                )
+                connected_since = float(
+                    getattr(session, "connected_since", 0.0) or 0.0
+                )
+
+            current = summary.get(address)
+            if current is None:
+                summary[address] = {
+                    "address": address,
+                    "worker_name": worker,
+                    "shares_accepted": shares_accepted,
+                    "shares_rejected": shares_rejected,
+                    "last_share_at": last_share_at,
+                    "difficulty": difficulty,
+                    "connected_since": connected_since,
+                }
+                continue
+
+            current["shares_accepted"] = int(current.get("shares_accepted") or 0) + int(
+                shares_accepted
+            )
+            current["shares_rejected"] = int(current.get("shares_rejected") or 0) + int(
+                shares_rejected
+            )
+            current["last_share_at"] = max(
+                float(current.get("last_share_at") or 0.0), last_share_at
+            )
+            if (
+                str(current.get("worker_name") or "").strip() in ("", "unknown-worker")
+                and str(worker or "").strip()
+            ):
+                current["worker_name"] = worker
+            if current.get("difficulty") in (None, "") and difficulty not in (None, ""):
+                current["difficulty"] = difficulty
+            if connected_since > 0:
+                existing_since = float(current.get("connected_since") or 0.0)
+                current["connected_since"] = (
+                    connected_since
+                    if existing_since <= 0
+                    else min(existing_since, connected_since)
+                )
+        return summary
+
+    def _resolve_address_for_identity(self, identity: str) -> Optional[str]:
+        key = str(identity or "").strip()
+        if not key:
+            return None
+
+        normalized_key = self._normalize_address(key)
+        if self._looks_like_address(key) and self._payout_eligible_address(normalized_key):
+            return normalized_key
+
+        _parsed_worker, parsed_address = self._parse_worker_identity(key)
+        normalized_parsed_address = self._normalize_address(parsed_address)
+        if self._looks_like_address(parsed_address) and self._payout_eligible_address(
+            normalized_parsed_address
+        ):
+            return normalized_parsed_address
+
+        for session in self._session_snapshots():
+            worker, address = self._session_worker_and_address(session)
+            if not self._payout_eligible_address(address):
+                continue
+            if key == worker:
+                return address
+            parsed_worker, _ = self._parse_worker_identity(worker)
+            if parsed_worker and parsed_worker == key:
+                return address
+
+        for event in reversed(self._share_events):
+            event_address = self._normalize_address(event.get("address"))  # type: ignore[arg-type]
+            if not self._payout_eligible_address(event_address):
+                continue
+            event_worker = str(event.get("worker") or "").strip()
+            if key == event_worker:
+                return event_address
+            parsed_worker, _ = self._parse_worker_identity(event_worker)
+            if parsed_worker and parsed_worker == key:
+                return event_address
+
+        if self._db is not None:
+            patterns = (key, f"%.{key}", f"%/{key}", f"%:{key}")
+            with self._db_lock:
+                rows = self._db.execute(
+                    """
+                    SELECT address, worker
+                    FROM shares
+                    WHERE address IS NOT NULL
+                      AND address != ''
+                      AND (worker = ? OR worker LIKE ? OR worker LIKE ? OR worker LIKE ?)
+                    ORDER BY ts DESC
+                    LIMIT 20
+                    """,
+                    patterns,
+                ).fetchall()
+                if not rows:
+                    rows = self._db.execute(
+                        """
+                        SELECT address, worker
+                        FROM worker_balances
+                        WHERE mode = ?
+                          AND (worker = ? OR worker LIKE ? OR worker LIKE ? OR worker LIKE ?)
+                        ORDER BY updated_ts DESC
+                        LIMIT 20
+                        """,
+                        (self._pool_mode, *patterns),
+                    ).fetchall()
+            for address, worker in rows:
+                resolved_address = self._normalize_address(address)
+                if not self._payout_eligible_address(resolved_address):
+                    continue
+                worker_text = str(worker or "").strip()
+                if worker_text == key:
+                    return resolved_address
+                parsed_worker, _ = self._parse_worker_identity(worker_text)
+                if parsed_worker and parsed_worker == key:
+                    return resolved_address
+        return None
 
     @staticmethod
     def _safe_ratio(value: object) -> float:
@@ -2005,6 +2215,10 @@ class PoolMetrics:
             self._db.commit()
 
     def pool_summary(self) -> Dict[str, object]:
+        cached = self._read_cache_get("pool_summary")
+        if isinstance(cached, dict):
+            return dict(cached)
+
         stats = self._server.stats()
         job = self._job_manager.current_job()
         share_events = list(self._share_events)
@@ -2015,7 +2229,7 @@ class PoolMetrics:
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
         payout = self.payout_status()
-        return {
+        result = {
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
             "pool_mode": self._pool_mode,
@@ -2042,6 +2256,8 @@ class PoolMetrics:
             "accounting": accounting,
             **payout,
         }
+        self._read_cache_set("pool_summary", result)
+        return dict(result)
 
     def _blocks_found_total(self) -> int:
         if self._db is not None:
@@ -2050,26 +2266,36 @@ class PoolMetrics:
             return int(row[0] or 0) if row else 0
         return len(self._block_events)
 
-    def _blocks_found_by_worker(self, worker_id: str) -> int:
+    def _blocks_found_by_address(self, address: str) -> int:
+        addr = self._normalize_address(address)
+        if not self._payout_eligible_address(addr):
+            return 0
         if self._db is not None:
             with self._db_lock:
                 row = self._db.execute(
-                    "SELECT COUNT(*) FROM blocks WHERE worker = ?",
-                    (worker_id,),
+                    "SELECT COUNT(*) FROM blocks WHERE address = ?",
+                    (addr,),
                 ).fetchone()
             return int(row[0] or 0) if row else 0
         return sum(
-            1 for blk in self._block_events if str(blk.get("worker") or "") == worker_id
+            1
+            for blk in self._block_events
+            if self._normalize_address(blk.get("address")) == addr  # type: ignore[arg-type]
         )
 
-    def _worker_balances_map(self) -> Dict[str, Dict[str, object]]:
+    def _blocks_found_by_worker(self, worker_id: str) -> int:
+        address = self._resolve_address_for_identity(worker_id)
+        if not address:
+            return 0
+        return self._blocks_found_by_address(address)
+
+    def _address_balances_map(self) -> Dict[str, Dict[str, object]]:
         data: Dict[str, Dict[str, object]] = {}
         if self._db is not None:
             with self._db_lock:
                 rows = self._db.execute(
                     """
-                    SELECT worker,
-                           MAX(address) as address,
+                    SELECT address,
                            SUM(total_credit) as total_credit,
                            SUM(pps_credit) as pps_credit,
                            SUM(solo_credit) as solo_credit,
@@ -2080,12 +2306,11 @@ class PoolMetrics:
                            MAX(updated_ts) as updated_ts
                     FROM worker_balances
                     WHERE mode = ?
-                    GROUP BY worker
+                    GROUP BY address
                     """,
                     (self._pool_mode,),
                 ).fetchall()
             for (
-                worker,
                 address,
                 total_credit,
                 pps_credit,
@@ -2096,12 +2321,14 @@ class PoolMetrics:
                 rejected_shares,
                 updated_ts,
             ) in rows:
+                addr = self._normalize_address(address)
+                if not self._payout_eligible_address(addr):
+                    continue
                 gross_credit = int(total_credit or 0)
                 paid_total = int(paid_out or 0)
-                available_credit = max(0, gross_credit - paid_total)
-                data[str(worker)] = {
-                    "address": address or "",
-                    "total_credit": available_credit,
+                data[addr] = {
+                    "address": addr,
+                    "total_credit": max(0, gross_credit - paid_total),
                     "gross_credit": gross_credit,
                     "pps_credit": int(pps_credit or 0),
                     "solo_credit": int(solo_credit or 0),
@@ -2113,10 +2340,12 @@ class PoolMetrics:
                 }
             return data
 
-        for (mode, worker, _address), row in self._worker_balances_cache.items():
+        for (mode, _worker, address), row in self._worker_balances_cache.items():
             if mode != self._pool_mode:
                 continue
-            current = data.get(worker)
+            addr = self._normalize_address(address)
+            if not self._payout_eligible_address(addr):
+                continue
             total_credit = int(row.get("total_credit") or 0)
             pps_credit = int(row.get("pps_credit") or 0)
             solo_credit = int(row.get("solo_credit") or 0)
@@ -2126,9 +2355,10 @@ class PoolMetrics:
             accepted_blocks = int(row.get("accepted_blocks") or 0)
             rejected_shares = int(row.get("rejected_shares") or 0)
             updated_ts = float(row.get("updated_ts") or 0.0)
+            current = data.get(addr)
             if current is None:
-                data[worker] = {
-                    "address": row.get("address") or "",
+                data[addr] = {
+                    "address": addr,
                     "total_credit": available_credit,
                     "gross_credit": total_credit,
                     "pps_credit": pps_credit,
@@ -2139,22 +2369,30 @@ class PoolMetrics:
                     "rejected_shares": rejected_shares,
                     "updated_ts": updated_ts,
                 }
-            else:
-                current["total_credit"] = int(current.get("total_credit") or 0) + available_credit
-                current["gross_credit"] = int(current.get("gross_credit") or 0) + total_credit
-                current["pps_credit"] = int(current.get("pps_credit") or 0) + pps_credit
-                current["solo_credit"] = int(current.get("solo_credit") or 0) + solo_credit
-                current["paid_out"] = int(current.get("paid_out") or 0) + paid_out
-                current["accepted_shares"] = int(current.get("accepted_shares") or 0) + accepted_shares
-                current["accepted_blocks"] = int(current.get("accepted_blocks") or 0) + accepted_blocks
-                current["rejected_shares"] = int(current.get("rejected_shares") or 0) + rejected_shares
-                current["updated_ts"] = max(float(current.get("updated_ts") or 0.0), updated_ts)
+                continue
+            current["total_credit"] = int(current.get("total_credit") or 0) + available_credit
+            current["gross_credit"] = int(current.get("gross_credit") or 0) + total_credit
+            current["pps_credit"] = int(current.get("pps_credit") or 0) + pps_credit
+            current["solo_credit"] = int(current.get("solo_credit") or 0) + solo_credit
+            current["paid_out"] = int(current.get("paid_out") or 0) + paid_out
+            current["accepted_shares"] = int(current.get("accepted_shares") or 0) + accepted_shares
+            current["accepted_blocks"] = int(current.get("accepted_blocks") or 0) + accepted_blocks
+            current["rejected_shares"] = int(current.get("rejected_shares") or 0) + rejected_shares
+            current["updated_ts"] = max(float(current.get("updated_ts") or 0.0), updated_ts)
         return data
 
+    def _worker_balances_map(self) -> Dict[str, Dict[str, object]]:
+        # Backward-compatible alias: worker-facing APIs now key balances by
+        # payout address so worker names remain cosmetic.
+        return self._address_balances_map()
+
     def miners(self) -> Dict[str, object]:
-        sessions = self._server.session_snapshots()
-        session_map = {str(s.get("worker") or s.get("session_id")): s for s in sessions}
-        balance_map = self._worker_balances_map()
+        cached = self._read_cache_get("miners")
+        if isinstance(cached, dict):
+            return dict(cached)
+
+        session_map = self._session_summary_by_address()
+        balance_map = self._address_balances_map()
 
         cutoff_1m = time.time() - 60
         cutoff_15m = time.time() - 900
@@ -2163,12 +2401,24 @@ class PoolMetrics:
 
         aggregates: Dict[str, Dict[str, object]] = {}
         block_counts: Dict[str, int] = {}
+        events_by_address: Dict[str, List[ShareEvent]] = defaultdict(list)
+        latest_worker_by_address: Dict[str, str] = {}
+
+        for ev in self._share_events:
+            addr = self._normalize_address(ev.get("address"))  # type: ignore[arg-type]
+            if not self._payout_eligible_address(addr):
+                continue
+            events_by_address[addr].append(ev)
+            worker_label = str(ev.get("worker") or "").strip()
+            if worker_label:
+                latest_worker_by_address[addr] = worker_label
+
         if self._db is not None:
             with self._db_lock:
                 rows = self._db.execute(
                     """
-                    SELECT worker,
-                           MAX(address) as address,
+                    SELECT address,
+                           MAX(worker) as worker_name,
                            SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END) as accepted,
                            SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) as rejected,
                            SUM(CASE WHEN status='accepted' AND ts >= ? THEN difficulty ELSE 0 END) as diff_1m,
@@ -2176,23 +2426,23 @@ class PoolMetrics:
                            SUM(CASE WHEN status='accepted' AND ts >= ? THEN difficulty ELSE 0 END) as diff_1h,
                            MAX(ts) as last_ts
                     FROM shares
-                    WHERE ts >= ?
-                    GROUP BY worker
+                    WHERE ts >= ? AND address IS NOT NULL AND address != ''
+                    GROUP BY address
                     """,
                     (cutoff_1m, cutoff_15m, cutoff_1h, cutoff_max),
                 ).fetchall()
                 block_rows = self._db.execute(
                     """
-                    SELECT worker, COUNT(*)
+                    SELECT address, COUNT(*)
                     FROM blocks
-                    WHERE worker IS NOT NULL AND worker != ''
-                    GROUP BY worker
+                    WHERE address IS NOT NULL AND address != ''
+                    GROUP BY address
                     """
                 ).fetchall()
             for row in rows:
                 (
-                    worker_id,
                     address,
+                    worker_name,
                     accepted,
                     rejected,
                     diff1,
@@ -2200,8 +2450,11 @@ class PoolMetrics:
                     diff60,
                     last_ts,
                 ) = row
-                aggregates[str(worker_id)] = {
-                    "address": address or "",
+                addr = self._normalize_address(address)
+                if not self._payout_eligible_address(addr):
+                    continue
+                aggregates[addr] = {
+                    "worker_name": str(worker_name or "").strip(),
                     "shares_accepted": int(accepted or 0),
                     "shares_rejected": int(rejected or 0),
                     "hashrate_1m": float(diff1 or 0.0) / 60,
@@ -2209,132 +2462,137 @@ class PoolMetrics:
                     "hashrate_1h": float(diff60 or 0.0) / 3600,
                     "last_share_at": last_ts,
                 }
-            for worker_id, blocks_found in block_rows:
-                block_counts[str(worker_id)] = int(blocks_found or 0)
+            for address, blocks_found in block_rows:
+                addr = self._normalize_address(address)
+                if not self._payout_eligible_address(addr):
+                    continue
+                block_counts[addr] = int(blocks_found or 0)
+        else:
+            for address, events in events_by_address.items():
+                recent_events = [
+                    ev
+                    for ev in events
+                    if float(ev.get("timestamp") or 0.0) >= cutoff_max
+                ]
+                if not recent_events:
+                    continue
+                accepted = sum(
+                    1 for ev in recent_events if str(ev.get("status") or "") == "accepted"
+                )
+                rejected = sum(
+                    1 for ev in recent_events if str(ev.get("status") or "") == "rejected"
+                )
+                aggregates[address] = {
+                    "worker_name": latest_worker_by_address.get(address, ""),
+                    "shares_accepted": accepted,
+                    "shares_rejected": rejected,
+                    "hashrate_1m": self._hashrate_from_events(recent_events, 60),
+                    "hashrate_15m": self._hashrate_from_events(recent_events, 900),
+                    "hashrate_1h": self._hashrate_from_events(recent_events, 3600),
+                    "last_share_at": max(
+                        float(ev.get("timestamp") or 0.0) for ev in recent_events
+                    ),
+                }
+            for blk in self._block_events:
+                addr = self._normalize_address(blk.get("address"))  # type: ignore[arg-type]
+                if not self._payout_eligible_address(addr):
+                    continue
+                block_counts[addr] = block_counts.get(addr, 0) + 1
 
-        events_by_worker: Dict[str, List[ShareEvent]] = defaultdict(list)
-        for ev in self._share_events:
-            events_by_worker[str(ev.get("worker"))].append(ev)
         if not block_counts:
             for blk in self._block_events:
-                worker_id = str(blk.get("worker") or "")
-                if worker_id:
-                    block_counts[worker_id] = block_counts.get(worker_id, 0) + 1
+                addr = self._normalize_address(blk.get("address"))  # type: ignore[arg-type]
+                if not self._payout_eligible_address(addr):
+                    continue
+                block_counts[addr] = block_counts.get(addr, 0) + 1
 
         items: List[Dict[str, object]] = []
-        seen_workers = set()
-        for worker_id, session in session_map.items():
-            worker_events = events_by_worker.get(str(worker_id), [])
-            agg = aggregates.get(worker_id, {})
-            items.append(
-                {
-                    "worker_id": worker_id,
-                    "worker_name": worker_id,
-                    "address": agg.get("address")
-                    or balance_map.get(worker_id, {}).get("address")
-                    or session.get("address")
-                    or "",
-                    "hashrate_1m": agg.get("hashrate_1m")
-                    or self._hashrate_from_events(worker_events, 60),
-                    "hashrate_15m": agg.get("hashrate_15m")
-                    or self._hashrate_from_events(worker_events, 900),
-                    "hashrate_1h": agg.get("hashrate_1h")
-                    or self._hashrate_from_events(worker_events, 3600),
-                    "last_share_at": agg.get("last_share_at")
-                    or session.get("last_share_at"),
-                    "difficulty": session.get("current_difficulty")
-                    or session.get("share_target"),
-                    "shares_accepted": agg.get("shares_accepted")
-                    or session.get("shares_accepted", 0),
-                    "shares_rejected": agg.get("shares_rejected")
-                    or session.get("shares_rejected", 0),
-                    "blocks_found": block_counts.get(worker_id, 0),
-                    "pool_mode": self._pool_mode,
-                    "credit_total": str(
-                        int(balance_map.get(worker_id, {}).get("total_credit") or 0)
-                    ),
-                    "credit_pps": str(
-                        int(balance_map.get(worker_id, {}).get("pps_credit") or 0)
-                    ),
-                    "credit_solo": str(
-                        int(balance_map.get(worker_id, {}).get("solo_credit") or 0)
-                    ),
-                }
-            )
-            seen_workers.add(worker_id)
+        seen_addresses: set[str] = set()
 
-        # Include historical miners not currently connected
-        for worker_id, agg in aggregates.items():
-            if worker_id in seen_workers:
+        def build_item(address: str) -> Dict[str, object]:
+            agg = aggregates.get(address, {})
+            session = session_map.get(address, {})
+            balance = balance_map.get(address, {})
+            events = events_by_address.get(address, [])
+            worker_name = (
+                str(session.get("worker_name") or "").strip()
+                or str(agg.get("worker_name") or "").strip()
+                or latest_worker_by_address.get(address, "")
+                or address
+            )
+            shares_accepted = int(
+                agg.get("shares_accepted")
+                or session.get("shares_accepted")
+                or balance.get("accepted_shares")
+                or 0
+            )
+            shares_rejected = int(
+                agg.get("shares_rejected")
+                or session.get("shares_rejected")
+                or balance.get("rejected_shares")
+                or 0
+            )
+            blocks_found = int(
+                block_counts.get(address, balance.get("accepted_blocks") or 0)
+            )
+            return {
+                "worker_id": address,
+                "worker_name": worker_name,
+                "address": address,
+                "hashrate_1m": agg.get("hashrate_1m")
+                or self._hashrate_from_events(events, 60),
+                "hashrate_15m": agg.get("hashrate_15m")
+                or self._hashrate_from_events(events, 900),
+                "hashrate_1h": agg.get("hashrate_1h")
+                or self._hashrate_from_events(events, 3600),
+                "last_share_at": agg.get("last_share_at")
+                or session.get("last_share_at")
+                or balance.get("updated_ts"),
+                "difficulty": session.get("difficulty"),
+                "shares_accepted": shares_accepted,
+                "shares_rejected": shares_rejected,
+                "blocks_found": blocks_found,
+                "pool_mode": self._pool_mode,
+                "credit_total": str(int(balance.get("total_credit") or 0)),
+                "credit_pps": str(int(balance.get("pps_credit") or 0)),
+                "credit_solo": str(int(balance.get("solo_credit") or 0)),
+            }
+
+        for address in session_map.keys():
+            if not self._payout_eligible_address(address):
                 continue
-            worker_events = events_by_worker.get(worker_id, [])
-            items.append(
-                {
-                    "worker_id": worker_id,
-                    "worker_name": worker_id,
-                    "address": agg.get("address")
-                    or balance_map.get(worker_id, {}).get("address")
-                    or "",
-                    "hashrate_1m": agg.get("hashrate_1m")
-                    or self._hashrate_from_events(worker_events, 60),
-                    "hashrate_15m": agg.get("hashrate_15m")
-                    or self._hashrate_from_events(worker_events, 900),
-                    "hashrate_1h": agg.get("hashrate_1h")
-                    or self._hashrate_from_events(worker_events, 3600),
-                    "last_share_at": agg.get("last_share_at"),
-                    "difficulty": None,
-                    "shares_accepted": agg.get("shares_accepted") or 0,
-                    "shares_rejected": agg.get("shares_rejected") or 0,
-                    "blocks_found": block_counts.get(worker_id, 0),
-                    "pool_mode": self._pool_mode,
-                    "credit_total": str(
-                        int(balance_map.get(worker_id, {}).get("total_credit") or 0)
-                    ),
-                    "credit_pps": str(
-                        int(balance_map.get(worker_id, {}).get("pps_credit") or 0)
-                    ),
-                    "credit_solo": str(
-                        int(balance_map.get(worker_id, {}).get("solo_credit") or 0)
-                    ),
-                }
-            )
+            items.append(build_item(address))
+            seen_addresses.add(address)
 
-        for worker_id, balance in balance_map.items():
-            if worker_id in seen_workers:
+        for address in aggregates.keys():
+            if address in seen_addresses or not self._payout_eligible_address(address):
                 continue
-            items.append(
-                {
-                    "worker_id": worker_id,
-                    "worker_name": worker_id,
-                    "address": balance.get("address") or "",
-                    "hashrate_1m": 0.0,
-                    "hashrate_15m": 0.0,
-                    "hashrate_1h": 0.0,
-                    "last_share_at": balance.get("updated_ts"),
-                    "difficulty": None,
-                    "shares_accepted": int(balance.get("accepted_shares") or 0),
-                    "shares_rejected": int(balance.get("rejected_shares") or 0),
-                    "blocks_found": int(balance.get("accepted_blocks") or 0),
-                    "pool_mode": self._pool_mode,
-                    "credit_total": str(int(balance.get("total_credit") or 0)),
-                    "credit_pps": str(int(balance.get("pps_credit") or 0)),
-                    "credit_solo": str(int(balance.get("solo_credit") or 0)),
-                }
-            )
+            items.append(build_item(address))
+            seen_addresses.add(address)
 
-        return {"items": items, "total": len(items)}
+        for address in balance_map.keys():
+            if address in seen_addresses or not self._payout_eligible_address(address):
+                continue
+            items.append(build_item(address))
+            seen_addresses.add(address)
+
+        result = {"items": items, "total": len(items)}
+        self._read_cache_set("miners", result)
+        return dict(result)
 
     def miner_detail(self, worker_id: str) -> Dict[str, object]:
-        balance = self._worker_balances_map().get(worker_id, {})
-        session = next(
-            (
-                s
-                for s in self._server.session_snapshots()
-                if str(s.get("worker") or s.get("session_id")) == worker_id
-            ),
-            None,
-        )
+        cache_key = f"miner_detail:{str(worker_id or '').strip()}"
+        cached = self._read_cache_get(cache_key)
+        if isinstance(cached, dict):
+            return dict(cached)
 
+        identity = str(worker_id or "").strip()
+        address = self._resolve_address_for_identity(identity)
+        if not address:
+            return {}
+
+        balance = self._address_balances_map().get(address, {})
+        session = self._session_summary_by_address().get(address, {})
         cutoff = time.time() - 3600
         buckets: Dict[int, float] = defaultdict(float)
         events: List[ShareEvent] = []
@@ -2343,23 +2601,23 @@ class PoolMetrics:
             with self._db_lock:
                 rows = self._db.execute(
                     """
-                    SELECT ts, address, difficulty, status
+                    SELECT ts, worker, address, difficulty, status
                     FROM shares
-                    WHERE worker = ? AND ts >= ?
+                    WHERE address = ? AND ts >= ?
                     ORDER BY ts ASC
                     """,
-                    (worker_id, cutoff),
+                    (address, cutoff),
                 ).fetchall()
         else:
             rows = []
 
         if rows:
-            for ts, address, difficulty, status in rows:
+            for ts, worker, event_address, difficulty, status in rows:
                 events.append(
                     {
                         "timestamp": ts,
-                        "worker": worker_id,
-                        "address": address,
+                        "worker": str(worker or ""),
+                        "address": event_address,
                         "difficulty": difficulty,
                         "status": status,
                     }
@@ -2369,13 +2627,16 @@ class PoolMetrics:
                     buckets[bucket] += float(difficulty or 0.0)
         else:
             for ev in self._share_events:
-                if str(ev.get("worker")) == worker_id and ev["timestamp"] >= cutoff:
-                    events.append(ev)
-                    if ev.get("status") == "accepted":
-                        bucket = int(ev["timestamp"] // 60) * 60
-                        buckets[bucket] += float(ev.get("difficulty") or 0.0)
+                event_address = self._normalize_address(ev.get("address"))  # type: ignore[arg-type]
+                if event_address != address or float(ev.get("timestamp") or 0.0) < cutoff:
+                    continue
+                events.append(ev)
+                if ev.get("status") == "accepted":
+                    bucket = int(float(ev.get("timestamp") or 0.0) // 60) * 60
+                    buckets[bucket] += float(ev.get("difficulty") or 0.0)
 
-        if not events and session is None and not balance:
+        blocks_found = self._blocks_found_by_address(address)
+        if not events and not session and not balance and blocks_found <= 0:
             return {}
 
         timeseries: List[Tuple[str, float]] = []
@@ -2385,18 +2646,26 @@ class PoolMetrics:
 
         accepted = sum(1 for ev in events if ev.get("status") == "accepted")
         rejected = sum(1 for ev in events if ev.get("status") == "rejected")
+        if accepted <= 0 and rejected <= 0 and balance:
+            accepted = int(balance.get("accepted_shares") or 0)
+            rejected = int(balance.get("rejected_shares") or 0)
+
         latest = events[-1] if events else None
-        blocks_found = self._blocks_found_by_worker(worker_id)
-        return {
-            "address": (latest.get("address") if latest else "")
-            or balance.get("address")
-            or "",
-            "worker_name": worker_id,
+        worker_name = (
+            str(session.get("worker_name") or "").strip()
+            or str((latest or {}).get("worker") or "").strip()
+            or identity
+            or address
+        )
+        connected_since = float(session.get("connected_since") or 0.0)
+        result = {
+            "address": address,
+            "worker_name": worker_name,
             "hashrate_timeseries": timeseries,
             "last_share": {
                 "time": (
                     datetime.fromtimestamp(
-                        latest["timestamp"], tz=timezone.utc
+                        float(latest.get("timestamp") or 0.0), tz=timezone.utc
                     ).isoformat()
                     if latest
                     else None
@@ -2411,17 +2680,25 @@ class PoolMetrics:
             "credit_total": str(int(balance.get("total_credit") or 0)),
             "credit_pps": str(int(balance.get("pps_credit") or 0)),
             "credit_solo": str(int(balance.get("solo_credit") or 0)),
-            "current_difficulty": (latest.get("difficulty") if latest else 0) or 0,
+            "current_difficulty": (
+                session.get("difficulty")
+                or (latest.get("difficulty") if latest else 0)
+                or 0
+            ),
             "connected_since": (
-                datetime.fromtimestamp(
-                    session["connected_since"], tz=timezone.utc
-                ).isoformat()
-                if session and session.get("connected_since")
+                datetime.fromtimestamp(connected_since, tz=timezone.utc).isoformat()
+                if connected_since > 0
                 else None
             ),
         }
+        self._read_cache_set(cache_key, result)
+        return dict(result)
 
     def recent_blocks(self) -> Dict[str, object]:
+        cached = self._read_cache_get("recent_blocks")
+        if isinstance(cached, dict):
+            return dict(cached)
+
         items: List[Dict[str, object]] = []
         if self._db is not None:
             with self._db_lock:
@@ -2475,11 +2752,13 @@ class PoolMetrics:
                 for blk in blocks
             ]
 
-        return {
+        result = {
             "items": items,
             "total": len(items),
             "blocks_found_total": self._blocks_found_total(),
         }
+        self._read_cache_set("recent_blocks", result)
+        return dict(result)
 
     def accounting_summary(self) -> Dict[str, object]:
         if self._db is not None:
