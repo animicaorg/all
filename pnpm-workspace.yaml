@@ -8,6 +8,9 @@ packages:
   - wallet
   - apps/miner-dashboard
   - apps/dapp-ide
+  - apps/banm-bridge-web
+  - apps/banm-bridge-admin
+  - evm/banm-bridge
   - explorer2
   - explorer2/*
   - services/exchange-api

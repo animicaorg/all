@@ -1,0 +1,28 @@
+{
+  "name": "@animica/banm-bridge-evm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test",
+    "clean": "hardhat clean",
+    "deploy": "hardhat run scripts/deploy.ts",
+    "grant-roles": "hardhat run scripts/grantRoles.ts",
+    "pause": "hardhat run scripts/pause.ts",
+    "unpause": "hardhat run scripts/unpause.ts",
+    "set-caps": "hardhat run scripts/setCaps.ts",
+    "configure-chain": "hardhat run scripts/configureChain.ts"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "hardhat": "^2.23.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0",
+    "dotenv": "^16.4.5"
+  }
+}

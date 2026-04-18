@@ -2,7 +2,9 @@ import sys
 import asyncio
 import argparse
 import json
+import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,11 +16,152 @@ from animica.stratum_pool.reference_cpu_miner import (
     ShareResult,
     StratumCpuMiner,
     SubmitOutcome,
+    _apply_runtime_difficulty_to_job,
     _is_stale_job_reason,
     _normalize_job_payload,
     _should_stop_job,
     resolve_config,
 )
+
+
+def test_scan_range_worker_scans_full_window_and_returns_best_share(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def digest_for_h_micro(h_micro: int) -> bytes:
+        unit = math.exp(-float(h_micro) / float(miner_mod.MICRO))
+        digest_int = int(unit * float(miner_mod.UINT256_MAX + 1) - 1.0)
+        digest_int = max(0, min(miner_mod.UINT256_MAX, digest_int))
+        return int(digest_int).to_bytes(32, "big", signed=False)
+
+    def fake_digest_from_sign_bytes(
+        _prefix: bytes,
+        *,
+        mix_seed: bytes = b"",
+        nonce_int: int,
+        nonce_byteorder: str = "little",
+    ) -> bytes:
+        _ = mix_seed, nonce_byteorder
+        desired_h = 10_000 + (int(nonce_int) * 100_000)
+        return digest_for_h_micro(desired_h)
+
+    monkeypatch.setattr(miner_mod, "digest_from_sign_bytes", fake_digest_from_sign_bytes)
+    share = miner_mod._scan_range_worker(
+        b"\x01\x02",
+        b"",
+        miner_mod.UINT256_MAX,
+        1_000_000,
+        0,
+        5,
+    )
+
+    assert share is not None
+    assert share.nonce == 4
+
+
+def test_scan_header_range_worker_scans_full_window_and_returns_best_share(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def digest_for_h_micro(h_micro: int) -> bytes:
+        unit = math.exp(-float(h_micro) / float(miner_mod.MICRO))
+        digest_int = int(unit * float(miner_mod.UINT256_MAX + 1) - 1.0)
+        digest_int = max(0, min(miner_mod.UINT256_MAX, digest_int))
+        return int(digest_int).to_bytes(32, "big", signed=False)
+
+    def fake_hash_candidate_header(_header_template: object, *, nonce: int):
+        desired_h = 10_000 + ((int(nonce) - 10) * 120_000)
+        digest = digest_for_h_micro(desired_h)
+        digest_int = int.from_bytes(digest, "big", signed=False)
+        return SimpleNamespace(digest_int=digest_int, digest=digest)
+
+    monkeypatch.setattr(miner_mod, "_hash_candidate_header", fake_hash_candidate_header)
+    share = miner_mod._scan_header_range_worker(
+        object(),
+        miner_mod.UINT256_MAX,
+        1_000_000,
+        10,
+        4,
+    )
+
+    assert share is not None
+    assert share.nonce == 13
+
+
+def test_emit_share_batch_update_aggregates_rejections(capsys: pytest.CaptureFixture[str]):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            stats_interval_sec=20.0,
+            log_level="INFO",
+        )
+    )
+    try:
+        miner._apply_submit_outcome(
+            SubmitOutcome(accepted=False, is_block=False, reason="low_difficulty", stale_job=False)
+        )
+        miner._apply_submit_outcome(
+            SubmitOutcome(accepted=False, is_block=False, reason="low_difficulty", stale_job=False)
+        )
+        miner._apply_submit_outcome(
+            SubmitOutcome(accepted=False, is_block=False, reason="bad_nonce", stale_job=False)
+        )
+        miner._apply_submit_outcome(
+            SubmitOutcome(accepted=True, is_block=False, reason=None, stale_job=False)
+        )
+        miner._emit_share_batch_update()
+        out = capsys.readouterr().out
+        assert "accepted=+1" in out
+        assert "rejected=+3" in out
+        assert "low_difficulty x2" in out
+        assert "bad_nonce x1" in out
+
+        miner._emit_share_batch_update()
+        out2 = capsys.readouterr().out
+        assert out2 == ""
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_submit_share_does_not_log_warning_per_reject(caplog: pytest.LogCaptureFixture):
+    miner = StratumCpuMiner(
+        MinerConfig(
+            host="127.0.0.1",
+            port=3333,
+            scheme="stratum+tcp",
+            tls=False,
+            address="anim1qqq",
+            worker="animica-cpu",
+            threads=1,
+            scan_window=25_000,
+            log_level="INFO",
+        )
+    )
+    miner._session_id = "test-session"
+
+    async def fake_call(_method: str, _params: dict[str, object]) -> dict[str, object]:
+        return {"error": {"code": -32602, "message": "low difficulty share"}}
+
+    miner._call = fake_call  # type: ignore[assignment]
+
+    with caplog.at_level("WARNING", logger="animica.cpu_miner"):
+        outcome = await miner._submit_share(
+            "job-1",
+            ShareResult(nonce=1, h_micro=1_000_000, d_ratio=1.0),
+        )
+
+    try:
+        assert outcome.accepted is False
+        assert outcome.stale_job is False
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    finally:
+        miner._scan_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def test_normalize_job_payload_accepts_live_pool_snake_case_theta():
@@ -64,6 +207,38 @@ def test_normalize_job_payload_accepts_header_template_shape():
     assert sign_hex == "0xabcd"
     assert theta_micro == 5_400_000
     assert share_target == 0.25
+
+
+def test_apply_runtime_difficulty_to_job_overrides_stale_notify_target():
+    job = {
+        "jobId": "job-live",
+        "shareTarget": 1.0,
+        "header": {
+            "number": 1,
+            "signBytes": "0x1234",
+            "thetaMicro": 1_000_000,
+        },
+    }
+
+    updated = _apply_runtime_difficulty_to_job(
+        job,
+        theta_micro=850_000,
+        share_target=0.25,
+    )
+
+    job_id, header, sign_hex, theta_micro, share_target = _normalize_job_payload(
+        updated,
+        default_theta_micro=0,
+        default_share_target=1.0,
+    )
+
+    assert job_id == "job-live"
+    assert sign_hex == "0x1234"
+    assert theta_micro == 850_000
+    assert share_target == 0.25
+    assert header["thetaMicro"] == 850_000
+    assert header["thetaTargetMicro"] == 850_000
+    assert header["theta_target_micro"] == 850_000
 
 
 def test_is_stale_job_reason_matches_pool_rpc_error():
@@ -126,6 +301,45 @@ def test_resolve_config_reads_api_and_mode_from_file(tmp_path: Path):
     assert resolved.api_base_url == "https://mine.animica.test"
     assert resolved.pool_mode == "solo"
     assert resolved.stats_interval_sec == 12.0
+
+
+def test_resolve_config_defaults_threads_to_local_cpu_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    config_path = tmp_path / "miner-auto-threads.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "host": "pool.animica.test",
+                "port": 3333,
+                "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(miner_mod.os, "cpu_count", lambda: 32)
+
+    resolved = resolve_config(
+        argparse.Namespace(
+            config=str(config_path),
+            pool_url=None,
+            host=None,
+            port=None,
+            scheme=None,
+            tls=False,
+            api_base_url=None,
+            address=None,
+            worker=None,
+            pool_mode=None,
+            threads=None,
+            scan_window=None,
+            stats_interval=None,
+            log_level=None,
+        )
+    )
+
+    assert resolved.threads == 32
 
 
 def test_resolve_config_rejects_invalid_address(tmp_path: Path):

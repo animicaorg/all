@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY python/pyproject.toml /app/python/pyproject.toml
+COPY python/animica /app/python/animica
+COPY sdk/python /app/sdk/python
+COPY ops/docker/banm-bridge/entrypoint-backend.sh /entrypoint-backend.sh
+COPY ops/docker/banm-bridge/healthcheck.sh /healthcheck.sh
+
+RUN pip install --no-cache-dir -e /app/python
+RUN chmod +x /entrypoint-backend.sh /healthcheck.sh
+
+EXPOSE 8660
+
+ENTRYPOINT ["/entrypoint-backend.sh"]
+

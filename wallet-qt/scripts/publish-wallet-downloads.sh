@@ -10,11 +10,15 @@ WEBSITE_DIR="$REPO_ROOT/website/public/wallet"
 PLATFORM=""
 SOURCE_DIR=""
 VERSION=""
+ARCHITECTURE=""
 
 LINUX_APPIMAGE=""
 LINUX_DEB=""
 LINUX_TARBALL=""
 LINUX_RAW=""
+
+MACOS_DMG=""
+MACOS_ZIP=""
 
 usage() {
     cat <<'EOF'
@@ -23,10 +27,13 @@ Usage: ./scripts/publish-wallet-downloads.sh [options]
 Publish wallet artifacts into website/public/wallet and regenerate manifest.json.
 
 Options:
-  --platform <windows|linux>  Platform to publish
+  --platform <windows|macos|linux>  Platform to publish
   --version <label>           Version/build label to expose on the website
   --source-dir <path>         Windows dist directory (defaults to wallet-qt/dist/windows)
   --website-dir <path>        Override website/public/wallet output directory
+  --architecture <value>      Architecture label to expose for the published platform
+  --dmg <path>                macOS DMG to publish
+  --zip <path>                macOS ZIP to publish
   --appimage <path>           Linux AppImage to publish
   --deb <path>                Linux .deb to publish
   --tarball <path>            Linux portable tar.gz to publish
@@ -67,7 +74,11 @@ write_checksum_file() {
 
     (
         cd "$WEBSITE_DIR"
-        sha256sum "${files[@]}" > "$(basename "$output_path")"
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${files[@]}" > "$(basename "$output_path")"
+        else
+            shasum -a 256 "${files[@]}" > "$(basename "$output_path")"
+        fi
     )
 }
 
@@ -92,6 +103,21 @@ parse_args() {
             --website-dir)
                 [ "$#" -ge 2 ] || fail "--website-dir requires a value"
                 WEBSITE_DIR="$2"
+                shift 2
+                ;;
+            --architecture)
+                [ "$#" -ge 2 ] || fail "--architecture requires a value"
+                ARCHITECTURE="$2"
+                shift 2
+                ;;
+            --dmg)
+                [ "$#" -ge 2 ] || fail "--dmg requires a value"
+                MACOS_DMG="$2"
+                shift 2
+                ;;
+            --zip)
+                [ "$#" -ge 2 ] || fail "--zip requires a value"
+                MACOS_ZIP="$2"
                 shift 2
                 ;;
             --appimage)
@@ -150,6 +176,24 @@ publish_windows() {
         "animica-wallet-windows-x64.zip"
 }
 
+publish_macos() {
+    [ -n "$MACOS_DMG$MACOS_ZIP" ] || fail "At least one macOS artifact is required"
+
+    rm -f \
+        "$WEBSITE_DIR/animicawallet.dmg" \
+        "$WEBSITE_DIR/animicawalletmac.zip" \
+        "$WEBSITE_DIR/animicawallet.sha256"
+
+    copy_if_requested "$MACOS_DMG" "$WEBSITE_DIR/animicawallet.dmg"
+    copy_if_requested "$MACOS_ZIP" "$WEBSITE_DIR/animicawalletmac.zip"
+
+    local package_files=()
+    [ -f "$WEBSITE_DIR/animicawallet.dmg" ] && package_files+=("animicawallet.dmg")
+    [ -f "$WEBSITE_DIR/animicawalletmac.zip" ] && package_files+=("animicawalletmac.zip")
+
+    write_checksum_file "$WEBSITE_DIR/animicawallet.sha256" "${package_files[@]}"
+}
+
 publish_linux() {
     [ -n "$LINUX_APPIMAGE$LINUX_DEB$LINUX_TARBALL$LINUX_RAW" ] || fail "At least one Linux artifact is required"
 
@@ -182,9 +226,23 @@ main() {
     parse_args "$@"
     mkdir -p "$WEBSITE_DIR"
 
+    if [ -z "$ARCHITECTURE" ]; then
+        case "$PLATFORM" in
+            windows|linux)
+                ARCHITECTURE="x86_64"
+                ;;
+            macos)
+                ARCHITECTURE="universal"
+                ;;
+        esac
+    fi
+
     case "$PLATFORM" in
         windows)
             publish_windows
+            ;;
+        macos)
+            publish_macos
             ;;
         linux)
             publish_linux
@@ -196,7 +254,8 @@ main() {
 
     "$SCRIPT_DIR/generate-wallet-manifest.py" \
         --website-dir "$WEBSITE_DIR" \
-        --version "$VERSION"
+        --version "$VERSION" \
+        --"${PLATFORM}"-architecture "$ARCHITECTURE"
 
     log "Published $PLATFORM wallet downloads into $WEBSITE_DIR"
     log "Manifest: $WEBSITE_DIR/manifest.json"

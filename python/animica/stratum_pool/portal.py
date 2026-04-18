@@ -11,7 +11,7 @@ from fastapi import Request
 from .config import PoolConfig
 
 PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
-DEFAULT_THREADS = 4
+DEFAULT_THREADS = 0
 DEFAULT_SCAN_WINDOW = 200_000
 DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.0")
 WILDCARD_HOSTS = {"", "0.0.0.0", "::", "[::]"}
@@ -346,36 +346,44 @@ def build_bundle_input(
 
 
 def build_config_document(resolved: ResolvedMiningConfig, bundle: BundleInput) -> str:
-    return (
-        "{\n"
-        f'  "pool_url": "{resolved.stratum_url}",\n'
-        f'  "host": "{resolved.public_host}",\n'
-        f'  "port": {resolved.public_port},\n'
-        f'  "scheme": "{resolved.public_scheme}",\n'
-        f'  "tls": {"true" if resolved.tls_enabled else "false"},\n'
-        f'  "address": "{bundle.address}",\n'
-        f'  "worker": "{bundle.worker}",\n'
-        f'  "threads": {bundle.threads},\n'
-        f'  "scan_window": {bundle.scan_window},\n'
-        f'  "api_base_url": "{resolved.api_base_url}",\n'
-        f'  "pool_mode": "{resolved.pool_mode}",\n'
-        '  "entrypoint": "animica-miner",\n'
-        '  "stats_interval_sec": 20,\n'
-        f'  "log_level": "{bundle.log_level}"\n'
-        "}\n"
+    lines = [
+        "{",
+        f'  "pool_url": "{resolved.stratum_url}",',
+        f'  "host": "{resolved.public_host}",',
+        f'  "port": {resolved.public_port},',
+        f'  "scheme": "{resolved.public_scheme}",',
+        f'  "tls": {"true" if resolved.tls_enabled else "false"},',
+        f'  "address": "{bundle.address}",',
+        f'  "worker": "{bundle.worker}",',
+    ]
+    if bundle.threads > 0:
+        lines.append(f'  "threads": {bundle.threads},')
+    lines.extend(
+        [
+            f'  "scan_window": {bundle.scan_window},',
+            f'  "api_base_url": "{resolved.api_base_url}",',
+            f'  "pool_mode": "{resolved.pool_mode}",',
+            '  "entrypoint": "animica-miner",',
+            '  "stats_interval_sec": 20,',
+            f'  "log_level": "{bundle.log_level}"',
+            "}",
+        ]
     )
+    return "\n".join(lines) + "\n"
 
 
 def build_manual_commands(resolved: ResolvedMiningConfig, bundle: BundleInput) -> dict[str, str]:
     quoted_address = bundle.address
     quoted_worker = bundle.worker
-    common_args = (
-        f"--pool-url {resolved.stratum_url} "
-        f"--address {quoted_address} "
-        f"--worker {quoted_worker} "
-        f"--threads {bundle.threads} "
-        f"--pool-mode {resolved.pool_mode}"
-    )
+    common_parts = [
+        f"--pool-url {resolved.stratum_url}",
+        f"--address {quoted_address}",
+        f"--worker {quoted_worker}",
+    ]
+    if bundle.threads > 0:
+        common_parts.append(f"--threads {bundle.threads}")
+    common_parts.append(f"--pool-mode {resolved.pool_mode}")
+    common_args = " ".join(common_parts)
     return {
         "windows": f"animica-miner.exe {common_args}",
         "macos": f"./animica-miner {common_args}",
@@ -719,5 +727,5 @@ def build_download_query(address: str, worker: str, threads: int) -> dict[str, A
     return {
         "address": address if address != PLACEHOLDER_ADDRESS else None,
         "worker": worker,
-        "threads": threads,
+        "threads": threads if threads > 0 else None,
     }

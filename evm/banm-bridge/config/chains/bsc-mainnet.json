@@ -1,0 +1,7 @@
+{
+  "chainId": 56,
+  "label": "bsc-mainnet",
+  "rpcUrl": "https://bsc-dataseed.binance.org",
+  "confirmationsRequired": 15
+}
+
