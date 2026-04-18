@@ -1303,13 +1303,14 @@ class MempoolService:
 
         sender_hex = _sender_hex(sender)
 
+        decoded_tx_obj: Any | None = None
         try:
             if hasattr(Tx, "from_obj"):
-                Tx.from_obj(  # type: ignore[attr-defined]
+                decoded_tx_obj = Tx.from_obj(  # type: ignore[attr-defined]
                     {"tx": normalized_env.get("tx"), "sigs": normalized_env.get("sigs", [])}
                 )
             elif hasattr(Tx, "from_cbor"):
-                Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
+                decoded_tx_obj = Tx.from_cbor(raw_bytes)  # type: ignore[attr-defined]
         except Exception as exc:
             self._record_rejection(
                 tx_hash_hex,
@@ -1322,11 +1323,35 @@ class MempoolService:
             ) from exc
 
         replay_in_index = False
+        replay_source = "tx_index"
         if self.tx_index is not None and hasattr(self.tx_index, "exists"):
             try:
                 replay_in_index = bool(self.tx_index.exists(tx_hash_bytes))
             except Exception:
                 replay_in_index = False
+            # Backward compatibility: tx_index historically keyed replay entries by
+            # unsigned/sign-bytes hash. Check that legacy domain too so already-
+            # applied transactions cannot be re-admitted after restart.
+            if (
+                not replay_in_index
+                and decoded_tx_obj is not None
+                and hasattr(decoded_tx_obj, "unsigned_hash")
+            ):
+                try:
+                    legacy_unsigned_hash = bytes(decoded_tx_obj.unsigned_hash())
+                except Exception:
+                    legacy_unsigned_hash = None
+                if (
+                    isinstance(legacy_unsigned_hash, (bytes, bytearray))
+                    and len(legacy_unsigned_hash) == 32
+                    and bytes(legacy_unsigned_hash) != tx_hash_bytes
+                ):
+                    try:
+                        replay_in_index = bool(self.tx_index.exists(bytes(legacy_unsigned_hash)))
+                    except Exception:
+                        replay_in_index = False
+                    if replay_in_index:
+                        replay_source = "tx_index_unsigned_hash"
         if replay_in_index:
             self._record_rejection(
                 tx_hash_hex,
@@ -1336,7 +1361,7 @@ class MempoolService:
             raise _build_replay_error(
                 tx_hash_hex=tx_hash_hex,
                 sender_hex=sender_hex,
-                replay_source="tx_index",
+                replay_source=replay_source,
             )
 
         # Do not treat transient recent-cache entries as canonical replay source.

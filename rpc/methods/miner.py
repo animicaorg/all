@@ -6787,6 +6787,13 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
             elif "parent" in reason_lower or "height continuity" in reason_lower:
                 reject_reason = "invalid_parent"
                 code = rpc_errors.AnimicaCode.INVALID_PARENT
+            elif (
+                "tx already applied on canonical chain" in reason_lower
+                or "duplicate tx apply attempt rejected" in reason_lower
+                or "duplicate tx hash in block" in reason_lower
+            ):
+                reject_reason = "duplicate_tx"
+                code = rpc_errors.AnimicaCode.INVALID_TX
             elif "coinbase" in reason_lower:
                 reject_reason = "invalid_coinbase"
                 code = rpc_errors.AnimicaCode.INVALID_COINBASE

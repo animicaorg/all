@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 from core.encoding.cbor import dumps as cbor_dumps
+from core.types.tx import Tx
+from core.utils.tx import normalize_tx_envelope
 from mempool.tx_hash import tx_hash_hex
 from rpc.mempool_service import MempoolService
 from mempool.errors import AdmissionError
@@ -68,6 +70,17 @@ class _AcceptingService(MempoolService):
 class _SeenTxIndex:
     def exists(self, _tx_hash: bytes) -> bool:
         return True
+
+
+class _LegacyUnsignedSeenTxIndex:
+    def __init__(self, seen_hash: bytes) -> None:
+        self.seen_hash = bytes(seen_hash)
+        self.calls: list[bytes] = []
+
+    def exists(self, tx_hash: bytes) -> bool:
+        hashed = bytes(tx_hash)
+        self.calls.append(hashed)
+        return hashed == self.seen_hash
 
 
 def _replay_candidate_envelope() -> tuple[dict[str, object], bytes, str, str]:
@@ -160,6 +173,37 @@ def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
     assert reject["context"]["tx_hash"] == txh
     assert reject["context"]["sender"] == sender_hex
     assert "trace_id" not in reject["context"]
+
+
+def test_submit_atomic_replay_from_legacy_unsigned_tx_index_is_typed() -> None:
+    tx, raw, txh, sender_hex = _replay_candidate_envelope()
+    normalized = normalize_tx_envelope(raw)
+    tx_obj = Tx.from_obj(
+        {"tx": normalized.get("tx"), "sigs": normalized.get("sigs", [])}
+    )
+    signed_hash = bytes.fromhex(txh[2:])
+    unsigned_hash = bytes(tx_obj.unsigned_hash())
+    assert signed_hash != unsigned_hash
+
+    tx_index = _LegacyUnsignedSeenTxIndex(unsigned_hash)
+    svc = MempoolService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=tx_index,
+        persist_enabled=False,
+    )
+
+    ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
+    assert ok is False
+    assert got_hash == txh
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "replay"
+    assert reject["context"]["tx_hash"] == txh
+    assert reject["context"]["sender"] == sender_hex
+    assert reject["context"]["replay_source"] == "tx_index_unsigned_hash"
+    assert any(call == unsigned_hash for call in tx_index.calls)
 
 
 def test_submit_atomic_stale_recent_cache_ignores_replay_constructor(
