@@ -1,0 +1,50 @@
+{
+  "source": "website-static",
+  "network": "mainnet",
+  "version": "0.1.0",
+  "generated_at": "2026-04-18T15:30:00Z",
+  "items": [
+    {
+      "platform": "windows",
+      "label": "Windows",
+      "filename": "animica-cpu-miner-0.1.0-mainnet-windows.zip",
+      "version": "0.1.0",
+      "launcher": ".bat launcher",
+      "entrypoint": "animica-miner.exe",
+      "includes_executable": false,
+      "requires_python": true,
+      "sha256": "8ca02f0d6f8b837389741ee694ef5742093fad467200c89748b8ab6dda5e17f8",
+      "size_bytes": 12360,
+      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-windows.zip",
+      "notes": "Static website-hosted starter bundle. Includes launcher + config + Python miner fallback."
+    },
+    {
+      "platform": "macos",
+      "label": "macOS",
+      "filename": "animica-cpu-miner-0.1.0-mainnet-macos.zip",
+      "version": "0.1.0",
+      "launcher": ".command launcher",
+      "entrypoint": "animica-miner",
+      "includes_executable": false,
+      "requires_python": true,
+      "sha256": "43e57867b7c0fdec33e457be127da56fea92c108ee3c6aba5d9f9444e9039cd0",
+      "size_bytes": 12297,
+      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-macos.zip",
+      "notes": "Static website-hosted starter bundle. Includes launcher + config + Python miner fallback."
+    },
+    {
+      "platform": "linux",
+      "label": "Ubuntu / Linux",
+      "filename": "animica-cpu-miner-0.1.0-mainnet-linux.tar.gz",
+      "version": "0.1.0",
+      "launcher": ".sh launcher",
+      "entrypoint": "animica-miner",
+      "includes_executable": true,
+      "requires_python": false,
+      "sha256": "d16a517af7aac94903d9af71becd4725beb850d667e3eb2057ac9766ac422bfe",
+      "size_bytes": 12037472,
+      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-linux.tar.gz",
+      "notes": "Static website-hosted starter bundle. Includes launcher + config + standalone animica-miner executable."
+    }
+  ]
+}

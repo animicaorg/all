@@ -8,8 +8,10 @@ import {
   unwrapPoolSummary,
 } from './normalize';
 import { resolveMiningApi } from './resolve';
+import { fetchJSON } from '../../utils/http';
 import type {
   MiningApiError,
+  MiningDownloadsResponse,
   MiningEnvHints,
   MiningMinerItem,
   MiningPlatform,
@@ -39,6 +41,7 @@ let payoutCountdownTargetMs: number | undefined;
 const DEFAULT_RUNTIME: RuntimeConfig = {
   isDev: false,
 };
+const STATIC_DOWNLOADS_MANIFEST = '/mining/manifest.json';
 
 export async function initMinePage(): Promise<void> {
   const runtime = readRuntimeConfig();
@@ -76,12 +79,22 @@ export async function initMinePage(): Promise<void> {
   });
 
   try {
-    const [configResult, downloadsResult, statusResult, summaryResult, minersResult] = await Promise.all([
+    const [
+      configResult,
+      downloadsResult,
+      statusResult,
+      summaryResult,
+      minersResult,
+      staticDownloadsResult,
+    ] = await Promise.all([
       client.fetchConfig(),
       client.fetchDownloads(),
       client.fetchStatus(),
       client.fetchSummary(),
       client.fetchMiners(),
+      resolution.isLocalDev
+        ? Promise.resolve({ ok: false, message: 'disabled' } as const)
+        : fetchStaticDownloadsManifest(),
     ]);
 
     if (statusResult.ok) {
@@ -111,11 +124,31 @@ export async function initMinePage(): Promise<void> {
       state.diagnostics.push(formatDiagnostic('config', configResult.error));
     }
 
-    if (downloadsResult.ok) {
-      state.downloads = normalizeMiningDownloads(downloadsResult.data, resolution);
+    const liveDownloads = downloadsResult.ok
+      ? normalizeMiningDownloads(downloadsResult.data, resolution)
+      : [];
+    const staticDownloadsResolution = {
+      ...resolution,
+      publicBaseUrl: window.location.origin,
+      publicPoolHost: window.location.host,
+    };
+    const staticDownloads = staticDownloadsResult.ok
+      ? normalizeMiningDownloads(staticDownloadsResult.data, staticDownloadsResolution)
+      : [];
+
+    if (!resolution.isLocalDev && staticDownloads.length > 0) {
+      state.downloads = staticDownloads;
+      state.diagnostics.push(
+        `Using static website mining bundles from ${STATIC_DOWNLOADS_MANIFEST}.`,
+      );
+    } else if (downloadsResult.ok) {
+      state.downloads = liveDownloads;
     } else {
       state.errors.downloads = downloadsResult.error;
       state.diagnostics.push(formatDiagnostic('downloads', downloadsResult.error));
+      if (!resolution.isLocalDev && !staticDownloadsResult.ok) {
+        state.diagnostics.push(staticDownloadsResult.message);
+      }
     }
 
     if (minersResult.ok) {
@@ -181,7 +214,7 @@ function renderState(
   elements: ReturnType<typeof resolveElements>,
   state: PageState,
   runtime: RuntimeConfig,
-  directPoolUrl?: string
+  directPoolUrl?: string,
 ): void {
   renderWarnings(elements, state.config?.warnings ?? []);
   renderStatus(elements, state);
@@ -191,10 +224,13 @@ function renderState(
   renderGenerated(elements, state);
   renderDebug(elements, runtime.isDev === true, state.diagnostics);
 
-  const hasLiveContent = Boolean(state.config) || state.downloads.length > 0 || hasLiveStatus(state.liveStatus);
+  const hasLiveContent =
+    Boolean(state.config) || state.downloads.length > 0 || hasLiveStatus(state.liveStatus);
   const fallbackMessage = buildFallbackMessage(state, directPoolUrl);
   setFallback(elements, {
-    visible: Boolean(fallbackMessage) && (!hasLiveContent || Boolean(state.errors.config) || state.downloads.length === 0),
+    visible:
+      Boolean(fallbackMessage) &&
+      (!hasLiveContent || Boolean(state.errors.config) || state.downloads.length === 0),
     message: fallbackMessage,
     directUrl: directPoolUrl,
   });
@@ -202,7 +238,7 @@ function renderState(
 
 function renderStaticDefaults(
   elements: ReturnType<typeof resolveElements>,
-  directPoolUrl?: string
+  directPoolUrl?: string,
 ): void {
   if (elements.stratumHost) elements.stratumHost.textContent = 'Resolving...';
   if (elements.stratumPort) elements.stratumPort.textContent = 'Resolving...';
@@ -256,7 +292,8 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
   }
 
   if (elements.networkChip) {
-    elements.networkChip.textContent = config?.network ?? readStatusText(liveStatus.network) ?? 'Unknown network';
+    elements.networkChip.textContent =
+      config?.network ?? readStatusText(liveStatus.network) ?? 'Unknown network';
   }
 
   if (elements.profileChip) {
@@ -279,7 +316,9 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
   }
 
   if (elements.stratumPort) {
-    elements.stratumPort.textContent = config?.stratumPort ? String(config.stratumPort) : 'Unavailable';
+    elements.stratumPort.textContent = config?.stratumPort
+      ? String(config.stratumPort)
+      : 'Unavailable';
   }
 
   if (elements.stratumUrl) {
@@ -340,7 +379,7 @@ function renderStatus(elements: ReturnType<typeof resolveElements>, state: PageS
 
 function renderInstructions(
   elements: ReturnType<typeof resolveElements>,
-  config?: NormalizedMiningConfig
+  config?: NormalizedMiningConfig,
 ): void {
   if (elements.payoutInstructions) {
     elements.payoutInstructions.textContent =
@@ -370,7 +409,7 @@ function renderInstructions(
 
 function renderDownloads(
   elements: ReturnType<typeof resolveElements>,
-  downloads: NormalizedMiningDownloadItem[]
+  downloads: NormalizedMiningDownloadItem[],
 ): void {
   for (const card of elements.downloadCards) {
     const platform = card.dataset.platform ?? '';
@@ -438,7 +477,7 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
       const worker = String(item.worker_name ?? item.worker_id ?? '').toLowerCase();
       const address = String(item.address ?? '').toLowerCase();
       return worker.includes(query) || address.includes(query);
-    })
+    }),
   );
 
   if (miners.length === 0) {
@@ -460,7 +499,9 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
       const blocks = formatInteger(item.blocks_found);
       const hashrate = formatHashrate(resolveMinerHashrate(item));
       const credit = escapeHtml(String(item.credit_total ?? '0'));
-      const mode = escapeHtml(String(item.pool_mode ?? state.config?.poolMode ?? 'pps').toUpperCase());
+      const mode = escapeHtml(
+        String(item.pool_mode ?? state.config?.poolMode ?? 'pps').toUpperCase(),
+      );
       return `
         <tr class="border-t border-white/10">
           <td class="px-4 py-3 font-medium text-white">${worker}</td>
@@ -504,13 +545,15 @@ function renderWarnings(elements: ReturnType<typeof resolveElements>, warnings: 
   }
 
   elements.warningPanel.classList.remove('hidden');
-  elements.warningList.innerHTML = warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
+  elements.warningList.innerHTML = warnings
+    .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+    .join('');
 }
 
 function renderDebug(
   elements: ReturnType<typeof resolveElements>,
   isDev: boolean,
-  diagnostics: string[]
+  diagnostics: string[],
 ): void {
   if (!elements.debugPanel || !elements.debugOutput) return;
 
@@ -568,7 +611,10 @@ function attachEvents(elements: ReturnType<typeof resolveElements>, state: PageS
   });
 }
 
-function setActiveTab(elements: ReturnType<typeof resolveElements>, platform: MiningPlatform): void {
+function setActiveTab(
+  elements: ReturnType<typeof resolveElements>,
+  platform: MiningPlatform,
+): void {
   for (const button of elements.tabButtons) {
     const active = button.dataset.tabTarget === platform;
     button.classList.toggle('bg-sky-500/15', active);
@@ -580,7 +626,7 @@ function setActiveTab(elements: ReturnType<typeof resolveElements>, platform: Mi
 
 function setFallback(
   elements: ReturnType<typeof resolveElements>,
-  input: { visible: boolean; message: string; directUrl?: string | undefined }
+  input: { visible: boolean; message: string; directUrl?: string | undefined },
 ): void {
   if (!elements.fallbackPanel || !elements.fallbackMessage) return;
 
@@ -643,7 +689,7 @@ function buildCommandSnippet(state: PageState): string {
     return personalizeCommand(activeCommand, state, state.activeTab);
   }
 
-    return [
+  return [
     '# Reference values',
     `POOL_URL=${config.stratumUrl}`,
     `PAYOUT_ADDRESS=${readPayoutAddress(true)}`,
@@ -681,12 +727,14 @@ function buildConfigSnippet(state: PageState): string {
       threads: readThreadCount(state),
     },
     null,
-    2
+    2,
   );
 }
 
 function readPayoutAddress(placeholder: boolean): string {
-  const value = (document.getElementById('payout-address') as HTMLInputElement | null)?.value.trim();
+  const value = (
+    document.getElementById('payout-address') as HTMLInputElement | null
+  )?.value.trim();
   if (value) return value;
   return placeholder ? '<animica-address>' : '';
 }
@@ -703,6 +751,28 @@ function readThreadCount(state: PageState): number {
   const parsed = value ? Number(value) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return state.config?.defaultThreads ?? 4;
+}
+
+type StaticDownloadsManifestResult =
+  | { ok: true; data: MiningDownloadsResponse }
+  | { ok: false; message: string };
+
+async function fetchStaticDownloadsManifest(): Promise<StaticDownloadsManifestResult> {
+  try {
+    const data = await fetchJSON<MiningDownloadsResponse>(STATIC_DOWNLOADS_MANIFEST, {
+      method: 'GET',
+      timeoutMs: 3_000,
+      retry: { maxRetries: 0, retryOnStatuses: [] },
+    });
+    return { ok: true, data };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown static manifest fetch failure';
+    return {
+      ok: false,
+      message: `Static mining manifest unavailable at ${STATIC_DOWNLOADS_MANIFEST}: ${message}`,
+    };
+  }
 }
 
 function readRuntimeConfig(): RuntimeConfig {
@@ -787,7 +857,7 @@ function readNonNegativeNumber(value: unknown): number | undefined {
 
 function resolveCountdownTargetMs(
   nextPayoutAt: unknown,
-  countdownSeconds: unknown
+  countdownSeconds: unknown,
 ): number | undefined {
   if (typeof nextPayoutAt === 'string' && nextPayoutAt.trim()) {
     const parsed = Date.parse(nextPayoutAt);
@@ -820,7 +890,7 @@ function clearPayoutCountdownTimer(): void {
 
 function startPayoutCountdown(
   elements: ReturnType<typeof resolveElements>,
-  input: { enabled: boolean; nextPayoutAt?: unknown; countdownSeconds?: unknown }
+  input: { enabled: boolean; nextPayoutAt?: unknown; countdownSeconds?: unknown },
 ): void {
   if (!elements.payoutCountdown) return;
 
@@ -840,10 +910,7 @@ function startPayoutCountdown(
   payoutCountdownTargetMs = targetMs;
   const update = () => {
     if (!elements.payoutCountdown || payoutCountdownTargetMs === undefined) return;
-    const remainingSeconds = Math.max(
-      0,
-      Math.ceil((payoutCountdownTargetMs - Date.now()) / 1000)
-    );
+    const remainingSeconds = Math.max(0, Math.ceil((payoutCountdownTargetMs - Date.now()) / 1000));
     elements.payoutCountdown.textContent =
       remainingSeconds > 0 ? formatDuration(remainingSeconds) : 'Due now';
   };
@@ -885,7 +952,9 @@ function formatLatestBlock(value: unknown): string {
 }
 
 function hasLiveStatus(status: MiningPoolStatus): boolean {
-  return ['miners', 'workers', 'height', 'pool_hashrate', 'latest_block'].some((key) => status[key] !== undefined);
+  return ['miners', 'workers', 'height', 'pool_hashrate', 'latest_block'].some(
+    (key) => status[key] !== undefined,
+  );
 }
 
 function readTextContent(elementId: string): string {
