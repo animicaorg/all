@@ -96,4 +96,5 @@ def to_anm_base_units_from_human(amount_text: str) -> int:
 
 
 def to_banm_wei_from_human(amount_text: str) -> int:
-    return parse_human_amount(amount_text, 18)
+    # BANM UI amounts intentionally follow Animica precision (9 decimals).
+    return parse_human_amount(amount_text, 9) * ANM_TO_BANM_SCALER

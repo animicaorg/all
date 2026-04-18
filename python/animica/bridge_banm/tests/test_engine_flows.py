@@ -162,6 +162,24 @@ def test_reverse_flow_claim_code_burn_release(bridge_engine):
     assert BridgeStatus(final.status) == BridgeStatus.COMPLETED
 
 
+def test_reverse_banm_amount_uses_animica_decimal_precision(bridge_engine):
+    engine, _, _, _ = bridge_engine
+    acct = Account.create()
+
+    created = engine.create_order(
+        CreateOrderRequest(
+            direction=BridgeDirection.BANM_TO_ANM,
+            connected_evm_address=acct.address,
+            amount="1.0000000019",
+            destination_address="anim1destdecimalbanm00000000000000000",
+        )
+    )
+    # 1.0000000019 BANM is rounded down to 9 decimals before converting to wei.
+    assert created.order.amount_in == 1_000_000_001_000_000_000
+    assert created.order.amount_out_expected == 997_500_001
+    assert created.order.fee_amount == 2_500_000
+
+
 def test_signature_mismatch_rejected(bridge_engine):
     engine, _, _, _ = bridge_engine
     good = Account.create()
