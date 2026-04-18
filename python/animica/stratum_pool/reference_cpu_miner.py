@@ -8,6 +8,8 @@ import hashlib
 import json
 import logging
 import math
+import multiprocessing as mp
+import os
 import secrets
 import signal
 import socket
@@ -18,8 +20,9 @@ import time
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
+from collections import defaultdict
 from dataclasses import dataclass, replace
-from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_EVEN, localcontext
 from pathlib import Path
 from typing import Any, Optional
 
@@ -85,6 +88,27 @@ def _normalize_pool_mode(value: Optional[str]) -> str:
 def _default_api_base_url(host: str, tls: bool) -> str:
     scheme = "https" if tls else "http"
     return f"{scheme}://{host}:8550"
+
+
+def _thread_cap() -> int:
+    return 61 if os.name == "nt" else 256
+
+
+def _default_threads() -> int:
+    detected = int(os.cpu_count() or 1)
+    return max(1, min(detected, _thread_cap()))
+
+
+def _resolve_threads(value: Any) -> int:
+    if value in (None, ""):
+        return _default_threads()
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return _default_threads()
+    if parsed <= 0:
+        return _default_threads()
+    return max(1, min(parsed, _thread_cap()))
 
 
 def _join_url(base: str, path: str) -> str:
@@ -229,6 +253,143 @@ class PoolStatusSnapshot:
     worker_blocks_found: int = 0
 
 
+def normalize_share_ratio(value: Any, *, default: float = 1.0) -> float:
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        ratio = float(default)
+    if ratio <= 0:
+        ratio = float(default)
+    if ratio <= 0:
+        ratio = 1.0
+    if ratio > 1.0:
+        ratio = 1.0
+    return ratio
+
+
+def derive_share_threshold_micro(theta_micro: int, share_ratio: Any) -> int:
+    theta = max(int(theta_micro), 0)
+    if theta <= 0:
+        return 0
+    ratio = Decimal(str(normalize_share_ratio(share_ratio)))
+    with localcontext() as ctx:
+        ctx.prec = 50
+        threshold = (Decimal(theta) * ratio).to_integral_value(rounding=ROUND_FLOOR)
+    return max(1, int(threshold))
+
+
+def parse_hex_bytes(value: Any, *, default: bytes = b"") -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("0x"):
+            text = text[2:]
+        if not text:
+            return default
+        if len(text) % 2:
+            text = "0" + text
+        try:
+            return bytes.fromhex(text)
+        except Exception:
+            return default
+    return default
+
+
+def digest_from_sign_bytes(
+    sign_bytes: bytes,
+    *,
+    mix_seed: bytes = b"",
+    nonce_int: int,
+    nonce_byteorder: str = "little",
+) -> bytes:
+    nonce_bytes = int(nonce_int).to_bytes(8, nonce_byteorder, signed=False)
+    hasher = hashlib.sha3_256()
+    hasher.update(sign_bytes)
+    hasher.update(mix_seed)
+    hasher.update(nonce_bytes)
+    return hasher.digest()
+
+
+def _extract_mix_seed_bytes(job: dict[str, Any], header: dict[str, Any]) -> bytes:
+    candidates = []
+    for mapping in (
+        job,
+        _dict_value(job, "hints", "targetHint", "target_hint"),
+        header,
+        _dict_value(header, "hints", "targetHint", "target_hint"),
+    ):
+        if isinstance(mapping, dict):
+            candidates.append(mapping.get("mixSeed"))
+            candidates.append(mapping.get("mix_seed"))
+    for value in candidates:
+        parsed = parse_hex_bytes(value, default=b"")
+        if parsed:
+            return parsed
+    return b""
+
+
+def _scan_range_worker(
+    prefix: bytes,
+    mix_seed: bytes,
+    target: int,
+    theta_micro: int,
+    start_nonce: int,
+    iterations: int,
+) -> Optional[ShareResult]:
+    nonce = start_nonce
+    best_share: Optional[ShareResult] = None
+    for attempt in range(1, iterations + 1):
+        digest = digest_from_sign_bytes(
+            prefix,
+            mix_seed=mix_seed,
+            nonce_int=nonce,
+            nonce_byteorder="little",
+        )
+        digest_int = int.from_bytes(digest, "big", signed=False)
+        if digest_int <= target:
+            h_micro = h_micro_from_digest(digest)
+            d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
+            candidate = ShareResult(
+                nonce=nonce,
+                h_micro=h_micro,
+                d_ratio=d_ratio,
+                hashes_tried=attempt,
+            )
+            if best_share is None or candidate.h_micro > best_share.h_micro:
+                best_share = candidate
+        nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
+    return best_share
+
+
+def _scan_header_range_worker(
+    header_template: Any,
+    target: int,
+    theta_micro: int,
+    start_nonce: int,
+    iterations: int,
+) -> Optional[ShareResult]:
+    if _hash_candidate_header is None:
+        return None
+    nonce = start_nonce
+    best_share: Optional[ShareResult] = None
+    for attempt in range(1, iterations + 1):
+        candidate_hash = _hash_candidate_header(header_template, nonce=nonce)
+        if candidate_hash.digest_int <= target:
+            h_micro = h_micro_from_digest(candidate_hash.digest)
+            d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
+            candidate = ShareResult(
+                nonce=nonce,
+                h_micro=h_micro,
+                d_ratio=d_ratio,
+                hashes_tried=attempt,
+            )
+            if best_share is None or candidate.h_micro > best_share.h_micro:
+                best_share = candidate
+        nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
+    return best_share
+
+
 def _first_present(mapping: Any, *keys: str) -> Any:
     if not isinstance(mapping, dict):
         return None
@@ -312,6 +473,37 @@ def _normalize_job_payload(
     theta_micro = _extract_theta_micro(job, header) or max(0, int(default_theta_micro))
     share_target = _extract_share_target(job, fallback=default_share_target) or 1.0
     return job_id, header, sign_hex, theta_micro, share_target
+
+
+def _apply_runtime_difficulty_to_job(
+    job: dict[str, Any],
+    *,
+    theta_micro: int,
+    share_target: float,
+) -> dict[str, Any]:
+    updated = dict(job) if isinstance(job, dict) else {}
+    if share_target > 0:
+        normalized_share_target = normalize_share_ratio(share_target, default=share_target)
+        updated["shareTarget"] = normalized_share_target
+        if "share_target" in updated:
+            updated["share_target"] = normalized_share_target
+    if theta_micro <= 0:
+        return updated
+
+    updated["thetaMicro"] = int(theta_micro)
+    updated["thetaTargetMicro"] = int(theta_micro)
+    updated["theta_target_micro"] = int(theta_micro)
+
+    for header_key in ("header", "headerTemplate"):
+        header = updated.get(header_key)
+        if not isinstance(header, dict):
+            continue
+        next_header = dict(header)
+        next_header["thetaMicro"] = int(theta_micro)
+        next_header["thetaTargetMicro"] = int(theta_micro)
+        next_header["theta_target_micro"] = int(theta_micro)
+        updated[header_key] = next_header
+    return updated
 
 
 def _header_template_from_job(header: dict[str, Any]) -> Optional[Any]:
@@ -433,7 +625,7 @@ def resolve_config(args: argparse.Namespace) -> MinerConfig:
     if port <= 0 or port > 65535:
         raise SystemExit("Pool port must be between 1 and 65535.")
     worker = sanitize_worker_name(args.worker or file_data.get("worker"))
-    threads = max(1, int(args.threads or file_data.get("threads") or 4))
+    threads = _resolve_threads(args.threads if args.threads is not None else file_data.get("threads"))
     scan_window = max(25_000, int(args.scan_window or file_data.get("scan_window") or 200_000))
     api_base_url = str(
         args.api_base_url
@@ -486,14 +678,21 @@ class StratumCpuMiner:
         self._local_blocks_found = 0
         self._last_pool_snapshot = PoolStatusSnapshot()
         self._stats_lock = threading.Lock()
-        self._hashes_since_report = 0
+        self._total_hashes = 0
+        self._last_total_hashes = 0
         self._last_report_ts = time.monotonic()
         self._last_hashrate_hps = 0.0
+        self._accepted_shares = 0
+        self._rejected_shares = 0
         self._last_power_w: Optional[float] = None
         self._power_sampler = _RaplPowerSampler()
-        self._scan_executor = concurrent.futures.ThreadPoolExecutor(
+        self._current_job: Optional[dict[str, Any]] = None
+        self._last_reported_accepted = 0
+        self._last_reported_rejected = 0
+        self._rejection_reason_counts_since_report: dict[str, int] = defaultdict(int)
+        self._scan_executor = concurrent.futures.ProcessPoolExecutor(
             max_workers=self.config.threads,
-            thread_name_prefix="animica-cpu-scan",
+            mp_context=mp.get_context("spawn"),
         )
 
     async def start(self) -> None:
@@ -538,30 +737,36 @@ class StratumCpuMiner:
         if hashes_tried <= 0:
             return
         with self._stats_lock:
-            self._hashes_since_report += int(hashes_tried)
+            self._total_hashes += int(hashes_tried)
 
-    def _drain_hashrate(self) -> float:
+    def _drain_hashrate(self) -> tuple[float, int]:
         now = time.monotonic()
         with self._stats_lock:
             elapsed = max(now - self._last_report_ts, 1e-6)
-            hashes = self._hashes_since_report
-            self._hashes_since_report = 0
+            total = self._total_hashes
+            hashes = max(0, total - self._last_total_hashes)
+            self._last_total_hashes = total
             self._last_report_ts = now
         if hashes > 0:
             self._last_hashrate_hps = float(hashes) / elapsed
-        return self._last_hashrate_hps
+        return self._last_hashrate_hps, total
 
     def _emit_status_line(
         self,
         *,
         hashrate_hps: float,
+        total_hashes: int,
         power_w: Optional[float],
         snapshot: PoolStatusSnapshot,
     ) -> None:
         ts = time.strftime("%H:%M:%S")
         print(
             f"[{ts}] mode={self.config.pool_mode} | "
+            f"backend=pool-cpu-multiprocess | "
             f"hashrate={_format_hashrate(hashrate_hps)} | "
+            f"total_hashes={total_hashes} | "
+            f"accepted={self._accepted_shares} | "
+            f"rejected={self._rejected_shares} | "
             f"power={_format_power(power_w)} | "
             f"blocks global={_format_counter(snapshot.global_height)} "
             f"pool={_format_counter(snapshot.pool_blocks_found)} "
@@ -576,6 +781,29 @@ class StratumCpuMiner:
             f"pool={_format_counter(snapshot.pool_blocks_found)} "
             f"you={_format_counter(snapshot.worker_blocks_found)}"
         )
+
+    def _emit_share_batch_update(self) -> None:
+        accepted_delta = self._accepted_shares - self._last_reported_accepted
+        rejected_delta = self._rejected_shares - self._last_reported_rejected
+        if accepted_delta <= 0 and rejected_delta <= 0:
+            return
+        ts = time.strftime("%H:%M:%S")
+        breakdown = ""
+        if self._rejection_reason_counts_since_report:
+            top_reasons = sorted(
+                self._rejection_reason_counts_since_report.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+            reason_summary = ", ".join(f"{reason} x{count}" for reason, count in top_reasons)
+            breakdown = f" | reject_reasons={reason_summary}"
+        print(
+            f"[{ts}] shares/{int(self.config.stats_interval_sec)}s "
+            f"accepted=+{accepted_delta} rejected=+{rejected_delta}{breakdown}"
+        )
+        self._last_reported_accepted = self._accepted_shares
+        self._last_reported_rejected = self._rejected_shares
+        self._rejection_reason_counts_since_report.clear()
 
     async def _fetch_pool_snapshot(self) -> PoolStatusSnapshot:
         status_url = _join_url(self.config.api_base_url, "/api/mining/status")
@@ -628,15 +856,17 @@ class StratumCpuMiner:
                 self._emit_block_update("Network found a block", snapshot)
             self._last_pool_snapshot = snapshot
 
-            hashrate_hps = self._drain_hashrate()
+            hashrate_hps, total_hashes = self._drain_hashrate()
             power_w = self._power_sampler.sample()
             if power_w is not None:
                 self._last_power_w = power_w
             self._emit_status_line(
                 hashrate_hps=hashrate_hps,
+                total_hashes=total_hashes,
                 power_w=self._last_power_w,
                 snapshot=snapshot,
             )
+            self._emit_share_batch_update()
 
     async def _send(self, payload: dict[str, Any]) -> None:
         self.writer.write((json.dumps(payload) + "\n").encode("utf-8"))
@@ -707,10 +937,30 @@ class StratumCpuMiner:
                 if method == "mining.set_difficulty":
                     share_target = _extract_share_target(params, fallback=self._share_target)
                     theta_micro = _extract_theta_micro(params)
+                    changed = False
                     if share_target > 0:
-                        self._share_target = share_target
+                        normalized_share_target = normalize_share_ratio(
+                            share_target, default=self._share_target
+                        )
+                        if abs(normalized_share_target - self._share_target) > 1e-12:
+                            self._share_target = normalized_share_target
+                            changed = True
                     if theta_micro > 0:
-                        self._theta_micro = theta_micro
+                        if theta_micro != self._theta_micro:
+                            self._theta_micro = theta_micro
+                            changed = True
+                    if changed and self._current_job is not None:
+                        self._current_job = _apply_runtime_difficulty_to_job(
+                            self._current_job,
+                            theta_micro=self._theta_micro,
+                            share_target=self._share_target,
+                        )
+                        self.log.info(
+                            "Difficulty update theta=%s shareTarget=%.6f; restarting current job",
+                            self._theta_micro,
+                            self._share_target,
+                        )
+                        await self._restart_current_job()
                 elif method == "mining.notify":
                     await self._handle_notify(params)
         except asyncio.CancelledError:
@@ -720,12 +970,51 @@ class StratumCpuMiner:
             self._stop.set()
 
     async def _handle_notify(self, job: dict[str, Any]) -> None:
+        self._current_job = dict(job)
         self._job_token += 1
         if self._mining_task:
             self._mining_task.cancel()
             await asyncio.gather(self._mining_task, return_exceptions=True)
         token = self._job_token
-        self._mining_task = asyncio.create_task(self._mine_job(token, job))
+        self._mining_task = asyncio.create_task(
+            self._mine_job(token, dict(self._current_job))
+        )
+
+    async def _restart_current_job(self) -> None:
+        if self._current_job is None:
+            return
+        self._job_token += 1
+        if self._mining_task:
+            self._mining_task.cancel()
+            await asyncio.gather(self._mining_task, return_exceptions=True)
+        token = self._job_token
+        self._mining_task = asyncio.create_task(
+            self._mine_job(token, dict(self._current_job))
+        )
+
+    def _apply_submit_outcome(self, outcome: SubmitOutcome) -> None:
+        if outcome.accepted:
+            self._accepted_shares += 1
+        else:
+            self._rejected_shares += 1
+            reason = (
+                str(outcome.reason or "unknown_reject")
+                if not outcome.stale_job
+                else "stale_job"
+            )
+            self._rejection_reason_counts_since_report[reason] += 1
+        if outcome.accepted and outcome.is_block:
+            self._local_blocks_found += 1
+            snapshot = PoolStatusSnapshot(
+                global_height=self._last_pool_snapshot.global_height,
+                pool_blocks_found=max(
+                    self._last_pool_snapshot.pool_blocks_found,
+                    self._local_blocks_found,
+                ),
+                worker_blocks_found=self._local_blocks_found,
+            )
+            self._emit_block_update("Block found by this miner", snapshot)
+            self._last_pool_snapshot = snapshot
 
     async def _mine_job(self, token: int, job: dict[str, Any]) -> None:
         job_id, header, sign_hex, theta_micro, share_target = _normalize_job_payload(
@@ -750,12 +1039,31 @@ class StratumCpuMiner:
                     )
                 return
             prefix = bytes.fromhex(sign_hex[2:])
+            mix_seed = _extract_mix_seed_bytes(job, header)
+        else:
+            mix_seed = b""
 
-        target_micro = max(1, int(theta_micro * max(share_target, 1e-9)))
+        share_ratio = normalize_share_ratio(share_target, default=1.0)
+        target_micro = derive_share_threshold_micro(theta_micro, share_ratio)
         nonce_start = secrets.randbelow(2**32)
+        submit_tasks: list[asyncio.Task[SubmitOutcome]] = []
+        best_pending_share: Optional[ShareResult] = None
+        max_submit_tasks = 4
 
         try:
             while token == self._job_token and not self._stop.is_set():
+                if submit_tasks:
+                    done = [task for task in submit_tasks if task.done()]
+                    if not done:
+                        await asyncio.sleep(0)
+                        done = [task for task in submit_tasks if task.done()]
+                    for task in done:
+                        submit_tasks.remove(task)
+                        outcome = await task
+                        self._apply_submit_outcome(outcome)
+                        if _should_stop_job(outcome):
+                            return
+
                 if header_template is not None:
                     share = await asyncio.to_thread(
                         self._scan_header_parallel,
@@ -768,6 +1076,7 @@ class StratumCpuMiner:
                     share = await asyncio.to_thread(
                         self._scan_parallel,
                         prefix,
+                        mix_seed,
                         target_micro,
                         theta_micro,
                         nonce_start,
@@ -775,27 +1084,29 @@ class StratumCpuMiner:
                 nonce_start = (nonce_start + self.config.scan_window) & 0xFFFFFFFFFFFFFFFF
                 if share is None:
                     continue
-                outcome = await self._submit_share(job_id, share)
-                if outcome.accepted and outcome.is_block:
-                    self._local_blocks_found += 1
-                    snapshot = PoolStatusSnapshot(
-                        global_height=self._last_pool_snapshot.global_height,
-                        pool_blocks_found=max(
-                            self._last_pool_snapshot.pool_blocks_found,
-                            self._local_blocks_found,
-                        ),
-                        worker_blocks_found=self._local_blocks_found,
+
+                if best_pending_share is None or share.h_micro > best_pending_share.h_micro:
+                    best_pending_share = share
+
+                while len(submit_tasks) < max_submit_tasks and best_pending_share is not None:
+                    submit_tasks.append(
+                        asyncio.create_task(self._submit_share(job_id, best_pending_share))
                     )
-                    self._emit_block_update("Block found by this miner", snapshot)
-                    self._last_pool_snapshot = snapshot
-                if _should_stop_job(outcome):
-                    return
+                    best_pending_share = None
+
+            for task in submit_tasks:
+                outcome = await task
+                self._apply_submit_outcome(outcome)
         except asyncio.CancelledError:
+            for task in submit_tasks:
+                task.cancel()
+            await asyncio.gather(*submit_tasks, return_exceptions=True)
             return
 
     def _scan_parallel(
         self,
         prefix: bytes,
+        mix_seed: bytes,
         target_micro: int,
         theta_micro: int,
         nonce_start: int,
@@ -804,36 +1115,30 @@ class StratumCpuMiner:
         target = micro_threshold_to_target256(target_micro)
         estimated_hashes = per_worker * self.config.threads
         futures = []
+        best_share: Optional[ShareResult] = None
         for index in range(self.config.threads):
             start = (nonce_start + (index * per_worker)) & 0xFFFFFFFFFFFFFFFF
             futures.append(
                 self._scan_executor.submit(
-                    self._scan_range,
+                    _scan_range_worker,
                     prefix,
+                    mix_seed,
                     target,
                     theta_micro,
                     start,
                     per_worker,
                 )
             )
-        try:
-            for future in concurrent.futures.as_completed(futures):
-                share = future.result()
-                if share is not None:
-                    estimated_hashes = max(
-                        self.config.threads,
-                        min(per_worker, max(1, share.hashes_tried)) * self.config.threads,
-                    )
-                    for other in futures:
-                        other.cancel()
-                    share = replace(share, hashes_tried=estimated_hashes)
-                    self._record_hashes(estimated_hashes)
-                    return share
-        finally:
-            for future in futures:
-                future.cancel()
+        for future in concurrent.futures.as_completed(futures):
+            share = future.result()
+            if share is not None and (
+                best_share is None or share.h_micro > best_share.h_micro
+            ):
+                best_share = share
         self._record_hashes(estimated_hashes)
-        return None
+        if best_share is None:
+            return None
+        return replace(best_share, hashes_tried=estimated_hashes)
 
     def _scan_header_parallel(
         self,
@@ -846,11 +1151,12 @@ class StratumCpuMiner:
         target = micro_threshold_to_target256(target_micro)
         estimated_hashes = per_worker * self.config.threads
         futures = []
+        best_share: Optional[ShareResult] = None
         for index in range(self.config.threads):
             start = (nonce_start + (index * per_worker)) & 0xFFFFFFFFFFFFFFFF
             futures.append(
                 self._scan_executor.submit(
-                    self._scan_header_range,
+                    _scan_header_range_worker,
                     header_template,
                     target,
                     theta_micro,
@@ -858,76 +1164,16 @@ class StratumCpuMiner:
                     per_worker,
                 )
             )
-        try:
-            for future in concurrent.futures.as_completed(futures):
-                share = future.result()
-                if share is not None:
-                    estimated_hashes = max(
-                        self.config.threads,
-                        min(per_worker, max(1, share.hashes_tried)) * self.config.threads,
-                    )
-                    for other in futures:
-                        other.cancel()
-                    share = replace(share, hashes_tried=estimated_hashes)
-                    self._record_hashes(estimated_hashes)
-                    return share
-        finally:
-            for future in futures:
-                future.cancel()
+        for future in concurrent.futures.as_completed(futures):
+            share = future.result()
+            if share is not None and (
+                best_share is None or share.h_micro > best_share.h_micro
+            ):
+                best_share = share
         self._record_hashes(estimated_hashes)
-        return None
-
-    @staticmethod
-    def _scan_range(
-        prefix: bytes,
-        target: int,
-        theta_micro: int,
-        start_nonce: int,
-        iterations: int,
-    ) -> Optional[ShareResult]:
-        base = hashlib.sha3_256()
-        base.update(prefix)
-        nonce = start_nonce
-        for attempt in range(1, iterations + 1):
-            hasher = base.copy()
-            hasher.update(struct.pack("<Q", nonce))
-            digest = hasher.digest()
-            if int.from_bytes(digest, "big", signed=False) <= target:
-                h_micro = h_micro_from_digest(digest)
-                d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
-                return ShareResult(
-                    nonce=nonce,
-                    h_micro=h_micro,
-                    d_ratio=d_ratio,
-                    hashes_tried=attempt,
-                )
-            nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
-        return None
-
-    @staticmethod
-    def _scan_header_range(
-        header_template: Any,
-        target: int,
-        theta_micro: int,
-        start_nonce: int,
-        iterations: int,
-    ) -> Optional[ShareResult]:
-        if _hash_candidate_header is None:
+        if best_share is None:
             return None
-        nonce = start_nonce
-        for attempt in range(1, iterations + 1):
-            candidate_hash = _hash_candidate_header(header_template, nonce=nonce)
-            if candidate_hash.digest_int <= target:
-                h_micro = h_micro_from_digest(candidate_hash.digest)
-                d_ratio = h_micro / float(theta_micro) if theta_micro > 0 else 0.0
-                return ShareResult(
-                    nonce=nonce,
-                    h_micro=h_micro,
-                    d_ratio=d_ratio,
-                    hashes_tried=attempt,
-                )
-            nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
-        return None
+        return replace(best_share, hashes_tried=estimated_hashes)
 
     async def _submit_share(self, job_id: str, share: ShareResult) -> SubmitOutcome:
         response = await self._call(
@@ -949,7 +1195,9 @@ class StratumCpuMiner:
         stale_job = _is_stale_job_reason(reason)
         if response.get("error"):
             if not stale_job:
-                self.log.warning("Share rejected: %s", reason or response["error"])
+                # Share rejects can be frequent on dynamic jobs; keep per-reject
+                # detail at debug level and use batched status updates for UX.
+                self.log.debug("Share rejected: %s", reason or response["error"])
             return SubmitOutcome(
                 accepted=False,
                 is_block=False,
@@ -1013,7 +1261,8 @@ async def async_main(args: argparse.Namespace) -> int:
         f"endpoint={config.stratum_url} | "
         f"mode={config.pool_mode} | "
         f"worker={config.worker} | "
-        f"threads={config.threads}"
+        f"threads={config.threads} | "
+        "backend=pool-cpu-multiprocess"
     )
 
     await miner.start()
@@ -1031,4 +1280,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     raise SystemExit(main())

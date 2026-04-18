@@ -25,6 +25,7 @@ ADHOC_SIGN=false
 NOTARIZE=false
 ARCH_LABEL="$(uname -m)"
 OUTPUT_DIR="$REPO_ROOT/dist/wallet-qt"
+WEBSITE_DIR="$REPO_ROOT/website/public/wallet"
 
 usage() {
     cat <<'EOF'
@@ -138,6 +139,14 @@ required_arch_for_verification() {
         printf '%s' 'x86_64'
     else
         printf '%s' 'arm64'
+    fi
+}
+
+website_arch_label() {
+    if [ "$ARCH_LABEL" = "universal2" ]; then
+        printf '%s' 'universal'
+    else
+        printf '%s' "$ARCH_LABEL"
     fi
 }
 
@@ -362,6 +371,21 @@ main() {
             shasum -a 256 "$(basename "$dmg_path")" >> SHA256SUMS
         fi
     )
+
+    if [ -d "$REPO_ROOT/website/public" ]; then
+        local -a publish_args=(
+            --platform macos
+            --version "$version"
+            --website-dir "$WEBSITE_DIR"
+            --architecture "$(website_arch_label)"
+            --zip "$app_zip"
+        )
+        if [ -n "$dmg_path" ]; then
+            publish_args+=(--dmg "$dmg_path")
+        fi
+        run_checked "Refreshing website downloads" \
+            "$SCRIPT_DIR/publish-wallet-downloads.sh" "${publish_args[@]}"
+    fi
 
     log ""
     log "======================================"

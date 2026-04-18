@@ -1,0 +1,84 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - banm_bridge_pg_prod:/var/lib/postgresql/data
+
+  backend:
+    image: ghcr.io/animica/banm-bridge-backend:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      BANM_BRIDGE_API_HOST: 0.0.0.0
+      BANM_BRIDGE_API_PORT: 8660
+      BANM_BRIDGE_PUBLIC_BASE_URL: ${BANM_BRIDGE_PUBLIC_BASE_URL}
+      BANM_BRIDGE_ADMIN_TOKEN_SECRET: ${BANM_BRIDGE_ADMIN_TOKEN_SECRET}
+      ANIMICA_RPC_URL: ${ANIMICA_RPC_URL}
+      ANIMICA_BRIDGE_CUSTODY_ADDRESS: ${ANIMICA_BRIDGE_CUSTODY_ADDRESS}
+      ANIMICA_BRIDGE_CUSTODY_KEY_REF: ${ANIMICA_BRIDGE_CUSTODY_KEY_REF}
+      ANIMICA_CONFIRMATIONS_REQUIRED: ${ANIMICA_CONFIRMATIONS_REQUIRED}
+      ANIMICA_RELEASE_CONFIRM_POLICY: ${ANIMICA_RELEASE_CONFIRM_POLICY}
+      EVM_RPC_URL: ${EVM_RPC_URL}
+      EVM_CHAIN_ID: ${EVM_CHAIN_ID}
+      EVM_BANM_TOKEN_ADDRESS: ${EVM_BANM_TOKEN_ADDRESS}
+      EVM_BRIDGE_CONTROLLER_ADDRESS: ${EVM_BRIDGE_CONTROLLER_ADDRESS}
+      EVM_BRIDGE_VAULT_ADDRESS: ${EVM_BRIDGE_VAULT_ADDRESS}
+      EVM_BRIDGE_DEPOSIT_ROUTER_ADDRESS: ${EVM_BRIDGE_DEPOSIT_ROUTER_ADDRESS}
+      EVM_OPERATOR_PRIVATE_KEY: ${EVM_OPERATOR_PRIVATE_KEY}
+      EVM_CONFIRMATIONS_REQUIRED: ${EVM_CONFIRMATIONS_REQUIRED}
+      ORDER_EXPIRY_MINUTES: ${ORDER_EXPIRY_MINUTES}
+      ENABLE_CLAIM_CODE_CONFIRMATION: ${ENABLE_CLAIM_CODE_CONFIRMATION}
+      REQUIRE_EVM_SIGNATURES: ${REQUIRE_EVM_SIGNATURES}
+      ENABLE_ANIMICA_SIGNATURES_IF_AVAILABLE: ${ENABLE_ANIMICA_SIGNATURES_IF_AVAILABLE}
+      BRIDGE_PAUSED: ${BRIDGE_PAUSED}
+      BRIDGE_PAUSED_FORWARD: ${BRIDGE_PAUSED_FORWARD}
+      BRIDGE_PAUSED_REVERSE: ${BRIDGE_PAUSED_REVERSE}
+      MAX_ORDER_AMOUNT_ANM: ${MAX_ORDER_AMOUNT_ANM}
+      MAX_ORDER_AMOUNT_BANM: ${MAX_ORDER_AMOUNT_BANM}
+      DAILY_MINT_CAP_BANM: ${DAILY_MINT_CAP_BANM}
+      DAILY_RELEASE_CAP_ANM: ${DAILY_RELEASE_CAP_ANM}
+      BRIDGE_FEE_BPS_FORWARD: ${BRIDGE_FEE_BPS_FORWARD}
+      BRIDGE_FEE_BPS_REVERSE: ${BRIDGE_FEE_BPS_REVERSE}
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh", "http://127.0.0.1:8660/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+  web:
+    image: ghcr.io/animica/banm-bridge-web:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  admin:
+    image: ghcr.io/animica/banm-bridge-admin:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  edge:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - web
+      - admin
+      - backend
+
+volumes:
+  banm_bridge_pg_prod:
+

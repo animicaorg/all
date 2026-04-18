@@ -68,6 +68,30 @@ class TestWalletManifestGenerator(unittest.TestCase):
                     architecture="x86_64",
                 )
 
+    def test_build_manifest_accepts_macos_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="wallet-manifest-") as tmp:
+            website_dir = Path(tmp)
+            dmg_hash = self._write_file(website_dir / "animicawallet.dmg", b"dmg\n")
+            zip_hash = self._write_file(website_dir / "animicawalletmac.zip", b"zip\n")
+            (website_dir / "animicawallet.sha256").write_text(
+                f"{dmg_hash}  animicawallet.dmg\n"
+                f"{zip_hash}  animicawalletmac.zip\n",
+                encoding="utf-8",
+            )
+
+            manifest = manifest_module.build_manifest(
+                website_dir,
+                version="v1.2.3-test",
+                generated_at="2026-04-08T00:00:00Z",
+                architecture="x86_64",
+                macos_architecture="universal",
+            )
+
+            self.assertIn("macos", manifest)
+            self.assertEqual(manifest["macos"]["installer_sha256"], dmg_hash)
+            self.assertEqual(manifest["macos"]["zip_sha256"], zip_hash)
+            self.assertEqual(manifest["macos"]["architecture"], "universal")
+
     def test_build_manifest_rejects_checksum_drift(self) -> None:
         with tempfile.TemporaryDirectory(prefix="wallet-manifest-") as tmp:
             website_dir = Path(tmp)

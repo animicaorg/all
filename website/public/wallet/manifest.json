@@ -1,6 +1,21 @@
 {
   "version": "v0.1.0-8f0b36cb6",
   "generated_at": "2026-04-16T19:28:04Z",
+  "macos": {
+    "architecture": "universal",
+    "build_label": "v0.1.0-8f0b36cb6",
+    "installer_url": "/wallet/animicawallet.dmg",
+    "installer_filename": "animicawallet.dmg",
+    "installer_sha256": "fcb4d56a1351e6cd28ab45b8027084a1587754acd4f25918c5e3bc6873b0d1c8",
+    "installer_size_bytes": 122900834,
+    "zip_url": "/wallet/animicawalletmac.zip",
+    "zip_filename": "animicawalletmac.zip",
+    "zip_sha256": "3724210c435e6e1147a954f991a21867ebf0c2424fa659b724e84105dc8974ad",
+    "zip_size_bytes": 67615953,
+    "checksum_url": "/wallet/animicawallet.sha256",
+    "checksum_filename": "animicawallet.sha256",
+    "checksum_size_bytes": 171
+  },
   "linux": {
     "architecture": "x86_64",
     "build_label": "v0.1.0-8f0b36cb6",

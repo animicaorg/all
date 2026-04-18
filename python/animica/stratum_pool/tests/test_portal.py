@@ -231,4 +231,4 @@ def test_build_bundle_input_uses_placeholder_defaults() -> None:
     bundle = build_bundle_input()
     assert bundle.address == PLACEHOLDER_ADDRESS
     assert bundle.worker
-    assert bundle.threads >= 1
+    assert bundle.threads == 0

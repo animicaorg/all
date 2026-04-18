@@ -1,0 +1,15 @@
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
+COPY apps/banm-bridge-admin /app/apps/banm-bridge-admin
+RUN corepack enable && pnpm install --filter @animica/banm-bridge-admin... --frozen-lockfile=false
+RUN pnpm --filter @animica/banm-bridge-admin build
+
+FROM nginx:1.27-alpine
+COPY ops/docker/banm-bridge/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/apps/banm-bridge-admin/dist /usr/share/nginx/html
+COPY ops/docker/banm-bridge/entrypoint-admin.sh /entrypoint-admin.sh
+RUN chmod +x /entrypoint-admin.sh
+EXPOSE 80
+ENTRYPOINT ["/entrypoint-admin.sh"]
+

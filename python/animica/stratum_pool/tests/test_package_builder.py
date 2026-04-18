@@ -39,6 +39,7 @@ def _resolved() -> ResolvedMiningConfig:
 def test_package_builder_defaults_to_python_fallback(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("ANIMICA_MINER_EXECUTABLES_DIR", raising=False)
     builder = MinerBundleBuilder(output_dir=tmp_path, version="1.0.0")
+    monkeypatch.setattr(builder, "_resolve_prebuilt_executable", lambda _platform: None)
     artifact = builder.build(_resolved(), "linux", build_bundle_input())
 
     assert artifact.includes_executable is False

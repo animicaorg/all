@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: animica
+      POSTGRES_PASSWORD: animica
+      POSTGRES_DB: banm_bridge
+    ports:
+      - "54329:5432"
+    volumes:
+      - banm_bridge_pg_dev:/var/lib/postgresql/data
+
+  banm-bridge-backend:
+    build:
+      context: ../../..
+      dockerfile: ops/docker/banm-bridge/Dockerfile.backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://animica:animica@postgres:5432/banm_bridge
+      BANM_BRIDGE_API_HOST: 0.0.0.0
+      BANM_BRIDGE_API_PORT: 8660
+      BANM_BRIDGE_PUBLIC_BASE_URL: http://localhost:5177
+      BANM_BRIDGE_ADMIN_TOKEN_SECRET: local-dev-change-me
+      BANM_ADMIN_USERNAME: admin
+      BANM_ADMIN_PASSWORD: admin123
+      ANIMICA_RPC_URL: http://host.docker.internal:8545/rpc
+      ANIMICA_BRIDGE_CUSTODY_ADDRESS: ${ANIMICA_BRIDGE_CUSTODY_ADDRESS:-anim1custodyaddress0000000000000000000}
+      ANIMICA_BRIDGE_CUSTODY_KEY_REF: ${ANIMICA_BRIDGE_CUSTODY_KEY_REF:-wallet:bridge-custody}
+      ANIMICA_CONFIRMATIONS_REQUIRED: 3
+      ANIMICA_RELEASE_CONFIRM_POLICY: confirmed
+      EVM_RPC_URL: ${EVM_RPC_URL:-https://data-seed-prebsc-1-s1.binance.org:8545}
+      EVM_CHAIN_ID: 97
+      EVM_BANM_TOKEN_ADDRESS: ${EVM_BANM_TOKEN_ADDRESS:-0x0000000000000000000000000000000000000000}
+      EVM_BRIDGE_CONTROLLER_ADDRESS: ${EVM_BRIDGE_CONTROLLER_ADDRESS:-0x0000000000000000000000000000000000000000}
+      EVM_BRIDGE_VAULT_ADDRESS: ${EVM_BRIDGE_VAULT_ADDRESS:-0x0000000000000000000000000000000000000000}
+      EVM_BRIDGE_DEPOSIT_ROUTER_ADDRESS: ${EVM_BRIDGE_DEPOSIT_ROUTER_ADDRESS:-0x0000000000000000000000000000000000000000}
+      EVM_OPERATOR_PRIVATE_KEY: ${EVM_OPERATOR_PRIVATE_KEY:-}
+      EVM_CONFIRMATIONS_REQUIRED: 3
+      ORDER_EXPIRY_MINUTES: 30
+      ENABLE_CLAIM_CODE_CONFIRMATION: "true"
+      REQUIRE_EVM_SIGNATURES: "true"
+      ENABLE_ANIMICA_SIGNATURES_IF_AVAILABLE: "false"
+      BRIDGE_PAUSED: "false"
+      BRIDGE_PAUSED_FORWARD: "false"
+      BRIDGE_PAUSED_REVERSE: "false"
+      MAX_ORDER_AMOUNT_ANM: 1000000000000
+      MAX_ORDER_AMOUNT_BANM: 1000000000000000000000000
+      DAILY_MINT_CAP_BANM: 10000000000000000000000000
+      DAILY_RELEASE_CAP_ANM: 10000000000000
+      BRIDGE_FEE_BPS_FORWARD: 25
+      BRIDGE_FEE_BPS_REVERSE: 25
+      BANM_BRIDGE_WORKER_ENABLED: "true"
+    depends_on:
+      - postgres
+    ports:
+      - "8660:8660"
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh", "http://127.0.0.1:8660/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  banm-bridge-web:
+    build:
+      context: ../../..
+      dockerfile: ops/docker/banm-bridge/Dockerfile.web
+    ports:
+      - "5177:80"
+    depends_on:
+      - banm-bridge-backend
+
+  banm-bridge-admin:
+    build:
+      context: ../../..
+      dockerfile: ops/docker/banm-bridge/Dockerfile.admin
+    ports:
+      - "5178:80"
+    depends_on:
+      - banm-bridge-backend
+
+volumes:
+  banm_bridge_pg_dev:
