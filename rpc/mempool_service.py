@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 import hashlib
 import json
 import logging
@@ -732,6 +733,10 @@ class MempoolService:
             os.getenv("ANIMICA_REPLAY_WINDOW_BLOCKS", "200") or 200
         )
         self._recent_txids: dict[str, int] = {}
+        self._quarantine_cap = int(
+            os.getenv("ANIMICA_MEMPOOL_QUARANTINE_CAP", "50000") or 50000
+        )
+        self._quarantined_txids: OrderedDict[str, float] = OrderedDict()
         # Per-sender admission locks to serialize balance/pending accounting
         self._sender_locks: dict[str, threading.RLock] = {}
         self._sender_locks_lock = threading.RLock()
@@ -827,6 +832,72 @@ class MempoolService:
         expired = [h for h, until in self._recent_txids.items() if until < current_height]
         for h in expired:
             self._recent_txids.pop(h, None)
+
+    def _mark_quarantined(self, tx_hash_hex: str) -> None:
+        tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+        self._quarantined_txids[tx_hash_hex] = time.time()
+        self._quarantined_txids.move_to_end(tx_hash_hex, last=True)
+        while len(self._quarantined_txids) > max(1, int(self._quarantine_cap)):
+            self._quarantined_txids.popitem(last=False)
+
+    def is_quarantined(self, tx_hash_hex: str) -> bool:
+        tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
+        return tx_hash_hex in self._quarantined_txids
+
+    def quarantine_hashes(
+        self,
+        tx_hashes: Iterable[str],
+        *,
+        reason: str = "duplicate_canonical",
+        details: dict[str, Any] | None = None,
+        permanent: bool = True,
+    ) -> dict[str, int]:
+        """
+        Quarantine tx hashes to prevent re-admission after duplicate/replay failures.
+
+        Quarantined hashes are also evicted from the active pool immediately.
+        """
+        unique_hashes: list[str] = []
+        seen: set[str] = set()
+        for tx_hash in tx_hashes:
+            try:
+                normalized = _normalize_hash_hex(tx_hash)
+            except Exception:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_hashes.append(normalized)
+
+        if not unique_hashes:
+            return {"quarantined": 0, "removed": 0}
+
+        quarantined = 0
+        for hash_hex in unique_hashes:
+            if permanent:
+                self._mark_quarantined(hash_hex)
+            payload = dict(details or {})
+            payload.setdefault("quarantined", True)
+            payload.setdefault("permanent", bool(permanent))
+            self._record_rejection(
+                hash_hex,
+                reason,
+                payload,
+                stage="duplicate_tx_resolver",
+            )
+            quarantined += 1
+
+        removed = self.remove_included(unique_hashes)
+        log.warning(
+            "Mempool duplicate tx resolver quarantined hashes",
+            extra={
+                "reason": reason,
+                "quarantined": quarantined,
+                "removed": int(removed),
+                "permanent": bool(permanent),
+            },
+        )
+        return {"quarantined": quarantined, "removed": int(removed)}
 
     def get_rejection(self, tx_hash_hex: str) -> dict[str, Any] | None:
         tx_hash_hex = _normalize_hash_hex(tx_hash_hex)
@@ -1247,6 +1318,17 @@ class MempoolService:
             local,
             len(self.pool),
         )
+
+        if self.is_quarantined(tx_hash_hex):
+            self._record_rejection(
+                tx_hash_hex,
+                "tx_quarantined",
+                {"reason": "duplicate_canonical"},
+            )
+            raise AdmissionError(
+                "transaction is quarantined due to duplicate/replay conflict",
+                context={"tx_hash": tx_hash_hex, "reason": "tx_quarantined"},
+            )
 
         if self.has_hash(tx_hash_hex):
             log.info(

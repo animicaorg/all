@@ -6791,6 +6791,7 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 "tx already applied on canonical chain" in reason_lower
                 or "duplicate tx apply attempt rejected" in reason_lower
                 or "duplicate tx hash in block" in reason_lower
+                or "duplicate sender+nonce in block" in reason_lower
             ):
                 reject_reason = "duplicate_tx"
                 code = rpc_errors.AnimicaCode.INVALID_TX

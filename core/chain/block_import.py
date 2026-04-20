@@ -1005,6 +1005,12 @@ class BlockImporter:
             tx_hashes = self._canonical_tx_hashes(block)
             duplicate_hash = self._first_duplicate_hash(tx_hashes)
             if duplicate_hash is not None:
+                self._resolve_duplicate_tx_failure(
+                    tx_hashes=[duplicate_hash],
+                    reason="duplicate_tx_hash_in_block",
+                    height=height,
+                    block_hash=h,
+                )
                 log.warning(
                     "duplicate tx hash detected inside block",
                     extra={
@@ -1025,6 +1031,18 @@ class BlockImporter:
             duplicate_sender_nonce = self._first_duplicate_sender_nonce(block)
             if duplicate_sender_nonce is not None:
                 dup_sender, dup_nonce = duplicate_sender_nonce
+                duplicate_hashes = self._duplicate_sender_nonce_hashes(
+                    block,
+                    tx_hashes,
+                    sender=dup_sender,
+                    nonce=dup_nonce,
+                )
+                self._resolve_duplicate_tx_failure(
+                    tx_hashes=duplicate_hashes,
+                    reason="duplicate_sender_nonce_in_block",
+                    height=height,
+                    block_hash=h,
+                )
                 log.warning(
                     "duplicate sender+nonce detected inside block",
                     extra={
@@ -1050,6 +1068,12 @@ class BlockImporter:
                     except Exception:
                         already_applied = False
                     if already_applied:
+                        self._resolve_duplicate_tx_failure(
+                            tx_hashes=[tx_hash],
+                            reason="tx_already_applied_on_canonical_chain",
+                            height=height,
+                            block_hash=h,
+                        )
                         log.warning(
                             "duplicate tx apply attempt rejected",
                             extra={
@@ -2424,6 +2448,138 @@ class BlockImporter:
                 return pair
             seen.add(pair)
         return None
+
+    @staticmethod
+    def _duplicate_sender_nonce_hashes(
+        block: Block,
+        tx_hashes: list[bytes],
+        *,
+        sender: bytes,
+        nonce: int,
+    ) -> list[bytes]:
+        out: list[bytes] = []
+        seen: set[bytes] = set()
+        for tx, tx_hash in zip(getattr(block, "txs", ()), tx_hashes):
+            if _is_coinbase_tx(tx):
+                continue
+            pair = _tx_sender_nonce(tx)
+            if pair is None:
+                continue
+            tx_sender, tx_nonce = pair
+            if tx_sender != sender or int(tx_nonce) != int(nonce):
+                continue
+            if tx_hash in seen:
+                continue
+            seen.add(tx_hash)
+            out.append(tx_hash)
+        return out
+
+    def _resolve_duplicate_tx_failure(
+        self,
+        *,
+        tx_hashes: Iterable[bytes],
+        reason: str,
+        height: int,
+        block_hash: bytes,
+    ) -> None:
+        tx_hash_hexes: list[str] = []
+        seen: set[bytes] = set()
+        for tx_hash in tx_hashes:
+            if not isinstance(tx_hash, (bytes, bytearray)):
+                continue
+            tx_hash_bytes = bytes(tx_hash)
+            if len(tx_hash_bytes) != 32:
+                continue
+            if tx_hash_bytes in seen:
+                continue
+            seen.add(tx_hash_bytes)
+            tx_hash_hexes.append("0x" + tx_hash_bytes.hex())
+
+        if not tx_hash_hexes:
+            return
+
+        mempool_service = None
+        try:
+            from rpc import deps
+
+            get_ctx = getattr(deps, "get_ctx", None)
+            if callable(get_ctx):
+                try:
+                    ctx = get_ctx()
+                except Exception:
+                    ctx = None
+                if ctx is not None:
+                    mempool_service = getattr(ctx, "mempool", None)
+        except Exception:
+            mempool_service = None
+
+        if mempool_service is None:
+            return
+
+        details = {
+            "reason": reason,
+            "height": int(height),
+            "block_hash": "0x" + bytes(block_hash).hex(),
+        }
+        removed = 0
+        quarantined = 0
+
+        try:
+            quarantine = getattr(mempool_service, "quarantine_hashes", None)
+            if callable(quarantine):
+                result = quarantine(
+                    tx_hash_hexes,
+                    reason="duplicate_canonical",
+                    details=details,
+                    permanent=True,
+                )
+                if isinstance(result, dict):
+                    removed = int(result.get("removed", 0) or 0)
+                    quarantined = int(result.get("quarantined", 0) or 0)
+                else:
+                    quarantined = len(tx_hash_hexes)
+            else:
+                remover = getattr(mempool_service, "remove_included", None)
+                if callable(remover):
+                    removed = int(remover(tx_hash_hexes) or 0)
+                recorder = getattr(mempool_service, "_record_rejection", None)
+                if callable(recorder):
+                    for tx_hash_hex in tx_hash_hexes:
+                        payload = dict(details)
+                        payload.setdefault("quarantined", True)
+                        try:
+                            recorder(
+                                tx_hash_hex,
+                                "duplicate_canonical",
+                                payload,
+                                stage="duplicate_tx_resolver",
+                            )
+                        except TypeError:
+                            recorder(tx_hash_hex, "duplicate_canonical", payload)
+                        quarantined += 1
+        except Exception:
+            log.debug(
+                "Failed duplicate tx resolver for mempool",
+                extra={
+                    "reason": reason,
+                    "height": int(height),
+                    "block_hash": "0x" + bytes(block_hash).hex(),
+                },
+                exc_info=True,
+            )
+            return
+
+        if removed or quarantined:
+            log.warning(
+                "Resolved duplicate tx failure in local mempool",
+                extra={
+                    "reason": reason,
+                    "height": int(height),
+                    "block_hash": "0x" + bytes(block_hash).hex(),
+                    "quarantined": int(quarantined),
+                    "removed": int(removed),
+                },
+            )
 
     def _remove_block_index(self, height: int) -> None:
         if self.tx_index is None:

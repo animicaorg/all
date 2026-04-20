@@ -175,6 +175,27 @@ def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
     assert "trace_id" not in reject["context"]
 
 
+def test_quarantined_hash_is_rejected_without_pool_insert() -> None:
+    svc = MempoolService(
+        pool=_DummyPool(),
+        chain_id=1,
+        min_gas_price_wei=0,
+        state_db=None,
+        tx_index=None,
+        persist_enabled=False,
+    )
+    tx, raw, txh, _sender_hex = _replay_candidate_envelope()
+
+    outcome = svc.quarantine_hashes([txh], reason="duplicate_canonical", permanent=True)
+    assert outcome["quarantined"] == 1
+
+    ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
+    assert ok is False
+    assert got_hash == txh
+    assert isinstance(reject, dict)
+    assert reject["reason_code"] == "tx_quarantined"
+
+
 def test_submit_atomic_replay_from_legacy_unsigned_tx_index_is_typed() -> None:
     tx, raw, txh, sender_hex = _replay_candidate_envelope()
     normalized = normalize_tx_envelope(raw)

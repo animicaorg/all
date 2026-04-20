@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from core.chain.block_import import BlockImporter, ImportErrorCode, _theta_to_target
 from core.db.block_db import BlockDB
@@ -128,6 +131,66 @@ def test_block_import_rejects_duplicate_tx_hash_in_single_block(tmp_path: Path) 
     assert "duplicate tx hash" in (res.reason or "")
     assert state_db.get_balance(sender) == 1000
     assert state_db.get_balance(recipient) == 0
+
+
+def test_block_import_duplicate_tx_triggers_mempool_quarantine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import rpc.deps as rpc_deps
+
+    class _MempoolStub:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def quarantine_hashes(
+            self,
+            tx_hashes,
+            *,
+            reason: str = "duplicate_canonical",
+            details=None,
+            permanent: bool = True,
+        ) -> dict[str, int]:
+            tx_hashes_list = list(tx_hashes)
+            self.calls.append(
+                {
+                    "tx_hashes": tx_hashes_list,
+                    "reason": reason,
+                    "details": dict(details or {}),
+                    "permanent": bool(permanent),
+                }
+            )
+            return {"quarantined": len(tx_hashes_list), "removed": 0}
+
+    mempool_stub = _MempoolStub()
+    monkeypatch.setattr(rpc_deps, "get_ctx", lambda: SimpleNamespace(mempool=mempool_stub))
+
+    params = _params()
+    bdb, state_db = _db_bundle(tmp_path)
+    importer = BlockImporter(params=params, block_db=bdb, state_db=state_db)
+
+    sender = b"\x11" * 32
+    recipient = b"\x22" * 32
+    state_db.set_balance(sender, 1000)
+
+    genesis = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100, txs_root=ZERO32)
+    res0 = importer.import_block(Block(header=genesis, txs=(), proofs=(), receipts=None))
+    assert res0.code == ImportErrorCode.ACCEPTED
+
+    tx = _transfer_tx(sender=sender, to=recipient, nonce=0, amount=10)
+    txs_root = compute_txs_root_from_txs((tx, tx))
+    h1 = _header(height=1, parent_hash=res0.block_hash, timestamp=1012, theta_micro=100, txs_root=txs_root)
+    block = Block.from_components(header=h1, txs=(tx, tx), proofs=(), receipts=None)
+
+    res = importer.import_block(block)
+    assert res.code == ImportErrorCode.INVALID
+    assert mempool_stub.calls, "duplicate resolver should quarantine offending tx hash"
+    first_call = mempool_stub.calls[0]
+    assert first_call["reason"] == "duplicate_canonical"
+    assert first_call["permanent"] is True
+    tx_hashes = first_call["tx_hashes"]
+    assert isinstance(tx_hashes, list)
+    assert len(tx_hashes) == 1
+    assert str(tx_hashes[0]).startswith("0x")
 
 
 def test_block_import_rejects_duplicate_sender_nonce_even_with_distinct_hashes(tmp_path: Path) -> None:
