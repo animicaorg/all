@@ -4816,7 +4816,10 @@ class P2PService:
             self._sync_last_header_error == "duplicate_headers"
             or bool(self._sync_last_headers_discard_reason_counts.get("duplicate_headers"))
         )
-        return stalled or duplicate_headers
+        overlap_headers = bool(
+            self._sync_last_headers_discard_reason_counts.get("overlap_headers")
+        )
+        return stalled or duplicate_headers or overlap_headers
 
     def _sync_watchdog_check(
         self, *, now: float, head_height: int, head_hash: Optional[str]
@@ -10149,7 +10152,19 @@ class P2PService:
         )
         if not headers:
             if trimmed_overlap > 0:
-                self._note_header_progress(peer, reason="headers_overlap")
+                if not self._is_sync_target_ahead(local_anchor_height):
+                    self._note_header_progress(peer, reason="headers_overlap")
+                else:
+                    log.info(
+                        "Overlap-only headers while behind target; not counting as progress",
+                        extra={
+                            "remote": peer.remote,
+                            "local_height": local_anchor_height,
+                            "trimmed_overlap": trimmed_overlap,
+                            "target_height": self._sync_target_height,
+                            "network_best_height": self._network_best_height(),
+                        },
+                    )
                 if not peer.anchored:
                     self._mark_peer_anchored(peer, reason="headers_overlap")
                 return [], None, {"overlap_headers": trimmed_overlap}
@@ -11489,46 +11504,112 @@ class P2PService:
                         self._reset_duplicate_header_range(peer)
                     elif all_known and headers:
                         if harmless_overlap:
-                            break
-                        if not peer.anchored:
-                            self._mark_peer_anchored(peer, reason="headers_duplicate")
-                        duplicate_count = self._track_duplicate_header_range(peer, headers)
-                        if duplicate_count >= self._sync_duplicate_headers_threshold:
-                            now = time.time()
-                            stall_duration = now - self._sync_last_progress_at
-                            
-                            # If we've been stalled too long, reset instead of increasing depth
-                            if stall_duration > self._sync_stall_timeout and self._sync_locator_depth_hint > 0:
-                                log.warning(
-                                    "Duplicate headers with extended stall; resetting locator depth",
-                                    extra={
-                                        "peer": peer.remote,
-                                        "duplicate_count": duplicate_count,
-                                        "stall_duration_s": stall_duration,
-                                        "old_depth_hint": self._sync_locator_depth_hint,
-                                    },
+                            if self._is_sync_target_ahead(int(local_height or 0)):
+                                overlap_count = self._track_duplicate_header_range(
+                                    peer, headers
                                 )
-                                # Reset to allow more detailed locators
-                                self._sync_locator_depth_hint = 0
-                                # Clear error state for fresh retry
-                                self._sync_last_header_error = None
-                                self._sync_last_header_error_at = None
-                                self._sync_last_header_error_peer = None
-                                # Don't penalize the peer - it might be giving us the right headers
-                                # Just try again with a better locator
-                                tried_peers.add(peer.remote)
-                                rotate_peer = True
-                            else:
-                                # Normal duplicate handling: increase depth and penalize
-                                self._sync_locator_depth_hint = min(
-                                    self._sync_locator_depth_hint + 8, 64
-                                )
-                                tried_peers.add(peer.remote)
-                                self._sync_last_header_error = "duplicate_headers"
-                                self._sync_last_header_error_at = now
-                                self._sync_last_header_error_peer = peer.remote
-                                self._penalize_peer(peer, "duplicate_headers", nonfatal=True)
-                                rotate_peer = True
+                                if (
+                                    overlap_count
+                                    >= max(1, self._sync_duplicate_headers_threshold)
+                                ):
+                                    now = time.time()
+                                    anchor_height, anchor_hash_hex = self._local_head()
+                                    anchor_hash = self._parse_hash_bytes(anchor_hash_hex)
+                                    locator = self._build_headers_locator()
+                                    if not locator:
+                                        fallback = self._genesis_hash()
+                                        if fallback:
+                                            locator = [fallback]
+                                    self._adjust_header_batch(
+                                        success=False, reason="overlap_headers"
+                                    )
+                                    self._sync_last_header_error = "overlap_headers"
+                                    self._sync_last_header_error_at = now
+                                    self._sync_last_header_error_peer = peer.remote
+                                    self._set_sync_backoff(
+                                        peer,
+                                        reason="overlap_headers",
+                                        delay=max(
+                                            1.0,
+                                            min(
+                                                self._sync_no_headers_backoff,
+                                                self._sync_request_timeout,
+                                            ),
+                                        ),
+                                    )
+                                    self._enqueue_header_retry(
+                                        peer=peer,
+                                        locator=locator,
+                                        locator_mode="overlap_headers",
+                                        anchor_height=int(anchor_height or 0),
+                                        anchor_hash=anchor_hash,
+                                        request_start_height=int(anchor_height or 0)
+                                        + 1,
+                                        max_headers=self._sync_headers_batch_current,
+                                        reason="overlap_headers",
+                                    )
+                                    tried_peers.add(peer.remote)
+                                    rotate_peer = True
+                                    log.warning(
+                                        "Repeated overlap-only headers while behind target; rotating peer",
+                                        extra={
+                                            "remote": peer.remote,
+                                            "overlap_count": overlap_count,
+                                            "batch_count": len(headers),
+                                            "local_height": int(local_height or 0),
+                                            "target_height": self._sync_target_height,
+                                            "network_best_height": self._network_best_height(),
+                                        },
+                                    )
+                            if not rotate_peer:
+                                break
+                        if not (harmless_overlap and rotate_peer):
+                            if not peer.anchored:
+                                self._mark_peer_anchored(peer, reason="headers_duplicate")
+                            duplicate_count = self._track_duplicate_header_range(
+                                peer, headers
+                            )
+                            if duplicate_count >= self._sync_duplicate_headers_threshold:
+                                now = time.time()
+                                stall_duration = now - self._sync_last_progress_at
+
+                                # If we've been stalled too long, reset instead of increasing depth
+                                if (
+                                    stall_duration > self._sync_stall_timeout
+                                    and self._sync_locator_depth_hint > 0
+                                ):
+                                    log.warning(
+                                        "Duplicate headers with extended stall; resetting locator depth",
+                                        extra={
+                                            "peer": peer.remote,
+                                            "duplicate_count": duplicate_count,
+                                            "stall_duration_s": stall_duration,
+                                            "old_depth_hint": self._sync_locator_depth_hint,
+                                        },
+                                    )
+                                    # Reset to allow more detailed locators
+                                    self._sync_locator_depth_hint = 0
+                                    # Clear error state for fresh retry
+                                    self._sync_last_header_error = None
+                                    self._sync_last_header_error_at = None
+                                    self._sync_last_header_error_peer = None
+                                    # Don't penalize the peer - it might be giving us the right headers
+                                    # Just try again with a better locator
+                                    tried_peers.add(peer.remote)
+                                    rotate_peer = True
+                                else:
+                                    # Normal duplicate handling: increase depth and penalize
+                                    self._sync_locator_depth_hint = min(
+                                        self._sync_locator_depth_hint + 8, 64
+                                    )
+                                    tried_peers.add(peer.remote)
+                                    self._sync_last_header_error = "duplicate_headers"
+                                    self._sync_last_header_error_at = now
+                                    self._sync_last_header_error_peer = peer.remote
+                                    self._penalize_peer(
+                                        peer, "duplicate_headers", nonfatal=True
+                                    )
+                                    rotate_peer = True
 
                     if rotate_peer:
                         saw_headers = False
@@ -13291,6 +13372,28 @@ class P2PService:
         
         # No verifier constraint, return max height
         return max(heights)
+
+    def _is_sync_target_ahead(self, local_height: int) -> bool:
+        local_height_int = int(local_height or 0)
+        target_height: Optional[int] = (
+            int(self._sync_target_height)
+            if self._sync_target_height is not None
+            else None
+        )
+        network_best_height = self._network_best_height()
+        if network_best_height is not None:
+            target_height = max(int(network_best_height), int(target_height or 0))
+        best_header_height = (
+            int(self._sync_best_header.height)
+            if self._sync_best_header is not None
+            else local_height_int
+        )
+        if target_height is None:
+            target_height = best_header_height
+        else:
+            target_height = max(int(target_height), best_header_height)
+        # Keep +1 tolerance for near-tip jitter.
+        return int(target_height) > local_height_int + 1
 
     def get_verifier_seed_status(self) -> dict[str, Any]:
         """
