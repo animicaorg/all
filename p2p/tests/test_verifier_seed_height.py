@@ -52,6 +52,8 @@ def test_verifier_seed_identification(tmp_path: Path) -> None:
     # Test verifier seeds
     assert node._is_verifier_seed_peer("3.12.224.189:30333") is True
     assert node._is_verifier_seed_peer("144.126.133.21:30333") is True
+    assert node._is_verifier_seed_peer("mainnet.animica.org:30333") is True
+    assert node._is_verifier_seed_peer("tcp://mainnet.animica.org:30333") is True
     
     # Test non-verifier seeds
     assert node._is_verifier_seed_peer("192.168.1.1:30333") is False

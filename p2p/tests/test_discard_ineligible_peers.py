@@ -271,6 +271,7 @@ class TestForcePeerPrioritization:
         
         # Ensure the force peer constant is set
         assert "144.126.133.21:30333" in FORCE_SYNC_HEADER_PEERS
+        assert "mainnet.animica.org:30333" in FORCE_SYNC_HEADER_PEERS
     
     def test_force_peer_bypasses_eligibility_checks(self):
         """Test that force peers bypass eligibility checks."""

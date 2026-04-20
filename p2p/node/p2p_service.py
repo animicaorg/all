@@ -94,7 +94,13 @@ DEFAULT_BOOTSTRAP_SEEDS = [
 ]
 FORCE_SYNC_HEADER_PEERS = {
     "144.126.133.21:30333",
+    "mainnet.animica.org:30333",
 }
+HTTPS_SEED_TCP_UPGRADE_HOSTS = {
+    "144.126.133.21",
+    "mainnet.animica.org",
+}
+DEFAULT_VERIFIER_SEED_NODES = "3.12.224.189,144.126.133.21,mainnet.animica.org"
 
 # Verifier seed mining constraint: allow miners to be at most this many blocks ahead
 # This allows a miner who just found the next block to be 1 block ahead of verifier seeds
@@ -114,6 +120,14 @@ def _env_flag(*keys: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except Exception:
+        return False
 
 
 @dataclass(slots=True)
@@ -207,6 +221,7 @@ class _PeerState:
     last_tx_data_recv_at: Optional[float] = None
     broadcast: PeerBroadcastScore = field(default_factory=PeerBroadcastScore)
     negotiated_caps: set[str] = field(default_factory=set)
+    accepts_inbound: Optional[bool] = None
 
 
 class _NullTxRelay:
@@ -816,7 +831,7 @@ class P2PService:
             if normalized and normalized not in self.seeds:
                 self.seeds.append(normalized)
         self._seed_sources = self._build_seed_sources(self._configured_seeds)
-        self._seed_keys = {self._addr_key(s) for s in self.seeds}
+        self._seed_keys = {self._addr_key(s).strip().lower() for s in self.seeds}
 
         # Resolve peerstore path (prefer chain-specific data dir)
         if peerstore_path is None:
@@ -1421,6 +1436,18 @@ class P2PService:
             "ANIMICA_P2P_PRIVATE_NETWORK", "false"
         ).lower() in ("1", "true", "yes", "on")
         self._allow_self_peers = _env_flag("ANIMICA_P2P_ALLOW_SELF_PEERS", default=False)
+        self._enforce_inbound_reachability = _env_flag(
+            "ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY",
+            default=bool(int(self.chain_id) == 1),
+        )
+        self._forfeit_outbound_only_blocks = _env_flag(
+            "ANIMICA_P2P_FORFEIT_OUTBOUND_ONLY_BLOCKS",
+            default=self._enforce_inbound_reachability,
+        )
+        self._outbound_only_ban_ttl = float(
+            os.environ.get("ANIMICA_P2P_OUTBOUND_ONLY_BAN_TTL", "21600") or 21600
+        )
+        self._outbound_only_blocklist: dict[str, float] = {}
         self._maybe_enable_private_from_config()
         self._external_ip = os.environ.get("ANIMICA_P2P_EXTERNAL_IP")
         self._external_ip_endpoint = (
@@ -1431,15 +1458,26 @@ class P2PService:
         # Verifier seed nodes for height validation
         # These nodes are considered authoritative for determining the highest block height
         self._enable_verifier_seeds = _env_flag("ANIMICA_P2P_ENABLE_VERIFIER_SEEDS", default=True)
-        verifier_ips_env = os.environ.get("ANIMICA_P2P_VERIFIER_SEED_IPS", "3.12.224.189,144.126.133.21")
-        self._verifier_seed_ips = {
-            ip.strip() for ip in verifier_ips_env.split(",") if ip.strip()
+        verifier_nodes_env = os.environ.get(
+            "ANIMICA_P2P_VERIFIER_SEED_IPS", DEFAULT_VERIFIER_SEED_NODES
+        )
+        self._verifier_seed_nodes = {
+            entry.strip().lower()
+            for entry in verifier_nodes_env.split(",")
+            if entry.strip()
         }
+        self._verifier_seed_ips = {
+            entry for entry in self._verifier_seed_nodes if _is_ip_literal(entry)
+        }
+        self._verifier_seed_hosts = (
+            self._verifier_seed_nodes - self._verifier_seed_ips
+        )
         log.info(
             "Verifier seed configuration",
             extra={
                 "enabled": self._enable_verifier_seeds,
                 "verifier_ips": sorted(self._verifier_seed_ips),
+                "verifier_hosts": sorted(self._verifier_seed_hosts),
             }
         )
         
@@ -1576,7 +1614,13 @@ class P2PService:
         self._sync_last_validated_height = 0
         self._sync_peer_penalties: Dict[str, int] = {}
         self._sync_peer_penalty_events: dict[str, Deque[float]] = {}
-        self._peer_exemptions = {"144.126.133.21:30333", "144.126.133.21"}
+        self._peer_exemptions = set(FORCE_SYNC_HEADER_PEERS)
+        for force_remote in FORCE_SYNC_HEADER_PEERS:
+            host = self._extract_host(force_remote)
+            if host:
+                self._peer_exemptions.add(host.lower())
+        self._peer_exemptions.update(self._verifier_seed_ips)
+        self._peer_exemptions.update(self._verifier_seed_hosts)
         self._sync_peer_penalty_whitelist = set(self._peer_exemptions)
         self._sync_last_progress_at = time.time()
         self._sync_last_inflight_reset_at = 0.0
@@ -2029,7 +2073,7 @@ class P2PService:
             for addr in discovered:
                 if addr not in self.seeds:
                     self.seeds.append(addr)
-            self._seed_keys.update({self._addr_key(a) for a in discovered})
+            self._seed_keys.update({self._addr_key(a).strip().lower() for a in discovered})
             self._seed_sources.setdefault("discovery", []).extend(discovered)
         log.info(
             "Loaded %d seed(s)",
@@ -3482,7 +3526,7 @@ class P2PService:
             if is_seed:
                 with contextlib.suppress(ValueError):
                     self.seeds.remove(addr)
-                self._seed_keys.discard(addr_key)
+                self._seed_keys.discard(addr_key.strip().lower())
             log.warning("Dropping invalid P2P endpoint %s: %s", addr, error)
             return
         if is_seed:
@@ -4145,8 +4189,8 @@ class P2PService:
         if not result.addr:
             return None
         if result.addr.port == 443:
-            seed_hosts = {"144.126.133.21"}
-            if result.addr.host in seed_hosts:
+            host = str(result.addr.host or "").strip().lower()
+            if host in HTTPS_SEED_TCP_UPGRADE_HOSTS:
                 upgraded = self._normalize_peer_addr(
                     f"{result.addr.host}:{DEFAULT_TCP_PORT}",
                     fallback_port=DEFAULT_TCP_PORT,
@@ -4166,7 +4210,7 @@ class P2PService:
                 seed, fallback_port=fallback_port, source="seed_host"
             )
             if parsed.addr and parsed.addr.host:
-                hosts.add(parsed.addr.host)
+                hosts.add(str(parsed.addr.host).strip().lower())
         return hosts
 
     def _addr_key(self, address: str) -> str:
@@ -4318,10 +4362,10 @@ class P2PService:
         return False
 
     def _is_seed_peer(self, peer: _PeerState) -> bool:
-        addr_key = self._addr_key(peer.remote)
+        addr_key = self._addr_key(peer.remote).strip().lower()
         if addr_key in self._seed_keys:
             return True
-        host = self._extract_host(peer.remote)
+        host = self._extract_host(peer.remote).strip().lower()
         if host and host in self._seed_hosts:
             return True
         return False
@@ -4329,10 +4373,11 @@ class P2PService:
     def _is_peer_exempt(self, key: str) -> bool:
         if not key:
             return False
-        if key in self._peer_exemptions:
+        normalized_key = key.strip().lower()
+        if normalized_key in self._peer_exemptions:
             return True
         host = self._extract_host(key)
-        if host and host in self._peer_exemptions:
+        if host and host.strip().lower() in self._peer_exemptions:
             return True
         return False
 
@@ -5205,10 +5250,107 @@ class P2PService:
         if not host:
             return None
         port = int(listen_port) if 1 <= int(listen_port) <= 65535 else 0
-        fallback_port = self._local_listen_port()
         if not port:
-            port = fallback_port
-        return self._sanitize_peer_addr(f"{host}:{port}", fallback_port=fallback_port)
+            return None
+        return self._sanitize_peer_addr(f"{host}:{port}", fallback_port=port)
+
+    def _strict_reported_peer_addrs(
+        self, *, peer: _PeerState, listen_port: int, listen_addrs: list[str]
+    ) -> list[str]:
+        addrs: list[str] = []
+        reported = self._reported_peer_addr(peer.remote, listen_port)
+        if reported:
+            addrs.append(reported)
+        fallback_port = (
+            int(listen_port)
+            if 1 <= int(listen_port) <= 65535
+            else DEFAULT_TCP_PORT
+        )
+        for addr in listen_addrs:
+            parsed = self._normalize_peer_addr(
+                addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
+            )
+            if (
+                parsed.addr
+                and not self._allow_self_peers
+                and self._is_self_address(parsed.addr.host, parsed.addr.port)
+            ):
+                log.info(
+                    "Ignoring self-like advertised peer address",
+                    extra={"remote": peer.remote, "reported_addr": addr},
+                )
+                continue
+            sanitized = self._sanitize_peer_addr(
+                addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
+            )
+            if sanitized:
+                addrs.append(sanitized)
+        return list(dict.fromkeys(addrs))
+
+    def _outbound_only_blocklist_keys(
+        self, *, peer_id: Optional[str], remote: Optional[str]
+    ) -> set[str]:
+        keys: set[str] = set()
+        if peer_id:
+            keys.add(f"peer:{peer_id}")
+        if remote:
+            keys.add(f"remote:{self._addr_key(remote).strip().lower()}")
+            host = self._extract_host(remote).strip().lower()
+            if host:
+                keys.add(f"host:{host}")
+        return keys
+
+    def _is_outbound_only_blocklisted(
+        self, *, peer_id: Optional[str], remote: Optional[str], now: Optional[float] = None
+    ) -> bool:
+        now = time.time() if now is None else now
+        keys = self._outbound_only_blocklist_keys(peer_id=peer_id, remote=remote)
+        blocked = False
+        for key in keys:
+            until = self._outbound_only_blocklist.get(key)
+            if until is None:
+                continue
+            if until > now:
+                blocked = True
+                continue
+            self._outbound_only_blocklist.pop(key, None)
+        return blocked
+
+    def _mark_outbound_only_blocklisted(
+        self, *, peer_id: Optional[str], remote: Optional[str], reason: str
+    ) -> None:
+        ttl = max(0.0, float(self._outbound_only_ban_ttl))
+        if ttl <= 0:
+            return
+        until = time.time() + ttl
+        for key in self._outbound_only_blocklist_keys(peer_id=peer_id, remote=remote):
+            self._outbound_only_blocklist[key] = until
+        log.warning(
+            "Outbound-only peer blocklisted",
+            extra={
+                "peer_id": peer_id,
+                "remote": remote,
+                "reason": reason,
+                "ttl_s": ttl,
+            },
+        )
+
+    def _peer_is_outbound_only(self, peer: _PeerState) -> bool:
+        return peer.accepts_inbound is False
+
+    def _enforce_outbound_only_policy_for_peer(self, peer: _PeerState) -> bool:
+        if not self._enforce_inbound_reachability:
+            return False
+        if self._is_peer_exempt(peer.remote):
+            return False
+        return self._peer_is_outbound_only(peer)
+
+    def _should_forfeit_peer_blocks(self, peer: _PeerState) -> bool:
+        if not self._forfeit_outbound_only_blocks:
+            return False
+        if self._is_peer_exempt(peer.remote):
+            return False
+        return self._peer_is_outbound_only(peer)
 
     def _update_peer_meta(self, peer: _PeerState) -> None:
         self._peer_registry.update_meta(
@@ -6075,7 +6217,7 @@ class P2PService:
                     ):
                         continue
                     self._dial_inflight.add(addr_key)
-                    is_seed = addr_key in self._seed_keys
+                    is_seed = addr_key.strip().lower() in self._seed_keys
                     if is_seed and self._bootstrap_seed_rate_limit > 0:
                         recent = self._seed_attempts_recent(addr_key)
                         if recent >= self._bootstrap_seed_rate_limit:
@@ -7252,6 +7394,16 @@ class P2PService:
                 HelloAck(accepted=False, reason="banned"),
             )
             raise PeerMisbehavior("banned", points=0)
+        if self._is_outbound_only_blocklisted(
+            peer_id=peer.peer_id, remote=peer.remote
+        ):
+            _handshake_fail("outbound_only_banned")
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="outbound_only_banned"),
+            )
+            raise PeerMisbehavior("outbound_only_banned", points=0)
         remote_host = self._extract_host(peer.remote)
         remote_port = self._extract_port(peer.remote) or 0
         self._maybe_enable_private_network(remote_host, reason="connected_peer")
@@ -7390,7 +7542,7 @@ class P2PService:
         reported_addr = self._reported_peer_addr(peer.remote, listen_port)
         if reported_addr:
             parsed = self._normalize_peer_addr(
-                reported_addr, fallback_port=self._local_listen_port()
+                reported_addr, fallback_port=int(listen_port or DEFAULT_TCP_PORT)
             )
             if (
                 parsed.addr
@@ -7402,30 +7554,29 @@ class P2PService:
                     extra={"remote": peer.remote, "reported_addr": reported_addr},
                 )
                 reported_addr = None
-        reported_addrs: list[str] = []
-        if reported_addr:
-            reported_addrs.append(reported_addr)
-        fallback_port = self._local_listen_port()
-        for addr in list(getattr(hello, "listen_addrs", []) or []):
-            parsed = self._normalize_peer_addr(
-                addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
+        reported_addrs = self._strict_reported_peer_addrs(
+            peer=peer,
+            listen_port=listen_port,
+            listen_addrs=list(getattr(hello, "listen_addrs", []) or []),
+        )
+        peer.accepts_inbound = bool(reported_addrs)
+        if self._enforce_outbound_only_policy_for_peer(peer):
+            self._mark_outbound_only_blocklisted(
+                peer_id=peer.peer_id,
+                remote=peer.remote,
+                reason="no_inbound_advertised",
             )
-            if (
-                parsed.addr
-                and not self._allow_self_peers
-                and self._is_self_address(parsed.addr.host, parsed.addr.port)
-            ):
-                log.info(
-                    "Ignoring self-like advertised peer address",
-                    extra={"remote": peer.remote, "reported_addr": addr},
-                )
-                continue
-            sanitized = self._sanitize_peer_addr(
-                addr, fallback_port=fallback_port, source=f"hello:{peer.remote}"
+            _handshake_fail("outbound_only_no_inbound")
+            await self._send(
+                peer,
+                MsgID.HELLO_ACK,
+                HelloAck(accepted=False, reason="outbound_only_no_inbound"),
             )
-            if sanitized:
-                reported_addrs.append(sanitized)
-        reported_addrs = list(dict.fromkeys(reported_addrs))
+            raise PeerMisbehavior(
+                "outbound_only_no_inbound",
+                points=self._score_points["wrong_chain"],
+                ban_ttl=self._outbound_only_ban_ttl if self._outbound_only_ban_ttl > 0 else None,
+            )
         for addr in reported_addrs:
             self._addrman.add(addr)
 
@@ -8767,6 +8918,23 @@ class P2PService:
             )
 
     async def _handle_blocks(self, peer: _PeerState, payload: bytes) -> None:
+        if self._should_forfeit_peer_blocks(peer):
+            self._stats["blocks_rejected"] += 1
+            self._record_block_failure(peer, reason="outbound_only_block_forfeit")
+            self._mark_outbound_only_blocklisted(
+                peer_id=peer.peer_id,
+                remote=peer.remote,
+                reason="block_forfeit",
+            )
+            log.warning(
+                "Forfeiting block payload from outbound-only peer",
+                extra={"remote": peer.remote, "peer_id": peer.peer_id},
+            )
+            self._create_child_task(
+                self._drop_peer(peer, reason="outbound_only_block_forfeit"),
+                name=f"p2p.drop_peer@{peer.remote}",
+            )
+            return
         data = self._decode_map(payload)
         msg = Blocks(**data)
         if len(msg.blocks) > self._max_blocks_per_message:
@@ -8857,6 +9025,21 @@ class P2PService:
             await self._enqueue_verify_task(peer, sync_block, len(raw_bytes))
 
     async def _handle_block_announce(self, peer: _PeerState, payload: bytes) -> None:
+        if self._should_forfeit_peer_blocks(peer):
+            self._mark_outbound_only_blocklisted(
+                peer_id=peer.peer_id,
+                remote=peer.remote,
+                reason="block_announce_forfeit",
+            )
+            log.warning(
+                "Ignoring block announce from outbound-only peer",
+                extra={"remote": peer.remote, "peer_id": peer.peer_id},
+            )
+            self._create_child_task(
+                self._drop_peer(peer, reason="outbound_only_block_announce"),
+                name=f"p2p.drop_peer@{peer.remote}",
+            )
+            return
         if proto_blk is None:
             log.debug("Block announce protocol unavailable")
             return
@@ -12262,10 +12445,10 @@ class P2PService:
     def _is_force_sync_remote(self, remote: Optional[str]) -> bool:
         if not remote:
             return False
-        key = self._addr_key(remote)
+        key = self._addr_key(remote).strip().lower()
         if key in FORCE_SYNC_HEADER_PEERS:
             return True
-        host = self._extract_host(remote)
+        host = self._extract_host(remote).strip().lower()
         if not host:
             return False
         return f"{host}:{DEFAULT_TCP_PORT}" in FORCE_SYNC_HEADER_PEERS
@@ -12421,6 +12604,8 @@ class P2PService:
             return False, "peer_id_missing"
         if not peer.ready_for_sync:
             return False, "not_ready"
+        if self._enforce_outbound_only_policy_for_peer(peer):
+            return False, "outbound_only_no_inbound"
         if enforce_header_cooldown and peer.header_cooldown_until > now:
             return False, "headers_cooldown"
         if self._is_self_address(
@@ -13184,15 +13369,16 @@ class P2PService:
         Returns:
             True if the peer is a verifier seed, False otherwise
         """
-        if not self._enable_verifier_seeds or not self._verifier_seed_ips:
+        if not self._enable_verifier_seeds or not self._verifier_seed_nodes:
             return False
-        
-        # Extract IP from remote address (format: "IP:PORT")
+
         try:
-            ip_part = peer_remote.split(":")[0]
-            return ip_part in self._verifier_seed_ips
+            host = self._extract_host(peer_remote).strip().lower()
         except Exception:
             return False
+        if not host:
+            return False
+        return host in self._verifier_seed_nodes
 
     def _local_is_verifier_seed(self) -> bool:
         if not self._enable_verifier_seeds or not self._verifier_seed_ips:
@@ -13307,6 +13493,8 @@ class P2PService:
             if not peer.hello_done.is_set():
                 continue
             if not peer.repo_state_ok:
+                continue
+            if self._enforce_outbound_only_policy_for_peer(peer):
                 continue
             info = self._sync_peer_heads.get(peer.remote)
 
@@ -13447,6 +13635,7 @@ class P2PService:
         return {
             "enabled": self._enable_verifier_seeds,
             "configured_ips": sorted(list(self._verifier_seed_ips)) if self._verifier_seed_ips else [],
+            "configured_hosts": sorted(list(self._verifier_seed_hosts)) if self._verifier_seed_hosts else [],
             "connected_verifiers": connected_verifiers,
             "max_verifier_height": max_verifier,
             "max_allowed_height": max_allowed,
