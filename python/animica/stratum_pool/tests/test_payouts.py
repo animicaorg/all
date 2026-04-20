@@ -104,7 +104,7 @@ def _install_omni_sdk_stubs(monkeypatch, *, submit_raw, request_handler=None):
                 f"raw:{int(chain_id)}:"
                 f"{tx_obj.get('from_addr')}:{tx_obj.get('to_addr')}:"
                 f"{int(tx_obj.get('amount') or 0)}:{int(tx_obj.get('nonce') or 0)}:"
-                f"{int(getattr(rpc, 'timeout', 0))}"
+                f"{int(getattr(rpc, 'timeout', 0))}:{int(tx_obj.get('max_fee') or 0)}"
             )
         )
     )
@@ -249,11 +249,19 @@ def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
 
     metrics = _ReconcileMetrics()
     scheduler = PoolPayoutScheduler(config=_config(), metrics=metrics)
+    scheduler._signer_resolution = SimpleNamespace(  # noqa: SLF001
+        sender="anim1poolwallet",
+        signer=SimpleNamespace(address="anim1poolwallet"),
+    )
 
     sent = scheduler._process_once()  # noqa: SLF001
 
     assert sent == 0
-    assert rebroadcast_submit_calls == ["raw:1:anim1poolwallet:anim1miner:25:7:15"]
+    assert len(rebroadcast_submit_calls) == 1
+    assert rebroadcast_submit_calls[0] != "raw:1:anim1poolwallet:anim1miner:25:7:15:0"
+    assert rebroadcast_submit_calls[0].startswith(
+        "raw:1:anim1poolwallet:anim1miner:25:7:15:"
+    )
     assert len(metrics.rebroadcast_calls) == 1
     assert metrics.rebroadcast_calls[0]["tx_hash"] == "0x" + ("ab" * 32)
     assert metrics.rebroadcast_calls[0]["new_tx_hash"] == "0x" + ("cd" * 32)

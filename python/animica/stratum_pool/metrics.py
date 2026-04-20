@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -40,14 +40,74 @@ class PoolMetrics:
         self._payout_records: list[dict[str, object]] = []
         self._payout_record_seq: int = 0
         self._started = time.time()
-        self._db = self._init_db(config.db_url)
         self._db_lock = Lock()
+        self._db = self._init_db(config.db_url)
         self._payout_state_lock = Lock()
         self._read_cache_ttl = max(
             0.0,
             float(os.getenv("ANIMICA_POOL_READ_CACHE_TTL", "0.5") or 0.5),
         )
-        self._read_cache: Dict[str, Tuple[float, object]] = {}
+        self._read_cache_max_entries = max(
+            64,
+            int(os.getenv("ANIMICA_POOL_READ_CACHE_MAX_ENTRIES", "2048") or 2048),
+        )
+        self._read_cache: "OrderedDict[str, Tuple[float, object]]" = OrderedDict()
+        self._db_write_batch_size = max(
+            1,
+            int(os.getenv("ANIMICA_POOL_DB_BATCH_WRITE_SIZE", "64") or 64),
+        )
+        self._db_write_flush_seconds = max(
+            0.05,
+            float(os.getenv("ANIMICA_POOL_DB_BATCH_FLUSH_SECONDS", "0.25") or 0.25),
+        )
+        self._db_pending_statements = 0
+        self._db_last_commit_ts = self._started
+        self._housekeep_interval_seconds = max(
+            1.0,
+            float(os.getenv("ANIMICA_POOL_HOUSEKEEP_INTERVAL_SECONDS", "300") or 300),
+        )
+        self._last_housekeep_ts = self._started
+        self._share_retention_seconds = max(
+            0.0,
+            float(
+                os.getenv(
+                    "ANIMICA_POOL_SHARE_RETENTION_SECONDS",
+                    str(int(48 * 3600)),
+                )
+                or 48 * 3600
+            ),
+        )
+        self._ledger_retention_seconds = max(
+            0.0,
+            float(
+                os.getenv(
+                    "ANIMICA_POOL_LEDGER_RETENTION_SECONDS",
+                    str(int(7 * 24 * 3600)),
+                )
+                or 7 * 24 * 3600
+            ),
+        )
+        self._payout_history_retention_seconds = max(
+            0.0,
+            float(
+                os.getenv(
+                    "ANIMICA_POOL_PAYOUT_HISTORY_RETENTION_SECONDS",
+                    str(int(30 * 24 * 3600)),
+                )
+                or 30 * 24 * 3600
+            ),
+        )
+        self._worker_cache_ttl_seconds = max(
+            30.0,
+            float(
+                os.getenv("ANIMICA_POOL_WORKER_CACHE_TTL_SECONDS", str(int(6 * 3600)))
+                or 6 * 3600
+            ),
+        )
+        self._worker_cache_max_entries = max(
+            100,
+            int(os.getenv("ANIMICA_POOL_WORKER_CACHE_MAX_ENTRIES", "5000") or 5000),
+        )
         self._payout_interval_seconds = max(
             0.0, float(getattr(config, "payout_interval_seconds", 0.0) or 0.0)
         )
@@ -83,6 +143,10 @@ class PoolMetrics:
         db_path = Path(path).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS shares (
@@ -182,6 +246,17 @@ class PoolMetrics:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_payouts_mode_tx_hash ON payouts(mode, tx_hash)"
         )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_status_ts ON shares(status, ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_address_ts ON shares(address, ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_worker_ts ON shares(worker, ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_ts ON blocks(ts)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_balances_mode_address ON worker_balances(mode, address)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ledger_mode_ts ON accounting_ledger(mode, ts)"
+        )
+        conn.execute("PRAGMA optimize")
         conn.commit()
         return conn
 
@@ -195,10 +270,165 @@ class PoolMetrics:
             return
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
+    def _commit_db_now(self, *, now_ts: Optional[float] = None) -> None:
+        if self._db is None:
+            return
+        self._db.commit()
+        self._db_pending_statements = 0
+        self._db_last_commit_ts = float(now_ts if now_ts is not None else time.time())
+
+    def _record_db_write(
+        self,
+        *,
+        statements: int = 1,
+        defer_commit: bool = False,
+        now_ts: Optional[float] = None,
+    ) -> None:
+        if self._db is None:
+            return
+        current_ts = float(now_ts if now_ts is not None else time.time())
+        self._db_pending_statements += max(1, int(statements or 1))
+        if not defer_commit:
+            self._commit_db_now(now_ts=current_ts)
+            return
+        if self._db_pending_statements >= self._db_write_batch_size:
+            self._commit_db_now(now_ts=current_ts)
+            return
+        if (current_ts - self._db_last_commit_ts) >= self._db_write_flush_seconds:
+            self._commit_db_now(now_ts=current_ts)
+
+    def _flush_pending_db_writes(self, *, force: bool = False) -> None:
+        if self._db is None or self._db_pending_statements <= 0:
+            return
+        now_ts = time.time()
+        if not force and (now_ts - self._db_last_commit_ts) < self._db_write_flush_seconds:
+            return
+        with self._db_lock:
+            if self._db_pending_statements > 0:
+                self._commit_db_now(now_ts=now_ts)
+
+    def _prune_read_cache(self, now_ts: Optional[float] = None) -> None:
+        ttl = float(self._read_cache_ttl)
+        if ttl <= 0:
+            self._read_cache.clear()
+            return
+        now = float(now_ts if now_ts is not None else time.time())
+        cutoff = now - ttl
+        stale_keys = [k for k, (ts, _value) in self._read_cache.items() if float(ts) < cutoff]
+        for stale in stale_keys:
+            self._read_cache.pop(stale, None)
+        while len(self._read_cache) > self._read_cache_max_entries:
+            self._read_cache.popitem(last=False)
+
+    def _prune_worker_balance_cache(self, *, now_ts: float) -> None:
+        if not self._worker_balances_cache:
+            return
+
+        ttl = float(self._worker_cache_ttl_seconds)
+        stale_cutoff = float(now_ts) - ttl
+        removable: list[tuple[tuple[str, str, str], float]] = []
+        for key, row in self._worker_balances_cache.items():
+            updated_ts = float(row.get("updated_ts") or 0.0)
+            if updated_ts <= 0 or updated_ts >= stale_cutoff:
+                continue
+            gross_credit = int(row.get("total_credit") or 0)
+            paid_out = int(row.get("paid_out") or 0)
+            available_credit = max(0, gross_credit - paid_out)
+            if available_credit > 0:
+                continue
+            removable.append((key, updated_ts))
+
+        for key, _updated_ts in removable:
+            self._worker_balances_cache.pop(key, None)
+
+        overflow = len(self._worker_balances_cache) - self._worker_cache_max_entries
+        if overflow <= 0:
+            return
+
+        candidates: list[tuple[tuple[str, str, str], float, int]] = []
+        for key, row in self._worker_balances_cache.items():
+            updated_ts = float(row.get("updated_ts") or 0.0)
+            gross_credit = int(row.get("total_credit") or 0)
+            paid_out = int(row.get("paid_out") or 0)
+            available_credit = max(0, gross_credit - paid_out)
+            if self._db is None and available_credit > 0:
+                # In no-DB mode, positive balances only exist in memory.
+                continue
+            candidates.append((key, updated_ts, available_credit))
+        candidates.sort(key=lambda item: (item[2], item[1]))
+        for key, _updated_ts, _available_credit in candidates[:overflow]:
+            self._worker_balances_cache.pop(key, None)
+
+    def _prune_payout_records(self, *, now_ts: float) -> None:
+        if self._db is not None or not self._payout_records:
+            return
+        retention = float(self._payout_history_retention_seconds)
+        if retention <= 0:
+            return
+        cutoff = float(now_ts) - retention
+        keep: list[dict[str, object]] = []
+        for record in self._payout_records:
+            status = str(record.get("status") or "").strip().lower()
+            timestamp = float(record.get("timestamp") or 0.0)
+            if status not in {"confirmed", "dropped", "failed"}:
+                keep.append(record)
+                continue
+            if timestamp <= 0 or timestamp >= cutoff:
+                keep.append(record)
+        self._payout_records = keep
+
+    def _prune_db_history(self, *, now_ts: float) -> None:
+        if self._db is None:
+            return
+        deleted = False
+        with self._db_lock:
+            if self._share_retention_seconds > 0:
+                share_cutoff = float(now_ts) - float(self._share_retention_seconds)
+                deleted = (
+                    self._db.execute("DELETE FROM shares WHERE ts < ?", (share_cutoff,)).rowcount
+                    > 0
+                ) or deleted
+            if self._ledger_retention_seconds > 0:
+                ledger_cutoff = float(now_ts) - float(self._ledger_retention_seconds)
+                deleted = (
+                    self._db.execute(
+                        "DELETE FROM accounting_ledger WHERE ts < ?",
+                        (ledger_cutoff,),
+                    ).rowcount
+                    > 0
+                ) or deleted
+            if self._payout_history_retention_seconds > 0:
+                payout_cutoff = float(now_ts) - float(self._payout_history_retention_seconds)
+                deleted = (
+                    self._db.execute(
+                        """
+                        DELETE FROM payouts
+                        WHERE ts < ?
+                          AND status IN ('confirmed', 'dropped', 'failed')
+                        """,
+                        (payout_cutoff,),
+                    ).rowcount
+                    > 0
+                ) or deleted
+            if deleted:
+                self._commit_db_now(now_ts=now_ts)
+
+    def _run_housekeeping(self, *, now_ts: Optional[float] = None, force: bool = False) -> None:
+        now = float(now_ts if now_ts is not None else time.time())
+        self._flush_pending_db_writes(force=force)
+        if not force and (now - self._last_housekeep_ts) < self._housekeep_interval_seconds:
+            return
+        self._last_housekeep_ts = now
+        self._prune_read_cache(now)
+        self._prune_worker_balance_cache(now_ts=now)
+        self._prune_payout_records(now_ts=now)
+        self._prune_db_history(now_ts=now)
+
     def _read_cache_get(self, key: str) -> Optional[object]:
         ttl = float(self._read_cache_ttl)
         if ttl <= 0:
             return None
+        self._prune_read_cache()
         cached = self._read_cache.get(key)
         if cached is None:
             return None
@@ -206,6 +436,7 @@ class PoolMetrics:
         if (time.time() - float(ts)) > ttl:
             self._read_cache.pop(key, None)
             return None
+        self._read_cache.move_to_end(key, last=True)
         return value
 
     def _read_cache_set(self, key: str, value: object) -> None:
@@ -213,12 +444,11 @@ class PoolMetrics:
         if ttl <= 0:
             return
         now = time.time()
+        self._prune_read_cache(now)
         self._read_cache[key] = (now, value)
-        if len(self._read_cache) > 1024:
-            cutoff = now - ttl
-            stale_keys = [k for k, (ts, _v) in self._read_cache.items() if ts < cutoff]
-            for stale in stale_keys:
-                self._read_cache.pop(stale, None)
+        self._read_cache.move_to_end(key, last=True)
+        while len(self._read_cache) > self._read_cache_max_entries:
+            self._read_cache.popitem(last=False)
 
     async def record_share(
         self,
@@ -231,6 +461,7 @@ class PoolMetrics:
         tx_count: int,
     ) -> None:
         now = time.time()
+        self._run_housekeeping(now_ts=now)
         reward = self._expected_reward(job)
         session_id = str(
             getattr(session, "session_id", None)
@@ -280,6 +511,8 @@ class PoolMetrics:
             is_block=accepted_block,
             tx_count=tx_count,
             reward=reward,
+            defer_commit=True,
+            now_ts=now,
         )
         self._apply_accounting_for_share(
             ts=now,
@@ -291,6 +524,7 @@ class PoolMetrics:
             reward=reward,
             difficulty=difficulty,
             reason=reason,
+            defer_commit=True,
         )
         rejection_reason = str(reason or "").lower()
         stale_template_reject = (not ok) and (
@@ -324,11 +558,14 @@ class PoolMetrics:
         is_block: bool,
         tx_count: int,
         reward: int,
+        defer_commit: bool = False,
+        now_ts: Optional[float] = None,
     ) -> None:
         if self._db is None:
             return
 
         with self._db_lock:
+            statements = 1
             self._db.execute(
                 """
                 INSERT INTO shares (ts, worker, address, difficulty, status, job_id, height, is_block, tx_count)
@@ -347,6 +584,7 @@ class PoolMetrics:
                 ),
             )
             if is_block:
+                statements += 1
                 self._db.execute(
                     """
                 INSERT OR REPLACE INTO blocks (
@@ -365,7 +603,11 @@ class PoolMetrics:
                         event.get("address"),
                     ),
                 )
-            self._db.commit()
+            self._record_db_write(
+                statements=statements,
+                defer_commit=defer_commit,
+                now_ts=now_ts,
+            )
 
     def remove_duplicate_block(self, job_id: str) -> None:
         """Remove a block from tracking if it turns out to be a duplicate.
@@ -386,7 +628,7 @@ class PoolMetrics:
                     "DELETE FROM blocks WHERE job_id = ?",
                     (job_id,)
                 )
-                self._db.commit()
+                self._commit_db_now()
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -676,6 +918,7 @@ class PoolMetrics:
         accepted_shares_delta: int = 0,
         accepted_blocks_delta: int = 0,
         rejected_shares_delta: int = 0,
+        defer_commit: bool = False,
     ) -> None:
         mode = self._pool_mode
         key = (mode, worker, address)
@@ -754,7 +997,7 @@ class PoolMetrics:
                     ts,
                 ),
             )
-            self._db.commit()
+            self._record_db_write(defer_commit=defer_commit, now_ts=ts)
 
     def _record_accounting_event(
         self,
@@ -766,6 +1009,7 @@ class PoolMetrics:
         amount: int,
         job_id: Optional[str],
         details: Optional[dict[str, object]] = None,
+        defer_commit: bool = False,
     ) -> None:
         payload = {
             "timestamp": ts,
@@ -797,7 +1041,7 @@ class PoolMetrics:
                     json.dumps(details or {}, sort_keys=True),
                 ),
             )
-            self._db.commit()
+            self._record_db_write(defer_commit=defer_commit, now_ts=ts)
 
     def _apply_accounting_for_share(
         self,
@@ -811,6 +1055,7 @@ class PoolMetrics:
         reward: int,
         difficulty: float,
         reason: Optional[str],
+        defer_commit: bool = False,
     ) -> None:
         if ok:
             pps_credit = 0
@@ -826,6 +1071,7 @@ class PoolMetrics:
                         amount=pps_credit,
                         job_id=job_id,
                         details={"difficulty_ratio": difficulty, "reward": reward},
+                        defer_commit=defer_commit,
                     )
             elif self._pool_mode == "solo" and is_block:
                 solo_credit = int(reward)
@@ -838,6 +1084,7 @@ class PoolMetrics:
                         amount=solo_credit,
                         job_id=job_id,
                         details={"reward": reward},
+                        defer_commit=defer_commit,
                     )
             self._apply_balance_delta(
                 ts=ts,
@@ -848,6 +1095,7 @@ class PoolMetrics:
                 solo_credit=solo_credit,
                 accepted_shares_delta=1,
                 accepted_blocks_delta=1 if is_block else 0,
+                defer_commit=defer_commit,
             )
             return
 
@@ -857,6 +1105,7 @@ class PoolMetrics:
             address=address,
             last_share_ts=ts,
             rejected_shares_delta=1,
+            defer_commit=defer_commit,
         )
         self._record_accounting_event(
             ts=ts,
@@ -866,6 +1115,7 @@ class PoolMetrics:
             amount=0,
             job_id=job_id,
             details={"reason": reason or "unknown"},
+            defer_commit=defer_commit,
         )
 
     def _accounting_summary_from_db(self) -> Dict[str, object]:
@@ -1152,6 +1402,7 @@ class PoolMetrics:
             self._last_payout_error = str(error).strip() if error else None
 
     def payout_status(self) -> Dict[str, object]:
+        self._run_housekeeping()
         now = time.time()
         with self._payout_state_lock:
             interval = float(self._payout_interval_seconds)
@@ -1180,6 +1431,7 @@ class PoolMetrics:
         limit: int = 50,
         max_total_amount: Optional[int] = None,
     ) -> List[Dict[str, object]]:
+        self._run_housekeeping()
         min_amount = max(1, int(min_amount or 1))
         limit = max(1, min(int(limit or 50), 500))
         items: List[Dict[str, object]] = []
@@ -1582,7 +1834,7 @@ class PoolMetrics:
                         None,
                     ),
                 )
-                self._db.commit()
+                self._commit_db_now(now_ts=now)
             return applied
 
         remaining = requested
@@ -1638,6 +1890,7 @@ class PoolMetrics:
         return applied
 
     def pending_payout_submissions(self, *, limit: int = 200) -> List[Dict[str, object]]:
+        self._run_housekeeping()
         max_rows = max(1, min(int(limit or 200), 2000))
         if self._db is not None:
             with self._db_lock:
@@ -1747,7 +2000,7 @@ class PoolMetrics:
                     """,
                     ("confirmed", now, int(payout_id)),
                 )
-                self._db.commit()
+                self._commit_db_now(now_ts=now)
             self._record_accounting_event(
                 ts=now,
                 worker="__pool__",
@@ -1840,7 +2093,7 @@ class PoolMetrics:
                         int(payout_id),
                     ),
                 )
-                self._db.commit()
+                self._commit_db_now(now_ts=now)
             self._record_accounting_event(
                 ts=now,
                 worker="__pool__",
@@ -1921,7 +2174,7 @@ class PoolMetrics:
                     """,
                     (next_count, now, retry_at, message, int(payout_id)),
                 )
-                self._db.commit()
+                self._commit_db_now(now_ts=now)
             self._record_accounting_event(
                 ts=now,
                 worker="__pool__",
@@ -2031,7 +2284,7 @@ class PoolMetrics:
                     )
                     remaining -= delta
                     released += delta
-                self._db.commit()
+                self._commit_db_now(now_ts=ts)
             return released
 
         candidates = [
@@ -2113,7 +2366,7 @@ class PoolMetrics:
                     """,
                     ("dropped", message, now, int(payout_id)),
                 )
-                self._db.commit()
+                self._commit_db_now(now_ts=now)
             released = 0
             if release_credit:
                 released = self._release_paid_out_credit(
@@ -2212,9 +2465,10 @@ class PoolMetrics:
                     message,
                 ),
             )
-            self._db.commit()
+            self._commit_db_now(now_ts=now)
 
     def pool_summary(self) -> Dict[str, object]:
+        self._run_housekeeping()
         cached = self._read_cache_get("pool_summary")
         if isinstance(cached, dict):
             return dict(cached)
@@ -2387,6 +2641,7 @@ class PoolMetrics:
         return self._address_balances_map()
 
     def miners(self) -> Dict[str, object]:
+        self._run_housekeeping()
         cached = self._read_cache_get("miners")
         if isinstance(cached, dict):
             return dict(cached)
@@ -2581,6 +2836,7 @@ class PoolMetrics:
         return dict(result)
 
     def miner_detail(self, worker_id: str) -> Dict[str, object]:
+        self._run_housekeeping()
         cache_key = f"miner_detail:{str(worker_id or '').strip()}"
         cached = self._read_cache_get(cache_key)
         if isinstance(cached, dict):
@@ -2695,6 +2951,7 @@ class PoolMetrics:
         return dict(result)
 
     def recent_blocks(self) -> Dict[str, object]:
+        self._run_housekeeping()
         cached = self._read_cache_get("recent_blocks")
         if isinstance(cached, dict):
             return dict(cached)
@@ -2761,6 +3018,7 @@ class PoolMetrics:
         return dict(result)
 
     def accounting_summary(self) -> Dict[str, object]:
+        self._run_housekeeping()
         if self._db is not None:
             summary = self._accounting_summary_from_db()
             if summary:
@@ -2768,6 +3026,7 @@ class PoolMetrics:
         return self._accounting_summary_from_memory()
 
     def accounting_ledger(self, *, limit: int = 100) -> Dict[str, object]:
+        self._run_housekeeping()
         limit = max(1, min(int(limit or 100), 500))
         items: List[Dict[str, object]] = []
         if self._db is not None:
@@ -2834,6 +3093,7 @@ class PoolMetrics:
         }
 
     def health(self) -> Dict[str, object]:
+        self._run_housekeeping()
         return {
             "status": "ok",
             "uptime": int(time.time() - self._started),
@@ -2841,3 +3101,15 @@ class PoolMetrics:
             "accounting": self.accounting_summary(),
             "payout": self.payout_status(),
         }
+
+    def close(self) -> None:
+        self._run_housekeeping(force=True)
+        if self._db is None:
+            return
+        with self._db_lock:
+            if self._db is None:
+                return
+            if self._db_pending_statements > 0:
+                self._commit_db_now()
+            self._db.close()
+            self._db = None

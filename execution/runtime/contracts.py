@@ -17,6 +17,7 @@ and the adapter will attempt to import vm_py lazily and route deploy/call.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
@@ -416,6 +417,582 @@ def _settle_fees(
 
 
 # --------------------------------------------------------------------------------------
+# VM-PY package helpers
+# --------------------------------------------------------------------------------------
+
+
+class ContractCallError(ExecError):
+    """Raised when contract call/deploy data cannot be executed."""
+
+
+class ContractNotFoundError(ContractCallError):
+    """Raised when contract code is not found at target address."""
+
+
+class InvalidCalldataError(ContractCallError):
+    """Raised when calldata cannot be decoded against ABI."""
+
+
+def _extract_payload_value(tx: Any) -> Any:
+    payload = _get(tx, "payload")
+    if payload is None:
+        payload = _get(_get(tx, "unsigned"), "payload")
+    if payload is None:
+        payload = _get(_get(tx, "tx"), "payload")
+    if payload is None and isinstance(tx, Mapping):
+        body = tx.get("body")
+        if isinstance(body, Mapping):
+            payload = body.get("payload")
+    if isinstance(payload, Mapping):
+        inner = payload.get("v")
+        if isinstance(inner, Mapping):
+            return inner
+    return payload
+
+
+def _extract_deploy_payload(tx: Any) -> tuple[bytes, bytes]:
+    payload = _extract_payload_value(tx)
+    code = _as_bytes(_get(payload, "code", default=_get(tx, "code")))
+    manifest = _as_bytes(_get(payload, "manifest", default=_get(tx, "manifest")))
+    if not code or not manifest:
+        raise ContractCallError(
+            "deploy payload missing code/manifest",
+            code="DEPLOY_PAYLOAD_INVALID",
+        )
+    return code, manifest
+
+
+def _extract_call_payload(tx: Any) -> tuple[bytes, bytes]:
+    payload = _extract_payload_value(tx)
+    to_addr = _as_bytes(
+        _get(payload, "to", default=_get(tx, "to", "recipient")),
+        expect_len=ADDRESS_LEN,
+    )
+    data = _as_bytes(_get(payload, "data", default=_get(tx, "data", "input")))
+    if not any(to_addr):
+        raise ContractCallError("call payload missing contract address", code="CALL_TO_MISSING")
+    if not data:
+        raise InvalidCalldataError("call payload missing calldata", code="CALLDATA_EMPTY")
+    return to_addr, data
+
+
+def _manifest_object_from_bytes(manifest_bytes: bytes) -> Mapping[str, Any]:
+    try:
+        raw = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception as exc:
+        raise ContractCallError(
+            "manifest bytes are not valid JSON object",
+            code="MANIFEST_INVALID",
+            data={"error": str(exc)},
+        ) from exc
+    if not isinstance(raw, Mapping):
+        raise ContractCallError("manifest must decode to JSON object", code="MANIFEST_INVALID")
+    return dict(raw)
+
+
+def _pack_contract_package(*, code: bytes, manifest_bytes: bytes) -> bytes:
+    try:
+        import cbor2
+
+        manifest_obj = _manifest_object_from_bytes(manifest_bytes)
+        return cbor2.dumps(
+            {
+                "manifest": manifest_obj,
+                "code": bytes(code),
+            },
+            canonical=True,
+        )
+    except Exception as exc:
+        raise ContractCallError(
+            "failed to encode contract package",
+            code="CONTRACT_PACKAGE_ENCODE_FAILED",
+            data={"error": str(exc)},
+        ) from exc
+
+
+def _unpack_contract_package(code_blob: bytes) -> tuple[Mapping[str, Any], bytes]:
+    if not code_blob:
+        raise ContractNotFoundError("empty contract code", code="CONTRACT_NOT_FOUND")
+    try:
+        import cbor2
+
+        decoded = cbor2.loads(code_blob)
+    except Exception:
+        raise ContractNotFoundError(
+            "contract package metadata not found",
+            code="CONTRACT_PACKAGE_MISSING",
+        ) from None
+    if not isinstance(decoded, Mapping):
+        raise ContractCallError("contract package must decode to CBOR map", code="CONTRACT_PACKAGE_INVALID")
+
+    manifest_raw = decoded.get("manifest")
+    code_raw = decoded.get("code", b"")
+    if isinstance(manifest_raw, Mapping):
+        manifest_obj: Mapping[str, Any] = dict(manifest_raw)
+    elif isinstance(manifest_raw, (bytes, bytearray)):
+        manifest_obj = _manifest_object_from_bytes(bytes(manifest_raw))
+    elif isinstance(manifest_raw, str):
+        manifest_obj = _manifest_object_from_bytes(manifest_raw.encode("utf-8"))
+    else:
+        raise ContractCallError("contract package missing manifest", code="CONTRACT_PACKAGE_INVALID")
+
+    code_bytes = _as_bytes(code_raw)
+    return manifest_obj, code_bytes
+
+
+def _derive_deploy_address(tx: Any, *, sender: bytes, chain_id: int) -> bytes:
+    try:
+        from core.utils.deploy_metadata import build_python_vm_package_deploy_metadata
+
+        meta = build_python_vm_package_deploy_metadata(
+            tx,
+            sender=sender,
+            chain_id=chain_id,
+            status=1,
+        )
+    except Exception as exc:
+        raise ContractCallError(
+            "failed to derive contract address",
+            code="DEPLOY_ADDRESS_DERIVE_FAILED",
+            data={"error": str(exc)},
+        ) from exc
+
+    if not isinstance(meta, Mapping):
+        raise ContractCallError("unable to derive contract address", code="DEPLOY_ADDRESS_DERIVE_FAILED")
+    addr_hex = meta.get("contractAddress") or meta.get("createdAddress")
+    if not isinstance(addr_hex, str) or not addr_hex:
+        raise ContractCallError("unable to derive contract address", code="DEPLOY_ADDRESS_DERIVE_FAILED")
+    out = _as_bytes(addr_hex, expect_len=ADDRESS_LEN)
+    if not any(out):
+        raise ContractCallError("derived contract address is invalid", code="DEPLOY_ADDRESS_DERIVE_FAILED")
+    return out
+
+
+def _decode_call_data(abi_obj: Any, data: bytes) -> tuple[str, List[Any]]:
+    try:
+        from omni_sdk.types import abi as abi_codec
+    except Exception as exc:
+        raise ContractCallError(
+            "ABI codec unavailable for call decoding",
+            code="ABI_CODEC_UNAVAILABLE",
+            data={"error": str(exc)},
+        ) from exc
+
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8:
+        raise InvalidCalldataError("calldata too short for selector", code="CALLDATA_INVALID")
+
+    try:
+        normalized = abi_codec.normalize_abi(_abi_entries_for_codec(abi_obj))  # type: ignore[attr-defined]
+    except Exception as exc:
+        raise ContractCallError(
+            "manifest ABI is invalid",
+            code="MANIFEST_ABI_INVALID",
+            data={"error": str(exc)},
+        ) from exc
+
+    functions = normalized.get("functions", {})
+    if not isinstance(functions, Mapping):
+        raise ContractCallError("manifest ABI has malformed functions", code="MANIFEST_ABI_INVALID")
+
+    selector = bytes(data[:8])
+    for fn_name, fn_def in functions.items():
+        if not isinstance(fn_name, str) or not isinstance(fn_def, Mapping):
+            continue
+        try:
+            fn_selector = abi_codec.function_selector(fn_def)  # type: ignore[attr-defined]
+        except Exception:
+            continue
+        if fn_selector != selector:
+            continue
+
+        inputs = fn_def.get("inputs", [])
+        if not isinstance(inputs, list):
+            raise ContractCallError("ABI function inputs malformed", code="MANIFEST_ABI_INVALID")
+        try:
+            arg_count, offset = abi_codec._uvarint_decode(data, 8)  # type: ignore[attr-defined]
+        except Exception as exc:
+            raise InvalidCalldataError(
+                "failed to decode calldata arg-count",
+                code="CALLDATA_INVALID",
+                data={"error": str(exc)},
+            ) from exc
+        if int(arg_count) != len(inputs):
+            raise InvalidCalldataError(
+                "calldata arg-count does not match ABI",
+                code="CALLDATA_INVALID",
+                data={"expected": len(inputs), "got": int(arg_count)},
+            )
+
+        values: List[Any] = []
+        for param in inputs:
+            if not isinstance(param, Mapping):
+                raise ContractCallError("ABI function input malformed", code="MANIFEST_ABI_INVALID")
+            typ = param.get("type")
+            if not isinstance(typ, str):
+                raise ContractCallError("ABI function input type missing", code="MANIFEST_ABI_INVALID")
+            try:
+                desc = abi_codec._parse_type(typ)  # type: ignore[attr-defined]
+                value, offset = abi_codec._decode_desc(data, desc, offset)  # type: ignore[attr-defined]
+            except Exception as exc:
+                raise InvalidCalldataError(
+                    "failed to decode calldata argument",
+                    code="CALLDATA_INVALID",
+                    data={"function": fn_name, "type": typ, "error": str(exc)},
+                ) from exc
+            values.append(value)
+
+        if offset != len(data):
+            raise InvalidCalldataError("calldata has trailing bytes", code="CALLDATA_INVALID")
+        return fn_name, values
+
+    raise InvalidCalldataError("unknown method selector", code="CALL_SELECTOR_UNKNOWN")
+
+
+def _encode_return_data(abi_obj: Any, fn_name: str, value: Any) -> bytes:
+    try:
+        from omni_sdk.types import abi as abi_codec
+    except Exception as exc:
+        raise ContractCallError(
+            "ABI codec unavailable for return encoding",
+            code="ABI_CODEC_UNAVAILABLE",
+            data={"error": str(exc)},
+        ) from exc
+
+    normalized = abi_codec.normalize_abi(_abi_entries_for_codec(abi_obj))  # type: ignore[attr-defined]
+    fn_def = normalized.get("functions", {}).get(fn_name)
+    if not isinstance(fn_def, Mapping):
+        raise ContractCallError("function not found in ABI", code="MANIFEST_ABI_INVALID", data={"function": fn_name})
+    outputs = fn_def.get("outputs", [])
+    if not isinstance(outputs, list):
+        raise ContractCallError("ABI outputs malformed", code="MANIFEST_ABI_INVALID")
+    if len(outputs) == 0:
+        return b""
+
+    encoded: List[bytes] = []
+    encoded.append(abi_codec._uvarint_encode(len(outputs)))  # type: ignore[attr-defined]
+    if len(outputs) == 1:
+        values = [value]
+    else:
+        if not isinstance(value, (list, tuple)) or len(value) != len(outputs):
+            raise ContractCallError(
+                "return value count does not match ABI outputs",
+                code="RETURN_ENCODING_FAILED",
+                data={"expected": len(outputs)},
+            )
+        values = list(value)
+
+    for out_item, out_value in zip(outputs, values):
+        if not isinstance(out_item, Mapping):
+            raise ContractCallError("ABI output malformed", code="MANIFEST_ABI_INVALID")
+        typ = out_item.get("type")
+        if not isinstance(typ, str):
+            raise ContractCallError("ABI output type missing", code="MANIFEST_ABI_INVALID")
+        try:
+            desc = abi_codec._parse_type(typ)  # type: ignore[attr-defined]
+            encoded.append(abi_codec._encode_desc(out_value, desc))  # type: ignore[attr-defined]
+        except Exception as exc:
+            raise ContractCallError(
+                "failed to encode return value",
+                code="RETURN_ENCODING_FAILED",
+                data={"type": typ, "error": str(exc)},
+            ) from exc
+    return b"".join(encoded)
+
+
+def _abi_entries_for_codec(abi_obj: Any) -> Any:
+    """
+    Accept both entry-list ABI and manifest-style ABI maps.
+
+    Runtime manifests commonly store ABI as:
+      {"functions": [...], "events": [...]}
+    while omni_sdk.types.abi expects a list of entries with explicit "type".
+    """
+    if not isinstance(abi_obj, Mapping):
+        return abi_obj
+    if {"entries", "functions", "events"} <= set(abi_obj.keys()):
+        return abi_obj
+
+    entries: List[dict[str, Any]] = []
+
+    functions = abi_obj.get("functions")
+    if isinstance(functions, list):
+        for fn in functions:
+            if isinstance(fn, Mapping):
+                item = dict(fn)
+                item.setdefault("type", "function")
+                entries.append(item)
+    elif isinstance(functions, Mapping):
+        for fn_name, fn in functions.items():
+            if isinstance(fn_name, str) and isinstance(fn, Mapping):
+                item = dict(fn)
+                item.setdefault("name", fn_name)
+                item.setdefault("type", "function")
+                entries.append(item)
+
+    events = abi_obj.get("events")
+    if isinstance(events, list):
+        for ev in events:
+            if isinstance(ev, Mapping):
+                item = dict(ev)
+                item.setdefault("type", "event")
+                entries.append(item)
+    elif isinstance(events, Mapping):
+        for ev_name, ev in events.items():
+            if isinstance(ev_name, str) and isinstance(ev, Mapping):
+                item = dict(ev)
+                item.setdefault("name", ev_name)
+                item.setdefault("type", "event")
+                entries.append(item)
+
+    return entries if entries else abi_obj
+
+
+def _looks_like_inline_source(text: str) -> bool:
+    stripped = text.lstrip()
+    if "\n" in text:
+        return True
+    inline_prefixes = (
+        "def ",
+        "from ",
+        "import ",
+        "class ",
+        "if ",
+        "#",
+        '"""',
+        "'''",
+        "@",
+    )
+    return stripped.startswith(inline_prefixes)
+
+
+def _source_text_from_code_bytes(code_bytes: bytes) -> str | None:
+    if not code_bytes:
+        return None
+    try:
+        text = code_bytes.decode("utf-8")
+    except Exception:
+        return None
+    if not text.strip():
+        return None
+    if "\x00" in text:
+        return None
+    if _looks_like_inline_source(text):
+        return text
+    return None
+
+
+def _manifest_for_runtime_execution(
+    manifest_obj: Mapping[str, Any],
+    code_bytes: bytes,
+) -> Mapping[str, Any]:
+    """
+    Build a VM runtime manifest that can execute deterministically from chain state.
+
+    Some deployments carry path-based source metadata that cannot be resolved from
+    an on-chain context. When source text is available in package code bytes, use
+    it as inline source for execution.
+    """
+    runtime_manifest = dict(manifest_obj)
+    source_value = runtime_manifest.get("source")
+    if isinstance(source_value, str) and _looks_like_inline_source(source_value):
+        # Wrap inline source to bypass path probing in manifest resolution.
+        runtime_manifest["source"] = {"inline": source_value}
+        return runtime_manifest
+
+    inline_source = _source_text_from_code_bytes(code_bytes)
+    if inline_source is None:
+        return runtime_manifest
+
+    runtime_manifest["source"] = {"inline": inline_source}
+    return runtime_manifest
+
+
+class _StateStoragePatch:
+    def __init__(self, state: Any, contract_addr: bytes, *, read_only: bool) -> None:
+        self._state = state
+        self._contract_addr = contract_addr
+        self._read_only = bool(read_only)
+        self._overlay: dict[bytes, bytes | None] = {}
+        self._stdlib_storage: Any = None
+        self._saved: dict[str, Any] = {}
+
+    def __enter__(self) -> "_StateStoragePatch":
+        from stdlib import storage as std_storage  # type: ignore
+
+        self._stdlib_storage = std_storage
+        for name in ("get", "set", "delete", "reset_backend"):
+            self._saved[name] = getattr(std_storage, name, None)
+
+        def _get_value(key: Any, default: Any = None) -> bytes:
+            k = _as_bytes(key)
+            if k in self._overlay:
+                val = self._overlay[k]
+                if val is None:
+                    return _as_bytes(default) if default is not None else b""
+                return bytes(val)
+
+            getter = getattr(self._state, "get_storage", None)
+            if callable(getter):
+                stored = getter(self._contract_addr, k)
+                if stored is None:
+                    return _as_bytes(default) if default is not None else b""
+                return _as_bytes(stored)
+            return _as_bytes(default) if default is not None else b""
+
+        def _set_value(key: Any, value: Any) -> None:
+            k = _as_bytes(key)
+            v = _as_bytes(value)
+            if self._read_only:
+                self._overlay[k] = v
+                return
+            setter = getattr(self._state, "set_storage", None)
+            if callable(setter):
+                setter(self._contract_addr, k, v)
+                return
+            raise ContractCallError("state backend does not expose set_storage", code="STATE_STORAGE_UNAVAILABLE")
+
+        def _delete_value(key: Any) -> None:
+            k = _as_bytes(key)
+            if self._read_only:
+                self._overlay[k] = None
+                return
+            deleter = getattr(self._state, "delete_storage", None)
+            if callable(deleter):
+                deleter(self._contract_addr, k)
+                return
+            self._overlay[k] = None
+
+        setattr(std_storage, "get", _get_value)
+        setattr(std_storage, "set", _set_value)
+        setattr(std_storage, "delete", _delete_value)
+        setattr(std_storage, "reset_backend", lambda: None)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._stdlib_storage is None:
+            return
+        for name, previous in self._saved.items():
+            if previous is None:
+                try:
+                    delattr(self._stdlib_storage, name)
+                except Exception:
+                    continue
+            else:
+                setattr(self._stdlib_storage, name, previous)
+
+
+def _execute_contract_method(
+    *,
+    state: Any,
+    contract_addr: bytes,
+    manifest_obj: Mapping[str, Any],
+    code_bytes: bytes,
+    method_name: str,
+    method_args: List[Any],
+    read_only: bool,
+) -> Any:
+    try:
+        from vm_py.runtime.loader import run_call as vm_run_call  # type: ignore
+    except Exception as exc:
+        raise ContractCallError(
+            "vm_py runtime unavailable for contract execution",
+            code="VM_RUNTIME_UNAVAILABLE",
+            data={"error": str(exc)},
+        ) from exc
+
+    runtime_manifest = _manifest_for_runtime_execution(manifest_obj, code_bytes)
+    try:
+        with _StateStoragePatch(state, contract_addr, read_only=read_only):
+            out = vm_run_call(dict(runtime_manifest), method_name, list(method_args))
+    except Exception as exc:
+        raise ContractCallError(
+            "contract execution failed",
+            code="CALL_EXECUTION_FAILED",
+            data={"error": str(exc)},
+        ) from exc
+    if isinstance(out, Mapping):
+        return out.get("result")
+    return out
+
+
+def _take_state_snapshot(state: Any) -> Any:
+    snap_fn = getattr(state, "snapshot", None)
+    if callable(snap_fn):
+        try:
+            return snap_fn()
+        except Exception:
+            return None
+    return None
+
+
+def _revert_state_snapshot(state: Any, snap: Any) -> None:
+    if snap is None:
+        return
+    revert_fn = getattr(state, "revert", None)
+    if callable(revert_fn):
+        revert_fn(snap)
+
+
+def _load_contract_from_state(state: Any, contract_addr: bytes) -> tuple[Mapping[str, Any], bytes]:
+    get_code = getattr(state, "get_code", None)
+    if not callable(get_code):
+        raise ContractCallError("state backend does not expose get_code", code="STATE_CODE_UNAVAILABLE")
+    code_blob = get_code(contract_addr)
+    if not isinstance(code_blob, (bytes, bytearray)) or len(code_blob) == 0:
+        raise ContractNotFoundError("contract code not found", code="CONTRACT_NOT_FOUND")
+    return _unpack_contract_package(bytes(code_blob))
+
+
+def simulate_call(
+    *,
+    state: Any,
+    contract_addr: bytes,
+    calldata: bytes,
+    sender: bytes | None = None,
+) -> bytes:
+    manifest_obj, code_bytes = _load_contract_from_state(state, contract_addr)
+    abi_obj = manifest_obj.get("abi")
+    method_name, method_args = _decode_call_data(abi_obj, calldata)
+    result = _execute_contract_method(
+        state=state,
+        contract_addr=contract_addr,
+        manifest_obj=manifest_obj,
+        code_bytes=code_bytes,
+        method_name=method_name,
+        method_args=method_args,
+        read_only=True,
+    )
+    return _encode_return_data(abi_obj, method_name, result)
+
+
+def _apply_deploy_vm(state: Any, tx: Any, sender: bytes, chain_id: int) -> tuple[bytes, str]:
+    code, manifest = _extract_deploy_payload(tx)
+    contract_addr = _derive_deploy_address(tx, sender=sender, chain_id=chain_id)
+    set_code = getattr(state, "set_code", None)
+    if not callable(set_code):
+        raise ContractCallError("state backend does not expose set_code", code="STATE_CODE_UNAVAILABLE")
+    package_blob = _pack_contract_package(code=code, manifest_bytes=manifest)
+    set_code(contract_addr, package_blob)
+    return contract_addr, "0x" + contract_addr.hex()
+
+
+def _apply_call_vm(state: Any, tx: Any, sender: bytes) -> Any:
+    contract_addr, calldata = _extract_call_payload(tx)
+    manifest_obj, code_bytes = _load_contract_from_state(state, contract_addr)
+    abi_obj = manifest_obj.get("abi")
+    method_name, method_args = _decode_call_data(abi_obj, calldata)
+    return _execute_contract_method(
+        state=state,
+        contract_addr=contract_addr,
+        manifest_obj=manifest_obj,
+        code_bytes=code_bytes,
+        method_name=method_name,
+        method_args=method_args,
+        read_only=False,
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Public API — Deploy & Call
 # --------------------------------------------------------------------------------------
 
@@ -479,27 +1056,39 @@ def apply_deploy(
         block_height=block_height,
     )
 
-    # Feature-gated path (future)
-    if (enable_vm_py is True) or (
-        enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
-    ):
-        try:
-            # VM-PY integration hook (Phase 2)
-            # When vm_py runtime is ready, uncomment:
-            # from vm_py.runtime.loader import deploy_package
-            # result = deploy_package(...)
-            # return result_as_ApplyResult(...)
-            pass  # Integration pending, falls back to deterministic revert
-        except Exception:
-            # fall back to deterministic revert below
+    try:
+        contract_addr, contract_hex = _apply_deploy_vm(
+            state=state,
+            tx=tx,
+            sender=sender,
+            chain_id=_as_int(getattr(block_env, "chain_id", 0)),
+        )
+        _increment_nonce(state, sender)
+        receipt = {
+            "status": "SUCCESS",
+            "contractAddress": contract_hex,
+            "createdAddress": contract_hex,
+        }
+        return ApplyResult(
+            status=TxStatus.SUCCESS,
+            gas_used=intrinsic,
+            logs=[],
+            state_root=_maybe_state_root(state),
+            receipt=receipt,
+        )
+    except Exception as exc:
+        if os.getenv("ANIMICA_ENABLE_VM_PY") == "1" or enable_vm_py is True:
+            # In explicit VM mode, surface failures via deterministic revert log.
             pass
 
     # Deterministic no-op: REVERT with a diagnostic log
     logs: List[LogEvent] = [
         LogEvent(
-            address=b"\x00" * ADDRESS_LEN,
+            address=locals().get("contract_addr", b"\x00" * ADDRESS_LEN),
             topics=[b"vm.disabled", b"deploy"],
-            data=b"",
+            data=str(exc).encode("utf-8", errors="replace")
+            if "exc" in locals()
+            else b"",
         )
     ]
     _increment_nonce(state, sender)
@@ -573,30 +1162,34 @@ def apply_call(
         block_height=block_height,
     )
 
-    # Future: route to vm_py if enabled & available
-    if (enable_vm_py is True) or (
-        enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
-    ):
-        try:
-            # VM-PY contract call hook (Phase 2)
-            # When vm_py runtime is ready, uncomment:
-            # from vm_py.runtime.abi import dispatch_call
-            # to = _as_bytes(_get(tx, "to", "recipient"), expect_len=ADDRESS_LEN)
-            # input_data = _as_bytes(_get(tx, "data", "input"))
-            # result = dispatch_call(state_adapter, to, input_data, gas=gas_limit or intrinsic, env=...)
-            # return result_as_ApplyResult(...)
-            pass  # Integration pending, falls back to deterministic revert
-        except Exception:
-            # fall back to deterministic revert below
+    state_snap = _take_state_snapshot(state)
+    try:
+        _apply_call_vm(state=state, tx=tx, sender=sender)
+        _increment_nonce(state, sender)
+        return ApplyResult(
+            status=TxStatus.SUCCESS,
+            gas_used=intrinsic,
+            logs=[],
+            state_root=_maybe_state_root(state),
+            receipt={"status": "SUCCESS"},
+        )
+    except Exception as exc:
+        _revert_state_snapshot(state, state_snap)
+        if os.getenv("ANIMICA_ENABLE_VM_PY") == "1" or enable_vm_py is True:
             pass
 
     # Deterministic no-op: REVERT with diagnostic log tagged with recipient
-    to = _as_bytes(_get(tx, "to", "recipient"), expect_len=ADDRESS_LEN)
+    to = _as_bytes(
+        _get(_extract_payload_value(tx), "to", default=_get(tx, "to", "recipient")),
+        expect_len=ADDRESS_LEN,
+    )
     logs: List[LogEvent] = [
         LogEvent(
             address=to if any(to) else b"\x00" * ADDRESS_LEN,
             topics=[b"vm.disabled", b"call"],
-            data=b"",
+            data=str(exc).encode("utf-8", errors="replace")
+            if "exc" in locals()
+            else b"",
         )
     ]
     _increment_nonce(state, sender)
@@ -610,4 +1203,11 @@ def apply_call(
     )
 
 
-__all__ = ["apply_deploy", "apply_call"]
+__all__ = [
+    "ContractCallError",
+    "ContractNotFoundError",
+    "InvalidCalldataError",
+    "simulate_call",
+    "apply_deploy",
+    "apply_call",
+]

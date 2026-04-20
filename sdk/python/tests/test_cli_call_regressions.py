@@ -643,3 +643,126 @@ def test_local_replay_uses_raw_block_payloads_when_tx_views_lack_calldata(
     assert meta["replayed_calls"] == 1
     assert isinstance(raw, bytes)
     assert call_cli.decode_return(abi_obj, "get", raw) == 7
+
+
+def test_local_replay_recovers_manifest_from_deploy_tx_when_abi_lacks_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    abi_manifest_path = tmp_path / "abi_only.json"
+    abi_manifest_path.write_text(
+        json.dumps(
+            {
+                "abi": {
+                    "functions": [
+                        {
+                            "name": "set",
+                            "inputs": [{"name": "n", "type": "int"}],
+                            "outputs": [],
+                        },
+                        {
+                            "name": "get",
+                            "inputs": [],
+                            "outputs": [{"name": "value", "type": "int"}],
+                        },
+                    ],
+                    "events": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    abi_obj = call_cli._load_abi(abi_manifest_path)
+
+    source_text = (
+        "counter = 0\n"
+        "def set(n):\n"
+        "    global counter\n"
+        "    counter = int(n)\n"
+        "def get():\n"
+        "    return counter\n"
+    )
+    rich_manifest = {
+        "name": "Counter",
+        "source": source_text,
+        "abi": abi_obj,
+    }
+    rich_manifest_bytes = json.dumps(
+        rich_manifest,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    deploy_tx = {
+        "chainId": 1,
+        "from": bytes.fromhex("aa" * 32),
+        "nonce": 0,
+        "payload": {
+            "t": 1,
+            "v": {
+                "code": source_text.encode("utf-8"),
+                "manifest": rich_manifest_bytes,
+            },
+        },
+    }
+    contract_address = call_cli._derive_contract_address_from_deploy_tx(deploy_tx)
+    assert contract_address is not None
+
+    set_call = call_cli.encode_call(abi_obj, "set", [9])
+    block = {
+        "hash": "0x" + ("ab" * 32),
+        "transactions": [
+            deploy_tx,
+            {
+                "payload": {
+                    "t": 2,
+                    "v": {
+                        "to": bytes.fromhex(contract_address[2:]),
+                        "data": bytes(set_call),
+                    },
+                }
+            },
+        ],
+    }
+
+    class _RpcStub:
+        def request(self, method: str, _params: Any = None) -> Any:
+            if method == "chain.getHead":
+                return {"height": 0}
+            if method == "chain.getBlockByHeight":
+                return block
+            raise AssertionError(f"unexpected method {method}")
+
+    vm_state: Dict[str, Any] = {"counter": 0}
+
+    def _run_call(_manifest: Any, method: str, args: list[Any]) -> dict[str, Any]:
+        if method == "set":
+            vm_state["counter"] = int(args[0])
+            return {"result": None}
+        if method == "get":
+            return {"result": vm_state["counter"]}
+        raise AssertionError(f"unexpected method {method}")
+
+    stdlib_module = ModuleType("stdlib")
+    stdlib_storage_module = ModuleType("stdlib.storage")
+    stdlib_storage_module.reset_backend = lambda: vm_state.update(counter=0)  # type: ignore[attr-defined]
+    stdlib_module.storage = stdlib_storage_module  # type: ignore[attr-defined]
+    vm_loader_module = ModuleType("vm_py.runtime.loader")
+    vm_loader_module.run_call = _run_call  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "stdlib", stdlib_module)
+    monkeypatch.setitem(sys.modules, "stdlib.storage", stdlib_storage_module)
+    monkeypatch.setitem(sys.modules, "vm_py.runtime.loader", vm_loader_module)
+
+    raw, decoded, meta = call_cli._simulate_call_local_replay(
+        _RpcStub(),
+        address=contract_address,
+        abi_path=abi_manifest_path,
+        abi_obj=abi_obj,
+        func="get",
+        args=[],
+    )
+
+    assert decoded == 9
+    assert meta["manifest_source"] == "onchain_deploy_manifest"
+    assert meta["replayed_calls"] == 1
+    assert isinstance(raw, bytes)
+    assert call_cli.decode_return(abi_obj, "get", raw) == 9

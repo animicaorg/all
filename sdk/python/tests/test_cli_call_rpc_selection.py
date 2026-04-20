@@ -141,7 +141,7 @@ def test_call_read_reports_probed_simulation_methods(
     )
 
     assert result.exit_code != 0
-    assert "probed methods: execution.simulateCall, state.call, vm.simulateCall" in result.output
+    assert "probed methods: state.call, execution.simulateCall, vm.simulateCall" in result.output
 
 
 def test_call_write_accepts_wallet_options(

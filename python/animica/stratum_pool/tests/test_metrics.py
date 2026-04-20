@@ -693,3 +693,175 @@ async def test_payout_due_addresses_keeps_connected_workers_at_full_credit(monke
     assert due
     assert due[0]["address"] == "anim1live"
     assert due[0]["amount"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_record_share_batches_sqlite_commits(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANIMICA_POOL_DB_BATCH_WRITE_SIZE", "1000")
+    monkeypatch.setenv("ANIMICA_POOL_DB_BATCH_FLUSH_SECONDS", "3600")
+    monkeypatch.setenv("ANIMICA_POOL_HOUSEKEEP_INTERVAL_SECONDS", "3600")
+    db_url = f"sqlite:///{tmp_path / 'pool_batch.db'}"
+    metrics = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    session = Session(
+        session_id="batch-session",
+        writer=None,
+        worker="worker-batch",
+        address="anim1batch",
+    )
+    job = StratumJob(
+        job_id="job-batch",
+        header={"number": 42},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 1.0},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    assert metrics._db_pending_statements > 0  # noqa: SLF001
+    with metrics._db_lock:  # noqa: SLF001
+        row = metrics._db.execute("SELECT COUNT(*) FROM shares").fetchone()  # noqa: SLF001
+    assert int((row or [0])[0] or 0) == 1
+
+    metrics.close()
+    assert metrics._db is None  # noqa: SLF001
+
+
+def test_housekeeping_prunes_old_sqlite_history(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANIMICA_POOL_SHARE_RETENTION_SECONDS", "60")
+    monkeypatch.setenv("ANIMICA_POOL_LEDGER_RETENTION_SECONDS", "60")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_HISTORY_RETENTION_SECONDS", "60")
+    db_url = f"sqlite:///{tmp_path / 'pool_retention.db'}"
+    metrics = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    now = 2_000_000_000.0
+    with metrics._db_lock:  # noqa: SLF001
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO shares (ts, worker, address, difficulty, status, job_id, height, is_block, tx_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (now - 120, "worker-old", "anim1old", 1.0, "accepted", "job-old", 1, 0, 0),
+        )
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO shares (ts, worker, address, difficulty, status, job_id, height, is_block, tx_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (now - 30, "worker-new", "anim1new", 1.0, "accepted", "job-new", 2, 0, 0),
+        )
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO accounting_ledger (ts, mode, worker, address, event, amount, job_id, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (now - 120, "pps", "worker-old", "anim1old", "pps_share_credit", 10, "job-old", "{}"),
+        )
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO accounting_ledger (ts, mode, worker, address, event, amount, job_id, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (now - 30, "pps", "worker-new", "anim1new", "pps_share_credit", 10, "job-new", "{}"),
+        )
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO payouts (
+                ts, mode, address, amount, tx_hash, raw_tx, nonce, status, error,
+                retry_count, last_retry_ts, next_retry_ts, confirmed_ts
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now - 120,
+                "pps",
+                "anim1old",
+                10,
+                "0x" + "aa" * 32,
+                None,
+                None,
+                "confirmed",
+                None,
+                0,
+                None,
+                None,
+                now - 110,
+            ),
+        )
+        metrics._db.execute(  # noqa: SLF001
+            """
+            INSERT INTO payouts (
+                ts, mode, address, amount, tx_hash, raw_tx, nonce, status, error,
+                retry_count, last_retry_ts, next_retry_ts, confirmed_ts
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now - 120,
+                "pps",
+                "anim1keep",
+                10,
+                "0x" + "bb" * 32,
+                None,
+                None,
+                "submitted",
+                None,
+                0,
+                None,
+                None,
+                None,
+            ),
+        )
+        metrics._commit_db_now(now_ts=now)  # noqa: SLF001
+
+    metrics._run_housekeeping(now_ts=now + 20, force=True)  # noqa: SLF001
+
+    with metrics._db_lock:  # noqa: SLF001
+        share_count = metrics._db.execute("SELECT COUNT(*) FROM shares").fetchone()  # noqa: SLF001
+        ledger_count = metrics._db.execute(  # noqa: SLF001
+            "SELECT COUNT(*) FROM accounting_ledger"
+        ).fetchone()
+        payout_rows = metrics._db.execute(  # noqa: SLF001
+            "SELECT status, tx_hash FROM payouts ORDER BY tx_hash ASC"
+        ).fetchall()
+
+    assert int((share_count or [0])[0] or 0) == 1
+    assert int((ledger_count or [0])[0] or 0) == 1
+    assert payout_rows == [("submitted", "0x" + "bb" * 32)]
+
+
+def test_worker_balance_cache_prunes_stale_zero_credit(monkeypatch):
+    monkeypatch.setenv("ANIMICA_POOL_WORKER_CACHE_TTL_SECONDS", "60")
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    metrics._worker_balances_cache[("pps", "worker-stale", "anim1stale")] = {  # noqa: SLF001
+        "total_credit": 0,
+        "paid_out": 0,
+        "updated_ts": 100.0,
+    }
+    metrics._worker_balances_cache[("pps", "worker-credit", "anim1credit")] = {  # noqa: SLF001
+        "total_credit": 25,
+        "paid_out": 0,
+        "updated_ts": 100.0,
+    }
+    metrics._run_housekeeping(now_ts=200.0, force=True)  # noqa: SLF001
+    assert ("pps", "worker-stale", "anim1stale") not in metrics._worker_balances_cache  # noqa: SLF001
+    assert ("pps", "worker-credit", "anim1credit") in metrics._worker_balances_cache  # noqa: SLF001

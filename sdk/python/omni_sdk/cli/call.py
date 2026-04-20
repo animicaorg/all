@@ -228,8 +228,8 @@ def _simulate_call(
     if sender:
         payload["from"] = sender
     candidates: Sequence[tuple[str, list[Any]]] = (
-        ("execution.simulateCall", [payload]),
         ("state.call", [payload]),
+        ("execution.simulateCall", [payload]),
         ("vm.simulateCall", [address, "0x" + calldata.hex(), sender, None]),
         ("state.simulateCall", [payload]),
         ("call.simulate", [payload]),
@@ -446,6 +446,109 @@ def _coerce_data_bytes(value: Any) -> Optional[bytes]:
     return None
 
 
+def _coerce_bytes_loose(value: Any) -> Optional[bytes]:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return b""
+        if text.startswith(("0x", "0X")):
+            text = text[2:]
+            if len(text) % 2 != 0:
+                text = "0" + text
+            try:
+                return bytes.fromhex(text)
+            except Exception:
+                return None
+        # Accept plain JSON text payloads too.
+        return value.encode("utf-8")
+    return None
+
+
+def _extract_tx_body(entry: Any) -> Any:
+    if not isinstance(entry, dict):
+        return None
+    tx_candidate = entry.get("tx")
+    if isinstance(tx_candidate, dict):
+        return tx_candidate
+    return entry
+
+
+def _derive_contract_address_from_deploy_tx(tx_obj: Any) -> Optional[str]:
+    try:
+        from core.utils.deploy_metadata import build_python_vm_package_deploy_metadata
+
+        meta = build_python_vm_package_deploy_metadata(tx_obj)
+    except Exception:
+        return None
+    if not isinstance(meta, dict):
+        return None
+    addr = meta.get("contractAddress") or meta.get("createdAddress")
+    if not isinstance(addr, str) or not addr.strip():
+        return None
+    return _normalize_address_for_match(addr)
+
+
+def _manifest_from_deploy_tx(tx_obj: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(tx_obj, dict):
+        return None
+    payload = tx_obj.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if _coerce_payload_kind(payload.get("t")) != 1:
+        return None
+    payload_v = payload.get("v")
+    if not isinstance(payload_v, dict):
+        return None
+    manifest_raw = payload_v.get("manifest")
+    manifest_bytes = _coerce_bytes_loose(manifest_raw)
+    if manifest_bytes is None:
+        return None
+    try:
+        decoded = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _find_deploy_manifest_for_address(
+    rpc: RpcClient,
+    *,
+    address: str,
+    head_height: int,
+) -> Optional[dict[str, Any]]:
+    target = _normalize_address_for_match(address)
+    if target is None:
+        return None
+
+    for height in range(max(0, int(head_height)), -1, -1):
+        try:
+            block = rpc.request("chain.getBlockByHeight", [height, True, True])
+        except Exception:
+            try:
+                block = rpc.request("chain.getBlockByHeight", [height, False, False])
+            except Exception:
+                continue
+        if not isinstance(block, dict):
+            continue
+
+        tx_entries = block.get("transactions", block.get("txs", []))
+        if not isinstance(tx_entries, list):
+            continue
+        for entry in tx_entries:
+            tx_obj = _extract_tx_body(entry)
+            if not isinstance(tx_obj, dict):
+                continue
+            derived = _derive_contract_address_from_deploy_tx(tx_obj)
+            if derived != target:
+                continue
+            manifest = _manifest_from_deploy_tx(tx_obj)
+            if isinstance(manifest, dict):
+                return manifest
+    return None
+
+
 def _extract_call_destination_and_data(tx_obj: Any) -> Optional[tuple[Any, bytes]]:
     if not isinstance(tx_obj, dict):
         return None
@@ -568,11 +671,9 @@ def _simulate_call_local_replay(
         raise RuntimeError(
             "local replay fallback requires --abi to point to a contract manifest object"
         )
-    if not any(key in manifest_doc for key in ("source", "entry", "sources")):
-        raise RuntimeError(
-            "local replay fallback requires a manifest with source/entry/sources fields"
-        )
-    manifest_input: Any = str(manifest_path)
+    replay_manifest: dict[str, Any] = dict(manifest_doc)
+    manifest_input: Any = dict(replay_manifest)
+    manifest_source = "abi_path"
 
     try:
         from stdlib import storage as stdlib_storage  # type: ignore
@@ -590,6 +691,35 @@ def _simulate_call_local_replay(
         raise RuntimeError(f"invalid contract address for replay: {address!r}")
 
     head_height = _chain_head_height(rpc)
+
+    # If --abi points to an ABI-only document, recover a richer manifest from chain
+    # deployment data so replay can still execute from source metadata.
+    if not any(key in replay_manifest for key in ("source", "entry", "sources", "code", "path")):
+        recovered = _find_deploy_manifest_for_address(
+            rpc,
+            address=address,
+            head_height=head_height,
+        )
+        if isinstance(recovered, dict):
+            replay_manifest = recovered
+            manifest_input = dict(replay_manifest)
+            manifest_source = "onchain_deploy_manifest"
+        else:
+            raise RuntimeError(
+                "local replay fallback could not recover manifest source metadata "
+                "(expected source/entry/sources or deploy-manifest on chain)"
+            )
+    elif any(key in replay_manifest for key in ("source", "entry", "sources", "code", "path")):
+        # Prefer path input when --abi is itself a manifest file so relative source
+        # paths resolve against the manifest directory.
+        manifest_input = str(manifest_path)
+
+    if not any(key in replay_manifest for key in ("source", "entry", "sources", "code", "path")):
+        raise RuntimeError(
+            "local replay fallback requires manifest source metadata "
+            "(source/entry/sources/code/path)"
+        )
+
     call_payloads = _iter_confirmed_call_payloads(rpc, head_height=head_height)
     replayed_calls = 0
 
@@ -614,6 +744,7 @@ def _simulate_call_local_replay(
         "source": "sdk_local_replay",
         "head_height": head_height,
         "replayed_calls": replayed_calls,
+        "manifest_source": manifest_source,
     }
     return raw_result, decoded_result, meta
 

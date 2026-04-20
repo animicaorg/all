@@ -228,6 +228,7 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
             except asyncio.CancelledError:  # noqa: BLE001
                 pass
         await server.stop()
+        metrics.close()
         api_server.should_exit = True
         await api_task
 

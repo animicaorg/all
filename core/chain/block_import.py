@@ -374,6 +374,41 @@ def _is_coinbase_tx(tx: Any) -> bool:
         return False
 
 
+def _tx_sender_nonce(tx: Any) -> Optional[tuple[bytes, int]]:
+    """
+    Best-effort extraction of (sender, nonce) used to detect semantic duplicates.
+    """
+    unsigned = _tx_unsigned(tx)
+    sender: Any = None
+    nonce: Any = None
+
+    if unsigned is not None:
+        sender = getattr(unsigned, "sender", None)
+        nonce = getattr(unsigned, "nonce", None)
+        if isinstance(unsigned, dict):
+            sender = unsigned.get("sender") or unsigned.get("from") or sender
+            nonce = unsigned.get("nonce", nonce)
+
+    if sender is None:
+        sender = getattr(tx, "sender", None)
+    if nonce is None:
+        nonce = getattr(tx, "nonce", None)
+    if isinstance(tx, dict):
+        sender = tx.get("sender") or tx.get("from") or sender
+        nonce = tx.get("nonce", nonce)
+
+    if sender is None or nonce is None:
+        return None
+    try:
+        sender_bytes = _decode_address_bytes(sender)
+        nonce_int = int(nonce)
+    except Exception:
+        return None
+    if nonce_int < 0:
+        return None
+    return sender_bytes, nonce_int
+
+
 def _compute_block_fees_total(block: Block) -> int:
     """
     Compute total explicit transaction fees in a block.
@@ -985,6 +1020,27 @@ class BlockImporter:
                     h,
                     False,
                     f"duplicate tx hash in block: 0x{duplicate_hash.hex()}",
+                )
+
+            duplicate_sender_nonce = self._first_duplicate_sender_nonce(block)
+            if duplicate_sender_nonce is not None:
+                dup_sender, dup_nonce = duplicate_sender_nonce
+                log.warning(
+                    "duplicate sender+nonce detected inside block",
+                    extra={
+                        "height": height,
+                        "block_hash": h.hex(),
+                        "sender": dup_sender.hex(),
+                        "nonce": int(dup_nonce),
+                        "caller": "BlockImporter.import_block",
+                    },
+                )
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    height,
+                    h,
+                    False,
+                    f"duplicate sender+nonce in block: 0x{dup_sender.hex()}:{int(dup_nonce)}",
                 )
 
             if self.tx_index is not None:
@@ -2353,6 +2409,20 @@ class BlockImporter:
             if tx_hash in seen:
                 return tx_hash
             seen.add(tx_hash)
+        return None
+
+    @staticmethod
+    def _first_duplicate_sender_nonce(block: Block) -> Optional[tuple[bytes, int]]:
+        seen: set[tuple[bytes, int]] = set()
+        for tx in getattr(block, "txs", ()):
+            if _is_coinbase_tx(tx):
+                continue
+            pair = _tx_sender_nonce(tx)
+            if pair is None:
+                continue
+            if pair in seen:
+                return pair
+            seen.add(pair)
         return None
 
     def _remove_block_index(self, height: int) -> None:
