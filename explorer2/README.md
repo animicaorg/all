@@ -113,6 +113,11 @@ This starts:
 - **Web UI** on `http://localhost:3001` (with Vite dev server)
 
 The web UI automatically proxies `/api` requests to the API server.
+If your API is not on `127.0.0.1:8081`, set `VITE_API_PROXY_TARGET` before starting web dev:
+
+```bash
+VITE_API_PROXY_TARGET=http://127.0.0.1:8081 pnpm -C explorer2/web dev
+```
 
 Run individual services for development:
 
@@ -206,6 +211,7 @@ The web UI will be available at `http://localhost:3001` and the API at `http://l
 | Variable | Description | Default |
 | --- | --- | --- |
 | `EXPLORER2_PORT` | API port | `8081` |
+| `VITE_API_PROXY_TARGET` | Web dev proxy target for `/api` (web dev only) | `http://127.0.0.1:8081` |
 | `EXPLORER2_RPC_URL` | **Node RPC endpoint** | `http://127.0.0.1:8545/rpc` |
 | `EXPLORER2_WS_URL` | WebSocket endpoint for real-time updates (optional) | unset |
 | `EXPLORER2_DATA_ROOT` | Base directory for local chain data (fallback) | `~/.animica` |

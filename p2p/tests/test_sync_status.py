@@ -955,6 +955,116 @@ def test_not_anchored_cooldown_allows_other_peers(tmp_path: Path) -> None:
     assert peer_a.remote not in ineligible
 
 
+def test_overlap_only_headers_are_not_progress_when_behind_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "overlap-behind-target")
+    block = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block)
+    assert accepted, reason
+
+    peer = _register_peer(node, "peer-overlap-behind:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block.header.height) + 20,
+        head_hash=block.header.hash(),
+    )
+    node._sync_target_height = int(block.header.height) + 10
+    node._sync_last_progress_at = 1234.0
+    monkeypatch.setattr("p2p.node.p2p_service.time.time", lambda: 9999.0)
+
+    accepted_hashes, header_error, discard_reason_counts = node._process_headers(
+        peer, [_compact_header(block)]
+    )
+
+    assert accepted_hashes == []
+    assert header_error is None
+    assert discard_reason_counts == {"overlap_headers": 1}
+    assert node._sync_last_progress_at == 1234.0
+
+
+def test_overlap_only_headers_still_count_progress_near_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "overlap-near-tip")
+    block = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block)
+    assert accepted, reason
+
+    peer = _register_peer(node, "peer-overlap-tip:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block.header.height),
+        head_hash=block.header.hash(),
+    )
+    node._sync_target_height = int(block.header.height)
+    node._sync_last_progress_at = 1234.0
+    monkeypatch.setattr("p2p.node.p2p_service.time.time", lambda: 9999.0)
+
+    accepted_hashes, header_error, discard_reason_counts = node._process_headers(
+        peer, [_compact_header(block)]
+    )
+
+    assert accepted_hashes == []
+    assert header_error is None
+    assert discard_reason_counts == {"overlap_headers": 1}
+    assert node._sync_last_progress_at == 9999.0
+
+
+def test_should_reset_from_highest_next_height_on_overlap_headers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "watchdog-overlap-reset")
+    local_height, _local_hash = deps_sync.head()
+    node._sync_last_progress_at = time.time()
+    node._sync_last_headers_discard_reason_counts = {"overlap_headers": 512}
+    monkeypatch.setattr(
+        node, "_network_best_height", lambda: int(local_height or 0) + 25
+    )
+
+    should_reset = node._should_reset_from_highest_next_height(
+        now=time.time(), head_height=int(local_height or 0)
+    )
+
+    assert should_reset is True
+
+
+@pytest.mark.asyncio
+async def test_sync_once_rotates_peer_on_repeated_overlap_while_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "overlap-rotate-peer")
+    block = _make_child_block(deps_sync)
+    accepted, reason = deps_sync.import_block(block)
+    assert accepted, reason
+
+    peer = _register_peer(node, "peer-overlap-loop:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block.header.height) + 50,
+        head_hash=block.header.hash(),
+    )
+    node._sync_target_height = int(block.header.height) + 25
+    node._sync_duplicate_headers_threshold = 1
+
+    async def _fake_fetch_headers(_peer: _PeerState) -> list[HeaderCompact]:
+        return [_compact_header(block)]
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once(force=True)
+
+    assert node._sync_last_header_error == "overlap_headers"
+    assert (
+        node._sync_peer_backoff_reason.get(node._peer_backoff_key(peer))
+        == "overlap_headers"
+    )
+    assert len(node._sync_header_retry_queue) >= 1
+
+
 @pytest.mark.asyncio
 async def test_locator_defaults_to_genesis_and_sets_summary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
