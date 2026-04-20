@@ -1003,6 +1003,7 @@ class BlockImporter:
             parent_hash = _parent_hash_of(header, hdr_map)
 
             tx_hashes = self._canonical_tx_hashes(block)
+            legacy_replay_hashes = self._legacy_replay_hashes(block)
             duplicate_hash = self._first_duplicate_hash(tx_hashes)
             if duplicate_hash is not None:
                 self._resolve_duplicate_tx_failure(
@@ -1062,14 +1063,33 @@ class BlockImporter:
                 )
 
             if self.tx_index is not None:
-                for tx_hash in tx_hashes:
+                for idx, tx_hash in enumerate(tx_hashes):
+                    legacy_hashes = (
+                        legacy_replay_hashes[idx]
+                        if idx < len(legacy_replay_hashes)
+                        else ()
+                    )
                     try:
                         already_applied = bool(self.tx_index.exists(tx_hash))
                     except Exception:
                         already_applied = False
+                    if not already_applied:
+                        for legacy_hash in legacy_hashes:
+                            if legacy_hash == tx_hash:
+                                continue
+                            try:
+                                already_applied = bool(self.tx_index.exists(legacy_hash))
+                            except Exception:
+                                already_applied = False
+                            if already_applied:
+                                break
                     if already_applied:
+                        resolver_hashes: list[bytes] = [tx_hash]
+                        for legacy_hash in legacy_hashes:
+                            if legacy_hash not in resolver_hashes:
+                                resolver_hashes.append(legacy_hash)
                         self._resolve_duplicate_tx_failure(
-                            tx_hashes=[tx_hash],
+                            tx_hashes=resolver_hashes,
                             reason="tx_already_applied_on_canonical_chain",
                             height=height,
                             block_hash=h,
@@ -1415,10 +1435,10 @@ class BlockImporter:
         return None
 
     def _tx_hash(self, tx: Tx) -> bytes:
-        # Canonical: sha3_256 over the tx SignBytes (encoding/ canonical domain).
-        from core.encoding.canonical import tx_signing_bytes
+        # Canonical tx hash is sha3_256 over canonical signed tx bytes.
+        from mempool.tx_hash import tx_hash_bytes as _tx_hash_bytes
 
-        return sha3_256(tx_signing_bytes(tx))
+        return _tx_hash_bytes(tx)
 
     # --- Fork choice & reorg ------------------------------------------------
 
@@ -2422,7 +2442,18 @@ class BlockImporter:
         for tx in getattr(block, "txs", ()):
             try:
                 tx_hashes.append(self._tx_hash(tx))
-            except Exception:  # pragma: no cover
+                continue
+            except Exception:
+                tx_hash_hex = self._extract_tx_hash(tx)
+                if isinstance(tx_hash_hex, str):
+                    tx_hash_value = tx_hash_hex[2:] if tx_hash_hex.startswith("0x") else tx_hash_hex
+                    try:
+                        tx_hash_bytes = bytes.fromhex(tx_hash_value)
+                    except ValueError:
+                        tx_hash_bytes = b""
+                    if len(tx_hash_bytes) == 32:
+                        tx_hashes.append(tx_hash_bytes)
+                        continue
                 return []
         return tx_hashes
 
@@ -2434,6 +2465,32 @@ class BlockImporter:
                 return tx_hash
             seen.add(tx_hash)
         return None
+
+    @staticmethod
+    def _legacy_replay_hashes(block: Block) -> list[tuple[bytes, ...]]:
+        out: list[tuple[bytes, ...]] = []
+        for tx in getattr(block, "txs", ()):
+            candidates: list[bytes] = []
+            unsigned_hash_fn = getattr(tx, "unsigned_hash", None)
+            if callable(unsigned_hash_fn):
+                try:
+                    unsigned_hash = unsigned_hash_fn()
+                except Exception:
+                    unsigned_hash = None
+                if isinstance(unsigned_hash, (bytes, bytearray)) and len(unsigned_hash) == 32:
+                    candidates.append(bytes(unsigned_hash))
+            try:
+                from core.encoding.canonical import tx_signing_bytes
+
+                signing_hash = sha3_256(tx_signing_bytes(tx))
+            except Exception:
+                signing_hash = None
+            if isinstance(signing_hash, (bytes, bytearray)) and len(signing_hash) == 32:
+                signing_hash_bytes = bytes(signing_hash)
+                if signing_hash_bytes not in candidates:
+                    candidates.append(signing_hash_bytes)
+            out.append(tuple(candidates))
+        return out
 
     @staticmethod
     def _first_duplicate_sender_nonce(block: Block) -> Optional[tuple[bytes, int]]:
