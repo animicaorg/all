@@ -368,6 +368,19 @@ class TestBlockCorroboration:
         assert ok is True
         assert reason == "force_peer_confirmed"
 
+    def test_low_peer_mode_accepts_votes_when_force_peer_unavailable(self):
+        normal_peer = MockPeerState("203.0.113.10:30333", hello_done=True)
+        self.service._eligible_block_peers.return_value = ([normal_peer], {})
+        self.service._header_vote_peers.return_value = {"peer1:30333"}
+
+        ok, reason, ctx = self.service._block_corroboration_status(
+            b"hash", origin_remote="peer1:30333"
+        )
+
+        assert ok is True
+        assert reason == "low_peer_mode_no_force_connected"
+        assert ctx["votes"] >= 1
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

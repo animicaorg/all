@@ -235,6 +235,82 @@ def test_inflight_block_expiry_requeues(tmp_path: Path) -> None:
     assert peer.sync_timeouts == 1
 
 
+@pytest.mark.asyncio
+async def test_queue_block_requests_uses_persisted_retry_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "queue-block-request-retry-count")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "queue-block-request-retry-count" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3010")
+    block_hash = b"\x21" * 32
+    node._sync_block_retry_counts[block_hash] = 2
+
+    async def _fake_send(_peer: _PeerState, _msg_id, _payload) -> None:
+        return None
+
+    monkeypatch.setattr(node, "_send", _fake_send)
+
+    requested = await node._queue_block_requests(peer, [block_hash])
+
+    assert requested == 1
+    request = node._sync_inflight_block_requests.get(block_hash)
+    assert request is not None
+    assert request.retry_count == 2
+
+
+def test_inflight_block_retry_count_accumulates_and_resets(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "inflight-retry-accumulates")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "inflight-retry-accumulates" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:3011")
+    block_hash = b"\x22" * 32
+    node._sync_inflight_max_retries = 2
+    node._sync_last_inflight_reset_at = 0.0
+
+    started_at = time.time() - 10
+    node._sync_inflight_blocks[block_hash] = started_at
+    node._sync_inflight_peers[block_hash] = peer.remote
+    node._sync_inflight_block_requests[block_hash] = _SyncRequest(
+        request_id="req-retry-1",
+        peer_id=peer.remote,
+        kind="blocks",
+        started_at=started_at,
+        deadline_at=started_at + 1,
+        retry_count=0,
+        item_hash=block_hash,
+    )
+    node._expire_inflight_blocks()
+    assert node._sync_block_retry_counts.get(block_hash) == 1
+
+    started_at = time.time() - 10
+    node._sync_inflight_blocks[block_hash] = started_at
+    node._sync_inflight_peers[block_hash] = peer.remote
+    node._sync_inflight_block_requests[block_hash] = _SyncRequest(
+        request_id="req-retry-2",
+        peer_id=peer.remote,
+        kind="blocks",
+        started_at=started_at,
+        deadline_at=started_at + 1,
+        retry_count=1,
+        item_hash=block_hash,
+    )
+    node._expire_inflight_blocks()
+
+    assert block_hash not in node._sync_block_retry_counts
+    assert node._stats["sync_inflight_reset"] >= 1
+
+
 def test_peer_broadcast_score_prefers_broadcaster(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "broadcast-score")
     node = P2PService(

@@ -1210,6 +1210,7 @@ class P2PService:
             os.environ.get("ANIMICA_P2P_HEADER_EMPTY_COOLDOWN_CAP", "600") or 600
         )
         self._sync_block_attempts_by_hash: dict[bytes, Deque[str]] = {}
+        self._sync_block_retry_counts: dict[bytes, int] = {}
         self._sync_block_attempts_cap = int(
             os.environ.get("ANIMICA_P2P_BLOCK_ATTEMPT_HISTORY", "8") or 8
         )
@@ -8635,6 +8636,7 @@ class P2PService:
             self._sync_inflight_blocks.pop(sync_block.hash, None)
             self._sync_inflight_peers.pop(sync_block.hash, None)
             self._sync_inflight_block_requests.pop(sync_block.hash, None)
+            self._sync_block_retry_counts.pop(sync_block.hash, None)
             return
         task = _SyncVerifyTask(
             sync_block=sync_block,
@@ -8653,6 +8655,7 @@ class P2PService:
         reason: Optional[str],
     ) -> None:
         peer = self._peer_by_remote(peer_remote)
+        self._sync_block_retry_counts.pop(sync_block.hash, None)
         if not ok and self._is_duplicate_reason(reason):
             self._drop_from_block_queue(sync_block.hash)
             ok = True
@@ -8819,6 +8822,7 @@ class P2PService:
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_inflight_block_requests.pop(sync_block.hash, None)
+                self._sync_block_retry_counts.pop(sync_block.hash, None)
                 self._sync_last_block_error = confirmation_reason
                 self._sync_last_block_error_at = time.time()
                 self._sync_last_block_error_peer = peer.remote
@@ -8845,6 +8849,7 @@ class P2PService:
                 self._sync_inflight_blocks.pop(sync_block.hash, None)
                 self._sync_inflight_peers.pop(sync_block.hash, None)
                 self._sync_inflight_block_requests.pop(sync_block.hash, None)
+                self._sync_block_retry_counts.pop(sync_block.hash, None)
                 continue
             await self._enqueue_verify_task(peer, sync_block, len(raw_bytes))
 
@@ -9286,6 +9291,7 @@ class P2PService:
         self._sync_block_queue_set.discard(block_hash)
         self._sync_block_queue_heights.pop(block_hash, None)
         self._sync_block_attempts_by_hash.pop(block_hash, None)
+        self._sync_block_retry_counts.pop(block_hash, None)
         with contextlib.suppress(ValueError):
             self._sync_block_queue.remove(block_hash)
 
@@ -9311,16 +9317,36 @@ class P2PService:
             block_hash, origin_remote=None
         )
         if not confirmed:
-            log.debug(
-                "Skipping cache block pending corroboration",
-                extra={
-                    "hash": block_hash.hex(),
-                    "reason": confirmation_reason,
-                    "votes": confirmation_ctx.get("votes"),
-                    "required_votes": confirmation_ctx.get("required"),
-                },
+            eligible_peers = int(confirmation_ctx.get("eligible_peers") or 0)
+            force_connected = bool(confirmation_ctx.get("force_connected"))
+            bypass_corroboration = (
+                eligible_peers <= 0
+                or (
+                    confirmation_reason == "await_force_peer_connection"
+                    and not force_connected
+                )
             )
-            return False
+            if bypass_corroboration:
+                log.info(
+                    "Bypassing cache block corroboration due to unavailable peers",
+                    extra={
+                        "hash": block_hash.hex(),
+                        "reason": confirmation_reason,
+                        "eligible_peers": eligible_peers,
+                        "force_connected": force_connected,
+                    },
+                )
+            else:
+                log.debug(
+                    "Skipping cache block pending corroboration",
+                    extra={
+                        "hash": block_hash.hex(),
+                        "reason": confirmation_reason,
+                        "votes": confirmation_ctx.get("votes"),
+                        "required_votes": confirmation_ctx.get("required"),
+                    },
+                )
+                return False
         ok, reason = await self._import_block_payload(
             raw_bytes, origin_remote="sync-cache"
         )
@@ -9617,12 +9643,21 @@ class P2PService:
             self._sync_inflight_blocks.pop(h, None)
             peer_remote = self._sync_inflight_peers.pop(h, None)
             request = self._sync_inflight_block_requests.pop(h, None)
+            retry_count = int(self._sync_block_retry_counts.get(h, 0))
+            if request is not None:
+                retry_count = max(retry_count, int(request.retry_count)) + 1
+                request.retry_count = retry_count
+            else:
+                retry_count += 1
+            self._sync_block_retry_counts[h] = retry_count
             if not self._has_block(h):
                 if h not in self._sync_block_queue_set:
                     self._sync_block_queue.appendleft(h)
                     self._sync_block_queue_set.add(h)
                     if h not in self._sync_block_queue_heights:
                         self._sync_block_queue_heights[h] = -1
+            else:
+                self._sync_block_retry_counts.pop(h, None)
             if peer_remote:
                 peer = self._peer_by_remote(peer_remote)
                 if peer is not None:
@@ -9637,7 +9672,6 @@ class P2PService:
                 self._sync_last_block_error_at = now
                 self._sync_last_block_error_peer = peer_remote
             if request is not None:
-                request.retry_count += 1
                 self._stats["blocks_req_timeout"] += 1
                 log.warning(
                     "Block request expired",
@@ -9646,12 +9680,13 @@ class P2PService:
                         "peer": request.peer_id,
                         "kind": request.kind,
                         "age_s": round(now - request.started_at, 3),
-                        "retry_count": request.retry_count,
+                        "retry_count": retry_count,
                         "item_hash": request.item_hash.hex() if request.item_hash else None,
                         "start_height": request.start_height,
                     },
                 )
-                if request.retry_count >= self._sync_inflight_max_retries:
+                if retry_count >= self._sync_inflight_max_retries:
+                    self._sync_block_retry_counts.pop(h, None)
                     self._reset_sync_inflight(
                         now=now,
                         reason="block_request_retries_exhausted",
@@ -10550,7 +10585,7 @@ class P2PService:
                 kind="blocks",
                 started_at=started_at,
                 deadline_at=deadline,
-                retry_count=0,
+                retry_count=int(self._sync_block_retry_counts.get(h, 0)),
                 item_hash=h,
                 start_height=None,
                 count=1,
@@ -11962,6 +11997,7 @@ class P2PService:
                     self._sync_block_queue.clear()
                     self._sync_block_queue_set.clear()
                     self._sync_block_queue_heights.clear()
+                    self._sync_block_retry_counts.clear()
                     self._ensure_block_queue()
                     self._sync_kick(reason="no_progress_timeout", aggressive=True)
                 stalled = self._sync_block_stalled_reason is not None
@@ -12245,18 +12281,32 @@ class P2PService:
         force_voted = any(self._is_force_sync_remote(remote) for remote in confirmation_peers)
         low_peer_mode = eligible_count < required_votes
         if low_peer_mode and self._sync_block_confirm_require_force_peer:
-            if force_connected and force_voted:
-                return True, "force_peer_confirmed", {
+            if force_connected:
+                if force_voted:
+                    return True, "force_peer_confirmed", {
+                        "votes": vote_count,
+                        "required": required_votes,
+                        "eligible_peers": eligible_count,
+                    }
+                return False, "await_force_peer_header", {
                     "votes": vote_count,
                     "required": required_votes,
                     "eligible_peers": eligible_count,
+                    "force_connected": force_connected,
+                    "force_voted": force_voted,
                 }
-            reason = (
-                "await_force_peer_header"
-                if force_connected
-                else "await_force_peer_connection"
-            )
-            return False, reason, {
+            # Fail-open in low-peer mode when no force peers are connected at all.
+            # Without this, 1-2 peer topologies can deadlock forever waiting for an
+            # unreachable force peer quorum.
+            if vote_count > 0:
+                return True, "low_peer_mode_no_force_connected", {
+                    "votes": vote_count,
+                    "required": required_votes,
+                    "eligible_peers": eligible_count,
+                    "force_connected": force_connected,
+                    "force_voted": force_voted,
+                }
+            return False, "await_force_peer_connection", {
                 "votes": vote_count,
                 "required": required_votes,
                 "eligible_peers": eligible_count,
@@ -12723,18 +12773,7 @@ class P2PService:
             if anchored:
                 eligible = anchored
         avoid_remotes = avoid_remotes or set()
-        
-        # Prioritize force peers (those in FORCE_SYNC_HEADER_PEERS)
-        force_peers = [
-            p
-            for p in eligible
-            if self._is_force_sync_remote(p.remote) and p.remote not in avoid_remotes
-        ]
-        if force_peers:
-            # Always prefer force peers - return the first available one
-            # These are trusted verifier nodes (like 144.126.133.21:30333)
-            return force_peers[0]
-        
+
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
         local_height, _ = self._local_head()
@@ -12792,6 +12831,7 @@ class P2PService:
         scored: list[tuple[tuple[float, ...], _PeerState]] = []
         for head_height, broadcast_score, non_broadcasting, p in height_filtered:
             latency = p.latency_ewma if p.latency_ewma is not None else 9999.0
+            force_bonus = 1 if self._is_force_sync_remote(p.remote) else 0
             outbound_bonus = 1 if p.direction == "outbound" else 0
             netgroup_penalty = 1 if avoid_netgroup and p.netgroup == avoid_netgroup else 0
             sync_score = self._peer_sync_score(p)
@@ -12808,6 +12848,7 @@ class P2PService:
                 else 0.0
             )
             score = (
+                force_bonus,
                 anchored_bonus,
                 proven_headers_bonus,
                 broadcast_score,
@@ -12850,33 +12891,7 @@ class P2PService:
         if not eligible:
             return None
         avoid_remotes = avoid_remotes or set()
-        
-        # Prioritize force peers (those in FORCE_SYNC_HEADER_PEERS)
-        force_peers = [
-            p
-            for p in eligible
-            if self._is_force_sync_remote(p.remote) and p.remote not in avoid_remotes
-        ]
-        if force_peers:
-            # Check if any force peer has the needed height
-            now = time.time()
-            for peer in force_peers:
-                info = self._sync_peer_heads.get(peer.remote)
-                if (
-                    info is not None
-                    and now - info.updated_at <= self._sync_peer_head_stale_sec
-                    and (not info.cooldown_until or info.cooldown_until <= now)
-                ):
-                    head_height = int(info.height)
-                else:
-                    try:
-                        head_height = int((peer.hello or {}).get("head_height") or 0)
-                    except Exception:
-                        head_height = 0
-                # If force peer has sufficient height, use it
-                if head_height > 0 and (needed_height is None or head_height >= needed_height):
-                    return peer
-        
+
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
         for peer in eligible:
@@ -12921,12 +12936,14 @@ class P2PService:
         scored: list[tuple[tuple[float, ...], _PeerState]] = []
         for broadcast_score, non_broadcasting, peer in height_filtered:
             latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
+            force_bonus = 1 if self._is_force_sync_remote(peer.remote) else 0
             outbound_bonus = 1 if peer.direction == "outbound" else 0
             anchored_bonus = 1 if self._peer_is_anchored(peer) else 0
             sync_score = self._peer_sync_score(peer)
             block_failure_penalty = -1.0 * float(peer.block_failures or 0)
             non_broadcasting_penalty = -5.0 if non_broadcasting else 0.0
             score = (
+                force_bonus,
                 anchored_bonus,
                 broadcast_score,
                 non_broadcasting_penalty,
@@ -13554,6 +13571,7 @@ class P2PService:
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
+        self._sync_block_retry_counts.clear()
         self._sync_pow_mismatch_votes.clear()
         self._sync_block_peer_cursor = 0
         for peer in self._peers.values():
@@ -14131,6 +14149,7 @@ class P2PService:
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
+        self._sync_block_retry_counts.clear()
         self._sync_block_buffer.clear()
         self._sync_inflight_blocks.clear()
         self._sync_inflight_peers.clear()
@@ -14409,6 +14428,7 @@ class P2PService:
         self._sync_block_queue.clear()
         self._sync_block_queue_set.clear()
         self._sync_block_queue_heights.clear()
+        self._sync_block_retry_counts.clear()
         for peer in self._peers.values():
             peer.pending_headers = None
             peer.pending_header_request_id = None
