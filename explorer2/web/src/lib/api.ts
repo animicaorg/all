@@ -58,7 +58,7 @@ export const api = {
   getBlock: (hashOrHeight: string) => apiGet<BlockDetail>(`/api/block/${hashOrHeight}`),
   getTx: (hash: string) => apiGet<TxDetail>(`/api/tx/${hash}`),
   getAddress: (address: string, limit = 20, cursor?: string) =>
-    apiGet<AddressSummary>(`/api/address/${address}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
+    apiGet<AddressSummary>(`/api/address/${encodeURIComponent(address)}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
   getMempool: (limit = 50, cursor?: string) =>
     apiGet<MempoolView>(`/api/mempool?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`),
   getContractDeployments: (limit = 24, scanBlocks = 240) =>

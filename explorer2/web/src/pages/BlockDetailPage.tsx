@@ -82,6 +82,18 @@ export default function BlockDetailPage() {
             </p>
           </div>
           <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Miner</p>
+            <p className="mt-2 font-mono text-sm text-gray-600 dark:text-slate-300">
+              {block.miner ? (
+                <Link to={`/address/${block.miner}`} className="text-animica-600 hover:underline dark:text-animica-400">
+                  {block.miner}
+                </Link>
+              ) : (
+                '—'
+              )}
+            </p>
+          </div>
+          <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-slate-500">Timestamp</p>
             <p className="mt-2 text-sm text-gray-700 dark:text-slate-200">
               {timeAgo(block.time)} · {formatTimestamp(block.time)}
@@ -129,8 +141,30 @@ export default function BlockDetailPage() {
                 </Link>
                 <div className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500 dark:text-slate-500">
                   <span>Index: {idx}</span>
-                  {tx.from && <span>From: {shorten(tx.from, 8, 6)}</span>}
-                  {tx.to && <span>To: {shorten(tx.to, 8, 6)}</span>}
+                  {tx.from && (
+                    <span>
+                      From:{' '}
+                      <Link
+                        className="text-animica-600 hover:underline dark:text-animica-400"
+                        to={`/address/${tx.from}`}
+                        title={tx.from}
+                      >
+                        {shorten(tx.from, 12, 8)}
+                      </Link>
+                    </span>
+                  )}
+                  {tx.to && (
+                    <span>
+                      To:{' '}
+                      <Link
+                        className="text-animica-600 hover:underline dark:text-animica-400"
+                        to={`/address/${tx.to}`}
+                        title={tx.to}
+                      >
+                        {shorten(tx.to, 12, 8)}
+                      </Link>
+                    </span>
+                  )}
                   <span>Amount: {tx.value ? `${formatBalance(tx.value).anm} ANM` : '—'}</span>
                 </div>
               </div>

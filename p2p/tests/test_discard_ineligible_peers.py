@@ -84,6 +84,9 @@ class TestDiscardIneligiblePeers:
         self.service._block_height_hint = Mock(return_value=1000)
         self.service._has_block = Mock(return_value=False)
         self.service._eligible_block_peers = Mock()
+        self.service._block_corroboration_status = Mock(
+            return_value=(False, "await_header_corroboration", {})
+        )
         
         # Bind the actual method from the module
         from p2p.node.p2p_service import P2PService
@@ -201,6 +204,35 @@ class TestDiscardIneligiblePeers:
         assert result["buffer"] == 0
         assert result["inflight"] == 0
         assert len(self.service._sync_block_buffer) == 2
+
+    def test_keep_buffer_block_if_corroborated(self):
+        """Corroborated blocks should remain buffered even if origin peer is ineligible."""
+        eligible_peer = MockPeerState("eligible.peer:30333", hello_done=True)
+        ineligible_peer = MockPeerState("ineligible.peer:30333", hello_done=False)
+
+        self.service._peers = {
+            ("eligible.peer:30333", "outbound"): eligible_peer,
+            ("ineligible.peer:30333", "outbound"): ineligible_peer,
+        }
+        self.service._eligible_block_peers.return_value = (
+            [eligible_peer],
+            {"ineligible.peer:30333": "handshake_pending"},
+        )
+        self.service._block_corroboration_status.return_value = (
+            True,
+            "quorum_met",
+            {"votes": 2, "required": 2},
+        )
+
+        block_ineligible = MockSyncBlock(b"hash_ineligible", "ineligible.peer:30333")
+        self.service._sync_block_buffer = OrderedDict(
+            [(b"hash_ineligible", block_ineligible)]
+        )
+
+        result = self.service._discard_blocks_from_ineligible_peers()
+
+        assert result["buffer"] == 0
+        assert b"hash_ineligible" in self.service._sync_block_buffer
     
     def test_clear_cache_when_error_peer_ineligible(self):
         """Test that cache is cleared when error peer becomes ineligible."""
@@ -276,6 +308,65 @@ class TestForcePeerPrioritization:
         # Verify force peer is eligible
         assert eligible is True
         assert reason == "force_eligible"
+
+
+class TestBlockCorroboration:
+    """Test block corroboration logic."""
+
+    def setup_method(self):
+        from p2p.node.p2p_service import P2PService
+
+        self.service = Mock(spec=P2PService)
+        self.service._sync_block_confirm_min_peers = 2
+        self.service._sync_block_confirm_require_force_peer = True
+        self.service._header_vote_peers = Mock(return_value=set())
+        self.service._eligible_block_peers = Mock(return_value=([], {}))
+        self.service._is_force_sync_remote = Mock(
+            side_effect=lambda remote: str(remote).startswith("144.126.133.21")
+        )
+
+        self.service._block_corroboration_status = (
+            P2PService._block_corroboration_status.__get__(self.service, P2PService)
+        )
+
+    def test_quorum_accepts_block(self):
+        self.service._header_vote_peers.return_value = {
+            "peer1:30333",
+            "peer2:30333",
+        }
+        self.service._eligible_block_peers.return_value = ([], {})
+
+        ok, reason, ctx = self.service._block_corroboration_status(
+            b"hash", origin_remote="peer1:30333"
+        )
+
+        assert ok is True
+        assert reason == "quorum_met"
+        assert ctx["votes"] == 2
+
+    def test_low_peer_mode_requires_force_peer_vote(self):
+        force_peer = MockPeerState("144.126.133.21:30333", hello_done=True)
+        self.service._eligible_block_peers.return_value = ([force_peer], {})
+        self.service._header_vote_peers.return_value = {"peer1:30333"}
+
+        ok, reason, _ctx = self.service._block_corroboration_status(
+            b"hash", origin_remote="peer1:30333"
+        )
+
+        assert ok is False
+        assert reason == "await_force_peer_header"
+
+    def test_low_peer_mode_accepts_force_peer_vote(self):
+        force_peer = MockPeerState("144.126.133.21:30333", hello_done=True)
+        self.service._eligible_block_peers.return_value = ([force_peer], {})
+        self.service._header_vote_peers.return_value = {"144.126.133.21:30333"}
+
+        ok, reason, _ctx = self.service._block_corroboration_status(
+            b"hash", origin_remote="peer1:30333"
+        )
+
+        assert ok is True
+        assert reason == "force_peer_confirmed"
 
 
 if __name__ == "__main__":

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail } from '../src/normalize'
+import { bech32m } from 'bech32'
+import {
+  canonicalAddressKey,
+  normalizeBlockDetail,
+  normalizeBlockSummary,
+  normalizeHead,
+  normalizeTxDetail,
+  normalizeTxSummary
+} from '../src/normalize'
 
 describe('normalizeHead', () => {
   it('normalizes core fields with height', () => {
@@ -181,5 +189,47 @@ describe('normalizeTxDetail', () => {
     expect(detail.from).toBe('anim1from')
     expect(detail.to).toBe('anim1to')
     expect(detail.feePaid).toBe('0x3')
+  })
+})
+
+describe('address and amount normalization', () => {
+  it('normalizes 32-byte hex addresses into bech32m', () => {
+    const digest = '0x' + '11'.repeat(32)
+    const summary = normalizeTxSummary({ hash: '0xabc', from: digest, to: digest, value: '0x1' })
+    expect(summary.from?.startsWith('anim1')).toBe(true)
+    expect(summary.to?.startsWith('anim1')).toBe(true)
+  })
+
+  it('maps equivalent bech32 payloads to the same canonical address key', () => {
+    const digest = Uint8Array.from(Buffer.from('22'.repeat(32), 'hex'))
+    const payloadA = Uint8Array.from([0x10, 0x01, ...digest])
+    const payloadB = Uint8Array.from([0x10, 0x02, ...digest])
+    const addrA = bech32m.encode('anim', bech32m.toWords(payloadA))
+    const addrB = bech32m.encode('anim', bech32m.toWords(payloadB))
+    expect(canonicalAddressKey(addrA)).toBe(canonicalAddressKey(addrB))
+  })
+
+  it('extracts nested transfer amounts for summary rendering', () => {
+    const summary = normalizeTxSummary({
+      hash: '0xabc',
+      payload: { v: { amount: '0x2a' } }
+    })
+    expect(summary.value).toBe('0x2a')
+  })
+
+  it('derives miner address from coinbase-like transaction when header miner is missing', () => {
+    const block = normalizeBlockDetail({
+      header: { height: 10, hash: '0xblock10', time: 1_700_000_010 },
+      txs: [
+        {
+          hash: '0xcoinbase',
+          kind: 'COINBASE',
+          from: '0x' + '0'.repeat(64),
+          to: '0x' + '33'.repeat(32),
+          amount: '0x64'
+        }
+      ]
+    })
+    expect(block.miner?.startsWith('anim1')).toBe(true)
   })
 })

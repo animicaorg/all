@@ -5,6 +5,7 @@ const hmrHost = process.env.VITE_HMR_HOST
 const hmrProtocol = process.env.VITE_HMR_PROTOCOL
 const hmrPort = process.env.VITE_HMR_PORT ? Number(process.env.VITE_HMR_PORT) : 3001
 const hmrClientPort = process.env.VITE_HMR_CLIENT_PORT ? Number(process.env.VITE_HMR_CLIENT_PORT) : undefined
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8081'
 const hmrConfig =
   hmrHost || hmrProtocol || hmrClientPort || process.env.VITE_HMR_PORT
     ? {
@@ -29,7 +30,7 @@ export default defineConfig({
     ],
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8081',
+        target: apiProxyTarget,
         changeOrigin: true
       }
     },

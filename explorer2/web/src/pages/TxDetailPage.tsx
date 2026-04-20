@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { DecodedValue, TxClassificationType, TxDetail } from '@animica/explorer2-shared'
 import { api } from '../lib/api'
-import { formatNumber, shorten } from '../lib/format'
+import { formatNumber } from '../lib/format'
 import CopyButton from '../components/CopyButton'
 import JsonViewer from '../components/JsonViewer'
 import Skeleton from '../components/Skeleton'
@@ -170,8 +170,8 @@ export default function TxDetailPage() {
             label="From"
             value={
               tx.from ? (
-                <Link to={`/address/${tx.from}`} className="text-animica-600 hover:underline dark:text-animica-400">
-                  {shorten(tx.from, 10, 8)}
+                <Link to={`/address/${tx.from}`} className="text-animica-600 hover:underline dark:text-animica-400" title={tx.from}>
+                  {tx.from}
                 </Link>
               ) : (
                 '—'
@@ -183,8 +183,8 @@ export default function TxDetailPage() {
             label="To"
             value={
               tx.to ? (
-                <Link to={`/address/${tx.to}`} className="text-animica-600 hover:underline dark:text-animica-400">
-                  {shorten(tx.to, 10, 8)}
+                <Link to={`/address/${tx.to}`} className="text-animica-600 hover:underline dark:text-animica-400" title={tx.to}>
+                  {tx.to}
                 </Link>
               ) : (
                 '—'
