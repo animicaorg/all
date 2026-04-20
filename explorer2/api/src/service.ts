@@ -19,7 +19,15 @@ import type {
 import { createHash } from 'node:crypto'
 import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
-import { normalizeBlockDetail, normalizeBlockSummary, normalizeHead, normalizeTxDetail, normalizeTxSummary } from './normalize.js'
+import {
+  canonicalAddressKey,
+  normalizeAddress,
+  normalizeBlockDetail,
+  normalizeBlockSummary,
+  normalizeHead,
+  normalizeTxDetail,
+  normalizeTxSummary
+} from './normalize.js'
 import { clampLimit, nextCursorForHeight, parseCursor } from './pagination.js'
 import { normalizeTxHash } from './txHash.js'
 import pino from 'pino'
@@ -46,7 +54,7 @@ export interface ChainClient {
 }
 
 const RECENT_BLOCK_WINDOW = 20
-const ADDRESS_SCAN_WINDOW = 50
+const ADDRESS_SCAN_MAX = 250
 const CONTRACT_DEPLOYMENT_SCAN_DEFAULT = 240
 const CONTRACT_DEPLOYMENT_SCAN_MAX = 1000
 const CONTRACT_DEPLOYMENT_LIMIT_MAX = 200
@@ -337,19 +345,25 @@ export class ExplorerService {
 
   async getAddressDetail(address: string, limitInput: number, cursor?: string): Promise<AddressSummary> {
     const limit = clampLimit(limitInput)
+    const normalizedAddress = normalizeAddress(address) ?? address
+    const targetAddressKey = canonicalAddressKey(normalizedAddress) ?? canonicalAddressKey(address)
     const [confirmedBalance, pendingBalance] = await Promise.all([
-      this.safeRpc(() => this.rpc.getBalance(address, 'latest')).catch(() => null),
-      this.safeRpc(() => this.rpc.getBalance(address, 'pending')).catch(() => null)
+      this.safeRpc(() => this.rpc.getBalance(normalizedAddress, 'latest')).catch(() => null),
+      this.safeRpc(() => this.rpc.getBalance(normalizedAddress, 'pending')).catch(() => null)
     ])
 
     const headRaw = await this.safeRpc(() => this.rpc.getHead())
     const head = normalizeHead(headRaw)
     const cursorHeight = parseCursor(cursor)
     const startHeight = cursorHeight ?? head.height
-    const heights = Array.from({ length: ADDRESS_SCAN_WINDOW }, (_, i) => startHeight - i).filter((h) => h >= 0)
-
     const txs: any[] = []
-    for (const height of heights) {
+    let scannedBlocks = 0
+    let nextHeight = startHeight
+
+    while (nextHeight >= 0 && scannedBlocks < ADDRESS_SCAN_MAX && txs.length < limit) {
+      const height = nextHeight
+      nextHeight -= 1
+      scannedBlocks += 1
       const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
       if (!block) continue
 
@@ -361,31 +375,36 @@ export class ExplorerService {
         const receipt = findReceiptForTx(tx, i, receipts)
         const detail = normalizeTxDetail(tx, receipt)
         const classification = await this.classifyAndPersistTx(detail, tx, receipt)
+        const fromKey = canonicalAddressKey(summary.from)
+        const toKey = canonicalAddressKey(summary.to)
+        const createdKey = canonicalAddressKey(classification.createdContractAddress)
         const touchesAddress =
-          summary.from === address ||
-          summary.to === address ||
-          classification.createdContractAddress === address
+          (targetAddressKey !== null &&
+            (fromKey === targetAddressKey || toKey === targetAddressKey || createdKey === targetAddressKey)) ||
+          summary.from === normalizedAddress ||
+          summary.to === normalizedAddress ||
+          classification.createdContractAddress === normalizedAddress
         if (!touchesAddress) continue
         summary.status = detail.status
+        summary.value = summary.value ?? detail.value
         summary.classification = classification
         txs.push(summary)
       }
-      if (txs.length >= limit) break
     }
 
-    const nextHeight = heights.length ? heights[heights.length - 1] : startHeight
-    const profile = await this.resolveContractProfile(address)
-    const accountType = profile?.accountType ?? (await this.resolveAccountType(address))
+    const profile = await this.resolveContractProfile(normalizedAddress)
+    const accountType = profile?.accountType ?? (await this.resolveAccountType(normalizedAddress))
+    const hasMore = nextHeight >= 0
     return {
-      address,
+      address: normalizedAddress,
       accountType,
       confirmedBalance,
       pendingBalance,
       txs: txs.slice(0, limit),
       contract: accountType === 'contract' ? profile ?? null : null,
-      nextCursor: nextCursorForHeight(nextHeight),
-      scannedBlocks: heights.length,
-      partial: true
+      nextCursor: hasMore ? nextCursorForHeight(nextHeight) : null,
+      scannedBlocks,
+      partial: hasMore
     }
   }
 

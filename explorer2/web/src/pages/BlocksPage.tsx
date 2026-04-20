@@ -174,6 +174,7 @@ export default function BlocksPage() {
               <tr>
                 <th className="px-4 py-3 sm:px-6">Height</th>
                 <th className="hidden px-4 py-3 sm:table-cell sm:px-6">Hash</th>
+                <th className="hidden px-4 py-3 lg:table-cell lg:px-6">Miner</th>
                 <th className="px-4 py-3 sm:px-6">Txs</th>
               </tr>
             </thead>
@@ -196,20 +197,33 @@ export default function BlocksPage() {
                   <td className="hidden px-4 py-3 font-mono text-gray-600 dark:text-slate-300 sm:table-cell sm:px-6">
                     {shorten(block.hash, 10, 8)}
                   </td>
+                  <td className="hidden px-4 py-3 font-mono text-gray-600 dark:text-slate-300 lg:table-cell lg:px-6">
+                    {block.miner ? (
+                      <Link
+                        className="text-animica-600 hover:underline dark:text-animica-400"
+                        to={`/address/${block.miner}`}
+                        title={block.miner}
+                      >
+                        {shorten(block.miner, 12, 8)}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-700 dark:text-slate-200 sm:px-6">{formatNumber(block.txCount)}</td>
                 </tr>
               ))}
               {loading &&
                 Array.from({ length: 3 }).map((_, i) => (
                   <tr key={`skeleton-${i}`}>
-                    <td className="px-4 py-3 sm:px-6" colSpan={3}>
+                    <td className="px-4 py-3 sm:px-6" colSpan={4}>
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))}
               {!loading && blocks.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="px-4 py-8 text-center text-gray-500 dark:text-slate-400">
+                  <td colSpan={4} className="px-4 py-8 text-center text-gray-500 dark:text-slate-400">
                     No blocks found
                   </td>
                 </tr>

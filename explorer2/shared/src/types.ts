@@ -69,6 +69,7 @@ export interface BlockDetail {
   chainId?: number
   difficulty?: string | number | null
   nonce?: number
+  miner?: Address | null
   txs: TxSummary[]
   raw: unknown
 }
