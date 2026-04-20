@@ -460,8 +460,8 @@ def _simulate_call(
         payload["from"] = sender
 
     candidates: list[tuple[str, list[Any]]] = [
-        ("execution.simulateCall", [payload]),
         ("state.call", [payload]),
+        ("execution.simulateCall", [payload]),
         ("vm.simulateCall", [contract_address, payload["data"], sender, None]),
         ("state.simulateCall", [payload]),
         ("call.simulate", [payload]),
@@ -927,6 +927,17 @@ def contract_deploy(
             deployment_record=None,
             manifest_obj=manifest_obj,
         )
+
+    if source_path is not None:
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except Exception:
+            source_text = None
+        if isinstance(source_text, str) and source_text.strip():
+            # Ensure deployments from source carry executable inline source metadata
+            # so node-side simulation/call can run from chain state alone.
+            manifest_obj["source"] = source_text
+            manifest_obj.setdefault("source_path", source_path.name)
 
     constructor_args, constructor_method, constructor_calldata = _parse_constructor_args(
         args_json=args_json,

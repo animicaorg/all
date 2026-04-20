@@ -130,6 +130,33 @@ def test_block_import_rejects_duplicate_tx_hash_in_single_block(tmp_path: Path) 
     assert state_db.get_balance(recipient) == 0
 
 
+def test_block_import_rejects_duplicate_sender_nonce_even_with_distinct_hashes(tmp_path: Path) -> None:
+    params = _params()
+    bdb, state_db = _db_bundle(tmp_path)
+    importer = BlockImporter(params=params, block_db=bdb, state_db=state_db)
+
+    sender = b"\x33" * 32
+    recipient = b"\x44" * 32
+    state_db.set_balance(sender, 1000)
+
+    genesis = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100, txs_root=ZERO32)
+    res0 = importer.import_block(Block(header=genesis, txs=(), proofs=(), receipts=None))
+    assert res0.code == ImportErrorCode.ACCEPTED
+
+    tx_a = _transfer_tx(sender=sender, to=recipient, nonce=0, amount=10)
+    tx_b = _transfer_tx(sender=sender, to=recipient, nonce=0, amount=11)
+
+    txs_root = compute_txs_root_from_txs((tx_a, tx_b))
+    h1 = _header(height=1, parent_hash=res0.block_hash, timestamp=1012, theta_micro=100, txs_root=txs_root)
+    block = Block.from_components(header=h1, txs=(tx_a, tx_b), proofs=(), receipts=None)
+
+    res = importer.import_block(block)
+    assert res.code == ImportErrorCode.INVALID
+    assert "duplicate sender+nonce" in (res.reason or "")
+    assert state_db.get_balance(sender) == 1000
+    assert state_db.get_balance(recipient) == 0
+
+
 def test_importing_same_block_twice_does_not_reapply_state(tmp_path: Path) -> None:
     params = _params()
     bdb, state_db = _db_bundle(tmp_path)

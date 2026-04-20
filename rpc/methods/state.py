@@ -85,6 +85,66 @@ def _to_hex_quantity(n: int) -> str:
     return hex(n)
 
 
+def _coerce_hex_bytes(value: Any, *, field: str) -> bytes:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if not isinstance(value, str):
+        raise rpc_errors.InvalidParams(f"{field} must be a hex string")
+    text = value.strip()
+    if text.startswith(("0x", "0X")):
+        text = text[2:]
+    if not text:
+        return b""
+    if len(text) % 2 != 0:
+        text = "0" + text
+    try:
+        return bytes.fromhex(text)
+    except Exception as exc:
+        raise rpc_errors.InvalidParams(f"{field} must be valid hex") from exc
+
+
+def _parse_state_call_args(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> tuple[str, bytes, str | None]:
+    """
+    Supported shapes:
+      - object style: [{"to":"...","data":"0x...","from":"..."}]
+      - positional style: ["<to>", "0x...", "<from_or_null>", null]
+      - named object style: {"to":"...","data":"0x...","from":"..."}
+    """
+    payload: dict[str, Any] | None = None
+    if kwargs:
+        payload = dict(kwargs)
+    elif len(args) == 1 and isinstance(args[0], dict):
+        payload = dict(args[0])
+    elif len(args) >= 2:
+        to_val = args[0]
+        data_val = args[1]
+        from_val = args[2] if len(args) >= 3 else None
+        if not isinstance(to_val, str):
+            raise rpc_errors.InvalidParams("state.call positional argument 0 must be contract address string")
+        return to_val, _coerce_hex_bytes(data_val, field="data"), (
+            str(from_val) if isinstance(from_val, str) and from_val.strip() else None
+        )
+    else:
+        raise rpc_errors.InvalidParams(
+            "state.call expects either [{to,data,from?}] or [to,data,from?,block?]"
+        )
+
+    to_val = payload.get("to")
+    data_val = payload.get("data")
+    from_val = payload.get("from")
+    if not isinstance(to_val, str) or not to_val.strip():
+        raise rpc_errors.InvalidParams("state.call payload requires non-empty 'to' field")
+    if data_val is None:
+        raise rpc_errors.InvalidParams("state.call payload requires 'data' field")
+    from_text: str | None = None
+    if isinstance(from_val, str) and from_val.strip():
+        from_text = from_val.strip()
+    return to_val.strip(), _coerce_hex_bytes(data_val, field="data"), from_text
+
+
 # ——— Service Adapters ———
 
 
@@ -204,6 +264,86 @@ def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
 
 
 # ——— RPC Methods ———
+
+
+@method(
+    "state.call",
+    aliases=(
+        "execution.simulateCall",
+        "vm.simulateCall",
+        "state.simulateCall",
+        "call.simulate",
+        "contracts.simulate",
+    ),
+    desc=(
+        "Read-only contract simulation call. Accepts payload {to,data,from?} or "
+        "positional [to,data,from?,block?]. Returns ABI-encoded return bytes as 0x-hex."
+    ),
+)
+def state_call(*args: Any, **kwargs: Any) -> str:
+    to_addr_raw, calldata, sender_raw = _parse_state_call_args(args, kwargs)
+
+    try:
+        from rpc.state_service import parse_address
+    except Exception as exc:  # pragma: no cover
+        raise rpc_errors.InternalError("state address parser unavailable") from exc
+
+    try:
+        contract_addr = parse_address(to_addr_raw)
+    except Exception as exc:
+        raise rpc_errors.InvalidParams(
+            "malformed contract address",
+            address=to_addr_raw,
+        ) from exc
+
+    sender_addr: bytes | None = None
+    if sender_raw:
+        try:
+            sender_addr = parse_address(sender_raw)
+        except Exception as exc:
+            raise rpc_errors.InvalidParams(
+                "malformed sender address",
+                sender=sender_raw,
+            ) from exc
+
+    try:
+        ctx = deps.get_ctx()
+        state_db = getattr(ctx, "state_db", None)
+    except Exception:
+        state_db = None
+    if state_db is None:
+        raise rpc_errors.InternalError("State DB not available")
+
+    try:
+        from execution.runtime import contracts as runtime_contracts
+    except Exception as exc:
+        raise rpc_errors.InternalError(
+            "contract simulation runtime unavailable",
+            error=str(exc),
+        ) from exc
+
+    try:
+        raw = runtime_contracts.simulate_call(
+            state=state_db,
+            contract_addr=contract_addr,
+            calldata=calldata,
+            sender=sender_addr,
+        )
+    except runtime_contracts.ContractNotFoundError as exc:
+        raise rpc_errors.NotFound("contract") from exc
+    except runtime_contracts.InvalidCalldataError as exc:
+        raise rpc_errors.InvalidParams(str(exc)) from exc
+    except runtime_contracts.ContractCallError as exc:
+        raise rpc_errors.InternalError(str(exc)) from exc
+    except Exception as exc:
+        raise rpc_errors.InternalError("contract simulation failed", error=str(exc)) from exc
+
+    if not isinstance(raw, (bytes, bytearray)):
+        raise rpc_errors.InternalError(
+            "contract simulation returned unsupported result type",
+            result_type=type(raw).__name__,
+        )
+    return "0x" + bytes(raw).hex()
 
 
 @method(

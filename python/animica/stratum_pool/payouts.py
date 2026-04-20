@@ -223,7 +223,35 @@ class PoolPayoutScheduler:
         dropped = {"evicted", "rejected", "reorged_out", "not_found"}
         return state in dropped or token in dropped
 
-    def _reconcile_submitted_payouts(self, *, rpc: Any, tx_send: Any) -> None:
+    @staticmethod
+    def _retry_fee_for_rebroadcast(*, base_fee: int, retry_count: int, attempt: int) -> int:
+        # Ensure replacement tx body changes on every rebroadcast attempt.
+        floor = max(1, int(base_fee))
+        bump = max(1, int(retry_count) + int(attempt) + 1)
+        return floor + bump
+
+    @staticmethod
+    def _next_nonce_after_retry(
+        *,
+        tx_nonce: Optional[int],
+        sender_pending_nonce: Optional[int],
+    ) -> Optional[int]:
+        if tx_nonce is None and sender_pending_nonce is None:
+            return None
+        if tx_nonce is None:
+            return int(sender_pending_nonce) if sender_pending_nonce is not None else None
+        if sender_pending_nonce is None:
+            return int(tx_nonce)
+        return max(int(tx_nonce), int(sender_pending_nonce))
+
+    def _reconcile_submitted_payouts(
+        self,
+        *,
+        rpc: Any,
+        tx_send: Any,
+        tx_build: Any,
+        sign_transaction_with_rpc_context: Any,
+    ) -> None:
         pending_getter = getattr(self._metrics, "pending_payout_submissions", None)
         if not callable(pending_getter):
             return
@@ -242,6 +270,41 @@ class PoolPayoutScheduler:
         mark_dropped = getattr(self._metrics, "mark_payout_dropped", None)
         now = time.time()
 
+        signer_sender: Optional[str] = None
+        signer_obj: Any = None
+        signer_error: Optional[Exception] = None
+        pending_nonce_cache: Optional[int] = None
+        nonce_cache_valid_at: float = 0.0
+
+        def resolve_signer_once() -> tuple[Optional[str], Any]:
+            nonlocal signer_sender, signer_obj, signer_error
+            if signer_sender is not None and signer_obj is not None:
+                return signer_sender, signer_obj
+            if signer_error is not None:
+                raise signer_error
+            try:
+                resolved = self._resolve_signer()
+                signer_sender = str(getattr(resolved, "sender", "") or "").strip()
+                signer_obj = getattr(resolved, "signer", None)
+                if not signer_sender or signer_obj is None:
+                    raise RuntimeError("payout signer unavailable")
+                return signer_sender, signer_obj
+            except Exception as exc:  # noqa: BLE001
+                signer_error = exc
+                raise
+
+        def refresh_pending_nonce(sender: str, *, force: bool = False) -> int:
+            nonlocal pending_nonce_cache, nonce_cache_valid_at
+            if (
+                not force
+                and pending_nonce_cache is not None
+                and (time.time() - nonce_cache_valid_at) <= 1.0
+            ):
+                return int(pending_nonce_cache)
+            pending_nonce_cache = self._resolve_nonce(rpc, sender)
+            nonce_cache_valid_at = time.time()
+            return int(pending_nonce_cache)
+
         for item in pending:
             tx_hash = self._normalize_tx_hash(item.get("tx_hash"))
             if not tx_hash:
@@ -249,6 +312,8 @@ class PoolPayoutScheduler:
             address = str(item.get("address") or "").strip()
             amount = int(item.get("amount") or 0)
             retry_count = max(0, int(item.get("retry_count") or 0))
+            item_nonce_raw = item.get("nonce")
+            item_nonce = int(item_nonce_raw) if item_nonce_raw is not None else None
             next_retry_ts_obj = item.get("next_retry_ts")
             next_retry_ts = float(next_retry_ts_obj) if next_retry_ts_obj is not None else None
             if next_retry_ts is not None and now < next_retry_ts:
@@ -291,13 +356,12 @@ class PoolPayoutScheduler:
             if state in {"evicted", "not_found"} and age < self._drop_grace_seconds:
                 continue
 
-            raw_tx = str(item.get("raw_tx") or "").strip()
-            if not raw_tx:
+            if not address or amount <= 0:
                 if callable(mark_dropped):
                     try:
                         mark_dropped(
                             tx_hash=tx_hash,
-                            error=f"payout tx {tx_hash} dropped ({state}) and raw tx is unavailable",
+                            error=f"payout tx {tx_hash} dropped ({state}) and payout metadata is incomplete",
                             release_credit=True,
                         )
                     except Exception:
@@ -305,21 +369,169 @@ class PoolPayoutScheduler:
                 continue
 
             try:
-                rebroadcast_hash = self._normalize_tx_hash(tx_send.submit_raw(rpc, raw_tx))
+                sender, signer = resolve_signer_once()
+                if sender is None or signer is None:
+                    raise RuntimeError("payout signer unavailable")
+            except Exception as exc:  # noqa: BLE001
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error=f"rebroadcast signer unavailable: {exc}",
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(1, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            try:
+                chain_pending_nonce = refresh_pending_nonce(sender)
+            except Exception as exc:  # noqa: BLE001
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error=f"rebroadcast nonce lookup failed: {exc}",
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(1, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            if item_nonce is not None and chain_pending_nonce > item_nonce:
+                # Nonce is already consumed/pending by another tx; do not generate
+                # another resend for this payout slot.
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error=(
+                                "rebroadcast skipped: nonce already advanced "
+                                f"(chain_pending_nonce={chain_pending_nonce}, tx_nonce={item_nonce})"
+                            ),
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(2, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            resend_nonce = self._next_nonce_after_retry(
+                tx_nonce=item_nonce,
+                sender_pending_nonce=chain_pending_nonce,
+            )
+            if resend_nonce is None:
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error="rebroadcast skipped: unable to resolve resend nonce",
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(1, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            try:
+                rechecked = self._read_tx_status(rpc, tx_hash)
+            except Exception as exc:  # noqa: BLE001
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error=f"rebroadcast precheck failed: {exc}",
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(1, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            if self._tx_is_confirmed(rechecked):
+                if callable(mark_confirmed):
+                    try:
+                        mark_confirmed(
+                            tx_hash=tx_hash,
+                            details={
+                                "state": rechecked.get("state"),
+                                "status": rechecked.get("status"),
+                                "reason": "rebroadcast_precheck_confirmed",
+                            },
+                        )
+                    except Exception:
+                        pass
+                continue
+            if self._tx_is_pending(rechecked) or not self._tx_is_dropped(rechecked):
+                if callable(record_retry):
+                    try:
+                        record_retry(
+                            tx_hash=tx_hash,
+                            error=(
+                                "rebroadcast skipped: tx no longer dropped "
+                                f"(state={rechecked.get('state')}, status={rechecked.get('status')})"
+                            ),
+                            next_retry_ts=now + (self._retry_backoff_seconds * max(1, retry_count + 1)),
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            try:
+                rebroadcast_hash = ""
+                rebroadcast_raw_tx: Optional[str] = None
+                rebroadcast_nonce = int(resend_nonce)
+                for attempt in range(3):
+                    retry_fee = self._retry_fee_for_rebroadcast(
+                        base_fee=self._max_fee,
+                        retry_count=retry_count,
+                        attempt=attempt,
+                    )
+                    tx_obj = tx_build.transfer(
+                        from_addr=sender,
+                        to_addr=address,
+                        amount=amount,
+                        nonce=rebroadcast_nonce,
+                        gas_limit=None,
+                        max_fee=retry_fee,
+                        chain_id=int(self._config.chain_id),
+                    )
+                    signed = sign_transaction_with_rpc_context(
+                        tx_obj,
+                        signer,
+                        chain_id=int(self._config.chain_id),
+                        rpc=rpc,
+                    )
+                    rebroadcast_raw_tx = str(getattr(signed, "raw_tx", "") or "")
+                    if not rebroadcast_raw_tx:
+                        raise RuntimeError("rebroadcast signing produced empty raw tx")
+                    candidate_hash = self._normalize_tx_hash(
+                        tx_send.submit_raw(rpc, signed.raw_tx)
+                    )
+                    if not candidate_hash:
+                        raise RuntimeError("rebroadcast did not return transaction hash")
+                    if candidate_hash != tx_hash:
+                        rebroadcast_hash = candidate_hash
+                        break
                 if not rebroadcast_hash:
-                    raise RuntimeError("rebroadcast did not return transaction hash")
+                    raise RuntimeError(
+                        f"rebroadcast returned existing tx hash {tx_hash}; replacement was not unique"
+                    )
                 if callable(record_rebroadcast):
                     try:
                         record_rebroadcast(
                             tx_hash=tx_hash,
                             new_tx_hash=rebroadcast_hash,
-                            raw_tx=raw_tx,
-                            nonce=item.get("nonce"),
+                            raw_tx=rebroadcast_raw_tx,
+                            nonce=rebroadcast_nonce,
                             next_retry_ts=now + self._retry_backoff_seconds,
-                            details={"state": state},
+                            details={
+                                "state": state,
+                                "retry_count": retry_count + 1,
+                                "resend_nonce": rebroadcast_nonce,
+                            },
                         )
                     except Exception:
                         pass
+                pending_nonce_cache = rebroadcast_nonce + 1
+                nonce_cache_valid_at = time.time()
                 self._log.info(
                     "pool_payout_rebroadcast",
                     extra={
@@ -387,7 +599,12 @@ class PoolPayoutScheduler:
 
         sent = 0
         with RpcClient(self._config.rpc_url, timeout=float(self._config.rpc_timeout)) as rpc:
-            self._reconcile_submitted_payouts(rpc=rpc, tx_send=tx_send)
+            self._reconcile_submitted_payouts(
+                rpc=rpc,
+                tx_send=tx_send,
+                tx_build=tx_build,
+                sign_transaction_with_rpc_context=sign_transaction_with_rpc_context,
+            )
 
             payout_budget = self._resolve_payout_budget()
             if payout_budget <= 0:
