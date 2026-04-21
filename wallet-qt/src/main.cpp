@@ -284,11 +284,9 @@ int main(int argc, char* argv[])
 
     QMenu* helpMenu = menuBar->addMenu("&Help");
     QAction* aboutAction = helpMenu->addAction("&About");
-    QObject::connect(aboutAction, &QAction::triggered, [&window]() {
-        QMessageBox::about(
-            &window,
-            "About Animica Wallet",
-            "<h2>Animica Wallet v0.1.0</h2>"
+    QObject::connect(aboutAction, &QAction::triggered, [&window, &app]() {
+        const QString aboutText = QString(
+            "<h2>Animica Wallet v%1</h2>"
             "<p>A remote Animica desktop wallet for mainnet accounts.</p>"
             "<p><b>Default endpoint:</b> https://rpc.animica.org/rpc</p>"
             "<p><b>Features:</b></p>"
@@ -298,7 +296,8 @@ int main(int argc, char* argv[])
             "<li>Fast startup without running a local node</li>"
             "</ul>"
             "<p>© 2026 Animica. All rights reserved.</p>"
-        );
+        ).arg(app.applicationVersion());
+        QMessageBox::about(&window, "About Animica Wallet", aboutText);
     });
 
     QAction* aboutQtAction = helpMenu->addAction("About &Qt");

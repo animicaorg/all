@@ -49,7 +49,7 @@ resolve_version() {
     fi
 
     local base_version
-    base_version="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || printf 'v0.1.0')"
+    base_version="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || printf 'v0.1.1')"
     printf '%s-%s\n' "$base_version" "$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 }
 

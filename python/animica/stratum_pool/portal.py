@@ -13,7 +13,7 @@ from .config import PoolConfig
 PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
 DEFAULT_THREADS = 0
 DEFAULT_SCAN_WINDOW = 200_000
-DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.0")
+DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.1")
 WILDCARD_HOSTS = {"", "0.0.0.0", "::", "[::]"}
 PRIMARY_SITE_HOSTS = {"animica.org", "www.animica.org"}
 STAGED_SITE_HOSTS = {"dev.animica.org", "staging.animica.org", "preview.animica.org"}

@@ -6,7 +6,7 @@ import subprocess
 from typing import Optional
 
 # Bump this when making backwards-incompatible changes to the mining module.
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 def _git_describe(repo_root: Optional[pathlib.Path] = None) -> Optional[str]:

@@ -15,8 +15,8 @@ set -euo pipefail
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <path-to-executable-or-appimage-or-tarball>"
     echo "Example: $0 ./build/linux/bin/animica-wallet"
-    echo "Example: $0 ./AnimicaWallet-v0.1.0-linux-x86_64.AppImage"
-    echo "Example: $0 ./AnimicaWallet-v0.1.0-linux-x86_64.tar.gz"
+    echo "Example: $0 ./AnimicaWallet-v0.1.1-linux-x86_64.AppImage"
+    echo "Example: $0 ./AnimicaWallet-v0.1.1-linux-x86_64.tar.gz"
     exit 1
 fi
 
