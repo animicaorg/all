@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export interface WalletManifestPlatform {
@@ -79,6 +79,12 @@ export interface WalletDownloadPageData {
   platformCards: WalletPlatformCard[];
 }
 
+export interface WalletExtensionDownloadData {
+  download?: WalletDownloadEntry;
+  checksumLink?: WalletChecksumLink;
+  instructions: string[];
+}
+
 const walletPublicDirCandidates: Array<string | URL> = [
   new URL('../../../public/wallet/', import.meta.url),
   resolve(process.cwd(), 'public', 'wallet'),
@@ -88,11 +94,52 @@ const walletManifestCandidates: Array<string | URL> = [
   resolve(process.cwd(), 'public', 'wallet', 'manifest.json'),
 ];
 
-function hasPublicWalletFile(filename: string): boolean {
-  return walletPublicDirCandidates.some((basePath) => {
+function findPublicWalletFile(filename: string): string | URL | null {
+  for (const basePath of walletPublicDirCandidates) {
     const candidate = basePath instanceof URL ? new URL(filename, basePath) : resolve(basePath, filename);
-    return existsSync(candidate);
-  });
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function hasPublicWalletFile(filename: string): boolean {
+  return findPublicWalletFile(filename) !== null;
+}
+
+function readPublicWalletFile(filename: string): string | undefined {
+  const candidate = findPublicWalletFile(filename);
+  if (!candidate) {
+    return undefined;
+  }
+
+  try {
+    return readFileSync(candidate, 'utf-8');
+  } catch {
+    return undefined;
+  }
+}
+
+function readPublicWalletFileSize(filename: string): number | undefined {
+  const candidate = findPublicWalletFile(filename);
+  if (!candidate) {
+    return undefined;
+  }
+
+  try {
+    return statSync(candidate).size;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseSha256(checksumFileContents: string | undefined): string | undefined {
+  if (!checksumFileContents) {
+    return undefined;
+  }
+  const match = checksumFileContents.match(/\b[a-fA-F0-9]{64}\b/);
+  return match?.[0]?.toLowerCase();
 }
 
 function formatBytes(bytes?: number): string | undefined {
@@ -470,5 +517,36 @@ export function loadWalletDownloadPageData(): WalletDownloadPageData {
     versionLabel: manifest?.version,
     generatedAt: manifest?.generated_at,
     platformCards,
+  };
+}
+
+export function loadWalletExtensionDownloadData(): WalletExtensionDownloadData {
+  const zipFilename = 'animica-wallet-extension-chrome.zip';
+  const checksumFilename = 'animica-wallet-extension-chrome.sha256';
+  const checksumContents = readPublicWalletFile(checksumFilename);
+  const checksum = parseSha256(checksumContents);
+
+  return {
+    download: hasPublicWalletFile(zipFilename)
+      ? normalizeDownload(
+          `/wallet/${zipFilename}`,
+          zipFilename,
+          'Chrome / Chromium Extension (.zip)',
+          readPublicWalletFileSize(zipFilename),
+          checksum,
+          true,
+        ) ?? undefined
+      : undefined,
+    checksumLink: hasPublicWalletFile(checksumFilename)
+      ? {
+          href: `/wallet/${checksumFilename}`,
+          label: 'SHA-256 checksum',
+        }
+      : undefined,
+    instructions: [
+      'Download the ZIP and extract it locally.',
+      'Open chrome://extensions, enable Developer mode, and click “Load unpacked”.',
+      'Select the extracted folder containing manifest.json and verify the checksum before first use.',
+    ],
   };
 }
