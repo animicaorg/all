@@ -686,6 +686,10 @@ class BlockImporter:
         self._pending_snapshots: set[int] = set()  # Track snapshots in progress
         
         self._init_fork_choice_from_db()
+        if self.state_db is not None:
+            head = self.block_db.get_canonical_head()
+            if head is not None:
+                self._capture_state_snapshot(int(head[0]))
 
     # --- Basics -------------------------------------------------------------
 
@@ -1575,9 +1579,29 @@ class BlockImporter:
         old_head = self.block_db.get_canonical_head()
         old_height = old_head[0] if old_head else None
         old_hash = old_head[1] if old_head else None
+        old_canonical_height = self.block_db.get_canonical_height()
+        if old_canonical_height is None:
+            old_canonical_height = 0
 
         detached_list = list(detached)
         attached_list = list(attached)
+        affected_start, affected_end = self._reorg_affected_range(
+            detached_list, attached_list, old_height=old_height, best_height=int(best.height)
+        )
+        old_canonical_hashes: dict[int, Optional[bytes]] = {}
+        if affected_start is not None and affected_end is not None:
+            old_canonical_hashes = self._canonical_hashes_in_range(
+                affected_start, affected_end
+            )
+        old_state_snapshot = None
+        if self.state_db is not None:
+            snapshot_fn = getattr(self.state_db, "snapshot", None)
+            if callable(snapshot_fn):
+                try:
+                    old_state_snapshot = snapshot_fn()
+                except Exception:
+                    old_state_snapshot = None
+
         if detached_list or attached_list:
             log.info(
                 "reorg",
@@ -1589,93 +1613,218 @@ class BlockImporter:
                 },
             )
 
-        # Reset difficulty anchor to the LCA timestamp if possible.
-        if attached_list:
-            first_header = self.block_db.get_header_by_hash(attached_list[0])
-            if first_header is not None:
-                parent_header = self.block_db.get_header_by_hash(
-                    _parent_hash_of(first_header)
-                )
-                if parent_header is not None:
-                    self._reanchor_difficulty_state(
-                        parent_header,
-                        parent_hash=_parent_hash_of(first_header),
+        try:
+            # Reset difficulty anchor to the LCA timestamp if possible.
+            if attached_list:
+                first_header = self.block_db.get_header_by_hash(attached_list[0])
+                if first_header is not None:
+                    parent_header = self.block_db.get_header_by_hash(
+                        _parent_hash_of(first_header)
                     )
+                    if parent_header is not None:
+                        self._reanchor_difficulty_state(
+                            parent_header,
+                            parent_hash=_parent_hash_of(first_header),
+                        )
 
-        # Remove canonical indices for detached blocks
-        if self.tx_index is not None:
+            # Remove canonical indices for detached blocks
+            if self.tx_index is not None:
+                for h in detached_list:
+                    header = self.block_db.get_header_by_hash(h)
+                    if header is None:
+                        continue
+                    height = _height_of(header)
+                    self._remove_block_index(height)
+
+            # Apply new canonical blocks and track canonical height
+            canonical_height = self.block_db.get_canonical_height()
+            if canonical_height is None:
+                canonical_height = 0
+
+            # Remove canonical height contributions for detached non-instant blocks
             for h in detached_list:
                 header = self.block_db.get_header_by_hash(h)
                 if header is None:
                     continue
+                if not _is_instant_block(header):
+                    canonical_height = max(0, canonical_height - 1)
+            self.block_db.set_canonical_height(canonical_height)
+            
+            for h in attached_list:
+                header = self.block_db.get_header_by_hash(h)
+                if header is None:
+                    continue
                 height = _height_of(header)
-                self._remove_block_index(height)
-
-        # Apply new canonical blocks and track canonical height
-        canonical_height = self.block_db.get_canonical_height()
-        if canonical_height is None:
-            canonical_height = 0
-
-        # Remove canonical height contributions for detached non-instant blocks
-        for h in detached_list:
-            header = self.block_db.get_header_by_hash(h)
-            if header is None:
-                continue
-            if not _is_instant_block(header):
-                canonical_height = max(0, canonical_height - 1)
-        self.block_db.set_canonical_height(canonical_height)
-        
-        for h in attached_list:
-            header = self.block_db.get_header_by_hash(h)
-            if header is None:
-                continue
-            height = _height_of(header)
-            
-            if hasattr(self.block_db, "set_canonical"):
-                self.block_db.set_canonical(height, h, allow_overwrite=True)
-            if self.tx_index is not None:
-                block = self.block_db.get_block_by_hash(h)
-                if block is not None:
-                    self._index_block_if_canonical(height=height, block_hash=h, block=block)
-
-            # Update canonical height only for non-instant blocks (mining blocks)
-            # Instant blocks are created by tx.sendRawTransaction with instant_block=True
-            # and should not count towards the halving schedule
-            if not _is_instant_block(header):
-                canonical_height += 1
-                self.block_db.set_canonical_height(canonical_height)
                 
-                # Check if we should create a disk snapshot at this height
-                if self._should_create_disk_snapshot(height):
-                    self._create_disk_snapshot(height)
+                if hasattr(self.block_db, "set_canonical"):
+                    self.block_db.set_canonical(height, h, allow_overwrite=True)
+                if self.tx_index is not None:
+                    block = self.block_db.get_block_by_hash(h)
+                    if block is not None:
+                        self._index_block_if_canonical(
+                            height=height, block_hash=h, block=block
+                        )
+
+                # Update canonical height only for non-instant blocks (mining blocks)
+                # Instant blocks are created by tx.sendRawTransaction with instant_block=True
+                # and should not count towards the halving schedule
+                if not _is_instant_block(header):
+                    canonical_height += 1
+                    self.block_db.set_canonical_height(canonical_height)
+                    
+                    # Check if we should create a disk snapshot at this height
+                    if self._should_create_disk_snapshot(height):
+                        self._create_disk_snapshot(height)
+                
+                ts = _timestamp_of(header)
+                if ts is not None:
+                    self._update_difficulty(ts, height, h)
+
+            if old_height is not None and best.height < old_height:
+                self._delete_canonical_range(best.height + 1, old_height)
+
+            if hasattr(self.block_db, "set_head"):
+                self.block_db.set_head(best.height, best.h, allow_reorg=True)
+            else:
+                self.block_db.set_canonical_head(
+                    best.height, best.h, allow_overwrite=True, allow_reorg=True
+                )
+
+            if self.state_db is not None:
+                if old_height is not None and old_height not in self._state_snapshots:
+                    self._capture_state_snapshot(old_height)
+                if not self._apply_state_reorg(detached_list, attached_list, best):
+                    raise BlockImportError(
+                        "invalid_state_transition: failed to apply reorg state changes"
+                    )
             
-            ts = _timestamp_of(header)
-            if ts is not None:
-                self._update_difficulty(ts, height, h)
+            # Auto-confirm local mempool transactions when canonical height increases
+            # This ensures transactions in local mempools get confirmed without needing
+            # to propagate to miners' nodes
+            if attached_list:
+                self._confirm_mempool_transactions(attached_list)
+            
+            # Check for and create missing snapshots (run periodically, not on every block)
+            # Only check every 100 blocks to avoid overhead
+            if best.height % 100 == 0:
+                self._check_and_create_missing_snapshots(best.height)
+        except Exception as exc:
+            self._restore_pre_reorg_state(
+                old_head=old_head,
+                old_canonical_height=int(old_canonical_height),
+                old_canonical_hashes=old_canonical_hashes,
+                old_state_snapshot=old_state_snapshot,
+            )
+            if isinstance(exc, BlockImportError):
+                raise
+            raise BlockImportError(f"invalid_state_transition: {exc}") from exc
 
-        if old_height is not None and best.height < old_height:
-            self._delete_canonical_range(best.height + 1, old_height)
+    def _reorg_affected_range(
+        self,
+        detached: list[bytes],
+        attached: list[bytes],
+        *,
+        old_height: Optional[int],
+        best_height: int,
+    ) -> tuple[Optional[int], Optional[int]]:
+        heights: list[int] = []
+        for h in detached + attached:
+            hh = self._block_height_for_hash(h)
+            if hh is not None:
+                heights.append(int(hh))
+        if not heights:
+            if old_height is None:
+                return None, None
+            return int(best_height), max(int(old_height), int(best_height))
+        start = min(heights)
+        end = max(max(heights), int(best_height), int(old_height or 0))
+        return int(start), int(end)
 
-        if hasattr(self.block_db, "set_head"):
-            self.block_db.set_head(best.height, best.h, allow_reorg=True)
-        else:
-            self.block_db.set_canonical_head(best.height, best.h, allow_overwrite=True, allow_reorg=True)
+    def _canonical_hashes_in_range(
+        self, start: int, end: int
+    ) -> dict[int, Optional[bytes]]:
+        if start > end:
+            return {}
+        out: dict[int, Optional[bytes]] = {}
+        for height in range(int(start), int(end) + 1):
+            try:
+                out[height] = self.block_db.get_canonical_hash(height)
+            except Exception:
+                out[height] = None
+        return out
 
-        if self.state_db is not None:
-            if old_height is not None and old_height not in self._state_snapshots:
-                self._capture_state_snapshot(old_height)
-            self._apply_state_reorg(detached_list, attached_list, best)
-        
-        # Auto-confirm local mempool transactions when canonical height increases
-        # This ensures transactions in local mempools get confirmed without needing
-        # to propagate to miners' nodes
-        if attached_list:
-            self._confirm_mempool_transactions(attached_list)
-        
-        # Check for and create missing snapshots (run periodically, not on every block)
-        # Only check every 100 blocks to avoid overhead
-        if best.height % 100 == 0:
-            self._check_and_create_missing_snapshots(best.height)
+    def _restore_pre_reorg_state(
+        self,
+        *,
+        old_head: Optional[tuple[int, bytes]],
+        old_canonical_height: int,
+        old_canonical_hashes: dict[int, Optional[bytes]],
+        old_state_snapshot: Any,
+    ) -> None:
+        kv = getattr(self.block_db, "kv", None)
+
+        for height in sorted(old_canonical_hashes):
+            self._remove_block_index(height)
+            previous_hash = old_canonical_hashes.get(height)
+            if previous_hash is None:
+                if kv is not None and hasattr(kv, "delete"):
+                    try:
+                        kv.delete(k_hix(height))
+                    except Exception:
+                        pass
+                continue
+
+            try:
+                self.block_db.set_canonical(
+                    int(height), bytes(previous_hash), allow_overwrite=True
+                )
+            except Exception:
+                continue
+            if self.tx_index is not None:
+                block = self.block_db.get_block_by_hash(bytes(previous_hash))
+                if block is not None:
+                    self._index_block_if_canonical(
+                        height=int(height), block_hash=bytes(previous_hash), block=block
+                    )
+
+        try:
+            self.block_db.set_canonical_height(int(old_canonical_height))
+        except Exception:
+            pass
+
+        if old_head is not None:
+            old_height, old_hash = old_head
+            if hasattr(self.block_db, "set_head"):
+                try:
+                    self.block_db.set_head(
+                        int(old_height), bytes(old_hash), allow_reorg=True
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.block_db.set_canonical_head(
+                        int(old_height),
+                        bytes(old_hash),
+                        allow_overwrite=True,
+                        allow_reorg=True,
+                    )
+                except Exception:
+                    pass
+
+        if self.state_db is not None and old_state_snapshot is not None:
+            try:
+                self.state_db.revert(old_state_snapshot)
+            except Exception:
+                log.error("state: failed to restore pre-reorg snapshot", exc_info=True)
+            else:
+                if old_head is not None:
+                    self._state_snapshots[int(old_head[0])] = old_state_snapshot
+
+        # Reset fork-choice view to canonical DB view so failed branches don't pin best tip.
+        self.fork_choice = None
+        self._init_fork_choice_from_db()
+        self.sync_difficulty_to_canonical_head()
 
     def _confirm_mempool_transactions(self, attached_blocks: list[bytes]) -> None:
         """
@@ -1856,11 +2005,11 @@ class BlockImporter:
         detached: list[bytes],
         attached: list[bytes],
         best,
-    ) -> None:
+    ) -> bool:
         if self.state_db is None:
-            return
+            return True
         if not detached and not attached:
-            return
+            return True
 
         lca_height = self._reorg_lca_height(detached, attached, best)
         snap = self._state_snapshots.get(lca_height)
@@ -1869,8 +2018,7 @@ class BlockImporter:
                 "state: missing snapshot for reorg; rebuilding from canonical chain",
                 extra={"lca_height": lca_height, "best_height": best.height},
             )
-            self._rebuild_state_from_canonical(best.height)
-            return
+            return self._rebuild_state_from_canonical(best.height)
 
         try:
             self.state_db.revert(snap)
@@ -1879,20 +2027,26 @@ class BlockImporter:
                 "state: failed to revert snapshot; rebuilding",
                 extra={"error": str(exc), "lca_height": lca_height},
             )
-            self._rebuild_state_from_canonical(best.height)
-            return
+            return self._rebuild_state_from_canonical(best.height)
 
         applied = 0
         for h in sorted(attached, key=self._block_height_for_hash):
             block = self.block_db.get_block_by_hash(h)
             if block is None:
-                continue
-            if not self._apply_block_state(block):
-                log.warning(
-                    "state: block execution failed during reorg",
-                    extra={"height": getattr(block.header, "height", None), "hash": h.hex()},
+                log.error(
+                    "state: missing block payload during reorg apply",
+                    extra={"hash": h.hex(), "best_height": best.height},
                 )
-                continue
+                return self._rebuild_state_from_canonical(best.height)
+            if not self._apply_block_state(block):
+                log.error(
+                    "state: block execution failed during reorg; rebuilding canonical state",
+                    extra={
+                        "height": getattr(block.header, "height", None),
+                        "hash": h.hex(),
+                    },
+                )
+                return self._rebuild_state_from_canonical(best.height)
             height = _height_of(block.header)
             self._capture_state_snapshot(height)
             applied += 1
@@ -1906,6 +2060,7 @@ class BlockImporter:
                     "best_height": best.height,
                 },
             )
+        return True
 
     def _reorg_lca_height(
         self,
@@ -2164,9 +2319,11 @@ class BlockImporter:
             return
         if len(self._state_snapshots) <= self._state_snapshot_limit:
             return
-        for height in sorted(self._state_snapshots.keys())[
-            : max(0, len(self._state_snapshots) - self._state_snapshot_limit)
-        ]:
+        # Keep genesis snapshot when present so recovery can always restart from a
+        # deterministic anchor.
+        removable = [h for h in sorted(self._state_snapshots.keys()) if h != 0]
+        trim = max(0, len(self._state_snapshots) - self._state_snapshot_limit)
+        for height in removable[:trim]:
             self._state_snapshots.pop(height, None)
 
     def _should_create_disk_snapshot(self, height: int) -> bool:
@@ -2354,34 +2511,73 @@ class BlockImporter:
             for height in sorted(missing_heights)[:3]:  # Create max 3 at a time
                 self._create_disk_snapshot(height)
 
-    def _rebuild_state_from_canonical(self, target_height: int) -> None:
+    def _rebuild_state_from_canonical(self, target_height: int) -> bool:
         if self.state_db is None:
-            return
-        genesis_snap = self._state_snapshots.get(0)
-        if genesis_snap is not None:
-            try:
-                self.state_db.revert(genesis_snap)
-            except Exception:
-                return
+            return False
+        target = max(0, int(target_height))
+
+        candidate_heights = [h for h in self._state_snapshots.keys() if int(h) <= target]
+        if not candidate_heights:
+            log.error(
+                "state: rebuild requested without any available snapshot",
+                extra={"target_height": target},
+            )
+            return False
+
+        baseline_height = max(candidate_heights)
+        baseline_snapshot = self._state_snapshots.get(baseline_height)
+        if baseline_snapshot is None:
+            log.error(
+                "state: rebuild baseline snapshot missing",
+                extra={"baseline_height": baseline_height, "target_height": target},
+            )
+            return False
+        try:
+            self.state_db.revert(baseline_snapshot)
+        except Exception:
+            log.error(
+                "state: failed to revert baseline snapshot for rebuild",
+                extra={"baseline_height": baseline_height, "target_height": target},
+                exc_info=True,
+            )
+            return False
+
         applied = 0
-        for height in range(1, max(0, int(target_height)) + 1):
+        for height in range(int(baseline_height) + 1, target + 1):
             try:
                 h = self.block_db.get_canonical_hash(height)
             except Exception:
                 h = None
             if not h:
-                break
+                log.error(
+                    "state: rebuild missing canonical hash",
+                    extra={"height": height, "target_height": target},
+                )
+                return False
             block = self.block_db.get_block_by_hash(h)
             if block is None:
-                break
+                log.error(
+                    "state: rebuild missing canonical block payload",
+                    extra={"height": height, "hash": bytes(h).hex()},
+                )
+                return False
             if not self._apply_block_state(block):
-                break
+                log.error(
+                    "state: rebuild failed while executing canonical block",
+                    extra={"height": height, "hash": bytes(h).hex()},
+                )
+                return False
             self._capture_state_snapshot(height)
             applied += 1
         log.info(
             "state: rebuilt from canonical chain",
-            extra={"target_height": target_height, "applied": applied},
+            extra={
+                "target_height": target,
+                "baseline_height": int(baseline_height),
+                "applied": applied,
+            },
         )
+        return True
 
     def fork_tips(self, limit: int = 5) -> List[Dict[str, Any]]:
         if self.fork_choice is None:
