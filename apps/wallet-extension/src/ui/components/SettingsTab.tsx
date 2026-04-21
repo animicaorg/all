@@ -16,6 +16,16 @@ interface ImportSummary {
   total_accounts: number;
 }
 
+interface WatchedToken {
+  type: string;
+  address: string;
+  symbol: string;
+  decimals: number;
+  chainId: number;
+  name?: string;
+  image?: string;
+}
+
 function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTabProps) {
   const [selectedNetwork, setSelectedNetwork] = useState(network?.id || 'mainnet');
   const [isBusy, setIsBusy] = useState(false);
@@ -28,6 +38,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
   const [rpcWarning, setRpcWarning] = useState<string | null>(null);
   const [forceRawTxCompat, setForceRawTxCompat] = useState(false);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const [watchedTokens, setWatchedTokens] = useState<WatchedToken[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,7 +47,12 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
 
   useEffect(() => {
     loadRpcConfig();
+    loadWatchedTokens();
   }, []);
+
+  useEffect(() => {
+    loadWatchedTokens();
+  }, [network?.id]);
 
   async function loadRpcConfig() {
     try {
@@ -58,6 +74,18 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
     }
   }
 
+  async function loadWatchedTokens() {
+    try {
+      const result = await chrome.runtime.sendMessage({ method: 'wallet_getTokens' });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      setWatchedTokens(Array.isArray(result) ? result : []);
+    } catch {
+      setWatchedTokens([]);
+    }
+  }
+
   async function handleNetworkChange(networkId: string) {
     try {
       const result = await chrome.runtime.sendMessage({
@@ -71,6 +99,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
 
       setSelectedNetwork(networkId);
       onNetworkChange();
+      loadWatchedTokens();
     } catch (error) {
       console.error('Failed to switch network:', error);
     }
@@ -329,6 +358,26 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
         {rpcMessage && <div className="success">{rpcMessage}</div>}
         {testResult && <div className="success">{testResult}</div>}
         {rpcError && <div className="error">{rpcError}</div>}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0, fontSize: '16px' }}>Watched Tokens</h3>
+        {watchedTokens.length === 0 && (
+          <div style={{ fontSize: '12px', color: '#666' }}>
+            No watched tokens on this network yet. Dapps can add tokens via <code>animica_watchAsset</code> / <code>animica_addToken</code>.
+          </div>
+        )}
+        {watchedTokens.length > 0 && (
+          <div style={{ display: 'grid', gap: '8px' }}>
+            {watchedTokens.map((token) => (
+              <div key={`${token.chainId}:${token.address.toLowerCase()}`} style={{ padding: '10px', background: '#f9f9f9', borderRadius: '8px' }}>
+                <div style={{ fontWeight: 600 }}>{token.symbol} {token.name ? `· ${token.name}` : ''}</div>
+                <div style={{ fontSize: '11px', color: '#666' }}>Decimals: {token.decimals} · Type: {token.type}</div>
+                <div style={{ fontSize: '11px', color: '#888', wordBreak: 'break-all' }}>{token.address}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card">

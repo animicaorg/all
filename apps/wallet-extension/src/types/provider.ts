@@ -28,6 +28,8 @@ export enum ProviderMethod {
   SWITCH_CHAIN = 'animica_switchChain',
   SIGN_MESSAGE = 'animica_signMessage',
   SEND_TRANSACTION = 'animica_sendTransaction',
+  WATCH_ASSET = 'animica_watchAsset',
+  ADD_TOKEN = 'animica_addToken',
 }
 
 export enum ProviderEvent {

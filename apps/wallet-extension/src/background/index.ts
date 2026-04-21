@@ -1,10 +1,9 @@
 // Background service worker
 
-import { loadVault, saveVault, loadState, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
+import { loadVault, saveVault, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
 import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
-import { buildAndSignTransfer, encodeTxForRpc } from '../core/tx/builder';
 import { createAccount } from '../core/wallets/account';
 import { importWalletsJson, exportWalletsJson } from '../core/wallets/import';
 import { NETWORKS } from '../types/network';
@@ -13,10 +12,11 @@ import { getRpcClient, recreateRpcClient } from '../services/rpcClientFactory';
 import { getBalance, getBalanceDebugState, setLastPingDebug } from '../services/balanceService';
 import { rpcPing } from '../services/rpcPing';
 import { sendRawTxPipeline, warmPolicyCapabilities } from '../services/sendRawTx';
-import type { VaultData, VaultSettings } from '../types/vault';
+import type { VaultData } from '../types/vault';
 import type { Account } from '../types/wallet';
 import type { TxStatus, PendingTx } from '../types/tx';
 import { decodeAddress } from '../core/crypto/address';
+import type { WatchedToken } from '../types/token';
 
 // Import new canonical tx module
 import { buildAndSignTransaction, fetchChainContext, algIdToSchemeId } from '../tx';
@@ -116,10 +116,17 @@ function captureSendRpcResponse(response: unknown, error: string | null = null, 
 }
 
 function parseBaseUnitAmount(value: unknown): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return BigInt(value.trim());
-  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return BigInt(value);
-  throw new Error('Invalid amount: must be a positive base-unit integer string');
+  if (typeof value === 'bigint') {
+    if (value < 0n) throw new Error('Invalid amount: must be a non-negative base-unit integer');
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) return BigInt(trimmed);
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) return BigInt(trimmed);
+  }
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return BigInt(value);
+  throw new Error('Invalid amount: must be a non-negative base-unit integer string');
 }
 
 function algLabel(algId: number): string {
@@ -144,22 +151,152 @@ function summarizeRawTx(rawTx: string): Record<string, unknown> {
   };
 }
 
-function extractSubmittedTxHash(sendResult: unknown): string {
-  if (typeof sendResult === 'string' && sendResult.length > 0) {
-    return sendResult;
+function parseBytesData(value: unknown): Uint8Array | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
+    return Uint8Array.from(value as number[]);
   }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '' || trimmed === '0x' || trimmed === '0X') return new Uint8Array();
+    if (!/^0x[0-9a-f]+$/i.test(trimmed)) {
+      throw new Error('Invalid data: must be 0x-prefixed hex');
+    }
+    const hex = trimmed.slice(2);
+    if (hex.length % 2 !== 0) throw new Error('Invalid data: hex length must be even');
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+    }
+    return bytes;
+  }
+  throw new Error('Invalid data: expected 0x-hex string or byte array');
+}
 
-  if (sendResult && typeof sendResult === 'object') {
-    const candidate = sendResult as Record<string, unknown>;
-    for (const key of ['tx_hash', 'hash', 'txHash', 'transactionHash']) {
-      const value = candidate[key];
-      if (typeof value === 'string' && value.length > 0) {
-        return value;
-      }
+function parseChainIdValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  if (typeof value === 'bigint' && value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(value);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      if (/^0x[0-9a-f]+$/i.test(trimmed)) return Number(BigInt(trimmed));
+      if (/^\d+$/.test(trimmed)) return Number(BigInt(trimmed));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toHexChainId(chainId: number): string {
+  return `0x${chainId.toString(16)}`;
+}
+
+function resolveNetworkId(input: unknown, networkConfigs: VaultData['networkConfigs']): string {
+  const target = Array.isArray(input) ? input[0] : input;
+
+  const matchByChainId = (chainId: number): string | null => {
+    for (const [networkId, config] of Object.entries(networkConfigs)) {
+      if (config.chainId === chainId) return networkId;
+    }
+    return null;
+  };
+
+  if (typeof target === 'string') {
+    const trimmed = target.trim();
+    if (networkConfigs[trimmed]) return trimmed;
+    const chainId = parseChainIdValue(trimmed);
+    if (chainId !== null) {
+      const byChain = matchByChainId(chainId);
+      if (byChain) return byChain;
     }
   }
 
-  throw new Error(`Unexpected tx.sendRawTransaction result: ${safeJsonStringify(sendResult)}`);
+  if (typeof target === 'number' || typeof target === 'bigint') {
+    const chainId = parseChainIdValue(target);
+    if (chainId !== null) {
+      const byChain = matchByChainId(chainId);
+      if (byChain) return byChain;
+    }
+  }
+
+  if (target && typeof target === 'object') {
+    const obj = target as Record<string, unknown>;
+
+    const networkIdCandidate = obj.networkId ?? obj.network ?? obj.id;
+    if (typeof networkIdCandidate === 'string') {
+      const trimmed = networkIdCandidate.trim();
+      if (networkConfigs[trimmed]) return trimmed;
+      const parsed = parseChainIdValue(trimmed);
+      if (parsed !== null) {
+        const byChain = matchByChainId(parsed);
+        if (byChain) return byChain;
+      }
+    } else {
+      const parsed = parseChainIdValue(networkIdCandidate);
+      if (parsed !== null) {
+        const byChain = matchByChainId(parsed);
+        if (byChain) return byChain;
+      }
+    }
+
+    const chainIdCandidate = obj.chainId ?? obj.chain_id;
+    const parsedChainId = parseChainIdValue(chainIdCandidate);
+    if (parsedChainId !== null) {
+      const byChain = matchByChainId(parsedChainId);
+      if (byChain) return byChain;
+    }
+  }
+
+  throw new Error('Invalid network target');
+}
+
+type WatchTokenInput = {
+  type: string;
+  address: string;
+  symbol: string;
+  decimals: number;
+  name?: string;
+  image?: string;
+};
+
+function parseWatchTokenParams(input: unknown): WatchTokenInput {
+  const payload = Array.isArray(input) ? input[0] : input;
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid watchAsset params: expected payload object');
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  const type = typeof candidate.type === 'string' && candidate.type.trim().length > 0
+    ? candidate.type.trim().toUpperCase()
+    : 'ANM20';
+  const source = (candidate.options && typeof candidate.options === 'object')
+    ? candidate.options as Record<string, unknown>
+    : candidate;
+
+  const address = typeof source.address === 'string' ? source.address.trim() : '';
+  const symbol = typeof source.symbol === 'string' ? source.symbol.trim().toUpperCase() : '';
+  const decimalsRaw = source.decimals;
+  const decimals = typeof decimalsRaw === 'number'
+    ? Math.trunc(decimalsRaw)
+    : typeof decimalsRaw === 'string' && /^\d+$/.test(decimalsRaw.trim())
+      ? Number(decimalsRaw.trim())
+      : NaN;
+  const name = typeof source.name === 'string' && source.name.trim().length > 0 ? source.name.trim() : undefined;
+  const image = typeof source.image === 'string' && source.image.trim().length > 0 ? source.image.trim() : undefined;
+
+  if (!address || address.length > 256) throw new Error('Invalid token address');
+  if (!symbol || symbol.length > 16) throw new Error('Invalid token symbol');
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 30) throw new Error('Invalid token decimals');
+
+  return { type, address, symbol, decimals, name, image };
+}
+
+function ensureVaultDefaults(vaultData: VaultData): VaultData {
+  if (!vaultData.watchedTokens) vaultData.watchedTokens = [];
+  return vaultData;
 }
 // Initialize on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -220,8 +357,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // Keep channel open for async response
 });
 
+function resolveSenderOrigin(sender: chrome.runtime.MessageSender): string {
+  if (typeof sender.origin === 'string' && sender.origin.length > 0) return sender.origin;
+  if (typeof sender.url === 'string' && sender.url.length > 0) {
+    try {
+      return new URL(sender.url).origin;
+    } catch {
+      return sender.url;
+    }
+  }
+  return 'unknown';
+}
+
 async function handleMessage(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
   const { method, params } = message;
+  const origin = resolveSenderOrigin(sender);
 
   switch (method) {
     case 'wallet_unlock':
@@ -262,7 +412,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return handleGetCurrentNetwork();
     
     case 'wallet_switchNetwork':
-      return handleSwitchNetwork(params.networkId);
+      return handleSwitchNetwork(params);
     
     case 'wallet_getBalance':
     case 'BALANCE_GET':
@@ -286,21 +436,47 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'wallet_getPendingTxs':
       return handleGetPendingTxs();
 
+    case 'wallet_getTokens':
+    case 'wallet_getWatchedAssets':
+      return handleGetWatchedTokens();
+
     case 'wallet_getDebugState':
       return handleGetDebugState();
     
     // Provider API
+    case 'eth_requestAccounts':
+    case 'animica_requestAccounts':
     case 'provider_requestAccounts':
-      return handleRequestAccounts(sender.origin!);
+      return handleRequestAccounts(origin);
     
+    case 'eth_accounts':
+    case 'animica_accounts':
     case 'provider_getAccounts':
-      return handleProviderGetAccounts(sender.origin!);
+      return handleProviderGetAccounts(origin);
     
+    case 'eth_chainId':
+      return handleProviderGetChainIdHex();
+
+    case 'animica_chainId':
+      return handleProviderGetChainId();
+
     case 'provider_getChainId':
       return handleProviderGetChainId();
-    
+
+    case 'wallet_switchEthereumChain':
+    case 'animica_switchChain':
+      await handleSwitchNetwork(params);
+      return null;
+
+    case 'wallet_watchAsset':
+    case 'animica_watchAsset':
+    case 'animica_addToken':
+      return handleWatchAsset(origin, params);
+
+    case 'eth_sendTransaction':
+    case 'animica_sendTransaction':
     case 'provider_sendTransaction':
-      return handleProviderSendTransaction(sender.origin!, params);
+      return handleProviderSendTransaction(origin, params);
     
     default:
       throw new Error(`Unknown method: ${method}`);
@@ -315,7 +491,7 @@ async function handleUnlock(password: string): Promise<{ success: boolean }> {
 
   try {
     const decrypted = await decrypt(vault.salt, vault.iv, vault.ciphertext, password);
-    const vaultData: VaultData = JSON.parse(decrypted);
+    const vaultData = ensureVaultDefaults(JSON.parse(decrypted) as VaultData);
     
     setUnlockedVault(vaultData, vaultData.settings.autoLockMinutes);
     await ensureActiveWallet(vaultData);
@@ -354,6 +530,7 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
     currentNetwork: 'mainnet',
     currentAccount: firstAccount.address,
     txCache: {},
+    watchedTokens: [],
     settings: {
       autoLockMinutes: 5,
       showTestNetworks: true,
@@ -453,7 +630,7 @@ async function handleGetCurrentNetwork(): Promise<any> {
   let rpcChainId: number | null = null;
   let rpcWarning: string | null = null;
   try {
-    const client = await getRpcClient();
+    const client = await getRpcClient(network.rpcUrls?.[0]);
     rpcChainId = await client.getChainId();
     if (rpcChainId !== network.chainId) {
       rpcWarning = 'RPC chain_id mismatch; switch network';
@@ -470,20 +647,22 @@ async function handleGetCurrentNetwork(): Promise<any> {
   };
 }
 
-async function handleSwitchNetwork(networkId: string): Promise<{ success: boolean }> {
+async function handleSwitchNetwork(networkTarget: unknown): Promise<{ success: boolean; networkId: string; chainId: number }> {
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
-  
-  if (!vaultData.networkConfigs[networkId]) {
-    throw new Error(`Network ${networkId} not found`);
-  }
-  
+
+  const networkId = resolveNetworkId(networkTarget, vaultData.networkConfigs);
   vaultData.currentNetwork = networkId;
   await saveVaultData(vaultData);
+
+  const network = vaultData.networkConfigs[networkId];
+  const rpcUrl = await getRpcUrl(network.rpcUrls?.[0]);
+  recreateRpcClient(rpcUrl);
+  warmPolicyCapabilities(rpcUrl, network.chainId).catch((error) => console.warn('Policy capability refresh failed:', error));
   
-  return { success: true };
+  return { success: true, networkId, chainId: network.chainId };
 }
 
 async function handleGetBalance(address: string): Promise<{ confirmed: string; available: string }> {
@@ -571,6 +750,8 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     if (!vaultData) {
       throw new Error('Wallet is locked');
     }
+
+    ensureVaultDefaults(vaultData);
     
     // Validate params
     if (!params.from || typeof params.from !== 'string') {
@@ -580,13 +761,19 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       throw new Error('Invalid to address');
     }
 
-    const amountBaseUnits = parseBaseUnitAmount(params.amount);
+    const fromAddress = params.from.trim();
+    const toAddress = params.to.trim();
+    const amountBaseUnits = parseBaseUnitAmount(params.amount ?? params.value ?? 0);
+    const txData = parseBytesData(params.data);
+    if (amountBaseUnits === 0n && (!txData || txData.length === 0)) {
+      throw new Error('Transaction must include a non-zero amount or non-empty data payload');
+    }
 
     const network = vaultData.networkConfigs[vaultData.currentNetwork];
-    const client = await getRpcClient();
+    const client = await getRpcClient(network.rpcUrls?.[0]);
 
     const activeWallet = await resolveActiveWallet(vaultData);
-    if (activeWallet.address !== params.from) {
+    if (activeWallet.address !== fromAddress) {
       throw new Error(`From address must match active wallet (${activeWallet.address})`);
     }
 
@@ -596,7 +783,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       throw new Error('Account not found');
     }
 
-    const fromAddressInfo = decodeAddress(params.from);
+    const fromAddressInfo = decodeAddress(fromAddress);
     if (account.algId !== fromAddressInfo.algId) {
       throw new Error(
         `Account/address algorithm mismatch: account uses ${algLabel(account.algId)}, ` +
@@ -631,8 +818,8 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       throw new Error(`Chain ID mismatch between network (${network.chainId}) and RPC identity (${context.chain_id})`);
     }
     
-    // Get nonce from RPC
-    const nonce = await client.getNonce(activeWallet.address, 'latest');
+    // Get nonce from RPC, accounting for pending mempool transactions.
+    const nonce = await client.getPendingNonce(activeWallet.address);
     
     // Convert algId to schemeId for signing
     const schemeId = algIdToSchemeId(account.algId);
@@ -641,8 +828,8 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     }
     
     txDebugLog('building-tx', {
-      from: params.from,
-      to: params.to,
+      from: fromAddress,
+      to: toAddress,
       value: amountBaseUnits,
       nonce,
       algId: account.algId,
@@ -653,12 +840,12 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     const result = await buildAndSignTransaction(
       {
         from: activeWallet.address,
-        to: params.to,
+        to: toAddress,
         value: amountBaseUnits,
-        fee: BigInt(params.gasPrice || vaultData.settings.defaultGasPrice),
-        gas_limit: BigInt(params.gasLimit || vaultData.settings.defaultGasLimit),
+        fee: BigInt(params.gasPrice ?? params.maxFeePerGas ?? vaultData.settings.defaultGasPrice),
+        gas_limit: BigInt(params.gasLimit ?? params.gas ?? vaultData.settings.defaultGasLimit),
         nonce,
-        data: params.data,
+        data: txData,
         memo: params.memo || '',
       },
       context,
@@ -856,6 +1043,65 @@ async function handleGetPendingTxs(): Promise<PendingTx[]> {
   return txStore.getAll();
 }
 
+async function handleGetWatchedTokens(): Promise<WatchedToken[]> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  ensureVaultDefaults(vaultData);
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  return (vaultData.watchedTokens || [])
+    .filter((token) => token.chainId === network.chainId)
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+async function handleWatchAsset(origin: string, params: unknown): Promise<boolean> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  ensureVaultDefaults(vaultData);
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  const parsed = parseWatchTokenParams(params);
+  const now = Date.now();
+  const normalizedAddress = parsed.address.toLowerCase();
+  const tokens = vaultData.watchedTokens || [];
+
+  const nextToken: WatchedToken = {
+    type: parsed.type,
+    address: parsed.address,
+    symbol: parsed.symbol,
+    decimals: parsed.decimals,
+    chainId: network.chainId,
+    name: parsed.name,
+    image: parsed.image,
+    addedAt: now,
+    addedByOrigin: origin !== 'unknown' ? origin : undefined,
+  };
+
+  const existingIndex = tokens.findIndex((token) =>
+    token.chainId === network.chainId && token.address.toLowerCase() === normalizedAddress,
+  );
+
+  if (existingIndex >= 0) {
+    const existing = tokens[existingIndex];
+    tokens[existingIndex] = {
+      ...existing,
+      ...nextToken,
+      addedAt: existing.addedAt || now,
+      addedByOrigin: existing.addedByOrigin || nextToken.addedByOrigin,
+    };
+  } else {
+    tokens.push(nextToken);
+  }
+
+  vaultData.watchedTokens = tokens;
+  await saveVaultData(vaultData);
+  return true;
+}
+
 async function handleRequestAccounts(origin: string): Promise<string[]> {
   const vaultData = getUnlockedVault();
   if (!vaultData) {
@@ -908,6 +1154,11 @@ async function handleProviderGetChainId(): Promise<number> {
   return network.chainId;
 }
 
+async function handleProviderGetChainIdHex(): Promise<string> {
+  const chainId = await handleProviderGetChainId();
+  return toHexChainId(chainId);
+}
+
 function normalizeProviderSendTransactionParams(params: any): any {
   // EIP-1193 callers typically send params: [txObject]; normalize to a single tx object here.
   if (Array.isArray(params)) {
@@ -950,6 +1201,8 @@ async function saveVaultData(vaultData: VaultData): Promise<void> {
   if (!unlockedPassword) {
     throw new Error('Vault password unavailable; please lock and unlock again');
   }
+
+  ensureVaultDefaults(vaultData);
 
   const encrypted = await encrypt(JSON.stringify(vaultData), unlockedPassword);
 

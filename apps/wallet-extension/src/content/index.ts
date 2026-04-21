@@ -20,6 +20,20 @@ window.addEventListener('message', async (event) => {
       params,
     });
 
+    if (response?.error) {
+      const error = response.error;
+      window.postMessage({
+        type: 'ANIMICA_PROVIDER_RESPONSE',
+        id,
+        error: {
+          code: typeof error.code === 'number' ? error.code : -32603,
+          message: typeof error.message === 'string' ? error.message : 'Internal error',
+          data: error.data,
+        },
+      }, '*');
+      return;
+    }
+
     window.postMessage({
       type: 'ANIMICA_PROVIDER_RESPONSE',
       id,
