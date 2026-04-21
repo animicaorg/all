@@ -7,6 +7,7 @@ export interface VaultData {
   currentNetwork: string;
   currentAccount?: string;
   txCache: Record<string, PendingTx>;
+  watchedTokens?: WatchedToken[];
   settings: VaultSettings;
 }
 
@@ -34,3 +35,4 @@ import { Account } from './wallet';
 import { DappPermission } from './provider';
 import { NetworkConfig } from './network';
 import { PendingTx } from './tx';
+import { WatchedToken } from './token';

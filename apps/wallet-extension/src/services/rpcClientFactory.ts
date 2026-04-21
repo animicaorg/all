@@ -4,8 +4,8 @@ import { getEffectiveRpcUrl, getRpcUrl } from './rpcConfig';
 let currentClient: RpcClient | null = null;
 let currentRpcUrl: string | null = null;
 
-export async function getRpcClient(): Promise<RpcClient> {
-  const rpcUrl = await getRpcUrl();
+export async function getRpcClient(defaultRpcUrl?: string): Promise<RpcClient> {
+  const rpcUrl = await getRpcUrl(defaultRpcUrl);
   if (!currentClient || currentRpcUrl !== rpcUrl) {
     currentClient = new RpcClient([rpcUrl]);
     currentRpcUrl = rpcUrl;

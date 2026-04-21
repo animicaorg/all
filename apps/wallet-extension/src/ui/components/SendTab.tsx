@@ -65,8 +65,9 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       return;
     }
 
-    if (!to.startsWith('anim1')) {
-      setError('Invalid address format (must start with anim1)');
+    const expectedPrefix = `${(network?.addressHrp || 'anim').toLowerCase()}1`;
+    if (!to.trim().toLowerCase().startsWith(expectedPrefix)) {
+      setError(`Invalid address format (must start with ${expectedPrefix})`);
       return;
     }
 
@@ -210,7 +211,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         </button>
 
         <div style={{ marginTop: '12px', padding: '12px', background: '#fff4e6', borderRadius: '8px', fontSize: '12px', color: '#9a6700' }}>
-          <strong>⚠️ Note:</strong> Transactions use v2 validity windows instead of nonces. Your tx will be valid for ~120 blocks (~2 hours).
+          <strong>⚠️ Note:</strong> Transactions use account nonces. Pending transactions reserve the next nonce until confirmed or dropped.
         </div>
       </div>
     </div>

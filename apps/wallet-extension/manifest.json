@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Animica Wallet",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "Secure post-quantum wallet for the Animica blockchain",
   "permissions": [
     "storage",
@@ -9,8 +9,8 @@
     "alarms"
   ],
   "host_permissions": [
-    "https://mainnet.animica.org/*",
-    "http://127.0.0.1/*"
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "background.js",

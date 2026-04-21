@@ -132,6 +132,8 @@ export async function buildAndSignTransaction(
   validateAddressBinding(params.from, publicKey, algId);
   
   // Build transaction body
+  const payloadData = params.data || new Uint8Array();
+  const kind = payloadData.length > 0 ? 2 : 0; // 0=transfer, 2=contract call
   const body: TxBody = {
     version: 1,
     chain_id: context.chain_id,
@@ -141,10 +143,10 @@ export async function buildAndSignTransaction(
     value: params.value,
     fee: params.fee,
     gas_limit: params.gas_limit,
-    data: params.data || new Uint8Array(),
+    data: payloadData,
     memo: params.memo || '',
     timestamp: params.timestamp || Math.floor(Date.now() / 1000),
-    kind: 0, // 0 = transfer
+    kind,
   };
   
   // Sign the transaction

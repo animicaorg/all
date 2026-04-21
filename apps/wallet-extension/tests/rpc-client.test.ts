@@ -37,6 +37,36 @@ describe('RpcClient numeric normalization', () => {
 
     await expect(client.getNonce('anim1abc')).resolves.toBe(42);
   });
+
+  it('resolves pending nonce using fallback methods when needed', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ error: { code: -32601, message: 'Method not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ error: { code: -32601, message: 'Method not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: '44' }) });
+
+    const client = await createClient(fetchMock as any);
+    await expect(client.getPendingNonce('anim1abc')).resolves.toBe(44);
+
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    const second = JSON.parse(String(fetchMock.mock.calls[1][1].body));
+    const third = JSON.parse(String(fetchMock.mock.calls[2][1].body));
+
+    expect(first.method).toBe('state.getPendingNonce');
+    expect(second.method).toBe('state.getNextNonce');
+    expect(third.method).toBe('state.getNonce');
+    expect(third.params).toEqual(['anim1abc', 'pending']);
+  });
+
+  it('does not hide non-method RPC errors while resolving pending nonce', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ error: { code: -32000, message: 'nonce lookup failed' } }) });
+
+    const client = await createClient(fetchMock as any);
+    await expect(client.getPendingNonce('anim1abc')).rejects.toThrow('nonce lookup failed');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('RpcClient sendRawTransaction error handling', () => {

@@ -301,6 +301,32 @@ export class RpcClient {
     return toRpcInteger(result, 'nonce');
   }
 
+  async getPendingNonce(address: string): Promise<number> {
+    const attempts: Array<{ method: string; params: JsonRpcParams }> = [
+      { method: 'state.getPendingNonce', params: [address] },
+      { method: 'state.getNextNonce', params: [address] },
+      { method: 'state.getNonce', params: [address, 'pending'] },
+      { method: 'state.getNonce', params: [address] },
+    ];
+
+    let lastError: Error | null = null;
+    for (const attempt of attempts) {
+      try {
+        const result = await this.call(attempt.method, attempt.params);
+        return toRpcInteger(result, 'nonce');
+      } catch (error) {
+        if (error instanceof RpcResponseError && (error.code === -32601 || error.code === -32602)) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (lastError) throw lastError;
+    throw new Error('Unable to resolve pending nonce');
+  }
+
   async sendRawTransaction(rawTx: string): Promise<string> {
     this.lastCallAttempts = [];
 
