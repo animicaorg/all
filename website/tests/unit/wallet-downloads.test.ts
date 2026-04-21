@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadWalletDownloadPageData, normalizeWalletManifest, type WalletManifest } from '../../src/features/wallet/downloads';
+import {
+  loadWalletDownloadPageData,
+  loadWalletExtensionDownloadData,
+  normalizeWalletManifest,
+  type WalletManifest,
+} from '../../src/features/wallet/downloads';
 
 describe('wallet download manifest normalization', () => {
   it('handles a Windows-only manifest', () => {
@@ -99,5 +104,15 @@ describe('wallet download page data', () => {
   it('surfaces a macOS card when website artifacts are present', () => {
     const data = loadWalletDownloadPageData();
     expect(data.platformCards.some((card) => card.key === 'macos')).toBe(true);
+  });
+
+  it('surfaces extension zip metadata when extension artifact is present', () => {
+    const extensionData = loadWalletExtensionDownloadData();
+
+    expect(extensionData.download?.href).toBe('/wallet/animica-wallet-extension-chrome.zip');
+    expect(extensionData.download?.download).toBe('animica-wallet-extension-chrome.zip');
+    expect(extensionData.download?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(extensionData.checksumLink?.href).toBe('/wallet/animica-wallet-extension-chrome.sha256');
+    expect(extensionData.instructions.length).toBeGreaterThan(0);
   });
 });
