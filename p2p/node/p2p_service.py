@@ -1341,6 +1341,7 @@ class P2PService:
             "peers": 0,
             "dial_attempts": 0,
             "dial_successes": 0,
+            "dial_skipped_outbound_only": 0,
             "handshake_failures": 0,
             "caps_failures": 0,
             "disconnects": 0,
@@ -6291,6 +6292,14 @@ class P2PService:
             return False
         addr = parsed.addr.canonical
         addr_key = self._addr_key(addr)
+        if self._is_outbound_only_blocklisted(peer_id=None, remote=addr):
+            self._stats["dial_skipped_outbound_only"] += 1
+            self._dial_inflight.discard(addr_key)
+            log.info(
+                "Skipping dial to outbound-only blocklisted peer",
+                extra={"peer_addr": addr},
+            )
+            return False
         conn_trace_id = self._new_conn_trace_id()
         self._dial_attempt_total += 1
         self._stats["dial_attempts"] += 1
