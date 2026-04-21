@@ -122,6 +122,13 @@ def _parse_sto_key(key: bytes) -> Tuple[bytes, bytes]:
     return addr, skey
 
 
+def _parse_applied_tx_key(key: bytes) -> bytes:
+    if not key.startswith(PFX_APPLIED_TX):
+        raise ValueError("not an APPLIED_TX key")
+    tx_hash, _ = _split_len_prefixed(key, 1)
+    return tx_hash
+
+
 # ---------------------------------------------------------------------------
 # Account model
 # ---------------------------------------------------------------------------
@@ -367,9 +374,9 @@ class StateDB:
 
     def snapshot(self) -> "StateSnapshot":
         """
-        Create a point-in-time materialized snapshot (accounts + storage). This
-        copies keys/values into memory for deterministic iteration independent
-        of concurrent writes.
+        Create a point-in-time materialized snapshot (accounts + storage + code +
+        idempotency markers). This copies keys/values into memory for deterministic
+        iteration independent of concurrent writes.
         """
         acc_entries: List[Tuple[bytes, Account]] = []
         for k, v in self.kv.iter_prefix(PFX_ACC):
@@ -389,7 +396,12 @@ class StateDB:
             addr, _ = _split_len_prefixed(k, 1)
             code_entries.append((addr, bytes(v)))
 
-        return StateSnapshot(acc_entries, sto_entries, code_entries)
+        applied_tx_entries: List[Tuple[bytes, bytes]] = []
+        for k, v in self.kv.iter_prefix(PFX_APPLIED_TX):
+            tx_hash = _parse_applied_tx_key(k)
+            applied_tx_entries.append((tx_hash, bytes(v)))
+
+        return StateSnapshot(acc_entries, sto_entries, code_entries, applied_tx_entries)
 
     def commit(self) -> None:
         """
@@ -414,6 +426,7 @@ class StateDB:
         acc_keys = [k for k, _ in self.kv.iter_prefix(PFX_ACC)]
         sto_keys = [k for k, _ in self.kv.iter_prefix(PFX_STO)]
         code_keys = [k for k, _ in self.kv.iter_prefix(PFX_CODE)]
+        applied_tx_keys = [k for k, _ in self.kv.iter_prefix(PFX_APPLIED_TX)]
 
         with self.kv.batch() as batch:
             for k in acc_keys:
@@ -422,6 +435,8 @@ class StateDB:
                 batch.delete(k)
             for k in code_keys:
                 batch.delete(k)
+            for k in applied_tx_keys:
+                batch.delete(k)
 
             for addr, acc in snap.iter_accounts():
                 batch.put(_k_acc(addr), acc.to_cbor())
@@ -429,6 +444,8 @@ class StateDB:
                 batch.put(_k_sto(addr, skey), bytes(val))
             for addr, code in snap.iter_code():
                 batch.put(_k_code(addr), bytes(code))
+            for tx_hash, marker in snap.iter_applied_txs():
+                batch.put(_k_applied_tx(tx_hash), bytes(marker))
 
 
 class StateSnapshot:
@@ -436,17 +453,19 @@ class StateSnapshot:
     Immutable, in-memory copy of a subset of state at a point in time.
     """
 
-    __slots__ = ("_acc", "_sto", "_code")
+    __slots__ = ("_acc", "_sto", "_code", "_applied_txs")
 
     def __init__(
         self,
         acc_entries: List[Tuple[bytes, Account]],
         sto_entries: List[Tuple[bytes, bytes, bytes]],
         code_entries: List[Tuple[bytes, bytes]],
+        applied_tx_entries: Optional[List[Tuple[bytes, bytes]]] = None,
     ) -> None:
         self._acc = acc_entries
         self._sto = sto_entries
         self._code = code_entries
+        self._applied_txs = applied_tx_entries or []
 
     # Iterators over frozen content
     def iter_accounts(self) -> Iterator[Tuple[bytes, Account]]:
@@ -471,10 +490,14 @@ class StateSnapshot:
     def iter_code(self) -> Iterator[Tuple[bytes, bytes]]:
         yield from self._code
 
+    def iter_applied_txs(self) -> Iterator[Tuple[bytes, bytes]]:
+        yield from self._applied_txs
+
     # Convenience: compute a deterministic "state digest" over snapshot
     def digest(self) -> bytes:
         """
-        Compute a simple digest over (accounts, storage, code) for sanity checks.
+        Compute a simple digest over (accounts, storage, code, applied tx markers)
+        for sanity checks.
         Not a consensus state root; use core/chain/state_root for that.
         """
         h = sha3_256(b"")
@@ -487,6 +510,9 @@ class StateSnapshot:
         # Code ordered by address
         for addr, code in sorted(self._code, key=lambda t: t[0]):
             h = sha3_256(h + b"C" + addr + code)
+        # Applied tx markers ordered by tx hash
+        for tx_hash, marker in sorted(self._applied_txs, key=lambda t: t[0]):
+            h = sha3_256(h + b"T" + tx_hash + marker)
         return h
 
 

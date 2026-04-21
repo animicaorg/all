@@ -167,3 +167,33 @@ def test_tx_idempotency_different_hash_lengths():
         assert state.get_tx_applied_height(tx_64) == 102
         
         state.close()
+
+
+def test_snapshot_revert_restores_applied_tx_markers():
+    """
+    State snapshots must include idempotency markers so reorg/rebuild can
+    deterministically restore tx-application guards.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        kv = SQLiteKV(str(db_path))
+        state = StateDB(kv)
+
+        tx_a = b"\xaa" * 32
+        tx_b = b"\xbb" * 32
+
+        state.mark_tx_applied(tx_a, 50)
+        snap = state.snapshot()
+        state.mark_tx_applied(tx_b, 51)
+
+        assert state.has_applied_tx(tx_a)
+        assert state.has_applied_tx(tx_b)
+
+        state.revert(snap)
+
+        assert state.has_applied_tx(tx_a)
+        assert state.get_tx_applied_height(tx_a) == 50
+        assert not state.has_applied_tx(tx_b)
+        assert state.get_tx_applied_height(tx_b) is None
+
+        state.close()
