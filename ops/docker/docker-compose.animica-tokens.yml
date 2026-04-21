@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  animica-tokens-api:
+    build:
+      context: ../..
+      dockerfile: apps/animica-tokens/server/Dockerfile
+    container_name: animica-tokens-api
+    env_file:
+      - ../../apps/animica-tokens/server/.env
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+
+  animica-tokens-web:
+    build:
+      context: ../..
+      dockerfile: apps/animica-tokens/Dockerfile
+    container_name: animica-tokens-web
+    env_file:
+      - ../../apps/animica-tokens/.env.local
+    depends_on:
+      - animica-tokens-api
+    ports:
+      - "5182:5182"
+    restart: unless-stopped

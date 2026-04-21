@@ -38,7 +38,7 @@ class PoolShareValidator:
     ) -> None:
         self._adapter = adapter
         self._pool_mode = str(pool_mode or "pps").strip().lower()
-        if self._pool_mode not in {"pps", "solo"}:
+        if self._pool_mode not in {"pps", "solo", "both"}:
             self._pool_mode = "pps"
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
 
@@ -126,6 +126,7 @@ class StratumPoolServer:
             max_cached_jobs=128,
             validator=self._validator,
             submit_hook=self._handle_share_submit,
+            pool_mode=config.pool_mode,
         )
 
     def set_submit_hook(
@@ -394,11 +395,11 @@ class StratumPoolServer:
             )
             proposed_threshold = current_threshold
             trigger: Optional[str] = None
-            if low_rejects / float(total) >= 0.70:
-                proposed_threshold = max(1, int(current_threshold * 0.70))
+            if low_rejects / float(total) >= 0.55:
+                proposed_threshold = max(1, int(current_threshold * 0.60))
                 trigger = "low_difficulty_rejects"
-            elif accepted / float(total) >= 0.85 and low_rejects <= 1:
-                proposed_threshold = max(1, int(current_threshold * 1.15))
+            elif accepted / float(total) >= 0.95 and low_rejects <= 1:
+                proposed_threshold = max(1, int(current_threshold * 1.05))
                 trigger = "high_accept_rate"
             else:
                 return

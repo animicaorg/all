@@ -12,12 +12,14 @@
 #include "TransactionMonitor.h"
 #include "WalletDatabase.h"
 #include "WalletEngine.h"
+#include "WalletSecuritySettings.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include "../rpc/RpcReply.h"
 #include "../rpc/RpcSettings.h"
 
 #include <QDateTime>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
@@ -139,6 +141,9 @@ WalletWidget::WalletWidget(
     }
 
     m_engine->setExplorerUrl(QSettings().value("WalletQt/explorerUrl").toString());
+    if (WalletSecuritySettings::walletEncryptionEnabled() && m_engine->isLoaded() && !m_engine->isLocked()) {
+        m_engine->lockWallet();
+    }
     updateToolbarState();
     updateStatus();
 
@@ -268,6 +273,9 @@ void WalletWidget::setupUi()
                 m_engine->balanceTracker()->setPollingInterval(pollIntervalMs);
             }
             setRpcEndpoint(RpcSettings::canonicalRpcUrl());
+            if (WalletSecuritySettings::walletEncryptionEnabled() && m_engine->isLoaded() && !m_engine->isLocked()) {
+                m_engine->lockWallet();
+            }
             refresh();
         }
     );
@@ -283,14 +291,12 @@ void WalletWidget::setupUi()
     m_rpcEndpointLabel = new QLabel("", this);
     m_rpcEndpointLabel->setStyleSheet("color: #666;");
     m_balanceLabel = new QLabel("Total: 0.000000 ANM", this);
-    m_syncLabel = new QLabel("", this);
 
     statusLayout->addWidget(m_statusLabel);
     statusLayout->addStretch();
     statusLayout->addWidget(m_rpcStatusLabel);
     statusLayout->addWidget(m_rpcEndpointLabel);
     statusLayout->addWidget(m_balanceLabel);
-    statusLayout->addWidget(m_syncLabel);
 
     statusBar->setStyleSheet("QWidget { background-color: #f5f5f5; border-top: 1px solid #d0d0d0; }");
     layout->addWidget(statusBar);
@@ -383,7 +389,12 @@ void WalletWidget::onUnlockWalletAction()
         return;
     }
 
-    if (m_engine->unlockWallet(QString())) {
+    QString password;
+    if (!requestWalletPassword(password)) {
+        return;
+    }
+
+    if (m_engine->unlockWallet(password)) {
         return;
     }
 
@@ -425,15 +436,7 @@ void WalletWidget::handleBalanceUpdated(const QString& address, const Balance& b
 
 void WalletWidget::handleSyncStatusChanged(bool syncing)
 {
-    if (syncing) {
-        m_syncLabel->setText("Syncing...");
-        return;
-    }
-
-    m_syncLabel->setText("Mainnet");
-    QTimer::singleShot(3000, this, [this]() {
-        m_syncLabel->clear();
-    });
+    Q_UNUSED(syncing);
 }
 
 void WalletWidget::handleRpcConnected()
@@ -545,6 +548,38 @@ void WalletWidget::clearConnectionBanner()
     m_connectionBannerDetails->clear();
 }
 
+bool WalletWidget::requestWalletPassword(QString& password)
+{
+    password.clear();
+    if (!WalletSecuritySettings::walletEncryptionEnabled()) {
+        return true;
+    }
+
+    bool ok = false;
+    const QString entered = QInputDialog::getText(
+        this,
+        "Wallet Password",
+        "Enter wallet password to unlock:",
+        QLineEdit::Password,
+        QString(),
+        &ok
+    );
+    if (!ok) {
+        return false;
+    }
+    if (!WalletSecuritySettings::verifyTransferPassword(entered)) {
+        QMessageBox::warning(
+            this,
+            "Unlock Failed",
+            "Wallet password is incorrect."
+        );
+        return false;
+    }
+
+    password = entered;
+    return true;
+}
+
 void WalletWidget::handleCreateAccountRequested()
 {
     if (!m_engine->isLoaded()) {
@@ -558,16 +593,22 @@ void WalletWidget::handleCreateAccountRequested()
         return;
     }
 
-    if (m_engine->isLocked() && !m_engine->unlockWallet(QString())) {
-        const QString detail = m_engine->lastError().trimmed();
-        QMessageBox::warning(
-            this,
-            "Unlock Failed",
-            detail.isEmpty()
-                ? QStringLiteral("The wallet store could not be unlocked for account creation.")
-                : QString("The wallet store could not be unlocked for account creation.\n\n%1").arg(detail)
-        );
-        return;
+    if (m_engine->isLocked()) {
+        QString password;
+        if (!requestWalletPassword(password)) {
+            return;
+        }
+        if (!m_engine->unlockWallet(password)) {
+            const QString detail = m_engine->lastError().trimmed();
+            QMessageBox::warning(
+                this,
+                "Unlock Failed",
+                detail.isEmpty()
+                    ? QStringLiteral("The wallet store could not be unlocked for account creation.")
+                    : QString("The wallet store could not be unlocked for account creation.\n\n%1").arg(detail)
+            );
+            return;
+        }
     }
 
     CreateAccountDialog dialog(m_engine, this);

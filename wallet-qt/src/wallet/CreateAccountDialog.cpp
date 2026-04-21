@@ -1,8 +1,10 @@
 #include "CreateAccountDialog.h"
+#include "WalletSecuritySettings.h"
 #include "WalletEngine.h"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMessageBox>
@@ -126,7 +128,28 @@ void CreateAccountDialog::onCreateClicked()
         return;
     }
 
-    if (m_engine->isLocked() && !m_engine->unlockWallet(QString())) {
+    QString password;
+    if (m_engine->isLocked() && WalletSecuritySettings::walletEncryptionEnabled()) {
+        bool ok = false;
+        const QString entered = QInputDialog::getText(
+            this,
+            "Wallet Password",
+            "Enter wallet password to unlock:",
+            QLineEdit::Password,
+            QString(),
+            &ok
+        );
+        if (!ok) {
+            return;
+        }
+        if (!WalletSecuritySettings::verifyTransferPassword(entered)) {
+            QMessageBox::warning(this, "Unlock Failed", "Wallet password is incorrect.");
+            return;
+        }
+        password = entered;
+    }
+
+    if (m_engine->isLocked() && !m_engine->unlockWallet(password)) {
         QMessageBox::warning(
             this,
             "Unlock Failed",

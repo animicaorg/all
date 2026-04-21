@@ -8,7 +8,7 @@ import socket
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from .hash_search import digest_to_int256
@@ -78,6 +78,7 @@ class Session:
     extranonce2_size: int = 8
     worker: Optional[str] = None
     address: Optional[str] = None
+    pool_mode: str = "pps"
     authorized: bool = False
     share_target: float = 0.01
     theta_micro: int = 800_000
@@ -89,6 +90,8 @@ class Session:
     last_share_at: Optional[float] = None
     last_share_status: Optional[str] = None
     current_difficulty: float = 0.0
+    low_diff_reject_streak: int = 0
+    accepted_share_streak: int = 0
     is_v1: bool = False
     subscription_ids: Tuple[str, str] = ("subscription-id-1", "subscription-id-2")
 
@@ -130,6 +133,40 @@ def _parse_worker_identity(raw_worker: Any) -> tuple[Optional[str], Optional[str
         return text, text
 
     return text, None
+
+
+def _normalize_pool_mode(
+    raw_mode: Any, *, default: str = "pps", allow_both: bool = False
+) -> str:
+    allowed = {"pps", "solo"}
+    if allow_both:
+        allowed.add("both")
+    candidate = str(raw_mode or "").strip().lower()
+    if candidate in allowed:
+        return candidate
+    fallback = str(default or "pps").strip().lower() or "pps"
+    if fallback in allowed:
+        return fallback
+    return "pps"
+
+
+def _parse_pool_mode_hint(raw_value: Any) -> Optional[str]:
+    text = str(raw_value or "").strip().lower()
+    if not text:
+        return None
+    if text in {"pps", "solo"}:
+        return text
+    for chunk in text.replace(";", ",").replace("|", ",").split(","):
+        token = chunk.strip()
+        if not token:
+            continue
+        if token in {"pps", "solo"}:
+            return token
+        if "=" in token:
+            key, value = token.split("=", 1)
+            if key.strip() in {"mode", "pool_mode"} and value.strip() in {"pps", "solo"}:
+                return value.strip()
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -285,6 +322,8 @@ class StratumServer:
                 Awaitable[None],
             ]
         ] = None,
+        pool_mode: str = "pps",
+        session_vardiff_enabled: bool = True,
     ) -> None:
         self._host = host
         self._port = port
@@ -302,6 +341,20 @@ class StratumServer:
         self._send_timeout_secs = max(float(send_timeout_secs), 0.0)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
+        self._pool_mode = _normalize_pool_mode(
+            pool_mode, default="pps", allow_both=True
+        )
+        self._default_session_pool_mode = (
+            "pps" if self._pool_mode == "both" else self._pool_mode
+        )
+        self._session_vardiff_enabled = bool(session_vardiff_enabled)
+        self._session_low_reject_streak_threshold = 3
+        self._session_high_accept_streak_threshold = 24
+        base_target = max(float(self._default_share_target), 1e-9)
+        self._session_min_share_target = max(1e-9, base_target * 0.05)
+        self._session_max_share_target = min(1.0, max(base_target * 1.5, base_target))
+        if self._session_max_share_target < self._session_min_share_target:
+            self._session_max_share_target = self._session_min_share_target
 
         # Stats
         self._accepted = 0
@@ -461,7 +514,11 @@ class StratumServer:
                     msg = push_notify(
                         job_id=job.job_id,
                         header=job.header,
-                        share_target=job.share_target,
+                        share_target=(
+                            float(s.share_target)
+                            if float(s.share_target or 0.0) > 0.0
+                            else float(job.share_target)
+                        ),
                         clean_jobs=clean_jobs,
                         hints=job.hints or {},
                     )
@@ -522,6 +579,7 @@ class StratumServer:
             framing=framing,
             extranonce1=extranonce1,
             extranonce2_size=self._extranonce2_size,
+            pool_mode=self._default_session_pool_mode,
             share_target=self._default_share_target,
             theta_micro=self._default_theta_micro,
             current_difficulty=share_target_to_difficulty(
@@ -635,6 +693,149 @@ class StratumServer:
             log_level,
             f"[Stratum] set_difficulty push worker={session.worker} session={session.session_id} shareTarget={share_target} θμ={theta_micro} diff={difficulty}",
         )
+
+    def _resolve_session_pool_mode(
+        self,
+        hinted_mode: Optional[str],
+        *,
+        current_mode: Optional[str] = None,
+    ) -> str:
+        if self._pool_mode != "both":
+            return self._default_session_pool_mode
+        current = _normalize_pool_mode(
+            current_mode, default=self._default_session_pool_mode
+        )
+        parsed = _normalize_pool_mode(hinted_mode, default=current)
+        if parsed in {"pps", "solo"}:
+            return parsed
+        return current
+
+    @staticmethod
+    def _mode_hint_from_authorize(params: JSON) -> Optional[str]:
+        for key in ("pool_mode", "mode", "password", "pass", "worker"):
+            hinted = _parse_pool_mode_hint(params.get(key))
+            if hinted is not None:
+                return hinted
+        return None
+
+    @staticmethod
+    def _job_for_session(session: Session, job: StratumJob) -> StratumJob:
+        if (
+            abs(float(session.share_target) - float(job.share_target)) <= 1e-15
+            and int(session.theta_micro) == int(job.theta_micro)
+        ):
+            return job
+        raw_payload = dict(job.raw) if isinstance(job.raw, dict) else None
+        if isinstance(raw_payload, dict):
+            # Force downstream validators to recalculate session-level share thresholds.
+            raw_payload["_shareThresholdMicro"] = 0
+            raw_payload["_shareTargetInt"] = 0
+            raw_payload["_validationFingerprint"] = None
+        return replace(
+            job,
+            share_target=float(session.share_target),
+            theta_micro=int(session.theta_micro),
+            raw=raw_payload,
+        )
+
+    async def _maybe_adjust_session_share_target(
+        self,
+        session: Session,
+        *,
+        ok: bool,
+        reason: Optional[str],
+    ) -> None:
+        if not self._session_vardiff_enabled:
+            return
+        if session.session_id not in self._sessions:
+            return
+        if not session.authorized:
+            return
+
+        normalized_reason = str(reason or "").strip().lower()
+        low_diff_reject = (not ok) and normalized_reason == "low difficulty share"
+        if low_diff_reject:
+            session.low_diff_reject_streak += 1
+            session.accepted_share_streak = 0
+        elif ok:
+            session.accepted_share_streak += 1
+            session.low_diff_reject_streak = 0
+        else:
+            session.low_diff_reject_streak = 0
+            session.accepted_share_streak = 0
+
+        current_target = max(float(session.share_target or 0.0), 1e-9)
+        proposed_target = current_target
+        trigger: Optional[str] = None
+
+        if (
+            low_diff_reject
+            and session.low_diff_reject_streak
+            >= self._session_low_reject_streak_threshold
+        ):
+            factor = (
+                0.65
+                if session.low_diff_reject_streak
+                >= (self._session_low_reject_streak_threshold * 2)
+                else 0.80
+            )
+            proposed_target = max(self._session_min_share_target, current_target * factor)
+            session.low_diff_reject_streak = 0
+            trigger = "low_difficulty_reject_streak"
+        elif (
+            ok
+            and session.accepted_share_streak
+            >= self._session_high_accept_streak_threshold
+        ):
+            proposed_target = min(self._session_max_share_target, current_target * 1.08)
+            session.accepted_share_streak = 0
+            trigger = "high_accept_streak"
+
+        if trigger is None:
+            return
+        if abs(proposed_target - current_target) <= max(current_target * 0.01, 1e-12):
+            return
+
+        try:
+            await self._push_difficulty(
+                session,
+                proposed_target,
+                session.theta_micro,
+                log_level=logging.DEBUG,
+            )
+            if self._current_job_id:
+                current_job = self._jobs.get(self._current_job_id)
+                if current_job is not None:
+                    if session.is_v1:
+                        await self._send(
+                            session, self._build_v1_notify(current_job, clean_jobs=False)
+                        )
+                    else:
+                        await self._send(
+                            session,
+                            push_notify(
+                                current_job.job_id,
+                                current_job.header,
+                                proposed_target,
+                                False,
+                                current_job.hints or {},
+                            ),
+                        )
+            log.info(
+                "[Stratum] session vardiff adjusted worker=%s session=%s trigger=%s oldShareTarget=%.8f newShareTarget=%.8f",
+                session.worker,
+                session.session_id,
+                trigger,
+                current_target,
+                proposed_target,
+            )
+        except Exception as e:  # pragma: no cover - best-effort
+            log.warning(
+                "[Stratum] session vardiff update failed for worker=%s session=%s: %s",
+                session.worker,
+                session.session_id,
+                e,
+            )
 
     async def _session_heartbeat(self, session: Session) -> None:
         """Periodically push a difficulty keepalive to reassure ASIC dashboards."""
@@ -769,9 +970,18 @@ class StratumServer:
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
                 identity = raw_params[0] if raw_params else None
+                password = raw_params[1] if len(raw_params) > 1 else None
                 worker, address = _parse_worker_identity(identity)
                 session.worker = worker
                 session.address = address
+                mode_hint = (
+                    _parse_pool_mode_hint(password)
+                    or _parse_pool_mode_hint(identity)
+                    or _parse_pool_mode_hint(raw_params)
+                )
+                session.pool_mode = self._resolve_session_pool_mode(
+                    mode_hint, current_mode=session.pool_mode
+                )
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
                 return
@@ -842,7 +1052,13 @@ class StratumServer:
                 await self._send(
                     session,
                     push_notify(
-                        job.job_id, job.header, job.share_target, True, job.hints or {}
+                        job.job_id,
+                        job.header,
+                        float(session.share_target)
+                        if float(session.share_target or 0.0) > 0.0
+                        else job.share_target,
+                        True,
+                        job.hints or {},
                     ),
                 )
 
@@ -856,12 +1072,16 @@ class StratumServer:
                 if address_input
                 else parsed_address
             )
+            mode_hint = self._mode_hint_from_authorize(params)
+            session.pool_mode = self._resolve_session_pool_mode(
+                mode_hint, current_mode=session.pool_mode
+            )
             session.authorized = (
                 True  # Add real checks here if desired (e.g., bech32 format)
             )
             await self._send(session, res_authorize(id_val, True))
             log.info(
-                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
+                f"[Stratum] authorize worker={session.worker} address={session.address} mode={session.pool_mode} session={session.session_id}"
             )
 
         elif method == Method.SET_DIFFICULTY:
@@ -921,8 +1141,12 @@ class StratumServer:
             params_with_context["_session_id"] = session.session_id
             params_with_context["_worker"] = session.worker
             params_with_context["_address"] = resolved_address
+            params_with_context["_pool_mode"] = session.pool_mode
+            if params_with_context.get("shareTarget") in (None, ""):
+                params_with_context["shareTarget"] = float(session.share_target)
+            job_for_validation = self._job_for_session(session, job)
             ok, reason, is_block, tx_count = await self._validator.validate(
-                job, params_with_context
+                job_for_validation, params_with_context
             )
             if ok:
                 self._accepted += 1
@@ -933,7 +1157,10 @@ class StratumServer:
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
             share_ratio = float(
-                params.get("d_ratio") or params.get("shareTarget") or job.share_target
+                params.get("d_ratio")
+                or params.get("shareTarget")
+                or session.share_target
+                or job_for_validation.share_target
             )
             session.current_difficulty = (
                 share_target_to_difficulty(session.theta_micro, share_ratio)
@@ -961,9 +1188,20 @@ class StratumServer:
                 reason,
                 session.current_difficulty,
             )
+            await self._maybe_adjust_session_share_target(
+                session,
+                ok=ok,
+                reason=reason,
+            )
             if self._submit_hook is not None:
                 await self._submit_hook(
-                    session, job, params_with_context, ok, reason, is_block, tx_count
+                    session,
+                    job_for_validation,
+                    params_with_context,
+                    ok,
+                    reason,
+                    is_block,
+                    tx_count,
                 )
 
         elif method == Method.GET_VERSION:
@@ -981,6 +1219,13 @@ class StratumServer:
     # ---------------- diagnostics ----------------
 
     def stats(self) -> JSON:
+        mode_counts = {"pps": 0, "solo": 0}
+        for session in self._sessions.values():
+            mode = _normalize_pool_mode(
+                session.pool_mode, default=self._default_session_pool_mode
+            )
+            if mode in mode_counts:
+                mode_counts[mode] += 1
         return {
             "clients": len(self._sessions),
             "accepted": self._accepted,
@@ -988,6 +1233,8 @@ class StratumServer:
             "uptime_sec": int(time.time() - self._started_ts),
             "currentJob": self._current_job_id,
             "activeJobs": len(self._jobs),
+            "pool_mode": self._pool_mode,
+            "session_modes": mode_counts,
         }
 
     def session_snapshots(self) -> List[JSON]:
@@ -996,6 +1243,7 @@ class StratumServer:
                 "session_id": s.session_id,
                 "worker": s.worker,
                 "address": s.address,
+                "pool_mode": s.pool_mode,
                 "authorized": s.authorized,
                 "share_target": s.share_target,
                 "theta_micro": s.theta_micro,

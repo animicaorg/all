@@ -88,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mode",
         dest="pool_mode",
         default=None,
-        help="Payout/accounting mode (pps|solo)",
+        help="Payout/accounting mode (pps|solo|both)",
     )
     parser.add_argument(
         "--payout-interval-seconds",

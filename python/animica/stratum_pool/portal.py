@@ -89,6 +89,17 @@ def normalize_address(value: Optional[str]) -> str:
     return raw or PLACEHOLDER_ADDRESS
 
 
+def _pool_mode_description(mode: Optional[str]) -> str:
+    normalized = str(mode or "").strip().lower()
+    if normalized == "solo":
+        return "only accepted full blocks are credited to the submitting miner"
+    if normalized == "both":
+        return (
+            "parallel PPS and SOLO accounting; miners select per connection via --pool-mode pps|solo"
+        )
+    return "accepted shares earn deterministic per-share credit"
+
+
 def _parse_host_port(raw: str) -> tuple[Optional[str], Optional[int]]:
     candidate = raw.strip()
     if not candidate:
@@ -271,7 +282,7 @@ def resolve_public_mining_config(
         or (config.pool_mode if getattr(config, "pool_mode", None) else None)
         or ("solo" if not pool_enabled else "pps")
     ).strip().lower()
-    if pool_mode not in {"pps", "solo"}:
+    if pool_mode not in {"pps", "solo", "both"}:
         pool_mode = "pps"
     fee_percent = _env_float("ANIMICA_POOL_FEE_PERCENT")
     payout_minimum = _read_env("ANIMICA_POOL_PAYOUT_MINIMUM")
@@ -525,7 +536,7 @@ Worker names are informational. This bundle uses `{bundle.worker}` by default. G
 
 ## Pool notes
 
-- Mode: {resolved.pool_mode.upper()} ({'pay-per-share credits' if resolved.pool_mode == 'pps' else 'winner-takes-block credits'})
+- Mode: {resolved.pool_mode.upper()} ({_pool_mode_description(resolved.pool_mode)})
 - Fee: {resolved.fee_percent if resolved.fee_percent is not None else "not published"}%
 - Payout minimum: {resolved.payout_minimum or "not published"}
 - Payout cadence: {f"every {int(resolved.payout_interval_seconds)} seconds" if resolved.payout_interval_seconds > 0 else "manual / disabled"}
@@ -623,6 +634,7 @@ class MiningPortalService:
         mode_summary = {
             "pps": "Accepted shares earn deterministic per-share credit.",
             "solo": "Only accepted full blocks are credited to the submitting miner.",
+            "both": "Pool accepts both PPS and SOLO workers in parallel. Set miner `--pool-mode` to `pps` or `solo`.",
         }
         downloads_url = str(request.url_for("mining_downloads_manifest"))
         status_url = str(request.url_for("mining_status"))

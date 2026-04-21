@@ -413,8 +413,15 @@ function renderDownloads(
 ): void {
   for (const card of elements.downloadCards) {
     const platform = card.dataset.platform ?? '';
-    const item = downloads.find((entry) => entry.platform === platform);
+    const platformItems = downloads.filter((entry) => entry.platform === platform);
+    const item =
+      platformItems.find((entry) => !entry.requiresPython) ??
+      platformItems.at(0);
+    const secondaryItem = platformItems.find((entry) => entry !== item);
     const link = card.querySelector<HTMLAnchorElement>(`[data-download-link="${platform}"]`);
+    const secondaryLink = card.querySelector<HTMLAnchorElement>(
+      `[data-download-secondary-link="${platform}"]`,
+    );
     const version = card.querySelector<HTMLElement>('[data-download-version]');
     const filename = card.querySelector<HTMLElement>('[data-download-file]');
     const launcher = card.querySelector<HTMLElement>('[data-download-launcher]');
@@ -436,6 +443,10 @@ function renderDownloads(
       if (size) size.textContent = 'Unavailable';
       if (sha) sha.textContent = 'Unavailable';
       if (note) note.textContent = 'Download metadata is currently unavailable.';
+      if (secondaryLink) {
+        secondaryLink.href = '#';
+        secondaryLink.classList.add('hidden');
+      }
       continue;
     }
 
@@ -462,7 +473,23 @@ function renderDownloads(
       const extra = item.requiresPython
         ? ' Requires Python 3.10+ (no standalone executable in this bundle).'
         : ` Entry point: ${item.entrypoint}.`;
-      note.textContent = `${item.notes}${extra}`;
+      const secondaryNotice = secondaryItem
+        ? ' Alternate Linux bundle available below.'
+        : '';
+      note.textContent = `${item.notes}${extra}${secondaryNotice}`;
+    }
+
+    if (secondaryLink) {
+      if (secondaryItem?.normalizedUrl) {
+        secondaryLink.href = secondaryItem.normalizedUrl;
+        secondaryLink.classList.remove('hidden');
+        secondaryLink.textContent = secondaryItem.requiresPython
+          ? 'Download Linux Python bundle'
+          : 'Download Linux executable bundle';
+      } else {
+        secondaryLink.href = '#';
+        secondaryLink.classList.add('hidden');
+      }
     }
   }
 }
@@ -499,9 +526,7 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
       const blocks = formatInteger(item.blocks_found);
       const hashrate = formatHashrate(resolveMinerHashrate(item));
       const credit = escapeHtml(String(item.credit_total ?? '0'));
-      const mode = escapeHtml(
-        String(item.pool_mode ?? state.config?.poolMode ?? 'pps').toUpperCase(),
-      );
+      const mode = escapeHtml(resolveMinerModeLabel(item, state.config?.poolMode));
       return `
         <tr class="border-t border-white/10">
           <td class="px-4 py-3 font-medium text-white">${worker}</td>
@@ -516,6 +541,37 @@ function renderMiners(elements: ReturnType<typeof resolveElements>, state: PageS
       `;
     })
     .join('');
+}
+
+function resolveMinerModeLabel(item: MiningMinerItem, fallbackPoolMode?: string): string {
+  const explicitMode = readModeToken(item.pool_mode);
+  if (explicitMode === 'pps' || explicitMode === 'solo') {
+    return explicitMode.toUpperCase();
+  }
+
+  const fallbackMode = readModeToken(fallbackPoolMode) ?? 'pps';
+  const inferredMode = inferMinerModeFromCredits(item);
+
+  if (explicitMode === 'both' || fallbackMode === 'both') {
+    if (inferredMode) return inferredMode.toUpperCase();
+    return 'PPS/SOLO';
+  }
+
+  return fallbackMode.toUpperCase();
+}
+
+function inferMinerModeFromCredits(item: MiningMinerItem): 'pps' | 'solo' | undefined {
+  const ppsCredit = readNonNegativeNumber(item.credit_pps);
+  const soloCredit = readNonNegativeNumber(item.credit_solo);
+  if (soloCredit > 0 && ppsCredit <= 0) return 'solo';
+  if (ppsCredit > 0 && soloCredit <= 0) return 'pps';
+  return undefined;
+}
+
+function readModeToken(value: unknown): 'pps' | 'solo' | 'both' | undefined {
+  const token = String(value ?? '').trim().toLowerCase();
+  if (token === 'pps' || token === 'solo' || token === 'both') return token;
+  return undefined;
 }
 
 function renderGenerated(elements: ReturnType<typeof resolveElements>, state: PageState): void {

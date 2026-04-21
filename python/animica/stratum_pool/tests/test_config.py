@@ -71,6 +71,16 @@ def test_invalid_pool_mode(monkeypatch):
         load_config_from_env()
 
 
+def test_pool_mode_both(monkeypatch):
+    monkeypatch.setenv(
+        "ANIMICA_POOL_ADDRESS",
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    )
+    monkeypatch.setenv("ANIMICA_POOL_MODE", "both")
+    cfg = load_config_from_env()
+    assert cfg.pool_mode == "both"
+
+
 def test_missing_pool_address(monkeypatch):
     monkeypatch.delenv("ANIMICA_POOL_ADDRESS", raising=False)
     with pytest.raises(ValueError):

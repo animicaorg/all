@@ -2,7 +2,7 @@
   "source": "website-static",
   "network": "mainnet",
   "version": "0.1.0",
-  "generated_at": "2026-04-18T15:30:00Z",
+  "generated_at": "2026-04-21T11:30:00Z",
   "items": [
     {
       "platform": "windows",
@@ -35,16 +35,32 @@
     {
       "platform": "linux",
       "label": "Ubuntu / Linux",
-      "filename": "animica-cpu-miner-0.1.0-mainnet-linux.tar.gz",
+      "variant": "executable",
+      "filename": "animica-cpu-miner-0.1.0-mainnet-linux-executable.tar.gz",
       "version": "0.1.0",
       "launcher": ".sh launcher",
       "entrypoint": "animica-miner",
       "includes_executable": true,
       "requires_python": false,
-      "sha256": "d16a517af7aac94903d9af71becd4725beb850d667e3eb2057ac9766ac422bfe",
-      "size_bytes": 12037472,
-      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-linux.tar.gz",
+      "sha256": "4de4349918ccd05f3329d7a769ab7070fb512a8d2b461b94d873771ac13d5bf4",
+      "size_bytes": 12037423,
+      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-linux-executable.tar.gz",
       "notes": "Static website-hosted starter bundle. Includes launcher + config + standalone animica-miner executable."
+    },
+    {
+      "platform": "linux",
+      "label": "Ubuntu / Linux",
+      "variant": "python",
+      "filename": "animica-cpu-miner-0.1.0-mainnet-linux-python.tar.gz",
+      "version": "0.1.0",
+      "launcher": ".sh launcher",
+      "entrypoint": "animica_cpu_miner.py",
+      "includes_executable": false,
+      "requires_python": true,
+      "sha256": "0c98d404b083c3c426001e813d97b19dd15849d3532ad1012c8a3eaed73c268e",
+      "size_bytes": 10112,
+      "url": "/mining/animica-cpu-miner-0.1.0-mainnet-linux-python.tar.gz",
+      "notes": "Static website-hosted starter bundle. Python-only Linux package without standalone executable."
     }
   ]
 }

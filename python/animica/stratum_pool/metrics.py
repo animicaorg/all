@@ -22,7 +22,7 @@ AccountingEvent = Dict[str, object]
 class PoolMetrics:
     """Lightweight in-memory metrics aggregator for the Stratum pool."""
 
-    _VALID_MODES = {"pps", "solo"}
+    _VALID_MODES = {"pps", "solo", "both"}
 
     def __init__(
         self, config: PoolConfig, job_manager: JobManager, server: StratumServer
@@ -154,6 +154,7 @@ class PoolMetrics:
                 ts REAL NOT NULL,
                 worker TEXT,
                 address TEXT,
+                mode TEXT NOT NULL DEFAULT 'pps',
                 difficulty REAL,
                 status TEXT,
                 job_id TEXT,
@@ -233,6 +234,7 @@ class PoolMetrics:
         self._ensure_column(conn, "blocks", "worker", "TEXT")
         self._ensure_column(conn, "blocks", "address", "TEXT")
         self._ensure_column(conn, "blocks", "reward", "INTEGER")
+        self._ensure_column(conn, "shares", "mode", "TEXT NOT NULL DEFAULT 'pps'")
         self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column(conn, "payouts", "raw_tx", "TEXT")
         self._ensure_column(conn, "payouts", "nonce", "INTEGER")
@@ -473,6 +475,7 @@ class PoolMetrics:
         worker = self._normalize_worker(worker_hint or parsed_worker, session_id)
         address_hint = getattr(session, "address", None) or parsed_address
         address = self._normalize_address(address_hint)
+        share_mode = self._resolve_share_mode(session=session, submit_params=submit_params)
 
         accepted_block = bool(ok and is_block)
         difficulty_value = submit_params.get("d_ratio")
@@ -500,6 +503,7 @@ class PoolMetrics:
             "difficulty": difficulty,
             "status": "accepted" if ok else "rejected",
             "reason": reason,
+            "pool_mode": share_mode,
             "job_id": job_id,
             "height": submit_params.get("height")
             or header_map.get("number")
@@ -508,6 +512,7 @@ class PoolMetrics:
         self._share_events.append(event)
         self._persist_share(
             event,
+            pool_mode=share_mode,
             is_block=accepted_block,
             tx_count=tx_count,
             reward=reward,
@@ -524,6 +529,7 @@ class PoolMetrics:
             reward=reward,
             difficulty=difficulty,
             reason=reason,
+            share_mode=share_mode,
             defer_commit=True,
         )
         rejection_reason = str(reason or "").lower()
@@ -555,6 +561,7 @@ class PoolMetrics:
         self,
         event: ShareEvent,
         *,
+        pool_mode: str,
         is_block: bool,
         tx_count: int,
         reward: int,
@@ -568,13 +575,14 @@ class PoolMetrics:
             statements = 1
             self._db.execute(
                 """
-                INSERT INTO shares (ts, worker, address, difficulty, status, job_id, height, is_block, tx_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shares (ts, worker, address, mode, difficulty, status, job_id, height, is_block, tx_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("timestamp"),
                     event.get("worker"),
                     event.get("address"),
+                    self._normalize_share_mode(pool_mode, default="pps"),
                     event.get("difficulty"),
                     event.get("status"),
                     event.get("job_id"),
@@ -714,6 +722,46 @@ class PoolMetrics:
             "system:"
         )
 
+    @staticmethod
+    def _normalize_share_mode(raw_mode: object, *, default: str = "pps") -> str:
+        mode = str(raw_mode or "").strip().lower()
+        if mode in {"pps", "solo"}:
+            return mode
+        fallback = str(default or "pps").strip().lower()
+        if fallback in {"pps", "solo"}:
+            return fallback
+        return "pps"
+
+    def _pick_share_mode(
+        self,
+        *candidates: object,
+        default: Optional[str] = None,
+    ) -> str:
+        if self._pool_mode in {"pps", "solo"}:
+            return self._pool_mode
+        for candidate in candidates:
+            mode = str(candidate or "").strip().lower()
+            if mode in {"pps", "solo"}:
+                return mode
+        fallback = default
+        if fallback is None:
+            fallback = "pps" if self._pool_mode == "both" else self._pool_mode
+        return self._normalize_share_mode(fallback, default="pps")
+
+    def _resolve_share_mode(
+        self,
+        *,
+        session: object,
+        submit_params: Dict[str, object],
+    ) -> str:
+        return self._pick_share_mode(
+            submit_params.get("_pool_mode"),
+            submit_params.get("pool_mode"),
+            submit_params.get("mode"),
+            getattr(session, "pool_mode", None),
+            default="pps",
+        )
+
     def _session_snapshots(self) -> List[object]:
         snapshots = getattr(self._server, "session_snapshots", None)
         if not callable(snapshots):
@@ -756,6 +804,10 @@ class PoolMetrics:
                     "share_target"
                 )
                 connected_since = float(session.get("connected_since") or 0.0)
+                session_mode = self._pick_share_mode(
+                    session.get("pool_mode"),
+                    default="pps",
+                )
             else:
                 shares_accepted = self._int_value(
                     getattr(session, "shares_accepted", 0)
@@ -770,6 +822,10 @@ class PoolMetrics:
                 connected_since = float(
                     getattr(session, "connected_since", 0.0) or 0.0
                 )
+                session_mode = self._pick_share_mode(
+                    getattr(session, "pool_mode", None),
+                    default="pps",
+                )
 
             current = summary.get(address)
             if current is None:
@@ -781,6 +837,8 @@ class PoolMetrics:
                     "last_share_at": last_share_at,
                     "difficulty": difficulty,
                     "connected_since": connected_since,
+                    "pool_mode": session_mode,
+                    "mode_counts": {session_mode: 1},
                 }
                 continue
 
@@ -800,6 +858,18 @@ class PoolMetrics:
                 current["worker_name"] = worker
             if current.get("difficulty") in (None, "") and difficulty not in (None, ""):
                 current["difficulty"] = difficulty
+            mode_counts = current.get("mode_counts")
+            if not isinstance(mode_counts, dict):
+                mode_counts = {}
+            mode_counts[session_mode] = int(mode_counts.get(session_mode) or 0) + 1
+            current["mode_counts"] = mode_counts
+            ordered_modes = sorted(
+                mode_counts.items(),
+                key=lambda item: (int(item[1]), 1 if item[0] == "pps" else 0, item[0]),
+                reverse=True,
+            )
+            if ordered_modes:
+                current["pool_mode"] = ordered_modes[0][0]
             if connected_since > 0:
                 existing_since = float(current.get("connected_since") or 0.0)
                 current["connected_since"] = (
@@ -1055,12 +1125,20 @@ class PoolMetrics:
         reward: int,
         difficulty: float,
         reason: Optional[str],
+        share_mode: str,
         defer_commit: bool = False,
     ) -> None:
+        accounting_mode = self._normalize_share_mode(
+            share_mode,
+            default="pps" if self._pool_mode == "both" else self._pool_mode,
+        )
+        if self._pool_mode in {"pps", "solo"}:
+            accounting_mode = self._pool_mode
+
         if ok:
             pps_credit = 0
             solo_credit = 0
-            if self._pool_mode == "pps":
+            if accounting_mode == "pps":
                 pps_credit = self._credit_for_share(reward, difficulty)
                 if pps_credit > 0:
                     self._record_accounting_event(
@@ -1070,10 +1148,14 @@ class PoolMetrics:
                         event="pps_share_credit",
                         amount=pps_credit,
                         job_id=job_id,
-                        details={"difficulty_ratio": difficulty, "reward": reward},
+                        details={
+                            "difficulty_ratio": difficulty,
+                            "reward": reward,
+                            "pool_mode": accounting_mode,
+                        },
                         defer_commit=defer_commit,
                     )
-            elif self._pool_mode == "solo" and is_block:
+            elif accounting_mode == "solo" and is_block:
                 solo_credit = int(reward)
                 if solo_credit > 0:
                     self._record_accounting_event(
@@ -1083,7 +1165,7 @@ class PoolMetrics:
                         event="solo_block_credit",
                         amount=solo_credit,
                         job_id=job_id,
-                        details={"reward": reward},
+                        details={"reward": reward, "pool_mode": accounting_mode},
                         defer_commit=defer_commit,
                     )
             self._apply_balance_delta(
@@ -1114,7 +1196,7 @@ class PoolMetrics:
             event="share_rejected",
             amount=0,
             job_id=job_id,
-            details={"reason": reason or "unknown"},
+            details={"reason": reason or "unknown", "pool_mode": accounting_mode},
             defer_commit=defer_commit,
         )
 
@@ -2658,6 +2740,8 @@ class PoolMetrics:
         block_counts: Dict[str, int] = {}
         events_by_address: Dict[str, List[ShareEvent]] = defaultdict(list)
         latest_worker_by_address: Dict[str, str] = {}
+        latest_mode_by_address: Dict[str, str] = {}
+        latest_mode_ts_by_address: Dict[str, float] = {}
 
         for ev in self._share_events:
             addr = self._normalize_address(ev.get("address"))  # type: ignore[arg-type]
@@ -2667,6 +2751,12 @@ class PoolMetrics:
             worker_label = str(ev.get("worker") or "").strip()
             if worker_label:
                 latest_worker_by_address[addr] = worker_label
+            mode_value = self._pick_share_mode(ev.get("pool_mode"), default="pps")
+            event_ts = float(ev.get("timestamp") or 0.0)
+            prev_mode_ts = float(latest_mode_ts_by_address.get(addr) or 0.0)
+            if event_ts >= prev_mode_ts:
+                latest_mode_ts_by_address[addr] = event_ts
+                latest_mode_by_address[addr] = mode_value
 
         if self._db is not None:
             with self._db_lock:
@@ -2692,6 +2782,22 @@ class PoolMetrics:
                     FROM blocks
                     WHERE address IS NOT NULL AND address != ''
                     GROUP BY address
+                    """
+                ).fetchall()
+                mode_rows = self._db.execute(
+                    """
+                    SELECT s.address, s.mode, s.ts
+                    FROM shares AS s
+                    JOIN (
+                        SELECT address, MAX(ts) AS max_ts
+                        FROM shares
+                        WHERE address IS NOT NULL AND address != ''
+                        GROUP BY address
+                    ) AS latest
+                      ON latest.address = s.address
+                     AND latest.max_ts = s.ts
+                    WHERE s.address IS NOT NULL AND s.address != ''
+                    ORDER BY s.ts DESC
                     """
                 ).fetchall()
             for row in rows:
@@ -2722,6 +2828,16 @@ class PoolMetrics:
                 if not self._payout_eligible_address(addr):
                     continue
                 block_counts[addr] = int(blocks_found or 0)
+            for address, mode, ts in mode_rows:
+                addr = self._normalize_address(address)
+                if not self._payout_eligible_address(addr):
+                    continue
+                mode_value = self._pick_share_mode(mode, default="pps")
+                mode_ts = float(ts or 0.0)
+                prev_mode_ts = float(latest_mode_ts_by_address.get(addr) or 0.0)
+                if mode_ts >= prev_mode_ts:
+                    latest_mode_ts_by_address[addr] = mode_ts
+                    latest_mode_by_address[addr] = mode_value
         else:
             for address, events in events_by_address.items():
                 recent_events = [
@@ -2790,6 +2906,11 @@ class PoolMetrics:
             blocks_found = int(
                 block_counts.get(address, balance.get("accepted_blocks") or 0)
             )
+            mode_value = self._pick_share_mode(
+                session.get("pool_mode"),
+                latest_mode_by_address.get(address),
+                default="pps",
+            )
             return {
                 "worker_id": address,
                 "worker_name": worker_name,
@@ -2807,7 +2928,7 @@ class PoolMetrics:
                 "shares_accepted": shares_accepted,
                 "shares_rejected": shares_rejected,
                 "blocks_found": blocks_found,
-                "pool_mode": self._pool_mode,
+                "pool_mode": mode_value,
                 "credit_total": str(int(balance.get("total_credit") or 0)),
                 "credit_pps": str(int(balance.get("pps_credit") or 0)),
                 "credit_solo": str(int(balance.get("solo_credit") or 0)),
@@ -2857,7 +2978,7 @@ class PoolMetrics:
             with self._db_lock:
                 rows = self._db.execute(
                     """
-                    SELECT ts, worker, address, difficulty, status
+                    SELECT ts, worker, address, mode, difficulty, status
                     FROM shares
                     WHERE address = ? AND ts >= ?
                     ORDER BY ts ASC
@@ -2868,12 +2989,13 @@ class PoolMetrics:
             rows = []
 
         if rows:
-            for ts, worker, event_address, difficulty, status in rows:
+            for ts, worker, event_address, mode, difficulty, status in rows:
                 events.append(
                     {
                         "timestamp": ts,
                         "worker": str(worker or ""),
                         "address": event_address,
+                        "pool_mode": self._pick_share_mode(mode, default="pps"),
                         "difficulty": difficulty,
                         "status": status,
                     }
@@ -2886,7 +3008,12 @@ class PoolMetrics:
                 event_address = self._normalize_address(ev.get("address"))  # type: ignore[arg-type]
                 if event_address != address or float(ev.get("timestamp") or 0.0) < cutoff:
                     continue
-                events.append(ev)
+                event_copy = dict(ev)
+                event_copy["pool_mode"] = self._pick_share_mode(
+                    ev.get("pool_mode"),
+                    default="pps",
+                )
+                events.append(event_copy)
                 if ev.get("status") == "accepted":
                     bucket = int(float(ev.get("timestamp") or 0.0) // 60) * 60
                     buckets[bucket] += float(ev.get("difficulty") or 0.0)
@@ -2913,6 +3040,11 @@ class PoolMetrics:
             or identity
             or address
         )
+        miner_mode = self._pick_share_mode(
+            session.get("pool_mode"),
+            (latest or {}).get("pool_mode"),
+            default="pps",
+        )
         connected_since = float(session.get("connected_since") or 0.0)
         result = {
             "address": address,
@@ -2932,7 +3064,7 @@ class PoolMetrics:
             "shares_accepted": accepted,
             "shares_rejected": rejected,
             "blocks_found": blocks_found,
-            "pool_mode": self._pool_mode,
+            "pool_mode": miner_mode,
             "credit_total": str(int(balance.get("total_credit") or 0)),
             "credit_pps": str(int(balance.get("pps_credit") or 0)),
             "credit_solo": str(int(balance.get("solo_credit") or 0)),

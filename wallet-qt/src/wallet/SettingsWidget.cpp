@@ -1,13 +1,16 @@
 #include "SettingsWidget.h"
 
 #include "../rpc/RpcSettings.h"
+#include "WalletSecuritySettings.h"
 
+#include <QCheckBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -69,6 +72,36 @@ SettingsWidget::SettingsWidget(const QString& walletFilePath, const QString& dat
     runtimeLayout->addRow("Data Directory:", m_dataDirLabel);
     layout->addWidget(runtimeGroup);
 
+    auto* securityGroup = new QGroupBox("Security", this);
+    auto* securityLayout = new QVBoxLayout(securityGroup);
+
+    m_transferPasswordStatusLabel = new QLabel(this);
+    m_transferPasswordStatusLabel->setStyleSheet("color: #555;");
+    securityLayout->addWidget(m_transferPasswordStatusLabel);
+
+    auto* passwordButtonRow = new QHBoxLayout();
+    m_setTransferPasswordButton = new QPushButton("Set Transfer Password", this);
+    m_clearTransferPasswordButton = new QPushButton("Clear Transfer Password", this);
+    passwordButtonRow->addWidget(m_setTransferPasswordButton);
+    passwordButtonRow->addWidget(m_clearTransferPasswordButton);
+    passwordButtonRow->addStretch();
+    securityLayout->addLayout(passwordButtonRow);
+
+    m_requireTransferPasswordCheck = new QCheckBox("Require transfer password for sending ANM", this);
+    securityLayout->addWidget(m_requireTransferPasswordCheck);
+
+    m_encryptWalletCheck = new QCheckBox("Encrypt wallet setting (lock wallet access with transfer password)", this);
+    securityLayout->addWidget(m_encryptWalletCheck);
+
+    auto* securityNoteLabel = new QLabel(
+        "This setting protects wallet access in the app and keeps the canonical wallets.json format unchanged.",
+        this
+    );
+    securityNoteLabel->setWordWrap(true);
+    securityNoteLabel->setStyleSheet("color: #666; font-size: 11px;");
+    securityLayout->addWidget(securityNoteLabel);
+    layout->addWidget(securityGroup);
+
     auto* effectiveGroup = new QGroupBox("Effective Config", this);
     auto* effectiveLayout = new QVBoxLayout(effectiveGroup);
     m_effectiveConfigEdit = new QPlainTextEdit(this);
@@ -92,9 +125,13 @@ SettingsWidget::SettingsWidget(const QString& walletFilePath, const QString& dat
     connect(m_defaultsButton, &QPushButton::clicked, this, &SettingsWidget::onDefaultsClicked);
     connect(m_exportButton, &QPushButton::clicked, this, &SettingsWidget::onExportClicked);
     connect(m_importButton, &QPushButton::clicked, this, &SettingsWidget::onImportClicked);
+    connect(m_setTransferPasswordButton, &QPushButton::clicked, this, &SettingsWidget::onSetTransferPasswordClicked);
+    connect(m_clearTransferPasswordButton, &QPushButton::clicked, this, &SettingsWidget::onClearTransferPasswordClicked);
     connect(m_explorerUrlEdit, &QLineEdit::textChanged, this, &SettingsWidget::updateEffectiveConfig);
     connect(m_pollIntervalSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsWidget::updateEffectiveConfig);
     connect(m_timeoutSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsWidget::updateEffectiveConfig);
+    connect(m_requireTransferPasswordCheck, &QCheckBox::toggled, this, &SettingsWidget::updateEffectiveConfig);
+    connect(m_encryptWalletCheck, &QCheckBox::toggled, this, &SettingsWidget::updateEffectiveConfig);
 
     load();
 }
@@ -113,6 +150,9 @@ void SettingsWidget::load()
     m_timeoutSpin->setValue(timeoutMs);
     m_walletFileLabel->setText(m_walletFilePath);
     m_dataDirLabel->setText(m_dataDir);
+    m_requireTransferPasswordCheck->setChecked(WalletSecuritySettings::requireTransferPasswordForSend());
+    m_encryptWalletCheck->setChecked(WalletSecuritySettings::walletEncryptionEnabled());
+    refreshSecurityState();
     updateEffectiveConfig();
 }
 
@@ -125,6 +165,14 @@ bool SettingsWidget::validate(QString& errorMessage) const
             errorMessage = "Explorer URL is invalid.";
             return false;
         }
+    }
+
+    if ((m_requireTransferPasswordCheck->isChecked() || m_encryptWalletCheck->isChecked())
+        && !WalletSecuritySettings::hasTransferPassword()) {
+        errorMessage = QString(
+            "Set a transfer password before enabling send protection or wallet encryption."
+        );
+        return false;
     }
     return true;
 }
@@ -147,7 +195,11 @@ void SettingsWidget::onSaveClicked()
     settings.endGroup();
     settings.sync();
 
+    WalletSecuritySettings::setRequireTransferPasswordForSend(m_requireTransferPasswordCheck->isChecked());
+    WalletSecuritySettings::setWalletEncryptionEnabled(m_encryptWalletCheck->isChecked());
+
     emit settingsApplied(m_explorerUrlEdit->text().trimmed(), m_pollIntervalSpin->value(), m_timeoutSpin->value());
+    refreshSecurityState();
     updateEffectiveConfig();
 }
 
@@ -156,6 +208,8 @@ void SettingsWidget::onDefaultsClicked()
     m_explorerUrlEdit->clear();
     m_pollIntervalSpin->setValue(5000);
     m_timeoutSpin->setValue(8000);
+    m_requireTransferPasswordCheck->setChecked(false);
+    m_encryptWalletCheck->setChecked(false);
     updateEffectiveConfig();
 }
 
@@ -211,7 +265,106 @@ void SettingsWidget::onImportClicked()
     m_explorerUrlEdit->setText(obj.value("explorerUrl").toString());
     m_pollIntervalSpin->setValue(obj.value("pollIntervalMs").toInt(5000));
     m_timeoutSpin->setValue(obj.value("timeoutMs").toInt(8000));
+    m_requireTransferPasswordCheck->setChecked(obj.value("requireTransferPasswordForSend").toBool(false));
+    m_encryptWalletCheck->setChecked(obj.value("walletEncryptionEnabled").toBool(false));
+    refreshSecurityState();
     updateEffectiveConfig();
+}
+
+void SettingsWidget::onSetTransferPasswordClicked()
+{
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this,
+        "Set Transfer Password",
+        QString("Enter a transfer password (%1+ characters):").arg(WalletSecuritySettings::kMinPasswordLength),
+        QLineEdit::Password,
+        QString(),
+        &ok
+    );
+    if (!ok) {
+        return;
+    }
+    if (password.size() < WalletSecuritySettings::kMinPasswordLength) {
+        QMessageBox::warning(
+            this,
+            "Weak Password",
+            QString("Transfer password must be at least %1 characters.")
+                .arg(WalletSecuritySettings::kMinPasswordLength)
+        );
+        return;
+    }
+
+    const QString confirmation = QInputDialog::getText(
+        this,
+        "Confirm Transfer Password",
+        "Re-enter the transfer password:",
+        QLineEdit::Password,
+        QString(),
+        &ok
+    );
+    if (!ok) {
+        return;
+    }
+    if (password != confirmation) {
+        QMessageBox::warning(this, "Password Mismatch", "The two password entries do not match.");
+        return;
+    }
+
+    if (!WalletSecuritySettings::setTransferPassword(password)) {
+        QMessageBox::warning(this, "Password Error", "Failed to save transfer password.");
+        return;
+    }
+
+    QMessageBox::information(this, "Password Saved", "Transfer password has been updated.");
+    refreshSecurityState();
+    updateEffectiveConfig();
+}
+
+void SettingsWidget::onClearTransferPasswordClicked()
+{
+    if (!WalletSecuritySettings::hasTransferPassword()) {
+        refreshSecurityState();
+        return;
+    }
+
+    bool ok = false;
+    const QString currentPassword = QInputDialog::getText(
+        this,
+        "Clear Transfer Password",
+        "Enter current transfer password:",
+        QLineEdit::Password,
+        QString(),
+        &ok
+    );
+    if (!ok) {
+        return;
+    }
+
+    if (!WalletSecuritySettings::clearTransferPassword(currentPassword)) {
+        QMessageBox::warning(this, "Authorization Failed", "Current transfer password is incorrect.");
+        return;
+    }
+
+    m_requireTransferPasswordCheck->setChecked(false);
+    m_encryptWalletCheck->setChecked(false);
+    QMessageBox::information(this, "Password Cleared", "Transfer password and security locks were removed.");
+    refreshSecurityState();
+    updateEffectiveConfig();
+}
+
+void SettingsWidget::refreshSecurityState()
+{
+    const bool hasPassword = WalletSecuritySettings::hasTransferPassword();
+    m_transferPasswordStatusLabel->setText(hasPassword
+        ? "Transfer password: configured"
+        : "Transfer password: not configured");
+    m_clearTransferPasswordButton->setEnabled(hasPassword);
+
+    if (!hasPassword) {
+        m_requireTransferPasswordCheck->setChecked(false);
+        m_encryptWalletCheck->setChecked(false);
+    }
 }
 
 void SettingsWidget::updateEffectiveConfig()
@@ -223,6 +376,8 @@ void SettingsWidget::updateEffectiveConfig()
     obj["explorerUrl"] = m_explorerUrlEdit->text().trimmed();
     obj["pollIntervalMs"] = m_pollIntervalSpin->value();
     obj["timeoutMs"] = m_timeoutSpin->value();
+    obj["requireTransferPasswordForSend"] = m_requireTransferPasswordCheck->isChecked();
+    obj["walletEncryptionEnabled"] = m_encryptWalletCheck->isChecked();
     obj["walletFile"] = m_walletFilePath;
     obj["dataDir"] = m_dataDir;
     m_effectiveConfigEdit->setPlainText(QJsonDocument(obj).toJson(QJsonDocument::Indented));

@@ -909,7 +909,11 @@ class StratumCpuMiner:
     async def _authorize(self) -> None:
         response = await self._call(
             "mining.authorize",
-            {"worker": self.config.worker, "address": self.config.address},
+            {
+                "worker": self.config.worker,
+                "address": self.config.address,
+                "pool_mode": self.config.pool_mode,
+            },
         )
         result = response.get("result") or {}
         ok = bool(result.get("ok", result.get("authorized", True)))

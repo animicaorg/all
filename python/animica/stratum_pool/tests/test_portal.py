@@ -135,6 +135,15 @@ def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPa
     assert resolved.payout_minimum == "10 ANM"
 
 
+def test_resolve_public_config_accepts_both_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANIMICA_POOL_MODE", "both")
+    resolved = resolve_public_mining_config(
+        PoolConfig(host="0.0.0.0", port=3333, network="mainnet", pool_mode="both")
+    )
+    assert resolved.pool_mode == "both"
+
+
 @pytest.mark.asyncio
 async def test_api_mining_endpoints_reflect_request_host(
     monkeypatch: pytest.MonkeyPatch,
@@ -225,6 +234,34 @@ async def test_api_mining_endpoints_alias_primary_site_host_to_pool(
         download_res = await client.get("/api/mining/downloads/windows")
         assert download_res.status_code == 200
         assert len(download_res.content) > 100
+
+
+@pytest.mark.asyncio
+async def test_api_mining_config_reports_both_mode_instructions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANIMICA_MINING_DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_POOL_MODE", "both")
+    cfg = PoolConfig(
+        host="0.0.0.0",
+        port=3333,
+        api_host="0.0.0.0",
+        api_port=8550,
+        network="mainnet",
+        pool_mode="both",
+    )
+    app = create_app(DummyMetrics(cfg))
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://pool.animica.test") as client:
+        config_res = await client.get("/api/mining/config")
+        assert config_res.status_code == 200
+        config_payload = config_res.json()
+        assert config_payload["pool_mode"] == "both"
+        assert "pps" in config_payload["pool_mode_instructions"].lower()
+        assert "solo" in config_payload["pool_mode_instructions"].lower()
 
 
 def test_build_bundle_input_uses_placeholder_defaults() -> None:

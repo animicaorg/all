@@ -8,6 +8,7 @@
 #include <QMutexLocker>
 #include <QProcessEnvironment>
 #include <QPushButton>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -23,6 +24,9 @@ namespace {
 void configureBackendEnvironment()
 {
     qputenv("ANIMICA_REPO_ROOT", QByteArray(ANIMICA_REPO_ROOT_PATH));
+    QSettings settings;
+    settings.remove("WalletQt/security");
+    settings.sync();
 }
 
 QString localPython()

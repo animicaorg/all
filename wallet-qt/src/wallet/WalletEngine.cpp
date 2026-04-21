@@ -1,6 +1,7 @@
 #include "WalletEngine.h"
 
 #include "AnimicaWalletBackend.h"
+#include "WalletSecuritySettings.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include "../rpc/RpcSettings.h"
 
@@ -353,6 +354,10 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
     }
 
     m_lastError.clear();
+    if (WalletSecuritySettings::walletEncryptionEnabled()) {
+        lockWallet();
+        return true;
+    }
     emit walletUnlocked();
     resetAutoLock();
     return true;
@@ -360,7 +365,6 @@ bool WalletEngine::openWallet(const QString& walletFilePath)
 
 bool WalletEngine::unlockWallet(const QString& password)
 {
-    Q_UNUSED(password);
     if (!m_loaded) {
         m_lastError = "No wallet store is loaded.";
         emit error("No wallet store is loaded.");
@@ -370,6 +374,20 @@ bool WalletEngine::unlockWallet(const QString& password)
         m_lastError.clear();
         return true;
     }
+
+    if (WalletSecuritySettings::walletEncryptionEnabled()) {
+        if (!WalletSecuritySettings::hasTransferPassword()) {
+            m_lastError = "Wallet encryption is enabled, but no transfer password is configured.";
+            emit error(m_lastError);
+            return false;
+        }
+        if (!WalletSecuritySettings::verifyTransferPassword(password)) {
+            m_lastError = "Wallet password is incorrect.";
+            emit error(m_lastError);
+            return false;
+        }
+    }
+
     m_locked = false;
     if (!reloadAccounts(false)) {
         m_locked = true;
@@ -399,11 +417,28 @@ bool WalletEngine::isLoaded() const
 
 bool WalletEngine::changePassword(const QString& oldPassword, const QString& newPassword)
 {
-    Q_UNUSED(oldPassword);
-    Q_UNUSED(newPassword);
-    m_lastError = "Wallet encryption is not supported by the canonical Animica wallets.json store.";
-    emit error("Wallet encryption is not supported by the canonical Animica wallets.json store.");
-    return false;
+    if (newPassword.size() < WalletSecuritySettings::kMinPasswordLength) {
+        m_lastError = QString("Password must be at least %1 characters.")
+            .arg(WalletSecuritySettings::kMinPasswordLength);
+        emit error(m_lastError);
+        return false;
+    }
+
+    if (WalletSecuritySettings::hasTransferPassword()
+        && !WalletSecuritySettings::verifyTransferPassword(oldPassword)) {
+        m_lastError = "Current password is incorrect.";
+        emit error(m_lastError);
+        return false;
+    }
+
+    if (!WalletSecuritySettings::setTransferPassword(newPassword)) {
+        m_lastError = "Failed to update wallet password.";
+        emit error(m_lastError);
+        return false;
+    }
+
+    m_lastError.clear();
+    return true;
 }
 
 void WalletEngine::setAutoLockTimeout(int minutes)
