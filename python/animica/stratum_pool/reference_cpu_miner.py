@@ -148,7 +148,7 @@ def _fetch_json(url: str, *, timeout: float = 3.0) -> dict[str, Any]:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "animica-cpu-miner/0.1",
+            "User-Agent": "animica-cpu-miner/0.1.1",
         },
     )
     with urllib_request.urlopen(req, timeout=timeout) as resp:
@@ -891,7 +891,7 @@ class StratumCpuMiner:
         response = await self._call(
             "mining.subscribe",
             {
-                "agent": "animica-cpu-miner/0.1",
+                "agent": "animica-cpu-miner/0.1.1",
                 "features": {"framing": "lines"},
                 "algo": "hashshare",
             },

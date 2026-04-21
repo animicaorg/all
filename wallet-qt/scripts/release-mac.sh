@@ -224,7 +224,7 @@ main() {
         version="$(git describe --tags --exact-match)"
     else
         local base_version
-        base_version="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")"
+        base_version="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.1")"
         version="${base_version}-$(git rev-parse --short HEAD)"
     fi
 

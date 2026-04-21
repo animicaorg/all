@@ -248,7 +248,7 @@ cd "$REPO_ROOT"
 if git describe --tags --exact-match >/dev/null 2>&1; then
     VERSION="$(git describe --tags --exact-match)"
 else
-    VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")"
+    VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.1")"
     COMMIT="$(git rev-parse --short HEAD)"
     VERSION="${VERSION}-${COMMIT}"
 fi
