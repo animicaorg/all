@@ -112,7 +112,7 @@ def test_run_pool_rejects_invalid_mode() -> None:
         ],
     )
     assert result.exit_code == 2
-    assert "--mode must be either 'pps' or 'solo'" in result.output
+    assert "--mode must be one of 'pps', 'solo', or 'both'" in result.output
 
 
 def test_run_pool_sets_solo_mode(monkeypatch: Any) -> None:
@@ -140,6 +140,37 @@ def test_run_pool_sets_solo_mode(monkeypatch: Any) -> None:
     import os
 
     assert os.getenv("ANIMICA_POOL_MODE") == "solo"
+    os.environ.pop("ANIMICA_POOL_MODE", None)
+    os.environ.pop("ANIMICA_POOL_ADDRESS", None)
+
+
+def test_run_pool_sets_both_mode(monkeypatch: Any) -> None:
+    called = {}
+
+    def fake_main(argv: list[str] | None = None) -> None:
+        called["argv"] = argv
+
+    monkeypatch.setattr(mining.pool_cli, "main", fake_main)
+    result = runner.invoke(
+        mining.app,
+        [
+            "run-pool",
+            "--mode",
+            "both",
+            "--pool-address",
+            "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz",
+            "--rpc-url",
+            "http://127.0.0.1:8545/rpc",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["argv"] == []
+    assert "Payout mode: BOTH" in result.output
+    assert "Linux/macOS (PPS):" in result.output
+    assert "Linux/macOS (SOLO):" in result.output
+    import os
+
+    assert os.getenv("ANIMICA_POOL_MODE") == "both"
     os.environ.pop("ANIMICA_POOL_MODE", None)
     os.environ.pop("ANIMICA_POOL_ADDRESS", None)
 

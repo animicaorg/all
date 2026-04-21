@@ -341,6 +341,66 @@ async def test_solo_accounting_only_credits_blocks():
 
 
 @pytest.mark.asyncio
+async def test_both_mode_reports_per_miner_pool_mode():
+    job_manager = DummyJobManager()
+    metrics = PoolMetrics(
+        PoolConfig(db_url="", pool_mode="both"),
+        job_manager,
+        DummyServer(),
+    )
+    job = StratumJob(
+        job_id="job-both",
+        header={"number": 21},
+        share_target=1.0,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+    pps_session = Session(
+        session_id="pps-session",
+        writer=None,
+        worker="rig-pps",
+        address="anim1ppsminer",
+        pool_mode="pps",
+    )
+    solo_session = Session(
+        session_id="solo-session",
+        writer=None,
+        worker="rig-solo",
+        address="anim1solominer",
+        pool_mode="solo",
+    )
+
+    await metrics.record_share(
+        pps_session,
+        job,
+        submit_params={"d_ratio": 0.5, "_pool_mode": "pps"},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+    await metrics.record_share(
+        solo_session,
+        job,
+        submit_params={"d_ratio": 1.0, "_pool_mode": "solo"},
+        ok=True,
+        reason=None,
+        is_block=True,
+        tx_count=1,
+    )
+
+    miners = metrics.miners()
+    by_address = {item["address"]: item for item in miners["items"]}
+    assert by_address["anim1ppsminer"]["pool_mode"] == "pps"
+    assert by_address["anim1solominer"]["pool_mode"] == "solo"
+
+    pps_detail = metrics.miner_detail("anim1ppsminer")
+    solo_detail = metrics.miner_detail("anim1solominer")
+    assert pps_detail["pool_mode"] == "pps"
+    assert solo_detail["pool_mode"] == "solo"
+
+
+@pytest.mark.asyncio
 async def test_payout_debits_available_credit_and_tracks_due_amount():
     job_manager = DummyJobManager()
     metrics = PoolMetrics(

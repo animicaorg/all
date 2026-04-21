@@ -1,6 +1,7 @@
 #include "SendWidget.h"
 
 #include "TransactionMonitor.h"
+#include "WalletSecuritySettings.h"
 #include "WalletDatabase.h"
 #include "WalletEngine.h"
 #include "../rpc/AnimicaRpcClient.h"
@@ -14,6 +15,7 @@
 #include <QJsonDocument>
 #include <QHBoxLayout>
 #include <QJsonObject>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -296,6 +298,10 @@ void SendWidget::setAmount(double amount)
 void SendWidget::onSendClicked()
 {
     if (!validateInputs() || m_sendWatcher->isRunning()) {
+        return;
+    }
+
+    if (!authorizeTransferWithPassword()) {
         return;
     }
 
@@ -750,6 +756,33 @@ qint64 SendWidget::selectedMaxFee() const
         return qMax<qint64>(1, customFeeWei);
     }
     return m_feeEstimator->getGasPrice(currentFeeTier());
+}
+
+bool SendWidget::authorizeTransferWithPassword()
+{
+    if (!WalletSecuritySettings::requireTransferPasswordForSend()) {
+        return true;
+    }
+
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this,
+        "Transfer Password",
+        "Enter transfer password to send ANM:",
+        QLineEdit::Password,
+        QString(),
+        &ok
+    );
+    if (!ok) {
+        return false;
+    }
+
+    if (!WalletSecuritySettings::verifyTransferPassword(password)) {
+        showError("Authorization Failed", "Transfer password is incorrect.");
+        return false;
+    }
+
+    return true;
 }
 
 void SendWidget::updateFeeControls()

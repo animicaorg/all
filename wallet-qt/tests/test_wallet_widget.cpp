@@ -21,6 +21,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
+#include <QSettings>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -33,6 +34,9 @@ namespace {
 void configureBackendEnvironment()
 {
     qputenv("ANIMICA_REPO_ROOT", QByteArray(ANIMICA_REPO_ROOT_PATH));
+    QSettings settings;
+    settings.remove("WalletQt/security");
+    settings.sync();
 }
 
 QString isolatedTestRpcEndpoint()

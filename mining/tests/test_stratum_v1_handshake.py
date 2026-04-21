@@ -116,3 +116,50 @@ async def test_v1_handshake_and_submit_round_trip():
         writer.close()
         await writer.wait_closed()
         await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_v1_authorize_mode_hint_sets_session_mode_in_both_pool():
+    port = _free_port()
+    server = StratumServer(host="127.0.0.1", port=port, pool_mode="both")
+    await server.start()
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+    async def _send(obj):
+        writer.write((json.dumps(obj) + "\n").encode())
+        await writer.drain()
+
+    async def _recv(timeout: float = 2):
+        line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        assert line, "connection closed unexpectedly"
+        return json.loads(line.decode())
+
+    try:
+        await _send({"id": 1, "method": "mining.subscribe", "params": []})
+        await _recv()
+        while True:
+            try:
+                await _recv(timeout=0.1)
+            except TimeoutError:
+                break
+
+        await _send(
+            {
+                "id": 2,
+                "method": "mining.authorize",
+                "params": ["anim1v1rig.worker-test", "mode=solo"],
+            }
+        )
+        auth_res = await _recv()
+        auth_result = auth_res.get("result")
+        assert auth_result is True or (
+            isinstance(auth_result, dict) and auth_result.get("authorized")
+        )
+        snapshots = server.session_snapshots()
+        assert snapshots
+        assert snapshots[0]["pool_mode"] == "solo"
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await server.stop()

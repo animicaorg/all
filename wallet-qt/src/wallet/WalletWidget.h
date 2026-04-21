@@ -87,6 +87,7 @@ private:
     void probeRpcStatus();
     void setConnectionBanner(const QString& title, const QString& details);
     void clearConnectionBanner();
+    bool requestWalletPassword(QString& password);
     
     WalletEngine* m_engine;
     AnimicaRpcClient* m_rpcClient;
@@ -101,7 +102,6 @@ private:
     QLabel* m_connectionBannerDetails;
     QLabel* m_statusLabel;
     QLabel* m_balanceLabel;
-    QLabel* m_syncLabel;
     QLabel* m_rpcStatusLabel;
     QLabel* m_rpcEndpointLabel;
     QAction* m_retryConnectionAction;

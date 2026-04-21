@@ -6,7 +6,7 @@ from typing import Optional
 
 from animica.config import load_network_config
 
-VALID_POOL_MODES = {"pps", "solo"}
+VALID_POOL_MODES = {"pps", "solo", "both"}
 VALID_POOL_PROFILES = {"hashshare", "asic_sha256"}
 
 

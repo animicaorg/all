@@ -558,7 +558,7 @@ def run_pool(
     mode: str = typer.Option(
         "pps",
         "--mode",
-        help="Payout/accounting mode (pps|solo)",
+        help="Payout/accounting mode (pps|solo|both)",
         envvar=POOL_MODE_ENV,
     ),
     pool_address: Optional[str] = typer.Option(
@@ -661,19 +661,20 @@ def run_pool(
         envvar="ANIMICA_POOL_PROFILE",
     ),
 ) -> None:
-    """Start the Animica Stratum mining pool with validated PPS/SOLO settings.
+    """Start the Animica Stratum mining pool with validated PPS/SOLO/BOTH settings.
 
     Examples:
       animica miner run-pool --mode pps --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc
       animica miner run-pool --mode solo --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc
+      animica miner run-pool --mode both --pool-address anim1... --rpc-url http://127.0.0.1:8545/rpc
     """
     _ensure_network_env()
     runtime = _ensure_stratum_available()
 
     normalized_mode = str(mode or "").strip().lower()
-    if normalized_mode not in {"pps", "solo"}:
+    if normalized_mode not in {"pps", "solo", "both"}:
         typer.secho(
-            "Error: --mode must be either 'pps' or 'solo'.",
+            "Error: --mode must be one of 'pps', 'solo', or 'both'.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -794,6 +795,7 @@ def run_pool(
     mode_notes = {
         "pps": "PPS credits accepted shares immediately (deterministic per-share accounting).",
         "solo": "SOLO credits only accepted full blocks to the submitting miner.",
+        "both": "BOTH runs parallel PPS and SOLO accounting so miners can choose mode per connection.",
     }
     typer.echo(f"Stratum endpoint: {stratum_url}")
     typer.echo(f"Pool API: {api_url}")
@@ -817,16 +819,21 @@ def run_pool(
             if parsed.hostname and parsed.port
             else stratum_url
         )
-    typer.echo(
-        "  Linux/macOS: "
-        f"./animica-miner --pool-url {pool_url_for_examples} --address <anim1...> "
-        f"--worker worker-01 --threads 4 --pool-mode {resolved_cfg.pool_mode}"
+    example_modes = (
+        ["pps", "solo"] if resolved_cfg.pool_mode == "both" else [resolved_cfg.pool_mode]
     )
-    typer.echo(
-        "  Windows: "
-        f"animica-miner.exe --pool-url {pool_url_for_examples} --address <anim1...> "
-        f"--worker worker-01 --threads 4 --pool-mode {resolved_cfg.pool_mode}"
-    )
+    for example_mode in example_modes:
+        label = f" ({example_mode.upper()})" if resolved_cfg.pool_mode == "both" else ""
+        typer.echo(
+            "  Linux/macOS"
+            f"{label}: ./animica-miner --pool-url {pool_url_for_examples} --address <anim1...> "
+            f"--worker worker-01 --threads 4 --pool-mode {example_mode}"
+        )
+        typer.echo(
+            "  Windows"
+            f"{label}: animica-miner.exe --pool-url {pool_url_for_examples} --address <anim1...> "
+            f"--worker worker-01 --threads 4 --pool-mode {example_mode}"
+        )
 
     for key, value in env_overrides.items():
         if value is not None:

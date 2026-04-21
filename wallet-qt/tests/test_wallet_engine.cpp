@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -18,6 +19,9 @@ namespace {
 void configureBackendEnvironment()
 {
     qputenv("ANIMICA_REPO_ROOT", QByteArray(ANIMICA_REPO_ROOT_PATH));
+    QSettings settings;
+    settings.remove("WalletQt/security");
+    settings.sync();
 }
 
 WalletEngine* makeEngine(AnimicaRpcClient& rpcClient, QObject* parent = nullptr)
@@ -309,6 +313,7 @@ private slots:
         QCOMPARE(root.value("version").toInt(), 2);
         QVERIFY(root.value("wallets").toArray().isEmpty());
     }
+
 };
 
 QTEST_MAIN(TestWalletEngine)

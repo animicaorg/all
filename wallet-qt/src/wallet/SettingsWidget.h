@@ -7,6 +7,7 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QCheckBox;
 class QSpinBox;
 
 class SettingsWidget : public QWidget
@@ -24,11 +25,14 @@ private slots:
     void onDefaultsClicked();
     void onExportClicked();
     void onImportClicked();
+    void onSetTransferPasswordClicked();
+    void onClearTransferPasswordClicked();
     void updateEffectiveConfig();
 
 private:
     void load();
     bool validate(QString& errorMessage) const;
+    void refreshSecurityState();
 
     QString m_walletFilePath;
     QString m_dataDir;
@@ -39,11 +43,16 @@ private:
     QSpinBox* m_timeoutSpin;
     QLabel* m_walletFileLabel;
     QLabel* m_dataDirLabel;
+    QLabel* m_transferPasswordStatusLabel;
+    QCheckBox* m_requireTransferPasswordCheck;
+    QCheckBox* m_encryptWalletCheck;
     QPlainTextEdit* m_effectiveConfigEdit;
     QPushButton* m_saveButton;
     QPushButton* m_defaultsButton;
     QPushButton* m_exportButton;
     QPushButton* m_importButton;
+    QPushButton* m_setTransferPasswordButton;
+    QPushButton* m_clearTransferPasswordButton;
 };
 
 #endif // SETTINGSWIDGET_H

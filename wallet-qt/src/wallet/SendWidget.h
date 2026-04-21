@@ -110,6 +110,7 @@ private:
     QString getCurrentAccountAddress() const;
     qint64 getAvailableBalance() const;
     qint64 selectedMaxFee() const;
+    bool authorizeTransferWithPassword();
     void updateFeeControls();
     FeeEstimator::FeeTier currentFeeTier() const;
     

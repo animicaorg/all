@@ -11,6 +11,7 @@
     "apps/miner-dashboard",
     "apps/dapp-ide",
     "apps/admin-web",
+    "apps/animica-tokens",
     "apps/banm-bridge-web",
     "apps/banm-bridge-admin",
     "evm/banm-bridge",

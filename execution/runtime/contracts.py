@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 DEFAULT_INTRINSIC_CALL = 21_000
 DEFAULT_INTRINSIC_DEPLOY = 53_000
 ADDRESS_LEN = 32
+MAX_INTERCALL_DEPTH = 16
 
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
@@ -890,9 +891,27 @@ def _execute_contract_method(
     method_name: str,
     method_args: List[Any],
     read_only: bool,
+    sender: bytes,
+    origin: bytes,
+    call_value: int,
+    chain_id: int,
+    tx_hash: bytes,
+    block_height: int,
+    block_timestamp: int,
+    depth: int,
+    max_depth: int = MAX_INTERCALL_DEPTH,
 ) -> Any:
     try:
         from vm_py.runtime.loader import run_call as vm_run_call  # type: ignore
+        from vm_py.runtime import abi as vm_abi  # type: ignore
+        try:
+            from vm_py.runtime import sandbox as vm_sandbox  # type: ignore
+
+            install_proxy = getattr(vm_sandbox, "install_stdlib_proxy", None)
+            if callable(install_proxy):
+                install_proxy(overwrite=True)
+        except Exception:
+            pass
     except Exception as exc:
         raise ContractCallError(
             "vm_py runtime unavailable for contract execution",
@@ -900,10 +919,120 @@ def _execute_contract_method(
             data={"error": str(exc)},
         ) from exc
 
+    if depth < 0:
+        raise ContractCallError("invalid call depth", code="CALL_DEPTH_INVALID")
+    if depth > max_depth:
+        raise ContractCallError(
+            "maximum call depth exceeded",
+            code="CALL_DEPTH_EXCEEDED",
+            data={"depth": depth, "max_depth": max_depth},
+        )
+
     runtime_manifest = _manifest_for_runtime_execution(manifest_obj, code_bytes)
+
+    def _inter_contract_call(
+        target: bytes,
+        target_method: str,
+        target_args: Any,
+        value_amount: int,
+        force_read_only: bool,
+    ) -> Any:
+        nested_read_only = bool(read_only or force_read_only)
+        nested_depth = depth + 1
+        if nested_depth > max_depth:
+            raise ContractCallError(
+                "maximum call depth exceeded",
+                code="CALL_DEPTH_EXCEEDED",
+                data={"depth": nested_depth, "max_depth": max_depth},
+            )
+        if value_amount < 0:
+            raise ContractCallError("negative call value", code="CALL_VALUE_INVALID")
+        if nested_read_only and value_amount:
+            raise ContractCallError(
+                "cannot transfer value in read-only call",
+                code="CALL_VALUE_READ_ONLY",
+            )
+
+        target_addr = _as_bytes(target, expect_len=ADDRESS_LEN)
+        if not any(target_addr):
+            raise ContractCallError("inter-contract call missing target", code="CALL_TO_MISSING")
+        manifest_child, code_child = _load_contract_from_state(state, target_addr)
+
+        call_args: List[Any]
+        if target_args is None:
+            call_args = []
+        elif isinstance(target_args, list):
+            call_args = list(target_args)
+        elif isinstance(target_args, tuple):
+            call_args = list(target_args)
+        else:
+            call_args = [target_args]
+
+        snap = _take_state_snapshot(state)
+        try:
+            if value_amount > 0:
+                # Move native value atomically with child-call state; snapshot will
+                # roll this back if execution fails.
+                _debit_balance(
+                    state,
+                    contract_addr,
+                    value_amount,
+                    reason="CONTRACT_INTERNAL_CALL_VALUE_DEBIT",
+                    tx_hash=None,
+                    height=block_height or None,
+                )
+                _credit_balance(
+                    state,
+                    target_addr,
+                    value_amount,
+                    reason="CONTRACT_INTERNAL_CALL_VALUE_CREDIT",
+                    tx_hash=None,
+                    height=block_height or None,
+                )
+
+            return _execute_contract_method(
+                state=state,
+                contract_addr=target_addr,
+                manifest_obj=manifest_child,
+                code_bytes=code_child,
+                method_name=target_method,
+                method_args=call_args,
+                read_only=nested_read_only,
+                sender=contract_addr,
+                origin=origin,
+                call_value=value_amount,
+                chain_id=chain_id,
+                tx_hash=tx_hash,
+                block_height=block_height,
+                block_timestamp=block_timestamp,
+                depth=nested_depth,
+                max_depth=max_depth,
+            )
+        except Exception:
+            _revert_state_snapshot(state, snap)
+            raise
+
+    ctx = vm_abi.CallContext(
+        sender=bytes(sender),
+        origin=bytes(origin),
+        contract=bytes(contract_addr),
+        value=max(0, int(call_value)),
+        chain_id=max(0, int(chain_id)),
+        tx_hash=bytes(tx_hash),
+        block_height=max(0, int(block_height)),
+        block_timestamp=max(0, int(block_timestamp)),
+        depth=max(0, int(depth)),
+        read_only=bool(read_only),
+    )
+
     try:
-        with _StateStoragePatch(state, contract_addr, read_only=read_only):
-            out = vm_run_call(dict(runtime_manifest), method_name, list(method_args))
+        with vm_abi.runtime_context(ctx):
+            vm_abi.push_call_hook(_inter_contract_call)
+            try:
+                with _StateStoragePatch(state, contract_addr, read_only=read_only):
+                    out = vm_run_call(dict(runtime_manifest), method_name, list(method_args))
+            finally:
+                vm_abi.pop_call_hook()
     except Exception as exc:
         raise ContractCallError(
             "contract execution failed",
@@ -953,6 +1082,7 @@ def simulate_call(
     manifest_obj, code_bytes = _load_contract_from_state(state, contract_addr)
     abi_obj = manifest_obj.get("abi")
     method_name, method_args = _decode_call_data(abi_obj, calldata)
+    sender_addr = _as_bytes(sender, expect_len=ADDRESS_LEN) if sender is not None else b"\x00" * ADDRESS_LEN
     result = _execute_contract_method(
         state=state,
         contract_addr=contract_addr,
@@ -961,6 +1091,14 @@ def simulate_call(
         method_name=method_name,
         method_args=method_args,
         read_only=True,
+        sender=sender_addr,
+        origin=sender_addr,
+        call_value=0,
+        chain_id=0,
+        tx_hash=b"",
+        block_height=0,
+        block_timestamp=0,
+        depth=0,
     )
     return _encode_return_data(abi_obj, method_name, result)
 
@@ -976,11 +1114,25 @@ def _apply_deploy_vm(state: Any, tx: Any, sender: bytes, chain_id: int) -> tuple
     return contract_addr, "0x" + contract_addr.hex()
 
 
-def _apply_call_vm(state: Any, tx: Any, sender: bytes) -> Any:
+def _apply_call_vm(
+    state: Any,
+    tx: Any,
+    sender: bytes,
+    *,
+    chain_id: int,
+    tx_hash: bytes,
+    block_height: int,
+    block_timestamp: int,
+) -> Any:
     contract_addr, calldata = _extract_call_payload(tx)
     manifest_obj, code_bytes = _load_contract_from_state(state, contract_addr)
     abi_obj = manifest_obj.get("abi")
     method_name, method_args = _decode_call_data(abi_obj, calldata)
+    payload = _extract_payload_value(tx)
+    call_value = _as_int(
+        _get(payload, "value", default=_get(tx, "value", "amount")),
+        default=0,
+    )
     return _execute_contract_method(
         state=state,
         contract_addr=contract_addr,
@@ -989,6 +1141,14 @@ def _apply_call_vm(state: Any, tx: Any, sender: bytes) -> Any:
         method_name=method_name,
         method_args=method_args,
         read_only=False,
+        sender=sender,
+        origin=sender,
+        call_value=max(0, int(call_value)),
+        chain_id=max(0, int(chain_id)),
+        tx_hash=bytes(tx_hash),
+        block_height=max(0, int(block_height)),
+        block_timestamp=max(0, int(block_timestamp)),
+        depth=0,
     )
 
 
@@ -1164,7 +1324,17 @@ def apply_call(
 
     state_snap = _take_state_snapshot(state)
     try:
-        _apply_call_vm(state=state, tx=tx, sender=sender)
+        _apply_call_vm(
+            state=state,
+            tx=tx,
+            sender=sender,
+            chain_id=_as_int(getattr(block_env, "chain_id", 0)),
+            tx_hash=_as_bytes(tx_hash_hex or "", expect_len=32)
+            if tx_hash_hex
+            else b"",
+            block_height=_as_int(getattr(block_env, "height", 0)),
+            block_timestamp=_as_int(getattr(block_env, "timestamp", 0)),
+        )
         _increment_nonce(state, sender)
         return ApplyResult(
             status=TxStatus.SUCCESS,

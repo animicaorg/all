@@ -132,6 +132,7 @@ set(HEADERS
     src/wallet/TransactionHistoryWidget.h
     src/wallet/FeeEstimator.h
     src/wallet/SendWidget.h
+    src/wallet/WalletSecuritySettings.h
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
     src/wallet/ReceiveQrService.h
