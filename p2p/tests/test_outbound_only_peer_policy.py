@@ -237,3 +237,44 @@ async def test_block_announce_forfeited_from_outbound_only_peer(
     assert node._is_outbound_only_blocklisted(
         peer_id=peer.peer_id, remote=peer.remote
     )
+
+
+@pytest.mark.asyncio
+async def test_dial_skips_outbound_only_blocklisted_peer_before_connect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY", "true")
+    monkeypatch.setenv("ANIMICA_P2P_OUTBOUND_ONLY_BAN_TTL", "60")
+
+    deps_sync, deps = _make_deps(tmp_path, "outbound-only-dial-skip")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "outbound-only-dial-skip" / "p2p"),
+    )
+
+    target = "tcp://198.51.100.15:30333"
+    node._mark_outbound_only_blocklisted(
+        peer_id=None,
+        remote=target,
+        reason="test_no_inbound",
+    )
+
+    dial_called = False
+
+    async def _unexpected_dial(*_args, **_kwargs):
+        nonlocal dial_called
+        dial_called = True
+        raise AssertionError("transport.dial should not be called")
+
+    monkeypatch.setattr(node._transport, "dial", _unexpected_dial)
+
+    node._dial_inflight.add(node._addr_key(target))
+    ok = await node._dial(target)
+
+    assert ok is False
+    assert dial_called is False
+    assert node._addr_key(target) not in node._dial_inflight
+    assert node._stats["dial_skipped_outbound_only"] >= 1
