@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ HOST_PREFIX = {
     "macos": "darwin",
     "windows": "win32",
 }
+REQUIRED_RUNTIME_MODULES = ("PySide6", "requests")
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +55,7 @@ def main() -> int:
     )
 
     if not args.skip_build:
+        ensure_runtime_modules_installed()
         run_pyinstaller()
 
     if args.target == "linux":
@@ -92,6 +95,18 @@ def write_version() -> None:
         ],
         cwd=APP_ROOT,
         check=True,
+    )
+
+
+def ensure_runtime_modules_installed() -> None:
+    missing = [name for name in REQUIRED_RUNTIME_MODULES if importlib.util.find_spec(name) is None]
+    if not missing:
+        return
+    missing_str = ", ".join(missing)
+    raise SystemExit(
+        "Packaging environment is missing required runtime modules: "
+        f"{missing_str}. Install them with:\n"
+        "  pip install -e 'apps/animica_studio[dev,package]'"
     )
 
 
