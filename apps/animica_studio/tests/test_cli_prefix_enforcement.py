@@ -6,6 +6,7 @@ import pytest
 
 from animica_studio.services import job_runner
 from animica_studio.services.job_runner import ResolvedCli, run_cli_blocking
+from animica_studio.storage.config import Config
 
 
 def test_run_cli_prefixes_resolved_animica(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,3 +66,23 @@ def test_static_guard_no_direct_spawn_outside_runner() -> None:
             offenders.append(str(py.relative_to(root)))
 
     assert offenders == [], f"Direct process spawning found outside job_runner: {offenders}"
+
+
+def test_resolve_animica_cli_finds_repo_venv_scripts_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / ".venv" / "Scripts"
+    scripts_dir.mkdir(parents=True)
+    cli = scripts_dir / "animica.exe"
+    cli.write_text("fake cli", encoding="utf-8")
+    cli.chmod(0o755)
+
+    cfg = Config(repo_root=str(tmp_path), use_repo_venv_automatically=True)
+
+    monkeypatch.setattr(job_runner, "_venv_scripts_dir", lambda _repo_root: scripts_dir)
+    monkeypatch.setattr(job_runner, "_animica_candidate_names", lambda: ["animica.exe"])
+    monkeypatch.setattr(job_runner, "_python_candidate_names", lambda: ["python.exe"])
+    monkeypatch.setattr(job_runner.shutil, "which", lambda _name: None)
+
+    resolved = job_runner.resolve_animica_cli(cfg)
+
+    assert resolved.argv_prefix == [str(cli.resolve())]
+    assert "Scripts" in resolved.env.get("PATH", "")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -87,19 +88,91 @@ class ResolvedCli:
 
 
 def _is_executable_file(path: Path) -> bool:
-    return path.exists() and path.is_file() and os.access(path, os.X_OK)
+    if not path.exists() or not path.is_file():
+        return False
+    if os.name == "nt":
+        suffix = path.suffix.lower()
+        if suffix in {".exe", ".cmd", ".bat", ".com"}:
+            return True
+    return os.access(path, os.X_OK)
 
 
 def _norm(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
 
 
+def _venv_scripts_dir(repo_root: Path) -> Path:
+    return repo_root / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+
+
+def _animica_candidate_names() -> list[str]:
+    if os.name == "nt":
+        return ["animica.exe", "animica.cmd", "animica.bat", "animica"]
+    return ["animica"]
+
+
+def _python_candidate_names() -> list[str]:
+    if os.name == "nt":
+        return ["python.exe", "python"]
+    return ["python"]
+
+
+def _first_executable_path(candidates: list[Path], attempted: list[str]) -> str | None:
+    for candidate in candidates:
+        attempted.append(str(candidate))
+        if _is_executable_file(candidate):
+            return _norm(candidate)
+    return None
+
+
+def _packaged_cli_candidates() -> list[Path]:
+    roots: list[Path] = []
+    try:
+        roots.append(Path(sys.executable).resolve().parent)
+    except Exception:  # noqa: BLE001
+        pass
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(str(meipass)))
+
+    rel_dirs = [
+        Path("."),
+        Path("bin"),
+        Path("node"),
+        Path("node") / "bin",
+        Path("node") / "venv" / "bin",
+        Path("node") / "venv" / "Scripts",
+        Path("resources") / "node" / "venv" / "bin",
+        Path("resources") / "node" / "venv" / "Scripts",
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        for rel in rel_dirs:
+            base = (root / rel).resolve()
+            for name in _animica_candidate_names():
+                candidate = base / name
+                key = str(candidate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(candidate)
+    return out
+
+
+def _repo_cli_candidates(repo_root: Path) -> list[Path]:
+    out = [repo_root / name for name in _animica_candidate_names()]
+    if os.name != "nt":
+        out.append(repo_root / "animica")
+    return out
+
+
 def _venv_env(repo_root: Path) -> dict[str, str]:
-    venv = repo_root / '.venv'
-    venv_bin = venv / 'bin'
-    existing_path = os.environ.get('PATH', '')
-    merged_path = f"{venv_bin}:{existing_path}" if existing_path else str(venv_bin)
-    return {'VIRTUAL_ENV': str(venv), 'PATH': merged_path}
+    venv = repo_root / ".venv"
+    scripts_dir = _venv_scripts_dir(repo_root)
+    existing_path = os.environ.get("PATH", "")
+    merged_path = f"{scripts_dir}{os.pathsep}{existing_path}" if existing_path else str(scripts_dir)
+    return {"VIRTUAL_ENV": str(venv), "PATH": merged_path}
 
 
 def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
@@ -114,13 +187,18 @@ def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
             log.info('CLI resolved to: %s (settings override)', cli)
             return ResolvedCli(argv_prefix=[cli], env={})
 
-    found = shutil.which('animica')
-    if found:
-        attempted.append(found)
-    if found:
-        cli = _norm(found)
-        log.info('CLI resolved to: %s (PATH)', cli)
-        return ResolvedCli(argv_prefix=[cli], env={})
+    for program_name in _animica_candidate_names():
+        found = shutil.which(program_name)
+        if found:
+            attempted.append(found)
+            cli = _norm(found)
+            log.info("CLI resolved to: %s (PATH)", cli)
+            return ResolvedCli(argv_prefix=[cli], env={})
+
+    packaged_cli = _first_executable_path(_packaged_cli_candidates(), attempted)
+    if packaged_cli:
+        log.info("CLI resolved to: %s (packaged runtime)", packaged_cli)
+        return ResolvedCli(argv_prefix=[packaged_cli], env={})
 
     repo_root: Path | None = Path(cfg.repo_root).expanduser().resolve() if cfg.repo_root else None
     if repo_root is None or not repo_root.exists():
@@ -130,32 +208,46 @@ def resolve_animica_cli(cfg: Config | None = None) -> ResolvedCli:
             save_config(cfg)
             repo_root = discovered
 
+    if repo_root is not None:
+        repo_cli = _first_executable_path(_repo_cli_candidates(repo_root), attempted)
+        if repo_cli:
+            log.info("CLI resolved to: %s (repo root)", repo_cli)
+            return ResolvedCli(argv_prefix=[repo_cli], env={}, repo_root=str(repo_root))
+
     if repo_root and cfg.use_repo_venv_automatically:
-        venv_bin = repo_root / '.venv' / 'bin'
-        venv_cli = venv_bin / 'animica'
-        venv_python = venv_bin / 'python'
-        attempted.extend([str(venv_cli), str(venv_python)])
+        scripts_dir = _venv_scripts_dir(repo_root)
+        venv_cli_candidates = [scripts_dir / name for name in _animica_candidate_names()]
+        venv_python_candidates = [scripts_dir / name for name in _python_candidate_names()]
         env = _venv_env(repo_root)
-        if _is_executable_file(venv_cli):
-            cli = str(venv_cli)
-            log.info('CLI resolved to: %s (repo .venv bin)', cli)
+        cli = _first_executable_path(venv_cli_candidates, attempted)
+        if cli:
+            log.info("CLI resolved to: %s (repo .venv scripts)", cli)
             return ResolvedCli(argv_prefix=[cli], env=env, repo_root=str(repo_root))
-        if _is_executable_file(venv_python):
-            cli = str(venv_python)
-            log.info('CLI resolved to: %s -m animica (repo .venv python)', cli)
+        python_bin = _first_executable_path(venv_python_candidates, attempted)
+        if python_bin:
+            cli = str(python_bin)
+            log.info("CLI resolved to: %s -m animica (repo .venv python)", cli)
             return ResolvedCli(argv_prefix=[cli, '-m', 'animica'], env=env, repo_root=str(repo_root))
 
         err = 'Animica CLI not found. Install it or configure its path in Settings.'
-        log.warning('Animica CLI resolution failed (repo .venv enabled). attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
+        log.warning(
+            "Animica CLI resolution failed (repo .venv enabled). attempted_paths=%s repo_root=%s",
+            attempted,
+            repo_root,
+        )
         return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err, attempted_paths=attempted)
 
     if repo_root and not cfg.use_repo_venv_automatically:
         err = 'Animica CLI not found. Install it or configure its path in Settings.'
-        log.warning('Animica CLI resolution failed (repo .venv disabled). attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
+        log.warning(
+            "Animica CLI resolution failed (repo .venv disabled). attempted_paths=%s repo_root=%s",
+            attempted,
+            repo_root,
+        )
         return ResolvedCli(argv_prefix=[], env={}, repo_root=str(repo_root), error=err, attempted_paths=attempted)
 
     err = 'Animica CLI not found. Install it or configure its path in Settings.'
-    log.warning('Animica CLI resolution failed. attempted_paths=%s which=%s repo_root=%s', attempted, found, repo_root)
+    log.warning("Animica CLI resolution failed. attempted_paths=%s repo_root=%s", attempted, repo_root)
     return ResolvedCli(
         argv_prefix=[],
         env={},
@@ -192,7 +284,7 @@ def _is_program_like_token(token: str) -> bool:
     if not normalized:
         return False
     leaf = Path(normalized).name.lower()
-    if leaf == "animica":
+    if leaf in {"animica", "animica.exe", "animica.cmd", "animica.bat"}:
         return True
     candidate = Path(normalized).expanduser()
     return candidate.is_absolute() or any(sep in normalized for sep in ("/", "\\"))

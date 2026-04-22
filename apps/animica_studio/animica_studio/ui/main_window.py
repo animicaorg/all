@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from animica_studio.models.profile_models import RpcProfile
+from animica_studio.models.profile_models import ProfileType, RpcProfile
 from animica_studio.services.ena_automation_service import EnaService
 from animica_studio.services.ena_contribution_engine import EnaContributionConfig, EnaContributionEngine
 from animica_studio.services.ena_full_auto_engine import EnaFullAutoEngine
@@ -29,6 +29,7 @@ from animica_studio.services.profile_service import ProfileService
 from animica_studio.services.settings_service import SettingsService
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.services.studio_status_service import StudioStatusService
+from animica_studio.services.workers import run_in_threadpool
 from animica_studio.storage.config import Config
 from animica_studio.ui.components.primitives import Toast
 from animica_studio.ui.pages.aicf_page import AicfPage
@@ -61,6 +62,69 @@ class _NavEntry(NamedTuple):
     icon: str
     page_factory: Callable[[], QWidget]
     visible: bool = True
+
+
+def _startup_runtime_bootstrap(
+    config: Config,
+    profile_service: ProfileService,
+    status_service: StudioStatusService,
+) -> dict[str, object]:
+    """Probe CLI availability and auto-start local node profiles on startup."""
+    from animica_studio.services.cli_capabilities import refresh_cli_registry  # noqa: PLC0415
+    from animica_studio.services.job_runner import resolve_animica_cli  # noqa: PLC0415
+
+    result: dict[str, object] = {
+        "cli_ok": False,
+        "cli_error": "",
+        "cli_path": "",
+        "cli_registry_refreshed": False,
+        "profile_type": "",
+        "node_rpc_before": None,
+        "node_running_before": None,
+        "node_start_attempted": False,
+        "node_start_ok": False,
+        "node_start_detail": "",
+        "node_start_skipped": "",
+        "node_rpc_after": None,
+        "node_running_after": None,
+    }
+
+    resolved = resolve_animica_cli(config)
+    result["cli_ok"] = bool(resolved.argv_prefix)
+    result["cli_error"] = str(resolved.error or "")
+    result["cli_path"] = " ".join(resolved.argv_prefix)
+
+    if resolved.argv_prefix:
+        try:
+            refresh_cli_registry(config)
+            result["cli_registry_refreshed"] = True
+        except Exception as exc:  # noqa: BLE001
+            result["cli_error"] = str(exc)
+
+    profile = profile_service.get_active()
+    result["profile_type"] = profile.type.value
+    if profile.type != ProfileType.LOCAL_NODE:
+        return result
+
+    node_before = status_service.collect_node_summary()
+    result["node_rpc_before"] = bool(node_before.rpc_reachable)
+    result["node_running_before"] = bool(node_before.running)
+    if node_before.rpc_reachable:
+        return result
+
+    if not bool(result["cli_ok"]):
+        result["node_start_skipped"] = "cli_unavailable"
+        return result
+
+    result["node_start_attempted"] = True
+    start_result = status_service.start_node()
+    result["node_start_ok"] = bool(start_result.ok)
+    detail = start_result.details or start_result.summary or ""
+    result["node_start_detail"] = detail
+    node_after = status_service.collect_node_summary()
+    result["node_rpc_after"] = bool(node_after.rpc_reachable)
+    result["node_running_after"] = bool(node_after.running)
+    return result
 
 
 class MainWindow(QMainWindow):
@@ -105,6 +169,7 @@ class MainWindow(QMainWindow):
         self._last_actual_chain_id: int | None = None
         self._last_sync_sample_height: int | None = None
         self._last_sync_sample_ts: float | None = None
+        self._startup_bootstrap_job = None
 
         self.setWindowTitle("Animica Studio")
         self.resize(1280, 820)
@@ -529,7 +594,46 @@ class MainWindow(QMainWindow):
             self.show_startup_degraded_banner("Safe mode enabled")
             return
         self._health_timer.start(_HEALTH_INTERVAL_MS)
+        QTimer.singleShot(200, self._run_startup_runtime_bootstrap)
         QTimer.singleShot(1200, self._trigger_health_check)
+
+    @safe_slot(log)
+    def _run_startup_runtime_bootstrap(self) -> None:
+        if self._startup_bootstrap_job is not None:
+            return
+        self._startup_bootstrap_job = run_in_threadpool(
+            _startup_runtime_bootstrap,
+            self._config,
+            self._profile_service,
+            self._status_service,
+        )
+        self._startup_bootstrap_job.signals.result.connect(self._on_startup_runtime_bootstrap_result)
+        self._startup_bootstrap_job.signals.error.connect(self._on_startup_runtime_bootstrap_error)
+        self._startup_bootstrap_job.signals.finished.connect(lambda: setattr(self, "_startup_bootstrap_job", None))
+
+    @safe_slot(log)
+    def _on_startup_runtime_bootstrap_result(self, result: dict[str, object]) -> None:
+        profile_type = str(result.get("profile_type") or "")
+        cli_missing_local = not bool(result.get("cli_ok")) and profile_type == ProfileType.LOCAL_NODE.value
+        if cli_missing_local:
+            detail = str(result.get("cli_error") or "Animica CLI not found. Configure CLI path in Settings.")
+            self._toast(f"Animica CLI unavailable at startup. {detail}")
+
+        if bool(result.get("node_start_attempted")) and not bool(result.get("node_start_ok")):
+            detail = str(result.get("node_start_detail") or "Node did not start.")
+            self._toast(f"Local node failed to start. {detail}")
+        elif result.get("node_start_skipped") == "cli_unavailable" and not cli_missing_local:
+            self._toast("Local node did not auto-start because Animica CLI is unavailable.")
+
+        self._dashboard_page.refresh_snapshot()
+        self._node_page.refresh_status()
+        self._wallet_page.refresh_wallets()
+        self._trigger_health_check()
+
+    @safe_slot(log)
+    def _on_startup_runtime_bootstrap_error(self, message: str, _traceback: str) -> None:
+        log.error("Startup runtime bootstrap failed: %s", message)
+        self.show_startup_degraded_banner("Startup runtime checks failed.")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._health_timer.stop()
