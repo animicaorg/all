@@ -1,156 +1,259 @@
 from __future__ import annotations
 
 """
-Deploy & preflight models.
+Deploy and preflight models.
 
-- DeployRequest/DeployResponse:
-    Accepts a SIGNED CBOR transaction (hex) and optionally waits for a receipt
-    after relaying it to the node RPC.
-
-- PreflightRequest/PreflightResponse:
-    Offline compile (no signing) of a Python-VM contract package to estimate
-    deploy gas and compute a stable code hash before creating a real tx.
-
-Notes
------
-These models intentionally avoid over-specifying receipt/block structures
-returned by arbitrary nodes; we surface minimally-typed dictionaries when
-needed and rely on adapters to normalize further.
+These models are intentionally backward-compatible with older request/response
+shapes used by studio-web and tests.
 """
 
 from typing import Any, Dict, List, Optional
 
 try:
     # Pydantic v2
-    from pydantic import BaseModel, Field, PositiveInt, conint
+    from pydantic import BaseModel, Field, PositiveInt, model_validator
 except Exception:  # pragma: no cover - v1 fallback
-    from pydantic.v1 import BaseModel, Field, PositiveInt  # type: ignore
-    from pydantic.v1.types import conint  # type: ignore
+    from pydantic.v1 import BaseModel, Field, PositiveInt, root_validator  # type: ignore
 
-from .common import Address, ChainId, Hash, Hex
-
-# ---------------------------------------------------------------------------
-# /deploy
-# ---------------------------------------------------------------------------
+from .common import Address, ChainId, Hash
 
 
 class DeployRequest(BaseModel):
     """
-    Relay a **signed** CBOR transaction to the node RPC.
+    Relay a signed transaction payload to the node RPC.
 
-    Fields
-    ------
-    chain_id: ChainId
-        Target chain id; validated early to prevent mis-sends.
-    from_address: Address
-        Sender address for bookkeeping/UX (the tx is already signed; this is informational).
-    raw_tx: Hex
-        0x-prefixed hex of the signed CBOR transaction bytes.
-    await_receipt: bool
-        If True, block until the transaction is included or timeout expires.
-    timeout_ms: Optional[int]
-        Max time to wait for the receipt when `await_receipt=True`. Defaults to server policy.
+    Accepted tx field aliases (input):
+    - raw_tx (canonical)
+    - rawTx
+    - tx
+    - signed_tx_hex
+    - tx_cbor
+
+    Accepted wait aliases:
+    - await_receipt (canonical)
+    - wait_for_receipt
+    - wait
+    - awaitReceipt
     """
 
-    chain_id: ChainId = Field(..., description="Target chain id.")
-    from_address: Address = Field(
-        ..., alias="from", description="Sender address (informational)."
+    chain_id: Optional[ChainId] = Field(default=None, description="Target chain id.")
+    from_address: Optional[Address] = Field(
+        default=None,
+        alias="from",
+        description="Sender address (informational).",
     )
-    raw_tx: Hex = Field(..., description="Signed CBOR transaction bytes (0x-hex).")
+    raw_tx: str = Field(..., description="Signed transaction bytes encoded as hex.")
     await_receipt: bool = Field(
-        default=True,
+        default=False,
         description="If true, wait for inclusion and return receipt when available.",
     )
-    timeout_ms: Optional[conint(ge=1, le=10_0000)] = Field(  # up to ~100s
-        default=None, description="Client-provided wait timeout (milliseconds)."
+    timeout_ms: int = Field(
+        default=60_000,
+        ge=1,
+        le=600_000,
+        description="Max wait time for receipt in milliseconds.",
+    )
+    poll_interval_ms: int = Field(
+        default=1_000,
+        ge=10,
+        le=60_000,
+        description="Polling interval when waiting for receipt.",
+    )
+
+    @staticmethod
+    def _normalize_hex(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("raw_tx must be a hex string")
+        v = value.strip()
+        if not v:
+            raise ValueError("raw_tx is required")
+        if v.startswith("0x") or v.startswith("0X"):
+            v = v[2:]
+        if not v:
+            raise ValueError("raw_tx is required")
+        if len(v) % 2 != 0:
+            raise ValueError("raw_tx must have even hex length")
+        try:
+            int(v, 16)
+        except Exception as e:
+            raise ValueError("raw_tx must be valid hex") from e
+        return "0x" + v.lower()
+
+    if "model_validator" in globals():
+
+        @model_validator(mode="before")
+        @classmethod
+        def _coerce_aliases(cls, data: Any) -> Any:  # type: ignore[override]
+            if not isinstance(data, dict):
+                return data
+            out = dict(data)
+
+            if "raw_tx" not in out:
+                for k in ("rawTx", "tx", "signed_tx_hex", "tx_cbor"):
+                    if out.get(k) is not None:
+                        out["raw_tx"] = out[k]
+                        break
+
+            if "await_receipt" not in out:
+                for k in ("wait_for_receipt", "wait", "awaitReceipt"):
+                    if k in out:
+                        out["await_receipt"] = out[k]
+                        break
+
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+
+            if "timeout_ms" not in out:
+                for k in ("timeoutMs",):
+                    if k in out:
+                        out["timeout_ms"] = out[k]
+                        break
+
+            if "poll_interval_ms" not in out:
+                for k in ("pollIntervalMs",):
+                    if k in out:
+                        out["poll_interval_ms"] = out[k]
+                        break
+
+            if "from_address" not in out and "from" in out:
+                out["from_address"] = out["from"]
+
+            return out
+
+        @model_validator(mode="after")
+        def _normalize(self) -> "DeployRequest":  # type: ignore[override]
+            self.raw_tx = self._normalize_hex(self.raw_tx)
+            return self
+
+    else:  # pragma: no cover - pydantic v1 fallback
+
+        @root_validator(pre=True)
+        def _coerce_aliases_v1(cls, values: Dict[str, Any]) -> Dict[str, Any]:  # type: ignore[override]
+            out = dict(values or {})
+            if "raw_tx" not in out:
+                for k in ("rawTx", "tx", "signed_tx_hex", "tx_cbor"):
+                    if out.get(k) is not None:
+                        out["raw_tx"] = out[k]
+                        break
+            if "await_receipt" not in out:
+                for k in ("wait_for_receipt", "wait", "awaitReceipt"):
+                    if k in out:
+                        out["await_receipt"] = out[k]
+                        break
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+            if "timeout_ms" not in out and "timeoutMs" in out:
+                out["timeout_ms"] = out["timeoutMs"]
+            if "poll_interval_ms" not in out and "pollIntervalMs" in out:
+                out["poll_interval_ms"] = out["pollIntervalMs"]
+            if "from_address" not in out and "from" in out:
+                out["from_address"] = out["from"]
+            if "raw_tx" in out:
+                out["raw_tx"] = cls._normalize_hex(out["raw_tx"])
+            return out
+
+    class Config:  # type: ignore[override]
+        populate_by_name = True
+        extra = "ignore"
+
+
+class DeployResponse(BaseModel):
+    tx_hash: Hash = Field(
+        ...,
+        alias="txHash",
+        description="Transaction hash assigned by the node.",
+    )
+    contract_address: Optional[Address] = Field(
+        default=None,
+        alias="contractAddress",
+        description="Address of deployed contract, if known.",
+    )
+    receipt: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Raw receipt object as returned by node RPC.",
+    )
+    block_hash: Optional[Hash] = Field(
+        default=None,
+        alias="blockHash",
+        description="Block hash if included.",
+    )
+    block_number: Optional[PositiveInt] = Field(
+        default=None,
+        alias="blockNumber",
+        description="Block number if included.",
     )
 
     class Config:  # type: ignore[override]
         populate_by_name = True
         extra = "forbid"
-        anystr_strip_whitespace = True
-
-
-class DeployResponse(BaseModel):
-    """
-    Response to a deploy relay.
-
-    When `await_receipt=False`, only `tx_hash` is guaranteed. When true and the
-    tx is included before timeout, `receipt` and optional derived fields are set.
-    """
-
-    tx_hash: Hash = Field(..., description="Transaction hash assigned by the node.")
-    contract_address: Optional[Address] = Field(
-        default=None,
-        description="Address of deployed contract, if determinable from receipt.",
-    )
-    receipt: Optional[Dict[str, Any]] = Field(
-        default=None, description="Raw receipt object as returned by the node RPC."
-    )
-    block_hash: Optional[Hash] = Field(
-        default=None, description="Block hash if included."
-    )
-    block_number: Optional[PositiveInt] = Field(
-        default=None, description="Block number if included."
-    )
-
-    class Config:  # type: ignore[override]
-        extra = "forbid"
-
-
-# ---------------------------------------------------------------------------
-# /preflight
-# ---------------------------------------------------------------------------
 
 
 class PreflightRequest(BaseModel):
-    """
-    Compile (offline) a Python-VM contract package and estimate deploy gas.
-
-    This does **not** sign or broadcast anything. It is safe to call from untrusted
-    frontends (subject to server-side resource limits).
-
-    Fields
-    ------
-    chain_id: ChainId
-        Target chain (used for deterministic code-hash domains and any feature flags).
-    manifest: Dict[str, Any]
-        Contract manifest JSON (ABI/functions/events/errors/etc.).
-    source: str
-        Contract source code (Python). For multi-file packages, send a concatenated source
-        or use studio-services artifacts APIs beforehand and refer to them here.
-    constructor_args: Optional[Dict[str, Any]]
-        Arguments to the deploy/constructor entrypoint if applicable.
-    """
-
-    chain_id: ChainId = Field(..., description="Target chain id.")
-    manifest: Dict[str, Any] = Field(..., description="Contract manifest JSON.")
-    source: str = Field(..., description="Python source code of the contract.")
-    constructor_args: Optional[Dict[str, Any]] = Field(
-        default=None, description="Optional constructor arguments."
+    chain_id: ChainId = Field(default=1, description="Target chain id.")
+    manifest: Dict[str, Any] = Field(default_factory=dict, description="Contract manifest JSON.")
+    source: str = Field(default="", description="Python source code.")
+    code_bytes: Optional[str] = Field(
+        default=None,
+        description="Optional compiled bytes as 0x-hex.",
     )
+    constructor_args: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional constructor arguments.",
+    )
+    simulate: bool = Field(default=False, description="Run local dry-run simulation.")
+
+    if "model_validator" in globals():
+
+        @model_validator(mode="before")
+        @classmethod
+        def _coerce_preflight_aliases(cls, data: Any) -> Any:  # type: ignore[override]
+            if not isinstance(data, dict):
+                return data
+            out = dict(data)
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+            if "constructor_args" not in out and "constructorArgs" in out:
+                out["constructor_args"] = out["constructorArgs"]
+            if "code_bytes" not in out:
+                for k in ("codeBytes", "code", "rawTx", "raw_tx"):
+                    if out.get(k) is not None:
+                        out["code_bytes"] = out[k]
+                        break
+            if "simulate" not in out:
+                out["simulate"] = bool(out.get("estimateGas") or out.get("simulate"))
+            return out
+
+    else:  # pragma: no cover
+
+        @root_validator(pre=True)
+        def _coerce_preflight_aliases_v1(cls, values: Dict[str, Any]) -> Dict[str, Any]:  # type: ignore[override]
+            out = dict(values or {})
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+            if "constructor_args" not in out and "constructorArgs" in out:
+                out["constructor_args"] = out["constructorArgs"]
+            if "code_bytes" not in out:
+                for k in ("codeBytes", "code", "rawTx", "raw_tx"):
+                    if out.get(k) is not None:
+                        out["code_bytes"] = out[k]
+                        break
+            if "simulate" not in out:
+                out["simulate"] = bool(out.get("estimateGas") or out.get("simulate"))
+            return out
 
     class Config:  # type: ignore[override]
-        extra = "forbid"
-        anystr_strip_whitespace = True
+        populate_by_name = True
+        extra = "ignore"
 
 
 class PreflightResponse(BaseModel):
-    """
-    Result of an offline compile + deploy-cost estimation.
-    """
-
-    code_hash: Hash = Field(
-        ..., description="Deterministic code hash computed from compiled artifact."
-    )
-    gas_estimate: PositiveInt = Field(
-        ..., description="Estimated intrinsic gas to deploy."
-    )
-    abi: Dict[str, Any] = Field(..., description="Normalized ABI as seen by clients.")
-    diagnostics: List[str] = Field(
-        default_factory=list,
-        description="Compiler/analysis diagnostics (warnings/info).",
-    )
+    code_hash: Optional[Hash] = Field(default=None, alias="codeHash")
+    gas_estimate: Optional[PositiveInt] = Field(default=None, alias="gasEstimate")
+    abi: Dict[str, Any] = Field(default_factory=dict)
+    diagnostics: List[str] = Field(default_factory=list)
+    ok: bool = Field(default=True)
+    error: Optional[str] = Field(default=None)
 
     class Config:  # type: ignore[override]
-        extra = "forbid"
+        populate_by_name = True
+        extra = "ignore"

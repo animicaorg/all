@@ -70,7 +70,7 @@ spec:
                   optional: true
             # CORS allowlist for studio-web / explorer-web (adjust to your domains)
             - name: CORS_ALLOW_ORIGINS
-              value: "https://studio.animica.dev,https://explorer.animica.dev,http://localhost:5173"
+              value: "https://studio.animica.dev,https://explorer.animica.dev,https://aicf.animica.org,http://localhost:5173"
             # Log level (info|debug|warning)
             - name: LOG_LEVEL
               value: "info"

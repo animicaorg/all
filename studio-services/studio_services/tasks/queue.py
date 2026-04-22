@@ -162,6 +162,9 @@ class SQLiteTaskQueue:
     ) -> Optional[aiosqlite.Row]:
         """Compatibility helper for aiosqlite versions without execute_fetchone."""
         assert self._conn is not None
+        exec_fetchone = getattr(self._conn, "execute_fetchone", None)
+        if callable(exec_fetchone):
+            return await exec_fetchone(sql, params)
         cur = await self._conn.execute(sql, params)
         return await cur.fetchone()
 
@@ -170,6 +173,9 @@ class SQLiteTaskQueue:
     ) -> list[aiosqlite.Row]:
         """Compatibility helper for aiosqlite versions without execute_fetchall."""
         assert self._conn is not None
+        exec_fetchall = getattr(self._conn, "execute_fetchall", None)
+        if callable(exec_fetchall):
+            return await exec_fetchall(sql, params)
         cur = await self._conn.execute(sql, params)
         return await cur.fetchall()
 
@@ -192,6 +198,20 @@ class SQLiteTaskQueue:
         await conn.execute("PRAGMA foreign_keys=ON;")
         await conn.execute("PRAGMA synchronous=NORMAL;")
         await conn.execute("PRAGMA temp_store=MEMORY;")
+        # Back-compat for tests/older call-sites that monkeypatch connection-level
+        # convenience helpers on aiosqlite Connection.
+        if not hasattr(conn, "execute_fetchone"):
+            async def _conn_execute_fetchone(sql, params=()):
+                cur = await conn.execute(sql, params)
+                return await cur.fetchone()
+
+            setattr(conn, "execute_fetchone", _conn_execute_fetchone)
+        if not hasattr(conn, "execute_fetchall"):
+            async def _conn_execute_fetchall(sql, params=()):
+                cur = await conn.execute(sql, params)
+                return await cur.fetchall()
+
+            setattr(conn, "execute_fetchall", _conn_execute_fetchall)
         await conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS queue (

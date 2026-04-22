@@ -4,14 +4,17 @@ import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 
 const title = "Status";
-const description = "AICF service status for API, scheduler, provider routing, settlement, and downloads.";
+const description = "AICF service status derived from live status endpoint metrics only.";
+const aicfApiBaseUrl =
+  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  "/api";
 
-const services = [
-  { name: 'API Gateway', status: 'Operational', uptime: '99.97%', latency: '182 ms p50' },
-  { name: 'Job Scheduler', status: 'Operational', uptime: '99.94%', latency: '280 ms assignment' },
-  { name: 'Provider Heartbeat', status: 'Operational', uptime: '99.91%', latency: '4.2 s interval' },
-  { name: 'ANM Settlement', status: 'Operational', uptime: '99.88%', latency: '1.2 block avg finality' },
-  { name: 'Downloads CDN', status: 'Operational', uptime: '99.99%', latency: 'global edge cache' },
+const topMetrics = [
+  { key: "serviceStatus", label: "Service Status" },
+  { key: "paused", label: "Scheduler Paused" },
+  { key: "apiLatencyMs", label: "API Latency" },
+  { key: "updatedAt", label: "Last Update (UTC)" },
 ];
 ---
 
@@ -23,20 +26,17 @@ const services = [
       <span class="aicf-kicker">Service Health</span>
       <h1 class="aicf-heading">AICF Platform Status</h1>
       <p class="aicf-subheading">
-        Live operational view for AICF API endpoints, scheduler routing, provider infrastructure, and settlement flows.
+        Live operational data from the AICF status endpoint. No synthetic uptime, latency, or incident values are shown.
       </p>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container" style="display:grid; gap:0.75rem;">
-      {services.map((service) => (
-        <article class="aicf-card" style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
-          <div>
-            <h2 style="font-size:1.1rem;">{service.name}</h2>
-            <p class="aicf-muted" style="font-size:0.9rem; margin-top:0.35rem;">{service.uptime} · {service.latency}</p>
-          </div>
-          <span class="aicf-kicker" style="border-color:rgba(63,223,154,0.45); color:#9af6cc;">{service.status}</span>
+    <div class="aicf-container aicf-grid-4">
+      {topMetrics.map((metric) => (
+        <article class="aicf-card">
+          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
+          <p class="aicf-value" data-aicf-status-metric={metric.key}>--</p>
         </article>
       ))}
     </div>
@@ -45,23 +45,136 @@ const services = [
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Recent Events</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li><strong>2026-04-22 14:35 UTC</strong> · Provider benchmark queue scaling rollout completed.</li>
-          <li><strong>2026-04-22 08:05 UTC</strong> · API latency spike mitigated by scheduler cache warmup.</li>
-          <li><strong>2026-04-21 17:48 UTC</strong> · Worker bundle release v0.2.0 published.</li>
-        </ul>
+        <h2 style="font-size:1.2rem;">Live Count Metrics</h2>
+        <table class="aicf-table" style="margin-top:0.8rem;">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Users</strong></td>
+              <td data-aicf-status-metric="users">--</td>
+            </tr>
+            <tr>
+              <td><strong>Projects</strong></td>
+              <td data-aicf-status-metric="projects">--</td>
+            </tr>
+            <tr>
+              <td><strong>Providers</strong></td>
+              <td data-aicf-status-metric="providers">--</td>
+            </tr>
+            <tr>
+              <td><strong>Nodes</strong></td>
+              <td data-aicf-status-metric="nodes">--</td>
+            </tr>
+            <tr>
+              <td><strong>Jobs</strong></td>
+              <td data-aicf-status-metric="jobs">--</td>
+            </tr>
+            <tr>
+              <td><strong>Contract Jobs</strong></td>
+              <td data-aicf-status-metric="contractJobs">--</td>
+            </tr>
+            <tr>
+              <td><strong>Agent Tasks</strong></td>
+              <td data-aicf-status-metric="agentTasks">--</td>
+            </tr>
+            <tr>
+              <td><strong>Usage Records</strong></td>
+              <td data-aicf-status-metric="usage">--</td>
+            </tr>
+            <tr>
+              <td><strong>Settlements</strong></td>
+              <td data-aicf-status-metric="settlements">--</td>
+            </tr>
+            <tr>
+              <td><strong>Total Queue Units</strong></td>
+              <td data-aicf-status-metric="queueUnits">--</td>
+            </tr>
+          </tbody>
+        </table>
       </article>
+
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Incident Response</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>Primary channel: status updates and recovery timeline on this page.</li>
-          <li>Escalation: aicf@animica.org with project ID and request/job IDs.</li>
-          <li>Postmortems: published in release notes after major incidents.</li>
-        </ul>
+        <h2 style="font-size:1.2rem;">Endpoint Payload</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">Raw response from `GET /status` on the configured AICF API base URL.</p>
+        <div class="aicf-code" style="margin-top:0.75rem;">
+          <pre style="margin:0;" data-aicf-status-raw>{`Loading...`}</pre>
+        </div>
       </article>
     </div>
+    <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-status-message>Loading live AICF metrics...</p>
   </section>
+
+  <script define:vars={{ aicfApiBaseUrl }}>
+    import {
+      deriveAicfCounts,
+      fetchAicfStatus,
+      formatCount,
+      formatUtc,
+    } from "../features/aicf/liveMetricsClient";
+
+    const messageEl = document.querySelector("[data-aicf-status-message]");
+    const rawEl = document.querySelector("[data-aicf-status-raw]");
+    const metricEls = Array.from(document.querySelectorAll("[data-aicf-status-metric]"));
+
+    const setMetric = (key, value) => {
+      for (const el of metricEls) {
+        if (el.getAttribute("data-aicf-status-metric") === key) {
+          el.textContent = value;
+        }
+      }
+    };
+
+    const setUnavailable = () => {
+      for (const el of metricEls) {
+        el.textContent = "Unavailable";
+      }
+      if (rawEl) {
+        rawEl.textContent = "Unavailable";
+      }
+      if (messageEl) {
+        messageEl.textContent = "Live AICF metrics unavailable.";
+      }
+    };
+
+    const loadMetrics = async () => {
+      try {
+        const { payload, latencyMs } = await fetchAicfStatus(aicfApiBaseUrl);
+        const counts = deriveAicfCounts(payload);
+
+        setMetric("users", formatCount(counts.users));
+        setMetric("projects", formatCount(counts.projects));
+        setMetric("providers", formatCount(counts.providers));
+        setMetric("nodes", formatCount(counts.nodes));
+        setMetric("jobs", formatCount(counts.jobs));
+        setMetric("contractJobs", formatCount(counts.contractJobs));
+        setMetric("agentTasks", formatCount(counts.agentTasks));
+        setMetric("usage", formatCount(counts.usage));
+        setMetric("settlements", formatCount(counts.settlements));
+        setMetric("queueUnits", formatCount(counts.queueUnits));
+        setMetric("serviceStatus", String(payload.status ?? "unknown").toUpperCase());
+        setMetric("paused", payload.paused ? "YES" : "NO");
+        setMetric("apiLatencyMs", `${latencyMs} ms`);
+        setMetric("updatedAt", formatUtc(payload.timestamp));
+
+        if (rawEl) {
+          rawEl.textContent = JSON.stringify(payload, null, 2);
+        }
+        if (messageEl) {
+          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
+        }
+      } catch (error) {
+        console.error("[aicf-status] unable to fetch live status", error);
+        setUnavailable();
+      }
+    };
+
+    loadMetrics().catch(() => setUnavailable());
+  </script>
 
   <Footer slot="footer" />
 </BaseLayout>

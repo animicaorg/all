@@ -3,17 +3,33 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import {
-  heroStats,
   howItWorks,
   useCases,
   modelCatalog,
-  networkPanels,
   providerSteps,
 } from "../data/aicf";
 
 const title = "Decentralized AI Compute on Animica";
 const description =
   "Spend ANM. Run models. Contribute GPU. AICF is Animica's decentralized AI compute cloud for inference, embeddings, training, and agent workloads.";
+const aicfApiBaseUrl =
+  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  "/api";
+
+const heroLiveMetrics = [
+  { key: "providers", label: "Active Providers" },
+  { key: "nodes", label: "Provider Nodes" },
+  { key: "queueUnits", label: "Queued Work Units" },
+  { key: "settlements", label: "Settlements Recorded" },
+];
+
+const liveNetworkPanels = [
+  { key: "serviceStatus", label: "Service Status", footnote: "From AICF /status" },
+  { key: "paused", label: "Scheduler Paused", footnote: "Governance pause flag" },
+  { key: "apiLatencyMs", label: "API Latency", footnote: "Browser-observed fetch RTT" },
+  { key: "updatedAt", label: "Last Update", footnote: "UTC timestamp from status payload" },
+];
 ---
 
 <BaseLayout title={title} description={description}>
@@ -34,13 +50,14 @@ const description =
       </div>
 
       <div class="aicf-grid-4" style="margin-top:1.5rem;">
-        {heroStats.map((stat) => (
+        {heroLiveMetrics.map((stat) => (
           <article class="aicf-card">
             <p class="aicf-muted" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.07em;">{stat.label}</p>
-            <p class="aicf-value">{stat.value}</p>
+            <p class="aicf-value" data-aicf-metric={stat.key}>--</p>
           </article>
         ))}
       </div>
+      <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-message>Loading live AICF metrics...</p>
     </div>
   </section>
 
@@ -197,10 +214,10 @@ Authorization: Bearer sk_live_aicf_...
       <article class="aicf-card">
         <span class="aicf-kicker">Live Network Stats</span>
         <div class="aicf-grid-2" style="margin-top:0.85rem;">
-          {networkPanels.map((panel) => (
+          {liveNetworkPanels.map((panel) => (
             <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,28,0.56);">
               <p class="aicf-muted" style="font-size:0.8rem;">{panel.label}</p>
-              <p class="aicf-value" style="font-size:1.45rem;">{panel.value}</p>
+              <p class="aicf-value" style="font-size:1.45rem;" data-aicf-metric={panel.key}>--</p>
               <p class="aicf-muted" style="font-size:0.82rem;">{panel.footnote}</p>
             </div>
           ))}
@@ -239,6 +256,60 @@ Authorization: Bearer sk_live_aicf_...
       </article>
     </div>
   </section>
+
+  <script define:vars={{ aicfApiBaseUrl }}>
+    import {
+      deriveAicfCounts,
+      fetchAicfStatus,
+      formatCount,
+      formatUtc,
+    } from "../features/aicf/liveMetricsClient";
+
+    const messageEl = document.querySelector("[data-aicf-message]");
+    const metricEls = Array.from(document.querySelectorAll("[data-aicf-metric]"));
+
+    const setMetric = (key, value) => {
+      for (const el of metricEls) {
+        if (el.getAttribute("data-aicf-metric") === key) {
+          el.textContent = value;
+        }
+      }
+    };
+
+    const setUnavailable = () => {
+      for (const el of metricEls) {
+        el.textContent = "Unavailable";
+      }
+      if (messageEl) {
+        messageEl.textContent = "Live AICF metrics unavailable.";
+      }
+    };
+
+    const loadMetrics = async () => {
+      try {
+        const { payload, latencyMs } = await fetchAicfStatus(aicfApiBaseUrl);
+        const counts = deriveAicfCounts(payload);
+
+        setMetric("providers", formatCount(counts.providers));
+        setMetric("nodes", formatCount(counts.nodes));
+        setMetric("queueUnits", formatCount(counts.queueUnits));
+        setMetric("settlements", formatCount(counts.settlements));
+        setMetric("serviceStatus", String(payload.status ?? "unknown").toUpperCase());
+        setMetric("paused", payload.paused ? "YES" : "NO");
+        setMetric("apiLatencyMs", `${latencyMs} ms`);
+        setMetric("updatedAt", formatUtc(payload.timestamp));
+
+        if (messageEl) {
+          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
+        }
+      } catch (error) {
+        console.error("[aicf-metrics] unable to fetch live status", error);
+        setUnavailable();
+      }
+    };
+
+    loadMetrics().catch(() => setUnavailable());
+  </script>
 
   <Footer slot="footer" />
 </BaseLayout>

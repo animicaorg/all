@@ -15,22 +15,22 @@ Notes:
 import logging
 from typing import Any, Callable, Sequence
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
 log = logging.getLogger(__name__)
 
-# Optional API-key guard (if the project provides it)
-_dependencies = []
-try:  # pragma: no cover - optional import
-    from fastapi import Depends
-    from studio_services.security.auth import require_api_key  # type: ignore
+async def _require_api_key_lazy(request: Request) -> str:
+    """
+    Resolve API key auth lazily at request time so test fixtures can set API_KEYS
+    after module import.
+    """
+    from studio_services.security.auth import ApiKeyAuth
 
-    _dependencies = [Depends(require_api_key)]
-except Exception:  # pragma: no cover
-    # No-op: faucet can still be protected by global middleware / network firewalls.
-    pass
+    checker = ApiKeyAuth(required=True)
+    token = await checker(request)
+    return token or ""
 
-router = APIRouter(tags=["faucet"], dependencies=_dependencies)
+router = APIRouter(tags=["faucet"], dependencies=[Depends(_require_api_key_lazy)])
 
 # Models (request/response)
 try:

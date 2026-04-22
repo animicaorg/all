@@ -182,6 +182,8 @@ importers:
         specifier: ^5.4.10
         version: 5.4.21(@types/node@22.19.7)
 
+  apps/aicf-provider: {}
+
   apps/aicf-web:
     dependencies:
       '@animica/aicf-sdk':

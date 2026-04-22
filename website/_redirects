@@ -7,6 +7,8 @@
 # http://www.animica.org/* https://animica.org/:splat     301!
 
 # --- Short-links to external apps ---
+/app         https://aicf.animica.org/                  302
+/app/*       https://aicf.animica.org/:splat            302
 /studio      https://studio.animica.org/                 302
 /explorer    https://explorer.animica.org/               302
 

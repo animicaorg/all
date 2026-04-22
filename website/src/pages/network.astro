@@ -2,19 +2,31 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import { networkPanels } from "../data/aicf";
 
 const title = "Network";
 const description =
-  "AICF network telemetry including active providers, utilization, jobs, rewards paid, model call volume, latency, and subsidy usage.";
+  "AICF network telemetry derived from live status payloads for providers, nodes, jobs, usage, and settlements.";
+const aicfApiBaseUrl =
+  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  "/api";
 
-const utilizationSeries = [52, 57, 61, 65, 62, 68, 71, 74, 70, 73, 76, 78];
-const providerRegions = [
-  { region: 'EU Central', providers: 49, avgLatency: '212 ms' },
-  { region: 'US East', providers: 38, avgLatency: '241 ms' },
-  { region: 'US West', providers: 27, avgLatency: '255 ms' },
-  { region: 'AP Southeast', providers: 19, avgLatency: '278 ms' },
-  { region: 'South America', providers: 9, avgLatency: '315 ms' },
+const summaryMetrics = [
+  { key: "providers", label: "Providers" },
+  { key: "nodes", label: "Nodes" },
+  { key: "jobs", label: "Jobs" },
+  { key: "contractJobs", label: "Contract Jobs" },
+  { key: "agentTasks", label: "Agent Tasks" },
+  { key: "queueUnits", label: "Total Queue Units" },
+  { key: "usage", label: "Usage Records" },
+  { key: "settlements", label: "Settlements" },
+];
+
+const healthMetrics = [
+  { key: "serviceStatus", label: "Service Status", footnote: "From AICF /status" },
+  { key: "paused", label: "Scheduler Paused", footnote: "Governance pause flag" },
+  { key: "apiLatencyMs", label: "API Latency", footnote: "Browser-observed fetch RTT" },
+  { key: "updatedAt", label: "Last Update", footnote: "UTC timestamp from status payload" },
 ];
 ---
 
@@ -26,19 +38,18 @@ const providerRegions = [
       <span class="aicf-kicker">Network Telemetry</span>
       <h1 class="aicf-heading">Live AICF Compute Network</h1>
       <p class="aicf-subheading">
-        Production metrics for provider availability, queue behavior, workload throughput, and ANM reward distribution.
-        Values are real-time where available and mock-live where backend streams are still being wired.
+        This page shows only live values fetched from the AICF status endpoint. If data is unavailable,
+        metrics are marked unavailable instead of showing placeholders.
       </p>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-4">
-      {networkPanels.map((panel) => (
+      {summaryMetrics.map((metric) => (
         <article class="aicf-card">
-          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{panel.label}</p>
-          <p class="aicf-value">{panel.value}</p>
-          <p class="aicf-muted" style="font-size:0.82rem;">{panel.footnote}</p>
+          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
+          <p class="aicf-value" data-aicf-network-metric={metric.key}>--</p>
         </article>
       ))}
     </div>
@@ -47,75 +58,149 @@ const providerRegions = [
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.35rem;">Utilization Trend (12h)</h2>
-        <p class="aicf-muted" style="margin-top:0.55rem;">Queue-weighted utilization of active provider capacity.</p>
-        <div style="margin-top:0.85rem; display:flex; align-items:flex-end; gap:0.45rem; height:210px;">
-          {utilizationSeries.map((point) => (
-            <div style={`flex:1; border-radius:0.35rem; background:linear-gradient(180deg, rgba(22,217,195,0.86), rgba(58,155,255,0.62)); height:${point}%;`} title={`${point}%`} />
+        <h2 style="font-size:1.25rem;">Status Health</h2>
+        <div class="aicf-grid-2" style="margin-top:0.85rem;">
+          {healthMetrics.map((metric) => (
+            <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,28,0.56);">
+              <p class="aicf-muted" style="font-size:0.8rem;">{metric.label}</p>
+              <p class="aicf-value" style="font-size:1.45rem;" data-aicf-network-metric={metric.key}>--</p>
+              <p class="aicf-muted" style="font-size:0.82rem;">{metric.footnote}</p>
+            </div>
           ))}
         </div>
       </article>
 
       <article class="aicf-card">
-        <h2 style="font-size:1.35rem;">Current Workload Split</h2>
-        <div style="margin-top:0.9rem; display:grid; gap:0.6rem;">
-          <div>
-            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Chat Inference</span><strong>54%</strong></div>
-            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:54%;background:#16d9c3;"></div></div>
-          </div>
-          <div>
-            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Embeddings</span><strong>24%</strong></div>
-            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:24%;background:#3a9bff;"></div></div>
-          </div>
-          <div>
-            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Agent Tasks</span><strong>15%</strong></div>
-            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:15%;background:#7bd7ff;"></div></div>
-          </div>
-          <div>
-            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Training / Batch</span><strong>7%</strong></div>
-            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:7%;background:#a7f5e8;"></div></div>
-          </div>
-        </div>
+        <h2 style="font-size:1.25rem;">Live Count Breakdown</h2>
+        <table class="aicf-table" style="margin-top:0.8rem;">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Users</strong></td>
+              <td data-aicf-network-metric="users">--</td>
+            </tr>
+            <tr>
+              <td><strong>Projects</strong></td>
+              <td data-aicf-network-metric="projects">--</td>
+            </tr>
+            <tr>
+              <td><strong>Providers</strong></td>
+              <td data-aicf-network-metric="providers">--</td>
+            </tr>
+            <tr>
+              <td><strong>Nodes</strong></td>
+              <td data-aicf-network-metric="nodes">--</td>
+            </tr>
+            <tr>
+              <td><strong>Jobs</strong></td>
+              <td data-aicf-network-metric="jobs">--</td>
+            </tr>
+            <tr>
+              <td><strong>Contract Jobs</strong></td>
+              <td data-aicf-network-metric="contractJobs">--</td>
+            </tr>
+            <tr>
+              <td><strong>Agent Tasks</strong></td>
+              <td data-aicf-network-metric="agentTasks">--</td>
+            </tr>
+            <tr>
+              <td><strong>Usage Records</strong></td>
+              <td data-aicf-network-metric="usage">--</td>
+            </tr>
+            <tr>
+              <td><strong>Settlements</strong></td>
+              <td data-aicf-network-metric="settlements">--</td>
+            </tr>
+          </tbody>
+        </table>
       </article>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
+    <div class="aicf-container">
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Regional Provider Distribution</h2>
-        <table class="aicf-table" style="margin-top:0.8rem;">
-          <thead>
-            <tr>
-              <th>Region</th>
-              <th>Providers</th>
-              <th>Avg Latency</th>
-            </tr>
-          </thead>
-          <tbody>
-            {providerRegions.map((row) => (
-              <tr>
-                <td><strong>{row.region}</strong></td>
-                <td>{row.providers}</td>
-                <td>{row.avgLatency}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <h2 style="font-size:1.2rem;">Raw Status Payload</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">Direct payload from the live AICF status endpoint.</p>
+        <div class="aicf-code" style="margin-top:0.75rem;">
+          <pre style="margin:0;" data-aicf-network-raw>{`Loading...`}</pre>
+        </div>
       </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Network Economy Snapshot</h2>
-        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>Active providers online: <strong>142</strong></li>
-          <li>Jobs completed this epoch: <strong>3.2M</strong></li>
-          <li>ANM paid to providers this epoch: <strong>812k</strong></li>
-          <li>Treasury subsidy in use: <strong>214k ANM</strong></li>
-          <li>Average completion SLA adherence: <strong>98.1%</strong></li>
-        </ul>
-      </article>
+      <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-network-message>Loading live AICF metrics...</p>
     </div>
   </section>
+
+  <script define:vars={{ aicfApiBaseUrl }}>
+    import {
+      deriveAicfCounts,
+      fetchAicfStatus,
+      formatCount,
+      formatUtc,
+    } from "../features/aicf/liveMetricsClient";
+
+    const messageEl = document.querySelector("[data-aicf-network-message]");
+    const rawEl = document.querySelector("[data-aicf-network-raw]");
+    const metricEls = Array.from(document.querySelectorAll("[data-aicf-network-metric]"));
+
+    const setMetric = (key, value) => {
+      for (const el of metricEls) {
+        if (el.getAttribute("data-aicf-network-metric") === key) {
+          el.textContent = value;
+        }
+      }
+    };
+
+    const setUnavailable = () => {
+      for (const el of metricEls) {
+        el.textContent = "Unavailable";
+      }
+      if (rawEl) {
+        rawEl.textContent = "Unavailable";
+      }
+      if (messageEl) {
+        messageEl.textContent = "Live AICF metrics unavailable.";
+      }
+    };
+
+    const loadMetrics = async () => {
+      try {
+        const { payload, latencyMs } = await fetchAicfStatus(aicfApiBaseUrl);
+        const counts = deriveAicfCounts(payload);
+
+        setMetric("users", formatCount(counts.users));
+        setMetric("projects", formatCount(counts.projects));
+        setMetric("providers", formatCount(counts.providers));
+        setMetric("nodes", formatCount(counts.nodes));
+        setMetric("jobs", formatCount(counts.jobs));
+        setMetric("contractJobs", formatCount(counts.contractJobs));
+        setMetric("agentTasks", formatCount(counts.agentTasks));
+        setMetric("queueUnits", formatCount(counts.queueUnits));
+        setMetric("usage", formatCount(counts.usage));
+        setMetric("settlements", formatCount(counts.settlements));
+        setMetric("serviceStatus", String(payload.status ?? "unknown").toUpperCase());
+        setMetric("paused", payload.paused ? "YES" : "NO");
+        setMetric("apiLatencyMs", `${latencyMs} ms`);
+        setMetric("updatedAt", formatUtc(payload.timestamp));
+
+        if (rawEl) {
+          rawEl.textContent = JSON.stringify(payload, null, 2);
+        }
+        if (messageEl) {
+          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
+        }
+      } catch (error) {
+        console.error("[aicf-network] unable to fetch live status", error);
+        setUnavailable();
+      }
+    };
+
+    loadMetrics().catch(() => setUnavailable());
+  </script>
 
   <Footer slot="footer" />
 </BaseLayout>

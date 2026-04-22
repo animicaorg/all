@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 
 try:
@@ -59,7 +60,7 @@ def tmp_workspace(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
 
 
 @pytest.fixture(scope="session")
-def app_env(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+def app_env(tmp_workspace: Path) -> Iterator[dict[str, str]]:
     """
     Minimal environment for the app to boot in tests.
 
@@ -81,9 +82,18 @@ def app_env(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, s
         # Disable faucet by default; tests can flip it on via monkeypatch
         "FAUCET_KEY": "",
     }
+    previous: dict[str, str | None] = {k: os.environ.get(k) for k in env}
     for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    return env
+        os.environ[k] = v
+
+    try:
+        yield env
+    finally:
+        for k, old in previous.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
 
 
 # ----------------------------
@@ -127,7 +137,7 @@ def api_key() -> str:
     return "test-key-1"
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def aclient(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """
     Shared async HTTP client bound to the ASGI app.

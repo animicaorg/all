@@ -72,7 +72,7 @@ def post_deploy(req: DeployRequest) -> DeployResponse:
     """
     log.debug(
         "POST /deploy received (bytes=%s)",
-        len(req.tx_cbor) if req and req.tx_cbor else 0,
+        len(req.raw_tx) if req and req.raw_tx else 0,
     )
     res = _submit_deploy(req)
     # Strong typing guard: ensure service returned the correct model

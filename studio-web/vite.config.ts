@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
   const RPC = env.VITE_RPC_URL || "http://localhost:8545";
   const SERVICES = env.VITE_SERVICES_URL || "http://localhost:8787";
+  const OPEN_BROWSER = /^(1|true|yes)$/i.test(env.VITE_OPEN_BROWSER || "");
 
   return {
     plugins: [react(), wasm(), topLevelAwait()],
@@ -28,7 +29,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       strictPort: true,
-      open: true,
+      open: OPEN_BROWSER,
+      allowedHosts: [
+        "localhost",
+        "127.0.0.1",
+        "aicf.animica.org",
+      ],
       proxy: {
         // JSON-RPC HTTP
         "/rpc": {

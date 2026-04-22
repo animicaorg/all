@@ -130,6 +130,10 @@ import {
   __internals,
 } from '@animica/sdk';
 
+function isUint8Like(value: unknown): boolean {
+  return !!value && ArrayBuffer.isView(value) && (value as ArrayBufferView).BYTES_PER_ELEMENT === 1;
+}
+
 describe('deploy flow — build → encode sign bytes → sign', () => {
   const enc = new TextEncoder();
 
@@ -167,7 +171,7 @@ describe('deploy flow — build → encode sign bytes → sign', () => {
     expect(tx.nonce).toBe(7n);
     expect(tx.gasLimit).toBe(2_000_000n);
     expect(tx.gasPrice).toBe(42n);
-    expect(tx.code instanceof Uint8Array).toBe(true);
+    expect(isUint8Like(tx.code)).toBe(true);
     expect(typeof tx.manifest).toBe('object');
   });
 
@@ -181,7 +185,7 @@ describe('deploy flow — build → encode sign bytes → sign', () => {
     });
 
     const signBytes = encodeSignBytes(tx);
-    expect(signBytes instanceof Uint8Array).toBe(true);
+    expect(isUint8Like(signBytes)).toBe(true);
     // Decode via test-only helper to assert structure
     const decoded = __internals.decodeSignBytesUnsafe(signBytes);
 

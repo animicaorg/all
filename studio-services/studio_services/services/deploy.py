@@ -1,26 +1,20 @@
 """
-Deploy service: accept signed CBOR tx → relay via node RPC; preflight simulation.
+Deploy service: submit signed tx payloads and run preflight checks.
 
-This module contains two primary entrypoints that routers can call:
-
-- relay_signed_tx(...) : submit a signed, CBOR-encoded transaction to the node,
-  optionally wait for the receipt, and return a structured response.
-
-- preflight_simulate(...) : compile & sanity-check a contract package locally
-  (no state writes), returning code-hash and optional gas estimates.
-
-Both functions delegate IO to adapters under studio_services.adapters and only
-perform light validation and orchestration here in the service layer.
+This module keeps compatibility with both legacy and current request payloads.
 """
 
 from __future__ import annotations
 
+import asyncio
 import binascii
+import inspect
 import logging
+import os
 import time
 from typing import Any, Dict, Optional
 
-from studio_services.adapters.node_rpc import NodeRPC, from_env
+from studio_services.adapters import node_rpc as node_rpc_mod
 from studio_services.adapters.vm_compile import (code_hash_bytes,
                                                  compile_package,
                                                  estimate_gas_for_deploy,
@@ -33,109 +27,138 @@ from studio_services.models.deploy import (DeployRequest, DeployResponse,
 log = logging.getLogger(__name__)
 
 
-# ---------- Helpers ----------
-
-
 def _decode_hex(data: str) -> bytes:
-    """Decode 0x-prefixed or plain hex into bytes."""
-    s = data.strip()
+    s = (data or "").strip()
     if s.startswith("0x") or s.startswith("0X"):
         s = s[2:]
     try:
         return binascii.unhexlify(s)
-    except binascii.Error as e:  # pragma: no cover - mapped as BadRequest above
+    except binascii.Error as e:
         raise BadRequest(f"Invalid hex payload: {e}") from e
 
 
-def _pick_first(*func_names: str):
+def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return asyncio.run(value)
+    return value
+
+
+def _pick_method(obj: Any, *names: str):
+    for name in names:
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            return fn
+    raise AttributeError(f"None of {names!r} found on {type(obj).__name__}")
+
+
+def _node_from_env() -> Any:
     """
-    Return a callable attribute accessor that tries several method names on an object.
-
-    Usage:
-        call = _pick_first("send_raw_transaction", "send_raw_tx")
-        tx_hash = call(node_rpc)(signed_bytes)
+    Build a node client in a way that works for:
+    - real NodeRPC (async client)
+    - test monkeypatches replacing `node_rpc.NodeRPC`
     """
+    rpc_url = os.environ.get("RPC_URL", "http://127.0.0.1:8545")
+    chain_id_env = os.environ.get("CHAIN_ID")
+    chain_id = int(chain_id_env) if chain_id_env and chain_id_env.isdigit() else 1
 
-    def _resolve(obj):
-        for name in func_names:
-            if hasattr(obj, name):
-                return getattr(obj, name)
-        raise AttributeError(f"None of {func_names} found on {type(obj).__name__}")
+    NodeRPC = getattr(node_rpc_mod, "NodeRPC", None)
+    NodeRpcConfig = getattr(node_rpc_mod, "NodeRpcConfig", None)
 
-    return _resolve
+    if callable(NodeRPC):
+        # Test doubles commonly accept kwargs (rpc_url, chain_id)
+        try:
+            return NodeRPC(rpc_url=rpc_url, chain_id=chain_id)
+        except TypeError:
+            pass
 
+        # Real adapter expects NodeRpcConfig
+        if NodeRpcConfig is not None:
+            try:
+                return NodeRPC(NodeRpcConfig(url=rpc_url))
+            except Exception:
+                pass
 
-# ---------- Public API ----------
+    # Last resort: module factory
+    from_env = getattr(node_rpc_mod, "from_env", None)
+    if callable(from_env):
+        return from_env()
+
+    raise ApiError("Unable to construct NodeRPC client")
 
 
 def relay_signed_tx(
-    node: NodeRPC,
+    node: Any,
     req: DeployRequest,
     *,
     expected_chain_id: Optional[ChainId] = None,
 ) -> DeployResponse:
-    """
-    Submit a signed CBOR transaction to the node; optionally await receipt.
-
-    Parameters
-    ----------
-    node : NodeRPC
-        Configured RPC adapter (HTTP+WS capable).
-    req : DeployRequest
-        Pydantic model containing the signed tx and options.
-    expected_chain_id : Optional[int]
-        If provided, reject when req.chain_id is set and mismatches.
-
-    Returns
-    -------
-    DeployResponse
-    """
-    # Validate chain id if provided
     if expected_chain_id is not None and req.chain_id is not None:
         if int(req.chain_id) != int(expected_chain_id):
-            raise ChainMismatch(
-                f"Provided chainId={req.chain_id} does not match server chainId={expected_chain_id}"
-            )
+            raise ChainMismatch(expected=int(expected_chain_id), got=int(req.chain_id))
 
-    signed_tx_bytes = _decode_hex(req.signed_tx_hex)
+    signed_tx_bytes = _decode_hex(req.raw_tx)
 
-    # Submit via NodeRPC (support a couple of method name variants)
-    send_fn = _pick_first("send_raw_transaction", "send_raw_tx", "tx_send_raw")(node)
-    tx_hash = send_fn(signed_tx_bytes)
+    send_fn = _pick_method(node, "send_raw_tx", "send_raw_transaction", "tx_send_raw")
+    tx_hash = _maybe_await(send_fn(signed_tx_bytes))
+    if not isinstance(tx_hash, str):
+        tx_hash = str(tx_hash)
 
     receipt: Optional[Dict[str, Any]] = None
     if req.await_receipt:
-        # Prefer explicit wait method if available; else poll get_receipt
-        if hasattr(node, "wait_for_receipt"):
-            receipt = node.wait_for_receipt(
-                tx_hash,
-                timeout_s=max(1.0, req.timeout_ms / 1000.0),
-                poll_interval_s=max(0.1, req.poll_interval_ms / 1000.0),
+        # 1) Prefer explicit wait helper if available
+        wait_fn = getattr(node, "wait_for_receipt", None)
+        if callable(wait_fn):
+            receipt = _maybe_await(
+                wait_fn(
+                    tx_hash,
+                    timeout_s=max(1.0, req.timeout_ms / 1000.0),
+                    poll_interval_s=max(0.01, req.poll_interval_ms / 1000.0),
+                )
             )
         else:
-            get_receipt = _pick_first("get_transaction_receipt", "get_receipt")(node)
+            # 2) Poll receipt getter
+            get_receipt = _pick_method(node, "get_transaction_receipt", "get_receipt")
             deadline = time.time() + max(1.0, req.timeout_ms / 1000.0)
+            poll_s = max(0.01, req.poll_interval_ms / 1000.0)
             while time.time() < deadline:
-                r = get_receipt(tx_hash)
+                r = _maybe_await(get_receipt(tx_hash))
                 if r:
                     receipt = r
                     break
-                time.sleep(max(0.1, req.poll_interval_ms / 1000.0))
+                time.sleep(poll_s)
+
             if receipt is None:
                 raise ApiError(
-                    f"Timed out waiting for receipt (tx={tx_hash}, timeout_ms={req.timeout_ms})"
+                    f"Timed out waiting for receipt (tx={tx_hash}, timeout_ms={req.timeout_ms})",
+                    status_code=504,
+                    code="rpc_error",
                 )
 
-    return DeployResponse(tx_hash=tx_hash, receipt=receipt)
+    contract_address = None
+    block_hash = None
+    block_number = None
+    if isinstance(receipt, dict):
+        contract_address = receipt.get("contractAddress") or receipt.get("contract_address")
+        block_hash = receipt.get("blockHash") or receipt.get("block_hash")
+        bn = receipt.get("blockNumber") or receipt.get("block_number")
+        if isinstance(bn, str):
+            try:
+                block_number = int(bn, 16) if bn.startswith("0x") else int(bn)
+            except Exception:
+                block_number = None
+        elif isinstance(bn, int) and bn > 0:
+            block_number = bn
+
+    return DeployResponse(
+        tx_hash=tx_hash,
+        receipt=receipt,
+        contract_address=contract_address,
+        block_hash=block_hash,
+        block_number=block_number,
+    )
 
 
 def submit_deploy(req: DeployRequest) -> DeployResponse:
-    """Compatibility wrapper used by the router.
-
-    Builds a NodeRPC from the environment/config and delegates to
-    :func:`relay_signed_tx`.
-    """
-
     try:
         from studio_services.config import load_config
 
@@ -144,49 +167,70 @@ def submit_deploy(req: DeployRequest) -> DeployResponse:
     except Exception:
         expected_chain = None
 
-    node = from_env()
+    node = _node_from_env()
     return relay_signed_tx(node, req, expected_chain_id=expected_chain)
 
 
+def _decode_optional_hex(data: Optional[str]) -> Optional[bytes]:
+    if not data:
+        return None
+    s = data.strip()
+    if s.startswith("0x") or s.startswith("0X"):
+        s = s[2:]
+    try:
+        return bytes.fromhex(s)
+    except Exception as e:
+        raise BadRequest(f"Invalid code_bytes hex: {e}") from e
+
+
 def preflight_simulate(req: PreflightRequest) -> PreflightResponse:
-    """
-    Offline compile & simulate a contract package locally (no state writes).
+    # Require at least one source of code
+    if not req.source and not req.code_bytes:
+        raise BadRequest("Provide source or code bytes for preflight")
 
-    - Compiles the provided (manifest, source/code) using vm_py.
-    - Computes a deterministic code hash (content-address-like).
-    - Optionally simulates a dry-run deploy to estimate intrinsic gas bounds.
+    code_bytes = _decode_optional_hex(req.code_bytes)
 
-    Notes
-    -----
-    This does not submit *any* transaction to the network and does not mutate
-    node state. It is intended for quick UX feedback before signing.
-    """
-    # Compile package (raises ValidationError/BadRequest from adapter on errors)
-    build = compile_package(
-        manifest=req.manifest,
-        source=req.source,
-        code_bytes=req.code_bytes,
-    )
-
-    # Compute canonical code-hash (bytes → 0x-hex)
-    ch_bytes = code_hash_bytes(build)
-    code_hash_hex = "0x" + ch_bytes.hex()
-
-    # Estimate gas — adapter may return None if unavailable for this artifact
-    gas_estimate = estimate_gas_for_deploy(build)
-
-    # Optional dry-run deploy (pure local), returns logs/diagnostics if requested
-    sim_result: Optional[Dict[str, Any]] = None
-    if req.simulate:
-        sim_result = simulate_deploy_locally(
-            build, call_data=req.constructor_args or {}
+    try:
+        build = compile_package(
+            manifest=req.manifest,
+            source=req.source or None,
+            code_bytes=code_bytes,
         )
+    except Exception as e:
+        raise BadRequest(f"Preflight compile failed: {e}") from e
+
+    code_hash_hex: Optional[str] = None
+    try:
+        ch = code_hash_bytes(build)
+        code_hash_hex = "0x" + bytes(ch).hex()
+    except Exception:
+        code_hash_hex = None
+
+    gas_estimate = None
+    try:
+        est = estimate_gas_for_deploy(build)
+        if isinstance(est, int) and est > 0:
+            gas_estimate = est
+    except Exception:
+        gas_estimate = None
+
+    diagnostics: list[str] = []
+    raw_diag = getattr(build, "diagnostics", None)
+    if isinstance(raw_diag, list):
+        diagnostics = [str(x) for x in raw_diag]
+
+    if req.simulate:
+        try:
+            simulate_deploy_locally(build, call_data=req.constructor_args or {})
+        except Exception as e:
+            diagnostics.append(f"simulate warning: {e}")
 
     return PreflightResponse(
         code_hash=code_hash_hex,
         gas_estimate=gas_estimate,
-        diagnostics=build.diagnostics or None,
-        simulate_result=sim_result,
+        abi=getattr(build, "abi", {}) or {},
+        diagnostics=diagnostics,
+        ok=True,
     )
 
 

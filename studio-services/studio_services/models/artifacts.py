@@ -1,166 +1,113 @@
 from __future__ import annotations
 
-"""
-Artifact models
-
-- ArtifactPut: request body for storing an artifact blob (content-addressed).
-  The server computes a deterministic `id` from the content and optional
-  linkage hints (e.g., code_hash/address) and persists metadata.
-
-- ArtifactMeta: metadata returned after storing or when fetching an artifact.
-  Includes size, media type, linkage (address/chain/code hash), labels,
-  and optional download path suitable for direct GETs from this service.
-
-Notes
------
-* `content` is 0x-hex of the raw bytes.
-* `kind` is a hint that influences defaults (e.g., media_type) and indexing.
-* Linkage fields (address/chain_id/code_hash) are optional; they can be filled
-  later by other endpoints (e.g., linking a verified address to an artifact).
-"""
+"""Artifact models with compatibility for base64/hex/text payload uploads."""
 
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 try:
-    # Pydantic v2
-    from pydantic import BaseModel, Field, PositiveInt, model_validator
+    from pydantic import BaseModel, Field, model_validator
+except Exception:  # pragma: no cover
+    from pydantic.v1 import BaseModel, Field, root_validator  # type: ignore
 
-    _IS_PYDANTIC_V2 = True
-except Exception:  # pragma: no cover - v1 fallback
-    from pydantic.v1 import BaseModel, Field, PositiveInt  # type: ignore
-
-    _IS_PYDANTIC_V2 = False
-
-from .common import Address, ChainId, Hash, Hex
+from .common import Address, ChainId, Hash
 
 
 class ArtifactKind(str, Enum):
-    source = "source"  # e.g., Python contract source
-    manifest = "manifest"  # contract manifest JSON
-    abi = "abi"  # ABI JSON
-    package = "package"  # bundled sources/assets (zip/tar)
-    ir = "ir"  # intermediate representation bytes
-    bytecode = "bytecode"  # compiled code bytes (if applicable)
-    other = "other"  # anything else
-
-
-_KIND_DEFAULT_MIMES: Dict[ArtifactKind, str] = {
-    ArtifactKind.source: "text/x-python",
-    ArtifactKind.manifest: "application/json",
-    ArtifactKind.abi: "application/json",
-    ArtifactKind.package: "application/zip",
-    ArtifactKind.ir: "application/cbor",
-    ArtifactKind.bytecode: "application/octet-stream",
-    ArtifactKind.other: "application/octet-stream",
-}
+    source = "source"
+    manifest = "manifest"
+    abi = "abi"
+    package = "package"
+    ir = "ir"
+    bytecode = "bytecode"
+    other = "other"
 
 
 class ArtifactPut(BaseModel):
-    """
-    Store an artifact blob.
-
-    Fields
-    ------
-    kind: ArtifactKind
-        High-level kind of artifact (affects default media_type).
-    content: Hex
-        0x-prefixed hex of raw bytes to store (content-addressed).
-    media_type: Optional[str]
-        RFC 2046 media type; default is derived from `kind` if omitted.
-    filename: Optional[str]
-        Friendly file name for UX; not used for addressing.
-    chain_id: Optional[ChainId]
-        Optional chain linkage for discovery (e.g., manifests per network).
-    address: Optional[Address]
-        Optional contract address to associate with the artifact.
-    code_hash: Optional[Hash]
-        Optional compiled code hash to associate for discovery/verification.
-    labels: Dict[str, str]
-        Free-form small metadata (keys/values), e.g., {"template":"counter"}.
-    """
-
-    kind: ArtifactKind = Field(..., description="Artifact kind.")
-    content: Hex = Field(..., description="0x-hex of the artifact bytes.")
+    kind: ArtifactKind = Field(default=ArtifactKind.other)
     media_type: Optional[str] = Field(
-        default=None, description="MIME type; defaults based on `kind` if omitted."
+        default=None,
+        alias="mediaType",
+        description="MIME type hint.",
     )
-    filename: Optional[str] = Field(
-        default=None, description="Friendly filename (optional)."
+    encoding: Optional[str] = Field(
+        default=None,
+        description="Encoding for content: base64|hex|utf8 (optional).",
     )
-    chain_id: Optional[ChainId] = Field(
-        default=None, description="Optional chain linkage."
+    content: Optional[str] = Field(
+        default=None,
+        description="Encoded content string (base64 or hex).",
     )
-    address: Optional[Address] = Field(
-        default=None, description="Optional associated contract address."
-    )
-    code_hash: Optional[Hash] = Field(
-        default=None, description="Optional associated compiled code hash."
-    )
-    labels: Dict[str, str] = Field(
-        default_factory=dict, description="Small key/value labels."
+    text: Optional[str] = Field(
+        default=None,
+        description="UTF-8 content shortcut.",
     )
 
-    class Config:  # type: ignore[override]
-        extra = "forbid"
-        anystr_strip_whitespace = True
+    filename: Optional[str] = Field(default=None)
+    chain_id: Optional[ChainId] = Field(default=None, alias="chainId")
+    address: Optional[Address] = Field(default=None)
+    code_hash: Optional[Hash] = Field(default=None, alias="codeHash")
+    labels: Dict[str, str] = Field(default_factory=dict)
 
-    if _IS_PYDANTIC_V2:
+    if "model_validator" in globals():
+
+        @model_validator(mode="before")
+        @classmethod
+        def _coerce_aliases(cls, data: Any) -> Any:  # type: ignore[override]
+            if not isinstance(data, dict):
+                return data
+            out = dict(data)
+            if "media_type" not in out and "mediaType" in out:
+                out["media_type"] = out["mediaType"]
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+            if "code_hash" not in out and "codeHash" in out:
+                out["code_hash"] = out["codeHash"]
+            return out
 
         @model_validator(mode="after")
-        def _fill_defaults(cls, values: "ArtifactPut") -> "ArtifactPut":  # type: ignore[override]
-            if values.media_type is None:
-                values.media_type = _KIND_DEFAULT_MIMES.get(
-                    values.kind, "application/octet-stream"
-                )
-            return values
+        def _validate_payload(self) -> "ArtifactPut":  # type: ignore[override]
+            if not self.content and self.text is None:
+                raise ValueError("Either content or text is required")
+            return self
 
-    else:  # pragma: no cover - v1 compatibility
+    else:  # pragma: no cover
 
-        @classmethod
-        def validate(cls, value):  # type: ignore[override]
-            obj = super().validate(value)
-            if obj.media_type is None:
-                obj.media_type = _KIND_DEFAULT_MIMES.get(
-                    obj.kind, "application/octet-stream"
-                )
-            return obj
+        @root_validator(pre=True)
+        def _coerce_aliases_v1(cls, values: Dict[str, Any]) -> Dict[str, Any]:  # type: ignore[override]
+            out = dict(values or {})
+            if "media_type" not in out and "mediaType" in out:
+                out["media_type"] = out["mediaType"]
+            if "chain_id" not in out and "chainId" in out:
+                out["chain_id"] = out["chainId"]
+            if "code_hash" not in out and "codeHash" in out:
+                out["code_hash"] = out["codeHash"]
+            if not out.get("content") and out.get("text") is None:
+                raise ValueError("Either content or text is required")
+            return out
+
+    class Config:  # type: ignore[override]
+        populate_by_name = True
+        extra = "ignore"
 
 
 class ArtifactMeta(BaseModel):
-    """
-    Metadata of a stored artifact.
-    """
-
-    id: str = Field(..., description="Deterministic content-addressed id.")
-    content_hash: Hash = Field(
-        ..., description="Hash of raw bytes (e.g., sha3-512 as 0x-hex)."
-    )
-    size: PositiveInt = Field(..., description="Size in bytes.")
-    kind: ArtifactKind = Field(..., description="Artifact kind.")
-    media_type: str = Field(..., description="MIME media type.")
-    filename: Optional[str] = Field(
-        default=None, description="Friendly filename if provided."
-    )
-    chain_id: Optional[ChainId] = Field(
-        default=None, description="Linked chain id, if any."
-    )
-    address: Optional[Address] = Field(
-        default=None, description="Linked contract address, if any."
-    )
-    code_hash: Optional[Hash] = Field(
-        default=None, description="Linked compiled code hash, if any."
-    )
-    labels: Dict[str, str] = Field(
-        default_factory=dict, description="Free-form labels."
-    )
-    created_at: str = Field(..., description="ISO-8601 creation timestamp.")
-    download_path: Optional[str] = Field(
-        default=None, description="Relative path suitable for GET /artifacts/{id}."
-    )
+    id: str = Field(..., description="Artifact id.")
+    kind: ArtifactKind = Field(default=ArtifactKind.other)
+    media_type: str = Field(default="application/octet-stream", alias="mediaType")
+    size: int = Field(default=0)
+    content_hash: Optional[str] = Field(default=None, alias="contentHash")
+    filename: Optional[str] = Field(default=None)
+    chain_id: Optional[ChainId] = Field(default=None, alias="chainId")
+    address: Optional[Address] = Field(default=None)
+    code_hash: Optional[Hash] = Field(default=None, alias="codeHash")
+    labels: Dict[str, str] = Field(default_factory=dict)
+    created_at: Optional[int] = Field(default=None, alias="createdAt")
+    download_path: Optional[str] = Field(default=None, alias="downloadPath")
 
     class Config:  # type: ignore[override]
-        extra = "forbid"
+        populate_by_name = True
+        extra = "ignore"
 
 
 __all__ = ["ArtifactPut", "ArtifactMeta", "ArtifactKind"]
