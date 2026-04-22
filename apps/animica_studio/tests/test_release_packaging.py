@@ -28,3 +28,10 @@ def test_linux_desktop_entry_points_to_installed_wrapper() -> None:
     assert f"TryExec={LINUX_PACKAGE_NAME}" in entry
     assert f"Icon={LINUX_PACKAGE_NAME}" in entry
     assert f"StartupWMClass={APP_BUNDLE_NAME}" in entry
+
+
+def test_pyinstaller_spec_includes_requests_hiddenimports() -> None:
+    spec_path = Path(__file__).resolve().parent.parent / "scripts" / "pyinstaller.spec"
+    spec_text = spec_path.read_text(encoding="utf-8")
+    assert '"requests"' in spec_text
+    assert '"requests.exceptions"' in spec_text
