@@ -58,6 +58,7 @@ class NodeService:
             start_cmd=list(profile.node.start_cmd),
             rpc_url=profile.node.rpc_local_url,
             data_dir=None,
+            config=config,
         )
         self._rpc_url = profile.node.rpc_local_url
 

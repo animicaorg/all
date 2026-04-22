@@ -92,6 +92,11 @@ class StudioStatusService:
             snapshot.issues = self._collect_issues(snapshot, wallets)
             return snapshot
 
+    def collect_node_summary(self) -> NodeSummary:
+        with self._lock:
+            profile = self._active_profile()
+            return self._collect_node_summary(profile)
+
     def probe_onboarding(self) -> OnboardingProbe:
         snapshot = self.collect_snapshot()
         issues = list(snapshot.issues)
@@ -211,6 +216,7 @@ class StudioStatusService:
             start_cmd=list(profile.node_start_cmd or ["animica", "node", "start"]),
             rpc_url=profile.node_rpc_url or profile.effective_rpc_url(),
             data_dir=data_dir,
+            config=self._config,
         )
 
     def _collect_wallet_summary(self, profile: RpcProfile, wallets: list[WalletRecord]) -> WalletSummary:

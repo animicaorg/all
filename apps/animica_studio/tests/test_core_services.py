@@ -7,6 +7,7 @@ import os
 import time
 import json
 import threading
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -633,6 +634,65 @@ def test_process_manager_status_stale_pid(tmp_path):
     assert status["running"] is False
     # Stale PID file should be removed
     assert not (tmp_path / "node.pid").exists()
+
+
+def test_process_manager_start_resolves_cli_and_sets_data_dir_env(tmp_path):
+    from animica_studio.services.process_manager import ProcessManager
+    from animica_studio.storage.config import Config
+
+    pm = ProcessManager(
+        start_cmd=["animica", "node", "start"],
+        rpc_url="http://127.0.0.1:8545/rpc",
+        data_dir=tmp_path,
+        config=Config(),
+    )
+
+    fake_proc = MagicMock()
+    fake_proc.pid = 4242
+
+    with (
+        patch("animica_studio.services.job_runner.resolve_animica_cli", return_value=types.SimpleNamespace(
+            argv_prefix=["/tmp/fake-animica"],
+            env={"VIRTUAL_ENV": "/tmp/fake-venv"},
+            error=None,
+        )),
+        patch.object(pm, "status", side_effect=[{"running": False}, {"running": True, "pid": 4242, "rpc_reachable": True}]),
+        patch.object(pm, "_wait_for_rpc", return_value=True),
+        patch("subprocess.Popen", return_value=fake_proc) as popen_mock,
+    ):
+        result = pm.start()
+
+    popen_args, popen_kwargs = popen_mock.call_args
+    assert popen_args[0][0] == "/tmp/fake-animica"
+    assert popen_args[0][1:] == ["node", "start"]
+    assert popen_kwargs["env"]["VIRTUAL_ENV"] == "/tmp/fake-venv"
+    assert popen_kwargs["env"]["ANIMICA_DATA_DIR"] == str(tmp_path)
+    assert result["just_started"] is True
+
+
+def test_process_manager_start_reports_missing_cli_resolution(tmp_path):
+    from animica_studio.services.process_manager import ProcessManager
+    from animica_studio.storage.config import Config
+
+    pm = ProcessManager(
+        start_cmd=["animica", "node", "start"],
+        rpc_url="http://127.0.0.1:8545/rpc",
+        data_dir=tmp_path,
+        config=Config(),
+    )
+
+    with (
+        patch("animica_studio.services.job_runner.resolve_animica_cli", return_value=types.SimpleNamespace(
+            argv_prefix=[],
+            env={},
+            error="Animica CLI not found. Configure CLI path in Settings.",
+        )),
+        patch.object(pm, "status", return_value={"running": False}),
+    ):
+        result = pm.start()
+
+    assert result["running"] is False
+    assert "Animica CLI not found" in str(result.get("error", ""))
 
 
 # ---------------------------------------------------------------------------
