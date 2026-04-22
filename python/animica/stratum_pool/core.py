@@ -412,6 +412,16 @@ def freeze_mining_job(job: MiningJob, *, fallback_chain_id: int) -> MiningJob:
     return frozen
 
 
+def _is_frozen_job(job: MiningJob) -> bool:
+    """Fast check for jobs that already carry normalized validation metadata."""
+    return bool(
+        str(job.validation_fingerprint or "").strip()
+        and int(job.issued_theta_micro or 0) > 0
+        and int(job.share_threshold_micro or 0) > 0
+        and int(job.share_target_int or 0) > 0
+    )
+
+
 class MiningCoreAdapter:
     def __init__(
         self,
@@ -713,7 +723,8 @@ class MiningCoreAdapter:
     async def _validate_and_submit_template_block(
         self, job: MiningJob, submit_params: Json
     ) -> Tuple[bool, Optional[str], bool, int]:
-        job = freeze_mining_job(job, fallback_chain_id=self._chain_id)
+        if not _is_frozen_job(job):
+            job = freeze_mining_job(job, fallback_chain_id=self._chain_id)
         template = dict(job.raw) if isinstance(job.raw, dict) else {}
         header_view = dict(job.header) if isinstance(job.header, dict) else {}
         if not header_view and isinstance(template.get("header"), dict):
@@ -845,7 +856,7 @@ class MiningCoreAdapter:
             )
             return False, "missing share target", False, 0
 
-        self._log.info(
+        self._log.debug(
             "stratum_submit_job_matched",
             extra={
                 "worker": submit_params.get("_worker") or submit_params.get("worker"),
@@ -868,7 +879,7 @@ class MiningCoreAdapter:
         )
 
         share_ok = digest_int <= share_target_int
-        self._log.info(
+        self._log.debug(
             "stratum_submit_share_target_compare",
             extra={
                 "worker": submit_params.get("_worker") or submit_params.get("worker"),
@@ -912,7 +923,7 @@ class MiningCoreAdapter:
             return False, "low difficulty share", False, 0
 
         is_block = bool(decision.is_block)
-        self._log.info(
+        self._log.debug(
             "stratum_submit_block_target_compare",
             extra={
                 "worker": submit_params.get("_worker") or submit_params.get("worker"),
@@ -932,7 +943,7 @@ class MiningCoreAdapter:
         )
         tx_count = template_tx_count(template)
         if not is_block:
-            self._log.info(
+            self._log.debug(
                 "stratum_share_accepted",
                 extra={
                     "worker": submit_params.get("_worker") or submit_params.get("worker"),
@@ -1249,7 +1260,8 @@ class MiningCoreAdapter:
     async def validate_and_submit_share(
         self, job: MiningJob, submit_params: Json
     ) -> Tuple[bool, Optional[str], bool, int]:
-        job = freeze_mining_job(job, fallback_chain_id=self._chain_id)
+        if not _is_frozen_job(job):
+            job = freeze_mining_job(job, fallback_chain_id=self._chain_id)
         if looks_like_block_template(job.raw):
             return await self._validate_and_submit_template_block(job, submit_params)
 
@@ -1292,7 +1304,7 @@ class MiningCoreAdapter:
             return ok, reason, is_block, tx_count
 
         payload = self._encode_share_payload(job, submit_params)
-        self._log.info(
+        self._log.debug(
             "stratum_submit_share_target_compare",
             extra={
                 "job_id": job.job_id,
@@ -1389,7 +1401,8 @@ class MiningCoreAdapter:
                 },
             )
         else:
-            self._log.info(
+            log_success = self._log.info if bool(is_block) else self._log.debug
+            log_success(
                 "stratum_share_submit_result",
                 extra={
                     "job_id": job.job_id,
@@ -1401,7 +1414,7 @@ class MiningCoreAdapter:
                     "tx_count": tx_count,
                 },
             )
-            self._log.info(
+            log_success(
                 "stratum_share_accepted",
                 extra={
                     "worker": submit_params.get("_worker") or submit_params.get("worker"),

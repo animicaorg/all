@@ -206,6 +206,87 @@ async def test_pps_accounting_credits_accepted_shares():
 
 
 @pytest.mark.asyncio
+async def test_pps_share_credit_ledger_disabled_by_default(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'pool_pps_ledger_default.db'}"
+    metrics = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    session = Session(
+        session_id="s-ledger-default",
+        writer=None,
+        worker="worker-ledger-default",
+        address="anim1ledgerdefault",
+    )
+    job = StratumJob(
+        job_id="job-ledger-default",
+        header={"number": 12},
+        share_target=0.5,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 0.5},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    with metrics._db_lock:  # noqa: SLF001
+        ledger_rows = metrics._db.execute(  # noqa: SLF001
+            "SELECT COUNT(*) FROM accounting_ledger WHERE event = 'pps_share_credit'"
+        ).fetchone()
+    assert int((ledger_rows or [0])[0] or 0) == 0
+    assert metrics.accounting_summary()["total_credit"] == "500"
+
+
+@pytest.mark.asyncio
+async def test_pps_share_credit_ledger_can_be_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANIMICA_POOL_LEDGER_RECORD_PPS_SHARES", "1")
+    db_url = f"sqlite:///{tmp_path / 'pool_pps_ledger_enabled.db'}"
+    metrics = PoolMetrics(
+        PoolConfig(db_url=db_url, pool_mode="pps"),
+        DummyJobManager(),
+        DummyServer(),
+    )
+    session = Session(
+        session_id="s-ledger-enabled",
+        writer=None,
+        worker="worker-ledger-enabled",
+        address="anim1ledgerenabled",
+    )
+    job = StratumJob(
+        job_id="job-ledger-enabled",
+        header={"number": 13},
+        share_target=0.25,
+        theta_micro=1_000_000,
+        raw={"coinbase": {"amount": 1000}},
+    )
+
+    await metrics.record_share(
+        session,
+        job,
+        submit_params={"d_ratio": 0.25},
+        ok=True,
+        reason=None,
+        is_block=False,
+        tx_count=0,
+    )
+
+    with metrics._db_lock:  # noqa: SLF001
+        ledger_rows = metrics._db.execute(  # noqa: SLF001
+            "SELECT COUNT(*) FROM accounting_ledger WHERE event = 'pps_share_credit'"
+        ).fetchone()
+    assert int((ledger_rows or [0])[0] or 0) == 1
+    assert metrics.accounting_summary()["total_credit"] == "250"
+
+
+@pytest.mark.asyncio
 async def test_record_share_parses_address_from_v1_style_worker_identity():
     job_manager = DummyJobManager()
     metrics = PoolMetrics(

@@ -1,0 +1,74 @@
+{
+  "name": "USDANToken",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      { "name": "init", "inputs": [
+        { "name": "owner", "type": "bytes" },
+        { "name": "mint_controller", "type": "bytes" },
+        { "name": "redemption_controller", "type": "bytes" },
+        { "name": "compliance_controller", "type": "bytes" },
+        { "name": "metadata_uri", "type": "bytes" },
+        { "name": "max_supply", "type": "int" },
+        { "name": "decimals", "type": "int" },
+        { "name": "enforce_allowlist", "type": "bool" }
+      ], "outputs": [] },
+      { "name": "name", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "symbol", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "decimals", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "total_supply", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "totalSupply", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "max_supply", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "owner", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "metadata_uri", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "mint_controller", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "redemption_controller", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "compliance_controller", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "allowlist_enforced", "inputs": [], "outputs": [{ "type": "bool" }] },
+      { "name": "paused", "inputs": [], "outputs": [{ "type": "bool" }] },
+      { "name": "balance_of", "inputs": [{ "name": "addr", "type": "bytes" }], "outputs": [{ "type": "int" }] },
+      { "name": "balanceOf", "inputs": [{ "name": "addr", "type": "bytes" }], "outputs": [{ "type": "int" }] },
+      { "name": "allowance", "inputs": [{ "name": "owner_addr", "type": "bytes" }, { "name": "spender", "type": "bytes" }], "outputs": [{ "type": "int" }] },
+      { "name": "is_frozen", "inputs": [{ "name": "addr", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "is_blocklisted", "inputs": [{ "name": "addr", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "transfer", "inputs": [{ "name": "to", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "approve", "inputs": [{ "name": "spender", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "transfer_from", "inputs": [{ "name": "owner_addr", "type": "bytes" }, { "name": "to", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "transferFrom", "inputs": [{ "name": "owner_addr", "type": "bytes" }, { "name": "to", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "mint", "inputs": [{ "name": "to", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "burn", "inputs": [{ "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "burn_from", "inputs": [{ "name": "owner_addr", "type": "bytes" }, { "name": "amount", "type": "int" }], "outputs": [{ "type": "bool" }] },
+      { "name": "set_owner", "inputs": [{ "name": "new_owner", "type": "bytes" }], "outputs": [] },
+      { "name": "set_metadata_uri", "inputs": [{ "name": "uri", "type": "bytes" }], "outputs": [] },
+      { "name": "set_mint_controller", "inputs": [{ "name": "controller", "type": "bytes" }], "outputs": [] },
+      { "name": "set_redemption_controller", "inputs": [{ "name": "controller", "type": "bytes" }], "outputs": [] },
+      { "name": "set_compliance_controller", "inputs": [{ "name": "controller", "type": "bytes" }], "outputs": [] },
+      { "name": "set_allowlist_enforced", "inputs": [{ "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_paused", "inputs": [{ "name": "paused_state", "type": "bool" }], "outputs": [] },
+      { "name": "set_frozen", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "frozen", "type": "bool" }], "outputs": [] },
+      { "name": "set_blocklisted", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "blocked", "type": "bool" }], "outputs": [] }
+    ],
+    "events": [
+      { "name": "Transfer", "inputs": [{ "name": "from", "type": "bytes" }, { "name": "to", "type": "bytes" }, { "name": "value", "type": "int" }] },
+      { "name": "Approval", "inputs": [{ "name": "owner", "type": "bytes" }, { "name": "spender", "type": "bytes" }, { "name": "value", "type": "int" }] },
+      { "name": "Mint", "inputs": [{ "name": "to", "type": "bytes" }, { "name": "value", "type": "int" }] },
+      { "name": "Burn", "inputs": [{ "name": "from", "type": "bytes" }, { "name": "value", "type": "int" }] },
+      { "name": "Paused", "inputs": [{ "name": "account", "type": "bytes" }] },
+      { "name": "Unpaused", "inputs": [{ "name": "account", "type": "bytes" }] },
+      { "name": "AccountFrozen", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "frozen", "type": "bool" }] },
+      { "name": "AccountBlocklisted", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "blocked", "type": "bool" }] }
+    ]
+  },
+  "deploy": {
+    "metadata": {
+      "description": "USDAN token contract with compliance hooks, controlled minting, and redemption burn integration."
+    }
+  },
+  "source": "contract.py"
+}

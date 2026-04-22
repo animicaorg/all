@@ -48,8 +48,11 @@ class PoolShareValidator:
             return False, "missing miner payout address", False, 0
         if not address.startswith("anim1"):
             return False, "invalid miner payout address", False, 0
-        raw_template = dict(job.raw) if isinstance(job.raw, dict) else {}
+        raw_template = job.raw if isinstance(job.raw, dict) else {}
         source_job_id = str(raw_template.get("_sourceJobId") or job.job_id)
+        if raw_template.get("_sourceJobId") != source_job_id:
+            raw_template = dict(raw_template)
+            raw_template["_sourceJobId"] = source_job_id
         mining_job = MiningJob(
             job_id=job.job_id,
             source_job_id=source_job_id,
@@ -73,10 +76,6 @@ class PoolShareValidator:
             proof_type=raw_template.get("_proofType"),
             validation_fingerprint=raw_template.get("_validationFingerprint"),
             raw=raw_template,
-        )
-        fallback_chain_id = int(getattr(self._adapter, "chain_id", 0) or 0)
-        mining_job = freeze_mining_job(
-            mining_job, fallback_chain_id=fallback_chain_id
         )
         try:
             return await self._adapter.validate_and_submit_share(

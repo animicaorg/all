@@ -1,0 +1,52 @@
+version: '3.9'
+
+services:
+  usdan-postgres:
+    image: postgres:16
+    container_name: usdan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: usdan
+    ports:
+      - '54329:5432'
+    volumes:
+      - usdan_postgres_data:/var/lib/postgresql/data
+
+  usdan-api:
+    build:
+      context: .
+      dockerfile: services/usdan-api/Dockerfile
+    container_name: usdan-api
+    restart: unless-stopped
+    env_file:
+      - services/usdan-api/.env.example
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@usdan-postgres:5432/usdan
+      USDAN_API_HOST: 0.0.0.0
+      USDAN_API_PORT: 8098
+      USDAN_DATA_MODE: memory
+    ports:
+      - '8098:8098'
+    depends_on:
+      - usdan-postgres
+
+  usdan-web:
+    image: node:20
+    container_name: usdan-web
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    command: ["sh", "-c", "pnpm --filter @animica/usdan-web dev"]
+    environment:
+      VITE_USDAN_API_BASE_URL: http://127.0.0.1:8098
+      VITE_ANIMICA_CHAIN_ID: 1337
+      VITE_USDAN_TOKEN_ADDRESS: anim1_usdan_token
+    ports:
+      - '5188:5188'
+    depends_on:
+      - usdan-api
+
+volumes:
+  usdan_postgres_data:

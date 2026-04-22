@@ -24,6 +24,15 @@ class PoolMetrics:
 
     _VALID_MODES = {"pps", "solo", "both"}
 
+    @staticmethod
+    def _env_flag(name: str, default: bool = False) -> bool:
+        raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off", ""}:
+            return False
+        return default
+
     def __init__(
         self, config: PoolConfig, job_manager: JobManager, server: StratumServer
     ) -> None:
@@ -127,6 +136,10 @@ class PoolMetrics:
         self._last_payout_at: Optional[float] = None
         self._last_payout_count: int = 0
         self._last_payout_error: Optional[str] = None
+        self._ledger_record_pps_share_credit = self._env_flag(
+            "ANIMICA_POOL_LEDGER_RECORD_PPS_SHARES",
+            default=False,
+        )
 
     @property
     def config(self) -> PoolConfig:
@@ -1108,7 +1121,7 @@ class PoolMetrics:
                     event,
                     int(amount),
                     job_id,
-                    json.dumps(details or {}, sort_keys=True),
+                    json.dumps(details or {}, separators=(",", ":")),
                 ),
             )
             self._record_db_write(defer_commit=defer_commit, now_ts=ts)
@@ -1140,7 +1153,7 @@ class PoolMetrics:
             solo_credit = 0
             if accounting_mode == "pps":
                 pps_credit = self._credit_for_share(reward, difficulty)
-                if pps_credit > 0:
+                if pps_credit > 0 and self._ledger_record_pps_share_credit:
                     self._record_accounting_event(
                         ts=ts,
                         worker=worker,

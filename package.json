@@ -18,7 +18,9 @@
     "explorer2",
     "explorer2/*",
     "services/exchange-api",
-    "services/admin-api"
+    "services/admin-api",
+    "services/usdan-api",
+    "apps/usdan-web"
   ],
   "pnpm": {
     "overrides": {
