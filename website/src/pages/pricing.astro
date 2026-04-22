@@ -1,0 +1,93 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { pricingRows } from "../data/aicf";
+
+const title = "Pricing";
+const description =
+  "ANM-based AICF pricing for model inference, embeddings, batch compute, and agent workloads with transparent provider and treasury splits.";
+---
+
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">ANM-Native Billing</span>
+      <h1 class="aicf-heading">Compute Pricing in ANM</h1>
+      <p class="aicf-subheading">
+        Developers pay in ANM. Jobs reserve ANM in escrow before execution. Settlements distribute ANM to providers and treasury with transparent economics.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/developers">Get API Access</a>
+        <a class="aicf-ghost-btn" href="/providers">Become a Provider</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <div class="aicf-card" style="padding:0; overflow:auto;">
+        <table class="aicf-table">
+          <thead>
+            <tr>
+              <th>Workload</th>
+              <th>Unit</th>
+              <th>Base Price</th>
+              <th>Provider Share</th>
+              <th>Treasury Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pricingRows.map((row) => (
+              <tr>
+                <td><strong>{row.item}</strong></td>
+                <td>{row.unit}</td>
+                <td>{row.basePrice}</td>
+                <td>{row.providerShare}</td>
+                <td>{row.treasuryShare}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-3">
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Developer Billing Rules</h2>
+        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
+          <li>All projects maintain ANM-denominated balances.</li>
+          <li>Budget caps are enforced per request and per async job.</li>
+          <li>Escrow reserves budget before provider execution starts.</li>
+          <li>Usage rows include charge, provider, and settlement identifiers.</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Provider Earnings Rules</h2>
+        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
+          <li>Rewards accrue from successful verified completions.</li>
+          <li>Higher benchmark class unlocks premium queues.</li>
+          <li>Reputation and stake influence routing confidence.</li>
+          <li>Disputes/slashing can reduce rewards for faulty execution.</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Network Economics</h2>
+        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
+          <li>Treasury can subsidize strategic workloads with ANM credits.</li>
+          <li>Governance can tune provider/treasury split by model class.</li>
+          <li>Contract jobs can lock dedicated ANM budgets in escrow.</li>
+          <li>Economics are transparent and auditable by design.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <Footer slot="footer" />
+</BaseLayout>

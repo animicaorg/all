@@ -4,9 +4,15 @@
   "packageManager": "pnpm@9.0.0",
   "workspaces": [
     "sdk",
+    "packages/shared/*",
+    "packages/sdk/*",
     "website",
     "explorer-web",
     "studio-web",
+    "apps/aicf-web",
+    "apps/aicf-provider",
+    "apps/aicf-api",
+    "apps/aicf-docs",
     "wallet",
     "apps/miner-dashboard",
     "apps/dapp-ide",
@@ -18,9 +24,20 @@
     "explorer2",
     "explorer2/*",
     "services/exchange-api",
+    "services/scheduler",
+    "services/job-worker",
+    "services/usage-meter",
+    "services/provider-control-plane",
+    "services/dispute-worker",
+    "services/treasury-worker",
+    "services/contract-job-watcher",
+    "services/fulfillment-scheduler",
+    "services/result-submitter",
+    "services/finalization-worker",
     "services/admin-api",
     "services/usdan-api",
-    "apps/usdan-web"
+    "apps/usdan-web",
+    "provider-daemon"
   ],
   "pnpm": {
     "overrides": {

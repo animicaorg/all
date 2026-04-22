@@ -1,0 +1,10 @@
+{
+  "name": "@animica/aicf-provider",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "./scripts/build_bundles.sh",
+    "bundle:0.2.0": "./scripts/build_bundles.sh 0.2.0"
+  }
+}

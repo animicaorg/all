@@ -1,0 +1,41 @@
+{
+  "source": "aicf-provider-build-script",
+  "version": "0.2.0",
+  "generated_at": "2026-04-22T17:10:17Z",
+  "checksum_file": "/provider/aicf-provider-worker-0.2.0.sha256",
+  "items": [
+    {
+      "platform": "windows",
+      "label": "Windows GPU Worker Executable Bundle",
+      "filename": "aicf-provider-worker-0.2.0-windows-x64.zip",
+      "version": "0.2.0",
+      "size_bytes": 5424,
+      "sha256": "d24af6cadabbc2a5fd454fdf247ac8fad87dee15b82e4e0ae0616dffc461ac17",
+      "url": "/provider/aicf-provider-worker-0.2.0-windows-x64.zip",
+      "release_notes": "/provider/release-notes-0.2.0.md",
+      "notes": "Includes worker config template, benchmark/start scripts, logs folder, and executable placeholder."
+    },
+    {
+      "platform": "linux",
+      "label": "Linux GPU Worker Bundle",
+      "filename": "aicf-provider-worker-0.2.0-linux-x64.tar.gz",
+      "version": "0.2.0",
+      "size_bytes": 4031,
+      "sha256": "ca9762c6461954ddfdabb0863666363f7d62a61e19707b468e302bc2754e2f93",
+      "url": "/provider/aicf-provider-worker-0.2.0-linux-x64.tar.gz",
+      "release_notes": "/provider/release-notes-0.2.0.md",
+      "notes": "Includes benchmark/start scripts and systemd unit template for daemonized operation."
+    },
+    {
+      "platform": "python",
+      "label": "Python Source Bundle",
+      "filename": "aicf-provider-worker-0.2.0-python.tar.gz",
+      "version": "0.2.0",
+      "size_bytes": 3992,
+      "sha256": "f7a444064de5c15a312a217d780e4930fa36c94be8bb38a35bb7e1c060e44243",
+      "url": "/provider/aicf-provider-worker-0.2.0-python.tar.gz",
+      "release_notes": "/provider/release-notes-0.2.0.md",
+      "notes": "Source-first worker package with venv quickstart and benchmark/start commands."
+    }
+  ]
+}

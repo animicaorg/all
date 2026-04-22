@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: AICF API
+  version: 0.1.0
+  description: ANM-native decentralized AI compute cloud API for aicf.animica.org.
+servers:
+  - url: https://api.aicf.animica.org
+  - url: http://127.0.0.1:8099
+paths:
+  /auth/signup:
+    post:
+      summary: Signup developer/provider account
+  /auth/login:
+    post:
+      summary: Login with email/password
+  /projects:
+    get:
+      summary: List projects
+    post:
+      summary: Create project
+  /projects/{projectId}/fund:
+    post:
+      summary: Fund project balance with ANM
+  /projects/{projectId}/api-keys:
+    post:
+      summary: Create API key
+  /models:
+    get:
+      summary: List models
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completions
+  /v1/embeddings:
+    post:
+      summary: OpenAI-compatible embeddings
+  /jobs:
+    get:
+      summary: List async jobs
+    post:
+      summary: Create async job
+  /contracts:
+    get:
+      summary: List registered VM-PY contracts using AICF
+    post:
+      summary: Register contract metadata for AICF job orchestration
+  /contract-jobs:
+    get:
+      summary: List on-chain contract-driven jobs
+    post:
+      summary: Create deterministic contract job intent + escrow funding metadata
+  /contract-jobs/{jobId}:
+    get:
+      summary: Get contract job detail with commitments/assignments/escrow events
+  /contract-jobs/{jobId}/accept:
+    post:
+      summary: Accept result hash for CALLBACK_ACCEPT / verifier flows
+  /contract-jobs/{jobId}/disputes:
+    post:
+      summary: Open dispute on contract job result
+  /contract-jobs/{jobId}/finalize:
+    post:
+      summary: Finalize payout/refund deterministically
+  /agent-tasks:
+    get:
+      summary: List on-chain agent tasks
+    post:
+      summary: Create on-chain agent task budget/state
+  /agent-tasks/{taskId}/steps:
+    post:
+      summary: Append agent task step commitment
+  /agent-tasks/{taskId}/final-result:
+    post:
+      summary: Submit agent task final result commitment/reference
+  /disputes:
+    get:
+      summary: List contract disputes
+  /disputes/{disputeId}/resolve:
+    post:
+      summary: Resolve dispute with slash/clear/refund outcome
+  /provider/register:
+    post:
+      summary: Register provider account
+  /provider/daemon/jobs/claim:
+    post:
+      summary: Provider daemon claims assigned jobs
+  /provider/daemon/jobs/{jobId}/result:
+    post:
+      summary: Provider daemon submits result and usage receipt
+  /provider/daemon/contract-jobs/claim:
+    post:
+      summary: Provider daemon claims assigned contract jobs
+  /provider/daemon/contract-jobs/{jobId}/commitment:
+    post:
+      summary: Provider daemon submits result commitment hash/signature
+  /provider/daemon/contract-jobs/{jobId}/reference:
+    post:
+      summary: Provider daemon submits external result reference
+  /admin/treasury/grants:
+    post:
+      summary: Allocate treasury grants in ANM
+  /admin/disputes/{jobId}/resolve:
+    post:
+      summary: Resolve dispute and optional slash
+  /internal/scheduler/tick:
+    post:
+      summary: Trigger scheduler assignment tick
+      security:
+        - InternalSecret: []
+  /internal/chain-events/watch:
+    get:
+      summary: Poll chain-derived contract events
+      security:
+        - InternalSecret: []
+  /internal/contract-jobs/scheduler/tick:
+    post:
+      summary: Schedule contract jobs to providers
+      security:
+        - InternalSecret: []
+  /internal/contract-jobs/result-submitter/tick:
+    post:
+      summary: Promote commitment-only jobs when result references are available
+      security:
+        - InternalSecret: []
+  /internal/contract-jobs/finalization/tick:
+    post:
+      summary: Finalize eligible contract jobs after challenge windows
+      security:
+        - InternalSecret: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: APIKey or SessionToken
+    InternalSecret:
+      type: apiKey
+      in: header
+      name: x-internal-secret

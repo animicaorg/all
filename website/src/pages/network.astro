@@ -1,183 +1,121 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
-import StatusBadge from "../components/StatusBadge.astro";
-import MetricTicker from "../components/MetricTicker.astro";
-import CodeBlock from "../components/CodeBlock.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { networkPanels } from "../data/aicf";
 
-import { chains } from "../config/chains";
-import { links } from "../config/links";
+const title = "Network";
+const description =
+  "AICF network telemetry including active providers, utilization, jobs, rewards paid, model call volume, latency, and subsidy usage.";
 
-const pageTitle = "Networks — Chain list & RPC endpoints";
-const pageDesc =
-  "Browse available Animica networks, their chain IDs, RPC endpoints, and Explorer links.";
-
-type Rpcish = string | undefined;
-
-function firstRpc(c: any): Rpcish {
-  // Try common shapes produced by chain registries
-  // 1) c.rpcUrls.public.http[0] (viem/ethers-style)
-  // 2) c.rpcUrls[0] or c.rpc
-  // 3) fallback to global env RPC (links.rpc.url)
-  try {
-    if (c?.rpcUrls?.public?.http?.[0]) return c.rpcUrls.public.http[0] as string;
-    if (Array.isArray(c?.rpcUrls) && c.rpcUrls[0]) return c.rpcUrls[0] as string;
-    if (typeof c?.rpc === "string") return c.rpc as string;
-  } catch {}
-  return links.rpc.url;
-}
-
-const primary = chains.find((c: any) => c.chainId === 1) ?? chains[0];
-const primaryRpc = firstRpc(primary);
-const chainCount = chains.length;
+const utilizationSeries = [52, 57, 61, 65, 62, 68, 71, 74, 70, 73, 76, 78];
+const providerRegions = [
+  { region: 'EU Central', providers: 49, avgLatency: '212 ms' },
+  { region: 'US East', providers: 38, avgLatency: '241 ms' },
+  { region: 'US West', providers: 27, avgLatency: '255 ms' },
+  { region: 'AP Southeast', providers: 19, avgLatency: '278 ms' },
+  { region: 'South America', providers: 9, avgLatency: '315 ms' },
+];
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Networks</h1>
-    <p class="mt-3 text-base opacity-80">
-      This page lists known Animica networks discovered at build time. The canonical main
-      network is <strong>Animica (chainId = 1)</strong>. Use the RPC endpoints below in your
-      tools, SDKs, or wallet configuration.
-    </p>
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
 
-    <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-medium opacity-80">Mainnet status</h3>
-          <StatusBadge rpcUrl={primaryRpc} />
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Network Telemetry</span>
+      <h1 class="aicf-heading">Live AICF Compute Network</h1>
+      <p class="aicf-subheading">
+        Production metrics for provider availability, queue behavior, workload throughput, and ANM reward distribution.
+        Values are real-time where available and mock-live where backend streams are still being wired.
+      </p>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-4">
+      {networkPanels.map((panel) => (
+        <article class="aicf-card">
+          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{panel.label}</p>
+          <p class="aicf-value">{panel.value}</p>
+          <p class="aicf-muted" style="font-size:0.82rem;">{panel.footnote}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.35rem;">Utilization Trend (12h)</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">Queue-weighted utilization of active provider capacity.</p>
+        <div style="margin-top:0.85rem; display:flex; align-items:flex-end; gap:0.45rem; height:210px;">
+          {utilizationSeries.map((point) => (
+            <div style={`flex:1; border-radius:0.35rem; background:linear-gradient(180deg, rgba(22,217,195,0.86), rgba(58,155,255,0.62)); height:${point}%;`} title={`${point}%`} />
+          ))}
         </div>
-        <p class="mt-3 text-2xl font-semibold tracking-tight">
-          <MetricTicker rpcUrl={primaryRpc} kind="height" />
-        </p>
-        <p class="text-xs opacity-70 mt-1">Head height</p>
-      </div>
+      </article>
 
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">Primary RPC</h3>
-        <p class="mt-3 font-mono text-xs break-all">{primaryRpc}</p>
-        <p class="text-xs opacity-70 mt-1">Animica (chainId=1)</p>
-      </div>
-
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">Total chains</h3>
-        <p class="mt-3 text-2xl font-semibold tracking-tight">{chainCount}</p>
-        <p class="text-xs opacity-70 mt-1">Imported from registry</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Chain list -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-    <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-      {chains.map((c: any) => {
-        const rpc = firstRpc(c);
-        const explorer = c.explorerUrl ?? (links.explorer?.home ?? "#");
-        return (
-          <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)]
-                      border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <h3 class="text-lg font-semibold tracking-tight">
-                  {c.name ?? "Unnamed Network"}
-                </h3>
-                <p class="text-xs opacity-70 mt-0.5">
-                  chainId <span class="font-mono">{c.chainId ?? c.id ?? "?"}</span>
-                  {c?.testnet ? " · testnet" : ""}
-                </p>
-              </div>
-              <div class="shrink-0">
-                <StatusBadge rpcUrl={rpc} />
-              </div>
-            </div>
-
-            <dl class="mt-4 space-y-2">
-              <div>
-                <dt class="text-xs opacity-70">RPC</dt>
-                <dd class="mt-0.5 font-mono text-xs break-all">
-                  {rpc}
-                </dd>
-              </div>
-              <div>
-                <dt class="text-xs opacity-70">Explorer</dt>
-                <dd class="mt-0.5 text-sm">
-                  <InlineLink href={c.explorerUrl ?? explorer} underline>
-                    {c.explorerUrl ?? explorer}
-                  </InlineLink>
-                </dd>
-              </div>
-              {c?.studioUrl && (
-                <div>
-                  <dt class="text-xs opacity-70">Studio</dt>
-                  <dd class="mt-0.5 text-sm">
-                    <InlineLink href={c.studioUrl} underline>{c.studioUrl}</InlineLink>
-                  </dd>
-                </div>
-              )}
-              {c?.symbol && (
-                <div>
-                  <dt class="text-xs opacity-70">Native token</dt>
-                  <dd class="mt-0.5 text-sm">{c.symbol}</dd>
-                </div>
-              )}
-            </dl>
-
-            <div class="mt-4 flex gap-2">
-              <a
-                href={(c.explorerUrl ?? explorer)}
-                target="_blank" rel="noopener noreferrer"
-                class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm
-                       border border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]
-                       hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]">
-                Open Explorer
-              </a>
-              <a
-                href={rpc}
-                target="_blank" rel="noopener noreferrer"
-                class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm
-                       border border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]
-                       hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]">
-                Open RPC
-              </a>
-            </div>
+      <article class="aicf-card">
+        <h2 style="font-size:1.35rem;">Current Workload Split</h2>
+        <div style="margin-top:0.9rem; display:grid; gap:0.6rem;">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Chat Inference</span><strong>54%</strong></div>
+            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:54%;background:#16d9c3;"></div></div>
           </div>
-        );
-      })}
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Embeddings</span><strong>24%</strong></div>
+            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:24%;background:#3a9bff;"></div></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Agent Tasks</span><strong>15%</strong></div>
+            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:15%;background:#7bd7ff;"></div></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;"><span>Training / Batch</span><strong>7%</strong></div>
+            <div style="height:8px;background:rgba(149,170,198,0.2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:7%;background:#a7f5e8;"></div></div>
+          </div>
+        </div>
+      </article>
     </div>
   </section>
 
-  <!-- Usage examples -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 my-12 sm:my-16">
-    <div class="rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-xl font-semibold tracking-tight">Quickstart</h2>
-      <div class="mt-4 grid gap-6 md:grid-cols-2">
-        <CodeBlock lang="bash" title="Query head via cURL">
-{`curl -s ${primaryRpc}/rpc \\
-  -H 'content-type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
-        </CodeBlock>
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Regional Provider Distribution</h2>
+        <table class="aicf-table" style="margin-top:0.8rem;">
+          <thead>
+            <tr>
+              <th>Region</th>
+              <th>Providers</th>
+              <th>Avg Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            {providerRegions.map((row) => (
+              <tr>
+                <td><strong>{row.region}</strong></td>
+                <td>{row.providers}</td>
+                <td>{row.avgLatency}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </article>
 
-        <CodeBlock lang="ts" title="TypeScript SDK (connect & get head)">
-{`import { Client } from '@animica/sdk';
-const client = new Client({ rpcUrl: '${primaryRpc}' });
-const head = await client.http.request('chain.getHead', []);
-console.log(head.height, head.hash);`}
-        </CodeBlock>
-      </div>
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Network Economy Snapshot</h2>
+        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>Active providers online: <strong>142</strong></li>
+          <li>Jobs completed this epoch: <strong>3.2M</strong></li>
+          <li>ANM paid to providers this epoch: <strong>812k</strong></li>
+          <li>Treasury subsidy in use: <strong>214k ANM</strong></li>
+          <li>Average completion SLA adherence: <strong>98.1%</strong></li>
+        </ul>
+      </article>
     </div>
   </section>
 
-  <!-- Add a custom network -->
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 mb-16 sm:mb-24">
-    <h2 class="text-xl font-semibold tracking-tight">Add a custom network</h2>
-    <p class="mt-2 text-sm opacity-80">
-      This site imports chains at build time. To add or override entries, edit your
-      chain registry (e.g. <code>website/chains/*.json</code>) or set environment variables that
-      influence the default RPC/Chain ID (<code>.env</code> → <code>ANIMICA_RPC_URL</code>, <code>ANIMICA_CHAIN_ID</code>).
-    </p>
-  </section>
+  <Footer slot="footer" />
 </BaseLayout>

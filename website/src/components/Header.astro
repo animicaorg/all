@@ -1,37 +1,28 @@
 ---
 import site from "../config/site";
 import { links } from "../config/links";
-import chains from "../config/chains";
 
 const nav = site.nav.top;
-
-const chainId = String(links.chainId ?? "");
-const rpcUrl = links.rpc.url ?? "";
-
-const chainRec = Array.isArray(chains)
-  ? chains.find((c: any) => String(c.chainId ?? c.id) === String(chainId))
-  : undefined;
-
-const networkName = chainRec?.name ?? (chainId ? `Chain ${chainId}` : "Network");
 const activePath = Astro.url.pathname;
 ---
 
-<header class="site-header">
-  <div class="header-container">
-    <!-- Brand -->
-    <a href="/" class="brand-link" aria-label={site.brand}>
-      <img src="/icons/logo.svg" width="24" height="24" alt="" class="brand-logo" />
-      <span class="brand-name">{site.brand}</span>
+<header class="aicf-header">
+  <div class="aicf-header-inner">
+    <a href="/" class="aicf-brand" aria-label={site.brand}>
+      <img src="/icons/logo.svg" width="24" height="24" alt="" />
+      <span>
+        {site.brand}
+        <small>Animica Compute Fabric</small>
+      </span>
     </a>
 
-    <!-- Desktop Navigation -->
-    <nav class="desktop-nav" aria-label="Primary">
+    <nav class="aicf-nav" aria-label="Primary">
       {nav.map((item) => {
         const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
         return (
           <a
             href={item.href}
-            class={`nav-link ${isActive ? "nav-link--active" : ""}`}
+            class={`aicf-nav-link ${isActive ? "active" : ""}`}
             aria-current={isActive ? "page" : undefined}
           >
             {item.label}
@@ -40,341 +31,37 @@ const activePath = Astro.url.pathname;
       })}
     </nav>
 
-    <div class="header-actions">
-      <!-- Theme Toggle -->
-      <button
-        class="theme-toggle"
-        type="button"
-        aria-label="Toggle theme"
-        data-theme-toggle
-        data-state="dark"
-      >
-        <span class="theme-toggle__icon" aria-hidden="true">☀︎</span>
-        <span class="theme-toggle__thumb"></span>
-        <span class="theme-toggle__icon" aria-hidden="true">☾</span>
-      </button>
-
-      <!-- Network Status Pill -->
-      <div
-        class="network-pill"
-        data-network-pill
-        title={rpcUrl ? `RPC: ${rpcUrl}` : "No RPC configured"}
-      >
-        <span class="network-status" data-dot></span>
-        <span class="network-name" data-net-name>{networkName}</span>
-        {chainId && <span class="network-chain-id" data-chain-id>· {chainId}</span>}
-        <span class="sr-only" data-status-sr>(status unknown)</span>
-      </div>
-
-      <!-- CTA Button -->
-      <a href="/wallet" class="button button--primary button--sm">
-        <span>Get Wallet</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M19 5H5a3 3 0 0 0-3 3v8a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V8a3 3 0 0 0-3-3zm1 11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v8zm-3-3a2 2 0 1 0-2 2 2 2 0 0 0 2-2z"
-          />
-        </svg>
+    <div class="aicf-header-actions">
+      <a class="aicf-ghost-btn" href={links.explorer.home()} target="_blank" rel="noopener noreferrer">
+        Explorer
       </a>
-
-      <!-- Mobile Menu Button -->
-      <button class="mobile-menu-btn" aria-label="Toggle navigation" data-mobile-menu-toggle>
-        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" class="menu-icon">
-          <path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-        </svg>
-        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" class="close-icon">
-          <path
-            fill="currentColor"
-            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-          />
-        </svg>
+      <a class="aicf-cta-btn" href="/downloads">Contribute GPU</a>
+      <button class="aicf-mobile-toggle" aria-label="Toggle menu" data-mobile-toggle>
+        <span></span>
+        <span></span>
       </button>
     </div>
   </div>
 
-  <!-- Mobile Navigation Overlay -->
-  <div class="mobile-nav" data-mobile-nav>
-    <nav class="mobile-nav-content" aria-label="Mobile">
-      {nav.map((item) => {
-        const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
-        return (
-          <a
-            href={item.href}
-            class={`mobile-nav-link ${isActive ? "mobile-nav-link--active" : ""}`}
-            aria-current={isActive ? "page" : undefined}
-          >
-            {item.label}
-          </a>
-        );
-      })}
-      <a href={links.explorer.home()} class="mobile-nav-link">
-        Open Explorer
-      </a>
-      <a href="/wallet" class="button button--primary button--lg mobile-cta">
-        Get Wallet
-      </a>
-    </nav>
+  <div class="aicf-mobile-nav" data-mobile-nav>
+    <div class="aicf-mobile-nav-inner">
+      {nav.map((item) => (
+        <a href={item.href} class="aicf-mobile-link">{item.label}</a>
+      ))}
+      <a class="aicf-cta-btn" href="/downloads">Contribute GPU</a>
+    </div>
   </div>
 
-  <!-- Client-side: JSON-RPC network status check -->
-  <script define:vars={{ rpcUrl }}>
-    (function () {
-      if (!rpcUrl) return;
-
-      const dot = document.querySelector("[data-network-pill] [data-dot]");
-      const pill = document.querySelector("[data-network-pill]");
-      const sr = document.querySelector("[data-network-pill] [data-status-sr]");
-
-      const setStatus = (state, tip) => {
-        if (!dot || !pill) return;
-        dot.dataset.status = state;
-        if (sr) sr.textContent = "(" + state + (tip ? ", head " + tip : "") + ")";
-        pill.dataset.status = state;
-      };
-
-      const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 6000);
-
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "chain.getHead",
-          params: [],
-        }),
-        signal: ctrl.signal,
-      })
-        .then((r) => r.json())
-        .then((j) => {
-          const head = j?.result;
-          const h = head && (head.number ?? head.height);
-          const height =
-            typeof h === "number" ? h : typeof h === "string" ? Number(h) : undefined;
-          setStatus("online", Number.isFinite(height) ? String(height) : undefined);
-        })
-        .catch(() => setStatus("offline"));
-    })();
-  </script>
-
-  <!-- Theme toggle script -->
-  <script>
-    (function () {
-      const root = document.documentElement;
-      const toggle = document.querySelector('[data-theme-toggle]');
-      if (!toggle) return;
-
-      const applyTheme = (theme) => {
-        if (theme === 'light') {
-          root.setAttribute('data-theme', 'light');
-          toggle.dataset.state = 'light';
-        } else {
-          root.setAttribute('data-theme', 'dark');
-          toggle.dataset.state = 'dark';
-        }
-      };
-
-      const stored = localStorage.getItem('animica-theme');
-      const preferred = stored || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-      applyTheme(preferred);
-
-      toggle.addEventListener('click', () => {
-        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-        applyTheme(next);
-        localStorage.setItem('animica-theme', next);
-      });
-    })();
-  </script>
-
-  <!-- Mobile menu toggle script -->
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const toggleBtn = document.querySelector('[data-mobile-menu-toggle]');
-      const mobileNav = document.querySelector('[data-mobile-nav]');
+      const toggle = document.querySelector('[data-mobile-toggle]') as HTMLButtonElement | null;
+      const nav = document.querySelector('[data-mobile-nav]') as HTMLDivElement | null;
+      if (!toggle || !nav) return;
 
-      if (toggleBtn && mobileNav) {
-        toggleBtn.addEventListener('click', () => {
-          const isOpen = mobileNav.classList.contains('mobile-nav--open');
-
-          if (isOpen) {
-            mobileNav.classList.remove('mobile-nav--open');
-            toggleBtn.classList.remove('mobile-menu-btn--open');
-            document.body.style.overflow = '';
-          } else {
-            mobileNav.classList.add('mobile-nav--open');
-            toggleBtn.classList.add('mobile-menu-btn--open');
-            document.body.style.overflow = 'hidden';
-          }
-        });
-
-        document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape' && mobileNav.classList.contains('mobile-nav--open')) {
-            mobileNav.classList.remove('mobile-nav--open');
-            toggleBtn.classList.remove('mobile-menu-btn--open');
-            document.body.style.overflow = '';
-          }
-        });
-
-        mobileNav.addEventListener('click', (e) => {
-          if (e.target === mobileNav) {
-            mobileNav.classList.remove('mobile-nav--open');
-            toggleBtn.classList.remove('mobile-menu-btn--open');
-            document.body.style.overflow = '';
-          }
-        });
-      }
+      toggle.addEventListener('click', () => {
+        nav.classList.toggle('open');
+        toggle.classList.toggle('open');
+      });
     });
   </script>
 </header>
-
-<style>
-  .site-header {
-    position: sticky;
-    top: 0;
-    z-index: var(--z-sticky);
-    background: rgba(10, 14, 23, 0.72);
-    backdrop-filter: blur(18px) saturate(160%);
-    border-bottom: 1px solid rgba(139, 92, 246, 0.12);
-  }
-
-  .header-container {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 0.75rem 1rem;
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-  }
-
-  .brand-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .brand-logo {
-    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.4));
-  }
-
-  .desktop-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.9rem 1.2rem;
-    margin-left: 0.5rem;
-  }
-
-  .nav-link {
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    transition: color 0.2s ease;
-  }
-
-  .nav-link:hover,
-  .nav-link--active {
-    color: var(--text-primary);
-  }
-
-  .header-actions {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .network-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: 999px;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-
-  .network-status {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 999px;
-    background: rgba(148, 163, 184, 0.6);
-  }
-
-  .network-pill[data-status="online"] .network-status {
-    background: #22c55e;
-  }
-
-  .network-pill[data-status="offline"] .network-status {
-    background: #ef4444;
-  }
-
-  .mobile-menu-btn {
-    display: none;
-    background: none;
-    border: none;
-    color: var(--text-primary);
-  }
-
-  .mobile-nav {
-    position: fixed;
-    inset: 0;
-    background: rgba(8, 12, 20, 0.78);
-    backdrop-filter: blur(16px);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    z-index: 50;
-  }
-
-  .mobile-nav--open {
-    display: flex;
-  }
-
-  .mobile-nav-content {
-    width: min(24rem, 100%);
-    background: rgba(12, 17, 28, 0.92);
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 1rem;
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .mobile-nav-link {
-    font-size: 1rem;
-    padding: 0.65rem 0.75rem;
-    border-radius: 0.75rem;
-    color: var(--text-muted);
-    transition: background 0.2s ease, color 0.2s ease;
-  }
-
-  .mobile-nav-link--active,
-  .mobile-nav-link:hover {
-    color: var(--text-primary);
-    background: rgba(139, 92, 246, 0.12);
-  }
-
-  .mobile-cta {
-    margin-top: 0.5rem;
-  }
-
-  @media (max-width: 1024px) {
-    .desktop-nav {
-      display: none;
-    }
-
-    .mobile-menu-btn {
-      display: inline-flex;
-    }
-  }
-
-  @media (max-width: 640px) {
-    .network-pill {
-      display: none;
-    }
-  }
-</style>

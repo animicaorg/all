@@ -1,0 +1,6 @@
+{
+  "name": "aicf_agent_task",
+  "version": "0.1.0",
+  "entrypoint": "contract.py",
+  "description": "Deterministic on-chain multi-step agent workflow tracking for AICF"
+}

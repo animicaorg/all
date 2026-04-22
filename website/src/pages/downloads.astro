@@ -1,129 +1,135 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
-import CodeBlock from "../components/CodeBlock.astro";
-import { links } from "../config/links";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { loadProviderDownloadsPageData } from "../features/provider/downloads";
 
-const pageTitle = "Downloads — Wallet & Explorer";
-const pageDesc =
-  "Official desktop downloads for Animica Wallet and Explorer, plus verification tips.";
+const title = "Downloads";
+const description =
+  "Download AICF provider worker bundles for Windows, Linux, and Python. Includes versioned artifacts, checksums, install flow, benchmark commands, and troubleshooting.";
 
-const releasesUrl = links.github.releases();
-const actionsUrl = `${links.github.root}/actions`;
+const data = loadProviderDownloadsPageData();
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Downloads</h1>
-    <p class="mt-3 text-base opacity-80">
-      Get the latest <strong>Wallet (desktop)</strong> and <strong>Explorer (desktop)</strong> builds.
-      Prefer official releases for production.
-    </p>
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
 
-    <div class="mt-6 flex gap-3 flex-wrap">
-      <a
-        href={releasesUrl}
-        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-               bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-               hover:opacity-90"
-        target="_blank" rel="noopener noreferrer"
-      >
-        Latest Releases (GitHub)
-      </a>
-      <a
-        href={actionsUrl}
-        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-               border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
-               hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
-        target="_blank" rel="noopener noreferrer"
-      >
-        CI Artifacts
-      </a>
-    </div>
-  </section>
-
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-    <div class="rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-xl font-semibold tracking-tight">Wallet (Desktop)</h2>
-      <p class="mt-2 text-sm opacity-80">Signed installers are published with each release.</p>
-
-      <div class="mt-5 grid gap-6 sm:grid-cols-3">
-        <div>
-          <h3 class="font-medium">macOS (Universal)</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href="/animicawallet.dmg" underline>animicawallet.dmg</InlineLink></li>
-            <li><InlineLink href="/wallet/animicawalletmac.zip" underline>animicawalletmac.zip</InlineLink></li>
-            <li class="opacity-75">Alt: <InlineLink href={releasesUrl} underline>Animica-Wallet.pkg</InlineLink></li>
-            <li class="opacity-70 text-xs">Requires macOS 12+</li>
-          </ul>
-        </div>
-
-        <div>
-          <h3 class="font-medium">Windows</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Wallet.msix</InlineLink></li>
-            <li class="opacity-75">Alt: <InlineLink href={releasesUrl} underline>Animica-Wallet-Setup.exe</InlineLink></li>
-            <li class="opacity-70 text-xs">Requires Windows 10/11</li>
-          </ul>
-        </div>
-
-        <div>
-          <h3 class="font-medium">Linux</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Wallet.AppImage</InlineLink></li>
-            <li class="opacity-75">DEB/RPM packages in Releases</li>
-          </ul>
-        </div>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Provider Worker Releases</span>
+      <h1 class="aicf-heading">Download GPU Contribution Bundles</h1>
+      <p class="aicf-subheading">
+        Version <strong>{data.version}</strong>
+        {data.generatedAt ? ` · generated ${data.generatedAt}` : ''}.
+        Download your platform bundle, benchmark hardware, start worker mode, and begin earning ANM.
+      </p>
+      <div class="aicf-btn-row">
+        {data.checksumFile ? <a class="aicf-ghost-btn" href={data.checksumFile}>Checksums</a> : null}
+        <a class="aicf-ghost-btn" href="/providers">Provider Overview</a>
+        <a class="aicf-btn" href="/support">Need Installation Help</a>
       </div>
     </div>
   </section>
 
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-10">
-    <div class="rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-xl font-semibold tracking-tight">Explorer (Desktop)</h2>
-      <p class="mt-2 text-sm opacity-80">
-        Tauri-based desktop wrapper for the web Explorer (offline mode optional).
-      </p>
-
-      <div class="mt-5 grid gap-6 sm:grid-cols-3">
-        <div>
-          <h3 class="font-medium">macOS (Universal)</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Explorer.dmg</InlineLink></li>
-            <li class="opacity-70 text-xs">Requires macOS 12+</li>
-          </ul>
-        </div>
-        <div>
-          <h3 class="font-medium">Windows</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Explorer.msix</InlineLink></li>
-            <li class="opacity-70 text-xs">Requires Windows 10/11</li>
-          </ul>
-        </div>
-        <div>
-          <h3 class="font-medium">Linux</h3>
-          <ul class="mt-2 space-y-2 text-sm">
-            <li><InlineLink href={releasesUrl} underline>Animica-Explorer.AppImage</InlineLink></li>
-            <li class="opacity-75">DEB/RPM packages in Releases</li>
-          </ul>
-        </div>
-      </div>
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-3">
+      {data.cards.map((card) => (
+        <article class="aicf-card">
+          <p class="aicf-kicker" style="margin-bottom:0.6rem;">{card.platform}</p>
+          <h2 style="font-size:1.15rem;">{card.label}</h2>
+          <p class="aicf-muted" style="margin-top:0.55rem;">{card.notes}</p>
+          <dl style="margin-top:0.7rem; display:grid; grid-template-columns:auto 1fr; gap:0.4rem 0.6rem; font-size:0.9rem;">
+            <dt class="aicf-muted">Version</dt>
+            <dd>{card.version}</dd>
+            <dt class="aicf-muted">File</dt>
+            <dd><code>{card.filename}</code></dd>
+            <dt class="aicf-muted">Size</dt>
+            <dd>{card.sizeLabel}</dd>
+            <dt class="aicf-muted">SHA256</dt>
+            <dd style="font-family:var(--font-mono); font-size:0.78rem; word-break:break-all;">{card.sha256}</dd>
+          </dl>
+          <div class="aicf-btn-row" style="margin-top:0.95rem;">
+            <a class="aicf-btn" href={card.href}>Download</a>
+            {card.releaseNotes ? <a class="aicf-ghost-btn" href={card.releaseNotes}>Release Notes</a> : null}
+          </div>
+        </article>
+      ))}
     </div>
   </section>
 
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-10">
-    <div class="rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-xl font-semibold tracking-tight">Verify your download</h2>
-      <p class="mt-2 text-sm opacity-80">
-        Always verify checksums and signatures before installing. Release notes include SHA-256 hashes.
-      </p>
-      <CodeBlock lang="bash" title="Verify SHA256">
-{`shasum -a 256 animicawallet.dmg
-# Compare with /animicawallet.sha256`}
-      </CodeBlock>
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      {data.cards.map((card) => (
+        <article class="aicf-card">
+          <h2 style="font-size:1.15rem;">Install · {card.label}</h2>
+          <ol style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
+            {card.installSteps.map((step) => (
+              <li class="aicf-muted">{step}</li>
+            ))}
+          </ol>
+          <div class="aicf-code" style="margin-top:0.75rem;">
+<pre style="margin:0;"><code>{card.quickStart}</code></pre>
+          </div>
+        </article>
+      ))}
     </div>
   </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Supported GPUs and Minimum Requirements</h2>
+        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>NVIDIA driver 535+ recommended for production queues</li>
+          <li>CUDA-compatible GPUs with at least 12GB VRAM for baseline inference queues</li>
+          <li>16GB system RAM minimum, 32GB recommended</li>
+          <li>Stable internet + open outbound HTTPS to AICF API</li>
+          <li>Wallet payout address on Animica mainnet</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Benchmark Before Joining</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Worker benchmark mode detects your hardware and emits throughput metrics used by scheduler assignment. Do not skip this step.
+        </p>
+        <div class="aicf-code" style="margin-top:0.75rem;">
+<pre style="margin:0;"><code>aicf-provider-worker benchmark --config provider.config.json
+# verifies GPU detection, throughput, memory, and health checks</code></pre>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Provider Earnings and Economics</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Providers earn ANM from completed workloads. Better benchmark class, lower failure rate, and strong uptime increase routing priority and earnings consistency.
+        </p>
+        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>Jobs escrow ANM before compute starts</li>
+          <li>Receipts settle rewards and update reputation</li>
+          <li>Treasury subsidy can boost strategic job classes</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.25rem;">Troubleshooting</h2>
+        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>If no GPU is detected, verify drivers and rerun benchmark mode.</li>
+          <li>If wallet binding fails, regenerate config and confirm payout address format.</li>
+          <li>If heartbeat fails, inspect `logs/provider-worker.log` and network ACLs.</li>
+          <li>If jobs are not assigned, review reputation, stake, and benchmark tier.</li>
+        </ul>
+        <div class="aicf-btn-row">
+          <a class="aicf-ghost-btn" href="/docs">Provider Docs</a>
+          <a class="aicf-btn" href="/support">Open Support</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <Footer slot="footer" />
 </BaseLayout>

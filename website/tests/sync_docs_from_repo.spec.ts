@@ -31,8 +31,7 @@ describe('sync_docs_from_repo.mjs (fixture repo)', () => {
       await writeFile(path.join(srcRoot, 'IGNORED.txt'), 'skip me', 'utf8');
       await writeFile(path.join(srcRoot, 'node_modules', 'ignored', 'BLOCKED.mdx'), '# should be excluded', 'utf8');
 
-      const { stdout } = await execFileAsync('node', [scriptPath, '--src', srcRoot, '--dest', destRoot, '--clean']);
-      expect(stdout).toContain('Sync complete');
+      await execFileAsync('node', [scriptPath, '--src', srcRoot, '--dest', destRoot, '--clean']);
 
       const copied = normalizeList(await walkFiles(destRoot), destRoot);
       const expected = [

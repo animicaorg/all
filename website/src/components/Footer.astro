@@ -1,174 +1,35 @@
 ---
 import site from "../config/site";
-import { links } from "../config/links";
 
 const year = new Date().getFullYear();
-
-const footerSections = site.nav.footer;
-const socialLinks = [
-  site.links.github ? { href: site.links.github, label: "GitHub" } : null,
-  site.links.discord ? { href: site.links.discord, label: "Discord" } : null,
-  site.links.telegram ? { href: site.links.telegram, label: "Telegram" } : null,
-  site.links.x ? { href: site.links.x, label: "X" } : null,
-].filter(Boolean);
 ---
 
-<footer class="site-footer">
-  <div class="footer-container">
-    <div class="footer-main">
-      <div class="footer-brand">
-        <a href="/" class="footer-logo-link" aria-label={site.brand}>
-          <img src="/icons/logo.svg" width="28" height="28" alt="" class="footer-logo" />
-          <span class="footer-brand-name">{site.brand}</span>
-        </a>
-        {site.tagline && <p class="footer-tagline">{site.tagline}</p>}
-        <p class="footer-contact">
-          <span class="opacity-70">Contact</span>
-          <a href={`mailto:${site.contact.email}`} class="footer-email">{site.contact.email}</a>
-        </p>
-        <div class="footer-social">
-          {socialLinks.map((link) => (
-            <a href={link!.href} class="social-link" target="_blank" rel="noopener noreferrer">
-              {link!.label}
-            </a>
+<footer class="aicf-footer">
+  <div class="aicf-footer-inner">
+    <div>
+      <p class="aicf-footer-brand">AICF</p>
+      <p class="aicf-footer-copy">
+        Decentralized AI compute cloud on Animica. Spend ANM for inference and training. Earn ANM by supplying useful GPU and CPU compute.
+      </p>
+      <p class="aicf-footer-meta">© {year} {site.brand} · {site.contact.email}</p>
+    </div>
+
+    {site.nav.footer.map((section) => (
+      <div>
+        <p class="aicf-footer-title">{section.title}</p>
+        <ul class="aicf-footer-links">
+          {section.items.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                {...(item.external ? { rel: "noopener noreferrer", target: "_blank" } : {})}
+              >
+                {item.label}
+              </a>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
-
-      {footerSections.map((section) => (
-        <div class="footer-section">
-          <h3 class="footer-section-title">{section.title}</h3>
-          <ul class="footer-link-list">
-            {section.items.map((link) => (
-              <li>
-                <a
-                  href={link.href}
-                  class="footer-link"
-                  {...(link.external ? { rel: "noopener noreferrer", target: "_blank" } : {})}
-                >
-                  {link.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-
-    <div class="footer-bottom">
-      <div class="footer-bottom-content">
-        <p class="footer-copyright">
-          © {year} {site.brand}. All rights reserved.
-        </p>
-        <div class="footer-bottom-links">
-          <a href="/updates" class="footer-bottom-link">Updates</a>
-          <span class="footer-divider">·</span>
-          <a href={links.github.root} class="footer-bottom-link" target="_blank" rel="noopener noreferrer">
-            GitHub
-          </a>
-          <span class="footer-divider">·</span>
-          <a href="/status" class="footer-bottom-link">Status</a>
-        </div>
-      </div>
-    </div>
+    ))}
   </div>
 </footer>
-
-<style>
-  .site-footer {
-    position: relative;
-    border-top: 1px solid rgba(139, 92, 246, 0.15);
-    background: linear-gradient(
-      to bottom,
-      rgba(10, 14, 23, 0.6),
-      rgba(10, 14, 23, 0.98)
-    );
-    backdrop-filter: blur(20px) saturate(180%);
-  }
-
-  .footer-container {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 0 1rem;
-  }
-
-  .footer-main {
-    display: grid;
-    grid-template-columns: 1.5fr repeat(4, 1fr);
-    gap: 3rem;
-    padding: 4rem 0;
-  }
-
-  .footer-brand {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .footer-logo-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-weight: 600;
-  }
-
-  .footer-social {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .social-link {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-
-  .footer-section-title {
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 0.75rem;
-  }
-
-  .footer-link-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .footer-link {
-    font-size: 0.9rem;
-    color: var(--text-muted);
-  }
-
-  .footer-bottom {
-    border-top: 1px solid rgba(148, 163, 184, 0.1);
-    padding: 1.5rem 0 2rem;
-  }
-
-  .footer-bottom-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  @media (max-width: 1024px) {
-    .footer-main {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .footer-brand {
-      grid-column: 1 / -1;
-    }
-  }
-
-  @media (max-width: 640px) {
-    .footer-main {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>

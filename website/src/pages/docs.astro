@@ -1,48 +1,96 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
 import { links } from "../config/links";
 
-const pageTitle = "Docs — Animica";
-const pageDesc =
-  "Developer documentation for Animica: node ops, RPC, mining, and SDKs.";
-const redirectTo = links.docs.home();
+const title = "Docs";
+const description =
+  "AICF documentation hub for developers, providers, contract jobs, API usage, and local environment setup.";
+
+const repo = links.github.root;
+
+const sections = [
+  {
+    title: 'Developer Docs',
+    guides: [
+      { label: 'API Quickstart', href: `${repo}/blob/main/docs/aicf-cloud/quickstart.md` },
+      { label: 'API Keys and Auth', href: `${repo}/blob/main/docs/aicf-cloud/api-keys.md` },
+      { label: 'Chat Completions', href: `${repo}/blob/main/docs/aicf-cloud/chat-completions.md` },
+      { label: 'Embeddings', href: `${repo}/blob/main/docs/aicf-cloud/embeddings.md` },
+      { label: 'Jobs and Async Workloads', href: `${repo}/blob/main/docs/aicf-cloud/jobs.md` },
+    ],
+  },
+  {
+    title: 'Provider Docs',
+    guides: [
+      { label: 'Provider Onboarding', href: `${repo}/blob/main/docs/aicf-cloud/provider-onboarding.md` },
+      { label: 'Provider Daemon Install', href: `${repo}/blob/main/docs/aicf-cloud/provider-daemon-install.md` },
+      { label: 'Provider Fulfillment Flow', href: `${repo}/blob/main/docs/aicf-cloud/provider-fulfillment-flow.md` },
+      { label: 'Staking and Slashing', href: `${repo}/blob/main/docs/aicf-cloud/staking-slashing.md` },
+      { label: 'Troubleshooting', href: `${repo}/blob/main/docs/aicf-cloud/troubleshooting.md` },
+    ],
+  },
+  {
+    title: 'Contract Docs',
+    guides: [
+      { label: 'Contract + LLM Patterns', href: `${repo}/blob/main/docs/aicf-cloud/contracts-calling-llms-agents.md` },
+      { label: 'Contract Escrow Settlement', href: `${repo}/blob/main/docs/aicf-cloud/contract-escrow-settlement.md` },
+      { label: 'Dispute Resolution', href: `${repo}/blob/main/docs/aicf-cloud/contract-dispute-resolution.md` },
+      { label: 'Deterministic Offchain Model', href: `${repo}/blob/main/docs/aicf-cloud/deterministic-offchain-model.md` },
+      { label: 'Contract Security Model', href: `${repo}/blob/main/docs/aicf-cloud/contract-security-model.md` },
+    ],
+  },
+  {
+    title: 'Local and Ops Setup',
+    guides: [
+      { label: 'Local Development', href: `${repo}/blob/main/docs/aicf-cloud/local-dev.md` },
+      { label: 'Deployment', href: `${repo}/blob/main/docs/aicf-cloud/deployment.md` },
+      { label: 'Contract Jobs Local Dev', href: `${repo}/blob/main/docs/aicf-cloud/contract-jobs-local-dev.md` },
+      { label: 'ANM Funding Flow', href: `${repo}/blob/main/docs/aicf-cloud/anm-funding-flow.md` },
+      { label: 'ANM Billing Model', href: `${repo}/blob/main/docs/aicf-cloud/anm-billing-model.md` },
+    ],
+  },
+];
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Documentation</h1>
-    <p class="mt-3 opacity-80">Redirecting you to the docs portal…</p>
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
 
-    <div class="mt-6">
-      <a
-        href={redirectTo}
-        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-               bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-               hover:opacity-90 focus:outline-none focus-visible:ring-2"
-      >
-        Open Docs
-      </a>
-      <p class="mt-2 text-sm opacity-70">
-        If you are not redirected automatically, use the button above or this link:
-        <InlineLink href={redirectTo} underline>{redirectTo}</InlineLink>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Documentation Hub</span>
+      <h1 class="aicf-heading">Developer, Provider, Contract, and Ops Docs</h1>
+      <p class="aicf-subheading">
+        AICF docs are organized by real workflows: build APIs, fund workloads with ANM, operate provider workers, and ship contract-driven AI jobs.
       </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/developers">Developer Start</a>
+        <a class="aicf-ghost-btn" href="/providers">Provider Start</a>
+        <a class="aicf-ghost-btn" href={repo} target="_blank" rel="noopener noreferrer">Open Full Repo Docs</a>
+      </div>
     </div>
-
-    <noscript>
-      <p class="mt-6 text-sm opacity-80">
-        JavaScript is disabled. Please follow the link to <a href={redirectTo}>docs</a>.
-      </p>
-    </noscript>
   </section>
 
-  <script is:inline>
-    (function () {
-      if (typeof window === 'undefined') return;
-      var base = "{redirectTo}";
-      var search = window.location.search || "";
-      var hash = window.location.hash || "";
-      window.location.replace(base + search + hash);
-    })();
-  </script>
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      {sections.map((section) => (
+        <article class="aicf-card">
+          <h2 style="font-size:1.3rem;">{section.title}</h2>
+          <ul style="margin-top:0.7rem; list-style:none; padding:0; display:grid; gap:0.45rem;">
+            {section.guides.map((guide) => (
+              <li>
+                <a href={guide.href} target="_blank" rel="noopener noreferrer" class="aicf-ghost-btn" style="width:100%; justify-content:space-between;">
+                  <span>{guide.label}</span>
+                  <span style="font-family:var(--font-mono); font-size:0.75rem;">open</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <Footer slot="footer" />
 </BaseLayout>

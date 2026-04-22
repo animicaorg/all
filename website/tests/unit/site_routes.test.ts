@@ -9,18 +9,20 @@ const pagesRoot = path.join(websiteRoot, 'src', 'pages');
 
 const requiredRoutes = [
   'index.astro',
+  'developers.astro',
+  'providers.astro',
+  'downloads.astro',
   'docs.astro',
-  'explorer.astro',
-  'wallet.astro',
-  'node.astro',
-  'mine.astro',
-  'community.astro',
+  'pricing.astro',
+  'network.astro',
+  'about.astro',
+  'faq.astro',
+  'support.astro',
   'status.astro',
-  'updates/index.astro',
 ];
 
 describe('site routes & env', () => {
-  it('has required routes in src/pages', () => {
+  it('has required AICF platform routes in src/pages', () => {
     const missing = requiredRoutes.filter((route) => !existsSync(path.join(pagesRoot, route)));
     expect(missing).toEqual([]);
   });

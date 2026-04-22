@@ -71,20 +71,20 @@ export type SiteConfig = {
 
 export const SITE: SiteConfig = {
   brand: {
-    name: 'Animica',
-    tagline: 'Post-quantum blockchain for durable, verifiable compute.',
+    name: 'AICF',
+    tagline: 'Decentralized AI compute cloud on Animica.',
     logo: {
       mark: '/icons/logo.svg',
       wordmark: '/icons/wordmark.svg',
     },
     theme: {
-      color: '#0ea5e9',
-      bg: '#0b0f1a',
+      color: '#16d9c3',
+      bg: '#070b16',
     },
   },
 
   urls: {
-    site: (import.meta.env.SITE_URL as string) || 'https://animica.org',
+    site: (import.meta.env.SITE_URL as string) || 'https://aicf.animica.org',
     docs: ENV.DOCS_URL,
     explorer: ENV.EXPLORER_URL,
     explorer2: ENV.EXPLORER2_URL,
@@ -97,41 +97,40 @@ export const SITE: SiteConfig = {
   nav: {
     top: [
       { label: 'Home', href: '/' },
+      { label: 'Developers', href: '/developers' },
+      { label: 'Providers', href: '/providers' },
+      { label: 'Downloads', href: '/downloads' },
+      { label: 'Pricing', href: '/pricing' },
+      { label: 'Network', href: '/network' },
       { label: 'Docs', href: '/docs' },
-      { label: 'Explorer', href: '/explorer' },
-      { label: 'Wallet', href: '/wallet' },
-      { label: 'Run a Node', href: '/node' },
-      { label: 'Mine', href: '/mine' },
-      { label: 'Community', href: '/community' },
       { label: 'Status', href: '/status' },
-      { label: 'Updates', href: '/updates' },
     ],
     footer: [
       {
+        title: 'Platform',
+        items: [
+          { label: 'Developers', href: '/developers' },
+          { label: 'Providers', href: '/providers' },
+          { label: 'Downloads', href: '/downloads' },
+          { label: 'Pricing', href: '/pricing' },
+        ],
+      },
+      {
         title: 'Network',
         items: [
-          { label: 'Explorer', href: '/explorer' },
-          ...(ENV.EXPLORER2_URL ? [{ label: 'Explorer 2', href: '/explorer#explorer-2' }] : []),
-          { label: 'RPC', href: ENV.RPC_URL, external: true, target: '_blank', rel: 'noopener' },
+          { label: 'Network', href: '/network' },
           { label: 'Status', href: '/status' },
+          { label: 'Explorer', href: '/explorer' },
+          { label: 'RPC', href: ENV.RPC_URL, external: true, target: '_blank', rel: 'noopener' },
         ],
       },
       {
-        title: 'Developers',
+        title: 'Resources',
         items: [
-          { label: 'Docs', href: '/docs' },
-          { label: 'Run a Node', href: '/node' },
-          { label: 'Mine', href: '/mine' },
-          { label: 'GitHub', href: ENV.GITHUB_URL, external: true, target: '_blank', rel: 'noopener' },
-        ],
-      },
-      {
-        title: 'Community',
-        items: [
-          ...(ENV.DISCORD_URL ? [{ label: 'Discord', href: ENV.DISCORD_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
-          ...(ENV.TELEGRAM_URL ? [{ label: 'Telegram', href: ENV.TELEGRAM_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
-          ...(ENV.X_URL ? [{ label: 'X (Twitter)', href: ENV.X_URL, external: true, target: '_blank', rel: 'noopener' }] : []),
-          { label: 'Updates', href: '/updates' },
+          { label: 'Docs Hub', href: '/docs' },
+          { label: 'About AICF', href: '/about' },
+          { label: 'FAQ', href: '/faq' },
+          { label: 'Support', href: '/support' },
         ],
       },
       {
@@ -140,13 +139,14 @@ export const SITE: SiteConfig = {
           { label: 'Privacy', href: '/privacy' },
           { label: 'Terms', href: '/terms' },
           { label: 'Security', href: '/security' },
+          { label: 'GitHub', href: ENV.GITHUB_URL, external: true, target: '_blank', rel: 'noopener' },
         ],
       },
     ],
   },
 
   contact: {
-    email: 'contact@animica.org',
+    email: 'aicf@animica.org',
     securityTxt: '/.well-known/security.txt',
     securityPolicy: '/security',
     acknowledgments: '/security/hall-of-fame',
@@ -165,10 +165,10 @@ export const SITE: SiteConfig = {
   },
 
   meta: {
-    title: 'Animica — Post-quantum blockchain for real-world compute',
+    title: 'AICF — Decentralized AI Compute Cloud on Animica',
     description:
-      'Animica is a post-quantum blockchain with useful-work consensus, deterministic Python VM, and production tooling for wallets, explorers, and node operators.',
-    ogImage: '/images/og/landing-light.png',
+      'AICF is Animica\'s decentralized AI compute cloud where developers spend ANM for inference, embeddings, training, and agents while providers earn ANM by contributing GPU and CPU capacity.',
+    ogImage: '/og/og-home.png',
   },
 };
 

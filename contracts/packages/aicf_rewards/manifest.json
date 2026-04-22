@@ -1,0 +1,16 @@
+{
+  "name": "AICFRewards",
+  "version": "0.1.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "source": "contract.py",
+  "deploy": {
+    "metadata": {
+      "description": "Provider reward accounting and claim settlement"
+    }
+  }
+}
