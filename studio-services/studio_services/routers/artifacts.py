@@ -15,7 +15,7 @@ It tolerates minor service-layer renames by resolving among common aliases.
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +47,9 @@ _put_artifact = _resolve(("put_artifact", "store_artifact", "create_artifact"))
 _get_artifact = _resolve(
     ("get_artifact", "fetch_artifact", "read_artifact", "artifact_by_id")
 )
+_get_artifact_bytes = _resolve(
+    ("get_artifact_bytes", "read_artifact_bytes", "fetch_artifact_bytes")
+)
 _list_by_addr = _resolve(
     (
         "list_artifacts_by_address",
@@ -66,7 +69,7 @@ def _maybe_guard_dep() -> List[Any]:
         from studio_services.security.auth import \
             require_api_key  # type: ignore
 
-        return [Depends(require_api_key)]
+        return [require_api_key()]
     except Exception:
         return []
 
@@ -101,19 +104,27 @@ def post_artifact(req: ArtifactPut) -> ArtifactMeta:
 @router.get(
     "/artifacts/{artifact_id}",
     summary="Get artifact metadata by id",
-    response_model=ArtifactMeta,
+    response_model=None,
 )
 def get_artifact(
     artifact_id: str = Path(
         ...,
         description="Artifact id (content-address / digest string).",
-    )
-) -> ArtifactMeta:
+    ),
+    metadata: bool = Query(
+        default=False,
+        description="When true, return metadata JSON; otherwise return raw bytes.",
+    ),
+) -> Any:
     """
     Fetch metadata for a stored artifact by id. The service may also serve
     content from a static route if enabled; this endpoint returns metadata.
     """
-    log.debug("GET /artifacts/{artifact_id} id=%s", artifact_id)
+    log.debug("GET /artifacts/{artifact_id} id=%s metadata=%s", artifact_id, metadata)
+    if not metadata:
+        payload, _mime = _get_artifact_bytes(artifact_id)
+        return Response(content=payload, media_type="application/octet-stream")
+
     meta = _get_artifact(artifact_id)
     if not isinstance(meta, ArtifactMeta):
         log.warning("service returned unexpected type for get_artifact: %r", type(meta))

@@ -45,6 +45,7 @@ export default defineConfig({
     host: true, 
     port: 3001,
     allowedHosts: [
+      "aicf.animica.org",
       "explorer.animica.org",
       "localhost",
       ".localhost",

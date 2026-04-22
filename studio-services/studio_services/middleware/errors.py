@@ -16,6 +16,7 @@ Exception → RFC7807 "problem+json" mappers for FastAPI.
 import logging
 from typing import Any, Dict, Optional, Tuple, Type
 
+from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -118,8 +119,13 @@ async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
     )
     code = getattr(exc, "code", exc.__class__.__name__)
     detail = getattr(exc, "detail", None) or getattr(exc, "message", str(exc)) or ""
-    type_uri = getattr(exc, "type_uri", "about:blank")
-    extras = getattr(exc, "extra", None) or getattr(exc, "extras", None)
+    type_uri_attr = getattr(exc, "type_uri", "about:blank")
+    type_uri = type_uri_attr() if callable(type_uri_attr) else str(type_uri_attr)
+    extras = (
+        getattr(exc, "details", None)
+        or getattr(exc, "extra", None)
+        or getattr(exc, "extras", None)
+    )
 
     status, title = _to_status_title(int(status))
     body = _base_problem(
@@ -156,7 +162,9 @@ async def _handle_validation_error(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     status, title = _to_status_title(422)
-    errors = exc.errors()  # pydantic-style list[dict]
+    # `exc.errors()` may contain non-JSON-serializable values (e.g. ValueError instances
+    # in "input"), so coerce through FastAPI's encoder first.
+    errors = jsonable_encoder(exc.errors())
     body = _base_problem(
         request,
         status=status,

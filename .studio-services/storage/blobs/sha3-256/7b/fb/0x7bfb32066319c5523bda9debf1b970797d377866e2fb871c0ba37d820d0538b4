@@ -1,0 +1,1 @@
+{"events":[{"inputs":[{"name":"by","type":"int"},{"name":"v","type":"int"}],"name":"Inc"}],"functions":[{"inputs":[{"name":"amount","type":"int"}],"name":"inc","outputs":[]},{"inputs":[],"name":"get","outputs":[{"name":"value","type":"int"}]}]}

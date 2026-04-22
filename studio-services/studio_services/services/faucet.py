@@ -25,8 +25,9 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from studio_services import config as cfg_mod
 from studio_services.adapters import \
     pq_addr as addr_adapter  # address validation
+from studio_services.adapters import node_rpc as node_rpc_mod
 from studio_services.adapters.node_rpc import NodeRPC
-from studio_services.errors import ApiError, BadRequest
+from studio_services.errors import ApiError, BadRequest, FaucetOff
 from studio_services.models.faucet import FaucetRequest, FaucetResponse
 # storage
 from studio_services.storage import sqlite as storage_sqlite  # type: ignore
@@ -291,13 +292,7 @@ def drip(
     fc = _get_faucet_cfg()
     secret = fc["FAUCET_KEY"]
     if not secret:
-        # Surface a typed error if the project defines FaucetOff
-        try:
-            from studio_services.errors import FaucetOff  # type: ignore
-
-            raise FaucetOff("Faucet is disabled")
-        except Exception:
-            raise BadRequest("Faucet is disabled (no FAUCET_KEY configured)")
+        raise FaucetOff()
 
     # Validate destination
     if not req.address:
@@ -376,7 +371,7 @@ def drip(
     # Build response
     resp = FaucetResponse(
         address=req.address,
-        amount=int(amount),
+        granted=int(amount),
         tx_hash=str(tx_hash),
         message="drip accepted",
         limits={
@@ -390,3 +385,33 @@ def drip(
 
 
 __all__ = ["drip"]
+
+
+def _node_from_env() -> NodeRPC:
+    from_env = getattr(node_rpc_mod, "from_env", None)
+    if callable(from_env):
+        return from_env()
+
+    NodeRPCCls = getattr(node_rpc_mod, "NodeRPC", None)
+    NodeRpcConfig = getattr(node_rpc_mod, "NodeRpcConfig", None)
+    rpc_url = os.getenv("RPC_URL", "http://127.0.0.1:8545")
+    if callable(NodeRPCCls):
+        try:
+            return NodeRPCCls(rpc_url=rpc_url)  # type: ignore[misc]
+        except TypeError:
+            if NodeRpcConfig is not None:
+                return NodeRPCCls(NodeRpcConfig(url=rpc_url))  # type: ignore[misc]
+    raise BadRequest("Node RPC is not configured")
+
+
+def request_drip(req: FaucetRequest) -> FaucetResponse:
+    node = _node_from_env()
+    return drip(node, req)
+
+
+# Router compatibility aliases
+submit_drip = request_drip
+faucet_drip = request_drip
+
+
+__all__ = ["drip", "request_drip", "submit_drip", "faucet_drip"]

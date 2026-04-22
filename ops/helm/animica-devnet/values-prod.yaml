@@ -117,7 +117,7 @@ node:
       host: "0.0.0.0"
       port: 8545
       wsPort: 8546
-      corsOrigins: ["https://studio.animica.dev", "https://explorer.animica.dev"]
+      corsOrigins: ["https://studio.animica.dev", "https://explorer.animica.dev", "https://aicf.animica.org"]
       rateLimits:
         maxRps: 500
         burst: 1000
@@ -226,7 +226,7 @@ services:
     CHAIN_ID: "2"
     STORAGE_DIR: "/var/lib/animica/services"
     RATE_LIMITS: "deploy=3r/s,verify=2r/s,artifacts=5r/s"
-    CORS_ALLOWLIST: "https://studio.animica.dev,https://explorer.animica.dev"
+    CORS_ALLOWLIST: "https://studio.animica.dev,https://explorer.animica.dev,https://aicf.animica.org"
   persistence:
     enabled: true
     size: 50Gi

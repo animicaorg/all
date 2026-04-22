@@ -1,10 +1,3 @@
-export const heroStats = [
-  { label: 'Active Providers', value: '142' },
-  { label: 'GPUs Online', value: '1,986' },
-  { label: 'Jobs Settled (24h)', value: '284,912' },
-  { label: 'ANM Paid Out (30d)', value: '5.8M' },
-];
-
 export const howItWorks = [
   {
     title: 'Developers Fund Projects',
@@ -140,29 +133,6 @@ export const providerSteps = [
   'Run benchmark mode and verify detected GPUs + throughput score.',
   'Start worker daemon with heartbeat + logs enabled.',
   'Accept jobs, submit receipts, and track rewards in dashboard.',
-];
-
-export const networkPanels = [
-  {
-    label: 'Provider Uptime (30d)',
-    value: '99.28%',
-    footnote: 'Based on heartbeat + completion windows',
-  },
-  {
-    label: 'Average Queue Delay',
-    value: '280 ms',
-    footnote: 'Scheduler assignment latency',
-  },
-  {
-    label: 'Model Calls Today',
-    value: '1.42M',
-    footnote: 'Chat + embeddings + agents',
-  },
-  {
-    label: 'Treasury Subsidy Used',
-    value: '214k ANM',
-    footnote: 'Developer boosts + grants',
-  },
 ];
 
 export const faqItems = [

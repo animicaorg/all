@@ -7,6 +7,10 @@ import { providerHardware, providerSteps } from "../data/aicf";
 const title = "Providers";
 const description =
   "Contribute GPU and CPU compute to AICF, run benchmarked workers, and earn ANM from live inference, embedding, and agent workloads.";
+const aicfApiBaseUrl =
+  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
+  "/api";
 ---
 
 <BaseLayout title={title} description={description}>
@@ -107,25 +111,26 @@ aicf-provider-worker start --config provider.config.json</code></pre>
       </article>
 
       <article class="aicf-card">
-        <span class="aicf-kicker">Provider Dashboard Preview</span>
+        <span class="aicf-kicker">Live Network Snapshot</span>
         <div class="aicf-grid-2" style="margin-top:0.7rem;">
           <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Current Utilization</p>
-            <p class="aicf-value" style="font-size:1.45rem;">78%</p>
+            <p class="aicf-muted" style="font-size:0.8rem;">Active Providers</p>
+            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="providers">--</p>
           </div>
           <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Jobs Completed (24h)</p>
-            <p class="aicf-value" style="font-size:1.45rem;">1,294</p>
+            <p class="aicf-muted" style="font-size:0.8rem;">Provider Nodes</p>
+            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="nodes">--</p>
           </div>
           <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">ANM Earned (24h)</p>
-            <p class="aicf-value" style="font-size:1.45rem;">4,830</p>
+            <p class="aicf-muted" style="font-size:0.8rem;">Queue Units</p>
+            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="queueUnits">--</p>
           </div>
           <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Reputation</p>
-            <p class="aicf-value" style="font-size:1.45rem;">97.4</p>
+            <p class="aicf-muted" style="font-size:0.8rem;">Settlements</p>
+            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="settlements">--</p>
           </div>
         </div>
+        <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-provider-message>Loading live AICF metrics...</p>
         <div class="aicf-btn-row">
           <a class="aicf-btn" href="/downloads">Download and Start</a>
           <a class="aicf-ghost-btn" href="/support">Need Help?</a>
@@ -133,6 +138,56 @@ aicf-provider-worker start --config provider.config.json</code></pre>
       </article>
     </div>
   </section>
+
+  <script define:vars={{ aicfApiBaseUrl }}>
+    import {
+      deriveAicfCounts,
+      fetchAicfStatus,
+      formatCount,
+      formatUtc,
+    } from "../features/aicf/liveMetricsClient";
+
+    const messageEl = document.querySelector("[data-aicf-provider-message]");
+    const metricEls = Array.from(document.querySelectorAll("[data-aicf-provider-metric]"));
+
+    const setMetric = (key, value) => {
+      for (const el of metricEls) {
+        if (el.getAttribute("data-aicf-provider-metric") === key) {
+          el.textContent = value;
+        }
+      }
+    };
+
+    const setUnavailable = () => {
+      for (const el of metricEls) {
+        el.textContent = "Unavailable";
+      }
+      if (messageEl) {
+        messageEl.textContent = "Live AICF metrics unavailable.";
+      }
+    };
+
+    const loadMetrics = async () => {
+      try {
+        const { payload } = await fetchAicfStatus(aicfApiBaseUrl);
+        const counts = deriveAicfCounts(payload);
+
+        setMetric("providers", formatCount(counts.providers));
+        setMetric("nodes", formatCount(counts.nodes));
+        setMetric("queueUnits", formatCount(counts.queueUnits));
+        setMetric("settlements", formatCount(counts.settlements));
+
+        if (messageEl) {
+          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
+        }
+      } catch (error) {
+        console.error("[aicf-providers] unable to fetch live status", error);
+        setUnavailable();
+      }
+    };
+
+    loadMetrics().catch(() => setUnavailable());
+  </script>
 
   <Footer slot="footer" />
 </BaseLayout>

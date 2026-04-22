@@ -25,7 +25,7 @@ describe('services/provider — wallet extension detection', () => {
     let checks = 0;
 
     if (typeof mod.getProvider === 'function') {
-      expect(mod.getProvider()).toBeNull();
+      await expect(mod.getProvider(25)).rejects.toThrow();
       checks++;
     }
 
@@ -40,7 +40,7 @@ describe('services/provider — wallet extension detection', () => {
     }
 
     if (typeof mod.connect === 'function') {
-      await expect(mod.connect()).rejects.toThrow();
+      await expect(mod.connect({ timeoutMs: 25 })).rejects.toThrow();
       checks++;
     }
 
@@ -62,6 +62,13 @@ describe('services/provider — wallet extension detection', () => {
         ) {
           return ['anim1testaccountxxxxxxxxxxxxxxxxxxxxxx'];
         }
+        if (
+          payload?.method === 'animica_chainId' ||
+          payload?.method === 'chain.getChainId' ||
+          payload?.method === 'eth_chainId'
+        ) {
+          return 1;
+        }
         return null;
       }),
       on: vi.fn(),
@@ -76,7 +83,7 @@ describe('services/provider — wallet extension detection', () => {
     let assertions = 0;
 
     if (typeof mod.getProvider === 'function') {
-      expect(mod.getProvider()).toBe(mock);
+      await expect(mod.getProvider()).resolves.toBe(mock);
       assertions++;
     }
 

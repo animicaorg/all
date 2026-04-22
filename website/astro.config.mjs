@@ -95,6 +95,7 @@ export default defineConfig({
         'dev.animica.org',
         'staging.animica.org',
         'preview.animica.org',
+        'aicf.animica.org',
         'explorer.animica.org',
       ],
       ...(miningProxy ? { proxy: miningProxy } : {}),
