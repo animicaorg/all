@@ -1,0 +1,50 @@
+{
+  "name": "USDANComplianceController",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      { "name": "init", "inputs": [
+        { "name": "owner", "type": "bytes" },
+        { "name": "token", "type": "bytes" },
+        { "name": "sanctions_reference", "type": "bytes" }
+      ], "outputs": [] },
+      { "name": "owner", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "token", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "sanctions_reference", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "allowlist_enforced", "inputs": [], "outputs": [{ "type": "bool" }] },
+      { "name": "is_admin", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "is_allowed", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "is_denied", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "is_transfer_allowed", "inputs": [{ "name": "src", "type": "bytes" }, { "name": "dst", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "set_owner", "inputs": [{ "name": "new_owner", "type": "bytes" }], "outputs": [] },
+      { "name": "set_admin", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_allowlist_enforced", "inputs": [{ "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_allow", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "allowed", "type": "bool" }], "outputs": [] },
+      { "name": "set_deny", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "denied", "type": "bool" }], "outputs": [] },
+      { "name": "set_sanctions_reference", "inputs": [{ "name": "reference", "type": "bytes" }], "outputs": [] },
+      { "name": "pause_token", "inputs": [{ "name": "paused_state", "type": "bool" }], "outputs": [] },
+      { "name": "freeze_account", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "frozen", "type": "bool" }], "outputs": [] },
+      { "name": "blocklist_account", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "blocked", "type": "bool" }], "outputs": [] }
+    ],
+    "events": [
+      { "name": "ComplianceAdminUpdated", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }] },
+      { "name": "AllowlistModeUpdated", "inputs": [{ "name": "enabled", "type": "bool" }] },
+      { "name": "AllowlistUpdated", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "allowed", "type": "bool" }] },
+      { "name": "DenylistUpdated", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "denied", "type": "bool" }] },
+      { "name": "PauseStatusPushed", "inputs": [{ "name": "paused", "type": "bool" }] },
+      { "name": "FreezeStatusPushed", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "frozen", "type": "bool" }] }
+    ]
+  },
+  "deploy": {
+    "metadata": {
+      "description": "USDAN compliance policy controller with allowlist/denylist, sanctions metadata, and emergency pause/freeze controls."
+    }
+  },
+  "source": "contract.py"
+}

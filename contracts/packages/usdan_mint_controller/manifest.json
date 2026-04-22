@@ -1,0 +1,67 @@
+{
+  "name": "USDANMintController",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      { "name": "init", "inputs": [
+        { "name": "owner", "type": "bytes" },
+        { "name": "token", "type": "bytes" },
+        { "name": "min_validity_blocks", "type": "int" },
+        { "name": "max_validity_blocks", "type": "int" }
+      ], "outputs": [] },
+      { "name": "owner", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "token", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "is_operator", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "is_signer", "inputs": [{ "name": "pubkey_hash", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "nonce_used", "inputs": [{ "name": "nonce", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "request_consumed", "inputs": [{ "name": "request_id", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "min_validity_blocks", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "max_validity_blocks", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "mint_message", "inputs": [
+        { "name": "recipient", "type": "bytes" },
+        { "name": "amount", "type": "int" },
+        { "name": "fiat_reference", "type": "bytes" },
+        { "name": "request_id", "type": "bytes" },
+        { "name": "nonce", "type": "bytes" },
+        { "name": "valid_after_block", "type": "int" },
+        { "name": "valid_before_block", "type": "int" }
+      ], "outputs": [{ "type": "bytes" }] },
+      { "name": "set_owner", "inputs": [{ "name": "new_owner", "type": "bytes" }], "outputs": [] },
+      { "name": "set_token", "inputs": [{ "name": "new_token", "type": "bytes" }], "outputs": [] },
+      { "name": "set_operator", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_signer", "inputs": [{ "name": "pubkey_hash", "type": "bytes" }, { "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_validity_windows", "inputs": [{ "name": "min_validity_blocks", "type": "int" }, { "name": "max_validity_blocks", "type": "int" }], "outputs": [] },
+      { "name": "execute_mint", "inputs": [
+        { "name": "recipient", "type": "bytes" },
+        { "name": "amount", "type": "int" },
+        { "name": "fiat_reference", "type": "bytes" },
+        { "name": "request_id", "type": "bytes" },
+        { "name": "nonce", "type": "bytes" },
+        { "name": "valid_after_block", "type": "int" },
+        { "name": "valid_before_block", "type": "int" },
+        { "name": "signer_pubkey", "type": "bytes" },
+        { "name": "signature", "type": "bytes" }
+      ], "outputs": [{ "type": "bool" }] }
+    ],
+    "events": [
+      { "name": "OwnershipTransferred", "inputs": [{ "name": "previousOwner", "type": "bytes" }, { "name": "newOwner", "type": "bytes" }] },
+      { "name": "TokenUpdated", "inputs": [{ "name": "previousToken", "type": "bytes" }, { "name": "newToken", "type": "bytes" }] },
+      { "name": "OperatorUpdated", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }] },
+      { "name": "SignerUpdated", "inputs": [{ "name": "pubkeyHash", "type": "bytes" }, { "name": "enabled", "type": "bool" }] },
+      { "name": "MintRequestAccepted", "inputs": [{ "name": "requestId", "type": "bytes" }, { "name": "recipient", "type": "bytes" }, { "name": "amount", "type": "int" }] },
+      { "name": "MintCompleted", "inputs": [{ "name": "requestId", "type": "bytes" }, { "name": "recipient", "type": "bytes" }, { "name": "amount", "type": "int" }] }
+    ]
+  },
+  "deploy": {
+    "metadata": {
+      "description": "Authorized mint controller for USDAN with backend signature validation, replay protection, and operator controls."
+    }
+  },
+  "source": "contract.py"
+}

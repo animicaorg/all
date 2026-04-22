@@ -1,0 +1,419 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  COMPLIANCE
+  OPS
+  SUPPORT
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  APPROVED
+  REJECTED
+  REVIEW
+}
+
+enum BankAccountStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  DISABLED
+}
+
+enum PurchaseStatus {
+  CREATED
+  FUNDS_PENDING
+  FUNDS_SETTLED
+  MINT_AUTHORIZED
+  MINT_SUBMITTED
+  MINT_CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+enum RedemptionStatus {
+  REQUESTED
+  PENDING_SIGNATURE
+  ONCHAIN_PENDING
+  ONCHAIN_CONFIRMED
+  PAYOUT_PENDING
+  PAYOUT_SENT
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum FiatEventType {
+  RECEIVABLE_CREATED
+  RECEIVABLE_UPDATED
+  INBOUND_PAYMENT_POSTED
+  INBOUND_PAYMENT_SETTLED
+  LEDGER_ENTRY_POSTED
+  PAYOUT_CREATED
+  PAYOUT_SENT
+  PAYOUT_SETTLED
+  PAYOUT_FAILED
+}
+
+enum MintAuthorizationStatus {
+  PREPARED
+  SIGNED
+  SUBMITTED
+  CONFIRMED
+  VOIDED
+}
+
+enum WebhookDeliveryStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum ComplianceFlagType {
+  SANCTIONS
+  AML
+  MANUAL_REVIEW
+  VELOCITY
+  LIMIT
+}
+
+enum ComplianceFlagStatus {
+  OPEN
+  RESOLVED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum AdminActionType {
+  APPROVE_MINT
+  REJECT_MINT
+  APPROVE_REDEMPTION
+  REJECT_REDEMPTION
+  SET_COMPLIANCE_FLAG
+  RESOLVE_COMPLIANCE_FLAG
+  REPLAY_WEBHOOK
+  PUBLISH_RESERVE_SNAPSHOT
+  USER_OVERRIDE
+}
+
+enum ReserveSnapshotSource {
+  RECONCILIATION
+  MANUAL
+  ATTESTATION
+}
+
+model User {
+  id             String               @id @default(uuid())
+  email          String?              @unique
+  displayName    String?
+  role           UserRole             @default(USER)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  walletLinks     WalletLink[]
+  kycRecords      KycRecord[]
+  bankAccounts    BankAccountRecord[]
+  purchases       PurchaseIntent[]
+  redemptions     RedemptionRequest[]
+  mintAuths       MintAuthorization[]
+  complianceFlags ComplianceFlag[]
+  supportTickets  SupportTicket[]
+}
+
+model WalletLink {
+  id            String   @id @default(uuid())
+  userId        String
+  walletAddress String
+  chainId       Int
+  isPrimary     Boolean  @default(false)
+  linkedAt      DateTime @default(now())
+  lastSeenAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([walletAddress, chainId])
+  @@index([userId])
+}
+
+model KycRecord {
+  id          String    @id @default(uuid())
+  userId      String
+  provider    String
+  externalRef String?
+  status      KycStatus @default(NOT_STARTED)
+  notes       String?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model BankAccountRecord {
+  id                String            @id @default(uuid())
+  userId            String
+  providerAccountId String?
+  bankAccountHash   String
+  routingLast4      String?
+  accountLast4      String?
+  status            BankAccountStatus @default(PENDING_VERIFICATION)
+  metadata          Json?
+  verifiedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model PurchaseIntent {
+  id                  String         @id @default(uuid())
+  userId              String
+  walletAddress       String
+  bankAccountId       String?
+  amountUsd           Decimal        @db.Decimal(20, 6)
+  amountUsdan         Decimal        @db.Decimal(20, 6)
+  status              PurchaseStatus @default(CREATED)
+  modernTreasuryRef   String?
+  settlementReference String?
+  requestId           String         @unique
+  nonce               String         @unique
+  mintTxHash          String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankAccount   BankAccountRecord?  @relation(fields: [bankAccountId], references: [id])
+  fiatEvents    FiatPaymentEvent[]
+  mintAuth      MintAuthorization?
+
+  @@index([userId])
+  @@index([status])
+}
+
+model RedemptionRequest {
+  id                    String           @id @default(uuid())
+  userId                String
+  walletAddress         String
+  bankAccountId         String?
+  amountUsdan           Decimal          @db.Decimal(20, 6)
+  status                RedemptionStatus @default(REQUESTED)
+  requestNonce          String
+  userIntentHash        String?
+  onchainTxHash         String?
+  onchainBlockHeight    Int?
+  onchainConfirmedAt    DateTime?
+  payoutReference       String?
+  payoutCompletedAt     DateTime?
+  cancellationReason    String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankAccount   BankAccountRecord?  @relation(fields: [bankAccountId], references: [id])
+  fiatEvents    FiatPaymentEvent[]
+  finality      RedemptionFinalityRecord?
+
+  @@unique([userId, requestNonce])
+  @@index([status])
+  @@index([userId])
+}
+
+model FiatPaymentEvent {
+  id                   String        @id @default(uuid())
+  purchaseIntentId     String?
+  redemptionRequestId  String?
+  eventType            FiatEventType
+  provider             String
+  externalId           String?
+  idempotencyKey       String?
+  payload              Json
+  receivedAt           DateTime      @default(now())
+  processedAt          DateTime?
+
+  purchaseIntent    PurchaseIntent?    @relation(fields: [purchaseIntentId], references: [id], onDelete: Cascade)
+  redemptionRequest RedemptionRequest? @relation(fields: [redemptionRequestId], references: [id], onDelete: Cascade)
+
+  @@index([eventType])
+  @@index([receivedAt])
+}
+
+model MintAuthorization {
+  id                String                  @id @default(uuid())
+  purchaseIntentId  String                  @unique
+  userId            String
+  walletAddress     String
+  amountUsdan       Decimal                 @db.Decimal(20, 6)
+  requestId         String                  @unique
+  nonce             String                  @unique
+  digestHex         String
+  signatureHex      String?
+  status            MintAuthorizationStatus @default(PREPARED)
+  txHash            String?
+  createdAt         DateTime                @default(now())
+  signedAt          DateTime?
+  submittedAt       DateTime?
+  confirmedAt       DateTime?
+
+  purchaseIntent PurchaseIntent @relation(fields: [purchaseIntentId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model RedemptionFinalityRecord {
+  id                  String   @id @default(uuid())
+  redemptionRequestId String   @unique
+  chainId             Int
+  txHash              String
+  blockHeight         Int
+  confirmations       Int
+  finalizedAt         DateTime @default(now())
+  proof               Json?
+
+  redemptionRequest RedemptionRequest @relation(fields: [redemptionRequestId], references: [id], onDelete: Cascade)
+}
+
+model ReserveSnapshot {
+  id                         String                @id @default(uuid())
+  capturedAt                 DateTime              @default(now())
+  source                     ReserveSnapshotSource @default(RECONCILIATION)
+  tokenSupply                Decimal               @db.Decimal(28, 8)
+  reserveLedgerBalance       Decimal               @db.Decimal(28, 8)
+  outstandingRedemptionQueue Decimal               @db.Decimal(28, 8)
+  pendingMintQueue           Decimal               @db.Decimal(28, 8)
+  coverageRatioBps           Int
+  latestAttestationAt        DateTime?
+  attestationHash            String?
+  attestationUri             String?
+  reconciliationHash         String
+  signedStatementHash        String?
+  metadata                   Json?
+
+  @@index([capturedAt])
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid())
+  provider       String
+  eventId        String
+  idempotencyKey String?
+  status         WebhookDeliveryStatus @default(RECEIVED)
+  signatureValid Boolean               @default(false)
+  attemptCount   Int                   @default(0)
+  payload        Json
+  lastError      String?
+  lastAttemptAt  DateTime?
+  processedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([provider, eventId])
+  @@index([status])
+}
+
+model ComplianceFlag {
+  id          String               @id @default(uuid())
+  userId      String
+  type        ComplianceFlagType
+  status      ComplianceFlagStatus @default(OPEN)
+  reason      String
+  metadata    Json?
+  createdBy   String
+  resolvedBy  String?
+  createdAt   DateTime             @default(now())
+  resolvedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model AdminAction {
+  id         String          @id @default(uuid())
+  actorId    String
+  action     AdminActionType
+  targetType String
+  targetId   String
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime        @default(now())
+
+  @@index([targetType, targetId])
+}
+
+model SupportTicket {
+  id             String              @id @default(uuid())
+  userId         String
+  subject        String
+  message        String
+  status         SupportTicketStatus @default(OPEN)
+  priority       SupportPriority     @default(MEDIUM)
+  assignedTo     String?
+  latestResponse String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  actorType      String
+  actorId        String
+  action         String
+  entityType     String
+  entityId       String
+  requestId      String?
+  idempotencyKey String?
+  details        Json?
+  createdAt      DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model IdempotencyKey {
+  id           String   @id @default(uuid())
+  scope        String
+  key          String
+  requestHash  String
+  responseHash String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+}

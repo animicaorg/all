@@ -1,0 +1,56 @@
+{
+  "name": "USDANReserveAttestation",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      { "name": "init", "inputs": [{ "name": "owner", "type": "bytes" }], "outputs": [] },
+      { "name": "owner", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "is_submitter", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "latest_attestation_id", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "latest_attestation_block", "inputs": [], "outputs": [{ "type": "int" }] },
+      { "name": "attestation_message", "inputs": [
+        { "name": "attestation_id", "type": "bytes" },
+        { "name": "statement_hash", "type": "bytes" },
+        { "name": "statement_uri", "type": "bytes" },
+        { "name": "reserve_amount", "type": "int" },
+        { "name": "liability_amount", "type": "int" },
+        { "name": "as_of_block", "type": "int" }
+      ], "outputs": [{ "type": "bytes" }] },
+      { "name": "set_owner", "inputs": [{ "name": "new_owner", "type": "bytes" }], "outputs": [] },
+      { "name": "set_submitter", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "get_attestation", "inputs": [{ "name": "attestation_id", "type": "bytes" }], "outputs": [{ "type": "dict" }] },
+      { "name": "submit_attestation", "inputs": [
+        { "name": "attestation_id", "type": "bytes" },
+        { "name": "statement_hash", "type": "bytes" },
+        { "name": "statement_uri", "type": "bytes" },
+        { "name": "reserve_amount", "type": "int" },
+        { "name": "liability_amount", "type": "int" },
+        { "name": "as_of_block", "type": "int" },
+        { "name": "signer_pubkey", "type": "bytes" },
+        { "name": "signature", "type": "bytes" }
+      ], "outputs": [] }
+    ],
+    "events": [
+      { "name": "SubmitterUpdated", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }] },
+      { "name": "ReserveAttested", "inputs": [
+        { "name": "attestationId", "type": "bytes" },
+        { "name": "statementHash", "type": "bytes" },
+        { "name": "reserveAmount", "type": "int" },
+        { "name": "liabilityAmount", "type": "int" },
+        { "name": "coverageBps", "type": "int" }
+      ] }
+    ]
+  },
+  "deploy": {
+    "metadata": {
+      "description": "Immutable reserve attestation registry for USDAN with signed snapshots and reserve-coverage derivation."
+    }
+  },
+  "source": "contract.py"
+}

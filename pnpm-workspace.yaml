@@ -15,5 +15,7 @@ packages:
   - explorer2
   - explorer2/*
   - services/exchange-api
+  - services/usdan-api
   - apps/admin-web
   - apps/dapp-ide
+  - apps/usdan-web

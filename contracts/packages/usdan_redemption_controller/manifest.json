@@ -1,0 +1,59 @@
+{
+  "name": "USDANRedemptionController",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      { "name": "init", "inputs": [
+        { "name": "owner", "type": "bytes" },
+        { "name": "token", "type": "bytes" },
+        { "name": "escrow_mode", "type": "bool" }
+      ], "outputs": [] },
+      { "name": "owner", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "token", "inputs": [], "outputs": [{ "type": "bytes" }] },
+      { "name": "escrow_mode", "inputs": [], "outputs": [{ "type": "bool" }] },
+      { "name": "is_operator", "inputs": [{ "name": "account", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "user_signer_hash", "inputs": [{ "name": "user", "type": "bytes" }], "outputs": [{ "type": "bytes" }] },
+      { "name": "nonce_used", "inputs": [{ "name": "user", "type": "bytes" }, { "name": "nonce", "type": "bytes" }], "outputs": [{ "type": "bool" }] },
+      { "name": "redemption_message", "inputs": [
+        { "name": "redeemer", "type": "bytes" },
+        { "name": "amount", "type": "int" },
+        { "name": "bank_account_ref", "type": "bytes" },
+        { "name": "nonce", "type": "bytes" },
+        { "name": "valid_before_block", "type": "int" }
+      ], "outputs": [{ "type": "bytes" }] },
+      { "name": "status_name", "inputs": [{ "name": "status_code", "type": "int" }], "outputs": [{ "type": "bytes" }] },
+      { "name": "set_owner", "inputs": [{ "name": "new_owner", "type": "bytes" }], "outputs": [] },
+      { "name": "set_token", "inputs": [{ "name": "new_token", "type": "bytes" }], "outputs": [] },
+      { "name": "set_operator", "inputs": [{ "name": "account", "type": "bytes" }, { "name": "enabled", "type": "bool" }], "outputs": [] },
+      { "name": "set_user_signer", "inputs": [{ "name": "user", "type": "bytes" }, { "name": "signer_pubkey_hash", "type": "bytes" }], "outputs": [] },
+      { "name": "initiate_redemption", "inputs": [
+        { "name": "amount", "type": "int" },
+        { "name": "bank_account_ref", "type": "bytes" },
+        { "name": "nonce", "type": "bytes" },
+        { "name": "valid_before_block", "type": "int" },
+        { "name": "signer_pubkey", "type": "bytes" },
+        { "name": "signature", "type": "bytes" }
+      ], "outputs": [{ "type": "bytes" }] },
+      { "name": "get_redemption", "inputs": [{ "name": "request_id", "type": "bytes" }], "outputs": [{ "type": "dict" }] },
+      { "name": "cancel_redemption", "inputs": [{ "name": "request_id", "type": "bytes" }, { "name": "cancel_reason", "type": "bytes" }], "outputs": [] },
+      { "name": "resolve_redemption", "inputs": [{ "name": "request_id", "type": "bytes" }, { "name": "payout_reference", "type": "bytes" }], "outputs": [] }
+    ],
+    "events": [
+      { "name": "RedemptionRequested", "inputs": [{ "name": "requestId", "type": "bytes" }, { "name": "redeemer", "type": "bytes" }, { "name": "amount", "type": "int" }] },
+      { "name": "RedemptionCancelled", "inputs": [{ "name": "requestId", "type": "bytes" }, { "name": "redeemer", "type": "bytes" }, { "name": "amount", "type": "int" }] },
+      { "name": "RedemptionResolved", "inputs": [{ "name": "requestId", "type": "bytes" }, { "name": "redeemer", "type": "bytes" }, { "name": "amount", "type": "int" }] }
+    ]
+  },
+  "deploy": {
+    "metadata": {
+      "description": "USDAN redemption controller supporting signed redemption intents, burn/escrow modes, and operator resolution workflows."
+    }
+  },
+  "source": "contract.py"
+}

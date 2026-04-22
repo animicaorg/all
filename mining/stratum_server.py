@@ -1123,7 +1123,7 @@ class StratumServer:
                     make_error(id_val, RpcErrorCodes.STALE_JOB, "job expired"),
                 )
                 return
-            log.info(
+            log.debug(
                 "[Stratum] submit job_matched worker=%s session=%s submitJob=%s currentJob=%s",
                 session.worker,
                 session.session_id,
@@ -1176,18 +1176,28 @@ class StratumServer:
                         id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count
                     ),
                 )
-            level = logging.INFO if ok else logging.WARNING
-            log.log(
-                level,
-                "[Stratum] submit worker=%s session=%s job=%s ok=%s block=%s reason=%s diff=%s",
-                session.worker,
-                session.session_id,
-                job_id,
-                ok,
-                is_block,
-                reason,
-                session.current_difficulty,
-            )
+            if ok:
+                log.debug(
+                    "[Stratum] submit worker=%s session=%s job=%s ok=%s block=%s reason=%s diff=%s",
+                    session.worker,
+                    session.session_id,
+                    job_id,
+                    ok,
+                    is_block,
+                    reason,
+                    session.current_difficulty,
+                )
+            else:
+                log.warning(
+                    "[Stratum] submit worker=%s session=%s job=%s ok=%s block=%s reason=%s diff=%s",
+                    session.worker,
+                    session.session_id,
+                    job_id,
+                    ok,
+                    is_block,
+                    reason,
+                    session.current_difficulty,
+                )
             await self._maybe_adjust_session_share_target(
                 session,
                 ok=ok,
