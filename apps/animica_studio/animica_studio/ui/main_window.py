@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable, NamedTuple
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QScrollArea,
     QSizePolicy,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -24,7 +26,6 @@ from animica_studio.services.ena_contribution_engine import EnaContributionConfi
 from animica_studio.services.ena_full_auto_engine import EnaFullAutoEngine
 from animica_studio.services.ena_store import EnaStore
 from animica_studio.services.profile_service import ProfileService
-from animica_studio.services.rpc_client import RpcClient
 from animica_studio.services.settings_service import SettingsService
 from animica_studio.services.shutdown_manager import ShutdownManager
 from animica_studio.services.studio_status_service import StudioStatusService
@@ -102,6 +103,8 @@ class MainWindow(QMainWindow):
         self._health_worker = None
         self._last_rpc_error: str | None = None
         self._last_actual_chain_id: int | None = None
+        self._last_sync_sample_height: int | None = None
+        self._last_sync_sample_ts: float | None = None
 
         self.setWindowTitle("Animica Studio")
         self.resize(1280, 820)
@@ -145,6 +148,7 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(self._content_scroll, 1)
         root.addWidget(body, 1)
         self.setCentralWidget(central)
+        self._build_sync_status_bar()
 
         self._dashboard_page = DashboardPage(
             config=self._config,
@@ -229,6 +233,17 @@ class MainWindow(QMainWindow):
         self._settings_page.open_logs_requested.connect(lambda: self._navigate(self._nav_index("Logs")))
         self._navigate(self._nav_index("Home"))
         self.refresh_header()
+
+    def _build_sync_status_bar(self) -> None:
+        status = QStatusBar(self)
+        status.setSizeGripEnabled(False)
+        self.setStatusBar(status)
+        self._sync_state_label = QLabel("Sync: checking…", self)
+        self._sync_blocks_label = QLabel("Blocks: local — / network —", self)
+        self._sync_rate_label = QLabel("Rate: — blk/s", self)
+        status.addPermanentWidget(self._sync_state_label, 1)
+        status.addPermanentWidget(self._sync_blocks_label, 1)
+        status.addPermanentWidget(self._sync_rate_label)
 
     def _initial_page_widget(self, entry: _NavEntry) -> QWidget:
         cached = self._page_cache.get(entry.label)
@@ -370,6 +385,10 @@ class MainWindow(QMainWindow):
     @safe_slot(log)
     def _on_profile_changed(self, profile: RpcProfile) -> None:
         self._last_actual_chain_id = None
+        self._reset_sync_rate_samples()
+        self._sync_state_label.setText("Sync: checking…")
+        self._sync_blocks_label.setText("Blocks: local — / network —")
+        self._sync_rate_label.setText("Rate: — blk/s")
         self.refresh_header()
         self._wallet_page.on_profile_changed(profile)
         self._node_page.refresh_status()
@@ -412,22 +431,19 @@ class MainWindow(QMainWindow):
     def _trigger_health_check(self) -> None:
         if self._safe_mode or (self._health_worker is not None and self._health_worker.isRunning()):
             return
-        active = self._profile_service.get_active()
-        url = active.effective_rpc_url()
 
         def _do_check() -> dict[str, object]:
-            client = RpcClient(url, connect_timeout=3.0, read_timeout=8.0, max_retries=1)
-            try:
-                head = client.get_head()
-                try:
-                    chain_id = client.get_chain_id()
-                except Exception:
-                    chain_id = None
-                return {"ok": True, "chain_id": chain_id, "head": head.number}
-            except Exception as exc:  # noqa: BLE001
-                return {"ok": False, "error": str(exc)}
-            finally:
-                client.close()
+            node = self._status_service.collect_node_summary()
+            return {
+                "ok": bool(node.rpc_reachable),
+                "chain_id": node.chain_id,
+                "error": node.last_error,
+                "sync_state": node.sync.state,
+                "sync_progress_pct": node.sync.progress_pct,
+                "sync_current_height": node.sync.current_height,
+                "sync_network_height": node.sync.network_height or node.sync.target_height,
+                "sample_ts": time.monotonic(),
+            }
 
         from animica_studio.services.workers import WorkerThread  # noqa: PLC0415
 
@@ -438,12 +454,61 @@ class MainWindow(QMainWindow):
         self._health_worker.start()
 
     def _on_health_result(self, result: dict[str, object]) -> None:
+        chain_id = result.get("chain_id") if isinstance(result.get("chain_id"), int) else None
         if result.get("ok"):
             self._last_rpc_error = None
-            self._last_actual_chain_id = result.get("chain_id") if isinstance(result.get("chain_id"), int) else None
+            self._last_actual_chain_id = chain_id
         else:
-            self._last_rpc_error = str(result.get("error", "Unknown error"))
+            self._last_rpc_error = str(result.get("error") or "RPC unreachable")
+            self._last_actual_chain_id = chain_id
+        self._update_sync_status_bar(result)
         self.refresh_header()
+
+    def _update_sync_status_bar(self, payload: dict[str, object]) -> None:
+        state = str(payload.get("sync_state") or "unknown").replace("_", " ").title()
+        progress_pct = payload.get("sync_progress_pct")
+        if isinstance(progress_pct, (int, float)):
+            self._sync_state_label.setText(f"Sync: {state} ({float(progress_pct):.1f}%)")
+        else:
+            self._sync_state_label.setText(f"Sync: {state}")
+
+        current_height = payload.get("sync_current_height") if isinstance(payload.get("sync_current_height"), int) else None
+        network_height = payload.get("sync_network_height") if isinstance(payload.get("sync_network_height"), int) else None
+        if current_height is not None and network_height is not None:
+            self._sync_blocks_label.setText(f"Blocks: local {current_height} / network {network_height}")
+        elif current_height is not None:
+            self._sync_blocks_label.setText(f"Blocks: local {current_height} / network —")
+        elif network_height is not None:
+            self._sync_blocks_label.setText(f"Blocks: local — / network {network_height}")
+        else:
+            self._sync_blocks_label.setText("Blocks: local — / network —")
+
+        sample_ts = payload.get("sample_ts") if isinstance(payload.get("sample_ts"), (int, float)) else None
+        rate = self._sample_sync_rate(current_height, float(sample_ts) if sample_ts is not None else None)
+        if rate is None:
+            self._sync_rate_label.setText("Rate: — blk/s")
+        else:
+            self._sync_rate_label.setText(f"Rate: {rate:.2f} blk/s")
+
+    def _sample_sync_rate(self, current_height: int | None, sample_ts: float | None) -> float | None:
+        previous_height = self._last_sync_sample_height
+        previous_ts = self._last_sync_sample_ts
+        self._last_sync_sample_height = current_height
+        self._last_sync_sample_ts = sample_ts
+        if current_height is None or sample_ts is None or previous_height is None or previous_ts is None:
+            return None
+        elapsed = sample_ts - previous_ts
+        if elapsed <= 0:
+            return None
+        delta = current_height - previous_height
+        if delta < 0:
+            self._reset_sync_rate_samples()
+            return None
+        return delta / elapsed
+
+    def _reset_sync_rate_samples(self) -> None:
+        self._last_sync_sample_height = None
+        self._last_sync_sample_ts = None
 
     def _toast(self, text: str) -> None:
         toast = Toast(self, text)
@@ -458,6 +523,9 @@ class MainWindow(QMainWindow):
 
     def run_post_start_init(self) -> None:
         if self._safe_mode:
+            self._sync_state_label.setText("Sync: disabled in safe mode")
+            self._sync_blocks_label.setText("Blocks: local — / network —")
+            self._sync_rate_label.setText("Rate: — blk/s")
             self.show_startup_degraded_banner("Safe mode enabled")
             return
         self._health_timer.start(_HEALTH_INTERVAL_MS)

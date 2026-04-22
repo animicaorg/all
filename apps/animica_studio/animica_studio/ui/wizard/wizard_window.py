@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +72,22 @@ def _run_verification(status_service: StudioStatusService, *, start_local_node: 
     start_result = None
     if start_local_node:
         start_result = status_service.start_node()
+        if isinstance(start_result, ServiceActionResult) and start_result.ok:
+            deadline = time.time() + 45.0
+            while time.time() < deadline:
+                probe = status_service.probe_onboarding()
+                if probe.rpc_reachable:
+                    break
+                time.sleep(1.0)
     snapshot = status_service.collect_snapshot()
     probe = status_service.probe_onboarding()
+    if (
+        isinstance(start_result, ServiceActionResult)
+        and start_result.ok
+        and not probe.rpc_reachable
+    ):
+        wait_note = "RPC is still unreachable after waiting for local node startup."
+        start_result.details = "\n".join(part for part in [start_result.details, wait_note] if part).strip()
     return {
         "probe": probe,
         "snapshot": snapshot,

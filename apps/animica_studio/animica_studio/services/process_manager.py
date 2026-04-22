@@ -21,11 +21,15 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from typing import TYPE_CHECKING
 
 from animica_studio.services.rpc_client import RpcClient, RpcTransportError
 from animica_studio.util.paths import app_data_dir
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from animica_studio.storage.config import Config
 
 _START_WAIT_INTERVAL_S = 0.5
 _START_MAX_WAIT_S = 20.0
@@ -141,12 +145,14 @@ class ProcessManager:
         data_dir: Path | None = None,
         log_file_name: str = "node.log",
         pid_file_name: str = "node.pid",
+        config: "Config | None" = None,
     ) -> None:
         self._start_cmd = start_cmd or ["animica", "node", "start"]
         self._rpc_url = rpc_url
         self._data_dir = data_dir or app_data_dir()
         self._log_file = self._data_dir / log_file_name
         self._pid_file = self._data_dir / pid_file_name
+        self._config = config
 
     # ------------------------------------------------------------------
     # Public API
@@ -162,7 +168,13 @@ class ProcessManager:
             log.info("ProcessManager: node already running (pid=%s)", current.get("pid"))
             return current
 
-        log.info("ProcessManager: starting node: %s", self._start_cmd)
+        try:
+            resolved_cmd, resolved_env = self._resolve_start_invocation()
+        except Exception as exc:  # noqa: BLE001
+            log.error("ProcessManager: failed to resolve start command: %s", exc)
+            return {"running": False, "pid": None, "rpc_reachable": False, "error": str(exc)}
+
+        log.info("ProcessManager: starting node: %s", resolved_cmd)
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
         log_fd = open(self._log_file, "a", encoding="utf-8")  # noqa: WPS515
@@ -177,12 +189,13 @@ class ProcessManager:
                 pass
 
             proc = subprocess.Popen(
-                self._start_cmd,
+                resolved_cmd,
                 stdout=log_fd,
                 stderr=log_fd,
                 stdin=subprocess.DEVNULL,
                 creationflags=extra_flags,
                 start_new_session=(sys.platform != "win32"),
+                env={**os.environ, **resolved_env},
             )
         except (FileNotFoundError, PermissionError, OSError) as exc:
             log_fd.close()
@@ -200,6 +213,30 @@ class ProcessManager:
         result = self.status()
         result["just_started"] = True
         return result
+
+    def _resolve_start_invocation(self) -> tuple[list[str], dict[str, str]]:
+        """Resolve start command + environment, including CLI path overrides.
+
+        If the configured command starts with ``animica``, this uses the same
+        CLI resolution path as the Console/JobRunner (PATH, override, repo venv).
+        """
+        cmd = [str(token).strip() for token in self._start_cmd if str(token).strip()]
+        if not cmd:
+            raise ValueError("Node start command is empty.")
+
+        env_overrides: dict[str, str] = {}
+        if cmd[0] == "animica":
+            from animica_studio.services.job_runner import resolve_animica_cli  # noqa: PLC0415
+
+            resolved = resolve_animica_cli(self._config)
+            if not resolved.argv_prefix:
+                raise FileNotFoundError(resolved.error or "Animica CLI not found. Configure CLI path in Settings.")
+            cmd = [*resolved.argv_prefix, *cmd[1:]]
+            env_overrides.update(resolved.env)
+
+        # Respect wizard/settings node data directory for CLI-based node startup.
+        env_overrides.setdefault("ANIMICA_DATA_DIR", str(self._data_dir))
+        return cmd, env_overrides
 
     def stop(self) -> dict[str, Any]:
         """Stop the node gracefully, falling back to SIGKILL.

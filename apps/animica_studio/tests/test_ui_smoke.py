@@ -25,6 +25,43 @@ def test_main_window_smoke() -> None:
     app.quit()
 
 
+def test_main_window_sync_status_bar_tracks_blocks_and_rate() -> None:
+    _app()
+    cfg = Config()
+    service = ProfileService(cfg)
+    window = MainWindow(cfg, service)
+
+    window._on_health_result(  # noqa: SLF001
+        {
+            "ok": True,
+            "chain_id": 1,
+            "sync_state": "syncing",
+            "sync_progress_pct": 50.0,
+            "sync_current_height": 100,
+            "sync_network_height": 200,
+            "sample_ts": 10.0,
+        }
+    )
+    assert window._sync_state_label.text() == "Sync: Syncing (50.0%)"  # noqa: SLF001
+    assert window._sync_blocks_label.text() == "Blocks: local 100 / network 200"  # noqa: SLF001
+    assert window._sync_rate_label.text() == "Rate: — blk/s"  # noqa: SLF001
+
+    window._on_health_result(  # noqa: SLF001
+        {
+            "ok": True,
+            "chain_id": 1,
+            "sync_state": "syncing",
+            "sync_progress_pct": 60.0,
+            "sync_current_height": 120,
+            "sync_network_height": 200,
+            "sample_ts": 15.0,
+        }
+    )
+    assert window._sync_rate_label.text() == "Rate: 4.00 blk/s"  # noqa: SLF001
+
+    window.close()
+
+
 def test_components_instantiate() -> None:
     """Verify all design-system primitives can be constructed."""
     _app()
@@ -79,7 +116,6 @@ def test_components_instantiate() -> None:
 
 def test_theme_system() -> None:
     """ThemeManager persists and emits changes correctly."""
-    from animica_studio.ui.theme.palette import build_palette
     from animica_studio.ui.theme.theme_manager import ThemeManager
     from animica_studio.ui.theme.stylesheet import build_stylesheet
 
@@ -197,3 +233,37 @@ def test_setup_wizard_smoke() -> None:
     wizard = SetupWizard(service)
     assert wizard.windowTitle() == "Animica Studio Setup"
     wizard.close()
+
+
+def test_setup_wizard_verification_waits_for_local_node_rpc(monkeypatch) -> None:
+    from animica_studio.models.studio_models import OnboardingProbe, StudioSnapshot
+    from animica_studio.services.studio_status_service import ServiceActionResult
+    from animica_studio.ui.wizard.wizard_window import _run_verification
+
+    class _FakeStatusService:
+        def __init__(self) -> None:
+            self.probe_calls = 0
+
+        def start_node(self) -> ServiceActionResult:
+            return ServiceActionResult(True, "Node start requested.")
+
+        def collect_snapshot(self) -> StudioSnapshot:
+            return StudioSnapshot(rpc_url="http://127.0.0.1:8545/rpc")
+
+        def probe_onboarding(self) -> OnboardingProbe:
+            self.probe_calls += 1
+            return OnboardingProbe(
+                has_wallet=True,
+                node_running=True,
+                rpc_reachable=self.probe_calls >= 3,
+            )
+
+    svc = _FakeStatusService()
+    monkeypatch.setattr("animica_studio.ui.wizard.wizard_window.time.sleep", lambda _s: None)
+    result = _run_verification(svc, start_local_node=True)
+
+    assert svc.probe_calls >= 3
+    assert isinstance(result["probe"], OnboardingProbe)
+    assert result["probe"].rpc_reachable is True
+    assert isinstance(result["start_result"], ServiceActionResult)
+    assert result["start_result"].ok is True

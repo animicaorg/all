@@ -30,6 +30,7 @@ HOST_PREFIX = {
     "windows": "win32",
 }
 REQUIRED_RUNTIME_MODULES = ("PySide6", "requests")
+MONACO_LOADER_PATH = APP_ROOT / "animica_studio" / "ui" / "web" / "monaco" / "vs" / "loader.js"
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,6 +57,7 @@ def main() -> int:
 
     if not args.skip_build:
         ensure_runtime_modules_installed()
+        ensure_monaco_assets_installed()
         run_pyinstaller()
 
     if args.target == "linux":
@@ -108,6 +110,27 @@ def ensure_runtime_modules_installed() -> None:
         f"{missing_str}. Install them with:\n"
         "  pip install -e 'apps/animica_studio[dev,package]'"
     )
+
+
+def ensure_monaco_assets_installed() -> None:
+    if MONACO_LOADER_PATH.exists():
+        return
+    print("==> Monaco assets missing; running setup_monaco.py")
+    try:
+        subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "setup_monaco.py")],
+            cwd=APP_ROOT,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            "Failed to prepare Monaco assets for packaging. "
+            "Run `python scripts/setup_monaco.py` and retry."
+        ) from exc
+    if not MONACO_LOADER_PATH.exists():
+        raise SystemExit(
+            f"Monaco setup completed but {MONACO_LOADER_PATH} is still missing."
+        )
 
 
 def run_pyinstaller() -> None:
