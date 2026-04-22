@@ -1,0 +1,17 @@
+[Unit]
+Description=AICF Provider Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aicf-provider-worker
+Environment=AICF_PROVIDER_CONFIG=/opt/aicf-provider-worker/provider.config.json
+ExecStart=/usr/bin/bash /opt/aicf-provider-worker/start-worker.sh
+Restart=always
+RestartSec=4
+StandardOutput=append:/opt/aicf-provider-worker/logs/provider-worker.log
+StandardError=append:/opt/aicf-provider-worker/logs/provider-worker.log
+
+[Install]
+WantedBy=multi-user.target

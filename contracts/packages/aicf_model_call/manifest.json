@@ -1,0 +1,6 @@
+{
+  "name": "aicf_model_call",
+  "version": "0.1.0",
+  "entrypoint": "contract.py",
+  "description": "Deterministic on-chain model call request/claim/commit/finalize for AICF"
+}

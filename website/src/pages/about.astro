@@ -1,227 +1,72 @@
 ---
-/**
- * About Page
- * 
- * Mission, vision, and architecture overview of Animica blockchain.
- */
-
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import Card from "../components/Card.astro";
-import Callout from "../components/Callout.astro";
 
-const pageTitle = "About Animica";
-const pageDesc = "Learn about Animica's mission, design goals, and the technology powering a post-quantum blockchain for real-world compute.";
+const title = "About";
+const description =
+  "AICF vision: useful decentralized AI compute on Animica with ANM-native economics for developers and providers.";
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
+<BaseLayout title={title} description={description}>
   <Header slot="header" />
-  
-  <main class="min-h-screen bg-white dark:bg-dark-50">
-    <!-- Hero Section -->
-    <section class="bg-gradient-to-b from-brand-50 to-white dark:from-dark-100 dark:to-dark-50 py-20 md:py-32">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6">
-          About Animica
-        </h1>
-        <p class="text-xl sm:text-2xl text-gray-600 dark:text-gray-300 leading-relaxed">
-          A post-quantum blockchain platform designed for security, transparency, and practical infrastructure
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">About AICF</span>
+      <h1 class="aicf-heading">Useful AI Compute, Not Hype</h1>
+      <p class="aicf-subheading">
+        AICF exists to turn decentralized infrastructure into productive AI compute.
+        Developers should be able to buy inference and training with ANM. Providers should be able to monetize real hardware with clear economics and accountable quality.
+      </p>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-3">
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Mission</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Build a decentralized compute cloud on Animica where model workloads settle natively in ANM and quality is enforced through measurable performance.
         </p>
-      </div>
-    </section>
-
-    <!-- Mission Section -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-8">
-          Our Mission
-        </h2>
-        <div class="prose prose-lg dark:prose-invert max-w-none">
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-            Animica exists to provide a blockchain platform that doesn't compromise on security, transparency, or practical usability. We believe that blockchain technology should be accessible to builders, verifiable by operators, and secure against future threats.
-          </p>
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-            By combining post-quantum cryptography, deterministic execution, and useful-work consensus, Animica creates an environment where developers can build with confidence, miners are rewarded for meaningful computation, and node operators have full visibility into the system.
-          </p>
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-            We're building infrastructure for the long term—transparent, well-documented, and designed to evolve as the ecosystem grows.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Design Goals -->
-    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-12 text-center">
-          Design Goals
-        </h2>
-        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              🔐 Quantum-Resistant Security
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Built with post-quantum signature schemes from day one. As quantum computers advance, Animica remains secure.
-            </p>
-          </Card>
-
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              🎯 Deterministic Execution
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Every node executes contracts identically. Reproducible state transitions with predictable gas costs.
-            </p>
-          </Card>
-
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              🐍 Developer Friendly
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Write smart contracts in Python with familiar syntax. Lower the barrier to blockchain development.
-            </p>
-          </Card>
-
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              ⚡ Useful Work
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              PoIES consensus rewards meaningful computation alongside traditional mining. Energy spent has value.
-            </p>
-          </Card>
-
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              🌐 P2P First
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Fully decentralized peer-to-peer network. No central servers, no single points of failure.
-            </p>
-          </Card>
-
-          <Card variant="bordered" padding="lg">
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              📊 Operational Clarity
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Comprehensive monitoring, clear APIs, and documentation for every operator workflow.
-            </p>
-          </Card>
-        </div>
-      </div>
-    </section>
-
-    <!-- Architecture Overview -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-8">
-          Architecture Overview
-        </h2>
-        
-        <div class="space-y-8">
-          <div>
-            <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-              Core Layers
-            </h3>
-            <div class="space-y-4">
-              <Card variant="default" padding="md">
-                <h4 class="font-bold text-lg text-gray-900 dark:text-white mb-2">
-                  Consensus Layer (PoIES)
-                </h4>
-                <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                  Proof-of-Integrated-External-Services accepts blocks using a deterministic score combining hash-share work with external proofs (AI, Quantum, Storage). Uses fixed-point math, nullifier windows, and EMA-based difficulty retargeting.
-                </p>
-              </Card>
-
-              <Card variant="default" padding="md">
-                <h4 class="font-bold text-lg text-gray-900 dark:text-white mb-2">
-                  Execution Layer (Python-VM)
-                </h4>
-                <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                  Deterministic state machine running Python-VM contracts. Canonical CBOR I/O, gas metering, journaled state, and deterministic receipts. Pure functions with no side effects.
-                </p>
-              </Card>
-
-              <Card variant="default" padding="md">
-                <h4 class="font-bold text-lg text-gray-900 dark:text-white mb-2">
-                  Network Layer (P2P)
-                </h4>
-                <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                  Gossip-based peer discovery and communication with no central authority. Supports TCP, QUIC, and WebSocket transports with end-to-end encryption.
-                </p>
-              </Card>
-
-              <Card variant="default" padding="md">
-                <h4 class="font-bold text-lg text-gray-900 dark:text-white mb-2">
-                  Capabilities Layer (AICF)
-                </h4>
-                <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                  Off-chain compute coordination for AI/Quantum jobs. Matches jobs to providers, settles payments, and enforces SLAs with on-chain proofs.
-                </p>
-              </Card>
-            </div>
-          </div>
-
-          <Callout type="info" title="Learn More">
-            For detailed technical specifications, architecture diagrams, and protocol details, visit the <a href="/technology" class="text-brand-600 dark:text-brand-400 underline">Technology page</a> or read the <a href="/docs" class="text-brand-600 dark:text-brand-400 underline">documentation</a>.
-          </Callout>
-        </div>
-      </div>
-    </section>
-
-    <!-- Why Animica Exists -->
-    <section class="py-16 md:py-24 bg-brand-50 dark:bg-brand-950/20">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-8">
-          Why Animica Exists
-        </h2>
-        <div class="prose prose-lg dark:prose-invert max-w-none">
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-            The blockchain landscape is full of projects optimizing for speed, marketing, or short-term gains. Animica takes a different approach: we optimize for security, transparency, and long-term sustainability.
-          </p>
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-            We believe that quantum computing will pose a real threat to existing blockchain infrastructure. Rather than waiting to retrofit security, we've built post-quantum cryptography into Animica from the start.
-          </p>
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-            We believe that blockchain should reward useful computation, not just waste energy. PoIES aligns block production with real compute work that has value beyond securing the chain.
-          </p>
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-            And we believe that developers shouldn't need to learn esoteric languages to build on blockchain. Python smart contracts lower the barrier to entry while maintaining the determinism required for consensus.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">
-          Join the Movement
-        </h2>
-        <p class="text-xl text-gray-600 dark:text-gray-300 mb-8">
-          Animica is built by a community of developers, operators, and believers in better blockchain infrastructure.
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Developer Promise</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Fast APIs, clear pricing, deterministic budget controls, and a path from quick inference to contract-funded orchestration.
         </p>
-        <div class="flex flex-col sm:flex-row gap-4 justify-center">
-          <a 
-            href="/community" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-brand-500 text-white font-medium rounded-lg hover:bg-brand-600 transition-colors duration-150"
-          >
-            Join Community
-          </a>
-          <a 
-            href="/node" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-gray-200 dark:bg-dark-200 text-gray-900 dark:text-white font-medium rounded-lg hover:bg-gray-300 dark:hover:bg-dark-300 transition-colors duration-150"
-          >
-            Run a Node
-          </a>
-        </div>
-      </div>
-    </section>
-  </main>
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Provider Promise</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Simple onboarding, benchmark-driven routing, transparent rewards, and a fair reputation/staking framework.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.35rem;">Why Decentralized AI Compute Matters</h2>
+        <ul style="margin-top:0.75rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>Distributes supply across many providers instead of a single centralized point.</li>
+          <li>Creates open market pressure for better pricing and performance.</li>
+          <li>Aligns incentives between useful workload demand and infrastructure supply.</li>
+          <li>Anchors payment and settlement in a native chain economy (ANM).</li>
+        </ul>
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.35rem;">Operating Principles</h2>
+        <ul style="margin-top:0.75rem; padding-left:1rem; display:grid; gap:0.45rem;">
+          <li>Practical API usability over marketing abstractions.</li>
+          <li>Transparent job economics and provider reward math.</li>
+          <li>Security and dispute controls for critical workloads.</li>
+          <li>Continuous provider tooling improvements and release discipline.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
 
   <Footer slot="footer" />
 </BaseLayout>

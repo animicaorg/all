@@ -1,352 +1,244 @@
 ---
-/**
- * Homepage - Animica L1 Blockchain
- * 
- * Professional landing page showcasing Animica's key features,
- * value propositions, and clear CTAs for different user types.
- */
-
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import Button from "../components/Button.astro";
-import Card from "../components/Card.astro";
-import Badge from "../components/Badge.astro";
-import { links } from "../config/links";
+import {
+  heroStats,
+  howItWorks,
+  useCases,
+  modelCatalog,
+  networkPanels,
+  providerSteps,
+} from "../data/aicf";
 
-const heroTitle = "Animica";
-const heroSubtitle = "Post-quantum blockchain for real-world compute";
-const heroDesc = "A production-ready L1 with quantum-resistant security, Python smart contracts, and useful-work consensus. Built for builders, miners, and node operators who value transparency and practical infrastructure.";
-
-// Key features/proof points
-const proofPoints = [
-  {
-    icon: "🔐",
-    title: "Post-Quantum Security",
-    description: "Built-in Dilithium3 and SPHINCS+ signatures protect against future quantum threats"
-  },
-  {
-    icon: "🐍",
-    title: "Python Smart Contracts",
-    description: "Write and deploy deterministic contracts in Python with our Python-VM execution layer"
-  },
-  {
-    icon: "⚡",
-    title: "Useful Work Consensus",
-    description: "PoIES rewards meaningful computation alongside traditional mining"
-  },
-  {
-    icon: "🛠️",
-    title: "Production Tooling",
-    description: "Complete ecosystem with wallets, explorer, SDKs, and monitoring"
-  }
-];
-
-// Get started cards
-const getStartedCards = [
-  {
-    title: "Run a Node",
-    description: "Join the network and help secure the chain with a single command",
-    href: "/node",
-    icon: "🖥️",
-    cta: "Setup Guide"
-  },
-  {
-    title: "Build Contracts",
-    description: "Deploy Python smart contracts using our SDKs and development tools",
-    href: "/developers",
-    icon: "👨‍💻",
-    cta: "Start Building"
-  },
-  {
-    title: "Mine Blocks",
-    description: "Contribute hash power and earn rewards through CPU or GPU mining",
-    href: "/mine",
-    icon: "⛏️",
-    cta: "Mining Guide"
-  },
-  {
-    title: "Explore Chain",
-    description: "Browse blocks, transactions, and addresses on the live explorer",
-    href: links.explorer.home(),
-    icon: "🔍",
-    cta: "Open Explorer"
-  }
-];
-
-// Stats/metrics (can be updated with real data later)
-const stats = [
-  { label: "Post-Quantum", value: "Secure" },
-  { label: "Python VM", value: "Deterministic" },
-  { label: "Multi-Language", value: "3 SDKs" },
-  { label: "Network", value: "P2P First" }
-];
+const title = "Decentralized AI Compute on Animica";
+const description =
+  "Spend ANM. Run models. Contribute GPU. AICF is Animica's decentralized AI compute cloud for inference, embeddings, training, and agent workloads.";
 ---
 
-<BaseLayout title={heroTitle} description={heroDesc}>
+<BaseLayout title={title} description={description}>
   <Header slot="header" />
-  
-  <main class="min-h-screen">
-    <!-- Hero Section -->
-    <section class="relative overflow-hidden bg-gradient-to-b from-white via-brand-50/30 to-white dark:from-dark-50 dark:via-dark-100 dark:to-dark-50">
-      <!-- Background decoration -->
-      <div class="absolute inset-0 bg-grid-gray-900/[0.02] dark:bg-grid-white/[0.02]" aria-hidden="true"></div>
-      
-      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
-        <div class="text-center">
-          <!-- Badge -->
-          <div class="mb-6 animate-fade-in-up">
-            <Badge variant="info" class="text-sm">
-              Post-quantum · Useful work · Python VM
-            </Badge>
-          </div>
 
-          <!-- Title -->
-          <h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight animate-fade-in-up">
-            {heroTitle}
-          </h1>
-          
-          <!-- Subtitle -->
-          <p class="text-2xl sm:text-3xl text-gray-700 dark:text-gray-200 mb-4 font-medium animate-fade-in-up">
-            {heroSubtitle}
-          </p>
-
-          <!-- Description -->
-          <p class="text-lg sm:text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto mb-10 leading-relaxed animate-fade-in-up">
-            {heroDesc}
-          </p>
-
-          <!-- CTAs -->
-          <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8 animate-fade-in-up">
-            <Button href="/node" variant="primary" size="lg">
-              Run a Node
-            </Button>
-            <Button href="/developers" variant="outline" size="lg">
-              Build a Contract
-            </Button>
-            <Button href={links.explorer.home()} variant="ghost" size="lg">
-              Open Explorer →
-            </Button>
-          </div>
-
-          <!-- Secondary links -->
-          <div class="flex flex-wrap gap-6 justify-center text-sm animate-fade-in-up">
-            <a href="/docs" class="text-brand-600 dark:text-brand-400 hover:underline">
-              Read Docs
-            </a>
-            <a href={links.github.root} class="text-brand-600 dark:text-brand-400 hover:underline" target="_blank" rel="noopener">
-              View on GitHub
-            </a>
-            <a href="/wallet" class="text-brand-600 dark:text-brand-400 hover:underline">
-              Get Wallet
-            </a>
-          </div>
-        </div>
-
-        <!-- Stats bar -->
-        <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
-          {stats.map((stat) => (
-            <div class="text-center p-4">
-              <div class="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                {stat.value}
-              </div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">
-                {stat.label}
-              </div>
-            </div>
-          ))}
-        </div>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">AICF Mainnet · Live Compute Economy</span>
+      <h1 class="aicf-heading">The AI Cloud Built on Animica</h1>
+      <p class="aicf-subheading">
+        AICF is decentralized AI compute where developers spend ANM for model APIs and provider nodes earn ANM by supplying real GPU and CPU capacity.
+        Contracts can fund AI jobs with escrow-backed settlement.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/developers">Start Building</a>
+        <a class="aicf-ghost-btn" href="/providers">Contribute GPU</a>
+        <a class="aicf-ghost-btn" href="/downloads">Download Worker</a>
       </div>
-    </section>
 
-    <!-- Proof Points Section -->
-    <section class="py-20 md:py-32 bg-white dark:bg-dark-50">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-16">
-          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-            Why Animica?
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-            Built from the ground up with security, transparency, and practical infrastructure in mind
-          </p>
-        </div>
-
-        <div class="grid md:grid-cols-2 gap-8">
-          {proofPoints.map((point) => (
-            <Card variant="bordered" padding="lg" hoverable>
-              <div class="text-4xl mb-4">{point.icon}</div>
-              <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">
-                {point.title}
-              </h3>
-              <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-                {point.description}
-              </p>
-            </Card>
-          ))}
-        </div>
+      <div class="aicf-grid-4" style="margin-top:1.5rem;">
+        {heroStats.map((stat) => (
+          <article class="aicf-card">
+            <p class="aicf-muted" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.07em;">{stat.label}</p>
+            <p class="aicf-value">{stat.value}</p>
+          </article>
+        ))}
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Get Started Section -->
-    <section class="py-20 md:py-32 bg-gray-50 dark:bg-dark-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-16">
-          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-            Get Started
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-            Choose your path and start building on Animica today
-          </p>
-        </div>
-
-        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {getStartedCards.map((card) => (
-            <Card variant="elevated" padding="lg" hoverable href={card.href}>
-              <div class="text-4xl mb-4">{card.icon}</div>
-              <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                {card.title}
-              </h3>
-              <p class="text-gray-600 dark:text-gray-300 mb-4 text-sm leading-relaxed">
-                {card.description}
-              </p>
-              <div class="text-brand-600 dark:text-brand-400 font-medium text-sm">
-                {card.cta} →
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-    </section>
-
-    <!-- How It Works Section -->
-    <section class="py-20 md:py-32 bg-white dark:bg-dark-50">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-16">
-          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-            How It Works
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-            Simple, transparent, and secure from the ground up
-          </p>
-        </div>
-
-        <div class="grid md:grid-cols-3 gap-12">
-          <div class="text-center">
-            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
-              1
-            </div>
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              Run a Node
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Start a mainnet node in minutes with Docker or native installs. Connect to peers and sync the chain.
-            </p>
-          </div>
-
-          <div class="text-center">
-            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
-              2
-            </div>
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              Secure & Verify
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Validate headers with post-quantum signatures. Lock down RPC endpoints and enable monitoring.
-            </p>
-          </div>
-
-          <div class="text-center">
-            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 font-bold text-2xl mb-6">
-              3
-            </div>
-            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
-              Build or Mine
-            </h3>
-            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Deploy contracts, mine blocks, or integrate with your stack using our SDKs and tooling.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="relative py-20 md:py-32 bg-brand-500 dark:bg-brand-600 overflow-hidden">
-      <div class="absolute inset-0 bg-grid-white/[0.05]" aria-hidden="true"></div>
-      
-      <div class="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">
-          Ready to get started?
-        </h2>
-        <p class="text-xl text-brand-50 mb-10 max-w-2xl mx-auto">
-          Join the community of builders, miners, and node operators making Animica a reality
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.5rem;">What AICF Is</h2>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          AICF is the decentralized compute cloud of Animica. It combines API-grade developer ergonomics with on-chain ANM settlement, verifiable provider contribution,
+          and programmable contract funding flows.
         </p>
-        <div class="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button 
-            href="/node" 
-            variant="secondary"
-            size="lg"
-            class="bg-white text-brand-600 hover:bg-gray-100"
-          >
-            Run a Node
-          </Button>
-          <Button 
-            href="/community" 
-            variant="outline"
-            size="lg"
-            class="border-white text-white hover:bg-white hover:text-brand-600"
-          >
-            Join Community
-          </Button>
+        <ul style="margin-top:0.85rem; padding-left:1rem; display:grid; gap:0.5rem;">
+          <li>OpenAI-compatible endpoints for chat and embeddings</li>
+          <li>ANM-native balances, escrow, receipts, and payouts</li>
+          <li>Provider routing by benchmark score, uptime, and reputation</li>
+          <li>Async jobs for inference, training, indexing, and agents</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.5rem;">Why It Matters</h2>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          Useful decentralized compute only works when incentives are direct and measurable. AICF aligns demand and supply in one ANM-native marketplace:
+          developers get elastic compute, providers monetize hardware, treasury can bootstrap strategic workloads.
+        </p>
+        <div class="aicf-grid-2" style="margin-top:0.9rem;">
+          {useCases.slice(0, 4).map((item) => (
+            <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,30,0.62);">
+              <h3>{item.title}</h3>
+              <p class="aicf-muted" style="font-size:0.9rem;">{item.description}</p>
+            </div>
+          ))}
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">How It Works</span>
+      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Spend ANM. Route Jobs. Reward Providers.</h2>
+      <div class="aicf-grid-4" style="margin-top:1rem;">
+        {howItWorks.map((step, idx) => (
+          <article class="aicf-card">
+            <p style="font-family:var(--font-mono); color:var(--brand-300);">0{idx + 1}</p>
+            <h3 style="margin-top:0.3rem;">{step.title}</h3>
+            <p class="aicf-muted" style="margin-top:0.45rem;">{step.description}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Spend ANM for AI</span>
+        <h2 style="font-size:1.65rem; margin-top:0.8rem;">Developer Billing You Can Reason About</h2>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          Every project balance is denominated in ANM. Requests reserve ANM budgets before execution. Final receipts settle directly against escrow.
+          No hidden fiat conversion, no opaque provider markups.
+        </p>
+        <div class="aicf-code" style="margin-top:0.9rem;">
+<pre style="margin:0;"><code>POST /v1/chat/completions
+Authorization: Bearer sk_live_aicf_...
+
+{`{
+  "model": "aicf-chat-1",
+  "messages": [{ "role": "user", "content": "summarize this contract" }],
+  "max_tokens": 512
+}`}</code></pre>
+        </div>
+      </article>
+
+      <article class="aicf-card">
+        <span class="aicf-kicker">Contribute GPU and Earn</span>
+        <h2 style="font-size:1.65rem; margin-top:0.8rem;">Provider Workflow in Minutes</h2>
+        <ol style="margin-top:0.7rem; padding-left:1.1rem; display:grid; gap:0.5rem;">
+          {providerSteps.map((step) => (
+            <li class="aicf-muted">{step}</li>
+          ))}
+        </ol>
+        <div class="aicf-btn-row" style="margin-top:1rem;">
+          <a class="aicf-btn" href="/downloads">Get Worker Bundle</a>
+          <a class="aicf-ghost-btn" href="/providers">Provider Guide</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Built-In Models and APIs</span>
+      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Default Hosted Models. OpenAI-Compatible Shape.</h2>
+      <div class="aicf-card" style="margin-top:1rem; padding:0; overflow:auto;">
+        <table class="aicf-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Type</th>
+              <th>Context</th>
+              <th>Latency</th>
+              <th>Price (ANM)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {modelCatalog.map((row) => (
+              <tr>
+                <td><strong>{row.model}</strong></td>
+                <td>{row.type}</td>
+                <td>{row.context}</td>
+                <td>{row.latency}</td>
+                <td>{row.price}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div class="aicf-grid-2" style="margin-top:1rem;">
+        <div class="aicf-code">
+<pre style="margin:0;"><code>POST /v1/embeddings
+{`{
+  "model": "aicf-embed-1",
+  "input": ["decentralized compute", "anm billing"]
+}`}</code></pre>
+        </div>
+        <div class="aicf-code">
+<pre style="margin:0;"><code>POST /v1/jobs
+{`{
+  "class": "fine_tuning_training",
+  "maxBudgetAnmNanos": "4500000000",
+  "request": {"model": "aicf-train-1", "input": {...}}
+}`}</code></pre>
         </div>
       </div>
-    </section>
-  </main>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Contract-Powered AI Jobs</span>
+        <h2 style="font-size:1.6rem; margin-top:0.8rem;">On-Chain Funding. Off-Chain Execution. Verifiable Settlement.</h2>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          Contracts can initiate AI tasks by locking ANM budget in escrow. AICF workers execute, submit receipts, and trigger deterministic settlement callbacks.
+          Dispute windows and slashing hooks enforce quality and accountability.
+        </p>
+        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.5rem;">
+          <li>Escrow budget before execution</li>
+          <li>Provider attestations and challenge windows</li>
+          <li>Treasury subsidy overlays for priority workloads</li>
+        </ul>
+      </article>
+      <article class="aicf-card">
+        <span class="aicf-kicker">Live Network Stats</span>
+        <div class="aicf-grid-2" style="margin-top:0.85rem;">
+          {networkPanels.map((panel) => (
+            <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,28,0.56);">
+              <p class="aicf-muted" style="font-size:0.8rem;">{panel.label}</p>
+              <p class="aicf-value" style="font-size:1.45rem;">{panel.value}</p>
+              <p class="aicf-muted" style="font-size:0.82rem;">{panel.footnote}</p>
+            </div>
+          ))}
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Ecosystem Roadmap</span>
+        <h2 style="font-size:1.55rem; margin-top:0.8rem;">What Ships Next</h2>
+        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.5rem;">
+          <li>Specialized GPU queues for model families and latency SLAs</li>
+          <li>Provider release channels with signed worker bundles</li>
+          <li>Contract-native agent orchestration templates</li>
+          <li>Fine-grained subsidy controls for ecosystem workloads</li>
+          <li>Model marketplace and custom deployment onboarding</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card" style="display:flex; flex-direction:column; justify-content:space-between;">
+        <div>
+          <span class="aicf-kicker">Build or Supply</span>
+          <h2 style="font-size:1.8rem; margin-top:0.8rem;">Two-Sided AI Compute Economy</h2>
+          <p class="aicf-muted" style="margin-top:0.7rem;">
+            Developers get immediate API utility. Providers get ANM-denominated revenue for useful compute. AICF aligns both sides in one live network.
+          </p>
+        </div>
+        <div class="aicf-btn-row" style="margin-top:1.1rem;">
+          <a class="aicf-btn" href="/developers">Create API Key</a>
+          <a class="aicf-ghost-btn" href="/downloads">Download Worker</a>
+          <a class="aicf-ghost-btn" href="/docs">Read Docs</a>
+        </div>
+      </article>
+    </div>
+  </section>
 
   <Footer slot="footer" />
 </BaseLayout>
-
-<style>
-  /* Grid pattern for background */
-  .bg-grid-gray-900\/\[0\.02\],
-  .bg-grid-white\/\[0\.02\],
-  .bg-grid-white\/\[0\.05\] {
-    background-size: 40px 40px;
-    background-image:
-      linear-gradient(to right, currentColor 1px, transparent 1px),
-      linear-gradient(to bottom, currentColor 1px, transparent 1px);
-    opacity: 0.5;
-  }
-
-  /* Animations */
-  @keyframes fadeInUp {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .animate-fade-in-up {
-    animation: fadeInUp 0.6s ease-out;
-  }
-
-  .animate-fade-in-up:nth-child(2) {
-    animation-delay: 0.1s;
-  }
-
-  .animate-fade-in-up:nth-child(3) {
-    animation-delay: 0.2s;
-  }
-
-  .animate-fade-in-up:nth-child(4) {
-    animation-delay: 0.3s;
-  }
-
-  .animate-fade-in-up:nth-child(5) {
-    animation-delay: 0.4s;
-  }
-</style>

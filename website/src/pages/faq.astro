@@ -2,77 +2,36 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import Accordion from "../components/Accordion.astro";
-import faqData from "../data/faq";
+import { faqItems } from "../data/aicf";
 
-const pageTitle = "Frequently Asked Questions";
-const pageDesc = "Find answers to common questions about Animica blockchain, including technical details, development, mining, and security.";
+const title = "FAQ";
+const description =
+  "Frequently asked questions on AICF ANM billing, provider earnings, contract-funded AI jobs, and contributor onboarding.";
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
+<BaseLayout title={title} description={description}>
   <Header slot="header" />
-  
-  <main class="min-h-screen bg-white dark:bg-dark-50">
-    <!-- Hero Section -->
-    <section class="bg-gradient-to-b from-brand-50 to-white dark:from-dark-100 dark:to-dark-50 py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6">
-          Frequently Asked Questions
-        </h1>
-        <p class="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-          {pageDesc}
-        </p>
-      </div>
-    </section>
 
-    <!-- FAQ Content -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        {faqData.map((category) => (
-          <div class="mb-12">
-            <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-6">
-              {category.category}
-            </h2>
-            <div class="space-y-4">
-              {category.items.map((item) => (
-                <Accordion title={item.question}>
-                  <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-                    {item.answer}
-                  </p>
-                </Accordion>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">FAQ</span>
+      <h1 class="aicf-heading">Common Questions</h1>
+      <p class="aicf-subheading">
+        Clear answers for developers spending ANM and providers earning ANM through decentralized compute on Animica.
+      </p>
+    </div>
+  </section>
 
-    <!-- CTA Section -->
-    <section class="bg-brand-500 dark:bg-brand-600 py-16">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 class="text-3xl font-bold text-white mb-4">
-          Still have questions?
-        </h2>
-        <p class="text-xl text-brand-50 mb-8">
-          Join our community or check out the documentation for more details.
-        </p>
-        <div class="flex flex-col sm:flex-row gap-4 justify-center">
-          <a 
-            href="/community" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-white text-brand-600 font-medium rounded-lg hover:bg-gray-100 transition-colors duration-150"
-          >
-            Join Community
-          </a>
-          <a 
-            href="/docs" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-brand-700 text-white font-medium rounded-lg hover:bg-brand-800 transition-colors duration-150"
-          >
-            Read Documentation
-          </a>
-        </div>
-      </div>
-    </section>
-  </main>
+  <section class="aicf-section">
+    <div class="aicf-container" style="display:grid; gap:0.85rem;">
+      {faqItems.map((item) => (
+        <article class="aicf-card">
+          <h2 style="font-size:1.1rem;">{item.question}</h2>
+          <p class="aicf-muted" style="margin-top:0.6rem;">{item.answer}</p>
+        </article>
+      ))}
+    </div>
+  </section>
 
   <Footer slot="footer" />
 </BaseLayout>

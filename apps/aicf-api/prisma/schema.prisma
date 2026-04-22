@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  developer
+  provider
+  admin
+}
+
+enum JobStatus {
+  queued
+  assigned
+  running
+  completed
+  failed
+  cancelled
+  disputed
+}
+
+enum ContractJobState {
+  created
+  funded
+  reserved
+  requested
+  assigned
+  running
+  commitment_submitted
+  result_submitted
+  accepted
+  challenged
+  finalized_paid
+  finalized_refunded
+  cancelled
+  expired
+}
+
+enum VerificationMode {
+  SINGLE_PROVIDER
+  QUORUM_MATCH
+  VERIFIER_REVIEW
+  CALLBACK_ACCEPT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  wallet       WalletBinding?
+  createdAt    DateTime @default(now())
+  projects     Project[]
+  providers    Provider[]
+}
+
+model WalletBinding {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  address   String
+  chainId   Int
+  signature String
+  linkedAt  DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Project {
+  id                String   @id @default(cuid())
+  ownerUserId       String
+  name              String
+  slug              String   @unique
+  description       String?
+  webhookUrl        String?
+  availableAnmNanos String
+  reservedAnmNanos  String
+  depositedAnmNanos String
+  spentAnmNanos     String
+  refundedAnmNanos  String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  owner             User     @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  apiKeys           ApiKey[]
+  jobs              Job[]
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  prefix    String   @unique
+  hash      String
+  scopes    String
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Provider {
+  id            String   @id @default(cuid())
+  userId        String
+  walletAddress String
+  daemonHash    String
+  state         String
+  reputation    Int
+  stakeAnmNanos String
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  nodes         ProviderNode[]
+}
+
+model ProviderNode {
+  id            String   @id @default(cuid())
+  providerId    String
+  metadataJson  String
+  capabilityJson String
+  benchmarkJson String
+  state         String
+  currentLoad   Int
+  queueDepth    Int
+  lastHeartbeat DateTime @default(now())
+  provider      Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+}
+
+model Job {
+  id                   String   @id @default(cuid())
+  projectId            String
+  apiKeyId             String?
+  status               JobStatus
+  model                String
+  class                String
+  requestJson          String
+  outputJson           String?
+  error                String?
+  assignedProviderId   String?
+  assignedNodeId       String?
+  maxBudgetAnmNanos    String
+  reservedBudgetAnmNanos String
+  chargedAnmNanos      String
+  refundedAnmNanos     String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Usage {
+  id                    String   @id @default(cuid())
+  projectId             String
+  jobId                 String?
+  model                 String
+  class                 String
+  inputTokens           Int
+  outputTokens          Int
+  embeddingVectors      Int
+  latencyMs             Int
+  chargedAnmNanos       String
+  providerRewardAnmNanos String
+  treasuryCutAnmNanos   String
+  subsidyAnmNanos       String
+  createdAt             DateTime @default(now())
+}
+
+model ContractEntity {
+  id          String        @id @default(cuid())
+  address     String        @unique
+  ownerUserId String
+  type        String
+  metadataJson String
+  paused      Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  owner       User          @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  jobs        ContractJob[]
+  agentTasks  AgentTask[]
+}
+
+model ContractJob {
+  id                     String            @id @default(cuid())
+  onchainJobId           String            @unique
+  contractId             String
+  requester              String
+  payer                  String
+  modelId                String
+  jobType                String
+  mode                   VerificationMode
+  callbackMode           String
+  inputRefHash           String
+  outputSchemaRef        String?
+  providerPolicyJson     String
+  privacy                String
+  replication            Int
+  quorum                 Int
+  budgetAnmNanos         String
+  fundedAnmNanos         String
+  reservedAnmNanos       String
+  paidAnmNanos           String
+  refundedAnmNanos       String
+  state                  ContractJobState
+  acceptedResultHash     String?
+  finalResultRef         String?
+  disputeStatus          String
+  metadataJson           String?
+  timeoutAt              DateTime
+  challengeWindowEndsAt  DateTime?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  contract               ContractEntity    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  assignments            JobAssignment[]
+  commitments            ResultCommitment[]
+  disputes               Dispute[]
+  escrowEvents           EscrowEvent[]
+}
+
+model AgentTask {
+  id              String         @id @default(cuid())
+  onchainTaskId   String         @unique
+  contractId      String
+  requester       String
+  payer           String
+  modelId         String
+  state           String
+  budgetAnmNanos  String
+  spentAnmNanos   String
+  remainingAnmNanos String
+  currentStep     Int
+  stepCount       Int
+  finalResultHash String?
+  finalResultRef  String?
+  disputeStatus   String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  contract        ContractEntity @relation(fields: [contractId], references: [id], onDelete: Cascade)
+}
+
+model JobAssignment {
+  id          String      @id @default(cuid())
+  contractJobId String
+  providerId  String
+  nodeId      String?
+  assignedAt  DateTime    @default(now())
+  completedAt DateTime?
+  status      String
+  contractJob ContractJob @relation(fields: [contractJobId], references: [id], onDelete: Cascade)
+}
+
+model ResultCommitment {
+  id               String      @id @default(cuid())
+  contractJobId    String
+  providerId       String
+  resultHash       String
+  resultRef        String?
+  providerSignature String
+  modelRuntime     String
+  usageJson        String
+  toolTraceRef     String?
+  verifierRef      String?
+  quorumGroup      String?
+  createdAt        DateTime    @default(now())
+  contractJob      ContractJob @relation(fields: [contractJobId], references: [id], onDelete: Cascade)
+}
+
+model Dispute {
+  id                String      @id @default(cuid())
+  contractJobId     String
+  openedBy          String
+  reasonCode        String
+  evidenceRef       String?
+  status            String
+  resolutionJson    String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  contractJob       ContractJob @relation(fields: [contractJobId], references: [id], onDelete: Cascade)
+}
+
+model EscrowEvent {
+  id             String      @id @default(cuid())
+  contractJobId  String
+  type           String
+  amountAnmNanos String
+  txHash         String?
+  actor          String
+  metadataJson   String?
+  createdAt      DateTime    @default(now())
+  contractJob    ContractJob @relation(fields: [contractJobId], references: [id], onDelete: Cascade)
+}

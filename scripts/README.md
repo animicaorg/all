@@ -37,6 +37,42 @@ python scripts/update_genesis_hash.py --network mainnet --force
 
 ## Development & Testing
 
+### deploy_aicf_contracts.py
+
+Compile and deploy the core AICF VM-PY contracts, then inject deployed contract
+addresses into `apps/aicf-api/.env`.
+
+**Examples:**
+
+```bash
+# Using wallet label from wallets.json
+python3 scripts/deploy_aicf_contracts.py \
+  --rpc http://127.0.0.1:8545/rpc \
+  --chain-id 1337 \
+  --wallet-label "demo-miner"
+
+# Using mnemonic
+python3 scripts/deploy_aicf_contracts.py \
+  --rpc http://127.0.0.1:8545/rpc \
+  --chain-id 1337 \
+  --mnemonic "$DEPLOYER_MNEMONIC"
+
+# Using raw seed hex
+python3 scripts/deploy_aicf_contracts.py \
+  --rpc https://rpc.animica.org/rpc \
+  --chain-id 1 \
+  --seed-hex "$DEPLOYER_SEED_HEX" \
+  --print-json
+
+# Using wallet label with explicit wallet file
+python3 scripts/deploy_aicf_contracts.py \
+  --rpc https://rpc.animica.org/rpc \
+  --chain-id 1 \
+  --wallet-file "$HOME/.animica/wallets.json" \
+  --wallet-label "prod-deployer" \
+  --print-json
+```
+
 ### bootstrap_explorer_cache.py
 
 Bootstrap the explorer cache for faster initial load.

@@ -1,0 +1,162 @@
+version: '3.9'
+
+services:
+  aicf-api:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-api dev"
+    environment:
+      AICF_API_HOST: 0.0.0.0
+      AICF_API_PORT: 8099
+      AICF_API_JWT_SECRET: change-me
+      AICF_API_INTERNAL_SECRET: change-me-internal
+      AICF_ADMIN_BOOTSTRAP_EMAIL: admin@animica.org
+      AICF_ADMIN_BOOTSTRAP_PASSWORD: change-me
+    ports:
+      - '8099:8099'
+
+  aicf-web:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-web dev"
+    environment:
+      VITE_AICF_API_BASE_URL: http://127.0.0.1:8099
+    ports:
+      - '5190:5190'
+
+  scheduler:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-scheduler dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  job-worker:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-job-worker dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  usage-meter:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-usage-meter dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_ADMIN_SESSION_TOKEN: ''
+    depends_on:
+      - aicf-api
+
+  provider-control-plane:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-provider-control-plane dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_ADMIN_SESSION_TOKEN: ''
+    depends_on:
+      - aicf-api
+
+  dispute-worker:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-dispute-worker dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_ADMIN_SESSION_TOKEN: ''
+      DISPUTE_WORKER_AUTO_RESOLVE: '0'
+    depends_on:
+      - aicf-api
+
+  treasury-worker:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-treasury-worker dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  contract-job-watcher:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-contract-job-watcher dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  fulfillment-scheduler:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-fulfillment-scheduler dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  result-submitter:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-result-submitter dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api
+
+  finalization-worker:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: >-
+      sh -lc "pnpm --filter @animica/aicf-finalization-worker dev"
+    environment:
+      AICF_API_BASE_URL: http://aicf-api:8099
+      AICF_INTERNAL_SECRET: change-me-internal
+    depends_on:
+      - aicf-api

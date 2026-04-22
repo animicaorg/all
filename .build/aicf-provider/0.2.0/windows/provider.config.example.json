@@ -1,0 +1,16 @@
+{
+  "api_base_url": "https://aicf.animica.org",
+  "provider_id": "provider-demo",
+  "provider_token": "replace-with-provider-token",
+  "node_id": "node-gpu-01",
+  "payout_address": "anm1replacewithwallet",
+  "heartbeat_interval_seconds": 8,
+  "benchmark_seconds": 10,
+  "log_dir": "logs",
+  "labels": ["gpu", "provider"],
+  "capabilities": {
+    "runtime": "llm",
+    "model_families": ["aicf-chat-1", "aicf-embed-1"],
+    "region": "unset"
+  }
+}

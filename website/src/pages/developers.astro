@@ -1,100 +1,159 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
-import CodeBlock from "../components/CodeBlock.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { architectureLayers, modelCatalog } from "../data/aicf";
 
-import { links } from "../config/links";
-
-const pageTitle = "Developers — Build with Animica";
-const pageDesc =
-  "Jump into Animica's post-quantum, useful-work stack: docs, code, RPC endpoints, and Explorer all in one place.";
-
-const githubRepo = links.github.root;
+const title = "Developers";
+const description =
+  "Build on AICF with OpenAI-compatible APIs, ANM-native billing, contract-funded jobs, and decentralized provider routing on Animica.";
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Developers</h1>
-    <p class="mt-3 text-base opacity-80">
-      Animica ships a post-quantum stack (Dilithium/SPHINCS+), a deterministic Python VM, and
-      useful-work (PoIES) consensus so you can build quickly without sacrificing security.
-      Start here to grab docs, source, RPC endpoints, and Explorer links.
-    </p>
-  </section>
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
 
-  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 grid gap-4 sm:grid-cols-2">
-    <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-lg font-semibold tracking-tight">Documentation</h2>
-      <p class="mt-2 text-sm opacity-80">Read the canonical guides and specs for nodes, SDKs, VM(Py), and ops.</p>
-      <div class="mt-3 flex gap-3 flex-wrap">
-        <a
-          href={links.docs.home()}
-          class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
-                 bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-                 hover:opacity-90"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open Docs
-        </a>
-        <InlineLink href={links.docs.gettingStarted()} underline>Getting started</InlineLink>
-      </div>
-    </div>
-
-    <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-lg font-semibold tracking-tight">Source code</h2>
-      <p class="mt-2 text-sm opacity-80">Fork the mono-repo, run the devnet stack, and contribute fixes.</p>
-      <div class="mt-3 flex gap-3 flex-wrap">
-        <a
-          href={githubRepo}
-          class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
-                 bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-                 hover:opacity-90"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View on GitHub
-        </a>
-        <InlineLink href={`${githubRepo}/tree/main/docs`} underline>Docs in repo</InlineLink>
-      </div>
-    </div>
-
-    <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-lg font-semibold tracking-tight">RPC endpoints</h2>
-      <p class="mt-2 text-sm opacity-80">Point your SDKs, curl, or tooling at the configured RPC.</p>
-      <CodeBlock lang="bash" title="Query head via HTTP">
-{`curl -s ${links.rpc.url}/rpc \\
-  -H 'content-type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
-      </CodeBlock>
-      <p class="mt-3 text-xs opacity-70">
-        Current default: <InlineLink href={links.rpc.url} underline noIcon>{links.rpc.url}</InlineLink>
-        · Browse more at <InlineLink href="/network" underline>Network</InlineLink>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Developer Platform</span>
+      <h1 class="aicf-heading">Ship AI Products on Decentralized Compute</h1>
+      <p class="aicf-subheading">
+        AICF gives teams OpenAI-compatible APIs, project-level ANM budgets, async job orchestration, and direct settlement on Animica.
+        Start with hosted models today and move to contract-triggered workloads as your stack matures.
       </p>
-    </div>
-
-    <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-lg font-semibold tracking-tight">Explorer</h2>
-      <p class="mt-2 text-sm opacity-80">
-        Inspect blocks, transactions, receipts, and contract state with zero wallet permissions.
-      </p>
-      <div class="mt-3 flex gap-3 flex-wrap">
-        <a
-          href={links.explorer.home()}
-          class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
-                 bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-                 hover:opacity-90"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open Explorer
-        </a>
-        <InlineLink href="/explorer" underline>Explorer features</InlineLink>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/app">Create API Key</a>
+        <a class="aicf-ghost-btn" href="/docs">API Docs</a>
+        <a class="aicf-ghost-btn" href="/pricing">Pricing in ANM</a>
       </div>
     </div>
   </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-3">
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">OpenAI-Compatible Endpoints</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Drop-in semantics for chat and embeddings. Keep your SDK and middleware shape while switching execution to AICF.
+        </p>
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">ANM-Native Billing</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Fund project balances with ANM, enforce per-job caps, and inspect usage rows with transparent settlement records.
+        </p>
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Contract-Driven Jobs</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Let contracts reserve ANM budgets, trigger model calls, and settle against receipts with challenge windows.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Quickstart</span>
+        <div class="aicf-code" style="margin-top:0.8rem;">
+<pre style="margin:0;"><code>{`curl https://aicf.animica.org/v1/chat/completions \\
+  -H "Authorization: Bearer $AICF_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "aicf-chat-1",
+    "messages": [
+      {"role": "system", "content": "You are an infra copilot"},
+      {"role": "user", "content": "Explain this GPU trace"}
+    ],
+    "max_tokens": 400
+  }'`}</code></pre>
+        </div>
+        <div class="aicf-code" style="margin-top:0.8rem;">
+<pre style="margin:0;"><code>{`curl https://aicf.animica.org/v1/embeddings \\
+  -H "Authorization: Bearer $AICF_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "aicf-embed-1",
+    "input": ["decentralized compute", "anm settlement"]
+  }'`}</code></pre>
+        </div>
+      </article>
+
+      <article class="aicf-card">
+        <span class="aicf-kicker">Model Surface</span>
+        <table class="aicf-table" style="margin-top:0.8rem;">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Type</th>
+              <th>Context</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            {modelCatalog.map((m) => (
+              <tr>
+                <td><strong>{m.model}</strong></td>
+                <td>{m.type}</td>
+                <td>{m.context}</td>
+                <td>{m.latency}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Architecture</span>
+      <div class="aicf-grid-4" style="margin-top:0.95rem;">
+        {architectureLayers.map((layer) => (
+          <article class="aicf-card">
+            <h3>{layer.layer}</h3>
+            <p class="aicf-muted" style="margin-top:0.45rem;">{layer.detail}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-2">
+      <article class="aicf-card">
+        <h2 style="font-size:1.4rem;">Contract-Powered AI Jobs</h2>
+        <p class="aicf-muted" style="margin-top:0.65rem;">
+          Contracts can escrow ANM and call AI workloads indirectly through AICF orchestration. This supports predictable settlement, dispute hooks, and auditability.
+        </p>
+        <div class="aicf-code" style="margin-top:0.8rem;">
+<pre style="margin:0;"><code>POST /v1/jobs
+{`{
+  "projectId": "proj_prod_search",
+  "maxBudgetAnmNanos": "2200000000",
+  "request": {
+    "class": "agent_task",
+    "model": "aicf-agent-1",
+    "input": {"goal": "triage incident reports"}
+  }
+}`}</code></pre>
+        </div>
+      </article>
+      <article class="aicf-card">
+        <h2 style="font-size:1.4rem;">Build Path</h2>
+        <ol style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.5rem;">
+          <li>Fund project wallet in ANM and create API keys.</li>
+          <li>Call hosted models through `/v1/chat/completions` and `/v1/embeddings`.</li>
+          <li>Move batch and agent workflows to async job classes.</li>
+          <li>Integrate contract-funded jobs for escrow-backed automation.</li>
+        </ol>
+        <div class="aicf-btn-row">
+          <a class="aicf-btn" href="/app">Launch App</a>
+          <a class="aicf-ghost-btn" href="/docs">Read Full Docs</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <Footer slot="footer" />
 </BaseLayout>
