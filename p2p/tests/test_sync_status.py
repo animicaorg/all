@@ -1923,6 +1923,43 @@ async def test_missing_parent_enqueues_parent_first(tmp_path: Path, monkeypatch:
     assert requested[0] == parent
 
 
+def test_missing_parent_with_parent_inflight_is_benign(tmp_path: Path) -> None:
+    node, _deps_sync = _make_service(tmp_path, "missing-parent-benign-inflight")
+    peer = _register_peer(node, "203.0.113.14:30333")
+    peer.peer_id = "peer-5"
+    peer.hello_done.set()
+    peer.ready_for_sync = True
+    peer.hello = {
+        "chain_id": node.chain_id,
+        "genesis_hash": node._genesis_hash(),
+        "fork_id": node._fork_id(),
+        "consensus_id": node._consensus_id(),
+        "protocol_version": node._protocol_version(),
+        "genesis_identity": node._genesis_identity(),
+        "network_params_hash": node._network_params_hash(),
+        "capabilities": ["sync"],
+        "head_height": 2,
+        "head_hash": b"\x45" * 32,
+    }
+
+    parent = b"\x11" * 32
+    child = b"\x21" * 32
+    now = time.time()
+    node._sync_inflight_blocks[parent] = now
+    node._sync_inflight_peers[parent] = peer.remote
+    node._sync_last_block_error = "missing parent"
+    node._sync_last_block_error_peer = peer.remote
+
+    sync_block = _SyncBlock(block=b"", hash=child, parent_hash=parent, origin_peer=peer.remote)
+    node._handle_missing_parent(peer, sync_block)
+
+    assert peer.missing_parent == 0
+    assert node._sync_block_stalled_reason is None
+    assert node._sync_last_block_error is None
+    assert parent in node._sync_inflight_blocks
+    assert parent not in node._sync_block_queue_set
+
+
 @pytest.mark.asyncio
 async def test_schedule_block_requests_seeds_queue_when_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

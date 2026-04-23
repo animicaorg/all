@@ -9675,23 +9675,49 @@ class P2PService:
         self._sync_wakeup.set()
 
     def _handle_missing_parent(self, peer: _PeerState, sync_block: _SyncBlock) -> None:
-        peer.missing_parent += 1
         now = time.time()
-        self._sync_last_block_error = "missing parent"
-        self._sync_last_block_error_at = now
-        self._sync_last_block_error_peer = peer.remote
         self._stats["sync_missing_parent_recover"] += 1
         self._sync_missing_parent_recoveries += 1
         parent_header_known = False
         parent_block_known = False
+        parent_inflight = False
+        parent_queued = False
+        parent_buffered = False
         if sync_block.parent_hash:
+            parent_inflight = sync_block.parent_hash in self._sync_inflight_blocks
+            parent_queued = sync_block.parent_hash in self._sync_block_queue_set
+            parent_buffered = sync_block.parent_hash in self._sync_block_buffer
             parent_header_known = bool(
                 self._has_header(sync_block.parent_hash)
                 or sync_block.parent_hash in self._sync_headers
             )
             parent_block_known = bool(self._has_block(sync_block.parent_hash))
+        benign_out_of_order = bool(
+            sync_block.parent_hash
+            and not parent_block_known
+            and (parent_header_known or parent_inflight or parent_queued or parent_buffered)
+        )
+        if benign_out_of_order:
+            if (
+                self._sync_last_block_error == "missing parent"
+                and self._sync_last_block_error_peer == peer.remote
+            ):
+                self._sync_last_block_error = None
+                self._sync_last_block_error_at = None
+                self._sync_last_block_error_peer = None
+        else:
+            peer.missing_parent += 1
+            self._sync_last_block_error = "missing parent"
+            self._sync_last_block_error_at = now
+            self._sync_last_block_error_peer = peer.remote
+            if peer.missing_parent >= self._missing_parent_threshold:
+                self._sync_block_stalled_reason = "missing parent"
         if sync_block.parent_hash and not parent_block_known:
-            if sync_block.parent_hash not in self._sync_block_queue_set:
+            if (
+                sync_block.parent_hash not in self._sync_block_queue_set
+                and sync_block.parent_hash not in self._sync_inflight_blocks
+                and sync_block.parent_hash not in self._sync_block_buffer
+            ):
                 parent_height = None
                 if sync_block.hash in self._sync_block_queue_heights:
                     parent_height = self._sync_block_queue_heights.get(sync_block.hash)
@@ -9717,7 +9743,13 @@ class P2PService:
                         "parent_height": parent_height,
                     },
                 )
-        if sync_block.parent_hash and not parent_header_known:
+        if (
+            sync_block.parent_hash
+            and not parent_header_known
+            and not parent_inflight
+            and not parent_queued
+            and not parent_buffered
+        ):
             anchor_height, anchor_hash_hex = self._local_head()
             anchor_hash = self._parse_hash_bytes(anchor_hash_hex)
             locator = self._build_headers_locator()
@@ -9736,11 +9768,12 @@ class P2PService:
                 reason="missing_parent_header",
             )
             self._sync_kick(reason="missing_parent_header", aggressive=True)
-        self._reset_sync_inflight(
-            now=now,
-            reason="missing_parent",
-            expired_hash=sync_block.hash,
-        )
+        if not benign_out_of_order:
+            self._reset_sync_inflight(
+                now=now,
+                reason="missing_parent",
+                expired_hash=sync_block.hash,
+            )
         log.info(
             "Missing parent detected",
             extra={
@@ -9751,11 +9784,18 @@ class P2PService:
                 else None,
                 "parent_header_known": parent_header_known,
                 "parent_block_known": parent_block_known,
+                "parent_inflight": parent_inflight,
+                "parent_queued": parent_queued,
+                "parent_buffered": parent_buffered,
+                "benign_out_of_order": benign_out_of_order,
             },
         )
-        if self._sync_block_stalled_reason == "missing parent":
+        if benign_out_of_order and self._sync_block_stalled_reason == "missing parent":
             self._sync_block_stalled_reason = None
-        if peer.missing_parent >= self._missing_parent_threshold:
+        if (
+            not benign_out_of_order
+            and peer.missing_parent >= self._missing_parent_threshold
+        ):
             self._penalize_peer(
                 peer,
                 "missing_parent",
