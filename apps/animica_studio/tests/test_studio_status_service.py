@@ -9,6 +9,7 @@ from animica_studio.services.settings_service import SettingsService
 from animica_studio.services.studio_status_service import StudioStatusService
 from animica_studio.services.wallet_repository import WalletRecord
 from animica_studio.storage.config import Config
+from animica_studio.models.studio_models import FeatureSummary, NodeSummary, StudioSnapshot, WalletSummary
 
 
 def _local_profile() -> RpcProfile:
@@ -132,3 +133,34 @@ def test_studio_status_service_extracts_json_from_mixed_output() -> None:
     service = StudioStatusService(Config(), SettingsService(Config()))
     payload = service._extract_json_output("warning: stale cache\n{\"height\": 10, \"peer_count\": 2}\n")  # noqa: SLF001
     assert payload == {"height": 10, "peer_count": 2}
+
+
+def test_collect_issues_adds_local_node_rpc_hint() -> None:
+    cfg = Config()
+    profile = _local_profile()
+    cfg.rpc_profiles = [profile.to_dict()]
+    cfg.active_profile_id = profile.id
+    service = StudioStatusService(cfg, SettingsService(cfg))
+
+    snapshot = StudioSnapshot(
+        profile_name=profile.name,
+        network_name="Mainnet",
+        rpc_url=profile.effective_rpc_url(),
+        wallet=WalletSummary(wallet_count=0),
+        node=NodeSummary(
+            running=False,
+            rpc_reachable=False,
+            rpc_url=profile.effective_rpc_url(),
+            last_error="Connection refused",
+        ),
+        mining=FeatureSummary("Mining", "attention", ""),
+        ena=FeatureSummary("ENA", "ready", ""),
+        aicf=FeatureSummary("AICF", "attention", ""),
+        da=FeatureSummary("DA", "ready", ""),
+    )
+
+    issues = service._collect_issues(snapshot, wallets=[])  # noqa: SLF001
+
+    rpc_issue = next((issue for issue in issues if issue.title == "Studio cannot reach the current RPC endpoint."), None)
+    assert rpc_issue is not None
+    assert "Start the local node from the Node page" in rpc_issue.detail
