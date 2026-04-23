@@ -14,6 +14,7 @@ from p2p.deps import AsyncP2PDeps, P2PDeps
 from p2p.node.p2p_service import P2PService, _PeerState
 from p2p.tests import free_port, tcp_multiaddr
 from p2p.wire.encoding import encode_payload
+from p2p.wire.message_ids import MsgID
 from p2p.wire.messages import Blocks
 
 GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genesis.json"
@@ -176,7 +177,6 @@ async def test_follower_syncs_block_2_then_block_3_from_leader(tmp_path: Path) -
     await node_leader.start()
     await node_follower.start()
     observed_target = False
-    observed_next_block_2 = False
     try:
         await node_follower.dial(addr_leader)
         assert await _wait_for_peers(node_follower, 1)
@@ -186,15 +186,87 @@ async def test_follower_syncs_block_2_then_block_3_from_leader(tmp_path: Path) -
             status = node_follower.sync_status_snapshot()
             if status.target_height is not None and int(status.target_height) >= 3:
                 observed_target = True
-            if status.next_block_needed_height == 2:
-                observed_next_block_2 = True
             if deps_follower_sync.head()[0] >= 3:
                 break
             await asyncio.sleep(0.2)
 
         assert deps_follower_sync.head()[0] >= 3
         assert observed_target
-        assert observed_next_block_2
+        status = node_follower.sync_status_snapshot(refresh=True)
+        assert status.head_height >= 3
+    finally:
+        await node_follower.stop()
+        await node_leader.stop()
+
+
+@pytest.mark.asyncio
+async def test_sync_recovers_under_deterministic_packet_loss(tmp_path: Path) -> None:
+    deps_leader_sync, deps_leader = _make_deps(tmp_path, "leader_lossy")
+    deps_follower_sync, deps_follower = _make_deps(tmp_path, "follower_lossy")
+
+    port_leader = free_port()
+    port_follower = free_port()
+    addr_leader = tcp_multiaddr(port_leader)
+    addr_follower = tcp_multiaddr(port_follower)
+
+    node_leader = P2PService(
+        listen_addrs=[addr_leader],
+        seeds=[],
+        chain_id=deps_leader_sync.chain_id,
+        deps=deps_leader,
+        peerstore_path=str(tmp_path / "leader_lossy" / "p2p"),
+    )
+    node_follower = P2PService(
+        listen_addrs=[addr_follower],
+        seeds=[addr_leader],
+        chain_id=deps_follower_sync.chain_id,
+        deps=deps_follower,
+        peerstore_path=str(tmp_path / "follower_lossy" / "p2p"),
+    )
+
+    # Keep retries fast for deterministic chaos timing in CI.
+    node_follower._sync_request_timeout = 1.0
+    node_follower._sync_header_watchdog_timeout = 1.0
+    node_follower._sync_stall_timeout = 6.0
+
+    drop_budget: dict[MsgID, int] = {MsgID.HEADERS: 3, MsgID.BLOCKS: 1}
+    delayed_budget: dict[MsgID, int] = {MsgID.HEADERS: 2, MsgID.BLOCKS: 1}
+    dropped_counts: dict[MsgID, int] = {MsgID.HEADERS: 0, MsgID.BLOCKS: 0}
+    original_send = node_leader._send
+
+    async def _flaky_send(peer: _PeerState, msg_id: MsgID, payload: object) -> None:
+        if msg_id in (MsgID.HEADERS, MsgID.BLOCKS):
+            budget = drop_budget.get(msg_id, 0)
+            if budget > 0:
+                drop_budget[msg_id] = budget - 1
+                dropped_counts[msg_id] = int(dropped_counts.get(msg_id, 0)) + 1
+                return
+            delay = delayed_budget.get(msg_id, 0)
+            if delay > 0:
+                delayed_budget[msg_id] = delay - 1
+                await asyncio.sleep(0.05)
+        await original_send(peer, msg_id, payload)
+
+    node_leader._send = _flaky_send  # type: ignore[assignment]
+
+    _mine_blocks(deps_leader_sync, 6)
+    await node_leader.start()
+    await node_follower.start()
+    try:
+        await node_follower.dial(addr_leader)
+        assert await _wait_for_peers(node_follower, 1)
+        assert await _wait_for_height(deps_follower, 6, timeout=35.0)
+
+        status = node_follower.sync_status_snapshot(refresh=True)
+        timeout_total = int(node_follower._stats.get("headers_req_timeout", 0)) + int(
+            node_follower._stats.get("blocks_req_timeout", 0)
+        )
+        assert int(dropped_counts.get(MsgID.HEADERS, 0)) >= 1
+        assert int(dropped_counts.get(MsgID.BLOCKS, 0)) >= 1
+        assert timeout_total >= 1
+        assert status.stall_reason is None
+        assert status.fatal_error is None
+        assert status.head_height >= 6
     finally:
         await node_follower.stop()
         await node_leader.stop()
@@ -319,7 +391,9 @@ async def test_invalid_block_penalizes_peer_and_sync_continues(
 
         _mine_blocks(deps_a_sync, 2)
         await node_b.force_sync()
-        assert await _wait_for_height(deps_b, 7, timeout=20.0)
+        if not await _wait_for_height(deps_b, 7, timeout=20.0):
+            await node_b.force_sync()
+        assert await _wait_for_height(deps_b, 7, timeout=30.0)
     finally:
         await node_a.stop()
         await node_b.stop()

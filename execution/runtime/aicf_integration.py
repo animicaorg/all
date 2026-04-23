@@ -21,6 +21,8 @@ import logging
 from typing import Any, Mapping, Optional
 
 log = logging.getLogger("execution.runtime.aicf_integration")
+_aicf_state_adapter_warned = False
+_aicf_module_missing_warned = False
 
 
 def process_block_for_aicf(
@@ -46,6 +48,21 @@ def process_block_for_aicf(
     """
     if params is None:
         return
+
+    # AICF state helpers expect a key/value state adapter with get/put.
+    # Some execution paths pass account-state adapters that intentionally do
+    # not expose this surface. In that case, skip AICF hooks instead of
+    # throwing per-block exceptions that can degrade sync throughput.
+    global _aicf_state_adapter_warned, _aicf_module_missing_warned
+    if not callable(getattr(state, "get", None)) or not callable(
+        getattr(state, "put", None)
+    ):
+        if not _aicf_state_adapter_warned:
+            _aicf_state_adapter_warned = True
+            log.warning(
+                "AICF: state adapter missing get/put; skipping AICF block processing"
+            )
+        return
     
     # Get AICF parameters
     aicf_params = params.get("aicf", {})
@@ -62,7 +79,9 @@ def process_block_for_aicf(
             set_epoch_length,
         )
     except ImportError:
-        log.warning("AICF state module not available; skipping AICF processing")
+        if not _aicf_module_missing_warned:
+            _aicf_module_missing_warned = True
+            log.warning("AICF state module not available; skipping AICF processing")
         return
     
     # Get block height

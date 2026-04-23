@@ -1,14 +1,15 @@
 {
-  "version": "9a47e7d06-dirty",
-  "generated_at": "2026-04-08T23:24:24Z",
+  "version": "19941d70b-dirty",
+  "generated_at": "2026-04-23T00:48:31Z",
   "linux": {
     "architecture": "amd64",
-    "build_label": "9a47e7d06-dirty",
+    "build_label": "19941d70b-dirty",
     "deb_url": "/studio/animica-studio-linux-amd64.deb",
     "deb_filename": "animica-studio-linux-amd64.deb",
-    "deb_sha256": "2c8d3e031fce21ef182763de6d6656599be682c9fcda55e9307812eeb73e895e",
-    "deb_size_bytes": 179712870,
+    "deb_sha256": "171699adc923550e88f0a45118a99fe2c0e418ca2de79b75ecfde49c0ae8ee65",
+    "deb_size_bytes": 188049970,
     "checksum_url": "/studio/animica-studio-linux.sha256",
-    "checksum_filename": "animica-studio-linux.sha256"
+    "checksum_filename": "animica-studio-linux.sha256",
+    "checksum_size_bytes": 97
   }
 }
