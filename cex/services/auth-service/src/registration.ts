@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { hashPassword } from "@cex/security/auth/password";
+import { hashPassword } from "@cex/security/auth";
 
 export interface RegistrationInput {
   email: string;

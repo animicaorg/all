@@ -11,8 +11,11 @@ import {
   createRedis,
   loadEnv
 } from "@cex/common";
-import { verifyPassword } from "@cex/security/auth/password";
-import { generateSessionId, getUserSessionCookieOptions } from "@cex/security/auth/session";
+import {
+  verifyPassword,
+  generateSessionId,
+  getUserSessionCookieOptions
+} from "@cex/security/auth";
 import {
   registerUser,
   RegistrationError,

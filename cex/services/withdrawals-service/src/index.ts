@@ -32,6 +32,35 @@ async function start() {
   const pool = createPgPool(config as any);
   const redis = createRedis(config as any);
 
+  // Fail fast if core dependencies are not reachable.
+  try {
+    await pool.query("SELECT 1");
+  } catch (error) {
+    logger.error(
+      {
+        err: error,
+        dbHost: config.DB_HOST,
+        dbPort: config.DB_PORT,
+        dbName: config.DB_NAME,
+      },
+      "Failed to connect to PostgreSQL"
+    );
+    throw error;
+  }
+
+  try {
+    await redis.ping();
+  } catch (error) {
+    logger.error(
+      {
+        err: error,
+        redisUrl: config.REDIS_URL,
+      },
+      "Failed to connect to Redis"
+    );
+    throw error;
+  }
+
   logger.info("Database and Redis connections established");
 
   // Create BitGo client
