@@ -86,3 +86,16 @@ def test_resolve_animica_cli_finds_repo_venv_scripts_layout(monkeypatch: pytest.
 
     assert resolved.argv_prefix == [str(cli.resolve())]
     assert "Scripts" in resolved.env.get("PATH", "")
+
+
+def test_windows_does_not_treat_extensionless_animica_as_executable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    launcher = tmp_path / "animica"
+    launcher.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    monkeypatch.setattr(job_runner.os, "name", "nt")
+    monkeypatch.setattr(job_runner.os, "access", lambda *_args, **_kwargs: True)
+
+    assert job_runner._is_executable_file(launcher) is False

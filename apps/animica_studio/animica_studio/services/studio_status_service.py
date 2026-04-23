@@ -506,10 +506,15 @@ class StudioStatusService:
 
     def _collect_issues(self, snapshot: StudioSnapshot, wallets: list[WalletRecord]) -> list[StatusIssue]:
         issues: list[StatusIssue] = []
+        active_profile = self._active_profile()
         if not wallets:
             issues.append(StatusIssue("warning", "No wallet is set up yet.", "Create or import a wallet to receive funds."))
         if not snapshot.node.rpc_reachable:
-            issues.append(StatusIssue("error", "Studio cannot reach the current RPC endpoint.", snapshot.node.last_error or snapshot.rpc_url))
+            detail = snapshot.node.last_error or snapshot.rpc_url
+            if active_profile.type == ProfileType.LOCAL_NODE:
+                hint = "Start the local node from the Node page, or switch this profile to External RPC."
+                detail = f"{detail} {hint}".strip() if detail else hint
+            issues.append(StatusIssue("error", "Studio cannot reach the current RPC endpoint.", detail))
         if snapshot.node.running and (snapshot.node.sync.peer_count or 0) == 0:
             issues.append(StatusIssue("warning", "The node is running but has no peers.", "Use Bootstrap Peers on the Node page."))
         if snapshot.node.sync.stall_reason:

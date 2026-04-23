@@ -92,8 +92,10 @@ def _is_executable_file(path: Path) -> bool:
         return False
     if os.name == "nt":
         suffix = path.suffix.lower()
-        if suffix in {".exe", ".cmd", ".bat", ".com"}:
-            return True
+        # On Windows, extensionless repo launchers (for example, POSIX shell
+        # scripts named "animica") frequently pass os.access(..., X_OK) but
+        # fail at process start with WinError 193.
+        return suffix in {".exe", ".cmd", ".bat", ".com"}
     return os.access(path, os.X_OK)
 
 
