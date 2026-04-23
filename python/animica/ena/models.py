@@ -15,7 +15,13 @@ def utc_now_iso() -> str:
 
 
 class BaseSchema(BaseModel):
-    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+    # Allow domain fields like `model_provider` while keeping protection for
+    # core BaseModel API names.
+    model_config = ConfigDict(
+        extra="allow",
+        arbitrary_types_allowed=True,
+        protected_namespaces=("model_validate", "model_dump"),
+    )
 
     def canonical_json(self) -> str:
         return json.dumps(

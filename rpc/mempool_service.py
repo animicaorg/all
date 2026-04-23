@@ -1825,7 +1825,9 @@ class MempoolService:
                 if instant_svc is not None:
                     anchor_hash = "0x" + ("00" * 32)
                     try:
-                        head = _rpc_deps.ensure_started().get_head()
+                        # Avoid recursive startup: submit() may run while deps.build_context()
+                        # restores persisted mempool entries before _CTX is available.
+                        head = _rpc_deps.get_ctx().get_head()
                         if isinstance(head, dict):
                             hh = str(head.get("hash") or "")
                             if hh:
