@@ -2,10 +2,12 @@
  * Database connection utilities
  */
 
-import { Pool, PoolClient } from "pg";
+import { Pool } from "pg";
+import type { PoolClient } from "pg";
 import type { Logger } from "pino";
 
-export { Pool, PoolClient };
+export { Pool };
+export type { PoolClient };
 
 /**
  * Execute a query within a transaction

@@ -45,13 +45,13 @@ export class OutboxWorker {
 
     this.intervalId = setInterval(() => {
       this.processOperations().catch((error) => {
-        this.logger.error({ error }, "Error in outbox worker");
+        this.logger.error({ err: error }, "Error in outbox worker");
       });
     }, this.config.OUTBOX_WORKER_INTERVAL_MS);
 
     // Run immediately
     this.processOperations().catch((error) => {
-      this.logger.error({ error }, "Error in initial outbox worker run");
+      this.logger.error({ err: error }, "Error in initial outbox worker run");
     });
   }
 
@@ -177,7 +177,7 @@ export class OutboxWorker {
     } catch (error: any) {
       this.logger.error(
         {
-          error,
+          err: error,
           operationId: operation.id,
           type: operation.type,
           attemptCount: operation.attemptCount,
@@ -233,7 +233,7 @@ export class OutboxWorker {
       return { success: true, message: "Ledger lock applied" };
     } catch (error: any) {
       this.logger.error(
-        { error, payload },
+        { err: error, payload },
         "Failed to apply ledger lock"
       );
       throw error;
@@ -268,7 +268,7 @@ export class OutboxWorker {
       return { success: true, message: "Ledger broadcast applied" };
     } catch (error: any) {
       this.logger.error(
-        { error, payload },
+        { err: error, payload },
         "Failed to apply ledger broadcast"
       );
       throw error;
@@ -303,7 +303,7 @@ export class OutboxWorker {
       return { success: true, message: "Ledger cancel applied" };
     } catch (error: any) {
       this.logger.error(
-        { error, payload },
+        { err: error, payload },
         "Failed to apply ledger cancel"
       );
       throw error;

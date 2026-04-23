@@ -12,7 +12,7 @@ import {
 const env = loadEnv(
   baseEnvSchema.extend({
     SERVICE_NAME: z.string().default("wallet-router"),
-    BITGO_ENV: z.enum(["sandbox", "prod"]).default("sandbox"),
+    BITGO_ENV: z.enum(["sandbox", "test", "prod"]).default("test"),
     BITGO_ACCESS_TOKEN: z.string().optional(),
     BITGO_WEBHOOK_SECRET: z.string().optional(),
     BITGO_BASE_URL: z.string().url().optional(),

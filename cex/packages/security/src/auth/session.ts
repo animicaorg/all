@@ -4,7 +4,6 @@
  */
 
 import { randomBytes } from 'crypto';
-import type { CookieOptions } from 'express';
 
 /**
  * Session cookie configuration

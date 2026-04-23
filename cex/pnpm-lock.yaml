@@ -178,6 +178,9 @@ importers:
 
   packages/observability:
     dependencies:
+      '@cex/security':
+        specifier: workspace:*
+        version: link:../security
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0

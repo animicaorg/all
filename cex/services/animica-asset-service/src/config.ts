@@ -7,6 +7,7 @@ import { baseEnvSchema, loadEnv } from "@cex/common";
 
 const configSchema = baseEnvSchema.partial().extend({
   SERVICE_NAME: z.string().default("animica-asset-service"),
+  LOG_LEVEL: z.string().default("info"),
   
   // Optional common fields (not needed for this service)
   NATS_URL: z.string().url().optional(),
