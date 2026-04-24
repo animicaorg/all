@@ -1174,6 +1174,43 @@ async def test_block_stall_recovery_rotates_peer(tmp_path: Path) -> None:
     assert node._sync_active_block_peer == peer_b.remote
 
 
+def test_sync_stall_clears_transient_block_penalties(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "stall-clear-transient-block-penalties")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "stall-clear-transient-block-penalties" / "p2p"),
+    )
+    peer_a = _register_peer(node, "peer:5701")
+    peer_b = _register_peer(node, "peer:5702")
+    now = time.time()
+    for peer in (peer_a, peer_b):
+        peer.hello["head_height"] = 5
+        node._update_peer_head_table(peer, height=5, source="test", head_hash=None)
+        node._set_block_backoff(peer, reason="block_timeout", delay=60.0)
+        peer.block_failures = 2
+        peer.block_cooldown_until = now + 60.0
+
+    block_hash = b"\x12" * 32
+    node._sync_block_queue.append(block_hash)
+    node._sync_block_queue_set.add(block_hash)
+    node._sync_block_queue_heights[block_hash] = 2
+    node._sync_last_block_error = STALL_BLOCK_TIMEOUT
+    node._sync_active_block_peer = peer_a.remote
+    node._create_child_task = lambda coro, *_args, **_kwargs: coro.close()  # type: ignore[assignment]
+
+    node._handle_sync_stall(reason=STALL_BLOCK_TIMEOUT)
+
+    assert node._sync_last_recovery_action == "retry_blocks_new_peer"
+    assert node._sync_active_block_peer == peer_b.remote
+    for peer in (peer_a, peer_b):
+        assert node._peer_backoff_key(peer) not in node._sync_block_peer_backoff
+        assert peer.block_cooldown_until == 0.0
+        assert peer.block_failures == 0
+
+
 def test_select_sync_peer_considers_proven_peer_when_heights_are_close(
     tmp_path: Path,
 ) -> None:
