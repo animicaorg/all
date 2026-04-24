@@ -224,6 +224,44 @@ async def test_sync_loop_does_not_mark_stall_without_target_ahead(
     )
 
 
+@pytest.mark.asyncio
+async def test_sync_loop_preserves_new_sync_request_raised_during_sync_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-loop-preserve-new-request")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-loop-preserve-new-request" / "p2p"),
+    )
+    _register_peer(node, "peer:1013")
+
+    node._sync_requested = True
+    node._sync_requested_at = time.time() - 5.0
+
+    async def _fake_sync_once(*, force: bool = False):
+        assert force is True
+        node._sync_kick(reason="test-requeue", aggressive=True)
+        node._running = False
+        return {"started": True}
+
+    async def _fake_schedule_block_requests(*_args, **_kwargs):
+        return 0
+
+    monkeypatch.setattr(node, "_sync_once", _fake_sync_once)
+    monkeypatch.setattr(
+        node, "_schedule_block_requests", _fake_schedule_block_requests
+    )
+    node._sync_tick_sec = 0.01
+    node._running = True
+
+    await node._sync_loop()
+
+    assert node._sync_requested is True
+
+
 def test_hash_normalization_handles_mixed_case(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "hash-normalization")
     node = P2PService(

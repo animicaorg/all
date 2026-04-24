@@ -12372,9 +12372,21 @@ class P2PService:
                 ):
                     self._rotate_sync_peer()
                     self._last_rotation_at = now
-                force_sync = stalled or self._sync_force_always or self._sync_requested
+                pending_sync_request = bool(self._sync_requested)
+                pending_sync_request_at = (
+                    float(self._sync_requested_at or 0.0)
+                    if pending_sync_request
+                    else None
+                )
+                force_sync = (
+                    stalled or self._sync_force_always or pending_sync_request
+                )
                 await self._sync_once(force=force_sync)
-                if self._sync_requested:
+                if (
+                    pending_sync_request
+                    and self._sync_requested
+                    and self._sync_requested_at == pending_sync_request_at
+                ):
                     self._sync_requested = False
                 self._log_sync_cycle()
                 # Schedule block requests regardless of stall status
