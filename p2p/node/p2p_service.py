@@ -12255,12 +12255,30 @@ class P2PService:
                         self._sync_last_block_error_at = now
                         self._sync_kick(reason=f"stall:{stall_reason}", aggressive=True)
 
-                # Detect when headers == blocks and we're not making progress
-                # This indicates we're stuck because all connected peers are at the same height
-                # even though the network might have higher blocks available
+                # Detect when headers == blocks and we're not making progress.
+                # Treat an unknown sync header as equal to the local head so a
+                # missing _sync_best_header does not suppress stall recovery.
+                effective_best_header_height = (
+                    best_header_height if self._sync_best_header is not None else best_block_height
+                )
+                target_ahead = False
                 if (
-                    best_header_height == best_block_height
+                    network_best_height is not None
+                    and int(network_best_height) > best_block_height
+                ):
+                    target_ahead = True
+                elif (
+                    self._sync_target_height is not None
+                    and int(self._sync_target_height) > best_block_height
+                ):
+                    target_ahead = True
+                elif best_peer_height is not None and int(best_peer_height) > best_block_height:
+                    target_ahead = True
+
+                if (
+                    effective_best_header_height == best_block_height
                     and best_block_height > 0
+                    and target_ahead
                     and not self._sync_inflight_headers
                     and not self._sync_inflight_blocks
                     and not self._sync_block_queue
@@ -12273,6 +12291,10 @@ class P2PService:
                             "Sync stalled: headers == blocks with no progress",
                             extra={
                                 "height": best_block_height,
+                                "best_header_height": effective_best_header_height,
+                                "network_best_height": network_best_height,
+                                "target_height": self._sync_target_height,
+                                "best_peer_height": best_peer_height,
                                 "stall_elapsed_s": max(0.0, now - self._sync_last_progress_at),
                                 "peers": len(self._peers),
                                 "last_header_error": self._sync_last_header_error,

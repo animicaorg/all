@@ -149,6 +149,81 @@ async def test_sync_loop_wakeup_schedules_headers(
             await task
 
 
+@pytest.mark.asyncio
+async def test_sync_loop_marks_stall_when_best_header_unknown_but_target_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-loop-unknown-best-header-stall")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-loop-unknown-best-header-stall" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1011")
+    peer.hello["head_height"] = 5
+    node._update_peer_head_table(peer, height=5, source="test", head_hash=None)
+    node._local_head = lambda: (3, None)  # type: ignore[method-assign]
+    node._sync_best_header = None
+    node._sync_target_height = 5
+    node._sync_last_head_height = 3
+    node._sync_last_head_hash = None
+    node._sync_last_progress_at = time.time() - node._sync_stall_timeout - 1.0
+    async def _fake_sync_once(*, force: bool = False):
+        node._running = False
+        return {"started": force}
+
+    monkeypatch.setattr(node, "_sync_once", _fake_sync_once)
+    node._sync_tick_sec = 0.01
+    node._running = True
+
+    await node._sync_loop()
+
+    assert any(
+        "Sync stalled: headers == blocks with no progress" in record.message
+        for record in caplog.records
+    )
+    assert node._sync_requested is False
+
+
+@pytest.mark.asyncio
+async def test_sync_loop_does_not_mark_stall_without_target_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-loop-at-tip-no-stall")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-loop-at-tip-no-stall" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1012")
+    peer.hello["head_height"] = 3
+    node._update_peer_head_table(peer, height=3, source="test", head_hash=None)
+    node._local_head = lambda: (3, None)  # type: ignore[method-assign]
+    node._sync_best_header = None
+    node._sync_target_height = 3
+    node._sync_last_head_height = 3
+    node._sync_last_head_hash = None
+    node._sync_last_progress_at = time.time() - node._sync_stall_timeout - 1.0
+    async def _fake_sync_once(*, force: bool = False):
+        node._running = False
+        return {"started": force}
+
+    monkeypatch.setattr(node, "_sync_once", _fake_sync_once)
+    node._sync_tick_sec = 0.01
+    node._running = True
+
+    await node._sync_loop()
+
+    assert not any(
+        "Sync stalled: headers == blocks with no progress" in record.message
+        for record in caplog.records
+    )
+
+
 def test_hash_normalization_handles_mixed_case(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "hash-normalization")
     node = P2PService(
