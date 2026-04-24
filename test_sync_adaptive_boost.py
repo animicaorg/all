@@ -36,7 +36,11 @@ def calculate_tick_rate(
     sync_boost_tick_sec: float | None, sync_tick_sec: float
 ) -> float:
     """Calculate the boosted tick rate."""
-    return sync_boost_tick_sec if sync_boost_tick_sec is not None else max(0.1, sync_tick_sec / 5)
+    return (
+        sync_boost_tick_sec
+        if sync_boost_tick_sec is not None
+        else min(sync_tick_sec, max(0.001, sync_tick_sec / 5))
+    )
 
 
 def test_adaptive_boost_extends_during_active_sync():

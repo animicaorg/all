@@ -262,6 +262,41 @@ async def test_sync_loop_preserves_new_sync_request_raised_during_sync_once(
     assert node._sync_requested is True
 
 
+def test_aggressive_sync_boost_is_faster_than_normal_tick(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-boost-fast")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-boost-fast" / "p2p"),
+    )
+    node._sync_tick_sec = 0.005
+
+    node._sync_kick(reason="test-aggressive-boost", aggressive=True)
+
+    assert node._sync_boost_tick_sec is not None
+    assert node._sync_boost_tick_sec < node._sync_tick_sec
+    assert node._sync_boost_tick_sec <= 0.001
+
+
+def test_explicit_sync_boost_tick_never_slows_normal_tick(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-boost-explicit")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-boost-explicit" / "p2p"),
+    )
+    node._sync_tick_sec = 0.005
+
+    result = node.boost_sync(duration_s=1.0, tick_ms=50)
+
+    assert result["boosted"] is True
+    assert node._sync_boost_tick_sec == node._sync_tick_sec
+
+
 def test_hash_normalization_handles_mixed_case(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "hash-normalization")
     node = P2PService(
@@ -512,6 +547,31 @@ def test_sync_stall_rotation_avoids_max_height_only_starvation(tmp_path: Path) -
     node._handle_sync_stall(reason=STALL_BLOCK_PEER_UNRESPONSIVE)
 
     assert node._sync_active_block_peer == peer_productive.remote
+
+
+def test_headers_equal_blocks_stall_enqueues_header_retry(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "headers-equal-blocks-retry")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "headers-equal-blocks-retry" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:5603")
+    peer.hello["head_height"] = 10
+    node._update_peer_head_table(peer, height=10, source="test", head_hash=None)
+    node._local_head = lambda: (5, node._genesis_hash().hex())  # type: ignore[method-assign]
+    node._sync_target_height = 10
+    node._sync_best_header = None
+    node._sync_last_header_error = "headers_empty"
+    node._sync_last_progress_at = time.time() - node._sync_stall_timeout - 1.0
+
+    node._handle_sync_stall(reason=STALL_BLOCK_PEER_UNRESPONSIVE)
+
+    assert node._sync_header_retry_queue
+    assert node._sync_block_stalled_reason is None
+    assert node._sync_requested is True
 
 
 def test_watchdog_resets_from_highest_next_height(tmp_path: Path) -> None:
@@ -898,6 +958,52 @@ async def test_headers_empty_rotates_peer(tmp_path: Path) -> None:
     assert peer_a.header_cooldown_until > time.time()
     _eligible, ineligible = node._eligible_sync_peers()
     assert ineligible.get(peer_a.remote) == "headers_cooldown"
+
+
+@pytest.mark.asyncio
+async def test_sync_once_clears_transient_header_cooldown_while_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "header-cooldown-recovery")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "header-cooldown-recovery" / "p2p"),
+    )
+    peer = _register_peer(node, "peer:1008")
+    peer.hello["head_height"] = 1
+    node._update_peer_head_table(peer, height=1, source="test", head_hash=None)
+    node._set_sync_backoff(peer, reason="headers_empty", delay=60.0)
+    node._mark_peer_head_issue(peer, reason="headers_empty", cooldown=60.0)
+    peer.header_cooldown_until = time.time() + 60.0
+    peer.empty_header_responses = 1
+
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    child_block = _make_child_block(genesis)
+    headers = [
+        HeaderCompact(
+            hash=compute_header_hash(child_block.header),
+            height=1,
+            parent=genesis.hash(),
+            theta_micro=int(getattr(child_block.header, "thetaMicro", 0)),
+            timestamp=int(getattr(child_block.header, "timestamp", 0)),
+        )
+    ]
+
+    async def _fake_fetch_headers(_peer: _PeerState):
+        return headers
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once(force=True)
+
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height == 1
+    assert peer.header_cooldown_until == 0.0
+    assert peer.empty_header_responses == 0
 
 
 @pytest.mark.asyncio
