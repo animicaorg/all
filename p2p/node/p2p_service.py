@@ -9475,8 +9475,13 @@ class P2PService:
                 header.hash, height_hint=header.height
             ):
                 recovered_missing_headers = True
-        if not actionable or not recovered_missing_headers:
+        if not actionable:
             return []
+
+        queued = self._enqueue_missing_blocks(actionable)
+        if not recovered_missing_headers and queued <= 0:
+            return []
+
         self._sync_headers_accepted_total += len(actionable)
         self._note_header_progress(peer, reason="headers_reused")
         now = time.time()
@@ -9500,7 +9505,6 @@ class P2PService:
         )
         if not peer.anchored:
             self._mark_peer_anchored(peer, reason="headers_reused")
-        queued = self._enqueue_missing_blocks(actionable)
         log.info(
             "Reused known headers for sync recovery",
             extra={
@@ -10785,7 +10789,19 @@ class P2PService:
                     return [h.hash for h in reused], None, {}
                 peer.broadcast.duplicate_header_batches += 1
                 self._stats["peer_duplicate_header_batches"] += 1
-                self._note_header_progress(peer, reason="duplicate_headers")
+                if self._is_sync_target_ahead(local_anchor_height):
+                    log.info(
+                        "Duplicate-only headers while behind target; not counting as progress",
+                        extra={
+                            "remote": peer.remote,
+                            "local_height": local_anchor_height,
+                            "count": len(headers),
+                            "target_height": self._sync_target_height,
+                            "network_best_height": self._network_best_height(),
+                        },
+                    )
+                else:
+                    self._note_header_progress(peer, reason="duplicate_headers")
                 return [], None, {"duplicate_headers": len(headers)}
             peer.broadcast.errors += 1
             return [], "invalid_headers", {"invalid_headers": len(headers)}
