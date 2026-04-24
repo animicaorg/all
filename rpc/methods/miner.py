@@ -32,12 +32,6 @@ try:  # Optional helper to compute share target from Θ
 except Exception:  # pragma: no cover
     share_microtarget = None  # type: ignore[assignment]
 
-# Import THETA_HARD_CAP_MICRO separately to avoid shadowing in function scope
-try:
-    from consensus.difficulty import THETA_HARD_CAP_MICRO
-except Exception:  # pragma: no cover
-    THETA_HARD_CAP_MICRO = 3_000_000_000  # Fallback if import fails
-
 try:  # canonical zero constant
     from core.types.hash import ZERO32
 except Exception:  # pragma: no cover
@@ -156,13 +150,14 @@ _HEAD_STATE: dict[str, Any] = {
 _AUTO_MINE: bool = False
 _AUTO_TASK: asyncio.Task | None = None
 
-# Dynamic theta adjustment state for mining operations
-# Tracks timing of recent blocks to adapt difficulty
+# Theta tracking state for mining/template operations.
+# Canonical theta is sourced from BlockImporter via _resolve_theta(); this state
+# only keeps lightweight telemetry fields.
 _MINING_STATE: dict[str, Any] = {
     "last_block_time": None,  # timestamp of last mined block
-    "block_times": [],         # Recent block intervals (seconds) for EMA calculation
-    "theta_state": None,       # RetargetState from consensus.difficulty
-    "adjustment_enabled": True, # Whether to dynamically adjust theta during mining
+    "block_times": [],         # recent observed block intervals (seconds)
+    "theta_state": None,       # legacy field retained for compatibility
+    "adjustment_enabled": True, # legacy toggle retained for compatibility
     "last_network_height": None,  # last observed chain head height
     "last_network_timestamp": None,  # last observed chain head timestamp
     "stale_head_hash": None,  # head hash used for stale-head bucket tracking
@@ -220,12 +215,6 @@ _MEMPOOL_BINDINGS_LOGGED: set[str] = set()
 _MINING_AUDIT_TRAIL: list[dict[str, Any]] = []
 _MINING_AUDIT_MAX_SIZE = int(os.getenv("ANIMICA_MINING_AUDIT_MAX_SIZE", "1000"))
 
-# Minimum theta for forced blocks (when previous block exceeds max_block_time_s).
-# 100K µ-nats = 0.1 nats = very easy mining (allows quick block production).
-_FORCED_BLOCK_MIN_THETA_MICRO = 100_000
-# Cap how much theta may decrease per retarget update so slow periods do not
-# collapse difficulty to the floor in a single call.
-_THETA_MAX_DOWN_STEP_MICRO = int(os.getenv("ANIMICA_THETA_MAX_DOWN_STEP_MICRO", "100000"))
 _WATCHDOG_INTERVAL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_INTERVAL_S", "30"))
 _WATCHDOG_STALL_S = float(os.getenv("ANIMICA_MINER_WATCHDOG_STALL_S", "120"))
 _WATCHDOG_MAX_ATTEMPTS = int(os.getenv("ANIMICA_MINER_WATCHDOG_MAX_ATTEMPTS", "2"))
@@ -1219,224 +1208,39 @@ def _head_timestamp_seconds() -> Optional[int]:
 
 def _adjust_theta_for_mining(dt_seconds: float | None = None, *, blocks_skipped: int = 1) -> int:
     """
-    Dynamically adjust theta micro during mining based on observed block times.
-    
-    This implements micro-adjustment of the acceptance threshold Θ to accommodate
-    network stress and hash rate changes. Uses EMA-based retargeting from
-    consensus.difficulty module.
-    
-    Theta (Θ) represents mining difficulty:
-    - Higher theta → harder mining (fewer valid blocks)
-    - Lower theta → easier mining (more valid blocks)
-    - Fast blocks (dt < target) → increase theta
-    - Slow blocks (dt > target) → decrease theta
-    
-    Args:
-        dt_seconds: Time elapsed since last block (seconds). If None, returns current theta.
-        blocks_skipped: Number of elapsed retarget intervals represented by dt_seconds.
-            Used to catch up theta updates when the miner has not requested work for
-            multiple stale-age buckets.
-        
-    Returns:
-        int: Adjusted theta_micro value for next mining iteration (in micro-nats)
+    Return canonical theta for mining/template headers.
+
+    Mining must not run a private theta retarget loop because block import
+    validates header theta against the canonical BlockImporter state once the
+    warmup window is passed (mainnet window is 720). Divergent local retarget
+    parameters can therefore hard-stop progress exactly at that boundary.
+
+    We still keep lightweight interval telemetry in `_MINING_STATE["block_times"]`
+    for observability, but consensus theta is always sourced from `_resolve_theta()`.
     """
-    global _MINING_STATE
-    
-    # If adjustment is disabled, return baseline theta
-    if not _MINING_STATE.get("adjustment_enabled", True):
-        return _resolve_theta()
-    
-    # If no dt provided, return current theta (initialization case)
-    if dt_seconds is None:
-        # Initialize state if needed
-        if _MINING_STATE.get("theta_state") is None:
-            try:
-                from consensus.difficulty import RetargetParams, init_state
-                
-                # Get current theta from consensus
-                current_theta = _resolve_theta()
-                
-                # Initialize retarget params with mining-friendly settings
-                # Use faster response for mining (smaller half-life, higher gain)
-                # Theta is capped at THETA_HARD_CAP_MICRO (3B µ-nats = 3,000 nats)
-                # to maintain network stability and prevent runaway values
-                # Stability is ensured by hard cap, step_clamp_micro, and overflow protection
-                # Adjusted parameters for gentler difficulty increases in devnet/testing scenarios
-                target_block_time_s = _target_block_time_s()
-                params = RetargetParams(
-                    target_block_time_s=target_block_time_s,
-                    half_life_blocks=12.0,           # Slower adaptation (was 8.0)
-                    gain_beta=0.75,                  # Less aggressive response (was 0.9)
-                    step_clamp_micro=1_000_000,      # Smaller steps (~1.0 nats per update, was 2.0)
-                    theta_min_micro=50_000,          # Even lower minimum (~0.05 nats, was 0.1)
-                    theta_max_micro=None,            # None = use hard cap (3B µ-nats)
-                )
-
-                head_snapshot = _current_head_snapshot()
-                if int(head_snapshot.get("height") or 0) == 0:
-                    current_theta = max(current_theta, params.theta_min_micro)
-                
-                _MINING_STATE["theta_state"] = init_state(params, current_theta)
-                # Display effective maximum (hard cap when None)
-                effective_max = params.theta_max_micro if params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
-                max_display = f"{effective_max / 1e6:.1f} nats"
-                log.info(
-                    f"Initialized dynamic theta adjustment for mining: "
-                    f"theta={current_theta/1e6:.3f} nats, target_time={params.target_block_time_s}s, "
-                    f"range=[{params.theta_min_micro/1e6:.1f}, {max_display}]"
-                )
-            except Exception as e:
-                log.warning(f"Failed to initialize theta adjustment: {e}")
-                _MINING_STATE["adjustment_enabled"] = False
-                return _resolve_theta()
-        
-        # Return current theta from state
-        state = _MINING_STATE.get("theta_state")
-        configured_target = _target_block_time_s()
-        if state and abs(float(state.params.target_block_time_s) - float(configured_target)) > 1e-9:
-            try:
-                from consensus.difficulty import RetargetParams, init_state
-
-                updated_params = RetargetParams(
-                    target_block_time_s=float(configured_target),
-                    half_life_blocks=float(state.params.half_life_blocks),
-                    gain_beta=float(state.params.gain_beta),
-                    step_clamp_micro=int(state.params.step_clamp_micro),
-                    theta_min_micro=int(state.params.theta_min_micro),
-                    theta_max_micro=(
-                        int(state.params.theta_max_micro)
-                        if state.params.theta_max_micro is not None
-                        else None
-                    ),
-                    max_block_time_s=state.params.max_block_time_s,
-                )
-                state = init_state(updated_params, int(state.theta_micro))
-                _MINING_STATE["theta_state"] = state
-                log.info(
-                    "Updated mining theta target block time: %.2fs",
-                    float(configured_target),
-                )
-            except Exception as e:
-                log.warning("Failed to refresh mining theta target block time: %s", e)
-        if state:
-            return int(state.theta_micro)
-        return _resolve_theta()
-    
-    # Update theta based on observed block time
-    try:
-        from consensus.difficulty import update_theta
-        
-        state = _MINING_STATE.get("theta_state")
-        if state is None:
-            # Initialize state first
-            _adjust_theta_for_mining(dt_seconds=None)
-            state = _MINING_STATE.get("theta_state")
-            if state is None:
-                return _resolve_theta()
-        
+    # Keep bounded local interval telemetry for diagnostics.
+    if dt_seconds is not None:
         try:
-            blocks_skipped = max(1, int(blocks_skipped))
+            dt = float(dt_seconds)
         except Exception:
-            blocks_skipped = 1
+            dt = None
+        if dt is not None and math.isfinite(dt) and dt > 0:
+            block_times = _MINING_STATE.get("block_times")
+            if not hasattr(block_times, "append"):
+                from collections import deque
 
-        # Validate dt_seconds (reject invalid values)
-        if dt_seconds <= 0 or not math.isfinite(dt_seconds):
-            log.warning(
-                f"Invalid dt_seconds for theta adjustment: {dt_seconds}, skipping update "
-                f"(must be > 0 and finite)"
-            )
-            return int(state.theta_micro)
+                block_times = deque(maxlen=20)
+                _MINING_STATE["block_times"] = block_times
+            block_times.append(dt)
 
-        # Clamp extreme dt_seconds instead of skipping so very slow periods still
-        # relax theta and unblock mining.
-        if dt_seconds > 3600.0:
-            original_dt = dt_seconds
-            dt_seconds = 3600.0
-            log.warning(
-                f"Large dt_seconds for theta adjustment: {original_dt:.2f}s; "
-                f"clamped to {dt_seconds:.1f}s"
-            )
-        
-        # Clamp dt_seconds to prevent extreme difficulty increases during rapid mining
-        # When mining blocks very quickly (e.g., local devnet, testing), dt_seconds can be < 1s
-        # This causes ln(dt/T) to be very negative, leading to exponential theta growth
-        # Clamp to 2% of target to keep updates bounded while still reacting when
-        # blocks arrive much faster than the configured target.
-        target_time = state.params.target_block_time_s
-        min_dt_threshold = max(0.25, target_time * 0.02)  # >=250ms or 2% of target
-        
-        if dt_seconds < min_dt_threshold:
-            original_dt = dt_seconds
-            dt_seconds = min_dt_threshold
-            log.debug(
-                f"Clamped dt_seconds for theta adjustment: {original_dt:.3f}s → {dt_seconds:.1f}s "
-                f"(min threshold: {min_dt_threshold:.2f}s) to prevent extreme difficulty increases"
-            )
-        
-        # Apply retargeting update
-        new_state = update_theta(state, dt_seconds, blocks_skipped=blocks_skipped)
-        old_theta = int(state.theta_micro)
-        new_theta = int(new_state.theta_micro)
+    # Keep legacy fields stable for callers/tests that introspect them.
+    _MINING_STATE["theta_state"] = None
+    _MINING_STATE["adjustment_enabled"] = True
 
-        # Avoid one-shot collapse to minimum difficulty on slow catch-up updates.
-        # For normal single-step updates, allow the consensus retarget step clamp
-        # to control downward movement so difficulty can respond symmetrically.
-        max_down_step = max(0, int(_THETA_MAX_DOWN_STEP_MICRO))
-        if blocks_skipped > 1 and max_down_step > 0 and new_theta < old_theta:
-            min_allowed = max(int(state.params.theta_min_micro), old_theta - max_down_step)
-            if new_theta < min_allowed:
-                new_theta = int(min_allowed)
-                new_state = replace(
-                    new_state,
-                    theta_micro=int(new_theta),
-                    tau_nats=float(new_theta) / 1_000_000.0,
-                )
-
-        _MINING_STATE["theta_state"] = new_state
-        
-        # Track block times for monitoring (keep last 20)
-        # Use list for simplicity; for production consider collections.deque(maxlen=20)
-        block_times = _MINING_STATE.get("block_times")
-        if block_times is None:
-            # Initialize with deque for automatic size management
-            from collections import deque
-            block_times = deque(maxlen=20)
-            _MINING_STATE["block_times"] = block_times
-        block_times.append(dt_seconds)
-        
-        # Log adjustment if significant change
-        old_theta = int(state.theta_micro)
-        new_theta = int(new_state.theta_micro)
-        
-        # Check for cap warning
-        effective_max = state.params.theta_max_micro if state.params.theta_max_micro is not None else THETA_HARD_CAP_MICRO
-        
-        # Warn if approaching cap (within 10%)
-        cap_threshold = effective_max * 0.9
-        if new_theta >= cap_threshold and old_theta < cap_threshold:
-            log.warning(
-                f"Mining theta approaching maximum cap: {new_theta/1e6:.3f} nats "
-                f"(cap: {effective_max/1e6:.1f} nats). "
-                f"Network is experiencing high load. Theta will stabilize at cap if sustained."
-            )
-        
-        if abs(new_theta - old_theta) > 10_000:  # > 0.01 nats change
-            # Calculate average of last 5 block times (deque needs list conversion for slicing)
-            recent_times = list(block_times)[-5:] if len(block_times) > 0 else []
-            avg_time = sum(recent_times) / len(recent_times) if recent_times else 0.0
-            log.info(
-                f"Adjusted mining theta: {old_theta/1e6:.3f} → {new_theta/1e6:.3f} nats "
-                f"(dt={dt_seconds:.2f}s, steps={blocks_skipped}, avg_5={avg_time:.2f}s, "
-                f"target={state.params.target_block_time_s}s)"
-            )
-        
-        return int(new_theta)
-        
-    except Exception as e:
-        log.error(f"Failed to adjust theta for mining: {e}", exc_info=True)
-        # Disable adjustment on error to prevent cascading failures
-        _MINING_STATE["adjustment_enabled"] = False
-        return _resolve_theta()
+    theta = int(_resolve_theta())
+    if theta <= 0:
+        return int(_DEFAULT_THETA_MICRO)
+    return theta
 
 
 def _network_block_interval(head_height: int, head_timestamp: int) -> tuple[float, int] | None:
@@ -3085,9 +2889,11 @@ def _build_child_header(
         parent_header,
         disable_block_time_limits=disable_block_time_limits,
     )
-    theta = getattr(
-        parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None)
-    )
+    theta = _resolve_theta()
+    if int(theta or 0) <= 0:
+        theta = getattr(
+            parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None)
+        )
     mix_seed = getattr(
         parent_header, "mixSeed", getattr(parent_header, "mix_seed", None)
     )
@@ -3906,28 +3712,25 @@ def _mine_once(
             stale_dt = _stale_head_interval(head_hash, head_timestamp)
             if stale_dt is not None:
                 stale_dt_seconds, stale_blocks_skipped = stale_dt
-    # Force minimum theta if block is being forced due to time
+    # Always keep header theta canonical. Even when the previous block is old,
+    # forcing a local minimum theta can diverge from importer validation and
+    # stall progress at retarget-window enforcement boundaries.
     if force_block_due_to_time:
-        # Use minimum theta to ensure block can be mined quickly
-        # This matches the theta_min_micro used in mining adjustment (see line 953)
+        adjusted_theta = _adjust_theta_for_mining(
+            float(max_block_time_s), blocks_skipped=1
+        )
         try:
-            header_template = replace(header_template, thetaMicro=_FORCED_BLOCK_MIN_THETA_MICRO)
+            header_template = replace(header_template, thetaMicro=adjusted_theta)
             log.info(
-                f"Forcing block with minimum theta: {_FORCED_BLOCK_MIN_THETA_MICRO/1e6:.3f} nats "
-                f"(previous block exceeded max_block_time_s)"
+                "Previous block exceeded max_block_time_s; "
+                "using canonical theta %.3f nats for forced mining attempt",
+                adjusted_theta / 1e6,
             )
         except Exception as e:
-            # If we can't set minimum theta, try to use the current minimum from adjustment state
-            # This ensures forcing still works even if replace() fails for some reason
-            log.error(f"Failed to apply minimum theta for forced block: {e}")
-            try:
-                state = _MINING_STATE.get("theta_state")
-                if state and hasattr(state, "params"):
-                    fallback_theta = state.params.theta_min_micro
-                    header_template = replace(header_template, thetaMicro=fallback_theta)
-                    log.warning(f"Using fallback theta: {fallback_theta/1e6:.3f} nats")
-            except Exception as e2:
-                log.error(f"Fallback theta also failed: {e2}. Mining may be difficult.")
+            log.warning(
+                "Failed to apply canonical theta during forced block attempt: %s",
+                e,
+            )
     elif network_dt_seconds is not None:
         adjusted_theta = _adjust_theta_for_mining(
             network_dt_seconds, blocks_skipped=network_blocks_skipped
