@@ -5542,23 +5542,9 @@ class P2PService:
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
             if not self._peer_is_sync_eligible(peer):
                 continue
-            height = None
-            head_hash = None
-            if info is not None:
-                if info.cooldown_until and info.cooldown_until > now:
-                    continue
-                if now - info.updated_at <= self._sync_peer_head_stale_sec:
-                    height = int(info.height)
-                    head_hash = info.head_hash
-            if height is None:
-                try:
-                    height = int((peer.hello or {}).get("head_height") or 0)
-                except Exception:
-                    height = 0
-                head_hash = bytes((peer.hello or {}).get("head_hash") or b"") or None
+            height, head_hash = self._fresh_peer_head(peer, now=now)
             if height <= 0:
                 continue
             if best_height is None or height > best_height:
@@ -5567,20 +5553,27 @@ class P2PService:
                 best_hash = head_hash
         return best_peer, best_height, best_hash
 
-    def _peer_sync_head_height(
+    def _fresh_peer_head(
         self, peer: _PeerState, *, now: Optional[float] = None
-    ) -> int:
+    ) -> tuple[int, Optional[bytes]]:
         now = time.time() if now is None else now
         info = self._sync_peer_heads.get(peer.remote)
         if info is not None:
-            if info.cooldown_until and info.cooldown_until > now:
-                return 0
-            if now - info.updated_at <= self._sync_peer_head_stale_sec:
-                return int(info.height)
+            if self._is_peer_responsive(info, now):
+                return int(info.height), info.head_hash
+            return 0, None
         try:
-            return int((peer.hello or {}).get("head_height") or 0)
+            height = int((peer.hello or {}).get("head_height") or 0)
         except Exception:
-            return 0
+            height = 0
+        head_hash = bytes((peer.hello or {}).get("head_hash") or b"") or None
+        return height, head_hash
+
+    def _peer_sync_head_height(
+        self, peer: _PeerState, *, now: Optional[float] = None
+    ) -> int:
+        height, _head_hash = self._fresh_peer_head(peer, now=now)
+        return height
 
     def _best_broadcast_peer_head(
         self,
@@ -5594,28 +5587,14 @@ class P2PService:
         for peer in self._peers.values():
             if not peer.hello_done.is_set():
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
             if not self._peer_is_sync_eligible(peer):
                 continue
-            height = None
-            head_hash = None
-            if info is not None:
-                if info.cooldown_until and info.cooldown_until > now:
-                    continue
-                if now - info.updated_at <= self._sync_peer_head_stale_sec:
-                    height = int(info.height)
-                    head_hash = info.head_hash
             _score, _classification, non_broadcasting = self._peer_broadcast_state(
                 peer, now=now
             )
             if non_broadcasting:
                 continue
-            if height is None:
-                try:
-                    height = int((peer.hello or {}).get("head_height") or 0)
-                except Exception:
-                    height = 0
-                head_hash = bytes((peer.hello or {}).get("head_hash") or b"") or None
+            height, head_hash = self._fresh_peer_head(peer, now=now)
             if height <= 0:
                 continue
             if best_height is None or height > best_height:
@@ -13445,19 +13424,7 @@ class P2PService:
                 continue
             if require_anchored and not self._peer_is_anchored(p):
                 continue
-            info = self._sync_peer_heads.get(p.remote)
-            if (
-                info is not None
-                and now - info.updated_at <= self._sync_peer_head_stale_sec
-                and (not info.cooldown_until or info.cooldown_until <= now)
-            ):
-                h = int(info.height)
-            else:
-                try:
-                    hello = p.hello or {}
-                    h = int(hello.get("head_height") or 0)
-                except Exception:
-                    h = 0
+            h, _head_hash = self._fresh_peer_head(p, now=now)
             broadcast_score, _classification, non_broadcasting = self._peer_broadcast_state(
                 p, now=now
             )
@@ -13563,18 +13530,7 @@ class P2PService:
                 continue
             if require_anchored and not self._peer_is_anchored(peer):
                 continue
-            info = self._sync_peer_heads.get(peer.remote)
-            if (
-                info is not None
-                and now - info.updated_at <= self._sync_peer_head_stale_sec
-                and (not info.cooldown_until or info.cooldown_until <= now)
-            ):
-                head_height = int(info.height)
-            else:
-                try:
-                    head_height = int((peer.hello or {}).get("head_height") or 0)
-                except Exception:
-                    head_height = 0
+            head_height, _head_hash = self._fresh_peer_head(peer, now=now)
             if head_height <= 0:
                 continue
             if needed_height is not None and head_height < needed_height:
