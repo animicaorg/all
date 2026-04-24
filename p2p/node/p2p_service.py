@@ -4790,11 +4790,28 @@ class P2PService:
                 self._sync_block_chunk_size_min,
                 self._sync_block_chunk_size_current // 2,
             )
+        avoid_remotes = {old_peer.remote} if old_peer is not None else None
         new_peer = self._select_block_peer(
             needed_height=needed_height,
             require_anchored=self._should_enforce_checkpoint_anchor(),
+            avoid_remotes=avoid_remotes,
         )
         if new_peer is None and self._should_enforce_checkpoint_anchor():
+            new_peer = self._select_block_peer(
+                needed_height=needed_height,
+                require_anchored=False,
+                avoid_remotes=avoid_remotes,
+            )
+        if new_peer is None and avoid_remotes:
+            new_peer = self._select_block_peer(
+                needed_height=needed_height,
+                require_anchored=self._should_enforce_checkpoint_anchor(),
+            )
+        if (
+            new_peer is None
+            and avoid_remotes
+            and self._should_enforce_checkpoint_anchor()
+        ):
             new_peer = self._select_block_peer(
                 needed_height=needed_height,
                 require_anchored=False,
@@ -13231,6 +13248,8 @@ class P2PService:
 
         candidates: list[tuple[int, float, bool, _PeerState]] = []
         now = time.time()
+        local_height, _ = self._local_head()
+        local_height = int(local_height or 0)
         for peer in eligible:
             if peer.remote in avoid_remotes:
                 continue
@@ -13259,30 +13278,51 @@ class P2PService:
         if not candidates:
             return None
         max_height = max(h for h, _score, _nb, _ in candidates)
+        floor_height = max(local_height + 1, max_height - 2)
         height_filtered = [
-            (score, non_broadcasting, peer)
+            (h, score, non_broadcasting, peer)
             for h, score, non_broadcasting, peer in candidates
-            if h == max_height
+            if h >= floor_height
         ]
-        if any(not non_broadcasting for _score, non_broadcasting, _peer in height_filtered):
+        if not height_filtered:
+            height_filtered = list(candidates)
+        if any(
+            not non_broadcasting
+            for _head_height, _score, non_broadcasting, _peer in height_filtered
+        ):
             height_filtered = [
-                (score, non_broadcasting, peer)
-                for score, non_broadcasting, peer in height_filtered
+                (h, score, non_broadcasting, peer)
+                for h, score, non_broadcasting, peer in height_filtered
                 if not non_broadcasting
             ]
         scored: list[tuple[tuple[float, ...], _PeerState]] = []
-        for broadcast_score, non_broadcasting, peer in height_filtered:
+        for head_height, broadcast_score, non_broadcasting, peer in height_filtered:
             latency = peer.latency_ewma if peer.latency_ewma is not None else 9999.0
             force_bonus = 1 if self._is_force_sync_remote(peer.remote) else 0
             outbound_bonus = 1 if peer.direction == "outbound" else 0
             anchored_bonus = 1 if self._peer_is_anchored(peer) else 0
             sync_score = self._peer_sync_score(peer)
+            proven_headers_bonus = 1 if peer.broadcast.successful_headers_served > 0 else 0
+            proven_blocks_bonus = 1 if peer.broadcast.successful_blocks_served > 0 else 0
+            lag_delta = max(0, int(head_height) - local_height)
+            capped_delta = min(lag_delta, 64)
             block_failure_penalty = -1.0 * float(peer.block_failures or 0)
             non_broadcasting_penalty = -5.0 if non_broadcasting else 0.0
+            recent_block_bonus = (
+                1.0
+                if peer.broadcast.last_head_advancement_at
+                and now - peer.broadcast.last_head_advancement_at
+                <= self._sync_peer_broadcast_recent_sec
+                else 0.0
+            )
             score = (
                 force_bonus,
                 anchored_bonus,
+                proven_blocks_bonus,
+                proven_headers_bonus,
                 broadcast_score,
+                recent_block_bonus,
+                capped_delta,
                 non_broadcasting_penalty,
                 outbound_bonus,
                 *sync_score,
