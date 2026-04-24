@@ -858,7 +858,20 @@ class P2PDeps:
         loc = self._tx_index.get(tx_hash)
         if not loc:
             return None
-        height, idx = loc
+        # TxIndex.get() returns TxPointer in current code, but older callers/tests
+        # may still expose tuple-like (height, index) locations.
+        height = getattr(loc, "height", None)
+        idx = getattr(loc, "index", None)
+        if height is None or idx is None:
+            try:
+                height, idx = loc
+            except Exception:
+                return None
+        try:
+            height = int(height)
+            idx = int(idx)
+        except Exception:
+            return None
         blk = self.block_by_number(height)
         if not blk:
             return None
