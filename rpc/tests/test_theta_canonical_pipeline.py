@@ -84,7 +84,7 @@ class _InMemoryBlockDB:
         self.canonical_height = int(height)
 
 
-def _make_params() -> ChainParams:
+def _make_params(*, window: int = 8) -> ChainParams:
     return ChainParams(
         chain_id=1337,
         chain_name="RPC Theta Test",
@@ -97,7 +97,7 @@ def _make_params() -> ChainParams:
         theta_max=20_000_000,
         gamma_total_cap=1_000_000,
         retarget=RetargetParams(
-            window=8,
+            window=window,
             ema_alpha=0.5,
             bounds=RetargetBounds(min=0.5, max=2.0),
         ),
@@ -257,6 +257,81 @@ def test_get_work_surfaces_updated_canonical_theta_after_block_acceptance(
         theta1 = int(work1["thetaMicro"])
         assert theta1 == importer.get_current_difficulty()
         assert theta1 > theta0
+    finally:
+        _restore_miner_globals(snapshot)
+
+
+def test_get_block_template_theta_stays_canonical_past_warmup_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.chain.block_import as block_import_mod
+    from mining.template_block import header_from_template_view
+
+    params = _make_params(window=3)
+    block_db = _InMemoryBlockDB()
+    importer = BlockImporter(params=params, block_db=block_db)
+    ctx = _FakeCtx(block_db)
+
+    class _Adapter:
+        def get_head(self):
+            snap = ctx.get_head()
+            return {
+                "height": int(snap.get("height") or 0),
+                "hash": snap.get("hash"),
+                "obj": snap.get("header"),
+                "header": snap.get("header"),
+            }
+
+    clock = {"now": 1_700_350_000.0}
+    monkeypatch.setattr(miner_methods.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(block_import_mod.time, "time", lambda: clock["now"])
+
+    genesis = _seal(
+        _header(
+            height=0,
+            parent_hash=ZERO32,
+            timestamp=int(clock["now"]) - 60,
+            theta_micro=params.theta_initial,
+        )
+    )
+    res0 = importer.import_block(_block(genesis))
+    assert res0.code == ImportErrorCode.ACCEPTED
+
+    snapshot = _snapshot_miner_globals()
+    try:
+        monkeypatch.setattr(miner_methods, "_ctx", lambda: ctx)
+        monkeypatch.setattr(miner_methods, "_adapter", lambda: _Adapter())
+        monkeypatch.setattr(miner_methods, "_resolve_mempool_service", lambda _ctx: None)
+        monkeypatch.setattr(miner_methods, "_mining_gate", lambda **_kw: (True, None))
+        monkeypatch.setattr(miner_methods, "_min_block_spacing_s", lambda: 0.0)
+        monkeypatch.setattr(
+            block_import_mod, "_load_chain_params_for_import", lambda _gp: params
+        )
+        monkeypatch.setattr(
+            block_import_mod, "_get_importer", lambda *_args, **_kwargs: importer
+        )
+
+        for _ in range(6):
+            clock["now"] += 30.0
+            template = miner_methods.miner_get_block_template(
+                address="0x" + ("22" * 32),
+                include_mempool=False,
+                sync_peer_mempools=False,
+                disable_block_time_limits=True,
+            )
+            assert template.get("enabled") is True
+            assert int(template["thetaMicro"]) == int(importer.get_current_difficulty())
+
+            template_header = header_from_template_view(template["header"], nonce=0)
+            sealed = _seal(template_header)
+            res = importer.import_block(_block(sealed))
+            assert (
+                res.code == ImportErrorCode.ACCEPTED
+            ), f"unexpected import failure at height={template_header.height}: {res.reason}"
+
+        head = block_db.get_canonical_head()
+        assert head is not None
+        assert int(head[0]) == 6
     finally:
         _restore_miner_globals(snapshot)
 
