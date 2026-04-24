@@ -16,6 +16,7 @@ from p2p.node.p2p_service import (
     STALL_BLOCK_TIMEOUT,
     STALL_CACHE_SHORT_CIRCUIT,
     P2PService,
+    _PeerHeadInfo,
     _PeerState,
     _SyncRequest,
 )
@@ -222,6 +223,72 @@ async def test_sync_loop_does_not_mark_stall_without_target_ahead(
         "Sync stalled: headers == blocks with no progress" in record.message
         for record in caplog.records
     )
+
+
+def test_header_peer_selection_ignores_stale_high_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-select-stale-high-header")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-select-stale-high-header" / "p2p"),
+    )
+    stale_peer = _register_peer(node, "peer:stale-high")
+    active_peer = _register_peer(node, "peer:active-lower")
+    stale_peer.peer_id = "peer-stale-high"
+    active_peer.peer_id = "peer-active-lower"
+    stale_peer.hello["head_height"] = 100
+    active_peer.hello["head_height"] = 50
+    now = time.time()
+    node._sync_peer_heads[stale_peer.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now - node._sync_peer_head_stale_sec - 1.0,
+        source="test",
+    )
+    node._sync_peer_heads[active_peer.remote] = _PeerHeadInfo(
+        height=50,
+        updated_at=now,
+        source="test",
+    )
+    node._local_head = lambda: (49, None)  # type: ignore[method-assign]
+
+    selected = node._select_sync_peer()
+
+    assert selected is active_peer
+
+
+def test_block_peer_selection_ignores_stale_high_peer(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-select-stale-high-block")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-select-stale-high-block" / "p2p"),
+    )
+    stale_peer = _register_peer(node, "peer:stale-high")
+    active_peer = _register_peer(node, "peer:active-lower")
+    stale_peer.peer_id = "peer-stale-high"
+    active_peer.peer_id = "peer-active-lower"
+    stale_peer.hello["head_height"] = 100
+    active_peer.hello["head_height"] = 50
+    now = time.time()
+    node._sync_peer_heads[stale_peer.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now - node._sync_peer_head_stale_sec - 1.0,
+        source="test",
+    )
+    node._sync_peer_heads[active_peer.remote] = _PeerHeadInfo(
+        height=50,
+        updated_at=now,
+        source="test",
+    )
+    node._local_head = lambda: (49, None)  # type: ignore[method-assign]
+
+    selected = node._select_block_peer(needed_height=50)
+
+    assert selected is active_peer
 
 
 @pytest.mark.asyncio
