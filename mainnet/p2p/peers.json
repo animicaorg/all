@@ -1,0 +1,34 @@
+{
+  "peers": [
+    {
+      "peer_id": "29363f9a6f364c846e5f96b80a5b8637",
+      "addrs": [
+        "tcp://mainnet.animica.org:30333"
+      ],
+      "score": -1.5,
+      "last_seen": 1777005444.951892,
+      "last_success": null,
+      "last_failure": 1777005460.0288026,
+      "failure_reason": "dns_lookup_failed",
+      "source": "peerstore",
+      "connected": false,
+      "banned_until": null,
+      "tags": {}
+    },
+    {
+      "peer_id": "90981b418bcc113ffddde1135b459fe1",
+      "addrs": [
+        "tcp://144.126.133.21:30333"
+      ],
+      "score": -1.5,
+      "last_seen": 1777005444.9518242,
+      "last_success": null,
+      "last_failure": 1777005459.0254693,
+      "failure_reason": "TransportError: dial failed to tcp://144.126.133.21:30333: [Errno 1] Operation not permitted",
+      "source": "peerstore",
+      "connected": false,
+      "banned_until": null,
+      "tags": {}
+    }
+  ]
+}

@@ -757,6 +757,7 @@ def _init_p2p_service(
     p2p_start_error = None
     p2p_required = _bool_env("ANIMICA_P2P_REQUIRED", cfg_view.p2p_required)
     enable_p2p = _bool_env("ANIMICA_P2P_ENABLE", True)
+    allow_genesis_reset = _allow_genesis_reset()
     if init_error:
         p2p_required = False
         enable_p2p = False
@@ -790,7 +791,11 @@ def _init_p2p_service(
         from p2p.deps import AsyncP2PDeps, P2PDeps
 
         # Note: this opens its own KV handles (safe for SQLite/RocksDB in this repo).
-        p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+        p2p_deps_sync = P2PDeps.open(
+            cfg_view.db_uri,
+            cfg_view.genesis_path,
+            allow_genesis_reset=allow_genesis_reset,
+        )
         p2p_deps = AsyncP2PDeps(p2p_deps_sync)
 
         # Use config system for listen addresses and seeds
@@ -1204,7 +1209,11 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
             from p2p.transport.multiaddr import parse_multiaddr
 
             if p2p_deps_sync is None:
-                p2p_deps_sync = P2PDeps.open(cfg_view.db_uri, cfg_view.genesis_path)
+                p2p_deps_sync = P2PDeps.open(
+                    cfg_view.db_uri,
+                    cfg_view.genesis_path,
+                    allow_genesis_reset=allow_reset,
+                )
 
             p2p_config = load_p2p_config()
             listen_host, listen_port = p2p_config.listen_tcp
