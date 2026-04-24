@@ -4816,6 +4816,37 @@ class P2PService:
                 needed_height=needed_height,
                 require_anchored=False,
             )
+        cleared_transient_penalties = 0
+        if new_peer is None:
+            cleared_transient_penalties = self._clear_transient_block_penalties(
+                needed_height=needed_height
+            )
+            if cleared_transient_penalties:
+                new_peer = self._select_block_peer(
+                    needed_height=needed_height,
+                    require_anchored=self._should_enforce_checkpoint_anchor(),
+                    avoid_remotes=avoid_remotes,
+                )
+                if new_peer is None and self._should_enforce_checkpoint_anchor():
+                    new_peer = self._select_block_peer(
+                        needed_height=needed_height,
+                        require_anchored=False,
+                        avoid_remotes=avoid_remotes,
+                    )
+                if new_peer is None and avoid_remotes:
+                    new_peer = self._select_block_peer(
+                        needed_height=needed_height,
+                        require_anchored=self._should_enforce_checkpoint_anchor(),
+                    )
+                if (
+                    new_peer is None
+                    and avoid_remotes
+                    and self._should_enforce_checkpoint_anchor()
+                ):
+                    new_peer = self._select_block_peer(
+                        needed_height=needed_height,
+                        require_anchored=False,
+                    )
         if new_peer:
             self._sync_active_block_peer = new_peer.remote
             self._sync_last_recovery_action = "retry_blocks_new_peer"
@@ -4853,6 +4884,7 @@ class P2PService:
                 "queued_blocks": len(self._sync_block_queue),
                 "eligible_block_peers": [p.remote for p in eligible_block_peers],
                 "discarded_blocks": discarded,
+                "cleared_transient_penalties": cleared_transient_penalties,
                 "recovery_peers": list(self._sync_last_block_recovery_peers),
             },
         )
@@ -12541,6 +12573,52 @@ class P2PService:
             self._sync_peer_backoff.pop(key, None)
             removed += 1
         return removed
+
+    def _clear_transient_block_penalties(
+        self, *, needed_height: Optional[int] = None
+    ) -> int:
+        now = time.time()
+        cleared = 0
+        transient_reasons = {"block_timeout"}
+        transient_stall_reasons = {
+            STALL_BLOCK_TIMEOUT,
+            STALL_BLOCK_PEER_UNRESPONSIVE,
+            "watchdog_no_progress",
+        }
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            if needed_height is not None and self._peer_sync_head_height(peer, now=now) < int(
+                needed_height
+            ):
+                continue
+            backoff_key = self._peer_backoff_key(peer)
+            backoff_reason = self._sync_block_peer_backoff_reason.get(backoff_key)
+            active_backoff = self._sync_block_peer_backoff.get(backoff_key, 0.0) > now
+            clear_backoff = bool(active_backoff and backoff_reason in transient_reasons)
+            clear_cooldown = bool(
+                peer.block_cooldown_until > now
+                and peer.block_failures > 0
+                and (
+                    clear_backoff
+                    or backoff_reason in transient_reasons
+                    or self._sync_last_block_error in transient_stall_reasons
+                )
+            )
+            if not clear_backoff and not clear_cooldown:
+                continue
+            if clear_backoff:
+                self._sync_block_peer_backoff.pop(backoff_key, None)
+                self._sync_block_peer_backoff_reason.pop(backoff_key, None)
+            if clear_cooldown:
+                peer.block_cooldown_until = 0.0
+                peer.block_failures = 0
+                peer.last_block_failure_at = 0.0
+                events = self._sync_block_failure_events.get(peer.remote)
+                if events:
+                    events.clear()
+            cleared += 1
+        return cleared
 
     def _is_force_sync_remote(self, remote: Optional[str]) -> bool:
         if not remote:
