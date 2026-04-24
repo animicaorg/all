@@ -27,6 +27,7 @@ from p2p.node.p2p_service import (
     _PeerState,
     _SyncBlock,
     _SyncHeader,
+    _SyncVerifyTask,
 )
 from p2p.tests import free_port, tcp_multiaddr
 from p2p.wire.frames import Framer
@@ -449,6 +450,76 @@ async def test_block_import_order_no_missing_parent_stall(tmp_path: Path) -> Non
     height, _ = deps_sync.head()
     assert height == 2
     assert block2.header.hash() not in node._sync_block_buffer
+
+
+@pytest.mark.asyncio
+async def test_verify_worker_failure_requeues_block_and_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "verify-worker-failure")
+    peer = _register_peer(node, "peer-verify:0")
+    _setup_peer_hello(node, peer, head_height=1)
+    block_hash = b"\x41" * 32
+    sync_block = _SyncBlock(
+        block=object(),
+        hash=block_hash,
+        parent_hash=node._genesis_hash(),
+        origin_peer=peer.remote,
+    )
+
+    async def _ok_import(*_args: Any, **_kwargs: Any) -> tuple[bool, None]:
+        return True, None
+
+    async def _boom_finalize(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("finalize failed")
+
+    monkeypatch.setattr(node, "_import_block_payload", _ok_import)
+    monkeypatch.setattr(node, "_finalize_block_import", _boom_finalize)
+    node._sync_inflight_blocks[block_hash] = time.time()
+    node._sync_inflight_peers[block_hash] = peer.remote
+    node._running = True
+
+    try:
+        node._start_verify_workers()
+        await node._sync_verify_queue.put(
+            _SyncVerifyTask(
+                sync_block=sync_block,
+                peer_remote=peer.remote,
+                enqueued_at=time.time(),
+                raw_bytes_len=1,
+            )
+        )
+        await asyncio.wait_for(node._sync_verify_queue.join(), timeout=2.0)
+
+        assert block_hash in node._sync_block_queue_set
+        assert block_hash not in node._sync_inflight_blocks
+        assert node._sync_last_block_error == "verify_worker_error:RuntimeError"
+        assert any(not task.done() for task in node._sync_verify_tasks)
+    finally:
+        node._running = False
+        await node._stop_verify_workers()
+
+
+@pytest.mark.asyncio
+async def test_start_verify_workers_replaces_dead_worker(tmp_path: Path) -> None:
+    node, _deps_sync = _make_service(tmp_path, "verify-worker-restart")
+
+    async def _dead_worker() -> None:
+        raise RuntimeError("worker crashed")
+
+    node._running = True
+    dead = asyncio.create_task(_dead_worker())
+    await asyncio.sleep(0)
+    node._sync_verify_tasks.append(dead)
+
+    try:
+        node._start_verify_workers()
+
+        assert dead not in node._sync_verify_tasks
+        assert any(not task.done() for task in node._sync_verify_tasks)
+    finally:
+        node._running = False
+        await node._stop_verify_workers()
 
 
 def test_header_batch_must_anchor(tmp_path: Path) -> None:

@@ -1911,15 +1911,33 @@ class P2PService:
         return task
 
     def _start_verify_workers(self) -> None:
-        if self._sync_verify_tasks:
-            return
+        self._prune_verify_workers()
         worker_count = max(1, int(self._sync_verify_workers))
-        for idx in range(worker_count):
+        while len(self._sync_verify_tasks) < worker_count:
+            idx = len(self._sync_verify_tasks)
             task = asyncio.create_task(
                 self._verify_worker_loop(idx),
                 name=f"p2p.sync.verify[{idx}]",
             )
             self._sync_verify_tasks.append(task)
+
+    def _prune_verify_workers(self) -> None:
+        if not self._sync_verify_tasks:
+            return
+        alive: list[asyncio.Task] = []
+        for task in self._sync_verify_tasks:
+            if not task.done():
+                alive.append(task)
+                continue
+            exc: Optional[BaseException] = None
+            with contextlib.suppress(asyncio.CancelledError):
+                exc = task.exception()
+            if exc is not None:
+                log.warning(
+                    "Sync verify worker exited unexpectedly",
+                    extra={"worker": task.get_name(), "error": repr(exc)},
+                )
+        self._sync_verify_tasks = alive
 
     async def _stop_verify_workers(self) -> None:
         if not self._sync_verify_tasks:
@@ -1942,27 +1960,61 @@ class P2PService:
                     except asyncio.QueueEmpty:
                         break
                 for task in tasks:
-                    start = time.time()
-                    ok = False
-                    reason = None
                     try:
-                        ok, reason = await self._import_block_payload(
-                            task.sync_block.block, origin_remote=task.peer_remote
+                        start = time.time()
+                        ok = False
+                        reason = None
+                        try:
+                            ok, reason = await self._import_block_payload(
+                                task.sync_block.block, origin_remote=task.peer_remote
+                            )
+                        except Exception as exc:
+                            ok = False
+                            reason = f"verify_error:{exc}"
+                        duration_ms = (time.time() - start) * 1000
+                        self._record_verify_metrics(duration_ms, batch_size=len(tasks))
+                        await self._finalize_block_import(
+                            task.sync_block,
+                            peer_remote=task.peer_remote,
+                            ok=ok,
+                            reason=reason,
                         )
                     except Exception as exc:
-                        ok = False
-                        reason = f"verify_error:{exc}"
-                    duration_ms = (time.time() - start) * 1000
-                    self._record_verify_metrics(duration_ms, batch_size=len(tasks))
-                    await self._finalize_block_import(
-                        task.sync_block,
-                        peer_remote=task.peer_remote,
-                        ok=ok,
-                        reason=reason,
-                    )
-                    self._sync_verify_queue.task_done()
+                        self._handle_verify_task_failure(task, exc)
+                    finally:
+                        self._sync_verify_queue.task_done()
         except asyncio.CancelledError:
             return
+
+    def _handle_verify_task_failure(
+        self, task: _SyncVerifyTask, exc: BaseException
+    ) -> None:
+        block_hash = task.sync_block.hash
+        self._sync_inflight_blocks.pop(block_hash, None)
+        self._sync_inflight_peers.pop(block_hash, None)
+        self._sync_inflight_block_requests.pop(block_hash, None)
+        if not self._has_block(block_hash):
+            if block_hash not in self._sync_block_queue_set:
+                self._sync_block_queue.appendleft(block_hash)
+                self._sync_block_queue_set.add(block_hash)
+                height_hint = self._block_height_hint(block_hash)
+                if height_hint is not None:
+                    self._sync_block_queue_heights[block_hash] = height_hint
+        else:
+            self._sync_block_retry_counts.pop(block_hash, None)
+        self._sync_last_block_error = f"verify_worker_error:{exc.__class__.__name__}"
+        self._sync_last_block_error_at = time.time()
+        self._sync_last_block_error_peer = task.peer_remote
+        self._sync_block_stalled_reason = STALL_BLOCK_INVALID_RESPONSE
+        log.warning(
+            "Sync verify task failed; block requeued",
+            extra={
+                "remote": task.peer_remote,
+                "hash": block_hash.hex(),
+                "error": repr(exc),
+            },
+        )
+        self._sync_wakeup.set()
 
     def _bind_mempool_callback(self) -> bool:
         if not self._tx_relay_enabled or not self._p2p_tx_enabled:
@@ -8823,7 +8875,7 @@ class P2PService:
     async def _enqueue_verify_task(
         self, peer: _PeerState, sync_block: _SyncBlock, raw_len: int
     ) -> None:
-        if self._running and not self._sync_verify_tasks:
+        if self._running:
             self._start_verify_workers()
         if not self._running or not self._sync_verify_tasks:
             start = time.time()
@@ -12915,6 +12967,25 @@ class P2PService:
         if vote_count >= required_votes:
             return True, "quorum_met", {"votes": vote_count, "required": required_votes}
         eligible, _ = self._eligible_block_peers()
+        eligible_total = len(eligible)
+        block_height: Optional[int] = None
+        with contextlib.suppress(Exception):
+            height_hint = self._block_height_hint(block_hash)
+            if height_hint is not None:
+                block_height = int(height_hint)
+        if block_height is not None:
+            now = time.time()
+            height_eligible: list[_PeerState] = []
+            for peer in eligible:
+                peer_height = 0
+                try:
+                    peer_height = int(self._peer_sync_head_height(peer, now=now))
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        peer_height = int((peer.hello or {}).get("head_height") or 0)
+                if peer_height >= int(block_height):
+                    height_eligible.append(peer)
+            eligible = height_eligible
         eligible_count = len(eligible)
         force_connected = any(self._is_force_sync_remote(peer.remote) for peer in eligible)
         force_voted = any(self._is_force_sync_remote(remote) for remote in confirmation_peers)
@@ -12926,11 +12997,15 @@ class P2PService:
                         "votes": vote_count,
                         "required": required_votes,
                         "eligible_peers": eligible_count,
+                        "eligible_peers_total": eligible_total,
+                        "block_height": block_height,
                     }
                 return False, "await_force_peer_header", {
                     "votes": vote_count,
                     "required": required_votes,
                     "eligible_peers": eligible_count,
+                    "eligible_peers_total": eligible_total,
+                    "block_height": block_height,
                     "force_connected": force_connected,
                     "force_voted": force_voted,
                 }
@@ -12942,6 +13017,8 @@ class P2PService:
                     "votes": vote_count,
                     "required": required_votes,
                     "eligible_peers": eligible_count,
+                    "eligible_peers_total": eligible_total,
+                    "block_height": block_height,
                     "force_connected": force_connected,
                     "force_voted": force_voted,
                 }
@@ -12949,6 +13026,8 @@ class P2PService:
                 "votes": vote_count,
                 "required": required_votes,
                 "eligible_peers": eligible_count,
+                "eligible_peers_total": eligible_total,
+                "block_height": block_height,
                 "force_connected": force_connected,
                 "force_voted": force_voted,
             }
@@ -12956,6 +13035,8 @@ class P2PService:
             "votes": vote_count,
             "required": required_votes,
             "eligible_peers": eligible_count,
+            "eligible_peers_total": eligible_total,
+            "block_height": block_height,
             "force_connected": force_connected,
             "force_voted": force_voted,
         }

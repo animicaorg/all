@@ -322,6 +322,12 @@ class TestBlockCorroboration:
         self.service._sync_block_confirm_require_force_peer = True
         self.service._header_vote_peers = Mock(return_value=set())
         self.service._eligible_block_peers = Mock(return_value=([], {}))
+        self.service._block_height_hint = Mock(return_value=None)
+        self.service._peer_sync_head_height = Mock(
+            side_effect=lambda peer, now=None: int(
+                (getattr(peer, "hello", {}) or {}).get("head_height") or 0
+            )
+        )
         self.service._is_force_sync_remote = Mock(
             side_effect=lambda remote: str(remote).startswith("144.126.133.21")
         )
@@ -381,6 +387,25 @@ class TestBlockCorroboration:
         assert ok is True
         assert reason == "low_peer_mode_no_force_connected"
         assert ctx["votes"] >= 1
+
+    def test_peers_below_block_height_do_not_block_low_peer_mode(self):
+        high_peer = MockPeerState("203.0.113.10:30333", hello_done=True)
+        low_peer = MockPeerState("203.0.113.11:30333", hello_done=True)
+        high_peer.hello["head_height"] = 100
+        low_peer.hello["head_height"] = 50
+        self.service._eligible_block_peers.return_value = ([high_peer, low_peer], {})
+        self.service._block_height_hint.return_value = 100
+        self.service._header_vote_peers.return_value = {"203.0.113.10:30333"}
+
+        ok, reason, ctx = self.service._block_corroboration_status(
+            b"hash", origin_remote="203.0.113.10:30333"
+        )
+
+        assert ok is True
+        assert reason == "low_peer_mode_no_force_connected"
+        assert ctx["eligible_peers"] == 1
+        assert ctx["eligible_peers_total"] == 2
+        assert ctx["block_height"] == 100
 
 
 if __name__ == "__main__":
