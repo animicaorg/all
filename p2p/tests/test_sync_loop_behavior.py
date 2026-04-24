@@ -412,6 +412,70 @@ def test_peer_broadcast_score_prefers_broadcaster(tmp_path: Path) -> None:
     assert selected == peer_a
 
 
+def test_block_peer_selection_prefers_proven_near_tip_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "block-peer-near-tip")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "block-peer-near-tip" / "p2p"),
+    )
+    peer_max = _register_peer(node, "peer:5501")
+    peer_good = _register_peer(node, "peer:5502")
+
+    node._local_head = lambda: (100, None)  # type: ignore[method-assign]
+    peer_max.hello["head_height"] = 105
+    peer_good.hello["head_height"] = 103
+    node._update_peer_head_table(peer_max, height=105, source="test", head_hash=None)
+    node._update_peer_head_table(peer_good, height=103, source="test", head_hash=None)
+
+    now = time.time()
+    peer_good.broadcast.last_inventory_at = now
+    peer_good.broadcast.last_head_advancement_at = now
+    peer_good.broadcast.successful_headers_served = 2
+    peer_good.broadcast.successful_blocks_served = 2
+
+    monkeypatch.setattr("p2p.node.p2p_service.random.shuffle", lambda items: None)
+    selected = node._select_block_peer(needed_height=101)
+    assert selected == peer_good
+
+
+def test_sync_stall_rotation_avoids_max_height_only_starvation(tmp_path: Path) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "stall-near-tip")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "stall-near-tip" / "p2p"),
+    )
+    peer_stalled = _register_peer(node, "peer:5601")
+    peer_productive = _register_peer(node, "peer:5602")
+
+    node._local_head = lambda: (100, None)  # type: ignore[method-assign]
+    node._sync_best_header = None
+    node._sync_active_block_peer = peer_stalled.remote
+
+    peer_stalled.hello["head_height"] = 105
+    peer_productive.hello["head_height"] = 103
+    node._update_peer_head_table(peer_stalled, height=105, source="test", head_hash=None)
+    node._update_peer_head_table(peer_productive, height=103, source="test", head_hash=None)
+
+    now = time.time()
+    peer_stalled.last_block_request_at = now - 10.0
+    peer_productive.broadcast.last_inventory_at = now
+    peer_productive.broadcast.last_head_advancement_at = now
+    peer_productive.broadcast.successful_headers_served = 3
+    peer_productive.broadcast.successful_blocks_served = 1
+
+    node._handle_sync_stall(reason=STALL_BLOCK_PEER_UNRESPONSIVE)
+
+    assert node._sync_active_block_peer == peer_productive.remote
+
+
 def test_watchdog_resets_from_highest_next_height(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "reset-next-height")
     node = P2PService(
