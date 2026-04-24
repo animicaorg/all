@@ -165,6 +165,16 @@ def _compact_header(block: Block) -> HeaderCompact:
     )
 
 
+def _sync_header_from_block(block: Block) -> _SyncHeader:
+    return _SyncHeader(
+        hash=block.header.hash(),
+        parent_hash=bytes(block.header.parentHash),
+        height=int(block.header.height),
+        theta_micro=int(getattr(block.header, "thetaMicro", 0)),
+        timestamp=int(getattr(block.header, "timestamp", 0)),
+    )
+
+
 def _make_peer() -> _PeerState:
     peer = _PeerState(
         session_id="peer-1",
@@ -1082,6 +1092,68 @@ def test_overlap_only_headers_still_count_progress_near_tip(
     assert header_error is None
     assert discard_reason_counts == {"overlap_headers": 1}
     assert node._sync_last_progress_at == 9999.0
+
+
+def test_known_duplicate_headers_rebuild_missing_block_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "duplicate-reuse-queue")
+    block = _make_child_block(deps_sync)
+    known_header = _sync_header_from_block(block)
+    node._sync_headers[known_header.hash] = known_header
+    node._sync_best_header = known_header
+
+    peer = _register_peer(node, "peer-duplicate-reuse:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block.header.height) + 20,
+        head_hash=block.header.hash(),
+    )
+    node._sync_target_height = int(block.header.height) + 10
+    node._sync_last_progress_at = 1234.0
+    monkeypatch.setattr("p2p.node.p2p_service.time.time", lambda: 9999.0)
+
+    accepted_hashes, header_error, discard_reason_counts = node._process_headers(
+        peer, [_compact_header(block)]
+    )
+
+    assert accepted_hashes == [known_header.hash]
+    assert header_error is None
+    assert discard_reason_counts == {}
+    assert list(node._sync_block_queue) == [known_header.hash]
+    assert node._sync_last_progress_at == 9999.0
+
+
+def test_duplicate_only_headers_are_not_progress_when_behind_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "duplicate-behind-target")
+    block = _make_child_block(deps_sync)
+    known_header = _sync_header_from_block(block)
+    node._sync_headers[known_header.hash] = known_header
+    node._sync_best_header = known_header
+
+    peer = _register_peer(node, "peer-duplicate-behind:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(block.header.height) + 20,
+        head_hash=block.header.hash(),
+    )
+    node._sync_target_height = int(block.header.height) + 10
+    node._sync_last_progress_at = 1234.0
+    monkeypatch.setattr(node, "_enqueue_missing_blocks", lambda _headers: 0)
+    monkeypatch.setattr("p2p.node.p2p_service.time.time", lambda: 9999.0)
+
+    accepted_hashes, header_error, discard_reason_counts = node._process_headers(
+        peer, [_compact_header(block)]
+    )
+
+    assert accepted_hashes == []
+    assert header_error is None
+    assert discard_reason_counts == {"duplicate_headers": 1}
+    assert node._sync_last_progress_at == 1234.0
 
 
 def test_should_reset_from_highest_next_height_on_overlap_headers(
