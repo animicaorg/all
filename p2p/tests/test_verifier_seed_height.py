@@ -664,3 +664,44 @@ def test_check_and_discount_blocks_past_verifier_reorgs_canonical_if_more_than_o
     assert recorded["height"] == 101
     assert recorded["allow_reorg"] is True
     assert recorded["hash_len"] == 32
+
+
+def test_verifier_seed_height_can_decrease_without_restart(tmp_path: Path) -> None:
+    """Verifier seed reorg-down updates should lower tracked height immediately."""
+    deps_sync, deps = _make_deps(tmp_path, "verifier-height-decrease")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "verifier-height-decrease" / "p2p"),
+    )
+
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
+    peer_regular = _register_peer(node, "192.168.1.1:30333")
+
+    now = time.time()
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=200,
+        updated_at=now,
+        source="test",
+    )
+    node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
+        height=201,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 200}
+    peer_regular.hello = {"head_height": 201}
+
+    assert node._get_max_verifier_height() == 200
+    assert node._network_best_height() == 201
+
+    # Verifier reports a reorg down by one block.
+    node._update_peer_head(peer_verifier, height=199, head_hash=b"reorg_down")
+
+    assert int(peer_verifier.hello["head_height"]) == 199
+    assert node._sync_peer_heads[peer_verifier.remote].height == 199
+    assert node._get_max_verifier_height() == 199
+    # Network best should re-anchor to verifier + 1 without process restart.
+    assert node._network_best_height() == 200
