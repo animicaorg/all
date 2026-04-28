@@ -150,7 +150,22 @@ export function createExplorerStore(preloaded?: Partial<ExplorerState>) {
 
             setHead: (patch) =>
               set(
-                (s) => ({ head: { ...s.head, ...patch } }),
+                (s) => {
+                  const nextHeight = typeof patch.height === 'number' ? patch.height : s.head.height;
+                  // Guard against pathological rollbacks (e.g., transient RPC returning genesis),
+                  // which can make the UI appear as if the whole chain reset.
+                  const MAX_ALLOWED_ROLLBACK = 32;
+                  if (nextHeight < s.head.height - MAX_ALLOWED_ROLLBACK) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[store] Ignoring suspicious head rollback', {
+                      from: s.head.height,
+                      to: nextHeight,
+                      limit: MAX_ALLOWED_ROLLBACK,
+                    });
+                    return {};
+                  }
+                  return { head: { ...s.head, ...patch } };
+                },
                 false,
                 'head/setHead'
               ),
