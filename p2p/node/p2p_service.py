@@ -5545,7 +5545,19 @@ class P2PService:
         except Exception:
             current = 0
         current_head_hash = bytes(peer.hello.get("head_hash") or b"")
+        allow_decrease = self._is_verifier_seed_peer(peer.remote)
         if height < current:
+            if allow_decrease:
+                peer.hello["head_height"] = int(height)
+                if head_hash:
+                    peer.hello["head_hash"] = bytes(head_hash)
+                self._update_peer_head_table(
+                    peer,
+                    height=int(height),
+                    source="peer_head",
+                    head_hash=head_hash or None,
+                )
+                return
             self._update_peer_head_table(
                 peer,
                 height=int(current),
@@ -5596,6 +5608,10 @@ class P2PService:
             )
             return
         if height < info.height:
+            if self._is_verifier_seed_peer(peer.remote):
+                info.height = int(height)
+                if head_hash:
+                    info.head_hash = bytes(head_hash)
             info.updated_at = now
             info.source = source
             return
