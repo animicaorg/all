@@ -566,6 +566,8 @@ async def list_peers() -> list[dict[str, t.Any]]:
                     peer_dict["connectedAt"] = peer_info.get("connected_at")
                 if "height" in peer_info:
                     peer_dict["height"] = peer_info["height"]
+                if "trusted" in peer_info:
+                    peer_dict["trusted"] = bool(peer_info.get("trusted"))
                 if "info" in peer_info:
                     peer_dict["meta"] = peer_info["info"]
                 if "meta" in peer_info and isinstance(peer_info.get("meta"), dict):
@@ -1163,6 +1165,38 @@ async def unban_peer(key: str) -> dict[str, t.Any]:
     try:
         p2p_svc.unban_peer(key)
         return {"success": True, "key": key}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@method("p2p.peerScores", desc="Return peer score snapshots")
+async def peer_scores() -> list[dict[str, t.Any]]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is not None and hasattr(p2p_svc, "peer_stats_snapshot"):
+        try:
+            return list(p2p_svc.peer_stats_snapshot())
+        except Exception:
+            return []
+    return []
+
+
+@method("p2p.addTrustedPeer", desc="Add trusted peer seed and prioritize bootstrap")
+async def add_trusted_peer(address: str) -> dict[str, t.Any]:
+    p2p_svc = _get_p2p_service()
+    if p2p_svc is None:
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
+    normalized = _normalize_peer_address(address) or address
+    try:
+        trusted = list(getattr(p2p_svc, "_trusted_seeds", []))
+        if normalized not in trusted:
+            trusted.append(normalized)
+            setattr(p2p_svc, "_trusted_seeds", trusted)
+            keys = set(getattr(p2p_svc, "_trusted_seed_keys", set()))
+            keys.add(getattr(p2p_svc, "_addr_key")(normalized).strip().lower())
+            setattr(p2p_svc, "_trusted_seed_keys", keys)
+        if hasattr(p2p_svc, "dial"):
+            await p2p_svc.dial(normalized)
+        return {"success": True, "trusted": trusted}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
 
@@ -2172,6 +2206,8 @@ __all__ = [
     "add_peer",
     "remove_peer",
     "get_peer_info",
+    "peer_scores",
+    "add_trusted_peer",
     "import_peers",
     "add_peers",
     "p2p_get_verifier_seeds",

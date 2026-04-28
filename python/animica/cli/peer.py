@@ -753,6 +753,7 @@ def list_peers(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show detailed peer information"
     ),
+    trusted: bool = typer.Option(False, "--trusted", help="Show only trusted peers"),
 ) -> None:
     """
     List all connected peers.
@@ -815,6 +816,9 @@ def list_peers(
         
         peers = _read_peer_store(store_path)
 
+    if trusted:
+        peers = [p for p in (peers or []) if bool(p.get("trusted"))]
+
     # Handle empty peer list
     if not peers or len(peers) == 0:
         if rpc_failed:
@@ -849,6 +853,10 @@ def list_peers(
             typer.echo(f"   Status: {status}")
             if direction:
                 typer.echo(f"   Direction: {direction}")
+            if peer.get("trusted") is not None:
+                typer.echo(f"   Trusted: {bool(peer.get('trusted'))}")
+            if peer.get("score") is not None:
+                typer.echo(f"   Score: {peer.get('score')}")
             typer.echo()
 
 
@@ -1612,6 +1620,49 @@ def test_peer_latency(
         typer.secho("✗ All pings failed - peer may be unreachable", fg=typer.colors.RED, bold=True)
     
     typer.echo()
+
+
+@app.command(name="add-trusted")
+def add_trusted_peer(
+    address: str = typer.Argument(..., help="Trusted peer address (ip:port or multiaddr)"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", envvar=RPC_ENV),
+) -> None:
+    url = _resolve_rpc_url(rpc_url, method="p2p.addTrustedPeer")
+    result = asyncio.run(rpc_call("p2p.addTrustedPeer", [address], rpc_url=url))
+    if not isinstance(result, dict) or not result.get("success"):
+        raise typer.Exit(code=1)
+    typer.echo("trusted peer added")
+
+
+@app.command(name="score")
+def peer_score(
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", envvar=RPC_ENV),
+) -> None:
+    url = _resolve_rpc_url(rpc_url, method="p2p.peerScores")
+    rows = asyncio.run(rpc_call("p2p.peerScores", [], rpc_url=url))
+    for row in rows or []:
+        typer.echo(f"{row.get('remote') or row.get('peer_id')} score={row.get('score')} blocks={row.get('blocks_served')} timeouts={row.get('timeouts')}")
+
+
+@app.command(name="ban")
+def ban_peer_cmd(
+    ip: str = typer.Argument(..., help="Peer IP/host to ban"),
+    minutes: int = typer.Option(10, "--minutes", min=1),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", envvar=RPC_ENV),
+) -> None:
+    url = _resolve_rpc_url(rpc_url, method="p2p.banPeer")
+    asyncio.run(rpc_call("p2p.banPeer", [ip, float(minutes * 60), "manual"], rpc_url=url))
+    typer.echo("banned")
+
+
+@app.command(name="unban")
+def unban_peer_cmd(
+    ip: str = typer.Argument(..., help="Peer IP/host to unban"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", envvar=RPC_ENV),
+) -> None:
+    url = _resolve_rpc_url(rpc_url, method="p2p.unbanPeer")
+    asyncio.run(rpc_call("p2p.unbanPeer", [ip], rpc_url=url))
+    typer.echo("unbanned")
 
 
 if __name__ == "__main__":
