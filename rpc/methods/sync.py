@@ -365,3 +365,17 @@ __all__ = [
     "sync_resume",
     "sync_set_target",
 ]
+
+
+@method("sync.forceCanonical", desc="Force canonical chain selection and reorg")
+async def sync_force_canonical(force: bool = False) -> dict[str, t.Any]:
+    svc = _get_p2p_service()
+    if svc is None or not hasattr(svc, "force_canonical_reorg"):
+        return {"success": False, "error": P2P_UNAVAILABLE_ERROR}
+    try:
+        result = svc.force_canonical_reorg(force=bool(force))
+        if isinstance(result, dict):
+            return result
+        return {"success": bool(result)}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
