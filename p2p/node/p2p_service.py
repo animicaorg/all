@@ -14003,7 +14003,7 @@ class P2PService:
             self._sync_verifier_ahead_since = now
 
         # Local chain is ahead of verifier - this shouldn't happen
-        # Log and reset to verifier's height
+        # Log and reset to verifier-constrained height.
         log.warning(
             "Local chain exceeds verifier highest height - discounting blocks and resetting",
             extra={
@@ -14012,13 +14012,64 @@ class P2PService:
                 "blocks_to_discount": local_height - max_verifier_height,
             }
         )
-        
-        # Reset the chain by triggering a reorg to verifier's height
-        # Clear the sync state to force resync from verifier's height
+
+        # Enforce canonical height anchored to verifier tip (plus allowed +1 jitter).
+        # This ensures we actively reorg down any canonical blocks that exceed the
+        # verifier-constrained limit instead of only scheduling background sync.
+        with contextlib.suppress(Exception):
+            self._reorg_canonical_to_verifier_limit(max_verifier_height)
+
+        # Clear the sync state to force resync from verifier's constrained height.
         self._reset_from_highest_next_height(
             reason="blocks_past_verifier_height"
         )
         self._sync_verifier_ahead_since = None
+
+    def _reorg_canonical_to_verifier_limit(self, max_verifier_height: int) -> bool:
+        local_height, _ = self._local_head()
+        max_allowed_height = int(max_verifier_height) + int(MAX_HEIGHT_AHEAD_OF_VERIFIER)
+        if int(local_height or 0) <= max_allowed_height:
+            return False
+
+        bdb = self._block_db()
+        target_height = max_allowed_height
+        target_hash = bdb.get_canonical_hash(target_height)
+        if target_hash is None and target_height > int(max_verifier_height):
+            target_height = int(max_verifier_height)
+            target_hash = bdb.get_canonical_hash(target_height)
+        if target_hash is None:
+            recovered = self._recover_head_from_canonical(int(max_verifier_height))
+            if recovered is None:
+                return False
+            target_height, target_hash = recovered
+        else:
+            target_hash = bytes(target_hash)
+
+        batch_fn = getattr(getattr(bdb, "kv", None), "batch", None)
+        if callable(batch_fn):
+            with bdb.kv.batch() as batch:
+                bdb.set_canonical_head(
+                    int(target_height),
+                    bytes(target_hash),
+                    batch=batch,
+                    allow_reorg=True,
+                )
+                self._prune_canonical_heights(bdb, above_height=int(target_height), batch=batch)
+        else:
+            bdb.set_canonical_head(int(target_height), bytes(target_hash), allow_reorg=True)
+            self._prune_canonical_heights(bdb, above_height=int(target_height), batch=None)
+
+        log.warning(
+            "Reorged canonical chain down to verifier-constrained height",
+            extra={
+                "local_height": int(local_height or 0),
+                "max_verifier_height": int(max_verifier_height),
+                "max_allowed_height": int(max_allowed_height),
+                "target_height": int(target_height),
+                "target_hash": bytes(target_hash).hex(),
+            },
+        )
+        return True
 
     def invalidate_block(self, block_hash: str) -> bool:
         self._sync_last_block_error = f"invalidated:{block_hash}"

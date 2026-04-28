@@ -613,3 +613,54 @@ def test_check_and_discount_blocks_past_verifier_one_ahead_rewinds_after_grace(t
 
     assert node._sync_recovery_attempts == initial_recovery_count + 1
     assert node._sync_last_recovery_reason == "blocks_past_verifier_height"
+
+
+def test_check_and_discount_blocks_past_verifier_reorgs_canonical_if_more_than_one_ahead(
+    tmp_path: Path,
+) -> None:
+    """If local canonical height is > verifier+1, node reorgs down to verifier+1."""
+    deps_sync, deps = _make_deps(tmp_path, "reorg-verifier-limit")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "reorg-verifier-limit" / "p2p"),
+    )
+
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
+    now = time.time()
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    # Local chain is 3 blocks ahead of verifier.
+    node._local_head = lambda: (103, "0xlocal")  # type: ignore[method-assign]
+    node._sync_verifier_rewind_grace_sec = 0.0
+    node._sync_verifier_ahead_since = now - 30.0
+
+    # Provide canonical hashes for verifier height and allowed +1 height.
+    fake_bdb = node._block_db()
+    node._prune_canonical_heights = lambda *args, **kwargs: 0  # type: ignore[method-assign]
+    node._reset_from_highest_next_height = lambda **kwargs: None  # type: ignore[method-assign]
+    fake_bdb.get_canonical_hash = lambda h: (
+        b"\x11" * 32 if h == 101 else (b"\x22" * 32 if h == 100 else None)
+    )
+    recorded: dict[str, int] = {}
+
+    def _record_set_canonical_head(height, block_hash, batch=None, allow_reorg=False):
+        recorded["height"] = int(height)
+        recorded["allow_reorg"] = bool(allow_reorg)
+        recorded["hash_len"] = len(block_hash)
+        return None
+
+    fake_bdb.set_canonical_head = _record_set_canonical_head
+
+    node._check_and_discount_blocks_past_verifier()
+
+    assert recorded["height"] == 101
+    assert recorded["allow_reorg"] is True
+    assert recorded["hash_len"] == 32
