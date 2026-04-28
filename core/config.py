@@ -250,6 +250,7 @@ class P2PConfig:
     seeds: List[str] = field(
         default_factory=list
     )  # multiaddrs like /ip4/1.2.3.4/tcp/30307
+    trusted_seeds: List[str] = field(default_factory=lambda: ["rpc.animica.org:30303"])
     enable_quic: bool = False
     max_peers: int = 64
 
@@ -261,6 +262,14 @@ class P2PConfig:
             raise ValueError(f"Invalid P2P listen_ip {self.listen_ip!r}") from e
         if not (1 <= self.listen_port <= 65535):
             raise ValueError(f"Invalid P2P port {self.listen_port}")
+
+
+@dataclass
+class SyncConfig:
+    drop_slow_peers: bool = True
+    peer_timeout: int = 8
+    retry_limit: int = 3
+    max_inflight_blocks: int = 16
 
 
 @dataclass
@@ -278,6 +287,7 @@ class Config:
     rpc: RPCConfig
     p2p: P2PConfig
     policies: PolicyRoots
+    sync: SyncConfig
 
     def ensure_dirs(self) -> None:
         for path in (self.paths.data_dir, self.paths.logs_dir):
@@ -387,6 +397,7 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
         "rpc": asdict(rpc),
         "p2p": asdict(p2p),
         "policies": asdict(policies),
+        "sync": asdict(SyncConfig()),
     }
 
     # 2) File
@@ -438,7 +449,13 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
     if "ANIMICA_P2P_PORT" in os.environ:
         base["p2p"]["listen_port"] = _env_int("ANIMICA_P2P_PORT", DEFAULT_P2P_PORT)
     if "ANIMICA_P2P_SEEDS" in os.environ:
-        base["p2p"]["seeds"] = _split_list(os.environ["ANIMICA_P2P_SEEDS"])
+        seed_list = _split_list(os.environ["ANIMICA_P2P_SEEDS"])
+        base["p2p"]["seeds"] = seed_list
+        existing_trusted = list(base["p2p"].get("trusted_seeds") or [])
+        for seed in seed_list:
+            if seed not in existing_trusted:
+                existing_trusted.append(seed)
+        base["p2p"]["trusted_seeds"] = existing_trusted
     if "ANIMICA_P2P_QUIC" in os.environ:
         base["p2p"]["enable_quic"] = _env_bool("ANIMICA_P2P_QUIC", False)
     if "ANIMICA_P2P_MAX_PEERS" in os.environ:
@@ -452,6 +469,14 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
         base["policies"]["pq_alg_policy_root_hex"] = os.environ[
             "ANIMICA_PQ_POLICY_ROOT"
         ].strip()
+    if "ANIMICA_SYNC_DROP_SLOW_PEERS" in os.environ:
+        base["sync"]["drop_slow_peers"] = _env_bool("ANIMICA_SYNC_DROP_SLOW_PEERS", True)
+    if "ANIMICA_SYNC_PEER_TIMEOUT" in os.environ:
+        base["sync"]["peer_timeout"] = _env_int("ANIMICA_SYNC_PEER_TIMEOUT", 8)
+    if "ANIMICA_SYNC_RETRY_LIMIT" in os.environ:
+        base["sync"]["retry_limit"] = _env_int("ANIMICA_SYNC_RETRY_LIMIT", 3)
+    if "ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS" in os.environ:
+        base["sync"]["max_inflight_blocks"] = _env_int("ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS", 16)
 
     # 4) Overrides (highest)
     if overrides:
@@ -482,6 +507,7 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
             listen_ip=base["p2p"]["listen_ip"],
             listen_port=int(base["p2p"]["listen_port"]),
             seeds=list(base["p2p"]["seeds"] or []),
+            trusted_seeds=list(base["p2p"].get("trusted_seeds") or []),
             enable_quic=bool(base["p2p"]["enable_quic"]),
             max_peers=int(base["p2p"]["max_peers"]),
         ),
@@ -489,6 +515,7 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
             poies_policy_root_hex=base["policies"].get("poies_policy_root_hex"),
             pq_alg_policy_root_hex=base["policies"].get("pq_alg_policy_root_hex"),
         ),
+        sync=SyncConfig(**base.get("sync", {})),
     )
 
     # Post-process defaults if DB URI is placeholder

@@ -147,6 +147,9 @@ class PeerBroadcastScore:
     successful_headers_served: int = 0
     successful_blocks_served: int = 0
     timeouts: int = 0
+    score: int = 0
+    last_block_time: float = 0.0
+    blocks_served: int = 0
     errors: int = 0
     tip_matches: int = 0
     non_broadcasting_since: Optional[float] = None
@@ -190,6 +193,9 @@ class _PeerState:
     invalid_blocks: int = 0
     invalid_msgs: int = 0
     timeouts: int = 0
+    score: int = 0
+    last_block_time: float = 0.0
+    blocks_served: int = 0
     notfound: int = 0
     missing_parent: int = 0
     stall_events: int = 0
@@ -833,6 +839,18 @@ class P2PService:
                 self.seeds.append(normalized)
         self._seed_sources = self._build_seed_sources(self._configured_seeds)
         self._seed_keys = {self._addr_key(s).strip().lower() for s in self.seeds}
+        trusted_seed_env = os.environ.get("ANIMICA_P2P_TRUSTED_SEEDS", "")
+        trusted_from_env = [x.strip() for x in trusted_seed_env.split(",") if x.strip()]
+        trusted_from_p2p_env = [x.strip() for x in os.environ.get("ANIMICA_P2P_SEEDS", "").split(",") if x.strip()]
+        trusted_candidates = ["rpc.animica.org:30303", *trusted_from_env, *trusted_from_p2p_env]
+        self._trusted_seeds: list[str] = []
+        for addr in trusted_candidates:
+            normalized = self._normalize_seed(addr)
+            if normalized and normalized not in self._trusted_seeds:
+                self._trusted_seeds.append(normalized)
+        self._trusted_seed_keys = {self._addr_key(a).strip().lower() for a in self._trusted_seeds}
+        self._trusted_seed_hosts = self._seed_hostnames(self._trusted_seeds)
+        self._sync_drop_slow_peers = _env_flag("ANIMICA_SYNC_DROP_SLOW_PEERS", default=True)
 
         # Resolve peerstore path (prefer chain-specific data dir)
         if peerstore_path is None:
@@ -1566,7 +1584,7 @@ class P2PService:
             ),
         ]
         self._ban_enabled = False
-        self._banlist_path = peerstore_dir / "bans.json"
+        self._banlist_path = Path.home() / ".animica" / "banlist.json"
         self._banlist: dict[str, dict[str, Any]] = {}
         self._banlist_event = asyncio.Event()
         self._banlist_persist_interval = float(
@@ -1686,7 +1704,7 @@ class P2PService:
                 "ANIMICA_SYNC_MAX_INFLIGHT_BLOCKS",
                 "ANIMICA_SYNC_INFLIGHT_BLOCKS",
                 "ANIMICA_P2P_SYNC_INFLIGHT",
-                default="16384",  # Massively increased from 2048 for ultra-fast sync (hundreds-to-thousands blocks/sec)
+                default="16",
             )
             or 32
         )
@@ -1734,7 +1752,7 @@ class P2PService:
             self._sync_headers_batch_max,
         )
         self._sync_request_timeout = float(
-            os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "15.0") or 15.0  # Increased from 10.0 for much larger batches
+            os.environ.get("ANIMICA_P2P_SYNC_TIMEOUT", "8.0") or 8.0
         )
         self._sync_header_watchdog_timeout = float(
             os.environ.get("ANIMICA_P2P_HEADER_REQ_TIMEOUT", "10.0") or 10.0
@@ -1757,6 +1775,7 @@ class P2PService:
             )
             or 20.0
         )
+        self._sync_retry_limit = int(os.environ.get("ANIMICA_SYNC_RETRY_LIMIT", "3") or 3)
         self._sync_watchdog_timeout = float(
             os.environ.get("ANIMICA_SYNC_WATCHDOG_TIMEOUT_S", "60") or 60
         )
@@ -2290,6 +2309,10 @@ class P2PService:
                     "invalid_blocks": peer.invalid_blocks,
                     "invalid_msgs": peer.invalid_msgs,
                     "timeouts": peer.timeouts,
+                    "score": peer.score,
+                    "blocks_served": peer.blocks_served,
+                    "last_block_time": peer.last_block_time,
+                    "trusted": self._is_trusted_peer(peer),
                     "notfound": peer.notfound,
                     "missing_parent": peer.missing_parent,
                     "stall_events": peer.stall_events,
@@ -3169,6 +3192,7 @@ class P2PService:
             "blocks_tip": int(head_height or 0),
             "verify_tip": int(self._sync_last_validated_height),
             "download_inflight_blocks": len(self._sync_inflight_blocks),
+            "trusted_seeds": list(self._trusted_seeds),
             "download_queue_depth": len(self._sync_block_queue),
             "verify_queue_depth": self._sync_verify_queue.qsize()
             + len(self._sync_block_buffer),
@@ -4423,6 +4447,16 @@ class P2PService:
         if host and host in self._seed_hosts:
             return True
         return False
+
+
+    def _is_trusted_peer(self, peer: _PeerState | None) -> bool:
+        if peer is None:
+            return False
+        addr_key = self._addr_key(peer.remote).strip().lower()
+        if addr_key in self._trusted_seed_keys:
+            return True
+        host = self._extract_host(peer.remote).strip().lower()
+        return bool(host and host in self._trusted_seed_hosts)
 
     def _is_peer_exempt(self, key: str) -> bool:
         if not key:
@@ -8952,6 +8986,9 @@ class P2PService:
                 except Exception:
                     pass
                 peer.broadcast.successful_blocks_served += 1
+                peer.score += 10
+                peer.blocks_served += 1
+                peer.last_block_time = time.time()
                 peer.broadcast.last_head_advancement_at = time.time()
                 self._stats["peer_broadcast_good"] += 1
                 peer.sync_successes += 1
@@ -10019,6 +10056,12 @@ class P2PService:
                     self._set_block_backoff(peer, reason="block_timeout", delay=60.0)
                     peer.sync_timeouts += 1
                     peer.sync_failures += 1
+                    peer.timeouts += 1
+                    peer.score -= 50
+                    if peer.timeouts >= 3:
+                        self._ban_peer(peer, ban_ttl=600.0, reason="sync_timeouts")
+                    if peer.score < -100:
+                        self._ban_peer(peer, ban_ttl=600.0, reason="low_score")
                 self._penalize_peer(peer, "block_timeout", nonfatal=True)
                 if peer is not None:
                     self._mark_peer_head_issue(peer, reason="block_timeout")
@@ -11111,7 +11154,8 @@ class P2PService:
                     1 for remote in self._sync_inflight_peers.values() if remote == p.remote
                 )
                 head_height = self._peer_sync_head_height(p, now=now)
-                return (head_height, rate, -inflight)
+                trusted = 1 if self._is_trusted_peer(p) else 0
+                return (trusted, head_height, rate, -inflight)
 
             preferred.sort(key=_peer_score, reverse=True)
             selected_peers = preferred[: max(1, self._sync_max_parallel_peers)]
@@ -12270,6 +12314,19 @@ class P2PService:
                 self._expire_inflight_headers()
                 self._expire_inflight_blocks()
                 self._prune_orphan_buffer()
+                if (
+                    self._sync_drop_slow_peers
+                    and self._sync_active_block_peer
+                    and (now - self._sync_last_progress_at) > 10.0
+                    and not self._sync_inflight_blocks
+                ):
+                    active = self._peer_by_remote(self._sync_active_block_peer)
+                    if active is not None and not self._is_trusted_peer(active):
+                        self._drop_peer(active, reason="stall_no_inflight")
+                        trusted = [p for p in self._peers.values() if self._is_trusted_peer(p)]
+                        if trusted:
+                            self._sync_active_block_peer = trusted[0].remote
+
                 
                 # Periodically discard blocks from ineligible peers to prevent stalls
                 # This is especially important when peers have handshake_pending status
@@ -13939,6 +13996,34 @@ class P2PService:
         self._reset_from_highest_next_height(
             reason="blocks_past_verifier_height"
         )
+
+    def invalidate_block(self, block_hash: str) -> bool:
+        self._sync_last_block_error = f"invalidated:{block_hash}"
+        self._sync_last_block_error_at = time.time()
+        return True
+
+    def rewind_to_common_ancestor(self, peer_chain: list[str]) -> bool:
+        self._reset_from_highest_next_height(reason="force_canonical_rewind")
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+        self._sync_inflight_block_requests.clear()
+        return True
+
+    def force_canonical_reorg(self, *, force: bool = False) -> dict[str, Any]:
+        if not force:
+            return {"success": False, "error": "--force required"}
+        local_height, local_hash = self._local_head()
+        best = self._select_sync_target_peer()
+        if best is None:
+            return {"success": False, "error": "no_peer"}
+        best_height = self._peer_sync_head_height(best, now=time.time())
+        if best_height <= int(local_height or 0):
+            return {"success": True, "changed": False, "local_height": local_height, "peer_height": best_height}
+        self.invalidate_block(local_hash or "")
+        self.rewind_to_common_ancestor([])
+        self._sync_active_block_peer = best.remote
+        self._sync_kick(reason="force_canonical", aggressive=True)
+        return {"success": True, "changed": True, "local_height": local_height, "peer_height": best_height, "peer": best.remote}
 
     def _network_best_height(self) -> Optional[int]:
         """

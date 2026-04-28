@@ -101,6 +101,9 @@ def sync_dump(
         p2p_debug = asyncio.run(
             rpc_call("p2p.syncDebug", {}, rpc_url=url, timeout=timeout)
         )
+        peer_scores = asyncio.run(
+            rpc_call("p2p.peerScores", {}, rpc_url=url, timeout=timeout)
+        )
     except Exception as exc:
         typer.secho(f"❌ Failed to query sync diagnostics: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -130,6 +133,7 @@ def sync_dump(
         "eligible_block_peers": sync_status.get("eligible_peers_for_blocks"),
         "active_block_peer": sync_status.get("active_peer_for_blocks"),
         "peer_error_summary": sync_status.get("block_error_summary"),
+        "peer_scores": peer_scores or [],
         "sync_recovery": {
             "attempts": sync_status.get("recovery_attempts"),
             "last_action": sync_status.get("last_recovery_action"),
@@ -170,6 +174,8 @@ def sync_dump(
         typer.echo(f"Last block error:  {dump['last_block_error']}")
     if dump["last_block_error_peer"]:
         typer.echo(f"Block error peer:  {dump['last_block_error_peer']}")
+    if dump.get("peer_scores"):
+        typer.echo(f"Peer scores:      {len(dump.get('peer_scores', []))} peers")
     if dump["sync_recovery"]["last_action"]:
         typer.echo(
             f"Last recovery:    {dump['sync_recovery']['last_action']} "
@@ -416,3 +422,21 @@ def p2p_health(
                 f"  - addr={addr} stage={stage} success={success} reason={reason} at={at}"
             )
     typer.echo("━" * 60)
+
+
+@app.command("force-canonical")
+def force_canonical(
+    force: bool = typer.Option(False, "--force", help="Required for destructive rewind"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc", envvar=RPC_ENV, help="RPC endpoint URL"),
+    timeout: Optional[float] = typer.Option(None, "--timeout", help="RPC timeout in seconds"),
+) -> None:
+    url = _resolve_rpc_url(rpc_url)
+    try:
+        result = asyncio.run(rpc_call("sync.forceCanonical", {"force": force}, rpc_url=url, timeout=timeout))
+    except Exception as exc:
+        typer.secho(f"❌ force-canonical failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if not isinstance(result, dict) or not result.get("success"):
+        typer.secho(f"❌ force-canonical rejected: {result}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(result, indent=2))
