@@ -552,3 +552,64 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_equal(tmp_path: 
     
     # Should not trigger a reset
     assert node._sync_recovery_attempts == initial_recovery_count
+
+
+def test_check_and_discount_blocks_past_verifier_one_ahead_waits_for_grace(tmp_path: Path) -> None:
+    """Local +1 above verifier should not reset before grace window expires."""
+    deps_sync, deps = _make_deps(tmp_path, "one-ahead-grace")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "one-ahead-grace" / "p2p"),
+    )
+
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
+    now = time.time()
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    node._local_head = lambda: (101, "0xlocal")  # type: ignore[method-assign]
+    node._sync_verifier_rewind_grace_sec = 60.0
+    node._sync_verifier_ahead_since = now
+
+    initial_recovery_count = node._sync_recovery_attempts
+    node._check_and_discount_blocks_past_verifier()
+
+    assert node._sync_recovery_attempts == initial_recovery_count
+
+
+def test_check_and_discount_blocks_past_verifier_one_ahead_rewinds_after_grace(tmp_path: Path) -> None:
+    """Local +1 above verifier should rewind once the grace window is exceeded."""
+    deps_sync, deps = _make_deps(tmp_path, "one-ahead-rewind")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "one-ahead-rewind" / "p2p"),
+    )
+
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
+    now = time.time()
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    node._local_head = lambda: (101, "0xlocal")  # type: ignore[method-assign]
+    node._sync_verifier_rewind_grace_sec = 10.0
+    node._sync_verifier_ahead_since = now - 20.0
+
+    initial_recovery_count = node._sync_recovery_attempts
+    node._check_and_discount_blocks_past_verifier()
+
+    assert node._sync_recovery_attempts == initial_recovery_count + 1
+    assert node._sync_last_recovery_reason == "blocks_past_verifier_height"

@@ -1303,6 +1303,10 @@ class P2PService:
         self._sync_peer_head_stale_sec = float(
             os.environ.get("ANIMICA_P2P_PEER_HEAD_STALE_SEC", "60.0") or 60.0
         )
+        self._sync_verifier_rewind_grace_sec = float(
+            os.environ.get("ANIMICA_P2P_VERIFIER_REWIND_GRACE_SEC", "30.0") or 30.0
+        )
+        self._sync_verifier_ahead_since: Optional[float] = None
         self._sync_peer_head_cooldown_sec = float(
             os.environ.get("ANIMICA_P2P_PEER_HEAD_COOLDOWN_SEC", "120.0") or 120.0
         )
@@ -13971,15 +13975,33 @@ class P2PService:
         max_verifier_height = self._get_max_verifier_height()
         if max_verifier_height is None:
             # No verifier seeds present - skip check
+            self._sync_verifier_ahead_since = None
             return
         
         local_height, local_hash = self._local_head()
         
-        # Only trigger if local is significantly ahead (2+ blocks)
-        # This avoids false positives during normal mining when a miner finds a block
-        if local_height <= max_verifier_height + 1:
+        now = time.time()
+        if local_height <= max_verifier_height:
+            self._sync_verifier_ahead_since = None
             return
-        
+
+        # Allow a brief grace period for temporary +1 tip jitter. If we remain
+        # above the verifier tip after the grace window, trigger rewind to
+        # converge nodes automatically.
+        if local_height <= max_verifier_height + MAX_HEIGHT_AHEAD_OF_VERIFIER:
+            if self._sync_verifier_ahead_since is None:
+                self._sync_verifier_ahead_since = now
+                return
+            if (
+                self._sync_verifier_rewind_grace_sec > 0.0
+                and (now - self._sync_verifier_ahead_since)
+                < self._sync_verifier_rewind_grace_sec
+            ):
+                return
+        else:
+            # 2+ blocks above verifier tip is always suspicious; rewind quickly.
+            self._sync_verifier_ahead_since = now
+
         # Local chain is ahead of verifier - this shouldn't happen
         # Log and reset to verifier's height
         log.warning(
@@ -13996,6 +14018,7 @@ class P2PService:
         self._reset_from_highest_next_height(
             reason="blocks_past_verifier_height"
         )
+        self._sync_verifier_ahead_since = None
 
     def invalidate_block(self, block_hash: str) -> bool:
         self._sync_last_block_error = f"invalidated:{block_hash}"
