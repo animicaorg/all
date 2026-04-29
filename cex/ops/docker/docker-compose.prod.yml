@@ -120,6 +120,7 @@ services:
       SERVICE_NAME: api-gateway
       PORT: 3000
       NODE_ENV: production
+      AUTH_SERVICE_URL: http://auth-service:3100
       DB_HOST: postgres
       REDIS_HOST: redis
       NATS_URL: nats://nats:4222

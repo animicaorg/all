@@ -2,7 +2,7 @@
  * Repository for outbox events
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import type { OutboxEvent } from "../../engine/types.js";
 
@@ -17,7 +17,7 @@ export class OutboxRepo {
     seq: bigint;
     type: "ORDER_EVENT" | "TRADE_EVENT";
     key: string;
-    payload: Record<string, unknown>;
+    payload: Record<string, any>;
   }): Promise<OutboxEvent> {
     const eventId = uuidv4();
     const createdAt = new Date();

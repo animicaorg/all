@@ -8,9 +8,13 @@ export function WSProvider({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAuthStore();
 
   useEffect(() => {
-    // Connect to WebSocket
-    const userId = isAuthenticated && user ? user.id : undefined;
-    connect(userId);
+    // Keep websocket disconnected for public/unauthenticated views.
+    if (!isAuthenticated || !user?.id) {
+      disconnect();
+      return;
+    }
+
+    connect(user.id);
 
     return () => {
       disconnect();

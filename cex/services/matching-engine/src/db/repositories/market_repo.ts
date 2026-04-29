@@ -2,7 +2,7 @@
  * Repository for market configuration
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { decimalToAtoms } from "../../engine/deterministic.js";
 import type { MarketConfig } from "../../engine/types.js";
 

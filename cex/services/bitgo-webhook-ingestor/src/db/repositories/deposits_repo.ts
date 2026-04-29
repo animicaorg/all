@@ -111,7 +111,7 @@ export class DepositsRepo {
       "SELECT * FROM deposits WHERE id = $1",
       [id]
     );
-    return result.rowCount > 0 ? this.mapRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   /**

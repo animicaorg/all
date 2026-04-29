@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { WSClient, WSConnectionState } from "./ws-client";
 import { Orderbook, Trade, Ticker, WSMessage, OrderbookLevel } from "./ws-types";
+import { getWsUrl } from "./endpoints";
 
-const WS_URL = import.meta.env.VITE_CEX_WS_URL || "ws://localhost:3000/ws";
+const WS_URL = getWsUrl();
 
 interface WSStore {
   // Connection state
@@ -52,7 +53,7 @@ export const useWSStore = create<WSStore>((set, get) => ({
         set({ connectionState: state });
       },
       onError: (error: Error) => {
-        console.error("WebSocket error:", error);
+        console.warn("WebSocket client error:", error.message);
       },
     });
 

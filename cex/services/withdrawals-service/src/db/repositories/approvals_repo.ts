@@ -76,7 +76,7 @@ export class ApprovalsRepo {
        WHERE withdrawal_id = $1 AND approver_id = $2`,
       [withdrawalId, approverId]
     );
-    return result.rowCount > 0;
+    return result.rows.length > 0;
   }
 
   private mapRow(row: any): WithdrawalApproval {

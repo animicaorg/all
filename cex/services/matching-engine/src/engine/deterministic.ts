@@ -77,7 +77,7 @@ export function isValidStep(value: bigint, step: bigint): boolean {
  *   > 0 if b comes before a
  *   = 0 if equal (should not happen)
  */
-export function compareOrders(a: Order, b: Order): number {
+export function compareOrders(a: any, b: any): number {
   // First compare by accepted_at timestamp
   const timeA = a.acceptedAt.getTime();
   const timeB = b.acceptedAt.getTime();
@@ -133,3 +133,4 @@ export function generateEventKey(
     ? `${marketId}:${eventType}:${sequence}:${orderId}`
     : `${marketId}:${eventType}:${sequence}`;
 }
+type Order = any;

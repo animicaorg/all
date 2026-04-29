@@ -2,7 +2,7 @@
  * Repository for market sequence tracking
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export class SequenceRepo {
   constructor(private client: PoolClient) {}

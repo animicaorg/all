@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './lib/auth-store';
 import { WSProvider } from './components/WSProvider';
@@ -21,7 +22,15 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-  const { isAuthenticated } = useAuthStore();
+  const { authReady, isAuthenticated, initialize } = useAuthStore();
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  if (!authReady) {
+    return null;
+  }
 
   return (
     <QueryClientProvider client={queryClient}>

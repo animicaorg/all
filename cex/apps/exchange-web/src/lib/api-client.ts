@@ -9,8 +9,9 @@ import type {
   CreateOrderRequest,
   PlatformStats,
 } from '../types';
+import { getApiBaseUrl } from './endpoints';
 
-const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
+const API_URL = getApiBaseUrl();
 
 class ApiClient {
   private client: AxiosInstance;
@@ -182,10 +183,17 @@ class ApiClient {
   // Platform Statistics
   async getStats(): Promise<PlatformStats> {
     const { data } = await this.client.get('/stats');
+    const volume24h = typeof data?.volume24h === 'number' && Number.isFinite(data.volume24h) ? data.volume24h : 0;
+    const activeTraders = typeof data?.activeTraders === 'number' && Number.isFinite(data.activeTraders) ? data.activeTraders : 0;
+    const uptimePercentage =
+      typeof data?.uptimePercentage === 'number' && Number.isFinite(data.uptimePercentage)
+        ? data.uptimePercentage
+        : null;
+
     return {
-      volume24h: data.volume24h,
-      activeTraders: data.activeTraders,
-      uptimePercentage: data.uptimePercentage,
+      volume24h,
+      activeTraders,
+      uptimePercentage,
     };
   }
 

@@ -79,10 +79,11 @@ export class ReconciliationJob {
       `;
 
       const stuckResult = await client.query(stuckQuery);
+      const stuckCount = stuckResult.rowCount ?? stuckResult.rows.length;
 
-      if (stuckResult.rowCount > 0) {
+      if (stuckCount > 0) {
         this.logger.warn(
-          { count: stuckResult.rowCount },
+          { count: stuckCount },
           "Found withdrawals stuck in non-terminal states"
         );
 
@@ -112,10 +113,11 @@ export class ReconciliationJob {
       `;
 
       const missingLinksResult = await client.query(missingLinksQuery);
+      const missingLinksCount = missingLinksResult.rowCount ?? missingLinksResult.rows.length;
 
-      if (missingLinksResult.rowCount > 0) {
+      if (missingLinksCount > 0) {
         this.logger.warn(
-          { count: missingLinksResult.rowCount },
+          { count: missingLinksCount },
           "Found withdrawals with missing ledger links"
         );
 
@@ -141,10 +143,11 @@ export class ReconciliationJob {
       `;
 
       const noTxidResult = await client.query(noTxidQuery);
+      const noTxidCount = noTxidResult.rowCount ?? noTxidResult.rows.length;
 
-      if (noTxidResult.rowCount > 0) {
+      if (noTxidCount > 0) {
         this.logger.warn(
-          { count: noTxidResult.rowCount },
+          { count: noTxidCount },
           "Found confirmed withdrawals without txid"
         );
 
@@ -163,9 +166,9 @@ export class ReconciliationJob {
       // Generate summary
       const summary = {
         timestamp: new Date().toISOString(),
-        stuckWithdrawals: stuckResult.rowCount,
-        missingLedgerLinks: missingLinksResult.rowCount,
-        confirmedWithoutTxid: noTxidResult.rowCount,
+        stuckWithdrawals: stuckCount,
+        missingLedgerLinks: missingLinksCount,
+        confirmedWithoutTxid: noTxidCount,
       };
 
       this.logger.info(

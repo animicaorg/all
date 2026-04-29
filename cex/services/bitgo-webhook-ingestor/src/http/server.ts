@@ -5,10 +5,9 @@
 import express, { type Express } from "express";
 import type { Pool } from "pg";
 import type { Logger } from "@cex/observability";
-import type { RedisClientType } from "redis";
-import { createRateLimiter } from "@cex/middleware";
 import type { Config } from "../config.js";
 import {
+  createRateLimiter,
   createInMemoryRateLimiter,
   createWebhookVerificationMiddleware,
   createAdminAuthMiddleware,
@@ -24,7 +23,12 @@ const WEBHOOK_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
  */
 export function createServer(
   pool: Pool,
-  redis: RedisClientType | null,
+  redis: {
+    ping(): Promise<string>;
+    incr(key: string): Promise<number>;
+    pexpire(key: string, milliseconds: number): Promise<number>;
+    pttl(key: string): Promise<number>;
+  } | null,
   config: Config,
   logger: Logger
 ): Express {
@@ -36,14 +40,18 @@ export function createServer(
   // Request logging middleware
   app.use((req, res, next) => {
     const startTime = Date.now();
-    
-    // Add request ID
-    req.id = req.id || req.headers["x-request-id"] || generateRequestId();
-    res.setHeader("X-Request-ID", req.id);
+    const reqAny = req as typeof req & { id?: string };
+    const headerRequestId = req.headers["x-request-id"];
+    const requestIdFromHeader = Array.isArray(headerRequestId)
+      ? headerRequestId[0]
+      : headerRequestId;
+    const requestId = reqAny.id || requestIdFromHeader || generateRequestId();
+    reqAny.id = requestId;
+    res.setHeader("X-Request-ID", requestId);
 
     // Create request logger
     const requestLogger = logger.child({
-      request_id: req.id,
+      request_id: requestId,
       method: req.method,
       path: req.path,
       ip: req.ip || req.socket.remoteAddress,
@@ -101,13 +109,15 @@ export function createServer(
   // Apply rate limiting
   if (redis) {
     webhookRouter.use(
-      createRateLimiter({
-        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-        max: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
-        keyPrefix: "webhook_rl",
+      createRateLimiter(
         redis,
-        logger,
-      })
+        {
+          windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+          maxRequests: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
+          keyPrefix: "webhook_rl",
+        },
+        logger
+      )
     );
   } else {
     // Fallback to in-memory rate limiter
@@ -170,4 +180,3 @@ export function createServer(
 function generateRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
-

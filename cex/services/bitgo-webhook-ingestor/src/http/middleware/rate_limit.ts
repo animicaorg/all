@@ -6,7 +6,13 @@
 
 import type { Request, Response, NextFunction } from "express";
 import type { Logger } from "pino";
-import type { RedisClientType } from "redis";
+
+interface RedisRateLimitClient {
+  ping(): Promise<string>;
+  incr(key: string): Promise<number>;
+  pexpire(key: string, milliseconds: number): Promise<number>;
+  pttl(key: string): Promise<number>;
+}
 
 export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
@@ -18,19 +24,16 @@ export interface RateLimitConfig {
  * Create rate limiting middleware using Redis
  */
 export function createRateLimiter(
-  redis: RedisClientType,
+  redis: RedisRateLimitClient,
   config: RateLimitConfig,
   logger: Logger
 ) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    // Use IP address as key
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const key = `${config.keyPrefix}:${ip}`;
 
     try {
-      // Get current count
-      const current = await redis.get(key);
-      const count = current ? parseInt(current, 10) : 0;
+      const count = await redis.incr(key);
 
       if (count >= config.maxRequests) {
         logger.warn(
@@ -38,24 +41,22 @@ export function createRateLimiter(
           "Rate limit exceeded"
         );
 
+        const ttl = await redis.pttl(key);
         res.status(429).json({
           error: "Too Many Requests",
           message: "Rate limit exceeded. Please try again later.",
-          retryAfter: Math.ceil(config.windowMs / 1000),
+          retryAfter: Math.ceil(Math.max(ttl, 0) / 1000),
         });
         return;
       }
 
-      // Increment counter
-      const newCount = count + 1;
-      await redis.set(key, newCount.toString(), {
-        PX: config.windowMs, // Set expiry in milliseconds
-        NX: count === 0, // Only set if doesn't exist for first request
-      });
+      if (count === 1) {
+        await redis.pexpire(key, config.windowMs);
+      }
 
       // Add rate limit headers
       res.setHeader("X-RateLimit-Limit", config.maxRequests.toString());
-      res.setHeader("X-RateLimit-Remaining", (config.maxRequests - newCount).toString());
+      res.setHeader("X-RateLimit-Remaining", (config.maxRequests - count).toString());
       res.setHeader(
         "X-RateLimit-Reset",
         new Date(Date.now() + config.windowMs).toISOString()

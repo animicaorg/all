@@ -32,7 +32,7 @@ export class NetworksRepo {
       "SELECT * FROM asset_networks WHERE id = $1",
       [id]
     );
-    return result.rowCount > 0 ? this.mapAssetNetworkRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapAssetNetworkRow(result.rows[0]) : null;
   }
 
   async getWallet(assetNetworkId: string, walletType: string = "HOT"): Promise<Wallet | null> {
@@ -44,7 +44,7 @@ export class NetworksRepo {
        LIMIT 1`,
       [assetNetworkId, walletType]
     );
-    return result.rowCount > 0 ? this.mapWalletRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapWalletRow(result.rows[0]) : null;
   }
 
   private mapAssetNetworkRow(row: any): AssetNetwork {

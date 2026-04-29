@@ -37,6 +37,9 @@ const logger = createLogger(env.SERVICE_NAME, env.LOG_LEVEL);
 
 const start = async () => {
   const app = express();
+
+  // Required when running behind TLS-terminating proxies (Nginx/Ingress) so secure session cookies are set.
+  app.set("trust proxy", 1);
   
   // CORS configuration
   app.use((req, res, next) => {
@@ -58,29 +61,33 @@ const start = async () => {
   const nats = await connectNats(env);
 
   // Session configuration
-  const sessionConfig = getUserSessionCookieOptions(env.NODE_ENV === "production");
-  app.use(session({
-    secret: env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      maxAge: sessionConfig.maxAge,
-      secure: sessionConfig.secure,
-      httpOnly: sessionConfig.httpOnly,
-      sameSite: sessionConfig.sameSite as any,
-    }
-  }));
+const sessionConfig = getUserSessionCookieOptions((process.env.NODE_ENV ?? "development") === "production");
 
+app.use(session({
+  secret: env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: sessionConfig.secure,
+    httpOnly: sessionConfig.httpOnly,
+    sameSite: sessionConfig.sameSite as any
+  }
+}) as any);
   // Passport configuration
-  app.use(passport.initialize());
+  app.use(passport.initialize() as any);
   app.use(passport.session());
 
   // Configure Google OAuth if credentials are provided
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    const defaultGoogleCallbackUrl =
+      (process.env.NODE_ENV ?? "development") === "production"
+        ? "https://api.animica.io/api/v1/auth/google/callback"
+        : "http://localhost:3000/api/v1/auth/google/callback";
+
     passport.use(new GoogleStrategy({
       clientID: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
-      callbackURL: env.GOOGLE_CALLBACK_URL || "http://localhost:3000/auth/google/callback",
+      callbackURL: env.GOOGLE_CALLBACK_URL || defaultGoogleCallbackUrl,
     }, async (accessToken, refreshToken, profile, done) => {
       try {
         // Find or create user based on Google ID
@@ -137,8 +144,7 @@ const start = async () => {
     }
   });
 
-  // Register endpoint
-  app.post("/auth/register", async (req, res) => {
+  const registerHandler = async (req: express.Request, res: express.Response) => {
     try {
       const user = await registerUser(pgPool, req.body);
       
@@ -158,10 +164,14 @@ const start = async () => {
       logger.error({ error }, "Registration error");
       res.status(500).json({ message: "Registration failed" });
     }
-  });
+  };
+
+  // Register endpoint
+  app.post("/auth/register", registerHandler);
+  app.post("/api/v1/auth/register", registerHandler);
 
   // Login endpoint
-  app.post("/auth/login", async (req, res) => {
+  const loginHandler = async (req: express.Request, res: express.Response) => {
     try {
       const { email, password } = req.body;
 
@@ -241,10 +251,12 @@ const start = async () => {
       logger.error({ error }, "Login error");
       res.status(500).json({ message: "Login failed" });
     }
-  });
+  };
+  app.post("/auth/login", loginHandler);
+  app.post("/api/v1/auth/login", loginHandler);
 
   // Logout endpoint
-  app.post("/auth/logout", async (req, res) => {
+  const logoutHandler = async (req: express.Request, res: express.Response) => {
     try {
       const userId = (req.session as any).userId;
       
@@ -267,49 +279,66 @@ const start = async () => {
       logger.error({ error }, "Logout error");
       res.status(500).json({ message: "Logout failed" });
     }
-  });
+  };
+  app.post("/auth/logout", logoutHandler);
+  app.post("/api/v1/auth/logout", logoutHandler);
 
   // Google OAuth routes
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-    app.get("/auth/google", 
-      passport.authenticate("google", { 
-        scope: ["profile", "email"] 
-      })
-    );
+    const googleAuthStart = passport.authenticate("google", {
+      scope: ["profile", "email"]
+    });
+
+    const googleAuthCallback = async (req: express.Request, res: express.Response) => {
+      try {
+        const user = req.user as any;
+
+        // Generate session
+        const sessionId = generateSessionId();
+
+        // Update user's session
+        await pgPool.query(
+          "UPDATE users SET current_session_id = $1, last_login_at = NOW() WHERE id = $2",
+          [sessionId, user.id]
+        );
+
+        // Set session
+        (req.session as any).userId = user.id;
+        (req.session as any).sessionId = sessionId;
+
+        logger.info({ userId: user.id, email: user.email }, "User logged in via Google");
+
+        // Redirect to frontend
+        res.redirect(`${env.FRONTEND_URL}/markets`);
+      } catch (error) {
+        logger.error({ error }, "Google callback error");
+        res.redirect(`${env.FRONTEND_URL}/login?error=oauth_failed`);
+      }
+    };
+
+    app.get("/auth/google", googleAuthStart);
+    app.get("/api/v1/auth/google", googleAuthStart);
 
     app.get("/auth/google/callback",
-      passport.authenticate("google", { failureRedirect: "/login" }),
-      async (req, res) => {
-        try {
-          const user = req.user as any;
-          
-          // Generate session
-          const sessionId = generateSessionId();
-          
-          // Update user's session
-          await pgPool.query(
-            "UPDATE users SET current_session_id = $1, last_login_at = NOW() WHERE id = $2",
-            [sessionId, user.id]
-          );
-
-          // Set session
-          (req.session as any).userId = user.id;
-          (req.session as any).sessionId = sessionId;
-
-          logger.info({ userId: user.id, email: user.email }, "User logged in via Google");
-
-          // Redirect to frontend
-          res.redirect(`${env.FRONTEND_URL}/markets`);
-        } catch (error) {
-          logger.error({ error }, "Google callback error");
-          res.redirect(`${env.FRONTEND_URL}/login?error=oauth_failed`);
-        }
-      }
+      passport.authenticate("google", { failureRedirect: `${env.FRONTEND_URL}/login?error=oauth_failed` }),
+      googleAuthCallback
     );
+    app.get("/api/v1/auth/google/callback",
+      passport.authenticate("google", { failureRedirect: `${env.FRONTEND_URL}/login?error=oauth_failed` }),
+      googleAuthCallback
+    );
+  } else {
+    const oauthUnavailable = (_req: express.Request, res: express.Response) => {
+      res.status(503).json({ message: "Google OAuth is not configured" });
+    };
+    app.get("/auth/google", oauthUnavailable);
+    app.get("/api/v1/auth/google", oauthUnavailable);
+    app.get("/auth/google/callback", oauthUnavailable);
+    app.get("/api/v1/auth/google/callback", oauthUnavailable);
   }
 
   // Current user endpoint
-  app.get("/auth/me", async (req, res) => {
+  const currentUserHandler = async (req: express.Request, res: express.Response) => {
     try {
       const userId = (req.session as any).userId;
       
@@ -331,9 +360,11 @@ const start = async () => {
       logger.error({ error }, "Get current user error");
       res.status(500).json({ message: "Failed to get user" });
     }
-  });
+  };
+  app.get("/auth/me", currentUserHandler);
+  app.get("/api/v1/auth/me", currentUserHandler);
 
-  app.get("/healthz", async (_req, res) => {
+  const healthHandler = async (_req: express.Request, res: express.Response) => {
     const pgOk = await pgPool
       .query("SELECT 1")
       .then(() => true)
@@ -349,7 +380,11 @@ const start = async () => {
       redis: redisOk,
       nats: nats.isClosed() ? "closed" : "open"
     });
-  });
+  };
+
+  // Support both /health and /healthz because existing infra probes and runbooks use /health.
+  app.get("/health", healthHandler);
+  app.get("/healthz", healthHandler);
 
   const server = app.listen(env.PORT, "0.0.0.0", () => {
     logger.info({ port: env.PORT }, "auth-service listening");

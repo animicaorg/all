@@ -93,7 +93,7 @@ export async function validateAndCreateWithdrawal(
     clientWithdrawalId: request.clientWithdrawalId,
     riskScore: riskDecision.score,
     riskFlags: riskDecision.flags,
-    riskReason: riskDecision.reason,
+    riskReason: riskDecision.reason ?? undefined,
   };
 
   const withdrawal = await withdrawalsRepo.create(createParams);

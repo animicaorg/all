@@ -5,7 +5,6 @@
 import express, { type Express } from "express";
 import type { Pool } from "pg";
 import type { Logger } from "pino";
-import type { RedisClientType } from "redis";
 import type { Config } from "../config.js";
 import type { BitgoConfigStore } from "../bitgo/config.js";
 import {
@@ -21,12 +20,19 @@ import {
   setupAdminRoutes,
 } from "./routes/index.js";
 
+interface RedisClient {
+  ping(): Promise<string>;
+  incr(key: string): Promise<number>;
+  pexpire(key: string, milliseconds: number): Promise<number>;
+  pttl(key: string): Promise<number>;
+}
+
 /**
  * Create and configure Express server
  */
 export function createServer(
   pool: Pool,
-  redis: RedisClientType | null,
+  redis: RedisClient | null,
   config: Config,
   bitgoConfigStore: BitgoConfigStore,
   logger: Logger

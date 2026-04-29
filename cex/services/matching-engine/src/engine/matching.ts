@@ -21,7 +21,7 @@ export interface MatchResult {
   fills: Fill[];
   trades: Trade[];
   makerUpdates: Map<string, Order>;
-  takerOrder: Order;
+  takerOrder: any;
 }
 
 export class MatchingEngine {
@@ -52,14 +52,14 @@ export class MatchingEngine {
   /**
    * Add an order to the book without matching
    */
-  addOrder(order: Order): void {
+  addOrder(order: any): void {
     this.orderBook.add(order);
   }
 
   /**
    * Remove an order from the book
    */
-  removeOrder(orderId: string): Order | undefined {
+  removeOrder(orderId: string): any | undefined {
     return this.orderBook.remove(orderId);
   }
 
@@ -67,7 +67,7 @@ export class MatchingEngine {
    * Match a taker order against the book
    * Returns fills, trades, and updated orders
    */
-  match(takerOrder: Order): MatchResult {
+  match(takerOrder: any): MatchResult {
     const fills: Fill[] = [];
     const trades: Trade[] = [];
     const makerUpdates = new Map<string, Order>();
@@ -161,7 +161,7 @@ export class MatchingEngine {
   /**
    * Get the best matching order from the book
    */
-  private getBestMatchingOrder(takerOrder: Order): Order | undefined {
+  private getBestMatchingOrder(takerOrder: any): any | undefined {
     if (takerOrder.side === "BUY") {
       return this.orderBook.getBestAsk();
     } else {
@@ -172,7 +172,7 @@ export class MatchingEngine {
   /**
    * Create a fill from a match
    */
-  private createFill(makerOrder: Order, takerOrder: Order, fillSize: bigint): Fill {
+  private createFill(makerOrder: any, takerOrder: any, fillSize: bigint): Fill {
     const priceAtoms = makerOrder.priceAtoms; // Maker price wins
     const quoteAmountAtoms = calculateQuoteAmount(priceAtoms, fillSize, 8);
     const fees = calculateTradeFees(quoteAmountAtoms, this.marketConfig);
@@ -190,7 +190,7 @@ export class MatchingEngine {
   /**
    * Create a trade record from a fill
    */
-  private createTrade(makerOrder: Order, takerOrder: Order, fill: Fill): Trade {
+  private createTrade(makerOrder: any, takerOrder: any, fill: Fill): Trade {
     const sequence = this.nextSequence();
     const quoteAmountAtoms = calculateQuoteAmount(fill.priceAtoms, fill.sizeAtoms, 8);
     const fees = calculateTradeFees(quoteAmountAtoms, this.marketConfig);
@@ -222,7 +222,7 @@ export class MatchingEngine {
    * Rebuild orderbook from a list of open orders
    * Orders must be sorted by accepted_at, then order_id
    */
-  rebuildFromOrders(orders: Order[]): void {
+  rebuildFromOrders(orders: any[]): void {
     this.orderBook.clear();
     for (const order of orders) {
       if (order.remainingAtoms > 0n) {

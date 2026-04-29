@@ -30,7 +30,7 @@ export class PolicyRepo {
       "SELECT * FROM withdrawal_policies WHERE asset_network_id = $1",
       [assetNetworkId]
     );
-    return result.rowCount > 0 ? this.mapRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   async list(enabledOnly: boolean = true): Promise<WithdrawalPolicy[]> {

@@ -11,16 +11,21 @@ import {
   extendWithHostPort,
   loadEnv,
 } from "@cex/common";
-import metaRouter from "./routes/meta";
-import { createMarketsRouter } from "./routes/markets";
-import { createOrdersRouter } from "./routes/orders";
-import { createStatsRouter } from "./routes/stats";
-import { createWebSocketServer } from "./websocket";
+import metaRouter from "./routes/meta.js";
+import { createAuthProxyRouter } from "./routes/auth.js";
+import { createMarketsRouter } from "./routes/markets.js";
+import { createOrdersRouter } from "./routes/orders.js";
+import { createStatsRouter } from "./routes/stats.js";
+import { createWebSocketServer } from "./websocket.js";
 
 const env = loadEnv(
   extendWithHostPort(
     baseEnvSchema.extend({
-      SERVICE_NAME: z.string().default("api-gateway")
+      SERVICE_NAME: z.string().default("api-gateway"),
+      AUTH_SERVICE_URL: z
+        .string()
+        .url()
+        .default(`http://auth-service:${process.env.AUTH_SERVICE_PORT ?? "3100"}`)
     }),
     { defaultPort: 3000 }
   )
@@ -70,8 +75,7 @@ const start = async () => {
   const redis = createRedis(env);
   const nats = await connectNats(env);
 
-  // Health check
-  app.get("/healthz", async (_req, res) => {
+  const healthHandler = async (_req: any, res: express.Response) => {
     const pgOk = await pgPool
       .query("SELECT 1")
       .then(() => true)
@@ -87,10 +91,14 @@ const start = async () => {
       redis: redisOk,
       nats: nats.isClosed() ? "closed" : "open"
     });
-  });
+  };
+
+  // Support both /health and /healthz because existing infra probes and runbooks use /health.
+  app.get("/health", healthHandler);
+  app.get("/healthz", healthHandler);
 
   // OpenAPI documentation
-  app.get("/openapi.json", (_req, res) => {
+  app.get("/openapi.json", (_req: any, res) => {
     const generator = new OpenApiGeneratorV3(registry.definitions);
     res.json(
       generator.generateDocument({
@@ -104,10 +112,23 @@ const start = async () => {
   });
 
   // Routes
+  const authProxyRouter = createAuthProxyRouter({ authServiceUrl: env.AUTH_SERVICE_URL });
+  const marketsRouter = createMarketsRouter(pgPool);
+  const ordersRouter = createOrdersRouter(pgPool, nats);
+  const statsRouter = createStatsRouter(pgPool);
+
+  app.use(authProxyRouter);
   app.use(metaRouter);
-  app.use(createMarketsRouter(pgPool));
-  app.use(createOrdersRouter(pgPool, nats));
-  app.use(createStatsRouter(pgPool));
+  app.use(marketsRouter);
+  app.use(ordersRouter);
+  app.use(statsRouter);
+
+  // Preserve /api/v1 compatibility expected by web clients.
+  app.use("/api/v1", authProxyRouter);
+  app.use("/api/v1", metaRouter);
+  app.use("/api/v1", marketsRouter);
+  app.use("/api/v1", ordersRouter);
+  app.use("/api/v1", statsRouter);
 
   // Start HTTP server
   const server = app.listen(env.PORT, env.HOST, () => {

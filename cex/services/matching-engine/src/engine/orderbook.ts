@@ -18,7 +18,7 @@ export class OrderBook {
   /**
    * Add an order to the book
    */
-  add(order: Order): void {
+  add(order: any): void {
     if (order.remainingAtoms <= 0n) {
       throw new Error("Cannot add order with no remaining size");
     }
@@ -34,7 +34,7 @@ export class OrderBook {
   /**
    * Remove an order from the book
    */
-  remove(orderId: string): Order | undefined {
+  remove(orderId: string): any | undefined {
     const index = this.orderIndex.get(orderId);
     if (!index) return undefined;
 
@@ -59,7 +59,7 @@ export class OrderBook {
   /**
    * Get an order by ID
    */
-  get(orderId: string): Order | undefined {
+  get(orderId: string): any | undefined {
     const index = this.orderIndex.get(orderId);
     if (!index) return undefined;
 
@@ -71,7 +71,7 @@ export class OrderBook {
   /**
    * Get the best bid (highest price)
    */
-  getBestBid(): Order | undefined {
+  getBestBid(): any | undefined {
     if (this.bids.size === 0) return undefined;
 
     const prices = Array.from(this.bids.keys()).sort(compareBidPrices);
@@ -90,7 +90,7 @@ export class OrderBook {
   /**
    * Get the best ask (lowest price)
    */
-  getBestAsk(): Order | undefined {
+  getBestAsk(): any | undefined {
     if (this.asks.size === 0) return undefined;
 
     const prices = Array.from(this.asks.keys()).sort(compareAskPrices);
@@ -109,7 +109,7 @@ export class OrderBook {
   /**
    * Get all bids at a price level (sorted FIFO)
    */
-  getBidsAtPrice(priceAtoms: bigint): Order[] {
+  getBidsAtPrice(priceAtoms: bigint): any[] {
     const orders = this.bids.get(priceAtoms) || [];
     return orders.slice().sort(compareOrders);
   }
@@ -117,7 +117,7 @@ export class OrderBook {
   /**
    * Get all asks at a price level (sorted FIFO)
    */
-  getAsksAtPrice(priceAtoms: bigint): Order[] {
+  getAsksAtPrice(priceAtoms: bigint): any[] {
     const orders = this.asks.get(priceAtoms) || [];
     return orders.slice().sort(compareOrders);
   }

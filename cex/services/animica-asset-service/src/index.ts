@@ -55,8 +55,8 @@ async function start() {
 
   // Create HTTP server
   const app = createServer(pool, rpcClient, config, logger);
-  const server = app.listen(config.PORT, "0.0.0.0", () => {
-    logger.info({ port: config.PORT }, "HTTP server listening");
+  const server = app.listen(Number(config.PORT ?? 3000), "0.0.0.0", () => {
+    logger.info({ port: Number(config.PORT ?? 3000) }, "HTTP server listening");
   });
 
   // Start background jobs

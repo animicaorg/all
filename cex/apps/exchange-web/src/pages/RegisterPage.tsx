@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Mail, Lock, User, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import axios from 'axios';
+import { getApiBaseUrl } from '../lib/endpoints';
 
-const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
+const API_URL = getApiBaseUrl();
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({

@@ -1,19 +1,24 @@
 /**
  * Deposit Credit Handler
- * 
+ *
  * Processes deposit credit commands from the deposit service
  * Credits user balances using double-entry accounting
  */
 
 import type { PoolClient } from "pg";
 import type { Logger } from "pino";
-import { AccountsRepo, LedgerRepo, BalancesRepo, IdempotencyRepo } from "../../db/repositories/index.js";
+import {
+  AccountsRepo,
+  LedgerRepo,
+  BalancesRepo,
+  IdempotencyRepo,
+} from "../../db/repositories/index.js";
 
 export interface DepositCreditCommand {
   idempotencyKey: string;
   userId: string;
   assetId: string;
-  amountAtoms: string; // BigInt as string
+  amountAtoms: string;
   source: {
     provider: string;
     txid: string;
@@ -25,16 +30,24 @@ export interface DepositCreditCommand {
   depositId: string;
 }
 
-/**
- * Process deposit credit command
- * Credits user's AVAILABLE account from SYSTEM:CLEARING
- */
 export async function handleDepositCredit(
   command: DepositCreditCommand,
   client: PoolClient,
   logger: Logger
 ): Promise<void> {
-  const { idempotencyKey, userId, assetId, amountAtoms, source, depositId } = command;
+  const {
+    idempotencyKey,
+    userId,
+    assetId,
+    amountAtoms,
+    source,
+    depositId,
+  } = command;
+
+  const idempotencyRepo = new IdempotencyRepo(client);
+  const accountsRepo = new AccountsRepo(client);
+  const ledgerRepo = new LedgerRepo(client);
+  const balancesRepo = new BalancesRepo(client);
 
   logger.info(
     {
@@ -48,10 +61,10 @@ export async function handleDepositCredit(
     "Processing deposit credit command"
   );
 
-  // Check idempotency
-  const idempotencyRepo = new IdempotencyRepo(client);
+  // ----------------------------
+  // Idempotency check
+  // ----------------------------
   const existing = await idempotencyRepo.get(idempotencyKey);
-  
   if (existing) {
     logger.info(
       { idempotencyKey, existingResult: existing.result },
@@ -60,33 +73,29 @@ export async function handleDepositCredit(
     return;
   }
 
-  // Initialize repositories
-  const accountsRepo = new AccountsRepo(client);
-  const ledgerRepo = new LedgerRepo(client);
-  const balancesRepo = new BalancesRepo(client);
-
-  // Get or create user AVAILABLE account
-  const userAccount = await accountsRepo.getOrCreateAccount(
-    userId,
-    assetId,
-    "AVAILABLE"
-  );
-
-  // Get or create SYSTEM CLEARING account
-  const clearingAccount = await accountsRepo.getOrCreateAccount(
-    null, // system account
-    assetId,
-    "CLEARING"
-  );
-
-  // Convert amount
-  const amountAtomsBigInt = BigInt(amountAtoms);
-
-  if (amountAtomsBigInt <= 0n) {
+  const amount = BigInt(amountAtoms);
+  if (amount <= 0n) {
     throw new Error("Amount must be positive");
   }
 
-  // Create ledger transaction
+  // ----------------------------
+  // Accounts (FIXED: no ensureAccount)
+  // ----------------------------
+  const userAccount = await accountsRepo.ensureUserAccounts(
+    userId,
+    assetId
+  );
+
+  const systemAccounts = await accountsRepo.ensureSystemAccount(
+    "CLEARING",
+    assetId
+  );
+
+  const clearingAccount = systemAccounts;
+
+  // ----------------------------
+  // Ledger transaction
+  // ----------------------------
   const txMetadata = {
     depositId,
     txid: source.txid,
@@ -97,38 +106,49 @@ export async function handleDepositCredit(
     network: source.network,
   };
 
-  const ledgerTxId = await ledgerRepo.createTransaction(
+  const ledgerTx = await ledgerRepo.createTransaction(
     "DEPOSIT",
-    null, // no market
-    null, // no sequence
+    null,
+    null,
     txMetadata
   );
 
-  // Create double-entry:
-  // DEBIT: SYSTEM:CLEARING (money leaving system clearing)
-  // CREDIT: USER:AVAILABLE (money entering user available balance)
-  await ledgerRepo.createEntry(
+  const ledgerTxId = ledgerTx.id;
+
+  // ----------------------------
+  // Double-entry accounting
+  // ----------------------------
+  await ledgerRepo.addEntry(
     ledgerTxId,
     clearingAccount.id,
     assetId,
     "DEBIT",
-    amountAtomsBigInt,
+    amount,
     `Deposit ${source.txid}`
   );
 
-  await ledgerRepo.createEntry(
+  await ledgerRepo.addEntry(
     ledgerTxId,
-    userAccount.id,
+    userAccount.available.id,
     assetId,
     "CREDIT",
-    amountAtomsBigInt,
+    amount,
     `Deposit ${source.txid}`
   );
 
-  // Update cached balances
-  await balancesRepo.incrementAvailable(userId, assetId, amountAtomsBigInt);
+  // ----------------------------
+  // Balance update (FIXED 4 args)
+  // ----------------------------
+  await balancesRepo.updateBalance(
+    userAccount.available.id,
+    assetId,
+    amount,
+    0n
+  );
 
-  // Record idempotency
+  // ----------------------------
+  // Idempotency record
+  // ----------------------------
   await idempotencyRepo.set(
     idempotencyKey,
     "ledger-deposit-credit",
@@ -140,7 +160,7 @@ export async function handleDepositCredit(
       amountAtoms,
       depositId,
     },
-    7 * 24 * 60 * 60 // 7 days TTL
+    7 * 24 * 60 * 60
   );
 
   logger.info(

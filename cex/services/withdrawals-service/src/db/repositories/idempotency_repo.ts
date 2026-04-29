@@ -33,7 +33,7 @@ export class IdempotencyRepo {
          AND expires_at > NOW()`,
       [idempotencyKey, userId, endpoint]
     );
-    return result.rowCount > 0 ? this.mapRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   async record(

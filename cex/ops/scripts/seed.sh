@@ -2,12 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+OPS_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+ROOT_DIR=$(cd "$OPS_DIR/.." && pwd)
 
-# Source shared utility
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/ensure-env.sh"
+ensure_env_file "$OPS_DIR"
+load_env_file "$OPS_DIR"
+normalize_local_endpoints
 
-# Ensure .env file exists
-ensure_env_file "$ROOT_DIR"
-
-docker compose -f "$ROOT_DIR/docker-compose.yml" --env-file "$ROOT_DIR/env/.env" run --rm seed
+cd "$ROOT_DIR"
+exec pnpm --filter @cex/db seed

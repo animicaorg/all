@@ -3,12 +3,12 @@ import { Pool } from "pg";
 
 const router = Router();
 
-export function createStatsRouter(pgPool: Pool) {
+export function createStatsRouter(pgPool: Pool): any {
   /**
    * GET /stats - Get platform statistics
    * Returns real-time trading volume, active traders, and system uptime
    */
-  router.get("/stats", async (_req, res) => {
+  router.get("/stats", async (_req: any, res) => {
     try {
       // Use a single query with CTEs for better performance
       const result = await pgPool.query(`

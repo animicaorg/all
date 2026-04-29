@@ -28,7 +28,7 @@ const createOrder = (
   price: string,
   size: string,
   timestamp: string
-): Order => ({
+): any => ({
   id,
   userId: "sim-user",
   clientOrderId: `client-${id}`,

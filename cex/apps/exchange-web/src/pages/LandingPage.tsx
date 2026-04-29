@@ -50,8 +50,8 @@ export default function LandingPage() {
     }
   };
 
-  const formatUptime = (uptime: number | null) => {
-    if (uptime === null) {
+  const formatUptime = (uptime: number | null | undefined) => {
+    if (typeof uptime !== 'number' || !Number.isFinite(uptime)) {
       return 'N/A';
     }
     return `${uptime.toFixed(1)}%`;

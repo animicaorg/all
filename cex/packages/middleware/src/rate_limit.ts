@@ -4,9 +4,10 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import type { Request, Response } from 'express';
+import type { Options } from 'express-rate-limit';
+import type { NextFunction, Request, Response } from 'express';
 import type { Logger } from '@cex/observability';
-import { createClient, RedisClientType } from 'redis';
+import { RedisClientType } from 'redis';
 
 /**
  * Rate limit configuration
@@ -45,7 +46,7 @@ export interface RateLimitConfig {
   /**
    * Skip function (e.g., skip for whitelisted IPs)
    */
-  skip?: (req: Request) => boolean;
+  skip?: Options['skip'];
 }
 
 /**
@@ -64,7 +65,7 @@ export function createRateLimiter(config: RateLimitConfig) {
     legacyHeaders: false,
     store,
     skip: config.skip,
-    handler: (req: Request, res: Response) => {
+    handler: (req, res) => {
       config.logger?.warn(
         {
           ip: req.ip,
@@ -282,7 +283,7 @@ export class BanList {
  * Middleware to check ban list
  */
 export function createBanCheckMiddleware(banList: BanList) {
-  return async (req: Request, res: Response, next: Function) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
     const banStatus = await banList.isBanned(ip);

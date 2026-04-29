@@ -4,11 +4,11 @@ import { z } from "zod";
 
 const router = Router();
 
-export function createMarketsRouter(pgPool: Pool) {
+export function createMarketsRouter(pgPool: Pool): any {
   /**
    * GET /markets - List all active markets
    */
-  router.get("/markets", async (_req, res) => {
+  router.get("/markets", async (_req: any, res) => {
     try {
       const result = await pgPool.query(`
         SELECT 
@@ -70,7 +70,7 @@ export function createMarketsRouter(pgPool: Pool) {
   /**
    * GET /markets/:symbol/orderbook - Get orderbook for a market
    */
-  router.get("/markets/:symbol/orderbook", async (req, res) => {
+  router.get("/markets/:symbol/orderbook", async (req: any, res) => {
     try {
       const { symbol } = req.params;
       const limit = parseInt(req.query.limit as string) || 20;
@@ -113,7 +113,7 @@ export function createMarketsRouter(pgPool: Pool) {
       let bidTotal = 0;
       let askTotal = 0;
 
-      ordersResult.rows.forEach((row) => {
+      ordersResult.rows.forEach((row: any) => {
         const price = parseFloat(row.price);
         const quantity = parseFloat(row.total_quantity);
 
@@ -153,7 +153,7 @@ export function createMarketsRouter(pgPool: Pool) {
   /**
    * GET /markets/:symbol/trades - Get recent trades for a market
    */
-  router.get("/markets/:symbol/trades", async (req, res) => {
+  router.get("/markets/:symbol/trades", async (req: any, res) => {
     try {
       const { symbol } = req.params;
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
@@ -194,7 +194,7 @@ export function createMarketsRouter(pgPool: Pool) {
 
       res.json({
         symbol,
-        trades: tradesResult.rows.map((row) => ({
+        trades: tradesResult.rows.map((row: any) => ({
           id: row.id,
           price: parseFloat(row.price),
           quantity: parseFloat(row.quantity),
@@ -212,7 +212,7 @@ export function createMarketsRouter(pgPool: Pool) {
   /**
    * GET /markets/:symbol/candles - Get candlestick data
    */
-  router.get("/markets/:symbol/candles", async (req, res) => {
+  router.get("/markets/:symbol/candles", async (req: any, res) => {
     try {
       const { symbol } = req.params;
       const resolution = (req.query.resolution as string) || "1m";
@@ -265,7 +265,7 @@ export function createMarketsRouter(pgPool: Pool) {
       res.json({
         symbol,
         resolution,
-        candles: candlesResult.rows.map((row) => ({
+        candles: candlesResult.rows.map((row: any) => ({
           timestamp: new Date(row.bucket).getTime(),
           open: parseFloat(row.open),
           high: parseFloat(row.high),

@@ -222,5 +222,5 @@ async function findAssetNetwork(
     contractAddress || null,
   ]);
 
-  return result.rowCount > 0 ? { id: result.rows[0].id } : null;
+  return result.rows.length > 0 ? { id: result.rows[0].id } : null;
 }

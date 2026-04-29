@@ -187,7 +187,7 @@ export function setupAdminRoutes(
             [deposit.assetNetworkId]
           );
 
-          if (assetResult.rowCount > 0) {
+          if (assetResult.rows.length > 0) {
             const assetSymbol = assetResult.rows[0].symbol;
             await outboxRepo.create(
               depositId,

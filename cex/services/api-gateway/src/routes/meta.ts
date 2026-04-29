@@ -1,12 +1,12 @@
 import { Router } from "express";
 
-const router = Router();
+const router= Router() as any;
 
 /**
  * GET /meta - Capabilities endpoint
  * Returns supported endpoints, WebSocket channels, and rate limits
  */
-router.get("/meta", (_req, res) => {
+router.get("/meta", (req: any, res: any) => {
   res.json({
     version: "0.1.0",
     capabilities: {

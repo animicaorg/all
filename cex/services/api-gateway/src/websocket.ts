@@ -240,7 +240,7 @@ export function createWebSocketServer(
       const bids: Array<[number, number]> = [];
       const asks: Array<[number, number]> = [];
 
-      ordersResult.rows.forEach((row) => {
+      ordersResult.rows.forEach((row: any) => {
         const price = parseFloat(row.price);
         const quantity = parseFloat(row.total_quantity);
 
@@ -315,7 +315,7 @@ export function createWebSocketServer(
           type: "snapshot",
           channel: "trades",
           symbol,
-          data: tradesResult.rows.map((row) => ({
+          data: tradesResult.rows.map((row: any) => ({
             id: row.id,
             price: parseFloat(row.price),
             quantity: parseFloat(row.quantity),
