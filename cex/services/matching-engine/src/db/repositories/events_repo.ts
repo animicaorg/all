@@ -2,7 +2,7 @@
  * Repository for order events
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import type { OrderEvent } from "../../engine/types.js";
 
@@ -17,7 +17,7 @@ export class EventsRepo {
     marketId: string;
     eventType: string;
     sequence: bigint;
-    payload: Record<string, unknown>;
+    payload: Record<string, any>;
   }): Promise<OrderEvent> {
     const eventId = uuidv4();
     const createdAt = new Date();

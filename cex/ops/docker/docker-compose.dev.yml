@@ -154,6 +154,7 @@ services:
       SERVICE_NAME: api-gateway
       PORT: ${API_GATEWAY_PORT:-3000}
       NODE_ENV: development
+      AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_PORT:-3100}
     command: sh -c "corepack enable && pnpm install && pnpm --filter @cex/api-gateway dev"
     ports:
       - "${API_GATEWAY_PORT:-3000}:3000"

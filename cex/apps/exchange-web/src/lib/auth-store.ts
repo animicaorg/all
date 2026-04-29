@@ -1,12 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import axios from 'axios';
+import { getApiBaseUrl } from './endpoints';
 
-const API_URL = import.meta.env.VITE_CEX_API_URL || 'http://trade.animica.org';
+const API_URL = getApiBaseUrl();
 
 interface AuthState {
+  authReady: boolean;
   isAuthenticated: boolean;
   user: { id: string; email: string } | null;
+  initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 }
@@ -14,12 +17,25 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
+      authReady: false,
       isAuthenticated: false,
       user: null,
+      initialize: async () => {
+        try {
+          const response = await axios.get(`${API_URL}/auth/me`, {
+            withCredentials: true,
+          });
+          const { id, email } = response.data;
+          if (id && email) {
+            set({ isAuthenticated: true, user: { id, email }, authReady: true });
+            return;
+          }
+        } catch {
+          // No valid session. Keep unauthenticated state.
+        }
+        set({ isAuthenticated: false, user: null, authReady: true });
+      },
       login: async (email: string, password: string) => {
-        // Call the authentication API
-        // Note: This assumes the auth endpoint exists at /auth/login
-        // Adjust the endpoint based on actual API implementation
         const response = await axios.post(`${API_URL}/auth/login`, {
           email,
           password,
@@ -28,14 +44,13 @@ export const useAuthStore = create<AuthState>()(
         });
         
         const { userId, email: userEmail } = response.data;
-        set({ isAuthenticated: true, user: { id: userId, email: userEmail || email } });
+        set({ isAuthenticated: true, user: { id: userId, email: userEmail || email }, authReady: true });
       },
       logout: () => {
-        // Optionally call logout endpoint to clear server-side session
         axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {
-          // Ignore errors on logout
+          // Ignore logout errors and still clear local auth state.
         });
-        set({ isAuthenticated: false, user: null });
+        set({ isAuthenticated: false, user: null, authReady: true });
       },
     }),
     {

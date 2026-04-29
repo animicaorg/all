@@ -58,7 +58,7 @@ export class BitgoConfigStore {
     }
 
     const result = await this.pool.query("SELECT * FROM bitgo_configs WHERE id = 'default' LIMIT 1");
-    const row = result.rowCount > 0 ? result.rows[0] : null;
+    const row = result.rows.length > 0 ? result.rows[0] : null;
 
     if (!row || !row.access_token_encrypted) {
       const fallbackBaseUrl =

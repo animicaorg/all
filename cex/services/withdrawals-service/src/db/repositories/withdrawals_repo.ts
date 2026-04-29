@@ -108,7 +108,7 @@ export class WithdrawalsRepo {
       "SELECT * FROM withdrawals WHERE id = $1",
       [id]
     );
-    return result.rowCount > 0 ? this.mapRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   async findByProviderRef(providerRef: string): Promise<Withdrawal | null> {
@@ -116,7 +116,7 @@ export class WithdrawalsRepo {
       "SELECT * FROM withdrawals WHERE provider_ref = $1",
       [providerRef]
     );
-    return result.rowCount > 0 ? this.mapRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   async updateStatus(

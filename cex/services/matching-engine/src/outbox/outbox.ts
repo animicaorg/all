@@ -7,7 +7,7 @@ export async function writeOrderEvent(
   marketId: string,
   sequence: bigint,
   eventType: string,
-  order: Order
+  order: any
 ): Promise<void> {
   const key = generateEventKey(marketId, eventType, sequence, order.id);
   

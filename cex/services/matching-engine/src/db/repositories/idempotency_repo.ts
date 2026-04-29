@@ -2,7 +2,7 @@
  * Repository for idempotency keys
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export class IdempotencyRepo {
   constructor(private client: PoolClient) {}
@@ -10,7 +10,7 @@ export class IdempotencyRepo {
   /**
    * Check if idempotency key exists and return cached result
    */
-  async get(key: string, consumer: string): Promise<Record<string, unknown> | null> {
+  async get(key: string, consumer: string): Promise<Record<string, any> | null> {
     const result = await this.client.query(
       `SELECT result FROM idempotency_keys
        WHERE key = $1 AND consumer = $2
@@ -28,7 +28,7 @@ export class IdempotencyRepo {
   async set(
     key: string,
     consumer: string,
-    result: Record<string, unknown>,
+    result: Record<string, any>,
     ttlSeconds: number = 86400
   ): Promise<void> {
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);

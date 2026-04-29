@@ -68,7 +68,8 @@ export function getUserSessionCookieOptions(isProduction: boolean): SessionCooki
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     secure: isProduction,
     httpOnly: true,
-    sameSite: 'lax', // Allow some cross-site navigation
+    // trade.animica.org and api.animica.io are cross-site, so cookies must be SameSite=None in production.
+    sameSite: isProduction ? 'none' : 'lax',
     path: '/',
   };
 }

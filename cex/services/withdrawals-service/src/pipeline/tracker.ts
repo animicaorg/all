@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 import type { Logger } from "pino";
 import { WithdrawalsRepo, AuditRepo } from "../db/repositories/index.js";
 import type { WithdrawalObservation } from "../bitgo/types.js";
+import type { OutboxOperationType } from "../outbox/outbox.js";
 import { enqueueOperation } from "../outbox/outbox.js";
 
 /**
@@ -44,7 +45,7 @@ export async function processWebhook(
 
   // 2. Apply state transition based on observation
   let updated = false;
-  let queuedOperation: string | null = null;
+  let queuedOperation: OutboxOperationType | null = null;
 
   switch (observation.state) {
     case "SIGNING":

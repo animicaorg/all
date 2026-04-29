@@ -88,7 +88,8 @@ export class WSClient {
 
       this.ws.onerror = (event) => {
         const error = new Error("WebSocket error");
-        console.error("WebSocket error:", event);
+        this.setState("error");
+        console.warn("WebSocket transport error:", event);
         this.options.onError(error);
       };
 

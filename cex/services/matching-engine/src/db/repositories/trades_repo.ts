@@ -2,7 +2,7 @@
  * Repository for trades
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { atomsToDecimal } from "../../engine/deterministic.js";
 import type { Trade } from "../../engine/types.js";
 

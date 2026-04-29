@@ -95,7 +95,7 @@ export interface OrderEvent {
   marketId: string;
   eventType: string;
   sequence: bigint;
-  payload: Record<string, unknown>;
+  payload: Record<string, any>;
   createdAt: Date;
 }
 
@@ -108,7 +108,7 @@ export interface OutboxEvent {
   seq: bigint;
   type: "ORDER_EVENT" | "TRADE_EVENT";
   key: string;
-  payload: Record<string, unknown>;
+  payload: Record<string, any>;
   createdAt: Date;
   publishedAt?: Date;
 }
@@ -167,7 +167,7 @@ export interface ReplaceOrderCommand {
  */
 export interface OrderResult {
   success: boolean;
-  order?: Order;
+  order?: any;
   fills: Fill[];
   trades: Trade[];
   events: OrderEvent[];
@@ -179,6 +179,6 @@ export interface OrderResult {
  */
 export interface PriceLevel {
   priceAtoms: bigint;
-  orders: Order[];
+  orders: any[];
   totalSize: bigint;
 }

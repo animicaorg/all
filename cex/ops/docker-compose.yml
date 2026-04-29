@@ -41,6 +41,7 @@ services:
     environment:
       SERVICE_NAME: api-gateway
       PORT: ${API_GATEWAY_PORT}
+      AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_PORT}
     ports:
       - "${API_GATEWAY_PORT}:${API_GATEWAY_PORT}"
 

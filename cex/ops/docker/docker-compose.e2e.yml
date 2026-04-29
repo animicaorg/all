@@ -84,6 +84,7 @@ services:
       SERVICE_NAME: api-gateway
       PORT: 3000
       LOG_LEVEL: info
+      AUTH_SERVICE_URL: http://auth-service:3100
     ports:
       - "13000:3000"
     healthcheck:

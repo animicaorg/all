@@ -120,7 +120,7 @@ async function verifyTokenContract(
     [assetNetworkId, contractAddress]
   );
   
-  return result.rowCount > 0;
+  return result.rows.length > 0;
 }
 
 /**
@@ -161,5 +161,5 @@ async function checkDuplicateTxid(
     [txid, address, currentDepositId]
   );
   
-  return result.rowCount > 0;
+  return result.rows.length > 0;
 }

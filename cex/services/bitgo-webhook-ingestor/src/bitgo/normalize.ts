@@ -74,7 +74,7 @@ async function lookupAssetNetwork(
     contractAddress || null,
   ]);
 
-  if (result.rowCount === 0) {
+  if (result.rows.length === 0) {
     return null;
   }
 

@@ -2,7 +2,7 @@
  * Repository for orders
  */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { atomsToDecimal, decimalToAtoms } from "../../engine/deterministic.js";
 import type { Order, OrderSide, OrderType, TimeInForce, OrderStatus } from "../../engine/types.js";
@@ -188,7 +188,7 @@ export class OrdersRepo {
     return this.rowToOrder(result.rows[0]);
   }
 
-  private rowToOrder(row: Record<string, unknown>): Order {
+  private rowToOrder(row: Record<string, any>): any {
     return {
       id: row.id as string,
       userId: row.user_id as string,

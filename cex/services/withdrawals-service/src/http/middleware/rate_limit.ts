@@ -3,8 +3,13 @@
  */
 
 import type { Request, Response, NextFunction } from "express";
-import type { RedisClientType } from "redis";
 import type { Logger } from "pino";
+
+interface RedisRateLimitClient {
+  incr(key: string): Promise<number>;
+  pexpire(key: string, milliseconds: number): Promise<number>;
+  pttl(key: string): Promise<number>;
+}
 
 interface RateLimitConfig {
   windowMs: number;
@@ -16,7 +21,7 @@ interface RateLimitConfig {
  * Redis-based rate limiting middleware
  */
 export function createRateLimiter(
-  redis: RedisClientType,
+  redis: RedisRateLimitClient,
   config: RateLimitConfig,
   logger: Logger
 ) {
@@ -32,12 +37,12 @@ export function createRateLimiter(
 
       // Set expiry on first request
       if (current === 1) {
-        await redis.pExpire(key, config.windowMs);
+        await redis.pexpire(key, config.windowMs);
       }
 
       // Check if over limit
       if (current > config.maxRequests) {
-        const ttl = await redis.pTTL(key);
+        const ttl = await redis.pttl(key);
         
         res.set("X-RateLimit-Limit", config.maxRequests.toString());
         res.set("X-RateLimit-Remaining", "0");

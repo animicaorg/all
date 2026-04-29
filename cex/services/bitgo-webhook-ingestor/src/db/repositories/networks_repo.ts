@@ -38,7 +38,7 @@ export class NetworksRepo {
       "SELECT * FROM asset_networks WHERE id = $1",
       [id]
     );
-    return result.rowCount > 0 ? this.mapAssetNetworkRow(result.rows[0]) : null;
+    return result.rows.length > 0 ? this.mapAssetNetworkRow(result.rows[0]) : null;
   }
 
   /**
@@ -54,7 +54,7 @@ export class NetworksRepo {
     `;
 
     const result = await this.client.query(query, [assetNetworkId]);
-    return result.rowCount > 0 ? result.rows[0].confirmations : 6;
+    return result.rows.length > 0 ? result.rows[0].confirmations : 6;
   }
 
   /**
@@ -69,7 +69,7 @@ export class NetworksRepo {
     `;
 
     const result = await this.client.query(query, [assetNetworkId]);
-    return result.rowCount > 0 ? result.rows[0].symbol : null;
+    return result.rows.length > 0 ? result.rows[0].symbol : null;
   }
 
   /**

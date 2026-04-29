@@ -4,7 +4,7 @@
  */
 
 import type { NatsConnection } from "nats";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { jsonCodec } from "@cex/common";
 import type { Logger } from "pino";
 import { OutboxRepo } from "../db/repositories/index.js";

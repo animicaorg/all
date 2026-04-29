@@ -2,7 +2,7 @@ import { Router } from "express";
 import { Pool } from "pg";
 import { NatsConnection } from "nats";
 import { z } from "zod";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { jsonCodec, subjects } from "@cex/common";
 
 const router = Router();
@@ -34,7 +34,7 @@ function requireAuth(req: any, res: any, next: any) {
   next();
 }
 
-export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
+export function createOrdersRouter(pgPool: Pool, nats: NatsConnection): any {
   /**
    * POST /orders - Create a new order
    */
@@ -42,7 +42,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
     try {
       const body = createOrderSchema.parse(req.body);
       const userId = req.userId;
-      const clientOrderId = body.clientOrderId || uuidv4();
+      const clientOrderId = body.clientOrderId || randomUUID();
       const idempotencyKey = body.idempotencyKey || `order-${userId}-${clientOrderId}-${Date.now()}`;
 
       // Check idempotency
@@ -105,9 +105,9 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
 
       // Publish order to NATS
       const orderCommand = {
-        event_id: uuidv4(),
-        correlation_id: uuidv4(),
-        causation_id: uuidv4(),
+        event_id: randomUUID(),
+        correlation_id: randomUUID(),
+        causation_id: randomUUID(),
         created_at: new Date().toISOString(),
         idempotency_key: idempotencyKey,
         type: "OrderSubmit",
@@ -181,9 +181,9 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
 
       // Publish cancel command
       const cancelCommand = {
-        event_id: uuidv4(),
-        correlation_id: uuidv4(),
-        causation_id: uuidv4(),
+        event_id: randomUUID(),
+        correlation_id: randomUUID(),
+        causation_id: randomUUID(),
         created_at: new Date().toISOString(),
         type: "OrderCancel",
         user_id: userId,
@@ -254,7 +254,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
       const result = await pgPool.query(query, params);
 
       res.json({
-        orders: result.rows.map((row) => ({
+        orders: result.rows.map((row: any) => ({
           id: row.id,
           clientOrderId: row.client_order_id,
           symbol: row.symbol,
@@ -322,7 +322,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
       const result = await pgPool.query(query, params);
 
       res.json({
-        trades: result.rows.map((row) => ({
+        trades: result.rows.map((row: any) => ({
           id: row.id,
           orderId: row.order_id,
           symbol: row.symbol,
@@ -363,7 +363,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection) {
       );
 
       res.json({
-        balances: result.rows.map((row) => ({
+        balances: result.rows.map((row: any) => ({
           asset: row.asset,
           available: parseFloat(row.available),
           locked: parseFloat(row.locked),

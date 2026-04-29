@@ -28,7 +28,7 @@ const createTestOrder = (
   priceAtoms: bigint,
   sizeAtoms: bigint,
   acceptedAt: Date = new Date("2024-01-01T00:00:00Z")
-): Order => ({
+): any => ({
   id,
   userId: "user-1",
   clientOrderId: `client-${id}`,

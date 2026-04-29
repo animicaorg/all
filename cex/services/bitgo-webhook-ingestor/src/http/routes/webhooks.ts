@@ -28,9 +28,12 @@ export function setupWebhookRoutes(
    * - x-request-id: Optional request tracking ID
    * 
    * Expected body: BitGoWebhookPayload
-   */
+  */
   router.post("/webhook", async (req, res) => {
-    const requestId = req.header("x-request-id") || req.id || Math.random().toString(36).slice(2);
+    const requestId =
+      req.header("x-request-id") ||
+      (req as typeof req & { id?: string }).id ||
+      Math.random().toString(36).slice(2);
     const webhookLogger = logger.child({ 
       request_id: requestId,
       endpoint: "webhook",
@@ -144,7 +147,7 @@ export function setupWebhookRoutes(
     try {
       // Check database connection
       const result = await pool.query("SELECT 1");
-      const dbOk = result.rowCount === 1;
+      const dbOk = result.rows.length === 1;
 
       if (!dbOk) {
         res.status(503).json({

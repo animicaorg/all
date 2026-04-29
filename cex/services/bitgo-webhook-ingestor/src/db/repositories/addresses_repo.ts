@@ -43,7 +43,7 @@ export class AddressesRepo {
       tag || null,
     ]);
 
-    return result.rowCount > 0 ? result.rows[0].user_id : null;
+    return result.rows.length > 0 ? result.rows[0].user_id : null;
   }
 
   /**

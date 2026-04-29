@@ -53,7 +53,7 @@ export class OutboxRepo {
       JSON.stringify(payload),
     ]);
 
-    if (result.rowCount === 0) {
+    if (result.rows.length === 0) {
       // Already exists, fetch it
       const existing = await this.client.query(
         "SELECT * FROM deposit_outbox WHERE idempotency_key = $1",

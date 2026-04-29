@@ -18,7 +18,8 @@
     "overrides": {
       "@google-cloud/secret-manager": "^6.1.1",
       "esbuild": "0.27.2",
-      "@esbuild/*": "0.27.2"
+      "@esbuild/*": "0.27.2",
+      "pino": "9.14.0"
     }
   },
   "devDependencies": {
