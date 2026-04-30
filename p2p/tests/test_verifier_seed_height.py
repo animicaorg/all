@@ -139,12 +139,14 @@ def test_verifier_seeds_constrain_network_height_one_ahead(tmp_path: Path) -> No
     peer_regular.hello = {"head_height": 101}
 
     # Network best height should be 101 (1 block ahead is allowed for miners)
+    allowed = int(node._sync_max_height_ahead_of_verifier)
+    assert allowed >= 1
     network_best = node._network_best_height()
     assert network_best == 101, f"Expected 101 (1 ahead allowed), got {network_best}"
 
 
 def test_verifier_seeds_constrain_network_height_two_ahead(tmp_path: Path) -> None:
-    """Test that non-verifier peers 2+ blocks ahead are rejected."""
+    """Test that non-verifier peers above the allowed verifier window are rejected."""
     deps_sync, deps = _make_deps(tmp_path, "verifier-two-ahead")
     node = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
@@ -168,15 +170,19 @@ def test_verifier_seeds_constrain_network_height_two_ahead(tmp_path: Path) -> No
     )
     peer_verifier.hello = {"head_height": 100}
 
-    # Regular peer is 2 blocks ahead (should be rejected)
+    allowed = int(node._sync_max_height_ahead_of_verifier)
+
+    # Regular peer is one block beyond the configured allowance (should be rejected)
+    regular_height = 100 + allowed + 1
     node._sync_peer_heads[peer_regular.remote] = _PeerHeadInfo(
-        height=102,
+        height=regular_height,
         updated_at=now,
         source="test",
     )
-    peer_regular.hello = {"head_height": 102}
+    peer_regular.hello = {"head_height": regular_height}
 
-    # Network best height should be 101 (max allowed = verifier + 1)
+    # Network best height should clamp to verifier+1 when only out-of-window
+    # non-verifier heights are present.
     network_best = node._network_best_height()
     assert network_best == 101, f"Expected 101 (constrained to verifier+1), got {network_best}"
 
@@ -554,6 +560,50 @@ def test_check_and_discount_blocks_past_verifier_no_action_when_equal(tmp_path: 
     assert node._sync_recovery_attempts == initial_recovery_count
 
 
+def test_check_and_discount_blocks_past_verifier_never_rewinds_local_verifier_node(
+    tmp_path: Path,
+) -> None:
+    """Local verifier nodes must never be auto-rewound."""
+    deps_sync, deps = _make_deps(tmp_path, "local-verifier-no-rewind")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "local-verifier-no-rewind" / "p2p"),
+    )
+
+    peer_verifier = _register_peer(node, "3.12.224.189:30333")
+    now = time.time()
+    node._sync_peer_heads[peer_verifier.remote] = _PeerHeadInfo(
+        height=100,
+        updated_at=now,
+        source="test",
+    )
+    peer_verifier.hello = {"head_height": 100}
+
+    max_ahead = int(node._sync_max_height_ahead_of_verifier)
+    node._local_head = lambda: (100 + max_ahead + 5, "0xlocal")  # type: ignore[method-assign]
+    node._sync_verifier_rewind_grace_sec = 0.0
+    node._sync_verifier_rewind_idle_sec = 0.0
+    node._sync_verifier_ahead_since = now - 60.0
+    node._local_is_verifier_seed = lambda: True  # type: ignore[method-assign]
+
+    called = {"reorg": False}
+
+    def _record_reorg(_max_verifier_height: int) -> bool:
+        called["reorg"] = True
+        return True
+
+    node._reorg_canonical_to_verifier_limit = _record_reorg  # type: ignore[method-assign]
+    initial_recovery_count = node._sync_recovery_attempts
+
+    node._check_and_discount_blocks_past_verifier()
+
+    assert called["reorg"] is False
+    assert node._sync_recovery_attempts == initial_recovery_count
+
+
 def test_check_and_discount_blocks_past_verifier_one_ahead_waits_for_grace(tmp_path: Path) -> None:
     """Local +1 above verifier should not reset before grace window expires."""
     deps_sync, deps = _make_deps(tmp_path, "one-ahead-grace")
@@ -606,6 +656,7 @@ def test_check_and_discount_blocks_past_verifier_one_ahead_rewinds_after_grace(t
 
     node._local_head = lambda: (101, "0xlocal")  # type: ignore[method-assign]
     node._sync_verifier_rewind_grace_sec = 10.0
+    node._sync_verifier_rewind_idle_sec = 0.0
     node._sync_verifier_ahead_since = now - 20.0
 
     initial_recovery_count = node._sync_recovery_attempts
@@ -618,7 +669,7 @@ def test_check_and_discount_blocks_past_verifier_one_ahead_rewinds_after_grace(t
 def test_check_and_discount_blocks_past_verifier_reorgs_canonical_if_more_than_one_ahead(
     tmp_path: Path,
 ) -> None:
-    """If local canonical height is > verifier+1, node reorgs down to verifier+1."""
+    """If local canonical height is above verifier allowance, node reorgs down."""
     deps_sync, deps = _make_deps(tmp_path, "reorg-verifier-limit")
     node = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
@@ -637,17 +688,19 @@ def test_check_and_discount_blocks_past_verifier_reorgs_canonical_if_more_than_o
     )
     peer_verifier.hello = {"head_height": 100}
 
-    # Local chain is 3 blocks ahead of verifier.
-    node._local_head = lambda: (103, "0xlocal")  # type: ignore[method-assign]
+    # Local chain is beyond verifier allowance.
+    max_ahead = int(node._sync_max_height_ahead_of_verifier)
+    node._local_head = lambda: (100 + max_ahead + 2, "0xlocal")  # type: ignore[method-assign]
     node._sync_verifier_rewind_grace_sec = 0.0
+    node._sync_verifier_rewind_idle_sec = 0.0
     node._sync_verifier_ahead_since = now - 30.0
 
-    # Provide canonical hashes for verifier height and allowed +1 height.
+    # Provide canonical hashes for verifier height and allowed window height.
     fake_bdb = node._block_db()
     node._prune_canonical_heights = lambda *args, **kwargs: 0  # type: ignore[method-assign]
     node._reset_from_highest_next_height = lambda **kwargs: None  # type: ignore[method-assign]
     fake_bdb.get_canonical_hash = lambda h: (
-        b"\x11" * 32 if h == 101 else (b"\x22" * 32 if h == 100 else None)
+        b"\x11" * 32 if h == (100 + max_ahead) else (b"\x22" * 32 if h == 100 else None)
     )
     recorded: dict[str, int] = {}
 
@@ -661,7 +714,7 @@ def test_check_and_discount_blocks_past_verifier_reorgs_canonical_if_more_than_o
 
     node._check_and_discount_blocks_past_verifier()
 
-    assert recorded["height"] == 101
+    assert recorded["height"] == 100 + max_ahead
     assert recorded["allow_reorg"] is True
     assert recorded["hash_len"] == 32
 
@@ -703,5 +756,8 @@ def test_verifier_seed_height_can_decrease_without_restart(tmp_path: Path) -> No
     assert int(peer_verifier.hello["head_height"]) == 199
     assert node._sync_peer_heads[peer_verifier.remote].height == 199
     assert node._get_max_verifier_height() == 199
-    # Network best should re-anchor to verifier + 1 without process restart.
-    assert node._network_best_height() == 200
+    # Network best should immediately respect the updated verifier anchor while
+    # still honoring the configured ahead-window.
+    allowed = int(node._sync_max_height_ahead_of_verifier)
+    expected = max(200, min(201, 199 + allowed))
+    assert node._network_best_height() == expected
