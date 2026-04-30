@@ -103,9 +103,9 @@ HTTPS_SEED_TCP_UPGRADE_HOSTS = {
 }
 DEFAULT_VERIFIER_SEED_NODES = "3.12.224.189,144.126.133.21,mainnet.animica.org"
 
-# Verifier seed mining constraint: allow miners to be at most this many blocks ahead
-# This allows a miner who just found the next block to be 1 block ahead of verifier seeds
-MAX_HEIGHT_AHEAD_OF_VERIFIER = 1
+# Verifier seed mining constraint: allow peers/miners to be ahead of verifiers
+# by a small, configurable window to absorb propagation jitter.
+DEFAULT_MAX_HEIGHT_AHEAD_OF_VERIFIER = 3
 
 
 def _env_value(*keys: str, default: Optional[str] = None) -> Optional[str]:
@@ -1315,6 +1315,26 @@ class P2PService:
         )
         self._sync_peer_non_broadcasting_sec = float(
             os.environ.get("ANIMICA_P2P_NON_BROADCASTING_SEC", "120") or 120
+        )
+        self._sync_max_height_ahead_of_verifier = max(
+            0,
+            int(
+                os.environ.get(
+                    "ANIMICA_P2P_MAX_HEIGHT_AHEAD_OF_VERIFIER",
+                    str(DEFAULT_MAX_HEIGHT_AHEAD_OF_VERIFIER),
+                )
+                or DEFAULT_MAX_HEIGHT_AHEAD_OF_VERIFIER
+            ),
+        )
+        self._sync_verifier_rewind_idle_sec = max(
+            0.0,
+            float(
+                os.environ.get(
+                    "ANIMICA_P2P_VERIFIER_REWIND_IDLE_SEC",
+                    str(self._sync_peer_non_broadcasting_sec),
+                )
+                or self._sync_peer_non_broadcasting_sec
+            ),
         )
         self._sync_peer_score_log_interval = float(
             os.environ.get("ANIMICA_P2P_PEER_SCORE_LOG_INTERVAL", "60") or 60
@@ -4599,7 +4619,7 @@ class P2PService:
         return True
 
     def _canonical_head_for_status(self) -> tuple[int, Optional[str]]:
-        local_height, local_hash = self._local_head()
+        local_height, _local_hash = self._local_head()
         local_height = int(local_height or 0)
         local_hash0x = self._canon_hash0x(local_hash)
         try:
@@ -13936,6 +13956,16 @@ class P2PService:
             return False
         return self._external_ip in self._verifier_seed_ips
 
+    def _max_height_ahead_of_verifier(self) -> int:
+        return max(0, int(self._sync_max_height_ahead_of_verifier))
+
+    def _verifier_rewind_idle_elapsed(self, *, now: float) -> bool:
+        idle_sec = max(0.0, float(self._sync_verifier_rewind_idle_sec))
+        if idle_sec <= 0.0:
+            return True
+        last_progress = float(self._sync_last_progress_at or 0.0)
+        return (now - last_progress) >= idle_sec
+
     def _get_max_verifier_height(self) -> Optional[int]:
         """
         Get the maximum height from verifier seed peers.
@@ -13983,9 +14013,14 @@ class P2PService:
         1. Verifier seeds are enabled
         2. At least one verifier seed is present and responsive
         3. Local height is GREATER than verifier height (not equal)
-        4. Local height is at least 2 blocks ahead (to avoid false positives during mining)
+        4. Local height remains above verifier bounds past grace and idle windows
         """
         if not self._enable_verifier_seeds:
+            return
+        if self._local_is_verifier_seed():
+            # Verifier nodes are authoritative anchors and must never auto-rewind
+            # from peer-reported verifier limits.
+            self._sync_verifier_ahead_since = None
             return
         
         max_verifier_height = self._get_max_verifier_height()
@@ -13994,17 +14029,19 @@ class P2PService:
             self._sync_verifier_ahead_since = None
             return
         
-        local_height, local_hash = self._local_head()
+        local_height, _local_hash = self._local_head()
         
         now = time.time()
         if local_height <= max_verifier_height:
             self._sync_verifier_ahead_since = None
             return
 
-        # Allow a brief grace period for temporary +1 tip jitter. If we remain
+        max_ahead = self._max_height_ahead_of_verifier()
+
+        # Allow a brief grace period for temporary near-tip jitter. If we remain
         # above the verifier tip after the grace window, trigger rewind to
         # converge nodes automatically.
-        if local_height <= max_verifier_height + MAX_HEIGHT_AHEAD_OF_VERIFIER:
+        if local_height <= max_verifier_height + max_ahead:
             if self._sync_verifier_ahead_since is None:
                 self._sync_verifier_ahead_since = now
                 return
@@ -14015,8 +14052,13 @@ class P2PService:
             ):
                 return
         else:
-            # 2+ blocks above verifier tip is always suspicious; rewind quickly.
+            # Materially above verifier bound is suspicious; mark ahead start.
             self._sync_verifier_ahead_since = now
+
+        # Only rewind when we've been idle for long enough; this avoids regressing
+        # an actively progressing chain during temporary verifier lag.
+        if not self._verifier_rewind_idle_elapsed(now=now):
+            return
 
         # Local chain is ahead of verifier - this shouldn't happen
         # Log and reset to verifier-constrained height.
@@ -14029,7 +14071,7 @@ class P2PService:
             }
         )
 
-        # Enforce canonical height anchored to verifier tip (plus allowed +1 jitter).
+        # Enforce canonical height anchored to verifier tip (plus configured jitter window).
         # This ensures we actively reorg down any canonical blocks that exceed the
         # verifier-constrained limit instead of only scheduling background sync.
         with contextlib.suppress(Exception):
@@ -14043,7 +14085,7 @@ class P2PService:
 
     def _reorg_canonical_to_verifier_limit(self, max_verifier_height: int) -> bool:
         local_height, _ = self._local_head()
-        max_allowed_height = int(max_verifier_height) + int(MAX_HEIGHT_AHEAD_OF_VERIFIER)
+        max_allowed_height = int(max_verifier_height) + int(self._max_height_ahead_of_verifier())
         if int(local_height or 0) <= max_allowed_height:
             return False
 
@@ -14102,7 +14144,7 @@ class P2PService:
     def force_canonical_reorg(self, *, force: bool = False) -> dict[str, Any]:
         if not force:
             return {"success": False, "error": "--force required"}
-        local_height, local_hash = self._local_head()
+        local_height, _local_hash = self._local_head()
         best = self._select_sync_target_peer()
         if best is None:
             return {"success": False, "error": "no_peer"}
@@ -14122,14 +14164,14 @@ class P2PService:
         This considers:
         1. Direct peer heights (head_height)
         2. Peer's network views (network_best_height) - enabling multi-hop propagation
-        3. Verifier seed constraints: non-verifier peers can only be max 1 block ahead
+        3. Verifier seed constraints: non-verifier peers can only be a few blocks ahead
 
         Only heights from responsive peers (not stale or in cooldown) are considered.
         This prevents unresponsive high-height nodes from blocking chain reorganization
         to active seed nodes.
         
         When verifier seeds are enabled, the network best height is constrained by:
-        - If verifier seeds are present: max(verifier_heights) + 1 (to allow miners)
+        - If verifier seeds are present: max(verifier_heights) + allowance (to absorb jitter)
         - Otherwise: max of all peer heights (backward compatible)
         """
         heights: list[int] = []
@@ -14175,11 +14217,12 @@ class P2PService:
         # Apply verifier seed constraint if enabled and verifier seeds are present
         if self._enable_verifier_seeds and verifier_heights:
             max_verifier_height = max(verifier_heights)
-            # Filter heights to only allow up to MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead of the highest verifier
+            max_ahead = self._max_height_ahead_of_verifier()
+            # Filter heights to only allow up to max_ahead blocks ahead of the highest verifier
             # This ensures the network is anchored to the verifier seeds' highest height, while allowing
-            # miners who just found a block to be ahead by the configured amount (typically 1 block).
-            # Any peer claiming to be more than MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead is ignored.
-            max_allowed_height = max_verifier_height + MAX_HEIGHT_AHEAD_OF_VERIFIER
+            # miners who just found one or a few blocks to be slightly ahead.
+            # Any peer claiming to be more than max_ahead blocks ahead is ignored.
+            max_allowed_height = max_verifier_height + max_ahead
             constrained_heights = [h for h in heights if h <= max_allowed_height]
             
             if constrained_heights:
@@ -14198,12 +14241,12 @@ class P2PService:
                         }
                     )
                 
-                # Always return at least max_allowed_height to allow miners to mine next block
-                # even if no peer is currently at that height
-                return max(constrained_max, max_allowed_height)
+                # Keep a minimal +1 forward target so miners can advance even if peers
+                # have not yet echoed the next block.
+                return max(constrained_max, max_verifier_height + 1)
             else:
-                # If all heights are filtered out, fall back to verifier max + 1
-                return max_allowed_height
+                # If all heights are filtered out, fall back to verifier max + 1.
+                return max_verifier_height + 1
         
         # No verifier constraint, return max height
         return max(heights)
@@ -14239,7 +14282,7 @@ class P2PService:
         - configured_ips: List of configured verifier seed IPs
         - connected_verifiers: List of connected verifier seed peers with their heights
         - max_verifier_height: Maximum height among connected verifiers (None if none connected)
-        - max_allowed_height: Maximum height allowed for mining (max_verifier + 1)
+        - max_allowed_height: Maximum height allowed for mining (max_verifier + allowance)
         - local_height: Current local chain height
         - local_is_verifier_seed: Whether this node is a configured verifier seed
         - can_mine: Whether mining is allowed based on verifier constraints
@@ -14267,16 +14310,17 @@ class P2PService:
                             "head_hash": "0x" + info.head_hash.hex() if info.head_hash else None,
                         })
         
-        max_allowed = None if max_verifier is None else max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER
+        max_ahead = self._max_height_ahead_of_verifier()
+        max_allowed = None if max_verifier is None else max_verifier + max_ahead
         
         # Can mine if:
         # 1. Verifier seeds are disabled, OR
         # 2. No verifiers connected (backward compatible), OR
-        # 3. Local height is at verifier height or within MAX_HEIGHT_AHEAD_OF_VERIFIER blocks ahead
+        # 3. Local height is at verifier height or within max-ahead allowance
         can_mine = (
             not self._enable_verifier_seeds
             or max_verifier is None
-            or local_height <= (max_verifier + MAX_HEIGHT_AHEAD_OF_VERIFIER)
+            or local_height <= (max_verifier + max_ahead)
         )
         
         return {

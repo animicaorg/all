@@ -72,6 +72,7 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     
     # Get status
     status = node.get_verifier_seed_status()
+    max_ahead = int(node._sync_max_height_ahead_of_verifier)
     
     # Validate response structure
     assert isinstance(status, dict)
@@ -79,9 +80,9 @@ def test_get_verifier_seed_status(tmp_path: Path) -> None:
     assert set(status["configured_ips"]) == {"3.12.224.189", "144.126.133.21"}
     assert len(status["connected_verifiers"]) == 2
     assert status["max_verifier_height"] == 105  # Highest verifier
-    assert status["max_allowed_height"] == 106  # Verifier + 1
+    assert status["max_allowed_height"] == 105 + max_ahead
     assert status["local_height"] == 103
-    assert status["can_mine"] is True  # 103 <= 106
+    assert status["can_mine"] is True  # local is within configured allowance
     
     # Verify connected verifiers details
     verifier_remotes = [v["remote"] for v in status["connected_verifiers"]]
@@ -111,21 +112,23 @@ def test_get_verifier_seed_status_cannot_mine(tmp_path: Path) -> None:
         height=100, updated_at=now, source="test"
     )
     
-    # Mock local head at 103 (2 blocks ahead - not allowed)
-    node._local_head = lambda: (103, "0x" + "00" * 32)
+    max_ahead = int(node._sync_max_height_ahead_of_verifier)
+
+    # Mock local head above the configured allowance.
+    node._local_head = lambda: (100 + max_ahead + 1, "0x" + "00" * 32)
     
     # Get status
     status = node.get_verifier_seed_status()
     
     # Validate
     assert status["max_verifier_height"] == 100
-    assert status["max_allowed_height"] == 101
-    assert status["local_height"] == 103
-    assert status["can_mine"] is False  # 103 > 101, not allowed
+    assert status["max_allowed_height"] == 100 + max_ahead
+    assert status["local_height"] == 100 + max_ahead + 1
+    assert status["can_mine"] is False
 
 
 def test_get_verifier_seed_status_at_boundary(tmp_path: Path) -> None:
-    """Test mining allowed at verifier_height + 1 (boundary case)."""
+    """Test mining allowed at verifier_height + configured boundary."""
     deps_sync, deps = _make_deps(tmp_path, "verifier-boundary")
     node = P2PService(
         listen_addrs=[tcp_multiaddr(free_port())],
@@ -145,17 +148,19 @@ def test_get_verifier_seed_status_at_boundary(tmp_path: Path) -> None:
         height=100, updated_at=now, source="test"
     )
     
-    # Mock local head at 101 (exactly at boundary)
-    node._local_head = lambda: (101, "0x" + "00" * 32)
+    max_ahead = int(node._sync_max_height_ahead_of_verifier)
+
+    # Mock local head exactly at the configured boundary.
+    node._local_head = lambda: (100 + max_ahead, "0x" + "00" * 32)
     
     # Get status
     status = node.get_verifier_seed_status()
     
     # Validate - should be allowed
     assert status["max_verifier_height"] == 100
-    assert status["max_allowed_height"] == 101
-    assert status["local_height"] == 101
-    assert status["can_mine"] is True  # 101 == 101, allowed
+    assert status["max_allowed_height"] == 100 + max_ahead
+    assert status["local_height"] == 100 + max_ahead
+    assert status["can_mine"] is True
 
 
 def test_get_verifier_seed_status_no_verifiers(tmp_path: Path) -> None:
