@@ -39,13 +39,29 @@ WALLET_ROUTER_PORT="${WALLET_ROUTER_PORT:-3008}"
 BITGO_INGESTOR_PORT="${BITGO_INGESTOR_PORT:-3002}"
 ANIMICA_INDEXER_PORT="${ANIMICA_INDEXER_PORT:-3009}"
 RISK_SERVICE_PORT="${RISK_SERVICE_PORT:-3010}"
-ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-4000}"
+ADMIN_SERVICE_PORT="${ADMIN_SERVICE_PORT:-3001}"
 FRONTEND_URL="${FRONTEND_URL:-https://trade.animica.org}"
 GOOGLE_CALLBACK_URL="${GOOGLE_CALLBACK_URL:-https://api.animica.io/api/v1/auth/google/callback}"
 AUTH_SERVICE_URL="${AUTH_SERVICE_URL:-http://127.0.0.1:${AUTH_SERVICE_PORT}}"
 
+ANIMICA_ROOT="${ANIMICA_ROOT:-$(cd "$ROOT/.." && pwd)}"
+ADMIN_API_DIR="${ADMIN_API_DIR:-$ANIMICA_ROOT/services/admin-api}"
+ADMIN_WEB_DIR="${ADMIN_WEB_DIR:-$ANIMICA_ROOT/apps/admin-web}"
+ADMIN_API_SCHEMA_SQL="${ADMIN_API_SCHEMA_SQL:-$ROOT/ops/sql/admin-api-bootstrap.sql}"
+ADMIN_API_PORT="${ADMIN_API_PORT:-4000}"
+ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-5173}"
+ADMIN_WEB_URL="${ADMIN_WEB_URL:-http://localhost:${ADMIN_WEB_PORT}}"
+
+SESSION_SECRET="${SESSION_SECRET:-dev-cex-session-secret-change-me-32}"
+ADMIN_API_SESSION_SECRET="${ADMIN_API_SESSION_SECRET:-$SESSION_SECRET}"
+JWT_SECRET="${JWT_SECRET:-dev-admin-jwt-secret-change-me-32chars}"
+CSRF_SECRET="${CSRF_SECRET:-dev-admin-csrf-secret-change-me-32ch}"
+ADMIN_BOOTSTRAP_SECRET="${ADMIN_BOOTSTRAP_SECRET:-$SESSION_SECRET}"
+CONFIG_ENCRYPTION_KEY="${CONFIG_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
+
 info() { echo "[INFO] $*"; }
 ok()   { echo "[OK]   $*"; }
+warn() { echo "[WARN] $*" >&2; }
 err()  { echo "[ERR]  $*" >&2; }
 
 need_cmd() {
@@ -97,8 +113,13 @@ wait_for_port() {
 
 cleanup_old() {
   info "Cleaning old application processes..."
-  pkill -f "tsx watch" || true
-  pkill -f "vite" || true
+  pkill -f "$ROOT/services/.*/tsx/dist/cli.mjs watch src/index.ts" || true
+  pkill -f "$ROOT/services/.*/tsx/dist/cli.mjs src/index.ts" || true
+  pkill -f "$ROOT/node_modules/.pnpm/tsx@.*src/index.ts" || true
+  pkill -f "$ROOT/apps/.*/vite/bin/vite.js" || true
+  pkill -f "$ADMIN_API_DIR/.*/tsx/dist/cli.mjs watch src/index.ts" || true
+  pkill -f "$ADMIN_API_DIR/.*/tsx/dist/cli.mjs src/index.ts" || true
+  pkill -f "$ADMIN_WEB_DIR/.*/vite/bin/vite.js" || true
   sleep 1
 }
 
@@ -112,10 +133,10 @@ start_background_process() {
   : > "$log_file"
   info "Starting $name"
 
-  bash -lc "
+  nohup bash -lc "
     cd '$ROOT'
     exec $cmd
-  " >"$log_file" 2>&1 &
+  " >"$log_file" 2>&1 </dev/null &
 
   echo $! > "$pid_file"
 }
@@ -250,11 +271,12 @@ start_service() {
 
   info "Starting $name on port $port"
 
-  bash -lc "
+  nohup bash -lc "
     cd '$ROOT'
     export PORT='$port'
     export HOST='0.0.0.0'
     export NODE_ENV='${NODE_ENV}'
+    export SESSION_SECRET='${SESSION_SECRET}'
     export NATS_URL='$NATS_URL'
     export REDIS_URL='$REDIS_URL'
     export DATABASE_URL='$DATABASE_URL'
@@ -275,7 +297,7 @@ start_service() {
     export GOOGLE_CALLBACK_URL='${GOOGLE_CALLBACK_URL}'
     export AUTH_SERVICE_URL='${AUTH_SERVICE_URL}'
     $cmd
-  " >"$log_file" 2>&1 &
+  " >"$log_file" 2>&1 </dev/null &
 
   echo $! > "$pid_file"
 
@@ -288,6 +310,122 @@ start_service() {
   }
 
   ok "$name running on $port"
+}
+
+prepare_admin_api_database() {
+  [[ -d "$ADMIN_API_DIR" ]] || {
+    err "Admin API directory not found: $ADMIN_API_DIR"
+    exit 1
+  }
+
+  info "Preparing admin API Prisma schema"
+
+  command -v psql >/dev/null 2>&1 || {
+    err "psql not found; cannot prepare admin API database schema"
+    exit 1
+  }
+
+  [[ -f "$ADMIN_API_SCHEMA_SQL" ]] || {
+    err "Admin API schema bootstrap SQL not found: $ADMIN_API_SCHEMA_SQL"
+    exit 1
+  }
+
+  local schema_log="$LOG_DIR/admin-api-schema.log"
+
+  pnpm --dir "$ADMIN_API_DIR" exec prisma generate --schema ../exchange-api/prisma/schema.prisma
+  if ! PGPASSWORD="$DB_PASSWORD" psql \
+    -v ON_ERROR_STOP=1 \
+    -h "$DB_HOST" \
+    -p "$DB_PORT" \
+    -U "$DB_USER" \
+    -d "$DB_NAME" \
+    -f "$ADMIN_API_SCHEMA_SQL" >"$schema_log" 2>&1; then
+    err "Admin API database schema bootstrap failed"
+    tail -n 80 "$schema_log" || true
+    exit 1
+  fi
+}
+
+start_admin_api() {
+  local name="admin-api"
+  local log_file="$LOG_DIR/$name.log"
+  local pid_file="$PID_DIR/$name.pid"
+
+  prepare_admin_api_database
+
+  : > "$log_file"
+  info "Starting $name on port $ADMIN_API_PORT"
+
+  nohup bash -lc "
+    cd '$ADMIN_API_DIR'
+    export NODE_ENV='${NODE_ENV}'
+    export SERVICE_NAME='admin-api'
+    export LOG_LEVEL='${LOG_LEVEL:-info}'
+    export DATABASE_URL='$DATABASE_URL'
+    export REDIS_URL='$REDIS_URL'
+    export HTTP_PORT='$ADMIN_API_PORT'
+    export HTTP_HOST='0.0.0.0'
+    export JWT_SECRET='$JWT_SECRET'
+    export JWT_EXPIRES_IN='${JWT_EXPIRES_IN:-1h}'
+    export REFRESH_TOKEN_EXPIRES_IN='${REFRESH_TOKEN_EXPIRES_IN:-7d}'
+    export SESSION_SECRET='$ADMIN_API_SESSION_SECRET'
+    export ADMIN_BOOTSTRAP_SECRET='$ADMIN_BOOTSTRAP_SECRET'
+    export CONFIG_ENCRYPTION_KEY='$CONFIG_ENCRYPTION_KEY'
+    export TOTP_ISSUER='${TOTP_ISSUER:-Animica Admin}'
+    export TOTP_WINDOW='${TOTP_WINDOW:-2}'
+    export CSRF_SECRET='$CSRF_SECRET'
+    export ADMIN_WEB_URL='$ADMIN_WEB_URL'
+    export CORS_CREDENTIALS='${CORS_CREDENTIALS:-true}'
+    export EXCHANGE_API_URL='${EXCHANGE_API_URL:-http://localhost:${API_GATEWAY_PORT}}'
+    export MATCHING_ENGINE_URL='${MATCHING_ENGINE_URL:-http://localhost:${MATCHING_ENGINE_PORT}}'
+    export LEDGER_SERVICE_URL='${LEDGER_SERVICE_URL:-http://localhost:${LEDGER_SERVICE_PORT}}'
+    export BITGO_ENV='${BITGO_ENV:-test}'
+    export BITGO_API_URL='${BITGO_API_URL:-${BITGO_BASE_URL:-https://app.bitgo-test.com}}'
+    export BITGO_ACCESS_TOKEN='${BITGO_ACCESS_TOKEN:-}'
+    export ANIMICA_NODE_URL='${ANIMICA_NODE_URL:-$ANIMICA_RPC_URL}'
+    exec ./node_modules/.bin/tsx src/index.ts
+  " >"$log_file" 2>&1 </dev/null &
+
+  echo $! > "$pid_file"
+
+  if wait_for_port 127.0.0.1 "$ADMIN_API_PORT" 30; then
+    ok "$name running on $ADMIN_API_PORT"
+  else
+    err "$name failed to start (port $ADMIN_API_PORT not open)"
+    tail -n 80 "$log_file" || true
+    exit 1
+  fi
+}
+
+start_admin_web() {
+  [[ -d "$ADMIN_WEB_DIR" ]] || {
+    err "Admin web directory not found: $ADMIN_WEB_DIR"
+    exit 1
+  }
+
+  local name="admin-web"
+  local log_file="$LOG_DIR/$name.log"
+  local pid_file="$PID_DIR/$name.pid"
+
+  : > "$log_file"
+  info "Starting $name on port $ADMIN_WEB_PORT"
+
+  nohup bash -lc "
+    cd '$ADMIN_WEB_DIR'
+    export NODE_ENV='${NODE_ENV}'
+    export VITE_ADMIN_API_PROXY_TARGET='http://127.0.0.1:${ADMIN_API_PORT}'
+    exec ./node_modules/.bin/vite --host 0.0.0.0 --port '$ADMIN_WEB_PORT'
+  " >"$log_file" 2>&1 </dev/null &
+
+  echo $! > "$pid_file"
+
+  if wait_for_port 127.0.0.1 "$ADMIN_WEB_PORT" 30; then
+    ok "$name running on $ADMIN_WEB_PORT"
+  else
+    err "$name failed to start (port $ADMIN_WEB_PORT not open)"
+    tail -n 80 "$log_file" || true
+    exit 1
+  fi
 }
 
 main() {
@@ -306,20 +444,30 @@ main() {
   pnpm --filter @cex/db migrate
 
   info "Starting services..."
-  start_service exchange-web        5175                   "pnpm --filter @cex/exchange-web dev -- --host 0.0.0.0 --port 5175"
-  start_service api-gateway         "$API_GATEWAY_PORT"  "pnpm --filter @cex/api-gateway dev"
-  start_service auth-service        "$AUTH_SERVICE_PORT" "pnpm --filter @cex/auth-service dev"
-  start_service matching-engine     "$MATCHING_ENGINE_PORT" "pnpm --filter @cex/matching-engine dev"
-  start_service ledger-service      "$LEDGER_SERVICE_PORT" "pnpm --filter @cex/ledger-service dev"
-  start_service wallet-router       "$WALLET_ROUTER_PORT" "pnpm --filter @cex/wallet-router dev"
-  start_service bitgo-webhook       "$BITGO_INGESTOR_PORT" "pnpm --filter @cex/bitgo-webhook-ingestor dev"
-  start_service animica-indexer     "$ANIMICA_INDEXER_PORT" "pnpm --filter @cex/animica-indexer dev"
-  start_service risk-service        "$RISK_SERVICE_PORT" "pnpm --filter @cex/risk-service dev"
-  start_service withdrawals-service 3011                   "pnpm --filter @cex/withdrawals-service dev"
-  start_service animica-asset       3012                   "pnpm --filter @cex/animica-asset-service dev"
-  start_service admin-service       "$ADMIN_SERVICE_PORT" "pnpm --filter @cex/admin-service dev"
+  start_service exchange-web        5175                   "cd apps/exchange-web && exec ./node_modules/.bin/vite --host 0.0.0.0 --port 5175"
+  start_service api-gateway         "$API_GATEWAY_PORT"  "cd services/api-gateway && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service auth-service        "$AUTH_SERVICE_PORT" "cd services/auth-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service matching-engine     "$MATCHING_ENGINE_PORT" "cd services/matching-engine && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service ledger-service      "$LEDGER_SERVICE_PORT" "cd services/ledger-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service wallet-router       "$WALLET_ROUTER_PORT" "cd services/wallet-router && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service bitgo-webhook       "$BITGO_INGESTOR_PORT" "cd services/bitgo-webhook-ingestor && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service animica-indexer     "$ANIMICA_INDEXER_PORT" "cd services/animica-indexer && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service risk-service        "$RISK_SERVICE_PORT" "cd services/risk-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service withdrawals-service 3011                   "cd services/withdrawals-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service animica-asset       3012                   "cd services/animica-asset-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_service admin-service       "$ADMIN_SERVICE_PORT" "cd services/admin-service && exec ./node_modules/.bin/tsx src/index.ts"
+  start_admin_api
+  start_admin_web
 
   ok "CEX fully started (bare metal mode)"
+  echo
+  echo "Exchange web: http://localhost:5175"
+  echo "Admin web:    http://localhost:$ADMIN_WEB_PORT"
+  echo "Admin API:    http://localhost:$ADMIN_API_PORT/admin/v1/health"
+  echo
+  echo "First admin login:"
+  echo "  Open first-time setup in admin-web and use ADMIN_BOOTSTRAP_SECRET."
+  echo "  If ADMIN_BOOTSTRAP_SECRET is not set, this script uses SESSION_SECRET for local dev."
   echo
   echo "Logs: tail -f $LOG_DIR/*.log"
 }

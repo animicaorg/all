@@ -4,6 +4,9 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT="${ROOT:-$SCRIPT_DIR}"
 PID_DIR="$ROOT/.run-pids"
+ANIMICA_ROOT="${ANIMICA_ROOT:-$(cd "$ROOT/.." && pwd)}"
+ADMIN_API_DIR="${ADMIN_API_DIR:-$ANIMICA_ROOT/services/admin-api}"
+ADMIN_WEB_DIR="${ADMIN_WEB_DIR:-$ANIMICA_ROOT/apps/admin-web}"
 
 mkdir -p "$PID_DIR"
 
@@ -105,7 +108,7 @@ info "PIDs: $PID_DIR"
 for svc in \
   exchange-web api-gateway auth-service matching-engine ledger-service \
   wallet-router bitgo-webhook animica-indexer risk-service \
-  withdrawals-service animica-asset admin-service
+  withdrawals-service animica-asset admin-service admin-api admin-web
 
 do
   stop_pid_file "$svc"
@@ -116,7 +119,12 @@ stop_pid_file "redis"
 stop_pid_file "nats"
 stop_managed_postgres
 
-pkill -f "tsx watch" >/dev/null 2>&1 || true
-pkill -f "vite" >/dev/null 2>&1 || true
+pkill -f "$ROOT/services/.*/tsx/dist/cli.mjs watch src/index.ts" >/dev/null 2>&1 || true
+pkill -f "$ROOT/services/.*/tsx/dist/cli.mjs src/index.ts" >/dev/null 2>&1 || true
+pkill -f "$ROOT/node_modules/.pnpm/tsx@.*src/index.ts" >/dev/null 2>&1 || true
+pkill -f "$ROOT/apps/.*/vite/bin/vite.js" >/dev/null 2>&1 || true
+pkill -f "$ADMIN_API_DIR/.*/tsx/dist/cli.mjs watch src/index.ts" >/dev/null 2>&1 || true
+pkill -f "$ADMIN_API_DIR/.*/tsx/dist/cli.mjs src/index.ts" >/dev/null 2>&1 || true
+pkill -f "$ADMIN_WEB_DIR/.*/vite/bin/vite.js" >/dev/null 2>&1 || true
 
 ok "Exchange stop sequence complete"

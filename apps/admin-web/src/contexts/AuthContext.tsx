@@ -5,9 +5,88 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiClient, type LoginRequest } from '../services/api';
+import { apiClient, type LoginRequest, type AdminRole } from '../services/api';
 
-export type AdminRole = 'SUPERADMIN' | 'OPS' | 'COMPLIANCE' | 'SUPPORT' | 'READONLY';
+export type { AdminRole };
+export type Permission =
+  | 'users:read'
+  | 'users:freeze'
+  | 'kyc:read'
+  | 'kyc:review'
+  | 'markets:read'
+  | 'markets:write'
+  | 'markets:halt'
+  | 'fees:read'
+  | 'fees:write'
+  | 'withdrawals:read'
+  | 'withdrawals:approve'
+  | 'withdrawals:sign'
+  | 'incidents:read'
+  | 'incidents:execute'
+  | 'audit:read'
+  | 'wallets:read'
+  | 'wallets:write';
+
+const rolePermissions: Record<AdminRole, Permission[]> = {
+  SUPERADMIN: [
+    'users:read',
+    'users:freeze',
+    'kyc:read',
+    'kyc:review',
+    'markets:read',
+    'markets:write',
+    'markets:halt',
+    'fees:read',
+    'fees:write',
+    'withdrawals:read',
+    'withdrawals:approve',
+    'withdrawals:sign',
+    'incidents:read',
+    'incidents:execute',
+    'audit:read',
+    'wallets:read',
+    'wallets:write',
+  ],
+  OPS: [
+    'users:read',
+    'users:freeze',
+    'kyc:read',
+    'markets:read',
+    'markets:write',
+    'markets:halt',
+    'fees:read',
+    'fees:write',
+    'withdrawals:read',
+    'withdrawals:approve',
+    'withdrawals:sign',
+    'incidents:read',
+    'incidents:execute',
+    'audit:read',
+    'wallets:read',
+    'wallets:write',
+  ],
+  COMPLIANCE: [
+    'users:read',
+    'users:freeze',
+    'kyc:read',
+    'kyc:review',
+    'withdrawals:read',
+    'withdrawals:approve',
+    'incidents:read',
+    'audit:read',
+  ],
+  SUPPORT: ['users:read', 'kyc:read', 'markets:read', 'withdrawals:read', 'audit:read', 'wallets:read'],
+  READONLY: [
+    'users:read',
+    'kyc:read',
+    'markets:read',
+    'fees:read',
+    'withdrawals:read',
+    'incidents:read',
+    'audit:read',
+    'wallets:read',
+  ],
+};
 
 export interface Admin {
   id: string;
@@ -25,7 +104,7 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (credentials: LoginRequest) => Promise<void>;
   logout: () => Promise<void>;
-  hasPermission: (permission: string) => boolean;
+  hasPermission: (permission: Permission) => boolean;
   hasRole: (...roles: AdminRole[]) => boolean;
 }
 
@@ -76,14 +155,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate('/login');
   };
 
-  const hasPermission = (permission: string): boolean => {
+  const hasPermission = (permission: Permission): boolean => {
     if (!admin) return false;
-    // SUPERADMIN has all permissions
-    if (admin.role === 'SUPERADMIN') return true;
-    
-    // Implement role-permission mapping (simplified)
-    // In production, this should match the backend RBAC
-    return true; // TODO: Implement proper permission checking
+    return rolePermissions[admin.role]?.includes(permission) ?? false;
   };
 
   const hasRole = (...roles: AdminRole[]): boolean => {

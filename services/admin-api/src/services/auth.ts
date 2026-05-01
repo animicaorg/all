@@ -4,6 +4,7 @@
  */
 
 import jwt from 'jsonwebtoken';
+import type { SignOptions } from 'jsonwebtoken';
 import type { PrismaClient, Admin } from '@prisma/client';
 import type { Config } from '../config.js';
 import type { Logger } from '../utils/logger.js';
@@ -101,6 +102,10 @@ export class AuthService {
     });
 
     // Generate JWT access token
+    const jwtOptions: SignOptions = {
+      expiresIn: this.config.JWT_EXPIRES_IN as SignOptions['expiresIn'],
+    };
+
     const accessToken = jwt.sign(
       {
         adminId: admin.id,
@@ -109,7 +114,7 @@ export class AuthService {
         sessionId: session.id,
       },
       this.config.JWT_SECRET,
-      { expiresIn: this.config.JWT_EXPIRES_IN }
+      jwtOptions
     );
 
     this.logger.info({ adminId: admin.id, email: admin.email, role: admin.role }, 'Admin logged in');
@@ -147,6 +152,10 @@ export class AuthService {
     }
 
     // Generate new access token
+    const jwtOptions: SignOptions = {
+      expiresIn: this.config.JWT_EXPIRES_IN as SignOptions['expiresIn'],
+    };
+
     const accessToken = jwt.sign(
       {
         adminId: session.admin.id,
@@ -155,7 +164,7 @@ export class AuthService {
         sessionId: session.id,
       },
       this.config.JWT_SECRET,
-      { expiresIn: this.config.JWT_EXPIRES_IN }
+      jwtOptions
     );
 
     return { accessToken };

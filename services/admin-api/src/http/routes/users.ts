@@ -21,6 +21,10 @@ const freezeUserSchema = z.object({
   reason: z.string().min(10).max(500),
 });
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function createUsersRouter(
   prisma: PrismaClient,
   config: Config,
@@ -42,10 +46,10 @@ export function createUsersRouter(
 
         const where: any = {};
         if (query) {
-          where.OR = [
-            { email: { contains: query, mode: 'insensitive' } },
-            { id: query },
-          ];
+          where.OR = [{ email: { contains: query, mode: 'insensitive' } }];
+          if (isUuid(query)) {
+            where.OR.push({ id: query });
+          }
         }
         if (status) {
           where.status = status;

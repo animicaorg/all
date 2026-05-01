@@ -288,7 +288,7 @@ model User {
   role         UserRole   @default(USER)
   twofaEnabled Boolean    @default(false) @map("twofa_enabled")
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relations
   profile             UserProfile?
@@ -317,7 +317,7 @@ model UserProfile {
   region      String?
   legalName   String?  @map("legal_name")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -372,7 +372,7 @@ model KycCase {
   reviewerUserId String?     @map("reviewer_user_id") @db.Uuid
   notes          String?     @db.Text
   createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   reviewer  User?         @relation("KycReviewer", fields: [reviewerUserId], references: [id])
@@ -545,7 +545,7 @@ model Order {
   avgFillPrice  Decimal     @default(0) @map("avg_fill_price") @db.Decimal(38, 18)
   clientOrderId String?     @map("client_order_id")
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   canceledAt    DateTime?   @map("canceled_at") @db.Timestamptz(3)
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -662,7 +662,7 @@ model BalanceCache {
   accountId String   @id @map("account_id") @db.Uuid
   available Decimal  @default(0) @db.Decimal(38, 18)
   locked    Decimal  @default(0) @db.Decimal(38, 18)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -723,7 +723,7 @@ model Withdrawal {
   idempotencyKey     String?            @unique @map("idempotency_key")
   riskScore          Decimal?           @map("risk_score") @db.Decimal(5, 2)
   createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   assetNetwork AssetNetwork @relation(fields: [assetNetworkId], references: [id], onDelete: Cascade)
@@ -774,7 +774,7 @@ model FeeSchedule {
   effectiveTo           DateTime? @map("effective_to") @db.Timestamptz(3)
   createdBy             String?   @map("created_by") @db.Uuid
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   market  Market? @relation(fields: [marketId], references: [id], onDelete: Cascade)
   asset   Asset?  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -797,7 +797,7 @@ model AuditLog {
   actorType    AuditActorType @map("actor_type")
   action       String
   entityType   String         @map("entity_type")
-  entityId     String?        @map("entity_id") @db.Uuid
+  entityId     String?        @map("entity_id")
   requestId    String?        @map("request_id")
   ip           String?        @db.Inet
   userAgent    String?        @map("user_agent")
@@ -857,7 +857,7 @@ model Candle {
   quoteVolume Decimal?       @map("quote_volume") @db.Decimal(36, 18)
   trades      Int            @default(0)
   createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt   DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   market Market @relation(fields: [marketId], references: [id])
 
@@ -897,7 +897,7 @@ model Admin {
   status              AdminStatus @default(ACTIVE)
   lastLoginAt         DateTime?   @map("last_login_at") @db.Timestamptz(3)
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   sessions             AdminSession[]
   auditLogs            AuditLog[]
@@ -923,7 +923,7 @@ model BitgoConfig {
   enabled                Boolean          @default(false)
   updatedBy              String?          @map("updated_by") @db.Uuid
   createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt              DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   updater Admin? @relation(fields: [updatedBy], references: [id])
 

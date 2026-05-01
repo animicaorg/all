@@ -56,20 +56,28 @@ src/
 
 ## Environment
 
-The dev server proxies `/admin/v1` to `http://localhost:4000` (admin-api).
+The dev server proxies `/admin/v1` to the admin API.
+
+- Default target: `http://localhost:4000`
+- Override target: `VITE_ADMIN_API_PROXY_TARGET=http://127.0.0.1:4000 pnpm dev`
+
+The admin web login does not use the CEX user auth service. It requires `../services/admin-api`
+and an admin account in the admin tables. For the first login, start admin-api with
+`ADMIN_BOOTSTRAP_SECRET` configured, then use the login page's "First-time setup" field with that
+same bootstrap secret. `SESSION_SECRET` signs cookies; it is not the first-admin bootstrap secret.
 
 ## Available Pages
 
 - `/login` - Login page
-- `/` - Dashboard
-- `/users` - User management
-- `/kyc` - KYC review (TODO)
-- `/markets` - Market controls (TODO)
-- `/fees` - Fee management (TODO)
-- `/wallets` - Wallet status (TODO)
-- `/withdrawals` - Withdrawal approvals (TODO)
-- `/incidents` - Incident management (TODO)
-- `/audit` - Audit log viewer (TODO)
+- `/` - Dashboard with live system metrics and recent audit events
+- `/users` - User search, detail, balances, risk flags, freeze/unfreeze
+- `/kyc` - KYC queue review and approval/rejection
+- `/markets` - Market status, controls, and open-order cancellation
+- `/fees` - Fee schedule list, create, edit, archive
+- `/wallets` - Wallet state and asset-network transfer controls
+- `/withdrawals` - Withdrawal queue approval, rejection, retry
+- `/incidents` - Incident creation, status changes, and action log
+- `/audit` - Searchable audit log viewer
 
 ## Security
 

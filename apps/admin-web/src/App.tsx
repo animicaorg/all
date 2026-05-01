@@ -4,7 +4,15 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import UsersPage from './pages/UsersPage';
 import BitgoSettingsPage from './pages/BitgoSettingsPage';
+import KycPage from './pages/KycPage';
+import MarketsPage from './pages/MarketsPage';
+import FeesPage from './pages/FeesPage';
+import WalletsPage from './pages/WalletsPage';
+import WithdrawalsPage from './pages/WithdrawalsPage';
+import IncidentsPage from './pages/IncidentsPage';
+import AuditPage from './pages/AuditPage';
 import Layout from './components/Layout';
+import { ErrorPanel } from './components/AdminUI';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -40,8 +48,15 @@ function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="users" element={<UsersPage />} />
+            <Route path="kyc" element={<KycPage />} />
+            <Route path="markets" element={<MarketsPage />} />
+            <Route path="fees" element={<FeesPage />} />
+            <Route path="wallets" element={<WalletsPage />} />
+            <Route path="withdrawals" element={<WithdrawalsPage />} />
+            <Route path="incidents" element={<IncidentsPage />} />
+            <Route path="audit" element={<AuditPage />} />
             <Route path="settings/bitgo" element={<BitgoSettingsPage />} />
-            <Route path="*" element={<div>Page not found</div>} />
+            <Route path="*" element={<ErrorPanel message="Page not found." />} />
           </Route>
         </Routes>
       </AuthProvider>

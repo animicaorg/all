@@ -12,8 +12,19 @@ import { createApp } from './http/server.js';
 async function main() {
   const config = loadConfig();
   const logger = createLogger(config);
-  
-  logger.info({ config: { ...config, JWT_SECRET: '***', CSRF_SECRET: '***', SESSION_SECRET: '***' } }, 'Starting admin API service');
+
+  const redactedConfig = {
+    ...config,
+    DATABASE_URL: config.DATABASE_URL.replace(/\/\/([^:@/]+):([^@/]+)@/, '//$1:***@'),
+    JWT_SECRET: '***',
+    SESSION_SECRET: '***',
+    ADMIN_BOOTSTRAP_SECRET: '***',
+    CONFIG_ENCRYPTION_KEY: '***',
+    CSRF_SECRET: '***',
+    BITGO_ACCESS_TOKEN: config.BITGO_ACCESS_TOKEN ? '***' : undefined,
+  };
+
+  logger.info({ config: redactedConfig }, 'Starting admin API service');
 
   // Initialize database
   const prisma = createPrismaClient(logger);
