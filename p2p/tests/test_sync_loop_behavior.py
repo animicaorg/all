@@ -329,6 +329,51 @@ async def test_sync_loop_preserves_new_sync_request_raised_during_sync_once(
     assert node._sync_requested is True
 
 
+@pytest.mark.asyncio
+async def test_sync_loop_recovers_after_iteration_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deps_sync, deps = _make_deps(tmp_path, "sync-loop-recovers-after-error")
+    node = P2PService(
+        listen_addrs=[tcp_multiaddr(free_port())],
+        seeds=[],
+        chain_id=deps_sync.chain_id,
+        deps=deps,
+        peerstore_path=str(tmp_path / "sync-loop-recovers-after-error" / "p2p"),
+    )
+    _register_peer(node, "peer:1014")
+
+    calls = 0
+    recovered = asyncio.Event()
+
+    async def _flaky_sync_once(*, force: bool = False):
+        nonlocal calls
+        _ = force
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("sync tick failed")
+        recovered.set()
+        node._running = False
+        return {"started": True}
+
+    async def _fake_schedule_block_requests(*_args, **_kwargs):
+        return 0
+
+    monkeypatch.setattr(node, "_sync_once", _flaky_sync_once)
+    monkeypatch.setattr(
+        node, "_schedule_block_requests", _fake_schedule_block_requests
+    )
+    node._sync_tick_sec = 0.01
+    node._running = True
+
+    await asyncio.wait_for(node._sync_loop(), timeout=1.0)
+
+    assert recovered.is_set()
+    assert calls >= 2
+    assert node._stats["sync_loop_errors"] == 1
+    assert node._sync_last_recovery_action == "sync_loop_restart"
+
+
 def test_aggressive_sync_boost_is_faster_than_normal_tick(tmp_path: Path) -> None:
     deps_sync, deps = _make_deps(tmp_path, "sync-boost-fast")
     node = P2PService(
