@@ -95,7 +95,7 @@ def make_block_chain(count: int) -> list[MockBlock]:
     parent_hash = b'\x00' * 32
     
     for i in range(count):
-        block_hash = bytes([i % 256]) + b'\x00' * 31
+        block_hash = i.to_bytes(32, "big")
         block = MockBlock(
             hash=block_hash,
             parent_hash=parent_hash,
