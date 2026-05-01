@@ -1,15 +1,30 @@
 /**
  * Dashboard Page
- * System overview with health metrics
+ * System overview with live admin metrics.
  */
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Activity, AlertTriangle, ArrowUpDown, FileCheck, ShieldCheck, TrendingUp, Users } from 'lucide-react';
+import { apiClient } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, Users, AlertTriangle, ArrowUpDown } from 'lucide-react';
+import { Button, ErrorPanel, LoadingPanel, PageHeader, Panel, PanelHeader, StatusBadge } from '../components/AdminUI';
+import { errorMessage, formatDateTime, formatNumber, shortId } from '../lib/format';
 
 export default function DashboardPage() {
   const { admin } = useAuth();
   const [showBootstrapNotice, setShowBootstrapNotice] = useState(false);
+
+  const overviewQuery = useQuery({
+    queryKey: ['overview'],
+    queryFn: () => apiClient.getOverview(),
+  });
+
+  const healthQuery = useQuery({
+    queryKey: ['health'],
+    queryFn: () => apiClient.getHealth(),
+  });
 
   useEffect(() => {
     const flag = localStorage.getItem('admin_bootstrap_created');
@@ -19,95 +34,124 @@ export default function DashboardPage() {
     }
   }, []);
 
+  if (overviewQuery.isLoading) {
+    return <LoadingPanel label="Loading dashboard" />;
+  }
+
+  if (overviewQuery.isError || !overviewQuery.data) {
+    return <ErrorPanel message={errorMessage(overviewQuery.error, 'Failed to load dashboard.')} />;
+  }
+
+  const overview = overviewQuery.data.data;
+  const health = healthQuery.data;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Welcome back, {admin?.email}
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description={`Signed in as ${admin?.email ?? 'admin'}`}
+        actions={
+          <Button type="button" variant="secondary" onClick={() => overviewQuery.refetch()}>
+            <Activity className="h-4 w-4" />
+            Refresh
+          </Button>
+        }
+      />
+
       {showBootstrapNotice && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           Admin initialized successfully.
         </div>
       )}
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="System Status"
-          value="Healthy"
-          icon={Activity}
-          color="green"
-          subtitle="All systems operational"
-        />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="Active Users"
-          value="12,543"
+          value={formatNumber(overview.metrics.users.active)}
+          subtitle={`${formatNumber(overview.metrics.users.total)} total accounts`}
           icon={Users}
-          color="blue"
-          subtitle="+12% from last month"
         />
         <MetricCard
-          title="Pending Withdrawals"
-          value="23"
+          title="KYC Queue"
+          value={formatNumber(overview.metrics.kyc.pending)}
+          subtitle="Pending or review cases"
+          icon={FileCheck}
+        />
+        <MetricCard
+          title="Withdrawal Queue"
+          value={formatNumber(overview.metrics.withdrawals.pending)}
+          subtitle="Awaiting risk or approval"
           icon={ArrowUpDown}
-          color="yellow"
-          subtitle="Awaiting approval"
         />
         <MetricCard
-          title="Active Incidents"
-          value="0"
+          title="Open Incidents"
+          value={formatNumber(overview.metrics.incidents.open)}
+          subtitle={`${formatNumber(overview.metrics.markets.halted)} halted markets`}
           icon={AlertTriangle}
-          color="green"
-          subtitle="No active incidents"
         />
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Recent Activity</h2>
-          <div className="space-y-3">
-            <ActivityItem
-              action="User registration"
-              user="user@example.com"
-              time="2 minutes ago"
-            />
-            <ActivityItem
-              action="KYC approved"
-              user="john.doe@example.com"
-              time="15 minutes ago"
-            />
-            <ActivityItem
-              action="Withdrawal approved"
-              user="jane.smith@example.com"
-              time="1 hour ago"
-            />
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+        <Panel className="xl:col-span-2">
+          <PanelHeader title="Recent Audit Events" />
+          <div className="divide-y divide-gray-100">
+            {overview.recentAudit.length === 0 ? (
+              <div className="px-5 py-8 text-sm text-gray-500">No audit events recorded.</div>
+            ) : (
+              overview.recentAudit.map((entry) => (
+                <div key={entry.id} className="grid gap-3 px-5 py-4 text-sm sm:grid-cols-[1fr_auto]">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-gray-950">{entry.action}</span>
+                      <StatusBadge value={entry.actorType} />
+                    </div>
+                    <p className="mt-1 truncate text-gray-500">
+                      {entry.actor} on {entry.entityType} {shortId(entry.entityId)}
+                    </p>
+                  </div>
+                  <span className="text-gray-500">{formatDateTime(entry.createdAt)}</span>
+                </div>
+              ))
+            )}
           </div>
-        </div>
+        </Panel>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h2>
-          <div className="space-y-2">
-            <QuickActionButton href="/kyc">Review KYC Queue (5)</QuickActionButton>
-            <QuickActionButton href="/withdrawals">Approve Withdrawals (23)</QuickActionButton>
-            <QuickActionButton href="/users">Manage Users</QuickActionButton>
-            <QuickActionButton href="/markets">Market Controls</QuickActionButton>
+        <Panel>
+          <PanelHeader title="Service Health" />
+          <div className="space-y-4 p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-500">Admin API</span>
+              <StatusBadge value={health?.status ?? (healthQuery.isError ? 'degraded' : 'checking')} />
+            </div>
+            {health?.checks &&
+              Object.entries(health.checks).map(([name, check]) => (
+                <div key={name} className="flex items-center justify-between border-t border-gray-100 pt-3">
+                  <span className="text-sm capitalize text-gray-600">{name}</span>
+                  <StatusBadge value={check.status} />
+                </div>
+              ))}
+            <div className="grid grid-cols-2 gap-3 border-t border-gray-100 pt-4 text-sm">
+              <Info label="New users 24h" value={formatNumber(overview.metrics.users.new24h)} />
+              <Info label="Trades 24h" value={formatNumber(overview.metrics.trades.last24h)} />
+            </div>
           </div>
-        </div>
+        </Panel>
       </div>
 
-      {/* System Info */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">System Information</h2>
-        <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <SystemInfoItem label="Admin Role" value={admin?.role || 'N/A'} />
-          <SystemInfoItem label="Last Login" value={admin?.lastLoginAt ? new Date(admin.lastLoginAt).toLocaleString() : 'First login'} />
-          <SystemInfoItem label="Session Status" value="Active" />
-        </dl>
-      </div>
+      <Panel>
+        <PanelHeader title="Operational Queues" />
+        <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
+          <QueueLink href="/kyc" icon={FileCheck} label="KYC Review" value={overview.metrics.kyc.pending} />
+          <QueueLink
+            href="/withdrawals"
+            icon={ArrowUpDown}
+            label="Withdrawals"
+            value={overview.metrics.withdrawals.pending}
+          />
+          <QueueLink href="/markets" icon={TrendingUp} label="Markets" value={overview.metrics.markets.total} />
+          <QueueLink href="/audit" icon={ShieldCheck} label="Audit Trail" value={overview.recentAudit.length} />
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -115,69 +159,60 @@ export default function DashboardPage() {
 function MetricCard({
   title,
   value,
-  icon: Icon,
-  color,
   subtitle,
+  icon: Icon,
 }: {
   title: string;
   value: string;
-  icon: any;
-  color: 'green' | 'blue' | 'yellow' | 'red';
   subtitle: string;
+  icon: typeof Activity;
 }) {
-  const colorClasses = {
-    green: 'bg-green-100 text-green-600',
-    blue: 'bg-blue-100 text-blue-600',
-    yellow: 'bg-yellow-100 text-yellow-600',
-    red: 'bg-red-100 text-red-600',
-  };
-
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <div className="flex items-center">
-        <div className={`p-3 rounded-lg ${colorClasses[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
-        <div className="ml-5">
+    <Panel className="p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
           <p className="text-sm font-medium text-gray-500">{title}</p>
-          <p className="text-2xl font-semibold text-gray-900">{value}</p>
-          <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
+          <p className="mt-2 text-3xl font-semibold text-gray-950">{value}</p>
+          <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
+        </div>
+        <div className="rounded-md bg-gray-100 p-3 text-gray-700">
+          <Icon className="h-5 w-5" />
         </div>
       </div>
-    </div>
+    </Panel>
   );
 }
 
-function ActivityItem({ action, user, time }: { action: string; user: string; time: string }) {
-  return (
-    <div className="flex items-start space-x-3 text-sm">
-      <div className="flex-shrink-0 w-2 h-2 mt-2 bg-blue-500 rounded-full" />
-      <div className="flex-1 min-w-0">
-        <p className="text-gray-900">
-          {action} <span className="font-medium">{user}</span>
-        </p>
-        <p className="text-gray-500">{time}</p>
-      </div>
-    </div>
-  );
-}
-
-function QuickActionButton({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      className="block w-full px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 text-center"
-    >
-      {children}
-    </a>
-  );
-}
-
-function SystemInfoItem({ label, value }: { label: string; value: string }) {
+function Info({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-sm font-medium text-gray-500">{label}</dt>
-      <dd className="mt-1 text-sm text-gray-900">{value}</dd>
+      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 font-semibold text-gray-950">{value}</p>
     </div>
+  );
+}
+
+function QueueLink({
+  href,
+  icon: Icon,
+  label,
+  value,
+}: {
+  href: string;
+  icon: typeof Activity;
+  label: string;
+  value: number;
+}) {
+  return (
+    <Link
+      to={href}
+      className="flex items-center justify-between rounded-md border border-gray-200 px-4 py-3 text-sm transition hover:border-gray-300 hover:bg-gray-50"
+    >
+      <span className="flex items-center gap-3 font-medium text-gray-800">
+        <Icon className="h-4 w-4 text-gray-500" />
+        {label}
+      </span>
+      <span className="font-semibold text-gray-950">{formatNumber(value)}</span>
+    </Link>
   );
 }

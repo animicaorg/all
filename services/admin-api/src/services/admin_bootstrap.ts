@@ -43,7 +43,9 @@ export class AdminBootstrapService {
     const { email, password } = credentials;
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(${BOOTSTRAP_LOCK_ID})`;
+      await tx.$queryRaw<{ lockResult: string }[]>`
+        SELECT pg_advisory_xact_lock(${BOOTSTRAP_LOCK_ID})::text AS "lockResult"
+      `;
 
       const adminCount = await tx.admin.count();
       if (adminCount > 0) {

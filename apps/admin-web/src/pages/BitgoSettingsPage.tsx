@@ -50,7 +50,7 @@ export default function BitgoSettingsPage() {
       try {
         wallets = walletsJson ? JSON.parse(walletsJson) : null;
         coins = coinsJson ? JSON.parse(coinsJson) : null;
-      } catch (parseError) {
+      } catch {
         setError('Wallet IDs or coin settings JSON is invalid.');
         setStatus('idle');
         return;

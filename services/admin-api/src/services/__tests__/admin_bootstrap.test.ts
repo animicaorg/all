@@ -52,6 +52,10 @@ describe('AdminBootstrapService', () => {
     expect(result.created).toBe(true);
     expect(state.admins).toHaveLength(1);
     expect(state.auditLogs).toHaveLength(1);
+    expect(prisma.$queryRaw).toHaveBeenCalledOnce();
+    expect(prisma.$queryRaw.mock.calls[0][0].join('')).toContain(
+      'pg_advisory_xact_lock()::text AS "lockResult"'
+    );
   });
 
   it('does not create another admin after bootstrap', async () => {

@@ -23,6 +23,14 @@ import { createAuthRouter } from './routes/auth.js';
 import { createUsersRouter } from './routes/users.js';
 import { createHealthRouter } from './routes/health.js';
 import { createSettingsRouter } from './routes/settings.js';
+import { createOverviewRouter } from './routes/overview.js';
+import { createKycRouter } from './routes/kyc.js';
+import { createMarketsRouter } from './routes/markets.js';
+import { createFeesRouter } from './routes/fees.js';
+import { createWalletsRouter } from './routes/wallets.js';
+import { createWithdrawalsRouter } from './routes/withdrawals.js';
+import { createIncidentsRouter } from './routes/incidents.js';
+import { createAuditRouter } from './routes/audit.js';
 
 export interface ServerDependencies {
   prisma: PrismaClient;
@@ -85,19 +93,19 @@ export function createApp(deps: ServerDependencies): Express {
   app.use('/admin/v1', authMiddleware, rateLimiter);
   
   // Protected route groups
+  app.use('/admin/v1/overview', createOverviewRouter(prisma, config, logger));
   app.use('/admin/v1/users', createUsersRouter(prisma, config, logger));
+  app.use('/admin/v1/kyc', createKycRouter(prisma, config, logger));
+  app.use('/admin/v1/markets', createMarketsRouter(prisma, config, logger));
+  app.use('/admin/v1/fees', createFeesRouter(prisma, config, logger));
+  app.use('/admin/v1/wallets', createWalletsRouter(prisma, config, logger));
+  app.use('/admin/v1/withdrawals', createWithdrawalsRouter(prisma, config, logger));
+  app.use('/admin/v1/incidents', createIncidentsRouter(prisma, config, logger));
+  app.use('/admin/v1/audit', createAuditRouter(prisma, config, logger));
   app.use('/admin/v1/settings', createSettingsRouter(prisma, config, logger));
 
-  // TODO: Add more route groups here
+  // TODO: Add admin management routes here.
   // app.use('/admin/v1/admins', createAdminsRouter(...));
-  // app.use('/admin/v1/users', createUsersRouter(...));
-  // app.use('/admin/v1/kyc', createKycRouter(...));
-  // app.use('/admin/v1/markets', createMarketsRouter(...));
-  // app.use('/admin/v1/fees', createFeesRouter(...));
-  // app.use('/admin/v1/wallets', createWalletsRouter(...));
-  // app.use('/admin/v1/withdrawals', createWithdrawalsRouter(...));
-  // app.use('/admin/v1/incidents', createIncidentsRouter(...));
-  // app.use('/admin/v1/audit', createAuditRouter(...));
 
   // Error handlers (must be last)
   app.use(notFoundHandler);

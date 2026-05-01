@@ -3,10 +3,10 @@
  * Pino logger with structured logging
  */
 
-import pino from 'pino';
+import { pino, type Logger as PinoLogger } from 'pino';
 import type { Config } from '../config.js';
 
-export type Logger = pino.Logger;
+export type Logger = PinoLogger;
 
 export function createLogger(config: Config): Logger {
   const isDevelopment = config.NODE_ENV === 'development';
@@ -24,7 +24,7 @@ export function createLogger(config: Config): Logger {
         }
       : undefined,
     formatters: {
-      level: (label) => {
+      level: (label: string) => {
         return { level: label };
       },
     },

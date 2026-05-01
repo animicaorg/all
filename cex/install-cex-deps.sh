@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="${ROOT:-$HOME/animica/cex}"
+ANIMICA_ROOT="${ANIMICA_ROOT:-$(cd "$ROOT/.." && pwd)}"
 
 echo "[INFO] Installing system + Node dependencies for Animica CEX"
 cd "$ROOT"
@@ -44,3 +45,11 @@ if [ ! -d "$ROOT/apps/exchange-web/node_modules" ]; then
 fi
 
 echo "[OK] All dependencies installed successfully"
+
+echo "[INFO] Installing admin web/API workspace dependencies..."
+pnpm --dir "$ANIMICA_ROOT" install
+
+echo "[INFO] Generating admin API Prisma client..."
+pnpm --dir "$ANIMICA_ROOT/services/admin-api" exec prisma generate --schema ../exchange-api/prisma/schema.prisma
+
+echo "[OK] Admin web/API dependencies installed successfully"
