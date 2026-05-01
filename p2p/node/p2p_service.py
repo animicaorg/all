@@ -4621,7 +4621,7 @@ class P2PService:
     def _canonical_head_for_status(self) -> tuple[int, Optional[str]]:
         local_height, _local_hash = self._local_head()
         local_height = int(local_height or 0)
-        local_hash0x = self._canon_hash0x(local_hash)
+        local_hash0x = self._canon_hash0x(_local_hash)
         try:
             bdb = self._block_db()
         except Exception:
@@ -12362,7 +12362,7 @@ class P2PService:
                 ):
                     active = self._peer_by_remote(self._sync_active_block_peer)
                     if active is not None and not self._is_trusted_peer(active):
-                        self._drop_peer(active, reason="stall_no_inflight")
+                        await self._drop_peer(active, reason="stall_no_inflight")
                         trusted = [p for p in self._peers.values() if self._is_trusted_peer(p)]
                         if trusted:
                             self._sync_active_block_peer = trusted[0].remote
@@ -14151,7 +14151,7 @@ class P2PService:
         best_height = self._peer_sync_head_height(best, now=time.time())
         if best_height <= int(local_height or 0):
             return {"success": True, "changed": False, "local_height": local_height, "peer_height": best_height}
-        self.invalidate_block(local_hash or "")
+        self.invalidate_block(_local_hash or "")
         self.rewind_to_common_ancestor([])
         self._sync_active_block_peer = best.remote
         self._sync_kick(reason="force_canonical", aggressive=True)
