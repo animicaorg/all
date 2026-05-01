@@ -1423,6 +1423,7 @@ class P2PService:
             "blocks_imported": 0,
             "blocks_rejected": 0,
             "sync_rounds": 0,
+            "sync_loop_errors": 0,
             "p2p_peers_rejected_genesis_mismatch": 0,
             "cache_hits": 0,
             "cache_misses": 0,
@@ -5217,6 +5218,48 @@ class P2PService:
         if network_best_height is None:
             return False
         return int(network_best_height) > int(head_height or 0)
+
+    def _handle_sync_loop_exception(self, exc: BaseException) -> None:
+        now = time.time()
+        self._stats["sync_loop_errors"] = self._stats.get("sync_loop_errors", 0) + 1
+        self._sync_last_block_error = f"sync_loop_error:{exc.__class__.__name__}"
+        self._sync_last_block_error_at = now
+        self._sync_last_recovery_action = "sync_loop_restart"
+        self._sync_last_recovery_at = now
+        self._sync_last_recovery_reason = repr(exc)
+        self._sync_active_header_peer = None
+        self._sync_active_block_peer = None
+
+        for peer in list(self._peers.values()):
+            if peer.pending_headers is not None and not peer.pending_headers.done():
+                with contextlib.suppress(Exception):
+                    peer.pending_headers.set_result(None)
+            peer.pending_headers = None
+            peer.pending_header_request_id = None
+
+        self._sync_inflight_header_requests.clear()
+        self._sync_inflight_headers = 0
+        for h in list(self._sync_inflight_blocks.keys()):
+            if self._has_block(h):
+                continue
+            if h not in self._sync_block_queue_set:
+                self._sync_block_queue.appendleft(h)
+                self._sync_block_queue_set.add(h)
+                height_hint = self._block_height_hint(h)
+                if height_hint is not None:
+                    self._sync_block_queue_heights[h] = height_hint
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+        self._sync_inflight_block_requests.clear()
+        self._sync_kick(reason="sync_loop_exception", aggressive=True)
+        log.exception(
+            "Sync loop iteration failed; restarting",
+            extra={
+                "error_class": exc.__class__.__name__,
+                "queued_blocks": len(self._sync_block_queue),
+                "peers": len(self._peers),
+            },
+        )
 
     async def _startup_sync_kick(self) -> None:
         deadline = time.time() + 10.0
@@ -12236,6 +12279,21 @@ class P2PService:
             return result
 
     async def _sync_loop(self) -> None:
+        while self._running:
+            try:
+                await self._sync_loop_forever()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self._handle_sync_loop_exception(exc)
+                try:
+                    await asyncio.sleep(
+                        min(1.0, max(float(self._sync_tick_sec), 0.05))
+                    )
+                except asyncio.CancelledError:
+                    return
+
+    async def _sync_loop_forever(self) -> None:
         try:
             while self._running:
                 if not self._sync_enabled:
