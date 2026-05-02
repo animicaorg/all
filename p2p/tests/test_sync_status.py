@@ -1625,6 +1625,52 @@ def test_wrong_chain_peer_is_ineligible(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_disconnected_cached_header_cursor_restarts_from_local_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node, deps_sync = _make_service(tmp_path, "disconnected-cache-cursor")
+    genesis = deps_sync.header_by_number(0)
+    assert genesis is not None
+    block1 = _make_child_block_from_header(genesis)
+    block2 = _make_child_block_from_header(block1.header)
+    block3 = _make_child_block_from_header(block2.header)
+    cached_header = _sync_header_from_block(block3)
+    node._sync_headers[cached_header.hash] = cached_header
+    node._sync_best_header = cached_header
+    node._sync_block_queue.append(cached_header.hash)
+    node._sync_block_queue_set.add(cached_header.hash)
+    node._sync_block_queue_heights[cached_header.hash] = int(cached_header.height)
+
+    locator = node._build_headers_locator()
+    assert locator[0] == node._genesis_hash()
+
+    peer = _register_peer(node, "peer-disconnected-cache:0")
+    _setup_peer_hello(
+        node,
+        peer,
+        head_height=int(cached_header.height),
+        head_hash=cached_header.hash,
+    )
+
+    fetched = False
+
+    async def _fake_fetch_headers(_peer: _PeerState) -> list[HeaderCompact]:
+        nonlocal fetched
+        fetched = True
+        return []
+
+    monkeypatch.setattr(node, "_fetch_headers", _fake_fetch_headers)
+
+    await node._sync_once(force=True)
+
+    assert fetched is True
+    assert node._sync_best_header is not None
+    assert node._sync_best_header.height == 0
+    assert not node._sync_block_queue
+    assert not node._sync_block_queue_set
+
+
+@pytest.mark.asyncio
 async def test_phantom_cursor_reset_clears_inflight_and_restarts(tmp_path: Path) -> None:
     node, deps_sync = _make_service(tmp_path, "phantom-reset")
     block = _make_child_block(deps_sync)
