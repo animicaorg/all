@@ -9518,6 +9518,85 @@ class P2PService:
         if header.height == best.height and header.hash > best.hash:
             self._sync_best_header = header
 
+    def _header_extends_anchor(
+        self,
+        header: _SyncHeader,
+        *,
+        anchor_height: int,
+        anchor_hash: Optional[bytes],
+    ) -> bool:
+        if int(header.height) != int(anchor_height) + 1:
+            return False
+        if anchor_hash is not None and header.parent_hash == anchor_hash:
+            return True
+        if int(anchor_height) == 0:
+            genesis_hashes = {
+                h
+                for h in (
+                    anchor_hash,
+                    self._genesis_header_hash(),
+                    self._genesis_block_hash(),
+                    self._genesis_hash(),
+                )
+                if h
+            }
+            return header.parent_hash in genesis_hashes
+        return False
+
+    def _next_header_after_anchor(
+        self,
+        *,
+        anchor_height: int,
+        anchor_hash: Optional[bytes],
+    ) -> Optional[_SyncHeader]:
+        expected_height = int(anchor_height) + 1
+        for header in self._sync_headers.values():
+            if int(header.height) != expected_height:
+                continue
+            if self._header_extends_anchor(
+                header,
+                anchor_height=int(anchor_height),
+                anchor_hash=anchor_hash,
+            ):
+                return header
+        return None
+
+    def _has_expected_block_work(
+        self,
+        *,
+        expected_height: int,
+    ) -> bool:
+        for block_hash in self._sync_block_queue:
+            if self._block_height_hint(block_hash) == int(expected_height):
+                return True
+        for block_hash in self._sync_inflight_blocks:
+            if self._block_height_hint(block_hash) == int(expected_height):
+                return True
+        for block_hash in self._sync_block_buffer:
+            if self._block_height_hint(block_hash) == int(expected_height):
+                return True
+        return False
+
+    def _sync_cursor_disconnected_from_local_head(
+        self,
+        *,
+        head_height: int,
+        head_hash: Optional[bytes],
+    ) -> bool:
+        if self._sync_best_header is None:
+            return False
+        if int(self._sync_best_header.height) <= int(head_height):
+            return False
+        expected_height = int(head_height) + 1
+        if self._next_header_after_anchor(
+            anchor_height=int(head_height),
+            anchor_hash=head_hash,
+        ):
+            return False
+        if self._has_expected_block_work(expected_height=expected_height):
+            return False
+        return True
+
     def _canonical_hash_at_height(self, height: int) -> Optional[bytes]:
         try:
             bdb = self._block_db()
@@ -14568,7 +14647,11 @@ class P2PService:
             self._sync_best_header is not None
             and not self._has_header(self._sync_best_header.hash)
         )
-        if not head_missing and not best_missing:
+        best_disconnected = self._sync_cursor_disconnected_from_local_head(
+            head_height=int(head_height or 0),
+            head_hash=head_bytes,
+        )
+        if not head_missing and not best_missing and not best_disconnected:
             return
         recovered = None
         if head_bytes is None and head_height >= 0:
@@ -14578,8 +14661,11 @@ class P2PService:
         if recovered is not None:
             head_height, head_bytes = recovered
         log.warning(
-            "sync: reset cursor due to missing head_hash in db",
+            "sync: reset cursor to canonical head",
             extra={
+                "reason": "disconnected_best_header"
+                if best_disconnected
+                else "missing_header",
                 "head_height": head_height,
                 "head_hash": head_hash,
                 "best_header_height": self._sync_best_header.height if self._sync_best_header else None,
@@ -15128,6 +15214,8 @@ class P2PService:
             if h is None:
                 continue
             self._sync_block_queue_heights[h] = int(height)
+        if state.headers or state.best_header_hash or state.block_queue:
+            self._ensure_sync_cursor_integrity()
 
     def _build_sync_cache_state(self) -> SyncCacheState:
         head_height, _ = self._local_head()
@@ -15323,7 +15411,14 @@ class P2PService:
         start_hash = head_hash
         start_height = head_height
 
-        if self._sync_best_header and self._sync_best_header.height > head_height:
+        if (
+            self._sync_best_header
+            and self._sync_best_header.height > head_height
+            and not self._sync_cursor_disconnected_from_local_head(
+                head_height=int(head_height),
+                head_hash=head_hash,
+            )
+        ):
             start_hash = self._sync_best_header.hash
             start_height = self._sync_best_header.height
 
