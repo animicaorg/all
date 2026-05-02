@@ -4792,6 +4792,120 @@ class P2PService:
         
         return result
 
+    def _highest_available_block_height(self) -> Optional[int]:
+        heights: list[int] = []
+        network_best_height = self._network_best_height()
+        if network_best_height is not None:
+            heights.append(int(network_best_height))
+        now = time.time()
+        eligible_peers, _ineligible = self._eligible_block_peers()
+        for peer in eligible_peers:
+            if not peer.hello_done.is_set():
+                continue
+            peer_height = self._peer_sync_head_height(peer, now=now)
+            if peer_height > 0:
+                heights.append(int(peer_height))
+        return max(heights) if heights else None
+
+    def _drop_unserviceable_header_target(
+        self, *, reason: str, local_height: int
+    ) -> bool:
+        if self._sync_best_header is None:
+            return False
+        local_height = int(local_height or 0)
+        best_header_height = int(self._sync_best_header.height)
+        if best_header_height <= local_height:
+            return False
+        available_height = self._highest_available_block_height()
+        if available_height is None or int(available_height) > local_height:
+            return False
+
+        removed_headers = 0
+        for header_hash, header in list(self._sync_headers.items()):
+            if int(header.height) > local_height:
+                self._sync_headers.pop(header_hash, None)
+                self._sync_header_sources.pop(header_hash, None)
+                self._sync_header_votes.pop(header_hash, None)
+                removed_headers += 1
+        removed_queued_blocks = len(self._sync_block_queue)
+        removed_buffered_blocks = len(self._sync_block_buffer)
+
+        self._sync_header_queue.clear()
+        self._sync_header_retry_queue.clear()
+        self._sync_inflight_header_requests.clear()
+        self._sync_inflight_headers = 0
+        self._sync_block_queue.clear()
+        self._sync_block_queue_set.clear()
+        self._sync_block_queue_heights.clear()
+        self._sync_block_retry_counts.clear()
+        self._sync_block_buffer.clear()
+        self._sync_inflight_blocks.clear()
+        self._sync_inflight_peers.clear()
+        self._sync_inflight_block_requests.clear()
+        self._sync_duplicate_header_ranges.clear()
+        self._sync_zero_accept_batches = 0
+        self._sync_zero_accept_last_at = 0.0
+        self._sync_last_headers_accepted_count = 0
+        self._sync_last_headers_discarded_count = 0
+        self._sync_last_headers_discard_reason_counts = {}
+        self._sync_last_queue_depth = 0
+        self._sync_next_block_stable_hash = None
+        self._sync_next_block_stable_since = 0.0
+        self._sync_active_header_peer = None
+        self._sync_active_block_peer = None
+        self._sync_block_stalled_reason = None
+        self._sync_last_block_error = None
+        self._sync_last_block_error_at = None
+        self._sync_last_block_error_peer = None
+        if self._sync_last_header_error in {
+            "duplicate_headers",
+            "overlap_headers",
+            "no_progress_headers",
+            "headers_empty",
+            "stale_network_best",
+            "peer_behind",
+        }:
+            self._sync_last_header_error = None
+            self._sync_last_header_error_at = None
+            self._sync_last_header_error_peer = None
+        self._sync_best_header = None
+        _head_height, head_hash_hex = self._local_head()
+        head_hash = self._parse_hash_bytes(head_hash_hex)
+        if head_hash is not None:
+            head_header = self._sync_header_by_hash(head_hash)
+            if head_header is not None:
+                self._sync_best_header = head_header
+        if (
+            self._sync_target_tip is not None
+            and int(self._sync_target_tip.height) > int(available_height)
+        ):
+            self._sync_target_tip = None
+        if (
+            self._sync_target_height is not None
+            and int(self._sync_target_height) > max(local_height, int(available_height))
+        ):
+            self._update_sync_target_height(
+                None, reason="drop_unserviceable_header_target"
+            )
+        self._sync_recovery_attempts += 1
+        self._sync_last_recovery_action = "drop_unserviceable_header_target"
+        self._sync_last_recovery_at = time.time()
+        self._sync_last_recovery_reason = reason
+        self._sync_wakeup.set()
+        log.warning(
+            "Dropped unserviceable sync header target",
+            extra={
+                "reason": reason,
+                "local_height": local_height,
+                "best_header_height": best_header_height,
+                "available_block_height": int(available_height),
+                "removed_headers": removed_headers,
+                "removed_queued_blocks": removed_queued_blocks,
+                "removed_buffered_blocks": removed_buffered_blocks,
+            },
+        )
+        return True
+
     async def _recover_missing_block(
         self,
         *,
@@ -4866,6 +4980,11 @@ class P2PService:
         # Discard blocks from ineligible peers before attempting recovery
         discarded = self._discard_blocks_from_ineligible_peers()
         local_height, _ = self._local_head()
+        if self._drop_unserviceable_header_target(
+            reason=reason, local_height=int(local_height or 0)
+        ):
+            self._last_rotation_at = now
+            return
         target_height = self._known_sync_target_height()
         header_recovery_enqueued = False
         cleared_header_penalties = 0

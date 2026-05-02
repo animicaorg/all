@@ -24,6 +24,7 @@ from p2p.errors import P2PError
 from p2p.node.p2p_service import (
     P2PService,
     PeerMisbehavior,
+    STALL_VERIFY_BACKPRESSURE,
     _PeerState,
     _SyncBlock,
     _SyncHeader,
@@ -1540,6 +1541,57 @@ def test_sync_status_synced_invariants(tmp_path: Path) -> None:
     assert snap.in_flight_blocks == 0
     assert snap.best_header_height <= snap.head_height
     assert snap.best_block_height == snap.head_height
+
+
+def test_stall_recovery_drops_unserviceable_header_target(
+    tmp_path: Path,
+) -> None:
+    node, _deps_sync = _make_service(tmp_path, "drop-unserviceable-header-target")
+    peer = _register_peer(node, "3.146.254.50:30333")
+    _setup_peer_hello(node, peer, head_height=98)
+    peer.hello["network_best_height"] = 98
+    node._update_peer_head_table(peer, height=98, source="test", head_hash=None)
+
+    next_hash = b"\x81" * 32
+    stale_tip_hash = b"\xff" * 32
+    node._local_head = lambda: (128, None)  # type: ignore[method-assign]
+    node._sync_headers[next_hash] = _SyncHeader(
+        hash=next_hash,
+        parent_hash=b"\x80" * 32,
+        height=129,
+        theta_micro=0,
+        timestamp=1,
+    )
+    node._sync_headers[stale_tip_hash] = _SyncHeader(
+        hash=stale_tip_hash,
+        parent_hash=b"\xfe" * 32,
+        height=512,
+        theta_micro=0,
+        timestamp=2,
+    )
+    node._sync_best_header = node._sync_headers[stale_tip_hash]
+    node._sync_target_height = 512
+    node._sync_block_queue.append(next_hash)
+    node._sync_block_queue_set.add(next_hash)
+    node._sync_block_queue_heights[next_hash] = 129
+    node._sync_header_queue.append((peer.remote, []))
+    node._sync_last_header_error = "duplicate_headers"
+    node._sync_last_headers_discard_reason_counts = {"duplicate_headers": 512}
+    node._sync_block_stalled_reason = STALL_VERIFY_BACKPRESSURE
+    node._sync_last_block_error = STALL_VERIFY_BACKPRESSURE
+
+    node._handle_sync_stall(reason=STALL_VERIFY_BACKPRESSURE)
+
+    assert node._sync_last_recovery_action == "drop_unserviceable_header_target"
+    assert node._sync_best_header is None
+    assert node._sync_target_height is None
+    assert not node._sync_headers
+    assert not node._sync_block_queue
+    assert not node._sync_header_queue
+    assert node._sync_block_stalled_reason is None
+    assert node._sync_last_block_error is None
+    assert node._sync_last_header_error is None
+    assert node._sync_last_headers_discard_reason_counts == {}
 
 
 def test_sync_status_not_synced_with_inflight_headers(tmp_path: Path) -> None:
