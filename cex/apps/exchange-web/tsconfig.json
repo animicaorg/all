@@ -6,6 +6,7 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    "types": ["react", "react-dom"],
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

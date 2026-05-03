@@ -4,6 +4,7 @@ import { NatsConnection } from "nats";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { jsonCodec, subjects } from "@cex/common";
+import { createRequireAuth } from "./authenticated.js";
 
 const router = Router();
 
@@ -18,23 +19,8 @@ const createOrderSchema = z.object({
   idempotencyKey: z.string().optional(),
 });
 
-// Simple auth middleware - in production, use proper JWT/session auth
-// ⚠️ SECURITY WARNING: This is NOT secure for production!
-// The x-user-id header can be spoofed by any client.
-// TODO: Replace with proper JWT authentication before production deployment
-function requireAuth(req: any, res: any, next: any) {
-  // For now, mock auth - check for session/token
-  const userId = req.headers["x-user-id"] || req.session?.userId;
-  
-  if (!userId) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  
-  req.userId = userId;
-  next();
-}
-
-export function createOrdersRouter(pgPool: Pool, nats: NatsConnection): any {
+export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServiceUrl: string): any {
+  const requireAuth = createRequireAuth(authServiceUrl);
   /**
    * POST /orders - Create a new order
    */
@@ -258,7 +244,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection): any {
           id: row.id,
           clientOrderId: row.client_order_id,
           symbol: row.symbol,
-          side: row.side,
+          side: String(row.side).toLowerCase(),
           type: row.type,
           price: row.price ? parseFloat(row.price) : undefined,
           quantity: parseFloat(row.quantity),
@@ -326,7 +312,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection): any {
           id: row.id,
           orderId: row.order_id,
           symbol: row.symbol,
-          side: row.side,
+          side: String(row.side).toLowerCase(),
           price: parseFloat(row.price),
           quantity: parseFloat(row.quantity),
           fee: row.role === "maker" ? parseFloat(row.maker_fee) : parseFloat(row.taker_fee),

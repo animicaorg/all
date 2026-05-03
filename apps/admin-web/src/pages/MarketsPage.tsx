@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, PauseCircle, PlayCircle, Search, SlidersHorizontal } from 'lucide-react';
-import { apiClient, type Market } from '../services/api';
+import { Ban, PauseCircle, PlayCircle, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import { apiClient, type Market, type MarketAssetOption } from '../services/api';
 import {
   Button,
   EmptyState,
@@ -16,6 +16,56 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { errorMessage, formatDateTime, formatDecimal, formatNumber } from '../lib/format';
 
+const defaultMarketForm = {
+  symbol: '',
+  baseAsset: '',
+  quoteAsset: 'USDT',
+  priceTick: '0.01',
+  sizeStep: '0.001',
+  minOrderSize: '0.001',
+  makerFeeBps: '10',
+  takerFeeBps: '20',
+  feeAsset: 'USDT',
+  status: 'ONLINE' as Market['status'],
+};
+
+type MarketFormState = typeof defaultMarketForm;
+
+function preferredBaseAsset(assets: MarketAssetOption[]): string {
+  const symbols = new Set(assets.map((asset) => asset.symbol));
+  if (symbols.has('ANM')) return 'ANM';
+  return assets.find((asset) => !['USDT', 'USDC'].includes(asset.symbol))?.symbol ?? assets[0]?.symbol ?? '';
+}
+
+function preferredQuoteAsset(assets: MarketAssetOption[], baseAsset: string): string {
+  const symbols = new Set(assets.map((asset) => asset.symbol));
+  if (symbols.has('USDT') && baseAsset !== 'USDT') return 'USDT';
+  if (symbols.has('USDC') && baseAsset !== 'USDC') return 'USDC';
+  return assets.find((asset) => asset.symbol !== baseAsset)?.symbol ?? '';
+}
+
+function withAssetDefaults(form: MarketFormState, assets: MarketAssetOption[]): MarketFormState {
+  if (assets.length === 0) return form;
+
+  const symbols = new Set(assets.map((asset) => asset.symbol));
+  const baseAsset = symbols.has(form.baseAsset) ? form.baseAsset : preferredBaseAsset(assets);
+  const quoteAsset =
+    symbols.has(form.quoteAsset) && form.quoteAsset !== baseAsset
+      ? form.quoteAsset
+      : preferredQuoteAsset(assets, baseAsset);
+  const feeAsset = symbols.has(form.feeAsset) ? form.feeAsset : quoteAsset || baseAsset;
+
+  if (baseAsset === form.baseAsset && quoteAsset === form.quoteAsset && feeAsset === form.feeAsset) return form;
+  return { ...form, baseAsset, quoteAsset, feeAsset };
+}
+
+function assetLabel(asset: MarketAssetOption): string {
+  const parts = [asset.name !== asset.symbol ? asset.name : '', asset.sources.join('/')]
+    .filter(Boolean)
+    .join(' - ');
+  return parts ? `${asset.symbol} - ${parts}` : asset.symbol;
+}
+
 export default function MarketsPage() {
   const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
@@ -24,6 +74,7 @@ export default function MarketsPage() {
   const [page, setPage] = useState(1);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [reason, setReason] = useState('');
+  const [marketForm, setMarketForm] = useState(defaultMarketForm);
   const [controls, setControls] = useState({
     tradingEnabled: true,
     depositsEnabled: true,
@@ -45,6 +96,16 @@ export default function MarketsPage() {
     queryFn: () => apiClient.listMarkets(params),
   });
 
+  const assetsQuery = useQuery({
+    queryKey: ['market-assets'],
+    queryFn: () => apiClient.listMarketAssets(),
+  });
+
+  const assetOptions = useMemo(
+    () => (assetsQuery.data?.data.assets ?? []).filter((asset) => asset.enabled),
+    [assetsQuery.data]
+  );
+
   useEffect(() => {
     if (!selectedMarket) return;
     setControls({
@@ -55,9 +116,29 @@ export default function MarketsPage() {
     setReason(selectedMarket.marketControl?.reason ?? '');
   }, [selectedMarket]);
 
+  useEffect(() => {
+    setMarketForm((prev) => withAssetDefaults(prev, assetOptions));
+  }, [assetOptions]);
+
   const refreshMarkets = async () => {
     await queryClient.invalidateQueries({ queryKey: ['markets'] });
   };
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      apiClient.createMarket({
+        ...marketForm,
+        baseAsset: marketForm.baseAsset.trim().toUpperCase(),
+        quoteAsset: marketForm.quoteAsset.trim().toUpperCase(),
+        symbol: marketForm.symbol.trim() ? marketForm.symbol.trim().toUpperCase() : undefined,
+        feeAsset: marketForm.feeAsset.trim() ? marketForm.feeAsset.trim().toUpperCase() : undefined,
+      }),
+    onSuccess: async (response) => {
+      setMarketForm(withAssetDefaults(defaultMarketForm, assetOptions));
+      setSelectedMarket(response.data.market);
+      await refreshMarkets();
+    },
+  });
 
   const statusMutation = useMutation({
     mutationFn: ({ id, nextStatus }: { id: string; nextStatus: Market['status'] }) =>
@@ -81,10 +162,169 @@ export default function MarketsPage() {
 
   const markets = marketsQuery.data?.data.markets ?? [];
   const pagination = marketsQuery.data?.data.pagination;
+  const hasAssetOptions = assetOptions.length > 0;
+  const createDisabled =
+    !hasPermission('markets:write') ||
+    createMutation.isPending ||
+    assetsQuery.isLoading ||
+    !hasAssetOptions ||
+    !marketForm.baseAsset ||
+    !marketForm.quoteAsset ||
+    marketForm.baseAsset === marketForm.quoteAsset;
+  const tradingEnabled = selectedMarket
+    ? (selectedMarket.marketControl?.tradingEnabled ?? selectedMarket.status === 'ONLINE')
+    : false;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Markets" description="Trading status, market controls, and open-order intervention." />
+
+      <Panel>
+        <PanelHeader title="Create Trading Pair" />
+        <form
+          className="grid gap-4 p-5 lg:grid-cols-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createMutation.mutate();
+          }}
+        >
+          <Field label="Base Asset">
+            <select
+              value={marketForm.baseAsset}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, baseAsset: event.target.value }))}
+              className="field-input"
+              disabled={assetsQuery.isLoading || !hasAssetOptions}
+              required
+            >
+              <option value="" disabled>
+                {assetsQuery.isLoading ? 'Loading assets' : 'Select asset'}
+              </option>
+              {assetOptions.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol} disabled={asset.symbol === marketForm.quoteAsset}>
+                  {assetLabel(asset)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Quote Asset">
+            <select
+              value={marketForm.quoteAsset}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, quoteAsset: event.target.value }))}
+              className="field-input"
+              disabled={assetsQuery.isLoading || !hasAssetOptions}
+              required
+            >
+              <option value="" disabled>
+                {assetsQuery.isLoading ? 'Loading assets' : 'Select asset'}
+              </option>
+              {assetOptions.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol} disabled={asset.symbol === marketForm.baseAsset}>
+                  {assetLabel(asset)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Symbol">
+            <input
+              value={marketForm.symbol}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, symbol: event.target.value }))}
+              placeholder="BTC-USDT"
+              className="field-input uppercase"
+            />
+          </Field>
+          <Field label="Initial Status">
+            <select
+              value={marketForm.status}
+              onChange={(event) =>
+                setMarketForm((prev) => ({ ...prev, status: event.target.value as Market['status'] }))
+              }
+              className="field-input"
+            >
+              <option value="ONLINE">Online</option>
+              <option value="HALTED">Halted</option>
+            </select>
+          </Field>
+          <Field label="Price Tick">
+            <input
+              value={marketForm.priceTick}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, priceTick: event.target.value }))}
+              inputMode="decimal"
+              className="field-input"
+              required
+            />
+          </Field>
+          <Field label="Size Step">
+            <input
+              value={marketForm.sizeStep}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, sizeStep: event.target.value }))}
+              inputMode="decimal"
+              className="field-input"
+              required
+            />
+          </Field>
+          <Field label="Min Order Size">
+            <input
+              value={marketForm.minOrderSize}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, minOrderSize: event.target.value }))}
+              inputMode="decimal"
+              className="field-input"
+              required
+            />
+          </Field>
+          <Field label="Fee Asset">
+            <select
+              value={marketForm.feeAsset}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, feeAsset: event.target.value }))}
+              className="field-input"
+              disabled={assetsQuery.isLoading || !hasAssetOptions}
+              required
+            >
+              <option value="" disabled>
+                {assetsQuery.isLoading ? 'Loading assets' : 'Select asset'}
+              </option>
+              {assetOptions.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol}>
+                  {assetLabel(asset)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Maker Bps">
+            <input
+              value={marketForm.makerFeeBps}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, makerFeeBps: event.target.value }))}
+              inputMode="numeric"
+              className="field-input"
+              required
+            />
+          </Field>
+          <Field label="Taker Bps">
+            <input
+              value={marketForm.takerFeeBps}
+              onChange={(event) => setMarketForm((prev) => ({ ...prev, takerFeeBps: event.target.value }))}
+              inputMode="numeric"
+              className="field-input"
+              required
+            />
+          </Field>
+          <div className="flex items-end lg:col-span-2">
+            <Button type="submit" disabled={createDisabled}>
+              <Plus className="h-4 w-4" />
+              Create Pair
+            </Button>
+          </div>
+          {assetsQuery.isError && (
+            <div className="lg:col-span-4">
+              <ErrorPanel message={errorMessage(assetsQuery.error, 'Failed to load market assets.')} />
+            </div>
+          )}
+          {createMutation.isError && (
+            <div className="lg:col-span-4">
+              <ErrorPanel message={errorMessage(createMutation.error, 'Market creation failed.')} />
+            </div>
+          )}
+        </form>
+      </Panel>
 
       <Panel>
         <div className="grid gap-3 border-b border-gray-200 p-5 md:grid-cols-[1fr_180px_auto]">
@@ -139,6 +379,7 @@ export default function MarketsPage() {
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Tick</th>
                   <th className="px-5 py-3">Min Size</th>
+                  <th className="px-5 py-3">Fees</th>
                   <th className="px-5 py-3">Orders</th>
                   <th className="px-5 py-3">Trades</th>
                 </tr>
@@ -157,6 +398,9 @@ export default function MarketsPage() {
                     </td>
                     <td className="px-5 py-4 text-gray-600">{formatDecimal(market.priceTick)}</td>
                     <td className="px-5 py-4 text-gray-600">{formatDecimal(market.minOrderSize)}</td>
+                    <td className="px-5 py-4 text-gray-600">
+                      {market.makerFeeBps}/{market.takerFeeBps} bps
+                    </td>
                     <td className="px-5 py-4 text-gray-600">{formatNumber(market._count?.orders ?? 0)}</td>
                     <td className="px-5 py-4 text-gray-600">{formatNumber(market._count?.trades ?? 0)}</td>
                   </tr>
@@ -178,7 +422,8 @@ export default function MarketsPage() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Info label="Created" value={formatDateTime(selectedMarket.createdAt)} />
               <Info label="Size Step" value={formatDecimal(selectedMarket.sizeStep)} />
-              <Info label="Trading" value={selectedMarket.marketControl?.tradingEnabled ? 'Enabled' : 'Disabled'} />
+              <Info label="Trading" value={tradingEnabled ? 'Enabled' : 'Disabled'} />
+              <Info label="Fees" value={`${selectedMarket.makerFeeBps}/${selectedMarket.takerFeeBps} bps`} />
               <Info label="Reason" value={selectedMarket.marketControl?.reason ?? 'None'} />
             </div>
             <div className="border-t border-gray-200 pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
@@ -261,6 +506,15 @@ export default function MarketsPage() {
         </Panel>
       )}
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="text-sm">
+      <span className="mb-1 block font-medium text-gray-700">{label}</span>
+      {children}
+    </label>
   );
 }
 

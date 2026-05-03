@@ -10,6 +10,7 @@ import type { Config } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { validateBody, validateParams, validateQuery, commonSchemas } from '../middleware/validation.js';
 import { requirePermission, PERMISSIONS } from '../middleware/rbac.js';
+import { pagination, tableExists } from './db_helpers.js';
 
 const incidentQuerySchema = z.object({
   status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).optional(),
@@ -49,6 +50,18 @@ export function createIncidentsRouter(
     async (req, res, next) => {
       try {
         const { status, severity, query, page = 1, limit = 50 } = req.query as any;
+        if (!(await tableExists(prisma, 'incidents'))) {
+          res.json({
+            success: true,
+            data: {
+              incidents: [],
+              statusCounts: [],
+              pagination: pagination(page, limit, 0),
+            },
+          });
+          return;
+        }
+
         const where: any = {};
         if (status) where.status = status;
         if (severity) where.severity = severity;
@@ -86,12 +99,7 @@ export function createIncidentsRouter(
               status: row.status,
               count: row._count._all,
             })),
-            pagination: {
-              page,
-              limit,
-              total,
-              totalPages: Math.ceil(total / limit),
-            },
+            pagination: pagination(page, limit, total),
           },
         });
       } catch (error) {

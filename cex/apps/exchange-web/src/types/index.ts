@@ -36,6 +36,15 @@ export interface Trade {
   timestamp: number;
 }
 
+export interface Candle {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface Order {
   id: string;
   clientOrderId: string;
@@ -55,6 +64,65 @@ export interface Balance {
   available: number;
   locked: number;
   total: number;
+}
+
+export interface AssetNetwork {
+  assetNetworkId: string;
+  code: string;
+  name: string;
+  type: string;
+  provider: string;
+  bitgoCoin?: string | null;
+  rpcUrl?: string | null;
+  depositsEnabled: boolean;
+  withdrawalsEnabled: boolean;
+  minWithdrawalAtoms: string;
+  withdrawalFeeAtoms: string;
+  flatFee: boolean;
+}
+
+export interface Asset {
+  symbol: string;
+  name: string;
+  decimals: number;
+  isEnabled: boolean;
+  networks: AssetNetwork[];
+}
+
+export interface DepositAddress {
+  id: string;
+  assetNetworkId: string;
+  symbol: string;
+  networkCode: string;
+  address: string;
+  tag?: string | null;
+  label?: string | null;
+  assignedAt: number;
+  created?: boolean;
+}
+
+export interface Withdrawal {
+  id: string;
+  status: string;
+  assetNetworkId?: string;
+  amount: string;
+  feeAmount: string;
+  totalDebitAmount: string;
+  destinationAddress: string;
+  destinationTag?: string | null;
+  txid?: string | null;
+  riskScore?: number;
+  riskFlags?: string[];
+  requestedAt?: string;
+  createdAt?: string;
+}
+
+export interface CreateWithdrawalRequest {
+  assetNetworkId: string;
+  destinationAddress: string;
+  destinationTag?: string;
+  amountAtoms: string;
+  clientWithdrawalId?: string;
 }
 
 export interface UserTrade {

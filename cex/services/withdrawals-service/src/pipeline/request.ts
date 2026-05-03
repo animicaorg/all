@@ -89,6 +89,7 @@ export async function validateAndCreateWithdrawal(
     destinationTag: request.destinationTag,
     amount: request.amount,
     feeAmount,
+    provider: assetNetwork.provider,
     idempotencyKey,
     clientWithdrawalId: request.clientWithdrawalId,
     riskScore: riskDecision.score,
@@ -109,8 +110,8 @@ export async function validateAndCreateWithdrawal(
   } else if (riskDecision.decision === "REVIEW") {
     status = "RISK_REVIEW";
     await withdrawalsRepo.updateStatus(withdrawal.id, "RISK_REVIEW");
-  } else if (riskDecision.requiredApprovals === 0) {
-    // Auto-approve if no approvals required
+  } else if (riskDecision.decision === "ALLOW") {
+    // Low-risk withdrawals are automatically approved and submitted by the outbox worker.
     status = "APPROVED";
     await withdrawalsRepo.updateStatus(withdrawal.id, "APPROVED");
   }
@@ -138,13 +139,6 @@ export async function validateAndCreateWithdrawal(
       userId,
       assetNetworkId: request.assetNetworkId,
       amount: withdrawal.totalDebitAmount.toString(),
-      withdrawalId: withdrawal.id,
-    });
-  }
-
-  // 10. If auto-approved, queue submission
-  if (status === "APPROVED") {
-    await enqueueOperation(client, withdrawal.id, "SUBMIT_TO_BITGO", {
       withdrawalId: withdrawal.id,
     });
   }

@@ -26,6 +26,15 @@ exports.seed = async function seed(knex) {
       metadata: JSON.stringify({ chain_id: 1, explorer_url: "https://etherscan.io" })
     },
     {
+      id: "55555555-5555-5555-5555-555555555555",
+      code: "SOL",
+      name: "Solana Mainnet",
+      type: "SOLANA",
+      confirmations_required: 32,
+      active: true,
+      metadata: JSON.stringify({ explorer_url: "https://solscan.io" })
+    },
+    {
       id: "33333333-3333-3333-3333-333333333333",
       code: "ETH_SEPOLIA",
       name: "Ethereum Sepolia Testnet",
@@ -53,6 +62,14 @@ exports.seed = async function seed(knex) {
       symbol: "ETH",
       name: "Ethereum",
       decimals: 18,
+      active: true,
+      metadata: JSON.stringify({})
+    },
+    {
+      id: "99999999-9999-9999-9999-999999999999",
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
       active: true,
       metadata: JSON.stringify({})
     },
@@ -88,7 +105,11 @@ exports.seed = async function seed(knex) {
       withdrawals_enabled: true,
       min_deposit_atoms: "10000", // 0.0001 BTC
       confirmations_override: null,
-      metadata: JSON.stringify({})
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "30000",
+        flat_withdrawal_fee: "0.0003"
+      })
     },
     {
       id: "ffffffff-0002-0002-0002-000000000002",
@@ -100,7 +121,27 @@ exports.seed = async function seed(knex) {
       withdrawals_enabled: true,
       min_deposit_atoms: "1000000000000000", // 0.001 ETH
       confirmations_override: null,
-      metadata: JSON.stringify({})
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "3000000000000000",
+        flat_withdrawal_fee: "0.003"
+      })
+    },
+    {
+      id: "ffffffff-0007-0007-0007-000000000007",
+      asset_id: "99999999-9999-9999-9999-999999999999", // SOL
+      network_id: "55555555-5555-5555-5555-555555555555", // SOL network
+      contract_address: null,
+      bitgo_coin: "sol",
+      deposits_enabled: true,
+      withdrawals_enabled: true,
+      min_deposit_atoms: "10000000", // 0.01 SOL
+      confirmations_override: null,
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "10000000",
+        flat_withdrawal_fee: "0.01"
+      })
     },
     {
       id: "ffffffff-0003-0003-0003-000000000003",
@@ -144,4 +185,66 @@ exports.seed = async function seed(knex) {
     .insert(assetNetworks)
     .onConflict("id")
     .ignore();
+
+  const withdrawalPolicies = [
+    {
+      asset_network_id: "ffffffff-0001-0001-0001-000000000001", // BTC
+      min_withdrawal_atoms: "100000", // 0.001 BTC
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "30000",
+        withdrawalFee: "0.0003",
+        flatFee: true,
+        feeAsset: "BTC",
+        rationale: "Flat fee set above normal network fee targets to cover miner fees and exchange operations."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-0002-0002-0002-000000000002", // ETH
+      min_withdrawal_atoms: "10000000000000000", // 0.01 ETH
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "3000000000000000",
+        withdrawalFee: "0.003",
+        flatFee: true,
+        feeAsset: "ETH",
+        rationale: "Flat fee includes gas headroom plus an operating margin."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-0007-0007-0007-000000000007", // SOL
+      min_withdrawal_atoms: "100000000", // 0.1 SOL
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "10000000",
+        withdrawalFee: "0.01",
+        flatFee: true,
+        feeAsset: "SOL",
+        rationale: "Flat fee covers Solana network fees, BitGo operations, and exchange margin."
+      })
+    }
+  ];
+
+  const hasWithdrawalPolicies = await knex.schema.hasTable("withdrawal_policies");
+  if (hasWithdrawalPolicies) {
+    for (const policy of withdrawalPolicies) {
+      await knex("withdrawal_policies")
+        .insert(policy)
+        .onConflict("asset_network_id")
+        .merge({
+          min_withdrawal_atoms: policy.min_withdrawal_atoms,
+          required_approvals: policy.required_approvals,
+          high_risk_approvals: policy.high_risk_approvals,
+          enabled: policy.enabled,
+          metadata: policy.metadata,
+          updated_at: knex.fn.now()
+        });
+    }
+  }
 };

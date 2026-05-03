@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Plus, Save, Trash2, Wifi } from 'lucide-react';
 import { apiClient, type BitgoSettings } from '../services/api';
+import { Button, ErrorPanel, PageHeader, Panel, PanelHeader, StatusBadge } from '../components/AdminUI';
 
 const emptySettings: BitgoSettings = {
   id: 'default',
@@ -13,12 +15,40 @@ const emptySettings: BitgoSettings = {
   updatedAt: null,
 };
 
+const defaultCoins = ['btc', 'eth', 'sol'];
+
+type WalletMappingRow = {
+  coin: string;
+  walletId: string;
+  feePolicy: string;
+};
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function getFeePolicy(value: unknown): string {
+  const record = objectRecord(value);
+  return typeof record.feePolicy === 'string' ? record.feePolicy : '';
+}
+
+function rowsFromSettings(settings: BitgoSettings): WalletMappingRow[] {
+  const wallets = settings.wallets ?? {};
+  const coins = settings.coins ?? {};
+  const coinKeys = Array.from(new Set([...defaultCoins, ...Object.keys(wallets), ...Object.keys(coins)])).sort();
+
+  return coinKeys.map((coin) => ({
+    coin,
+    walletId: wallets[coin] ?? '',
+    feePolicy: getFeePolicy(coins[coin]),
+  }));
+}
+
 export default function BitgoSettingsPage() {
   const [settings, setSettings] = useState<BitgoSettings>(emptySettings);
   const [accessToken, setAccessToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
-  const [walletsJson, setWalletsJson] = useState('');
-  const [coinsJson, setCoinsJson] = useState('');
+  const [walletRows, setWalletRows] = useState<WalletMappingRow[]>(rowsFromSettings(emptySettings));
   const [status, setStatus] = useState<'idle' | 'saving' | 'testing'>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,14 +58,17 @@ export default function BitgoSettingsPage() {
       try {
         const response = await apiClient.getBitgoSettings();
         setSettings(response.data);
-        setWalletsJson(response.data.wallets ? JSON.stringify(response.data.wallets, null, 2) : '');
-        setCoinsJson(response.data.coins ? JSON.stringify(response.data.coins, null, 2) : '');
+        setWalletRows(rowsFromSettings(response.data));
       } catch (err: any) {
         setError(err.response?.data?.message || 'Failed to load BitGo settings.');
       }
     };
     load();
   }, []);
+
+  const updateWalletRow = (index: number, patch: Partial<WalletMappingRow>) => {
+    setWalletRows((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  };
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -44,16 +77,21 @@ export default function BitgoSettingsPage() {
     setError(null);
 
     try {
-      let wallets = null;
-      let coins = null;
+      const wallets: Record<string, string> = {};
+      const coins: Record<string, unknown> = { ...(settings.coins ?? {}) };
 
-      try {
-        wallets = walletsJson ? JSON.parse(walletsJson) : null;
-        coins = coinsJson ? JSON.parse(coinsJson) : null;
-      } catch {
-        setError('Wallet IDs or coin settings JSON is invalid.');
-        setStatus('idle');
-        return;
+      for (const row of walletRows) {
+        const coin = row.coin.trim().toLowerCase();
+        const walletId = row.walletId.trim();
+        if (!coin) continue;
+        if (walletId) wallets[coin] = walletId;
+
+        if (row.feePolicy.trim()) {
+          coins[coin] = {
+            ...objectRecord(coins[coin]),
+            feePolicy: row.feePolicy.trim(),
+          };
+        }
       }
 
       const response = await apiClient.updateBitgoSettings({
@@ -61,12 +99,13 @@ export default function BitgoSettingsPage() {
         baseUrl: settings.baseUrl,
         accessToken: accessToken || undefined,
         webhookSecret: webhookSecret || undefined,
-        wallets,
-        coins,
+        wallets: Object.keys(wallets).length ? wallets : null,
+        coins: Object.keys(coins).length ? coins : null,
         enabled: settings.enabled,
       });
 
       setSettings(response.data);
+      setWalletRows(rowsFromSettings(response.data));
       setAccessToken('');
       setWebhookSecret('');
       setMessage('BitGo settings saved.');
@@ -96,133 +135,156 @@ export default function BitgoSettingsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">BitGo Settings</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Configure BitGo environment, credentials, and wallet mappings.
-        </p>
-      </div>
+    <form onSubmit={handleSave} className="max-w-5xl space-y-6">
+      <PageHeader
+        title="BitGo Settings"
+        description="Connection credentials and wallet mappings for BitGo-backed assets."
+        actions={<StatusBadge value={settings.enabled ? 'Enabled' : 'Disabled'} />}
+      />
 
-      {message && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
-      )}
+      {message && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
+      {error && <ErrorPanel message={error} />}
 
-      <form onSubmit={handleSave} className="space-y-6 bg-white p-6 rounded-lg shadow">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-medium text-gray-900">Connection</h2>
-            <p className="text-sm text-gray-500">Enable BitGo and select environment.</p>
-          </div>
-          <label className="inline-flex items-center">
+      <Panel>
+        <PanelHeader title="Connection" />
+        <div className="grid gap-4 p-5 md:grid-cols-2">
+          <label className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-sm">
+            <span className="font-medium text-gray-700">Enabled</span>
             <input
               type="checkbox"
               checked={settings.enabled}
-              onChange={(e) => setSettings((prev) => ({ ...prev, enabled: e.target.checked }))}
-              className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+              onChange={(event) => setSettings((prev) => ({ ...prev, enabled: event.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 text-gray-950 focus:ring-gray-400"
             />
-            <span className="ml-2 text-sm text-gray-700">Enabled</span>
           </label>
-        </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Environment</label>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium text-gray-700">Environment</span>
             <select
               value={settings.environment}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, environment: e.target.value as 'test' | 'prod' }))
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, environment: event.target.value as 'test' | 'prod' }))
               }
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              className="field-input"
             >
               <option value="test">Test</option>
               <option value="prod">Production</option>
             </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">API Base URL (optional)</label>
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium text-gray-700">API base URL</span>
             <input
               type="url"
               value={settings.baseUrl ?? ''}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, baseUrl: e.target.value || null }))
-              }
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              onChange={(event) => setSettings((prev) => ({ ...prev, baseUrl: event.target.value || null }))}
+              className="field-input"
               placeholder="https://app.bitgo-test.com"
             />
-          </div>
-        </div>
+          </label>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Access Token</label>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium text-gray-700">Access token</span>
             <input
               type="password"
               value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              onChange={(event) => setAccessToken(event.target.value)}
+              className="field-input"
               placeholder={settings.accessTokenMasked ? settings.accessTokenMasked : 'Not set'}
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Webhook Secret</label>
+          </label>
+
+          <label className="text-sm md:col-span-2">
+            <span className="mb-1 block font-medium text-gray-700">Webhook secret</span>
             <input
               type="password"
               value={webhookSecret}
-              onChange={(e) => setWebhookSecret(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              onChange={(event) => setWebhookSecret(event.target.value)}
+              className="field-input"
               placeholder={settings.webhookSecretMasked ? settings.webhookSecretMasked : 'Not set'}
             />
-          </div>
+          </label>
         </div>
+      </Panel>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Wallet IDs (JSON)</label>
-          <textarea
-            value={walletsJson}
-            onChange={(e) => setWalletsJson(e.target.value)}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono text-xs"
-            rows={4}
-            placeholder='{"btc": "wallet-id", "eth": "wallet-id"}'
-          />
+      <Panel>
+        <PanelHeader
+          title="Wallet Mappings"
+          actions={
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setWalletRows((rows) => [...rows, { coin: '', walletId: '', feePolicy: '' }])}
+            >
+              <Plus className="h-4 w-4" />
+              Add Coin
+            </Button>
+          }
+        />
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-5 py-3">BitGo coin</th>
+                <th className="px-5 py-3">Wallet ID</th>
+                <th className="px-5 py-3">Fee policy</th>
+                <th className="px-5 py-3">Remove</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {walletRows.map((row, index) => (
+                <tr key={`${row.coin}-${index}`}>
+                  <td className="px-5 py-3">
+                    <input
+                      value={row.coin}
+                      onChange={(event) => updateWalletRow(index, { coin: event.target.value })}
+                      className="field-input min-w-28"
+                      placeholder="btc"
+                    />
+                  </td>
+                  <td className="px-5 py-3">
+                    <input
+                      value={row.walletId}
+                      onChange={(event) => updateWalletRow(index, { walletId: event.target.value })}
+                      className="field-input min-w-72"
+                      placeholder="BitGo wallet ID"
+                    />
+                  </td>
+                  <td className="px-5 py-3">
+                    <input
+                      value={row.feePolicy}
+                      onChange={(event) => updateWalletRow(index, { feePolicy: event.target.value })}
+                      className="field-input min-w-44"
+                      placeholder="standard"
+                    />
+                  </td>
+                  <td className="px-5 py-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setWalletRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}
+                      aria-label={`Remove ${row.coin || 'coin'} mapping`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      </Panel>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Coin Settings (JSON)</label>
-          <textarea
-            value={coinsJson}
-            onChange={(e) => setCoinsJson(e.target.value)}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono text-xs"
-            rows={4}
-            placeholder='{"btc": {"feePolicy": "standard"}}'
-          />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={status !== 'idle'}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {status === 'saving' ? 'Saving...' : 'Save Settings'}
-          </button>
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={status !== 'idle'}
-            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:opacity-50"
-          >
-            {status === 'testing' ? 'Testing...' : 'Test Connection'}
-          </button>
-        </div>
-      </form>
-    </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" disabled={status !== 'idle'}>
+          <Save className="h-4 w-4" />
+          {status === 'saving' ? 'Saving' : 'Save Settings'}
+        </Button>
+        <Button type="button" variant="secondary" onClick={handleTest} disabled={status !== 'idle'}>
+          <Wifi className="h-4 w-4" />
+          {status === 'testing' ? 'Testing' : 'Test Connection'}
+        </Button>
+      </div>
+    </form>
   );
 }

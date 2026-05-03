@@ -10,6 +10,7 @@ import type { Config } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { validateBody, validateQuery, validateParams, commonSchemas } from '../middleware/validation.js';
 import { requirePermission, PERMISSIONS } from '../middleware/rbac.js';
+import { columnExists, countSql, pagination, rowsSql, tableExists } from './db_helpers.js';
 
 const searchUsersSchema = z.object({
   query: z.string().optional(),
@@ -23,6 +24,70 @@ const freezeUserSchema = z.object({
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+interface UserRow {
+  id: string;
+  email: string | null;
+  status: string | null;
+  role: string | null;
+  twofa_enabled: boolean | null;
+  created_at: Date;
+  updated_at: Date | null;
+}
+
+interface RiskFlagRow {
+  id: string;
+  user_id: string;
+  code: string;
+  severity: string;
+  note: string | null;
+  status: string;
+  created_at: Date;
+  closed_at: Date | null;
+}
+
+function mapUser(row: UserRow) {
+  return {
+    id: row.id,
+    email: row.email,
+    status: row.status ?? 'ACTIVE',
+    role: row.role ?? 'USER',
+    twofaEnabled: row.twofa_enabled ?? false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  };
+}
+
+function mapRiskFlag(row: RiskFlagRow) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    code: row.code,
+    severity: row.severity,
+    note: row.note,
+    status: row.status,
+    createdAt: row.created_at,
+    closedAt: row.closed_at,
+  };
+}
+
+async function userSelectExpressions(prisma: PrismaClient) {
+  const [hasTwofaEnabled, hasTwoFaEnabled, hasStatus, hasRole, hasUpdatedAt] = await Promise.all([
+    columnExists(prisma, 'users', 'twofa_enabled'),
+    columnExists(prisma, 'users', 'two_fa_enabled'),
+    columnExists(prisma, 'users', 'status'),
+    columnExists(prisma, 'users', 'role'),
+    columnExists(prisma, 'users', 'updated_at'),
+  ]);
+
+  return {
+    status: hasStatus ? 'status::text' : "'ACTIVE'",
+    role: hasRole ? 'role::text' : "'USER'",
+    twofa: hasTwofaEnabled ? 'twofa_enabled' : hasTwoFaEnabled ? 'two_fa_enabled' : 'false',
+    updatedAt: hasUpdatedAt ? 'updated_at' : 'created_at',
+    hasStatus,
+  };
 }
 
 export function createUsersRouter(
@@ -43,47 +108,55 @@ export function createUsersRouter(
     async (req, res, next) => {
       try {
         const { query, status, page = 1, limit = 50 } = req.query as any;
+        const expr = await userSelectExpressions(prisma);
+        const where: string[] = [];
+        const values: unknown[] = [];
 
-        const where: any = {};
         if (query) {
-          where.OR = [{ email: { contains: query, mode: 'insensitive' } }];
+          const conditions = [`email ILIKE $${values.length + 1}`];
+          values.push(`%${query}%`);
           if (isUuid(query)) {
-            where.OR.push({ id: query });
+            conditions.push(`id = $${values.length + 1}::uuid`);
+            values.push(query);
           }
+          where.push(`(${conditions.join(' OR ')})`);
         }
         if (status) {
-          where.status = status;
+          if (expr.hasStatus) {
+            where.push(`status::text = $${values.length + 1}`);
+            values.push(status);
+          } else if (status !== 'ACTIVE') {
+            where.push('false');
+          }
         }
 
-        const [users, total] = await Promise.all([
-          prisma.user.findMany({
-            where,
-            select: {
-              id: true,
-              email: true,
-              status: true,
-              role: true,
-              twofaEnabled: true,
-              createdAt: true,
-              updatedAt: true,
-            },
-            skip: (page - 1) * limit,
-            take: limit,
-            orderBy: { createdAt: 'desc' },
-          }),
-          prisma.user.count({ where }),
-        ]);
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const total = await countSql(prisma, `SELECT COUNT(*)::bigint AS count FROM users ${whereSql}`, ...values);
+        const users = await rowsSql<UserRow>(
+          prisma,
+          `SELECT
+            id::text AS id,
+            email::text AS email,
+            ${expr.status} AS status,
+            ${expr.role} AS role,
+            ${expr.twofa} AS twofa_enabled,
+            created_at,
+            ${expr.updatedAt} AS updated_at
+          FROM users
+          ${whereSql}
+          ORDER BY created_at DESC
+          OFFSET $${values.length + 1}
+          LIMIT $${values.length + 2}`,
+          ...values,
+          (page - 1) * limit,
+          limit
+        );
 
         res.json({
           success: true,
           data: {
-            users,
-            pagination: {
-              page,
-              limit,
-              total,
-              totalPages: Math.ceil(total / limit),
-            },
+            users: users.map(mapUser),
+            pagination: pagination(page, limit, total),
           },
         });
       } catch (error) {
@@ -102,58 +175,65 @@ export function createUsersRouter(
     validateParams(z.object({ id: commonSchemas.uuid })),
     async (req, res, next) => {
       try {
-        const user = await prisma.user.findUnique({
-          where: { id: req.params.id },
-          include: {
-            profile: true,
-            kycCases: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
-            riskFlags: {
-              where: { status: 'OPEN' },
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-        });
+        const expr = await userSelectExpressions(prisma);
+        const [user] = await rowsSql<UserRow>(
+          prisma,
+          `SELECT
+            id::text AS id,
+            email::text AS email,
+            ${expr.status} AS status,
+            ${expr.role} AS role,
+            ${expr.twofa} AS twofa_enabled,
+            created_at,
+            ${expr.updatedAt} AS updated_at
+          FROM users
+          WHERE id = $1::uuid
+          LIMIT 1`,
+          req.params.id
+        );
 
         if (!user) {
           res.status(404).json({ error: 'NotFound', message: 'User not found' });
           return;
         }
 
-        // Get balance summary
-        const balances = await prisma.ledgerAccount.findMany({
-          where: {
-            ownerId: user.id,
-            accountType: 'AVAILABLE',
-          },
-          include: {
-            asset: true,
-            balanceCache: true,
-          },
-        });
-
-        // Get recent activity
-        const recentOrders = await prisma.order.count({
-          where: {
-            userId: user.id,
-            createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-          },
-        });
+        const riskFlagsExist = await tableExists(prisma, 'risk_flags');
+        const [riskFlags, recentOrders] = await Promise.all([
+          riskFlagsExist
+            ? rowsSql<RiskFlagRow>(
+                prisma,
+                `SELECT
+                  id::text AS id,
+                  user_id::text AS user_id,
+                  code,
+                  severity::text AS severity,
+                  note,
+                  status::text AS status,
+                  created_at,
+                  closed_at
+                FROM risk_flags
+                WHERE user_id = $1::uuid AND status::text = 'OPEN'
+                ORDER BY created_at DESC`,
+                req.params.id
+              )
+            : Promise.resolve([]),
+          countSql(
+            prisma,
+            "SELECT COUNT(*)::bigint AS count FROM orders WHERE user_id = $1::uuid AND created_at >= NOW() - interval '30 days'",
+            req.params.id
+          ),
+        ]);
 
         res.json({
           success: true,
           data: {
             user: {
-              ...user,
-              passwordHash: undefined,
+              ...mapUser(user),
+              profile: null,
+              kycCases: [],
+              riskFlags: riskFlags.map(mapRiskFlag),
             },
-            balances: balances.map((b) => ({
-              asset: b.asset.symbol,
-              available: b.balanceCache?.available || '0',
-              locked: b.balanceCache?.locked || '0',
-            })),
+            balances: [],
             stats: {
               recentOrders,
             },

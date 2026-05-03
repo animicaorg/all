@@ -10,6 +10,7 @@ import type { Config } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { validateBody, validateParams, validateQuery, commonSchemas } from '../middleware/validation.js';
 import { requirePermission, PERMISSIONS } from '../middleware/rbac.js';
+import { pagination, rowsSql, tableExists } from './db_helpers.js';
 
 const feeQuerySchema = z.object({
   scope: z.enum(['GLOBAL', 'USER_TIER', 'MARKET']).optional(),
@@ -34,6 +35,11 @@ const feeWriteSchema = z.object({
 
 const feePatchSchema = feeWriteSchema.partial();
 
+interface MarketOptionRow {
+  id: string;
+  symbol: string;
+}
+
 export function createFeesRouter(
   prisma: PrismaClient,
   _config: Config,
@@ -48,12 +54,29 @@ export function createFeesRouter(
     async (req, res, next) => {
       try {
         const { scope, status, marketId, page = 1, limit = 50 } = req.query as any;
+        const markets = await rowsSql<MarketOptionRow>(
+          prisma,
+          'SELECT id::text AS id, symbol::text AS symbol FROM markets ORDER BY symbol ASC'
+        );
+
+        if (!(await tableExists(prisma, 'fee_schedules'))) {
+          res.json({
+            success: true,
+            data: {
+              fees: [],
+              markets,
+              pagination: pagination(page, limit, 0),
+            },
+          });
+          return;
+        }
+
         const where: any = {};
         if (scope) where.scope = scope;
         if (status) where.status = status;
         if (marketId) where.marketId = marketId;
 
-        const [fees, total, markets] = await Promise.all([
+        const [fees, total] = await Promise.all([
           prisma.feeSchedule.findMany({
             where,
             include: {
@@ -75,10 +98,6 @@ export function createFeesRouter(
             take: limit,
           }),
           prisma.feeSchedule.count({ where }),
-          prisma.market.findMany({
-            select: { id: true, symbol: true },
-            orderBy: { symbol: 'asc' },
-          }),
         ]);
 
         res.json({
@@ -86,12 +105,7 @@ export function createFeesRouter(
           data: {
             fees,
             markets,
-            pagination: {
-              page,
-              limit,
-              total,
-              totalPages: Math.ceil(total / limit),
-            },
+            pagination: pagination(page, limit, total),
           },
         });
       } catch (error) {

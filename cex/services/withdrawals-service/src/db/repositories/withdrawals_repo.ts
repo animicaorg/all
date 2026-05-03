@@ -52,6 +52,7 @@ export interface CreateWithdrawalParams {
   destinationTag?: string;
   amount: bigint;
   feeAmount: bigint;
+  provider?: string;
   idempotencyKey: string;
   clientWithdrawalId?: string;
   riskScore?: number;
@@ -75,9 +76,9 @@ export class WithdrawalsRepo {
       INSERT INTO withdrawals (
         user_id, asset_network_id, destination_address, destination_tag,
         amount, fee_amount, total_debit_amount, idempotency_key, client_withdrawal_id,
-        risk_score, risk_flags, risk_reason
+        provider, risk_score, risk_flags, risk_reason
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
       )
       RETURNING *
     `;
@@ -94,6 +95,7 @@ export class WithdrawalsRepo {
       totalDebitAmount.toString(),
       params.idempotencyKey,
       params.clientWithdrawalId || null,
+      params.provider || "BITGO",
       params.riskScore || null,
       JSON.stringify(params.riskFlags || []),
       params.riskReason || null,

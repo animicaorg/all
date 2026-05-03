@@ -37,7 +37,7 @@ const configSchema = baseEnvSchema.partial().extend({
   ANIMICA_MAX_FEE_ATOMS: z.string().default("100000000000000000"), // 0.1 ANM
   
   // Ledger service integration
-  LEDGER_SERVICE_URL: z.string().default("http://localhost:3002"),
+  LEDGER_SERVICE_URL: z.string().default("http://localhost:13004"),
   
   // Admin
   ADMIN_API_KEY: z.string(),

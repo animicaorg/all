@@ -4,6 +4,15 @@ import { z } from "zod";
 
 const router = Router();
 
+const resolutionToMs: Record<string, number> = {
+  "1m": 60 * 1000,
+  "5m": 5 * 60 * 1000,
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "4h": 4 * 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000,
+};
+
 export function createMarketsRouter(pgPool: Pool): any {
   /**
    * GET /markets - List all active markets
@@ -30,7 +39,7 @@ export function createMarketsRouter(pgPool: Pool): any {
         FROM markets m
         LEFT JOIN LATERAL (
           SELECT 
-            price as last_price,
+            (array_agg(price ORDER BY created_at DESC))[1] as last_price,
             SUM(size) as volume_24h,
             MAX(price) as high_24h,
             MIN(price) as low_24h,
@@ -100,8 +109,8 @@ export function createMarketsRouter(pgPool: Pool): any {
           AND remaining_quantity > 0
         GROUP BY side, price
         ORDER BY 
-          CASE WHEN side = 'buy' THEN price END DESC,
-          CASE WHEN side = 'sell' THEN price END ASC
+          CASE WHEN lower(side) = 'buy' THEN price END DESC,
+          CASE WHEN lower(side) = 'sell' THEN price END ASC
       `,
         [marketId]
       );
@@ -117,7 +126,7 @@ export function createMarketsRouter(pgPool: Pool): any {
         const price = parseFloat(row.price);
         const quantity = parseFloat(row.total_quantity);
 
-        if (row.side === "buy") {
+        if (String(row.side).toLowerCase() === "buy") {
           bidTotal += quantity;
           if (bids.length < limit) {
             bids.push({ price, quantity, total: bidTotal });
@@ -180,7 +189,7 @@ export function createMarketsRouter(pgPool: Pool): any {
           t.sequence,
           t.created_at,
           CASE 
-            WHEN taker_order.side = 'buy' THEN 'buy'
+            WHEN lower(taker_order.side) = 'buy' THEN 'buy'
             ELSE 'sell'
           END as side
         FROM trades t
@@ -218,17 +227,8 @@ export function createMarketsRouter(pgPool: Pool): any {
       const resolution = (req.query.resolution as string) || "1m";
       const limit = Math.min(parseInt(req.query.limit as string) || 500, 1000);
 
-      // Map resolution to interval
-      const intervalMap: Record<string, string> = {
-        "1m": "1 minute",
-        "5m": "5 minutes",
-        "15m": "15 minutes",
-        "1h": "1 hour",
-        "4h": "4 hours",
-        "1d": "1 day",
-      };
-
-      const interval = intervalMap[resolution] || "1 minute";
+      const bucketMs = resolutionToMs[resolution] || resolutionToMs["1m"];
+      const fromDate = new Date(Date.now() - bucketMs * limit);
 
       // Get market ID
       const marketResult = await pgPool.query(
@@ -242,47 +242,57 @@ export function createMarketsRouter(pgPool: Pool): any {
 
       const marketId = marketResult.rows[0].id;
 
-      // Generate candles from trades
-      const candlesResult = await pgPool.query(
+      const tradesResult = await pgPool.query(
         `
         SELECT 
-          time_bucket($1::interval, created_at) as bucket,
-          (array_agg(price ORDER BY created_at ASC))[1] as open,
-          MAX(price) as high,
-          MIN(price) as low,
-          (array_agg(price ORDER BY created_at DESC))[1] as close,
-          SUM(size) as volume
+          created_at,
+          price,
+          size
         FROM trades
-        WHERE market_id = $2
-          AND created_at > NOW() - ($1::interval * $3)
-        GROUP BY bucket
-        ORDER BY bucket DESC
-        LIMIT $3
+        WHERE market_id = $1
+          AND created_at > $2
+        ORDER BY created_at ASC
       `,
-        [interval, marketId, limit]
+        [marketId, fromDate]
       );
+
+      const candleMap = new Map<
+        number,
+        { timestamp: number; open: number; high: number; low: number; close: number; volume: number }
+      >();
+
+      for (const row of tradesResult.rows) {
+        const timestamp = new Date(row.created_at).getTime();
+        const bucket = Math.floor(timestamp / bucketMs) * bucketMs;
+        const price = parseFloat(row.price);
+        const size = parseFloat(row.size);
+        const candle = candleMap.get(bucket);
+
+        if (!candle) {
+          candleMap.set(bucket, {
+            timestamp: bucket,
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: size,
+          });
+        } else {
+          candle.high = Math.max(candle.high, price);
+          candle.low = Math.min(candle.low, price);
+          candle.close = price;
+          candle.volume += size;
+        }
+      }
 
       res.json({
         symbol,
         resolution,
-        candles: candlesResult.rows.map((row: any) => ({
-          timestamp: new Date(row.bucket).getTime(),
-          open: parseFloat(row.open),
-          high: parseFloat(row.high),
-          low: parseFloat(row.low),
-          close: parseFloat(row.close),
-          volume: parseFloat(row.volume),
-        })),
+        candles: [...candleMap.values()].slice(-limit),
       });
     } catch (error) {
       console.error("Error fetching candles:", error);
-      // If time_bucket function doesn't exist (TimescaleDB not installed),
-      // return a fallback or approximate candles
-      res.status(500).json({
-        error: "Candlestick data temporarily unavailable",
-        message:
-          "Install TimescaleDB extension or use trade data to approximate",
-      });
+      res.status(500).json({ error: "Failed to fetch candles" });
     }
   });
 

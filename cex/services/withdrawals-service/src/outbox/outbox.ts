@@ -7,6 +7,8 @@ import type { PoolClient } from "pg";
 export type OutboxOperationType =
   | "APPLY_LEDGER_LOCK"
   | "SUBMIT_TO_BITGO"
+  | "SUBMIT_TO_ANIMICA_NODE"
+  | "SUBMIT_TO_BITCOIN_NODE"
   | "APPLY_LEDGER_BROADCAST"
   | "APPLY_LEDGER_CANCEL";
 
@@ -22,6 +24,13 @@ export interface OutboxOperation {
   createdAt: Date;
   processedAt: Date | null;
   updatedAt: Date;
+}
+
+export function submissionOperationForProvider(provider: string): OutboxOperationType | null {
+  if (provider === "BITGO") return "SUBMIT_TO_BITGO";
+  if (provider === "ANIMICA_NODE") return "SUBMIT_TO_ANIMICA_NODE";
+  if (provider === "BITCOIN_NODE") return "SUBMIT_TO_BITCOIN_NODE";
+  return null;
 }
 
 /**
@@ -49,6 +58,69 @@ export async function enqueueOperation(
   ]);
 
   return mapRow(result.rows[0]);
+}
+
+export async function hasCompletedLedgerLock(
+  client: PoolClient,
+  withdrawalId: string
+): Promise<boolean> {
+  const result = await client.query(
+    `SELECT 1
+     FROM withdrawal_outbox
+     WHERE withdrawal_id = $1
+       AND type = 'APPLY_LEDGER_LOCK'
+       AND status = 'COMPLETED'
+     LIMIT 1`,
+    [withdrawalId]
+  );
+  return (result.rowCount || 0) > 0;
+}
+
+export async function enqueueOperationIfMissing(
+  client: PoolClient,
+  withdrawalId: string,
+  type: OutboxOperationType,
+  payload: any
+): Promise<OutboxOperation | null> {
+  const existing = await client.query(
+    `SELECT *
+     FROM withdrawal_outbox
+     WHERE withdrawal_id = $1
+       AND type = $2
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [withdrawalId, type]
+  );
+  if ((existing.rowCount || 0) > 0) {
+    return null;
+  }
+
+  return enqueueOperation(client, withdrawalId, type, payload);
+}
+
+export async function enqueueSubmissionIfEligible(
+  client: PoolClient,
+  withdrawalId: string
+): Promise<OutboxOperation | null> {
+  const withdrawalResult = await client.query(
+    `SELECT status, provider
+     FROM withdrawals
+     WHERE id = $1`,
+    [withdrawalId]
+  );
+  const withdrawal = withdrawalResult.rows[0];
+  if (!withdrawal || withdrawal.status !== "APPROVED") {
+    return null;
+  }
+
+  if (!(await hasCompletedLedgerLock(client, withdrawalId))) {
+    return null;
+  }
+
+  const type = submissionOperationForProvider(withdrawal.provider);
+  if (!type) return null;
+
+  return enqueueOperationIfMissing(client, withdrawalId, type, { withdrawalId });
 }
 
 /**
@@ -144,11 +216,16 @@ export async function markPermanentlyFailed(
 }
 
 function mapRow(row: any): OutboxOperation {
+  const payload =
+    typeof row.payload === "string"
+      ? JSON.parse(row.payload)
+      : row.payload;
+
   return {
     id: row.id,
     withdrawalId: row.withdrawal_id,
     type: row.type,
-    payload: row.payload,
+    payload,
     status: row.status,
     attemptCount: row.attempt_count,
     nextRetryAt: row.next_retry_at,

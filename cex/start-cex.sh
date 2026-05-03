@@ -35,6 +35,7 @@ API_GATEWAY_PORT="${API_GATEWAY_PORT:-3000}"
 AUTH_SERVICE_PORT="${AUTH_SERVICE_PORT:-3005}"
 MATCHING_ENGINE_PORT="${MATCHING_ENGINE_PORT:-3006}"
 LEDGER_SERVICE_PORT="${LEDGER_SERVICE_PORT:-3007}"
+LEDGER_SERVICE_URL="${LEDGER_SERVICE_URL:-http://127.0.0.1:${LEDGER_SERVICE_PORT}}"
 WALLET_ROUTER_PORT="${WALLET_ROUTER_PORT:-3008}"
 BITGO_INGESTOR_PORT="${BITGO_INGESTOR_PORT:-3002}"
 ANIMICA_INDEXER_PORT="${ANIMICA_INDEXER_PORT:-3009}"
@@ -280,6 +281,7 @@ start_service() {
     export NATS_URL='$NATS_URL'
     export REDIS_URL='$REDIS_URL'
     export DATABASE_URL='$DATABASE_URL'
+    export LEDGER_SERVICE_URL='$LEDGER_SERVICE_URL'
     export DB_HOST='$DB_HOST'
     export DB_PORT='$DB_PORT'
     export DB_USER='$DB_USER'
@@ -289,7 +291,8 @@ start_service() {
     export BITGO_ENV='${BITGO_ENV:-test}'
     export BITGO_ACCESS_TOKEN='${BITGO_ACCESS_TOKEN:-dev-token}'
     export BITGO_WEBHOOK_SECRET='${BITGO_WEBHOOK_SECRET:-dev-webhook-secret}'
-    export BITGO_BASE_URL='${BITGO_BASE_URL:-https://app.bitgo-test.com}'
+    export BITGO_BASE_URL='${BITGO_BASE_URL:-${BITGO_API_URL:-https://app.bitgo-test.com}}'
+    export CONFIG_ENCRYPTION_KEY='$CONFIG_ENCRYPTION_KEY'
     export ADMIN_API_KEY='${ADMIN_API_KEY:-dev-admin-key}'
     export FRONTEND_URL='${FRONTEND_URL}'
     export GOOGLE_CLIENT_ID='${GOOGLE_CLIENT_ID:-}'
@@ -301,13 +304,11 @@ start_service() {
 
   echo $! > "$pid_file"
 
-  sleep 3
-
-  ss -ltn | grep -q ":$port" || {
+  if ! wait_for_port 127.0.0.1 "$port" 45; then
     err "$name failed to start (port $port not open)"
     tail -n 50 "$log_file" || true
     exit 1
-  }
+  fi
 
   ok "$name running on $port"
 }
@@ -378,7 +379,6 @@ start_admin_api() {
     export CORS_CREDENTIALS='${CORS_CREDENTIALS:-true}'
     export EXCHANGE_API_URL='${EXCHANGE_API_URL:-http://localhost:${API_GATEWAY_PORT}}'
     export MATCHING_ENGINE_URL='${MATCHING_ENGINE_URL:-http://localhost:${MATCHING_ENGINE_PORT}}'
-    export LEDGER_SERVICE_URL='${LEDGER_SERVICE_URL:-http://localhost:${LEDGER_SERVICE_PORT}}'
     export BITGO_ENV='${BITGO_ENV:-test}'
     export BITGO_API_URL='${BITGO_API_URL:-${BITGO_BASE_URL:-https://app.bitgo-test.com}}'
     export BITGO_ACCESS_TOKEN='${BITGO_ACCESS_TOKEN:-}'

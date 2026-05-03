@@ -141,11 +141,16 @@ export interface Network {
   createdAt: string;
 }
 
+export type WalletProvider = 'BITGO' | 'ANIMICA_NODE' | 'BITCOIN_NODE' | 'LOCAL_ANIMICA' | 'OTHER';
+
 export interface AssetNetwork {
   id: string;
   assetId: string;
   networkId: string;
   contractAddress: string | null;
+  provider: WalletProvider;
+  bitgoCoin: string | null;
+  rpcUrl: string | null;
   depositEnabled: boolean;
   withdrawalEnabled: boolean;
   minWithdrawal: string;
@@ -208,6 +213,9 @@ export interface Market {
   priceTick: string;
   sizeStep: string;
   minOrderSize: string;
+  makerFeeBps: number;
+  takerFeeBps: number;
+  feeAsset: string;
   createdAt: string;
   baseAsset: Asset;
   quoteAsset: Asset;
@@ -221,6 +229,32 @@ export interface Market {
 export interface MarketsListData {
   markets: Market[];
   pagination: Pagination;
+}
+
+export interface MarketAssetOption {
+  symbol: string;
+  name: string;
+  decimals: number;
+  sources: string[];
+  networks: string[];
+  enabled: boolean;
+}
+
+export interface MarketAssetsData {
+  assets: MarketAssetOption[];
+}
+
+export interface CreateMarketRequest {
+  symbol?: string;
+  baseAsset: string;
+  quoteAsset: string;
+  priceTick: string;
+  sizeStep: string;
+  minOrderSize: string;
+  makerFeeBps: number | string;
+  takerFeeBps: number | string;
+  feeAsset?: string;
+  status: Market['status'];
 }
 
 export interface FeeSchedule {
@@ -252,8 +286,9 @@ export interface FeesListData {
 export interface Wallet {
   id: string;
   networkId: string;
-  purpose: 'HOT' | 'WARM' | 'COLD' | 'TREASURY' | 'FEE';
-  provider: 'BITGO' | 'LOCAL_ANIMICA' | 'OTHER';
+  assetNetworkId: string;
+  purpose: 'HOT' | 'WARM' | 'COLD' | 'TREASURY' | 'FEE' | string;
+  provider: WalletProvider;
   providerRef: string;
   address: string | null;
   isActive: boolean;
@@ -270,6 +305,18 @@ export interface WalletsListData {
   assets: Asset[];
   networks: Network[];
   pagination: Pagination;
+}
+
+export interface ProviderSetupRequest {
+  assetNetworkId: string;
+  provider: Extract<WalletProvider, 'BITGO' | 'ANIMICA_NODE' | 'BITCOIN_NODE'>;
+  walletId?: string;
+  assetName?: string | null;
+  address?: string | null;
+  rpcUrl?: string | null;
+  bitgoCoin?: string | null;
+  depositEnabled?: boolean;
+  withdrawalEnabled?: boolean;
 }
 
 export interface WithdrawalApproval {
@@ -306,7 +353,7 @@ export interface Withdrawal {
   broadcastAt: string | null;
   confirmedAt: string | null;
   txid: string | null;
-  provider: 'BITGO' | 'ANIMICA_NODE' | 'MANUAL';
+  provider: 'BITGO' | 'ANIMICA_NODE' | 'BITCOIN_NODE' | 'MANUAL';
   providerRef: string | null;
   idempotencyKey: string | null;
   riskScore: string | null;
@@ -557,6 +604,16 @@ class ApiClient {
     return response.data;
   }
 
+  async listMarketAssets(): Promise<ApiResponse<MarketAssetsData>> {
+    const response = await this.client.get<ApiResponse<MarketAssetsData>>('/markets/assets');
+    return response.data;
+  }
+
+  async createMarket(payload: CreateMarketRequest): Promise<ApiResponse<{ market: Market }>> {
+    const response = await this.client.post<ApiResponse<{ market: Market }>>('/markets', payload);
+    return response.data;
+  }
+
   async updateMarketStatus(
     id: string,
     payload: { status: Market['status']; reason?: string }
@@ -615,6 +672,16 @@ class ApiClient {
 
   async updateWallet(id: string, payload: Partial<Pick<Wallet, 'providerRef' | 'address' | 'isActive'>>) {
     const response = await this.client.patch<ApiResponse<{ wallet: Wallet }>>(`/wallets/${id}`, payload);
+    return response.data;
+  }
+
+  async configureWalletProvider(
+    payload: ProviderSetupRequest
+  ): Promise<ApiResponse<{ wallet: Wallet | null; assetNetwork: AssetNetwork }>> {
+    const response = await this.client.put<ApiResponse<{ wallet: Wallet | null; assetNetwork: AssetNetwork }>>(
+      '/wallets/provider-setup',
+      payload
+    );
     return response.data;
   }
 

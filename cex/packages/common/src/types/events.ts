@@ -14,7 +14,8 @@ export const orderSubmitSchema = baseMessageSchema.extend({
   client_order_id: z.string().min(1),
   market: z.string().min(1),
   side: z.enum(["buy", "sell"]),
-  price: z.number().positive(),
+  order_type: z.enum(["LIMIT", "MARKET", "POST_ONLY", "IOC", "FOK"]).default("LIMIT"),
+  price: z.number().nonnegative().optional(),
   quantity: z.number().positive()
 });
 

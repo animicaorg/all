@@ -16,7 +16,7 @@ const configSchema = baseEnvSchema.extend({
   CONFIG_ENCRYPTION_KEY: z.string().optional(),
   
   // Ledger service integration
-  LEDGER_SERVICE_URL: z.string().default("http://localhost:3002"),
+  LEDGER_SERVICE_URL: z.string().default("http://localhost:13004"),
   
   // Admin
   ADMIN_API_KEY: z.string(),

@@ -5,8 +5,13 @@ import type {
   Trade,
   Order,
   Balance,
+  Asset,
+  Candle,
+  DepositAddress,
   UserTrade,
   CreateOrderRequest,
+  CreateWithdrawalRequest,
+  Withdrawal,
   PlatformStats,
 } from '../types';
 import { getApiBaseUrl } from './endpoints';
@@ -83,6 +88,20 @@ class ApiClient {
       quantity: t.quantity,
       side: t.side,
       timestamp: t.timestamp,
+    }));
+  }
+
+  async getCandles(symbol: string, resolution = '1m', limit = 300): Promise<Candle[]> {
+    const { data } = await this.client.get(`/markets/${symbol}/candles`, {
+      params: { resolution, limit },
+    });
+    return data.candles.map((candle: any) => ({
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
     }));
   }
 
@@ -178,6 +197,40 @@ class ApiClient {
       locked: b.locked,
       total: b.total,
     }));
+  }
+
+  async getAssets(): Promise<Asset[]> {
+    const { data } = await this.client.get('/assets');
+    return data.assets;
+  }
+
+  async getDepositAddresses(assetNetworkId?: string): Promise<DepositAddress[]> {
+    const { data } = await this.client.get('/me/deposit-addresses', {
+      params: assetNetworkId ? { assetNetworkId } : {},
+    });
+    return data.depositAddresses;
+  }
+
+  async createDepositAddress(assetNetworkId: string): Promise<DepositAddress> {
+    const { data } = await this.client.post('/me/deposit-addresses', { assetNetworkId });
+    return data.depositAddress;
+  }
+
+  async createWithdrawal(request: CreateWithdrawalRequest): Promise<Withdrawal> {
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `withdrawal-${crypto.randomUUID()}`
+        : `withdrawal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    const { data } = await this.client.post('/withdrawals', request, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+    });
+    return data;
+  }
+
+  async getWithdrawals(): Promise<Withdrawal[]> {
+    const { data } = await this.client.get('/withdrawals');
+    return data.withdrawals;
   }
 
   // Platform Statistics

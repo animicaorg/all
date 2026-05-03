@@ -13,9 +13,13 @@ import {
   markCompleted,
   markFailed,
   markPermanentlyFailed,
+  enqueueSubmissionIfEligible,
+  hasCompletedLedgerLock,
   type OutboxOperation,
 } from "./outbox.js";
 import { submitToBitGo } from "../pipeline/submit.js";
+import { submitToAnimicaNode } from "../pipeline/submit_animica_node.js";
+import { submitToBitcoinNode } from "../pipeline/submit_bitcoin_node.js";
 import { calculateBackoff } from "../pipeline/retries.js";
 
 export class OutboxWorker {
@@ -141,10 +145,29 @@ export class OutboxWorker {
           break;
 
         case "SUBMIT_TO_BITGO":
+          await this.ensureLedgerLockCompleted(client, operation.withdrawalId);
           result = await submitToBitGo(
             client,
             operation.withdrawalId,
             this.bitgoClient,
+            this.logger
+          );
+          break;
+
+        case "SUBMIT_TO_ANIMICA_NODE":
+          await this.ensureLedgerLockCompleted(client, operation.withdrawalId);
+          result = await submitToAnimicaNode(
+            client,
+            operation.withdrawalId,
+            this.logger
+          );
+          break;
+
+        case "SUBMIT_TO_BITCOIN_NODE":
+          await this.ensureLedgerLockCompleted(client, operation.withdrawalId);
+          result = await submitToBitcoinNode(
+            client,
+            operation.withdrawalId,
             this.logger
           );
           break;
@@ -163,6 +186,9 @@ export class OutboxWorker {
 
       if (result.success) {
         await markCompleted(client, operation.id);
+        if (operation.type === "APPLY_LEDGER_LOCK") {
+          await enqueueSubmissionIfEligible(client, operation.withdrawalId);
+        }
         this.logger.info(
           {
             operationId: operation.id,
@@ -237,6 +263,12 @@ export class OutboxWorker {
         "Failed to apply ledger lock"
       );
       throw error;
+    }
+  }
+
+  private async ensureLedgerLockCompleted(client: any, withdrawalId: string): Promise<void> {
+    if (!(await hasCompletedLedgerLock(client, withdrawalId))) {
+      throw new Error("Ledger lock not completed");
     }
   }
 
