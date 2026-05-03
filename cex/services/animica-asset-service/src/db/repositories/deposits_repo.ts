@@ -62,6 +62,8 @@ export class DepositsRepository {
    */
   async upsert(params: CreateDepositParams, client?: PoolClient): Promise<Deposit> {
     const executor = client || this.pool;
+    const normalizedTag = params.tag || "";
+    const normalizedVout = params.vout || "0";
     
     const query = `
       INSERT INTO deposits (
@@ -88,9 +90,9 @@ export class DepositsRepository {
       params.assetNetworkId,
       params.walletId,
       params.txid,
-      params.vout,
+      normalizedVout,
       params.address,
-      params.tag,
+      normalizedTag,
       params.amountAtoms,
       params.confirmationsRequired,
       params.blockHeight,
@@ -100,6 +102,46 @@ export class DepositsRepository {
     
     const result = await executor.query(query, values);
     return result.rows[0];
+  }
+
+  /**
+   * Queue a confirmed deposit for ledger credit.
+   */
+  async createCreditOutbox(deposit: Deposit, client?: PoolClient): Promise<void> {
+    if (!deposit.user_id || deposit.unassigned || deposit.risk_hold) return;
+
+    const executor = client || this.pool;
+    const assetResult = await executor.query(
+      `SELECT assets.symbol
+       FROM asset_networks
+       JOIN assets ON assets.id = asset_networks.asset_id
+       WHERE asset_networks.id = $1`,
+      [deposit.asset_network_id]
+    );
+    const assetSymbol = assetResult.rows[0]?.symbol;
+    if (!assetSymbol) return;
+
+    const idempotencyKey = `deposit:${deposit.id}`;
+    const payload = {
+      idempotencyKey,
+      userId: deposit.user_id,
+      assetId: assetSymbol,
+      amountAtoms: deposit.amount_atoms,
+      source: {
+        provider: deposit.provider,
+        txid: deposit.txid,
+        address: deposit.address,
+        network: "ANIMICA",
+      },
+      depositId: deposit.id,
+    };
+
+    await executor.query(
+      `INSERT INTO deposit_outbox (deposit_id, idempotency_key, payload)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [deposit.id, idempotencyKey, JSON.stringify(payload)]
+    );
   }
   
   /**

@@ -97,21 +97,23 @@ export const useWSStore = create<WSStore>((set, get) => ({
 
 function handleMessage(message: WSMessage, set: any, get: any) {
   if (message.type === "snapshot" && message.channel === "orderbook") {
+    const data = message.data as { bids: [number, number][]; asks: [number, number][]; sequence: number };
     const orderbook: Orderbook = {
       symbol: message.symbol,
-      bids: message.data.bids.map(([price, quantity]) => ({ price, quantity })),
-      asks: message.data.asks.map(([price, quantity]) => ({ price, quantity })),
-      sequence: message.data.sequence,
+      bids: data.bids.map(([price, quantity]) => ({ price, quantity })),
+      asks: data.asks.map(([price, quantity]) => ({ price, quantity })),
+      sequence: data.sequence,
     };
 
-    const orderbooks = new Map(get().orderbooks);
+    const orderbooks = new Map<string, Orderbook>(get().orderbooks);
     orderbooks.set(message.symbol, orderbook);
     set({ orderbooks });
   } else if (message.type === "update" && message.channel === "orderbook") {
-    const orderbooks = new Map(get().orderbooks);
+    const data = message.data as { bids?: [number, number][]; asks?: [number, number][]; sequence: number };
+    const orderbooks = new Map<string, Orderbook>(get().orderbooks);
     const existing = orderbooks.get(message.symbol);
 
-    if (!existing || (typeof message.data.sequence === 'number' && message.data.sequence <= existing.sequence)) {
+    if (!existing || data.sequence <= existing.sequence) {
       // Sequence gap or old message - ignore
       return;
     }
@@ -121,12 +123,12 @@ function handleMessage(message: WSMessage, set: any, get: any) {
       symbol: message.symbol,
       bids: existing.bids,
       asks: existing.asks,
-      sequence: message.data.sequence,
+      sequence: data.sequence,
     };
 
-    if (message.data.bids) {
+    if (data.bids) {
       const bidsMap = new Map(existing.bids.map((b: OrderbookLevel) => [b.price, b.quantity]));
-      message.data.bids.forEach(([price, quantity]) => {
+      data.bids.forEach(([price, quantity]) => {
         if (quantity === 0) {
           bidsMap.delete(price);
         } else {
@@ -138,9 +140,9 @@ function handleMessage(message: WSMessage, set: any, get: any) {
         .sort((a, b) => b.price - a.price);
     }
 
-    if (message.data.asks) {
+    if (data.asks) {
       const asksMap = new Map(existing.asks.map((a: OrderbookLevel) => [a.price, a.quantity]));
-      message.data.asks.forEach(([price, quantity]) => {
+      data.asks.forEach(([price, quantity]) => {
         if (quantity === 0) {
           asksMap.delete(price);
         } else {
@@ -155,11 +157,12 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     orderbooks.set(message.symbol, updated);
     set({ orderbooks });
   } else if (message.type === "snapshot" && message.channel === "trades") {
-    const trades = new Map(get().trades);
-    trades.set(message.symbol, message.data);
+    const data = message.data as Trade[];
+    const trades = new Map<string, Trade[]>(get().trades);
+    trades.set(message.symbol, data);
     set({ trades });
   } else if (message.type === "update" && message.channel === "trades") {
-    const trades = new Map(get().trades);
+    const trades = new Map<string, Trade[]>(get().trades);
     const existing = trades.get(message.symbol) || [];
 
     // Add new trade and deduplicate
@@ -177,26 +180,28 @@ function handleMessage(message: WSMessage, set: any, get: any) {
     trades.set(message.symbol, deduplicated.slice(0, 100));
     set({ trades });
   } else if (message.type === "snapshot" && message.channel === "ticker") {
+    const data = message.data as Omit<Ticker, "symbol">;
     const ticker: Ticker = {
       symbol: message.symbol,
-      ...message.data,
+      ...data,
     };
 
-    const tickers = new Map(get().tickers);
+    const tickers = new Map<string, Ticker>(get().tickers);
     tickers.set(message.symbol, ticker);
     set({ tickers });
   } else if (message.type === "update" && message.channel === "ticker") {
-    const tickers = new Map(get().tickers);
+    const tickers = new Map<string, Ticker>(get().tickers);
     const existing = tickers.get(message.symbol);
 
     if (existing) {
+      const data = message.data as Partial<Omit<Ticker, "symbol">>;
       const updated: Ticker = {
         symbol: message.symbol,
-        lastPrice: message.data.lastPrice ?? existing.lastPrice,
-        volume24h: message.data.volume24h ?? existing.volume24h,
-        high24h: message.data.high24h ?? existing.high24h,
-        low24h: message.data.low24h ?? existing.low24h,
-        priceChange24h: message.data.priceChange24h ?? existing.priceChange24h,
+        lastPrice: data.lastPrice ?? existing.lastPrice,
+        volume24h: data.volume24h ?? existing.volume24h,
+        high24h: data.high24h ?? existing.high24h,
+        low24h: data.low24h ?? existing.low24h,
+        priceChange24h: data.priceChange24h ?? existing.priceChange24h,
       };
       tickers.set(message.symbol, updated);
       set({ tickers });

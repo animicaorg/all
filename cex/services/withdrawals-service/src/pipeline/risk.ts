@@ -93,7 +93,7 @@ export async function evaluateRisk(
   if (score >= 80) {
     decision = "BLOCK";
     reason = reason || "High risk score";
-  } else if (score >= 40 || flags.length > 0) {
+  } else if (score >= 40 || flags.some((flag) => flag !== "NEW_ADDRESS")) {
     decision = "REVIEW";
     reason = reason || "Requires manual review";
   } else {

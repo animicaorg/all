@@ -7,7 +7,7 @@
 
 import type { Pool } from "pg";
 import type { Logger } from "pino";
-import { DepositsRepo } from "../db/repositories/index.js";
+import { AuditRepo, DepositsRepo, NetworksRepo, OutboxRepo } from "../db/repositories/index.js";
 import type { Config } from "../config.js";
 
 export class ConfirmationBackfill {
@@ -72,6 +72,9 @@ export class ConfirmationBackfill {
 
     try {
       const depositsRepo = new DepositsRepo(client);
+      const networksRepo = new NetworksRepo(client);
+      const outboxRepo = new OutboxRepo(client);
+      const auditRepo = new AuditRepo(client);
 
       // Get deposits that need confirmation update
       // Only look at deposits older than 1 minute to avoid thrashing
@@ -140,8 +143,35 @@ export class ConfirmationBackfill {
               "Deposit reached confirmation threshold"
             );
 
-            // The outbox creation should happen in the pipeline
-            // This is just a backfill to update confirmations
+            if (updated.userId && !updated.riskHold && !updated.unassigned) {
+              const assetSymbol = await networksRepo.getAssetSymbol(updated.assetNetworkId);
+              if (assetSymbol) {
+                await outboxRepo.create(
+                  updated.id,
+                  updated.userId,
+                  assetSymbol,
+                  updated.amountAtoms,
+                  {
+                    provider: updated.provider,
+                    txid: updated.txid,
+                    address: updated.address,
+                    transferId: updated.transferId,
+                    walletId: updated.walletId,
+                  }
+                );
+
+                await auditRepo.logDeposit(
+                  "DEPOSIT_CONFIRMED",
+                  updated.id,
+                  updated.userId,
+                  {
+                    confirmations: updated.confirmations,
+                    confirmationsRequired: updated.confirmationsRequired,
+                  },
+                  { backfill: true }
+                );
+              }
+            }
           }
         } catch (error) {
           depositLogger.error(

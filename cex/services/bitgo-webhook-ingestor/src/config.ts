@@ -29,7 +29,7 @@ const configSchema = baseEnvSchema.extend({
   SERVICE_AUTH_KEY: z.string().optional(), // For internal service-to-service calls
   
   // Ledger service integration
-  LEDGER_SERVICE_URL: z.string().default("http://localhost:3002"),
+  LEDGER_SERVICE_URL: z.string().default("http://localhost:13004"),
   LEDGER_SERVICE_NATS_SUBJECT: z.string().default("ledger.deposit.credit"),
 });
 

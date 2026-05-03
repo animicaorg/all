@@ -12,11 +12,13 @@ router.get("/meta", (req: any, res: any) => {
     capabilities: {
       rest: {
         markets: true,
+        assets: true,
         orderbook: true,
         trades: true,
         candles: true,
         orders: true,
         balances: true,
+        flatWithdrawalFees: true,
         auth: true,
       },
       ws: {

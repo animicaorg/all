@@ -80,6 +80,10 @@ class AccessPolicy:
         "sync.force",
         "sync.trigger",
         "sync.start",
+        "wallet.createAddress",
+        "wallet.send",
+        "wallet_createAddress",
+        "wallet_send",
     })
     bootstrap_methods: set[str] = field(default_factory=lambda: {
         "bootstrap.getManifest",

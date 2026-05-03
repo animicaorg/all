@@ -10,6 +10,7 @@ import type { Config } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { validateBody, validateParams, validateQuery, commonSchemas } from '../middleware/validation.js';
 import { requirePermission, PERMISSIONS } from '../middleware/rbac.js';
+import { pagination, tableExists } from './db_helpers.js';
 
 const kycQuerySchema = z.object({
   query: z.string().optional(),
@@ -42,6 +43,17 @@ export function createKycRouter(
     async (req, res, next) => {
       try {
         const { query, status, riskTier, page = 1, limit = 50 } = req.query as any;
+        if (!(await tableExists(prisma, 'kyc_cases'))) {
+          res.json({
+            success: true,
+            data: {
+              cases: [],
+              queueCounts: [],
+              pagination: pagination(page, limit, 0),
+            },
+          });
+          return;
+        }
 
         const where: any = {};
         if (status) where.status = status;
@@ -105,12 +117,7 @@ export function createKycRouter(
               status: row.status,
               count: row._count._all,
             })),
-            pagination: {
-              page,
-              limit,
-              total,
-              totalPages: Math.ceil(total / limit),
-            },
+            pagination: pagination(page, limit, total),
           },
         });
       } catch (error) {

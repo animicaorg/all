@@ -120,7 +120,7 @@ export async function handleDepositCredit(
   // ----------------------------
   await ledgerRepo.addEntry(
     ledgerTxId,
-    clearingAccount.id,
+    userAccount.available.id,
     assetId,
     "DEBIT",
     amount,
@@ -129,7 +129,7 @@ export async function handleDepositCredit(
 
   await ledgerRepo.addEntry(
     ledgerTxId,
-    userAccount.available.id,
+    clearingAccount.id,
     assetId,
     "CREDIT",
     amount,
@@ -137,13 +137,14 @@ export async function handleDepositCredit(
   );
 
   // ----------------------------
-  // Balance update (FIXED 4 args)
+  // Balance cache update
   // ----------------------------
+  const existingBalance = await balancesRepo.getBalance(userId, assetId);
   await balancesRepo.updateBalance(
-    userAccount.available.id,
+    userId,
     assetId,
-    amount,
-    0n
+    (existingBalance?.availableAtoms || 0n) + amount,
+    existingBalance?.lockedAtoms || 0n
   );
 
   // ----------------------------

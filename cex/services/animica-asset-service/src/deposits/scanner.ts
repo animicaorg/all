@@ -229,6 +229,13 @@ export class BlockScanner {
           "Deposit confirmed"
         );
       }
+
+      if (
+        confirmations >= deposit.confirmations_required &&
+        ["DETECTED", "CONFIRMED"].includes(deposit.status)
+      ) {
+        await this.depositsRepo.createCreditOutbox(deposit);
+      }
     }
   }
   

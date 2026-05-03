@@ -49,6 +49,12 @@ export async function submitToBitGo(
 
     return { success: false, message: "No wallet configured" };
   }
+  if (wallet.provider !== "BITGO") {
+    return {
+      success: false,
+      message: `Wallet provider ${wallet.provider} cannot be submitted through BitGo`,
+    };
+  }
 
   // 4. Build BitGo transfer request
   const transferRequest: BitGoTransferRequest = {

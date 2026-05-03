@@ -230,8 +230,8 @@ export function createWebSocketServer(
           AND remaining_quantity > 0
         GROUP BY side, price
         ORDER BY 
-          CASE WHEN side = 'buy' THEN price END DESC,
-          CASE WHEN side = 'sell' THEN price END ASC
+          CASE WHEN lower(side) = 'buy' THEN price END DESC,
+          CASE WHEN lower(side) = 'sell' THEN price END ASC
         LIMIT 40
       `,
         [marketId]
@@ -244,7 +244,7 @@ export function createWebSocketServer(
         const price = parseFloat(row.price);
         const quantity = parseFloat(row.total_quantity);
 
-        if (row.side === "buy") {
+        if (String(row.side).toLowerCase() === "buy") {
           bids.push([price, quantity]);
         } else {
           asks.push([price, quantity]);
@@ -298,7 +298,7 @@ export function createWebSocketServer(
           t.sequence,
           t.created_at,
           CASE 
-            WHEN taker_order.side = 'buy' THEN 'buy'
+            WHEN lower(taker_order.side) = 'buy' THEN 'buy'
             ELSE 'sell'
           END as side
         FROM trades t

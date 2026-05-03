@@ -48,7 +48,6 @@ const configSchema = z.object({
   // External Services
   EXCHANGE_API_URL: z.string().default('http://localhost:3000'),
   MATCHING_ENGINE_URL: z.string().default('http://localhost:3100'),
-  LEDGER_SERVICE_URL: z.string().default('http://localhost:3200'),
   BITGO_ENV: z.enum(['test', 'prod']).default('test'),
   BITGO_API_URL: z.string().optional(),
   BITGO_ACCESS_TOKEN: z.string().optional(),

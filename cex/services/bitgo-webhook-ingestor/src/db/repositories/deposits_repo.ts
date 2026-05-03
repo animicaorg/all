@@ -47,6 +47,8 @@ export class DepositsRepo {
     userId: string | null,
     confirmationsRequired: number
   ): Promise<Deposit> {
+    const normalizedTag = observation.tag || "";
+    const normalizedVout = observation.voutOrLogIndex || "0";
     const query = `
       INSERT INTO deposits (
         user_id, asset_network_id, provider, provider_event_id,
@@ -65,11 +67,13 @@ export class DepositsRepo {
         block_hash = COALESCE(EXCLUDED.block_hash, deposits.block_hash),
         status = CASE
           WHEN EXCLUDED.status = 'FAILED' THEN 'FAILED'
-          WHEN EXCLUDED.confirmations >= deposits.confirmations_required AND deposits.status = 'DETECTED' THEN 'CONFIRMED'
+          WHEN (EXCLUDED.status = 'CONFIRMED' OR EXCLUDED.confirmations >= deposits.confirmations_required)
+            AND deposits.status = 'DETECTED' THEN 'CONFIRMED'
           ELSE deposits.status
         END,
         confirmed_at = CASE
-          WHEN EXCLUDED.confirmations >= deposits.confirmations_required AND deposits.status = 'DETECTED' THEN NOW()
+          WHEN (EXCLUDED.status = 'CONFIRMED' OR EXCLUDED.confirmations >= deposits.confirmations_required)
+            AND deposits.status = 'DETECTED' THEN NOW()
           ELSE deposits.confirmed_at
         END,
         updated_at = NOW()
@@ -84,9 +88,9 @@ export class DepositsRepo {
       observation.walletId,
       observation.transferId || null,
       observation.txid,
-      observation.voutOrLogIndex || null,
+      normalizedVout,
       observation.address,
-      observation.tag || null,
+      normalizedTag,
       observation.amountAtoms.toString(),
       observation.confirmations,
       confirmationsRequired,

@@ -210,9 +210,12 @@ async function findAssetNetwork(
     FROM asset_networks an
     JOIN assets a ON a.id = an.asset_id
     JOIN networks n ON n.id = an.network_id
-    WHERE a.symbol = $1
-      AND n.code = $2
-      AND (an.contract_address = $3 OR (an.contract_address IS NULL AND $3 IS NULL))
+    WHERE UPPER(a.symbol) = UPPER($1)
+      AND UPPER(n.code) = UPPER($2)
+      AND (
+        LOWER(an.contract_address) = LOWER($3)
+        OR (an.contract_address IS NULL AND $3 IS NULL)
+      )
       AND an.deposits_enabled = true
   `;
 

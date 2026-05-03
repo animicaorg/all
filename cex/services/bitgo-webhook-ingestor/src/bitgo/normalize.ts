@@ -17,6 +17,8 @@ const COIN_TO_NETWORK: Record<string, string> = {
   eth: "ETH",
   teth: "ETH_SEPOLIA",
   gteth: "ETH", // goerli
+  sol: "SOL",
+  tsol: "SOL",
 };
 
 /**
@@ -28,6 +30,8 @@ const COIN_TO_ASSET: Record<string, string> = {
   eth: "ETH",
   teth: "ETH",
   gteth: "ETH",
+  sol: "SOL",
+  tsol: "SOL",
 };
 
 /**
@@ -62,9 +66,12 @@ async function lookupAssetNetwork(
     FROM asset_networks an
     JOIN assets a ON a.id = an.asset_id
     JOIN networks n ON n.id = an.network_id
-    WHERE a.symbol = $1
-      AND n.code = $2
-      AND (an.contract_address = $3 OR (an.contract_address IS NULL AND $3 IS NULL))
+    WHERE UPPER(a.symbol) = UPPER($1)
+      AND UPPER(n.code) = UPPER($2)
+      AND (
+        LOWER(an.contract_address) = LOWER($3)
+        OR (an.contract_address IS NULL AND $3 IS NULL)
+      )
       AND an.deposits_enabled = true
   `;
 
@@ -109,10 +116,15 @@ export async function normalizeBitGoWebhook(
   // BitGo marks incoming transfers with positive value in entries/outputs
   const entries = transfer.entries || transfer.outputs || [];
   
-  for (const entry of entries) {
-    const value = typeof entry.value === "string" 
-      ? entry.value 
-      : entry.valueString || entry.value.toString();
+  for (const [index, entry] of entries.entries()) {
+    const value = typeof entry.value === "string"
+      ? entry.value
+      : entry.valueString || entry.value?.toString();
+
+    if (!value) {
+      logger.debug({ transferId: transfer.id, index }, "Skipping BitGo entry without a value");
+      continue;
+    }
     
     const numericValue = BigInt(value);
     
@@ -152,20 +164,20 @@ export async function normalizeBitGoWebhook(
     // Create observation
     const observation: DepositObservation = {
       provider: "BITGO",
-      providerEventId: transfer.id,
+      providerEventId: `${transfer.id}:${index}:${entry.address}`,
       walletId: payload.walletId,
       coin: payload.coin,
       networkCode,
       assetSymbol,
       txid: transfer.txid,
-      voutOrLogIndex: undefined, // BitGo doesn't always provide this
+      voutOrLogIndex: String(index),
       address: entry.address,
       tag: undefined, // TODO: extract memo/tag for MEMO_BASED networks
       amountAtoms: numericValue,
       confirmations: transfer.confirmations || 0,
       blockHeight: transfer.height,
       blockHash: transfer.heightId,
-      observedAt: new Date(transfer.date),
+      observedAt: transfer.date ? new Date(transfer.date) : new Date(),
       status,
       transferId: transfer.id,
       raw: payload,

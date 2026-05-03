@@ -14,8 +14,10 @@ import {
 import metaRouter from "./routes/meta.js";
 import { createAuthProxyRouter } from "./routes/auth.js";
 import { createMarketsRouter } from "./routes/markets.js";
+import { createAssetsRouter } from "./routes/assets.js";
 import { createOrdersRouter } from "./routes/orders.js";
 import { createStatsRouter } from "./routes/stats.js";
+import { createTransfersRouter } from "./routes/transfers.js";
 import { createWebSocketServer } from "./websocket.js";
 
 const env = loadEnv(
@@ -25,7 +27,18 @@ const env = loadEnv(
       AUTH_SERVICE_URL: z
         .string()
         .url()
-        .default(`http://auth-service:${process.env.AUTH_SERVICE_PORT ?? "3100"}`)
+        .default(`http://auth-service:${process.env.AUTH_SERVICE_PORT ?? "3100"}`),
+      WITHDRAWALS_SERVICE_URL: z
+        .string()
+        .url()
+        .default(`http://127.0.0.1:${process.env.WITHDRAWALS_SERVICE_PORT ?? "3011"}`),
+      BITGO_BASE_URL: z.string().url().optional(),
+      BITGO_API_URL: z.string().url().optional(),
+      BITGO_ACCESS_TOKEN: z.string().optional(),
+      CONFIG_ENCRYPTION_KEY: z.string().optional(),
+      ADMIN_API_KEY: z.string().optional(),
+      ANIMICA_RPC_URL: z.string().url().optional(),
+      ANIMICA_RPC_ADMIN_TOKEN: z.string().optional()
     }),
     { defaultPort: 3000 }
   )
@@ -114,21 +127,36 @@ const start = async () => {
   // Routes
   const authProxyRouter = createAuthProxyRouter({ authServiceUrl: env.AUTH_SERVICE_URL });
   const marketsRouter = createMarketsRouter(pgPool);
-  const ordersRouter = createOrdersRouter(pgPool, nats);
+  const assetsRouter = createAssetsRouter(pgPool);
+  const ordersRouter = createOrdersRouter(pgPool, nats, env.AUTH_SERVICE_URL);
   const statsRouter = createStatsRouter(pgPool);
+  const transfersRouter = createTransfersRouter(pgPool, {
+    authServiceUrl: env.AUTH_SERVICE_URL,
+    withdrawalsServiceUrl: env.WITHDRAWALS_SERVICE_URL,
+    bitgoBaseUrl: env.BITGO_BASE_URL ?? env.BITGO_API_URL,
+    bitgoAccessToken: env.BITGO_ACCESS_TOKEN,
+    configEncryptionKey: env.CONFIG_ENCRYPTION_KEY,
+    adminApiKey: env.ADMIN_API_KEY,
+    animicaRpcUrl: env.ANIMICA_RPC_URL,
+    animicaRpcAdminToken: env.ANIMICA_RPC_ADMIN_TOKEN,
+  });
 
   app.use(authProxyRouter);
   app.use(metaRouter);
   app.use(marketsRouter);
+  app.use(assetsRouter);
   app.use(ordersRouter);
   app.use(statsRouter);
+  app.use(transfersRouter);
 
   // Preserve /api/v1 compatibility expected by web clients.
   app.use("/api/v1", authProxyRouter);
   app.use("/api/v1", metaRouter);
   app.use("/api/v1", marketsRouter);
+  app.use("/api/v1", assetsRouter);
   app.use("/api/v1", ordersRouter);
   app.use("/api/v1", statsRouter);
+  app.use("/api/v1", transfersRouter);
 
   // Start HTTP server
   const server = app.listen(env.PORT, env.HOST, () => {

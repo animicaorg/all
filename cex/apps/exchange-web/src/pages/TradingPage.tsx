@@ -6,6 +6,7 @@ import { toast } from 'react-hot-toast';
 import { apiClient } from '../lib/api-client';
 import { useWSStore } from '../lib/ws-store';
 import { OrderEntry } from '../components/OrderEntry';
+import { MarketChart } from '../components/MarketChart';
 import type { CreateOrderRequest, Market } from '../types';
 
 export default function TradingPage() {
@@ -184,6 +185,8 @@ export default function TradingPage() {
           </div>
         </div>
       )}
+
+      <MarketChart symbol={symbol} market={market} trades={displayTrades} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Orderbook */}

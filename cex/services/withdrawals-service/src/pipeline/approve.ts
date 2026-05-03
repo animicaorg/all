@@ -9,7 +9,7 @@ import {
   ApprovalsRepo,
   AuditRepo,
 } from "../db/repositories/index.js";
-import { enqueueOperation } from "../outbox/outbox.js";
+import { enqueueOperation, enqueueSubmissionIfEligible } from "../outbox/outbox.js";
 
 export interface ApprovalRequest {
   withdrawalId: string;
@@ -119,10 +119,7 @@ export async function handleApproval(
     // Threshold met - approve and queue submission
     await withdrawalsRepo.updateStatus(request.withdrawalId, "APPROVED");
 
-    // Queue BitGo submission
-    await enqueueOperation(client, request.withdrawalId, "SUBMIT_TO_BITGO", {
-      withdrawalId: request.withdrawalId,
-    });
+    const submissionOperation = await enqueueSubmissionIfEligible(client, request.withdrawalId);
 
     logger.info(
       {
@@ -130,7 +127,9 @@ export async function handleApproval(
         approvalCount,
         requiredApprovals,
       },
-      "Withdrawal approved and queued for submission"
+      submissionOperation
+        ? "Withdrawal approved and queued for submission"
+        : "Withdrawal approved; submission waits for ledger lock"
     );
 
     return {
