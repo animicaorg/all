@@ -27,6 +27,28 @@ class ApiClient {
       timeout: 10000,
       withCredentials: true,
     });
+
+    this.client.interceptors.request.use((config) => {
+      try {
+        const raw =
+          typeof window !== 'undefined'
+            ? window.localStorage.getItem('auth-storage')
+            : null;
+
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const state = parsed?.state ?? parsed;
+          const userId = state?.user?.id;
+          if (userId) {
+            config.headers = config.headers ?? {};
+            (config.headers as any)['x-user-id'] = userId;
+          }
+        }
+      } catch {
+        // ignore auth-storage parse errors
+      }
+      return config;
+    });
   }
 
   // Health check
