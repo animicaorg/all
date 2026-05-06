@@ -39,14 +39,27 @@ export async function submitToBitGo(
     };
   }
 
-  // 3. Get wallet for asset network
-  const wallet = await networksRepo.getWallet(withdrawal.assetNetworkId, "HOT");
+  // 3. Get asset network and wallet
+  const [assetNetwork, wallet] = await Promise.all([
+    networksRepo.getAssetNetwork(withdrawal.assetNetworkId),
+    networksRepo.getWallet(withdrawal.assetNetworkId, "HOT"),
+  ]);
+  if (!assetNetwork) {
+    return { success: false, message: "Asset network not found" };
+  }
+  if (!assetNetwork.enabled) {
+    return { success: false, message: "Withdrawals are paused for this asset network" };
+  }
+  if (assetNetwork.provider !== "BITGO") {
+    return {
+      success: false,
+      message: `Asset network provider ${assetNetwork.provider} cannot be submitted through BitGo`,
+    };
+  }
+  if (!assetNetwork.bitgoCoin) {
+    return { success: false, message: "Asset network has no BitGo coin configured" };
+  }
   if (!wallet) {
-    await withdrawalsRepo.updateStatus(withdrawalId, "FAILED", {
-      failureCode: "NO_WALLET",
-      failureMessage: "No hot wallet configured for this asset network",
-    });
-
     return { success: false, message: "No wallet configured" };
   }
   if (wallet.provider !== "BITGO") {
@@ -62,13 +75,18 @@ export async function submitToBitGo(
     address: withdrawal.destinationAddress,
     memo: withdrawal.destinationTag || undefined,
     sequenceId: withdrawal.idempotencyKey, // Use idempotency key for BitGo
+    type: "transfer",
   };
+  if (assetNetwork.addressType?.toUpperCase() === "UTXO") {
+    transferRequest.txFormat = "psbt";
+  }
 
   try {
     // 5. Submit to BitGo
     logger.info(
       {
         withdrawalId,
+        coin: assetNetwork.bitgoCoin,
         walletId: wallet.providerWalletId,
         amount: withdrawal.amount.toString(),
         address: withdrawal.destinationAddress,
@@ -77,6 +95,7 @@ export async function submitToBitGo(
     );
 
     const response = await bitgoClient.createTransfer(
+      assetNetwork.bitgoCoin,
       wallet.providerWalletId,
       transferRequest
     );
@@ -105,6 +124,7 @@ export async function submitToBitGo(
         bitgoState: response.transfer.state,
       },
       metadata: {
+        coin: assetNetwork.bitgoCoin,
         walletId: wallet.providerWalletId,
       },
     });
@@ -112,6 +132,7 @@ export async function submitToBitGo(
     logger.info(
       {
         withdrawalId,
+        coin: assetNetwork.bitgoCoin,
         providerRef: response.transfer.id,
         bitgoState: response.transfer.state,
         newStatus,
@@ -132,14 +153,6 @@ export async function submitToBitGo(
       },
       "Failed to submit withdrawal to BitGo"
     );
-
-    // Update withdrawal with error
-    await withdrawalsRepo.updateStatus(withdrawalId, "FAILED", {
-      failureCode: "BITGO_ERROR",
-      failureMessage: error.message || "Failed to submit to BitGo",
-      incrementAttempt: true,
-      nextRetryAt: new Date(Date.now() + 60000), // Retry in 1 minute
-    });
 
     await auditRepo.log({
       eventType: "WITHDRAWAL_SUBMISSION_FAILED",

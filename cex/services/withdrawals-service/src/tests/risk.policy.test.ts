@@ -126,22 +126,22 @@ describe("Risk Evaluation and Policy", () => {
 
   describe("Velocity Limits", () => {
     it("should enforce 24h amount limit", async () => {
-      // Create existing withdrawal at 400M satoshis
+      // Create existing withdrawal at 4.5 BTC
       const existingWithdrawal = {
         id: "wd-existing-1",
         user_id: fixtures.users.alice,
         asset_network_id: "an-btc-mainnet",
-        total_debit_amount: "400000000", // 4 BTC
+        total_debit_amount: "450000000",
         status: "CONFIRMED",
         created_at: new Date(),
       };
       db.withdrawals.set(existingWithdrawal.id, existingWithdrawal);
 
-      // Try to withdraw 200M more (would exceed 5 BTC limit)
+      // Try to withdraw 0.6 BTC more (would exceed 5 BTC daily limit without exceeding per-withdrawal max)
       const request: WithdrawalRequest = {
         assetNetworkId: "an-btc-mainnet",
         destinationAddress: fixtures.addresses.btc.valid,
-        amount: 200000000n,
+        amount: fixtures.amounts.btc.large,
       };
 
       const result = await validateAndCreateWithdrawal(
@@ -239,11 +239,11 @@ describe("Risk Evaluation and Policy", () => {
       };
       db.withdrawals.set(btcWithdrawal.id, btcWithdrawal);
 
-      // ETH withdrawal should not be affected by BTC velocity
+      // LTC withdrawal should not be affected by BTC velocity
       const request: WithdrawalRequest = {
-        assetNetworkId: "an-eth-mainnet",
-        destinationAddress: fixtures.addresses.eth.valid,
-        amount: fixtures.amounts.eth.large,
+        assetNetworkId: "an-ltc-mainnet",
+        destinationAddress: fixtures.addresses.ltc.valid,
+        amount: 100000000n,
       };
 
       const result = await validateAndCreateWithdrawal(

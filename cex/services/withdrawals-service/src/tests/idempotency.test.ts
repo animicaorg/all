@@ -411,16 +411,16 @@ describe("Idempotency", () => {
       const result1 = await submitToBitGo(mockClient, withdrawal.id, mockBitGo, mockLogger);
       expect(result1.success).toBe(false);
 
-      // Withdrawal marked as failed with retry scheduled
+      // Provider failures are retry-safe; outbox retry/backoff owns resubmission.
       let updatedWithdrawal = db.withdrawals.get(withdrawal.id);
-      expect(updatedWithdrawal.status).toBe("FAILED");
+      expect(updatedWithdrawal.status).toBe("APPROVED");
 
       // Fix BitGo and retry
-      mockBitGo.createTransfer = async (walletId: string, request: any) => {
+      mockBitGo.createTransfer = async (coin: string, walletId: string, request: any) => {
         const transferId = `bitgo-transfer-${Math.random().toString(36).substr(2, 9)}`;
         const transfer = {
           id: transferId,
-          coin: "btc",
+          coin,
           wallet: walletId,
           txid: "0xretry123",
           state: "signed" as const,
@@ -485,7 +485,7 @@ describe("Idempotency", () => {
       const matchingTransfer = transfers.find((t) => t.sequenceId === idempotencyKey);
       expect(matchingTransfer).toBeDefined();
 
-      // Verify only one of each operation type was created
+      // Verify the provider call did not duplicate ledger locks or enqueue itself.
       const lockOps2 = db.outbox.filter(
         (op) => op.type === "APPLY_LEDGER_LOCK" && op.withdrawal_id === withdrawalId
       );
@@ -494,7 +494,7 @@ describe("Idempotency", () => {
       const submitOps = db.outbox.filter(
         (op) => op.type === "SUBMIT_TO_BITGO" && op.withdrawal_id === withdrawalId
       );
-      expect(submitOps.length).toBeGreaterThan(0);
+      expect(submitOps).toHaveLength(0);
     });
   });
 });

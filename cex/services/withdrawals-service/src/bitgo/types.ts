@@ -7,6 +7,8 @@ export interface BitGoTransferRequest {
   address: string;
   memo?: string; // For MEMO_BASED networks
   sequenceId?: string; // Idempotency key
+  type?: "transfer";
+  txFormat?: "psbt";
   walletPassphrase?: string;
 }
 

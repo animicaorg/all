@@ -11,7 +11,8 @@ import {
   addAtoms,
   subtractAtoms,
   formatAtoms,
-  parseAtoms
+  parseAtoms,
+  getAssetDecimals
 } from "../domain/money.js";
 
 describe("money utilities", () => {
@@ -90,6 +91,16 @@ describe("money utilities", () => {
       
       const parsed = parseAtoms(formatted, "USDT");
       expect(parsed).toBe(atoms);
+    });
+  });
+
+  describe("asset decimals", () => {
+    it("uses 8 decimals for supported BitGo UTXO assets", () => {
+      expect(getAssetDecimals("BTC")).toBe(8);
+      expect(getAssetDecimals("LTC")).toBe(8);
+      expect(getAssetDecimals("DOGE")).toBe(8);
+      expect(getAssetDecimals("ZEC")).toBe(8);
+      expect(formatAtoms(8_694_835n, "LTC")).toBe("0.08694835 LTC");
     });
   });
 });

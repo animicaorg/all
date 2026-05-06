@@ -14,7 +14,10 @@ const configSchema = baseEnvSchema.extend({
   // BitGo configuration (will be loaded from secrets)
   BITGO_WEBHOOK_SECRET: z.string().optional(),
   BITGO_API_TOKEN: z.string().optional(),
+  BITGO_ACCESS_TOKEN: z.string().optional(),
   BITGO_ENV: z.enum(["prod", "test"]).default("test"),
+  BITGO_BASE_URL: z.string().url().optional(),
+  BITGO_API_URL: z.string().url().optional(),
   
   // Rate limiting
   WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().default(100),
@@ -22,6 +25,7 @@ const configSchema = baseEnvSchema.extend({
   
   // Confirmation tracking
   CONFIRMATION_BACKFILL_INTERVAL_MS: z.coerce.number().default(60000), // 1 minute
+  BITGO_TRANSFER_DISCOVERY_LIMIT: z.coerce.number().int().positive().max(500).default(100),
   OUTBOX_PROCESSOR_INTERVAL_MS: z.coerce.number().default(5000), // 5 seconds
   
   // Admin and service auth

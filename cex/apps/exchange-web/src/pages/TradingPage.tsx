@@ -71,6 +71,9 @@ export default function TradingPage() {
   const { data: balances = [] } = useQuery({
     queryKey: ['balances'],
     queryFn: () => apiClient.getBalances(),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
   });
 
   const createOrderMutation = useMutation({

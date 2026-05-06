@@ -18,6 +18,9 @@ export const ASSET_DECIMALS: Record<string, number> = {
   USDC: 6,
   ANM: 9,
   BTC: 8,
+  LTC: 8,
+  DOGE: 8,
+  ZEC: 8,
   ETH: 18,
   SOL: 9,
 };

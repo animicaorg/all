@@ -95,11 +95,10 @@ export function createServer(
   // Apply authentication
   withdrawalRouter.use(createAuthMiddleware(logger));
 
-  // Apply rate limiting
-  if (redis) {
-    withdrawalRouter.use(
-      "/withdrawals",
-      createRateLimiter(
+  // Apply rate limiting only to new withdrawal requests. Read endpoints are
+  // polled by the UI and must not consume a user's withdrawal submission quota.
+  const withdrawalRequestRateLimiter = redis
+    ? createRateLimiter(
         redis,
         {
           windowMs: 60 * 60 * 1000, // 1 hour
@@ -108,24 +107,19 @@ export function createServer(
         },
         logger
       )
-    );
-  } else {
-    withdrawalRouter.use(
-      "/withdrawals",
-      createInMemoryRateLimiter(
+    : createInMemoryRateLimiter(
         {
           windowMs: 60 * 60 * 1000,
           maxRequests: config.WITHDRAWAL_REQUEST_RATE_LIMIT,
           keyPrefix: "withdrawal:ratelimit",
         },
         logger
-      )
-    );
-  }
+      );
 
   // Apply idempotency for POST requests
   withdrawalRouter.post(
     "/withdrawals",
+    withdrawalRequestRateLimiter,
     createIdempotencyMiddleware(pool, logger)
   );
 

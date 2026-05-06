@@ -11,6 +11,7 @@ export interface AssetNetwork {
   networkName: string;
   addressType: string;
   provider: string;
+  bitgoCoin: string | null;
   confirmationsRequired: number;
   enabled: boolean;
   metadata: any;
@@ -37,6 +38,7 @@ export class NetworksRepo {
         assets.decimals AS asset_decimals,
         networks.code AS network_name,
         networks.type AS address_type,
+        asset_networks.bitgo_coin,
         COALESCE(
           asset_networks.metadata->>'provider',
           CASE
@@ -87,6 +89,7 @@ export class NetworksRepo {
       networkName: row.network_name,
       addressType: row.address_type,
       provider: row.provider,
+      bitgoCoin: row.bitgo_coin,
       confirmationsRequired: row.confirmations_required,
       enabled: row.enabled,
       metadata: row.metadata,

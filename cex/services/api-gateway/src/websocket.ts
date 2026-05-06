@@ -26,11 +26,6 @@ const messageSchema = z.discriminatedUnion("action", [
   pingSchema,
 ]);
 
-interface Subscription {
-  channel: string;
-  symbol?: string;
-}
-
 interface Client {
   ws: WebSocket;
   userId?: string;
@@ -46,6 +41,14 @@ export function createWebSocketServer(
 ) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   const clients = new Map<WebSocket, Client>();
+  const marketSymbolById = new Map<string, string>();
+  const natsSubscriptions = [
+    nats.subscribe("cex.order.event.*"),
+    nats.subscribe("cex.trade.event.*"),
+  ];
+
+  void pumpMarketEvents(natsSubscriptions[0], "order");
+  void pumpMarketEvents(natsSubscriptions[1], "trade");
 
   // Heartbeat interval - ping clients every 30 seconds
   const heartbeatInterval = setInterval(() => {
@@ -385,9 +388,84 @@ export function createWebSocketServer(
     }
   }
 
+  async function pumpMarketEvents(
+    subscription: AsyncIterable<{ subject: string }>,
+    eventKind: "order" | "trade"
+  ) {
+    try {
+      for await (const message of subscription) {
+        const marketId = message.subject.split(".").pop();
+        if (!marketId) {
+          continue;
+        }
+
+        const symbol = await getMarketSymbol(marketId);
+        if (!symbol) {
+          continue;
+        }
+
+        await broadcastMarketSnapshots(symbol, eventKind);
+      }
+    } catch (error) {
+      if (!wss.clients.size) {
+        return;
+      }
+      console.error(`Error processing ${eventKind} market events:`, error);
+    }
+  }
+
+  async function getMarketSymbol(marketId: string): Promise<string | null> {
+    const cached = marketSymbolById.get(marketId);
+    if (cached) {
+      return cached;
+    }
+
+    const result = await pgPool.query(
+      "SELECT symbol FROM markets WHERE id = $1 AND active = true",
+      [marketId]
+    );
+    const symbol = result.rows[0]?.symbol;
+    if (!symbol) {
+      return null;
+    }
+
+    marketSymbolById.set(marketId, symbol);
+    return symbol;
+  }
+
+  async function broadcastMarketSnapshots(symbol: string, eventKind: "order" | "trade") {
+    const targets = Array.from(clients.values()).filter(
+      (client) => client.ws.readyState === WebSocket.OPEN
+    );
+    if (targets.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      targets.map(async (client) => {
+        const tasks: Promise<void>[] = [];
+
+        if (client.subscriptions.has(`orderbook:${symbol}`)) {
+          tasks.push(sendOrderbookSnapshot(client, symbol));
+        }
+        if (eventKind === "trade" && client.subscriptions.has(`trades:${symbol}`)) {
+          tasks.push(sendTradesSnapshot(client, symbol));
+        }
+        if (eventKind === "trade" && client.subscriptions.has(`ticker:${symbol}`)) {
+          tasks.push(sendTickerSnapshot(client, symbol));
+        }
+
+        await Promise.all(tasks);
+      })
+    );
+  }
+
   // Cleanup on server shutdown
   wss.on("close", () => {
     clearInterval(heartbeatInterval);
+    for (const subscription of natsSubscriptions) {
+      subscription.unsubscribe();
+    }
   });
 
   return wss;

@@ -45,9 +45,20 @@ function decimalToAtoms(value: string, decimals: number): string {
 }
 
 function formatBalance(value: number, asset: string): string {
+  const maximumFractionDigits =
+    asset === 'BTC' || asset === 'LTC' || asset === 'DOGE' || asset === 'ZEC'
+      ? 8
+      : asset === 'ANM'
+        ? 9
+        : asset === 'ETH'
+          ? 8
+          : asset === 'SOL'
+            ? 6
+            : 2;
+
   return value.toLocaleString(undefined, {
     minimumFractionDigits: 2,
-    maximumFractionDigits: asset === 'BTC' || asset === 'ETH' ? 8 : asset === 'SOL' ? 6 : 2,
+    maximumFractionDigits,
   });
 }
 
@@ -332,6 +343,8 @@ export default function AccountPage() {
     queryKey: ['balances'],
     queryFn: () => apiClient.getBalances(),
     refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
   });
 
   const { data: assets = [], isLoading: assetsLoading } = useQuery({
@@ -344,12 +357,15 @@ export default function AccountPage() {
     queryKey: ['withdrawals'],
     queryFn: () => apiClient.getWithdrawals(),
     refetchInterval: 10000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: deposits = [] } = useQuery({
     queryKey: ['deposits'],
     queryFn: () => apiClient.getDeposits(),
     refetchInterval: 10000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
   });
 
   const createDepositAddress = useMutation({
@@ -466,7 +482,7 @@ export default function AccountPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Asset</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Total</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Available</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">In Orders</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Locked</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">

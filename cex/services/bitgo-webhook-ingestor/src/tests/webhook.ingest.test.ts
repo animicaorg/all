@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from "@jest/globals";
 import type { DepositObservation } from "../bitgo/types.js";
 import type { IngestResult } from "../pipeline/ingest.js";
+import { normalizeBitGoWebhook } from "../bitgo/normalize.js";
 
 describe("Webhook Ingestion", () => {
   // Mock pool client
@@ -116,6 +117,55 @@ describe("Webhook Ingestion", () => {
 
       expect(payload.transfer.state).toBe("confirmed");
       expect(payload.transfer.txid).toBe(expectedObservation.txid);
+    });
+
+    it.each([
+      ["btc", "BTC", "BTC"],
+      ["ltc", "LTC", "LTC"],
+      ["doge", "DOGE", "DOGE"],
+      ["zec", "ZEC", "ZEC"],
+    ])("should normalize %s native UTXO deposit webhooks", async (coin, networkCode, assetSymbol) => {
+      const observations = await normalizeBitGoWebhook(
+        {
+          type: "transfer",
+          walletId: `wallet-${coin}`,
+          coin,
+          transfer: {
+            id: `transfer-${coin}`,
+            coin,
+            wallet: `wallet-${coin}`,
+            txid: `tx-${coin}`,
+            height: 12345,
+            heightId: "0xblockhash",
+            date: "2026-05-06T17:00:00Z",
+            confirmations: 30,
+            valueString: "100000000",
+            state: "confirmed",
+            entries: [
+              {
+                address: `${coin}-deposit-address`,
+                valueString: "100000000",
+                wallet: `wallet-${coin}`,
+              },
+            ],
+          },
+        } as any,
+        mockClient as any,
+        mockLogger
+      );
+
+      expect(observations).toHaveLength(1);
+      expect(observations[0]).toMatchObject({
+        provider: "BITGO",
+        walletId: `wallet-${coin}`,
+        coin,
+        networkCode,
+        assetSymbol,
+        txid: `tx-${coin}`,
+        address: `${coin}-deposit-address`,
+        status: "CONFIRMED",
+      });
+      expect(observations[0].amountAtoms).toBe(100000000n);
     });
 
     it("should skip non-transfer webhooks", async () => {

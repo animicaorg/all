@@ -47,6 +47,7 @@ async function start() {
   // Load sensitive configuration from secrets
   const bitgoWebhookSecret = await getSecret("BITGO_WEBHOOK_SECRET");
   const bitgoApiToken = await getSecret("BITGO_API_TOKEN");
+  const bitgoAccessToken = await getSecret("BITGO_ACCESS_TOKEN");
   const adminKey = await getSecret("ADMIN_KEY");
   const serviceAuthKey = await getSecret("SERVICE_AUTH_KEY");
 
@@ -54,7 +55,16 @@ async function start() {
   const runtimeConfig = {
     ...config,
     BITGO_WEBHOOK_SECRET: bitgoWebhookSecret || config.BITGO_WEBHOOK_SECRET,
-    BITGO_API_TOKEN: bitgoApiToken || config.BITGO_API_TOKEN,
+    BITGO_API_TOKEN:
+      bitgoApiToken ||
+      config.BITGO_API_TOKEN ||
+      bitgoAccessToken ||
+      config.BITGO_ACCESS_TOKEN,
+    BITGO_ACCESS_TOKEN:
+      bitgoAccessToken ||
+      config.BITGO_ACCESS_TOKEN ||
+      bitgoApiToken ||
+      config.BITGO_API_TOKEN,
     ADMIN_KEY: adminKey || config.ADMIN_KEY,
     SERVICE_AUTH_KEY: serviceAuthKey || config.SERVICE_AUTH_KEY,
   };
@@ -62,6 +72,7 @@ async function start() {
   logger.info(
     {
       bitgoSecretConfigured: !!runtimeConfig.BITGO_WEBHOOK_SECRET,
+      bitgoApiConfigured: !!runtimeConfig.BITGO_API_TOKEN,
       adminKeyConfigured: !!runtimeConfig.ADMIN_KEY,
       serviceAuthConfigured: !!runtimeConfig.SERVICE_AUTH_KEY,
     },

@@ -42,7 +42,7 @@ describe("Withdrawal Request and Lock", () => {
       );
 
       expect(result.withdrawalId).toBeDefined();
-      expect(result.status).toBe("REQUESTED");
+      expect(result.status).toBe("APPROVED");
 
       // Check withdrawal was created
       const withdrawal = db.withdrawals.get(result.withdrawalId);
@@ -206,9 +206,9 @@ describe("Withdrawal Request and Lock", () => {
 
     it("should calculate fee from policy metadata", async () => {
       const request: WithdrawalRequest = {
-        assetNetworkId: "an-eth-mainnet",
-        destinationAddress: fixtures.addresses.eth.valid,
-        amount: fixtures.amounts.eth.medium,
+        assetNetworkId: "an-ltc-mainnet",
+        destinationAddress: fixtures.addresses.ltc.valid,
+        amount: 100000000n,
       };
 
       const result = await validateAndCreateWithdrawal(
@@ -220,7 +220,7 @@ describe("Withdrawal Request and Lock", () => {
       );
 
       const withdrawal = db.withdrawals.get(result.withdrawalId);
-      expect(withdrawal.fee_amount).toBe("10000000000000000"); // 0.01 ETH from policy
+      expect(withdrawal.fee_amount).toBe("10000"); // 0.0001 LTC from policy
     });
 
     it("should use zero fee if not in policy metadata", async () => {

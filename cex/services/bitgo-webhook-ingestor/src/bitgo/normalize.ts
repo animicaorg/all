@@ -120,6 +120,11 @@ export async function normalizeBitGoWebhook(
   }
 
   const transfer = payload.transfer;
+  if (!transfer.txid) {
+    logger.debug({ transferId: transfer.id }, "Skipping BitGo transfer without txid");
+    return observations;
+  }
+
   const coinInfo = parseBitGoCoin(payload.coin);
   const networkCode = coinInfo.network;
   const assetSymbol = coinInfo.token || COIN_TO_ASSET[payload.coin] || payload.coin.toUpperCase();
@@ -142,6 +147,12 @@ export async function normalizeBitGoWebhook(
     
     // Skip outgoing transfers (negative or zero value)
     if (numericValue <= 0n) {
+      continue;
+    }
+
+    const address = typeof entry.address === "string" ? entry.address.trim() : "";
+    if (!address) {
+      logger.debug({ transferId: transfer.id, index }, "Skipping BitGo entry without an address");
       continue;
     }
 
@@ -176,14 +187,14 @@ export async function normalizeBitGoWebhook(
     // Create observation
     const observation: DepositObservation = {
       provider: "BITGO",
-      providerEventId: `${transfer.id}:${index}:${entry.address}`,
+      providerEventId: `${transfer.id}:${index}:${address}`,
       walletId: payload.walletId,
       coin: payload.coin,
       networkCode,
       assetSymbol,
       txid: transfer.txid,
       voutOrLogIndex: String(index),
-      address: entry.address,
+      address,
       tag: undefined, // TODO: extract memo/tag for MEMO_BASED networks
       amountAtoms: numericValue,
       confirmations: transfer.confirmations || 0,
