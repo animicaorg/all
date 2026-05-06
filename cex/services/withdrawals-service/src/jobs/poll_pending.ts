@@ -91,11 +91,19 @@ export class PollPendingJob {
             continue;
           }
 
-          // Get wallet
-          const wallet = await networksRepo.getWallet(
-            withdrawal.assetNetworkId,
-            "HOT"
-          );
+          // Get network and wallet
+          const [assetNetwork, wallet] = await Promise.all([
+            networksRepo.getAssetNetwork(withdrawal.assetNetworkId),
+            networksRepo.getWallet(withdrawal.assetNetworkId, "HOT"),
+          ]);
+
+          if (!assetNetwork?.bitgoCoin) {
+            this.logger.warn(
+              { withdrawalId: withdrawal.id, assetNetworkId: withdrawal.assetNetworkId },
+              "No BitGo coin configured for withdrawal"
+            );
+            continue;
+          }
 
           if (!wallet) {
             this.logger.warn(
@@ -107,6 +115,7 @@ export class PollPendingJob {
 
           // Query BitGo for transfer status
           const response = await this.bitgoClient.getTransfer(
+            assetNetwork.bitgoCoin,
             wallet.providerWalletId,
             withdrawal.providerRef
           );

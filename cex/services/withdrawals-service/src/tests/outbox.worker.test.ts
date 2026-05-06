@@ -362,6 +362,19 @@ describe("Outbox Worker", () => {
       };
       
       db.outbox.push(operation);
+      db.outbox.push({
+        id: "outbox-submit-lock-completed-1",
+        withdrawal_id: withdrawal.id,
+        type: "APPLY_LEDGER_LOCK",
+        payload: JSON.stringify({ withdrawalId: withdrawal.id }),
+        status: "COMPLETED",
+        attempt_count: 1,
+        next_retry_at: new Date(),
+        last_error: null,
+        created_at: new Date(),
+        processed_at: new Date(),
+        updated_at: new Date(),
+      });
 
       const config = {
         LEDGER_SERVICE_URL: "http://ledger:3000",
@@ -378,6 +391,17 @@ describe("Outbox Worker", () => {
       // Operation should be completed
       const op = db.outbox.find((o) => o.id === operation.id);
       expect(op?.status).toBe("COMPLETED");
+
+      const broadcastOp = db.outbox.find(
+        (o) =>
+          o.withdrawal_id === withdrawal.id &&
+          o.type === "APPLY_LEDGER_BROADCAST"
+      );
+      expect(broadcastOp).toBeDefined();
+      expect(broadcastOp?.status).toBe("PENDING");
+      expect(JSON.parse(broadcastOp?.payload as string)).toMatchObject({
+        withdrawalId: withdrawal.id,
+      });
     });
   });
 

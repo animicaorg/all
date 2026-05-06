@@ -30,7 +30,7 @@ describe("Approval and Submission", () => {
   });
 
   describe("Approval Workflow", () => {
-    it("should require 2 approvals before submission", async () => {
+    it("should approve and queue submission after completed ledger lock", async () => {
       // Create a withdrawal requiring approval
       const withdrawal = {
         id: "wd-approval-test-1",
@@ -47,20 +47,19 @@ describe("Approval and Submission", () => {
         created_at: new Date(),
       };
       db.withdrawals.set(withdrawal.id, withdrawal);
-
-      // Modify the approval threshold in mock
-      const originalQuery = mockClient.query;
-      mockClient.query = async (query: string, values?: any[]) => {
-        // Return required approvals = 2
-        if (query.includes("COUNT(*) FROM approvals") && query.includes("APPROVE")) {
-          const withdrawalId = values?.[0];
-          const count = db.approvals.filter(
-            (a) => a.withdrawal_id === withdrawalId && a.action === "APPROVE"
-          ).length;
-          return { rows: [{ count: count.toString() }], rowCount: 1 };
-        }
-        return originalQuery(query, values);
-      };
+      db.outbox.push({
+        id: "outbox-lock-completed-1",
+        withdrawal_id: withdrawal.id,
+        type: "APPLY_LEDGER_LOCK",
+        payload: JSON.stringify({ withdrawalId: withdrawal.id }),
+        status: "COMPLETED",
+        attempt_count: 1,
+        next_retry_at: new Date(),
+        last_error: null,
+        created_at: new Date(),
+        processed_at: new Date(),
+        updated_at: new Date(),
+      });
 
       // First approval
       const approval1: ApprovalRequest = {
@@ -72,7 +71,7 @@ describe("Approval and Submission", () => {
 
       const result1 = await handleApproval(mockClient, approval1, mockLogger);
       expect(result1.success).toBe(true);
-      expect(result1.message).toContain("1/1"); // Mock returns requiredApprovals = 1
+      expect(result1.message).toBe("Withdrawal approved");
       
       // Verify status updated to APPROVED and submission queued
       const updatedWithdrawal = db.withdrawals.get(withdrawal.id);
@@ -109,10 +108,10 @@ describe("Approval and Submission", () => {
       // Second approval by same approver should fail
       const result2 = await handleApproval(mockClient, approval1, mockLogger);
       expect(result2.success).toBe(false);
-      expect(result2.message).toContain("already acted");
+      expect(result2.message).toContain("Cannot approve");
     });
 
-    it("should allow different approvers to approve", async () => {
+    it("should not accept another approval after approval threshold is met", async () => {
       const withdrawal = {
         id: "wd-multi-approval-1",
         user_id: fixtures.users.alice,
@@ -142,11 +141,12 @@ describe("Approval and Submission", () => {
       };
 
       const result2 = await handleApproval(mockClient, approval2, mockLogger);
-      expect(result2.success).toBe(true);
+      expect(result2.success).toBe(false);
+      expect(result2.message).toContain("Cannot approve");
 
-      // Both approvals should be recorded
+      // The first approval transitions the withdrawal, so no second approval is recorded.
       const approvals = db.approvals.filter((a) => a.withdrawal_id === withdrawal.id);
-      expect(approvals).toHaveLength(2);
+      expect(approvals).toHaveLength(1);
     });
 
     it("should handle rejection properly", async () => {
@@ -265,6 +265,53 @@ describe("Approval and Submission", () => {
 
       // Verify BitGo was called
       expect(mockBitGo.transfers.size).toBe(1);
+      expect(mockBitGo.requests[0]).toMatchObject({
+        coin: "btc",
+        walletId: "bitgo-wallet-btc-hot",
+      });
+      expect(mockBitGo.requests[0].request.sequenceId).toBe("idem-submit-1");
+    });
+
+    it.each([
+      ["BTC", "an-btc-mainnet", fixtures.addresses.btc.valid, "btc", "bitgo-wallet-btc-hot"],
+      ["LTC", "an-ltc-mainnet", fixtures.addresses.ltc.valid, "ltc", "bitgo-wallet-ltc-hot"],
+      ["DOGE", "an-doge-mainnet", fixtures.addresses.doge.valid, "doge", "bitgo-wallet-doge-hot"],
+      ["ZEC", "an-zec-mainnet", fixtures.addresses.zec.valid, "zec", "bitgo-wallet-zec-hot"],
+    ])("should submit %s withdrawals through the coin-scoped BitGo wallet endpoint", async (
+      _asset,
+      assetNetworkId,
+      destinationAddress,
+      expectedCoin,
+      expectedWalletId
+    ) => {
+      const withdrawal = {
+        id: `wd-submit-${expectedCoin}`,
+        user_id: fixtures.users.alice,
+        asset_network_id: assetNetworkId,
+        destination_address: destinationAddress,
+        amount: "10000000",
+        fee_amount: "5000",
+        total_debit_amount: "10005000",
+        status: "APPROVED",
+        idempotency_key: `idem-submit-${expectedCoin}`,
+        created_at: new Date(),
+      };
+      db.withdrawals.set(withdrawal.id, withdrawal);
+
+      const result = await submitToBitGo(
+        mockClient,
+        withdrawal.id,
+        mockBitGo,
+        mockLogger
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockBitGo.requests).toHaveLength(1);
+      expect(mockBitGo.requests[0]).toMatchObject({
+        coin: expectedCoin,
+        walletId: expectedWalletId,
+      });
+      expect(db.withdrawals.get(withdrawal.id).status).toBe("BROADCAST");
     });
 
     it("should be idempotent - same withdrawal does not create duplicate transfers", async () => {
@@ -365,10 +412,10 @@ describe("Approval and Submission", () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain("BitGo API timeout");
 
-      // Check withdrawal marked as failed
+      // Provider failures are retry-safe; the outbox owns retry/backoff.
       const updatedWithdrawal = db.withdrawals.get(withdrawal.id);
-      expect(updatedWithdrawal.status).toBe("FAILED");
-      expect(updatedWithdrawal.failure_code).toBe("BITGO_ERROR");
+      expect(updatedWithdrawal.status).toBe("APPROVED");
+      expect(updatedWithdrawal.failure_code).toBeUndefined();
     });
 
     it("should not submit if withdrawal not approved", async () => {
@@ -419,8 +466,8 @@ describe("Approval and Submission", () => {
       expect(result.message).toContain("No wallet configured");
 
       const updatedWithdrawal = db.withdrawals.get(withdrawal.id);
-      expect(updatedWithdrawal.status).toBe("FAILED");
-      expect(updatedWithdrawal.failure_code).toBe("NO_WALLET");
+      expect(updatedWithdrawal.status).toBe("APPROVED");
+      expect(updatedWithdrawal.failure_code).toBeUndefined();
     });
 
     it("should create audit log for submission", async () => {

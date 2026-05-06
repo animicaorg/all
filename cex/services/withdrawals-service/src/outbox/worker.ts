@@ -14,8 +14,10 @@ import {
   markFailed,
   markPermanentlyFailed,
   enqueueSubmissionIfEligible,
+  enqueueOperationIfMissing,
   hasCompletedLedgerLock,
   type OutboxOperation,
+  type OutboxOperationType,
 } from "./outbox.js";
 import { submitToBitGo } from "../pipeline/submit.js";
 import { submitToAnimicaNode } from "../pipeline/submit_animica_node.js";
@@ -189,6 +191,9 @@ export class OutboxWorker {
         if (operation.type === "APPLY_LEDGER_LOCK") {
           await enqueueSubmissionIfEligible(client, operation.withdrawalId);
         }
+        if (isSubmitOperation(operation.type)) {
+          await this.enqueueLedgerBroadcastIfBroadcast(client, operation.withdrawalId);
+        }
         this.logger.info(
           {
             operationId: operation.id,
@@ -272,6 +277,40 @@ export class OutboxWorker {
     }
   }
 
+  private async enqueueLedgerBroadcastIfBroadcast(client: any, withdrawalId: string): Promise<void> {
+    const result = await client.query(
+      `SELECT status, user_id, txid
+       FROM withdrawals
+       WHERE id = $1`,
+      [withdrawalId]
+    );
+    const withdrawal = result.rows[0];
+    if (!withdrawal || withdrawal.status !== "BROADCAST") {
+      return;
+    }
+
+    const enqueued = await enqueueOperationIfMissing(
+      client,
+      withdrawalId,
+      "APPLY_LEDGER_BROADCAST",
+      {
+        withdrawalId,
+        userId: withdrawal.user_id,
+        txid: withdrawal.txid,
+      }
+    );
+
+    if (enqueued) {
+      this.logger.info(
+        {
+          withdrawalId,
+          txid: withdrawal.txid,
+        },
+        "Ledger broadcast operation enqueued after provider submission"
+      );
+    }
+  }
+
   /**
    * Apply ledger broadcast (move from available to system)
    */
@@ -341,4 +380,12 @@ export class OutboxWorker {
       throw error;
     }
   }
+}
+
+function isSubmitOperation(type: OutboxOperationType): boolean {
+  return (
+    type === "SUBMIT_TO_BITGO" ||
+    type === "SUBMIT_TO_ANIMICA_NODE" ||
+    type === "SUBMIT_TO_BITCOIN_NODE"
+  );
 }

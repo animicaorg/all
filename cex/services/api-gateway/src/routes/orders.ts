@@ -195,6 +195,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
    */
   router.get("/me/orders", requireAuth, async (req: any, res) => {
     try {
+      res.set("Cache-Control", "no-store");
       const userId = req.userId;
       const symbol = req.query.symbol as string | undefined;
       const status = req.query.status as string | undefined;
@@ -333,6 +334,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
    */
   router.get("/me/balances", requireAuth, async (req: any, res) => {
     try {
+      res.set("Cache-Control", "no-store");
       const userId = req.userId;
 
       const result = await pgPool.query(

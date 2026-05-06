@@ -9,8 +9,21 @@ import type { BitGoTransferRequest, BitGoTransferResponse } from "./types.js";
 export interface BitgoConfigProvider {
   getConfig: () => Promise<{
     baseUrl: string;
+    expressUrl?: string;
     accessToken?: string;
+    walletPassphrase?: string;
   }>;
+}
+
+type BitGoEndpoint = "api" | "express";
+
+function isHostedBitGoApiUrl(baseUrl: string): boolean {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname === "app.bitgo.com" || hostname === "app.bitgo-test.com";
+  } catch {
+    return false;
+  }
 }
 
 export class BitGoClient {
@@ -19,18 +32,34 @@ export class BitGoClient {
     private logger: Logger
   ) {}
 
-  private async request<T>(method: "get" | "post" | "delete", url: string, data?: any) {
+  private async request<T>(
+    method: "get" | "post" | "delete",
+    url: string,
+    data?: any,
+    endpoint: BitGoEndpoint = "api"
+  ) {
     const config = await this.configProvider.getConfig();
     if (!config.accessToken) {
       throw new Error("BitGo access token not configured");
     }
 
-    this.logger.debug({ method, url, data }, "BitGo API request");
+    const baseURL = endpoint === "express" ? config.expressUrl ?? config.baseUrl : config.baseUrl;
+    if (endpoint === "express" && !config.expressUrl && isHostedBitGoApiUrl(baseURL)) {
+      throw new Error(
+        "BITGO_EXPRESS_URL is required for BitGo withdrawals; /sendcoins must be sent to BitGo Express, not the hosted BitGo API"
+      );
+    }
+
+    const logData =
+      data && typeof data === "object" && "walletPassphrase" in data
+        ? { ...data, walletPassphrase: "[redacted]" }
+        : data;
+    this.logger.debug({ method, url, endpoint, data: logData }, "BitGo API request");
 
     try {
       const response = await axios.request<T>({
         method,
-        baseURL: config.baseUrl,
+        baseURL,
         url,
         data,
         headers: {
@@ -59,27 +88,46 @@ export class BitGoClient {
    * Create a transfer (withdrawal)
    */
   async createTransfer(
+    coin: string,
     walletId: string,
     request: BitGoTransferRequest
   ): Promise<BitGoTransferResponse> {
-    return this.request<BitGoTransferResponse>(`post`, `/api/v2/${walletId}/sendcoins`, request);
+    const config = await this.configProvider.getConfig();
+    const payload =
+      config.walletPassphrase && !request.walletPassphrase
+        ? { ...request, walletPassphrase: config.walletPassphrase }
+        : request;
+
+    return this.request<BitGoTransferResponse>(
+      `post`,
+      `/api/v2/${encodeURIComponent(coin)}/wallet/${encodeURIComponent(walletId)}/sendcoins`,
+      payload,
+      "express"
+    );
   }
 
   /**
    * Get transfer status
    */
   async getTransfer(
+    coin: string,
     walletId: string,
     transferId: string
   ): Promise<BitGoTransferResponse> {
-    return this.request<BitGoTransferResponse>(`get`, `/api/v2/${walletId}/transfer/${transferId}`);
+    return this.request<BitGoTransferResponse>(
+      `get`,
+      `/api/v2/${encodeURIComponent(coin)}/wallet/${encodeURIComponent(walletId)}/transfer/${encodeURIComponent(transferId)}`
+    );
   }
 
   /**
    * Cancel a pending transfer
    */
-  async cancelTransfer(walletId: string, transferId: string): Promise<void> {
-    await this.request(`delete`, `/api/v2/${walletId}/transfer/${transferId}`);
+  async cancelTransfer(coin: string, walletId: string, transferId: string): Promise<void> {
+    await this.request(
+      `delete`,
+      `/api/v2/${encodeURIComponent(coin)}/wallet/${encodeURIComponent(walletId)}/transfer/${encodeURIComponent(transferId)}`
+    );
   }
 }
 

@@ -22,6 +22,7 @@ async function start() {
         ...config,
         BITGO_ACCESS_TOKEN: config.BITGO_ACCESS_TOKEN ? "***" : undefined,
         BITGO_WEBHOOK_SECRET: config.BITGO_WEBHOOK_SECRET ? "***" : undefined,
+        BITGO_WALLET_PASSPHRASE: config.BITGO_WALLET_PASSPHRASE ? "***" : undefined,
         ADMIN_API_KEY: config.ADMIN_API_KEY ? "***" : undefined,
       },
     },

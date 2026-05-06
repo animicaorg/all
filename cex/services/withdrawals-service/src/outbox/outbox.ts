@@ -208,6 +208,7 @@ export async function markPermanentlyFailed(
   await client.query(
     `UPDATE withdrawal_outbox 
      SET status = 'FAILED',
+         attempt_count = attempt_count + 1,
          last_error = $2,
          updated_at = NOW()
      WHERE id = $1`,

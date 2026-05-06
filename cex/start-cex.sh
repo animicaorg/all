@@ -292,6 +292,8 @@ start_service() {
     export BITGO_ACCESS_TOKEN='${BITGO_ACCESS_TOKEN:-dev-token}'
     export BITGO_WEBHOOK_SECRET='${BITGO_WEBHOOK_SECRET:-dev-webhook-secret}'
     export BITGO_BASE_URL='${BITGO_BASE_URL:-${BITGO_API_URL:-https://app.bitgo-test.com}}'
+    export BITGO_EXPRESS_URL='${BITGO_EXPRESS_URL:-}'
+    export BITGO_WALLET_PASSPHRASE='${BITGO_WALLET_PASSPHRASE:-}'
     export CONFIG_ENCRYPTION_KEY='$CONFIG_ENCRYPTION_KEY'
     export ADMIN_API_KEY='${ADMIN_API_KEY:-dev-admin-key}'
     export FRONTEND_URL='${FRONTEND_URL}'

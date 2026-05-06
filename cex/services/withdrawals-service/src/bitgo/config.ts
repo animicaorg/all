@@ -13,8 +13,10 @@ const TAG_LENGTH = 16;
 
 export interface BitgoRuntimeConfig {
   baseUrl: string;
+  expressUrl?: string;
   accessToken?: string;
   webhookSecret?: string;
+  walletPassphrase?: string;
   environment: "test" | "prod";
   wallets: Record<string, string> | null;
   coins: Record<string, any> | null;
@@ -69,8 +71,10 @@ export class BitgoConfigStore {
 
       this.cached = {
         baseUrl: fallbackBaseUrl,
+        expressUrl: this.config.BITGO_EXPRESS_URL,
         accessToken: this.config.BITGO_ACCESS_TOKEN,
         webhookSecret: this.config.BITGO_WEBHOOK_SECRET,
+        walletPassphrase: this.config.BITGO_WALLET_PASSPHRASE,
         environment: this.config.BITGO_ENV,
         wallets: null,
         coins: null,
@@ -89,10 +93,12 @@ export class BitgoConfigStore {
     this.cached = {
       baseUrl: row.base_url
         ?? (row.environment === "prod" ? "https://app.bitgo.com" : "https://app.bitgo-test.com"),
+      expressUrl: this.config.BITGO_EXPRESS_URL,
       accessToken: decryptSecret(row.access_token_encrypted, key),
       webhookSecret: row.webhook_secret_encrypted
         ? decryptSecret(row.webhook_secret_encrypted, key)
         : undefined,
+      walletPassphrase: this.config.BITGO_WALLET_PASSPHRASE,
       environment: row.environment,
       wallets: row.wallets ?? null,
       coins: row.coins ?? null,

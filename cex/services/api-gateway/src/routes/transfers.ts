@@ -522,6 +522,7 @@ export function createTransfersRouter(pgPool: Pool, options: TransferRouterOptio
 
   router.get("/deposits", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
+      res.set("Cache-Control", "no-store");
       const userId = req.userId!;
 
       const result = await pgPool.query(
