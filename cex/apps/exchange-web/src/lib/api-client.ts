@@ -15,6 +15,26 @@ import type {
   Withdrawal,
   PlatformStats,
 } from '../types';
+
+
+function normalizeBalanceValue(asset: string, value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const a = String(asset || '').toUpperCase();
+
+  // Animica uses 1e9 base units.
+  if (a === 'ANM') {
+    return Number.isInteger(value) ? value / 1e9 : value;
+  }
+
+  // UTXO assets use 1e8 base units.
+  const satLike = new Set(['BTC', 'LTC', 'DOGE', 'ZEC', 'DASH', 'BCH']);
+  if (satLike.has(a)) {
+    return Number.isInteger(value) ? value / 1e8 : value;
+  }
+
+  return value;
+}
+
 import { getApiBaseUrl } from './endpoints';
 
 const API_URL = getApiBaseUrl();
@@ -114,7 +134,7 @@ class ApiClient {
       bids: data.bids.map((b: any) => ({
         price: b.price,
         quantity: b.quantity,
-        total: b.total,
+        total: normalizeBalanceValue(b.asset, Number(b.total)),
       })),
       asks: data.asks.map((a: any) => ({
         price: a.price,
@@ -239,9 +259,9 @@ class ApiClient {
     const { data } = await this.client.get('/me/balances');
     return data.balances.map((b: any) => ({
       asset: b.asset,
-      available: b.available,
-      locked: b.locked,
-      total: b.total,
+      available: normalizeBalanceValue(b.asset, Number(b.available ?? 0)),
+      locked: normalizeBalanceValue(b.asset, Number(b.locked ?? 0)),
+      total: normalizeBalanceValue(b.asset, Number(b.total ?? 0)),
     }));
   }
 

@@ -20,8 +20,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const navItems = [
     { path: '/markets', label: 'Markets' },
-    { path: '/account', label: 'Account' },
-  ];
+    { path: '/account', label: 'Account' }];
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col">

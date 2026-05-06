@@ -9,6 +9,11 @@ import { OrderEntry } from '../components/OrderEntry';
 import { MarketChart } from '../components/MarketChart';
 import type { CreateOrderRequest, Market } from '../types';
 
+function isActiveOrderStatus(status: string | undefined | null): boolean {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  return normalized === 'open' || normalized === 'pending' || normalized === 'accepted' || normalized === 'partial_fill';
+}
+
 export default function TradingPage() {
   const { symbol } = useParams<{ symbol: string }>();
   const navigate = useNavigate();
@@ -17,7 +22,6 @@ export default function TradingPage() {
 
   const { subscribe, unsubscribe, orderbooks, trades, tickers, connectionState, getStats } = useWSStore();
 
-  // Get market info
   const { data: markets = [] } = useQuery({
     queryKey: ['markets'],
     queryFn: () => apiClient.getMarkets(),
@@ -27,7 +31,6 @@ export default function TradingPage() {
     return markets.find((m) => m.symbol === symbol);
   }, [markets, symbol]);
 
-  // Subscribe to WebSocket channels
   useEffect(() => {
     if (!symbol) return;
 
@@ -42,12 +45,10 @@ export default function TradingPage() {
     };
   }, [symbol, subscribe, unsubscribe]);
 
-  // Get data from WebSocket store
   const orderbook = orderbooks.get(symbol || '');
   const marketTrades = trades.get(symbol || '') || [];
   const ticker = tickers.get(symbol || '');
 
-  // Fallback to REST if WebSocket not available
   const { data: restOrderbook } = useQuery({
     queryKey: ['orderbook', symbol],
     queryFn: () => apiClient.getOrderbook(symbol!),
@@ -63,9 +64,11 @@ export default function TradingPage() {
   });
 
   const { data: myOrders = [] } = useQuery({
-    queryKey: ['myOrders', symbol],
-    queryFn: () => apiClient.getMyOrders(symbol),
+    queryKey: ['myOrders'],
+    queryFn: () => apiClient.getMyOrders(),
     refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
   });
 
   const { data: balances = [] } = useQuery({
@@ -114,8 +117,9 @@ export default function TradingPage() {
 
   const displayOrderbook = orderbook || restOrderbook;
   const displayTrades = marketTrades.length > 0 ? marketTrades : restTrades;
-  const openOrders = myOrders.filter((order) => order.status === 'open' || order.status === 'pending');
-  const recentOrders = myOrders.slice(0, 10);
+  const marketOrders = myOrders.filter((order) => order.symbol === symbol);
+  const openOrders = marketOrders.filter((order) => isActiveOrderStatus(order.status));
+  const recentOrders = marketOrders.slice(0, 10);
 
   const [baseAsset, quoteAsset] = symbol.split('-');
   const baseBalance = balances.find((b) => b.asset === baseAsset);
@@ -126,7 +130,6 @@ export default function TradingPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
@@ -154,7 +157,7 @@ export default function TradingPage() {
             </div>
           </div>
         </div>
-        
+
         <button
           onClick={() => setShowDiagnostics(!showDiagnostics)}
           className="p-2 hover:bg-slate-700 rounded-lg"
@@ -164,7 +167,6 @@ export default function TradingPage() {
         </button>
       </div>
 
-      {/* Diagnostics Drawer */}
       {showDiagnostics && (
         <div className="bg-slate-800 rounded-lg p-4">
           <h3 className="text-lg font-semibold text-white mb-3">Diagnostics</h3>
@@ -194,17 +196,15 @@ export default function TradingPage() {
       <MarketChart symbol={symbol} market={market} trades={displayTrades} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Orderbook */}
         <div className="bg-slate-800 rounded-lg p-4">
           <h2 className="text-lg font-semibold text-white mb-4">Order Book</h2>
-          
+
           {!displayOrderbook ? (
             <div className="text-center py-8 text-slate-400">
               <p>Loading orderbook...</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Asks (reversed to show from low to high) */}
               <div>
                 <div className="text-xs text-slate-400 mb-2 grid grid-cols-3 gap-2">
                   <span>Price</span>
@@ -222,7 +222,6 @@ export default function TradingPage() {
                 </div>
               </div>
 
-              {/* Spread */}
               <div className="text-center py-2 bg-slate-700 rounded">
                 <span className="text-sm text-slate-400">Spread: </span>
                 <span className="text-sm text-white font-medium">
@@ -232,7 +231,6 @@ export default function TradingPage() {
                 </span>
               </div>
 
-              {/* Bids */}
               <div>
                 <div className="space-y-1">
                   {displayOrderbook.bids.slice(0, 10).map((bid, i) => (
@@ -248,9 +246,7 @@ export default function TradingPage() {
           )}
         </div>
 
-        {/* Center: Recent Trades and Orders */}
         <div className="space-y-6">
-          {/* Recent Trades */}
           <div className="bg-slate-800 rounded-lg p-4">
             <h2 className="text-lg font-semibold text-white mb-4">Recent Trades</h2>
             {displayTrades.length === 0 ? (
@@ -274,7 +270,6 @@ export default function TradingPage() {
             )}
           </div>
 
-          {/* My Open Orders */}
           <div className="bg-slate-800 rounded-lg p-4">
             <h2 className="text-lg font-semibold text-white mb-4">My Open Orders</h2>
             {openOrders.length === 0 ? (
@@ -340,7 +335,6 @@ export default function TradingPage() {
           </div>
         </div>
 
-        {/* Right: Order Entry */}
         <OrderEntry
           market={market}
           balances={balances}

@@ -188,10 +188,10 @@ export class LedgerConsumer {
         
         if (orderEvent.eventType === "ACCEPTED") {
           result = await handleOrderLock(client, orderEvent, market);
-        } else if (["FILLED", "CANCELED", "EXPIRED", "REJECTED"].includes(orderEvent.eventType)) {
+        } else if (["FILLED", "CANCELED", "CANCELED_REPLACED", "EXPIRED", "REJECTED"].includes(orderEvent.eventType)) {
           result = await handleOrderRelease(client, orderEvent, market);
         } else {
-          // PARTIAL_FILL, REJECTED - no ledger action needed
+          // PARTIAL_FILL and other non-terminal order events do not change locked balances
           result = { ok: true };
         }
 
