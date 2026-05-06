@@ -46,98 +46,112 @@ export class ReorgHandler {
    */
   async handleReorg(
     assetNetworkId: string,
-    currentHeight: number,
-    expectedParentHash: string,
-    actualParentHash: string,
+    firstMismatchedHeight: number,
     maxReorgDepth: number
   ): Promise<ReorgResult> {
+    const scanState = await this.scanStateRepo.get(assetNetworkId);
+    if (!scanState || !scanState.cursor_hash) {
+      throw new Error("Cannot handle reorg without a persisted scan cursor");
+    }
+
+    const cursorHeight = scanState.cursor_height;
+    const searchStartHeight = Math.min(firstMismatchedHeight, cursorHeight);
+    const minSearchHeight = Math.max(0, searchStartHeight - maxReorgDepth);
+
     this.logger.warn(
-      { currentHeight, expectedParentHash, actualParentHash },
+      { firstMismatchedHeight, cursorHeight, minSearchHeight },
       "Reorg detected - finding common ancestor"
     );
     
-    let searchHeight = currentHeight - 1;
-    let commonAncestorHeight = searchHeight;
-    let commonAncestorHash = expectedParentHash;
-    let steps = 0;
+    let commonAncestorHeight: number | null = null;
+    let commonAncestorHash: string | null = null;
     
     // Walk backwards to find common ancestor
-    while (steps < maxReorgDepth) {
-      // Get our stored block at this height
-      const storedBlock = await this.blocksRepo.getByHeight(assetNetworkId, searchHeight);
-      
-      if (!storedBlock) {
-        // No stored block - assume this is safe to use
-        this.logger.info(
-          { height: searchHeight },
-          "No stored block at height, assuming common ancestor"
-        );
-        commonAncestorHeight = searchHeight;
-        break;
-      }
-      
-      // Get current chain's block at this height
+    for (let searchHeight = searchStartHeight; searchHeight >= minSearchHeight; searchHeight--) {
       const chainBlock = await this.rpcClient.getBlockByHeight(searchHeight);
-      
-      if (storedBlock.hash === chainBlock.hash) {
-        // Found common ancestor
+      const storedBlock = await this.blocksRepo.getCanonicalByHeight(assetNetworkId, searchHeight);
+
+      if (storedBlock && storedBlock.hash === chainBlock.hash) {
         commonAncestorHeight = searchHeight;
         commonAncestorHash = storedBlock.hash;
-        this.logger.info(
-          { height: commonAncestorHeight, hash: commonAncestorHash },
-          "Common ancestor found"
-        );
         break;
       }
-      
-      searchHeight--;
-      steps++;
+
+      if (
+        !storedBlock &&
+        scanState.cursor_height === searchHeight &&
+        scanState.cursor_hash === chainBlock.hash
+      ) {
+        commonAncestorHeight = searchHeight;
+        commonAncestorHash = chainBlock.hash;
+        break;
+      }
+
+      if (!storedBlock) {
+        this.logger.debug(
+          { height: searchHeight, chainHash: chainBlock.hash },
+          "No stored canonical block at height while searching for common ancestor"
+        );
+      }
+
+      if (searchHeight === 0) break;
     }
     
-    if (steps >= maxReorgDepth) {
+    if (commonAncestorHeight === null || commonAncestorHash === null) {
       throw new Error(
-        `Reorg exceeds max depth ${maxReorgDepth}. Manual intervention required.`
+        `Reorg common ancestor not found within max depth ${maxReorgDepth}. Manual intervention required.`
       );
     }
+
+    this.logger.info(
+      { height: commonAncestorHeight, hash: commonAncestorHash },
+      "Common ancestor found"
+    );
+
+    const commonHeight = commonAncestorHeight;
+    const commonHash = commonAncestorHash;
     
     // Execute rollback in transaction
     const result = await withTransaction(this.pool, async (client) => {
-      const reorgedFromHeight = commonAncestorHeight + 1;
-      const reorgedToHeight = currentHeight;
-      const reorgedBlocks = reorgedToHeight - reorgedFromHeight + 1;
+      const reorgedFromHeight = commonHeight + 1;
+      const reorgedToHeight = cursorHeight;
+      const reorgedBlocks =
+        reorgedFromHeight <= reorgedToHeight ? reorgedToHeight - reorgedFromHeight + 1 : 0;
       
-      // Mark blocks as non-canonical
-      await this.blocksRepo.markNonCanonical(
-        assetNetworkId,
-        reorgedFromHeight,
-        reorgedToHeight,
-        client
-      );
-      
-      // Get affected deposits
-      const affectedDeposits = await this.depositsRepo.getByHeightRange(
-        assetNetworkId,
-        reorgedFromHeight,
-        reorgedToHeight
-      );
-      
-      // Mark deposits as reorged
-      const depositIds = affectedDeposits.map((d) => d.id);
-      await this.depositsRepo.markReorged(depositIds, client);
-      
-      // Delete seen transactions
-      await this.seenTxsRepo.deleteByHeightRange(
-        assetNetworkId,
-        reorgedFromHeight,
-        reorgedToHeight,
-        client
-      );
+      const affectedDeposits =
+        reorgedBlocks > 0
+          ? await this.depositsRepo.getByHeightRange(
+              assetNetworkId,
+              reorgedFromHeight,
+              reorgedToHeight
+            )
+          : [];
+
+      if (reorgedBlocks > 0) {
+        // Mark blocks as non-canonical only after a real common ancestor is proven.
+        await this.blocksRepo.markNonCanonical(
+          assetNetworkId,
+          reorgedFromHeight,
+          reorgedToHeight,
+          client
+        );
+
+        const depositIds = affectedDeposits.map((d) => d.id);
+        await this.depositsRepo.markReorged(depositIds, client);
+
+        await this.seenTxsRepo.deleteByHeightRange(
+          assetNetworkId,
+          reorgedFromHeight,
+          reorgedToHeight,
+          client
+        );
+      }
       
       // Rollback scan cursor
       await this.scanStateRepo.rollbackCursor(
         assetNetworkId,
-        commonAncestorHeight,
-        commonAncestorHash,
+        commonHeight,
+        commonHash,
         client
       );
       
@@ -155,9 +169,10 @@ export class ReorgHandler {
         // Insert audit alert
         const auditQuery = `
           INSERT INTO audit_logs (
-            event_type, resource_type, resource_id, actor_type, changes, metadata
+            event_type, resource_type, resource_id, actor_type,
+            action, entity_type, entity_id, changes, metadata
           )
-          VALUES ($1, $2, $3, $4, $5, $6)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `;
         
         for (const deposit of creditedDeposits) {
@@ -166,15 +181,18 @@ export class ReorgHandler {
             "DEPOSIT",
             deposit.id,
             "SYSTEM",
-            JSON.stringify({ reorg: { commonAncestorHeight, reorgedBlocks } }),
+            "DEPOSIT_REORGED_CREDITED",
+            "DEPOSIT",
+            deposit.id,
+            JSON.stringify({ reorg: { commonAncestorHeight: commonHeight, reorgedBlocks } }),
             JSON.stringify({ txid: deposit.txid, amount: deposit.amount_atoms }),
           ]);
         }
       }
       
       return {
-        commonAncestorHeight,
-        commonAncestorHash,
+        commonAncestorHeight: commonHeight,
+        commonAncestorHash: commonHash,
         reorgedBlocks,
         affectedDeposits: affectedDeposits.length,
       };

@@ -14,6 +14,7 @@ import { BlockScanner, type ScannerConfig } from "../deposits/scanner.js";
 export class ScanLoopJob {
   private intervalId: NodeJS.Timeout | null = null;
   private isLeader: boolean = false;
+  private tickInProgress: boolean = false;
   private scanner: BlockScanner;
   private scanStateRepo: ScanStateRepository;
 
@@ -32,6 +33,9 @@ export class ScanLoopJob {
       scanBatch: config.ANIMICA_SCAN_BATCH,
       maxReorgDepth: config.ANIMICA_MAX_REORG_DEPTH,
       walletId: "ANIMICA_NODE", // provider identifier
+      mempoolScanEnabled: config.ANIMICA_MEMPOOL_SCAN_ENABLED,
+      mempoolMaxTxs: config.ANIMICA_MEMPOOL_MAX_TXS,
+      balanceFallbackEnabled: config.ANIMICA_BALANCE_FALLBACK_ENABLED,
     };
     
     this.scanner = new BlockScanner(pool, rpcClient, scannerConfig, logger);
@@ -110,17 +114,24 @@ export class ScanLoopJob {
    * Single tick of the scan loop
    */
   private async tick(): Promise<void> {
-    // Try to acquire lock (leader election)
-    const acquired = await this.tryAcquireLock();
-
-    if (!acquired) {
-      this.logger.debug("Not the leader, skipping scan");
+    if (this.tickInProgress) {
+      this.logger.debug("Previous scan tick still running, skipping overlapping tick");
       return;
     }
 
-    this.isLeader = true;
+    this.tickInProgress = true;
 
+    // Try to acquire lock (leader election)
     try {
+      const acquired = await this.tryAcquireLock();
+
+      if (!acquired) {
+        this.logger.debug("Not the leader, skipping scan");
+        return;
+      }
+
+      this.isLeader = true;
+
       // Run scanner
       await this.scanner.scan();
 
@@ -129,6 +140,8 @@ export class ScanLoopJob {
     } catch (error) {
       this.logger.error({ error }, "Error during scan");
       // Don't release lock - let it expire naturally
+    } finally {
+      this.tickInProgress = false;
     }
   }
 

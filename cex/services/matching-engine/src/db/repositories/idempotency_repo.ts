@@ -3,6 +3,7 @@
  */
 
 import type { Pool, PoolClient } from "pg";
+import { stringifyJson } from "../../utils/json.js";
 
 export class IdempotencyRepo {
   constructor(private client: PoolClient) {}
@@ -38,7 +39,7 @@ export class IdempotencyRepo {
        VALUES ($1, $2, $3, NOW(), $4)
        ON CONFLICT (key) DO UPDATE
        SET result = $3, expires_at = $4`,
-      [key, consumer, JSON.stringify(result), expiresAt]
+      [key, consumer, stringifyJson(result), expiresAt]
     );
   }
 

@@ -50,11 +50,11 @@ export interface Order {
   clientOrderId: string;
   symbol: string;
   side: 'buy' | 'sell';
-  type: 'limit' | 'market';
+  type: 'limit' | 'market' | 'post_only';
   price?: number;
   quantity: number;
   filledQuantity: number;
-  status: 'pending' | 'open' | 'filled' | 'cancelled' | 'rejected';
+  status: 'pending' | 'open' | 'filled' | 'cancelled' | 'rejected' | 'expired';
   createdAt: number;
   updatedAt: number;
 }
@@ -101,6 +101,25 @@ export interface DepositAddress {
   created?: boolean;
 }
 
+export interface Deposit {
+  id: string;
+  status: string;
+  assetNetworkId?: string;
+  amount: string;
+  txid: string;
+  address: string;
+  tag?: string | null;
+  confirmations: number;
+  confirmationsRequired: number;
+  detectedAt?: string;
+  confirmedAt?: string | null;
+  creditedAt?: string | null;
+  blockHeight?: number | null;
+  blockHash?: string | null;
+  networkCode?: string;
+  symbol?: string;
+}
+
 export interface Withdrawal {
   id: string;
   status: string;
@@ -140,7 +159,7 @@ export interface UserTrade {
 export interface CreateOrderRequest {
   symbol: string;
   side: 'buy' | 'sell';
-  type: 'limit' | 'market';
+  type: 'limit' | 'market' | 'post_only';
   price?: number;
   quantity: number;
   clientOrderId?: string;

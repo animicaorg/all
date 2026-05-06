@@ -31,8 +31,35 @@ exports.seed = async function seed(knex) {
       name: "Solana Mainnet",
       type: "SOLANA",
       confirmations_required: 32,
-      active: true,
+      active: false,
       metadata: JSON.stringify({ explorer_url: "https://solscan.io" })
+    },
+    {
+      id: "66666666-6666-6666-6666-666666666666",
+      code: "LTC",
+      name: "Litecoin Mainnet",
+      type: "UTXO",
+      confirmations_required: 6,
+      active: true,
+      metadata: JSON.stringify({ explorer_url: "https://blockchair.com/litecoin" })
+    },
+    {
+      id: "77777777-7777-7777-7777-777777777777",
+      code: "DOGE",
+      name: "Dogecoin Mainnet",
+      type: "UTXO",
+      confirmations_required: 20,
+      active: true,
+      metadata: JSON.stringify({ explorer_url: "https://blockchair.com/dogecoin" })
+    },
+    {
+      id: "88888888-8888-8888-8888-888888888888",
+      code: "ZEC",
+      name: "Zcash Mainnet",
+      type: "UTXO",
+      confirmations_required: 24,
+      active: true,
+      metadata: JSON.stringify({ explorer_url: "https://blockchair.com/zcash" })
     },
     {
       id: "33333333-3333-3333-3333-333333333333",
@@ -40,7 +67,7 @@ exports.seed = async function seed(knex) {
       name: "Ethereum Sepolia Testnet",
       type: "EVM",
       confirmations_required: 6,
-      active: true,
+      active: false,
       metadata: JSON.stringify({ chain_id: 11155111, explorer_url: "https://sepolia.etherscan.io" })
     }
   ];
@@ -62,7 +89,7 @@ exports.seed = async function seed(knex) {
       symbol: "ETH",
       name: "Ethereum",
       decimals: 18,
-      active: true,
+      active: false,
       metadata: JSON.stringify({})
     },
     {
@@ -70,6 +97,30 @@ exports.seed = async function seed(knex) {
       symbol: "SOL",
       name: "Solana",
       decimals: 9,
+      active: false,
+      metadata: JSON.stringify({})
+    },
+    {
+      id: "abababab-abab-abab-abab-abababababab",
+      symbol: "LTC",
+      name: "Litecoin",
+      decimals: 8,
+      active: true,
+      metadata: JSON.stringify({})
+    },
+    {
+      id: "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd",
+      symbol: "DOGE",
+      name: "Dogecoin",
+      decimals: 8,
+      active: true,
+      metadata: JSON.stringify({})
+    },
+    {
+      id: "efefefef-efef-efef-efef-efefefefefef",
+      symbol: "ZEC",
+      name: "Zcash",
+      decimals: 8,
       active: true,
       metadata: JSON.stringify({})
     },
@@ -107,8 +158,8 @@ exports.seed = async function seed(knex) {
       confirmations_override: null,
       metadata: JSON.stringify({
         provider: "BITGO",
-        flat_withdrawal_fee_atoms: "30000",
-        flat_withdrawal_fee: "0.0003"
+        flat_withdrawal_fee_atoms: "5000",
+        flat_withdrawal_fee: "0.00005"
       })
     },
     {
@@ -117,8 +168,8 @@ exports.seed = async function seed(knex) {
       network_id: "22222222-2222-2222-2222-222222222222", // ETH network
       contract_address: null,
       bitgo_coin: "eth",
-      deposits_enabled: true,
-      withdrawals_enabled: true,
+      deposits_enabled: false,
+      withdrawals_enabled: false,
       min_deposit_atoms: "1000000000000000", // 0.001 ETH
       confirmations_override: null,
       metadata: JSON.stringify({
@@ -133,8 +184,8 @@ exports.seed = async function seed(knex) {
       network_id: "55555555-5555-5555-5555-555555555555", // SOL network
       contract_address: null,
       bitgo_coin: "sol",
-      deposits_enabled: true,
-      withdrawals_enabled: true,
+      deposits_enabled: false,
+      withdrawals_enabled: false,
       min_deposit_atoms: "10000000", // 0.01 SOL
       confirmations_override: null,
       metadata: JSON.stringify({
@@ -168,13 +219,61 @@ exports.seed = async function seed(knex) {
       metadata: JSON.stringify({})
     },
     {
+      id: "ffffffff-0008-0008-0008-000000000008",
+      asset_id: "abababab-abab-abab-abab-abababababab", // LTC
+      network_id: "66666666-6666-6666-6666-666666666666", // LTC network
+      contract_address: null,
+      bitgo_coin: "ltc",
+      deposits_enabled: true,
+      withdrawals_enabled: true,
+      min_deposit_atoms: "100000", // 0.001 LTC
+      confirmations_override: null,
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "10000",
+        flat_withdrawal_fee: "0.0001"
+      })
+    },
+    {
+      id: "ffffffff-0009-0009-0009-000000000009",
+      asset_id: "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd", // DOGE
+      network_id: "77777777-7777-7777-7777-777777777777", // DOGE network
+      contract_address: null,
+      bitgo_coin: "doge",
+      deposits_enabled: true,
+      withdrawals_enabled: true,
+      min_deposit_atoms: "1000000000", // 10 DOGE
+      confirmations_override: null,
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "100000000",
+        flat_withdrawal_fee: "1"
+      })
+    },
+    {
+      id: "ffffffff-000a-000a-000a-00000000000a",
+      asset_id: "efefefef-efef-efef-efef-efefefefefef", // ZEC
+      network_id: "88888888-8888-8888-8888-888888888888", // ZEC network
+      contract_address: null,
+      bitgo_coin: "zec",
+      deposits_enabled: true,
+      withdrawals_enabled: true,
+      min_deposit_atoms: "100000", // 0.001 ZEC
+      confirmations_override: null,
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        flat_withdrawal_fee_atoms: "10000",
+        flat_withdrawal_fee: "0.0001"
+      })
+    },
+    {
       id: "ffffffff-0005-0005-0005-000000000005",
       asset_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", // ETH
       network_id: "33333333-3333-3333-3333-333333333333", // ETH Sepolia
       contract_address: null,
       bitgo_coin: "teth",
-      deposits_enabled: true,
-      withdrawals_enabled: true,
+      deposits_enabled: false,
+      withdrawals_enabled: false,
       min_deposit_atoms: "1000000000000000", // 0.001 ETH
       confirmations_override: null,
       metadata: JSON.stringify({ testnet: true })
@@ -189,16 +288,16 @@ exports.seed = async function seed(knex) {
   const withdrawalPolicies = [
     {
       asset_network_id: "ffffffff-0001-0001-0001-000000000001", // BTC
-      min_withdrawal_atoms: "100000", // 0.001 BTC
+      min_withdrawal_atoms: "10000", // 0.0001 BTC
       required_approvals: 1,
       high_risk_approvals: 2,
       enabled: true,
       metadata: JSON.stringify({
-        withdrawalFeeAtoms: "30000",
-        withdrawalFee: "0.0003",
+        withdrawalFeeAtoms: "5000",
+        withdrawalFee: "0.00005",
         flatFee: true,
         feeAsset: "BTC",
-        rationale: "Flat fee set above normal network fee targets to cover miner fees and exchange operations."
+        rationale: "Lower flat BTC withdrawal fee and minimum for the current product policy."
       })
     },
     {
@@ -206,7 +305,7 @@ exports.seed = async function seed(knex) {
       min_withdrawal_atoms: "10000000000000000", // 0.01 ETH
       required_approvals: 1,
       high_risk_approvals: 2,
-      enabled: true,
+      enabled: false,
       metadata: JSON.stringify({
         withdrawalFeeAtoms: "3000000000000000",
         withdrawalFee: "0.003",
@@ -220,13 +319,55 @@ exports.seed = async function seed(knex) {
       min_withdrawal_atoms: "100000000", // 0.1 SOL
       required_approvals: 1,
       high_risk_approvals: 2,
-      enabled: true,
+      enabled: false,
       metadata: JSON.stringify({
         withdrawalFeeAtoms: "10000000",
         withdrawalFee: "0.01",
         flatFee: true,
         feeAsset: "SOL",
         rationale: "Flat fee covers Solana network fees, BitGo operations, and exchange margin."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-0008-0008-0008-000000000008", // LTC
+      min_withdrawal_atoms: "100000", // 0.001 LTC
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "10000",
+        withdrawalFee: "0.0001",
+        flatFee: true,
+        feeAsset: "LTC",
+        rationale: "Flat fee for Litecoin BitGo withdrawals."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-0009-0009-0009-000000000009", // DOGE
+      min_withdrawal_atoms: "1000000000", // 10 DOGE
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "100000000",
+        withdrawalFee: "1",
+        flatFee: true,
+        feeAsset: "DOGE",
+        rationale: "Flat fee for Dogecoin BitGo withdrawals."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-000a-000a-000a-00000000000a", // ZEC
+      min_withdrawal_atoms: "100000", // 0.001 ZEC
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "10000",
+        withdrawalFee: "0.0001",
+        flatFee: true,
+        feeAsset: "ZEC",
+        rationale: "Flat fee for Zcash BitGo withdrawals."
       })
     }
   ];

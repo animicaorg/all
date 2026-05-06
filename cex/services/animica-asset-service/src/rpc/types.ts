@@ -65,4 +65,8 @@ export interface RpcCapabilities {
   supportsWalletCreateAddress: boolean;
   supportsWalletSend: boolean;
   supportsEstimateFee: boolean;
+  supportsMempoolGetPending: boolean;
+  supportsMempoolGet: boolean;
+  supportsStateGetAddressBalance: boolean;
+  supportsStateGetBalance: boolean;
 }

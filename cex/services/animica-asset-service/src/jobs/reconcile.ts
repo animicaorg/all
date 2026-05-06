@@ -132,7 +132,7 @@ export class ReconciliationJob {
         COUNT(*) as total,
         COUNT(*) FILTER (WHERE confirmations >= $1) as confirmed_count,
         COUNT(*) FILTER (WHERE confirmations < $1) as unconfirmed_count
-      FROM animica_deposits
+      FROM deposits
       WHERE asset_network_id = $2
     `;
 

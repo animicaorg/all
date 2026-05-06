@@ -96,7 +96,10 @@ export class AddressesRepository {
   ): Promise<string | null> {
     const query = `
       SELECT user_id FROM user_deposit_addresses
-      WHERE asset_network_id = $1 AND address = $2 AND tag IS NOT DISTINCT FROM $3 AND status = 'ACTIVE'
+      WHERE asset_network_id = $1
+        AND LOWER(address) = LOWER($2)
+        AND tag IS NOT DISTINCT FROM $3
+        AND status = 'ACTIVE'
     `;
     
     const result = await this.pool.query(query, [assetNetworkId, address, tag]);
@@ -113,7 +116,7 @@ export class AddressesRepository {
     `;
     
     const result = await this.pool.query(query, [assetNetworkId]);
-    return new Set(result.rows.map((row) => row.address));
+    return new Set(result.rows.map((row) => String(row.address).toLowerCase()));
   }
   
   /**

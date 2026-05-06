@@ -36,6 +36,7 @@ export class MockAnimicaRpc {
   private blocksByHash: Map<string, MockBlock> = new Map();
   private transactions: Map<string, MockTransaction> = new Map();
   private nonces: Map<string, number> = new Map();
+  private balances: Map<string, bigint> = new Map();
   private currentHeight: number = 0;
   
   constructor() {
@@ -98,6 +99,10 @@ export class MockAnimicaRpc {
     this.nonces.set(tx.from, Math.max(this.nonces.get(tx.from) || 0, tx.nonce + 1));
     
     return fullTx;
+  }
+
+  setConfirmedBalance(address: string, amountAtoms: string): void {
+    this.balances.set(address.toLowerCase(), BigInt(amountAtoms));
   }
   
   /**
@@ -255,6 +260,20 @@ export class MockAnimicaRpc {
       estimated_fee: "21000000000000", // 21000 * 1 gwei
     };
   }
+
+  async getPendingTransactionIds(): Promise<string[]> {
+    return Array.from(this.transactions.values())
+      .filter((tx) => tx.status === "pending")
+      .map((tx) => tx.txid);
+  }
+
+  async getMempoolTransaction(txid: string): Promise<TransactionInfo> {
+    return this.getTransaction(txid);
+  }
+
+  async getConfirmedAddressBalance(address: string): Promise<string> {
+    return (this.balances.get(address.toLowerCase()) ?? 0n).toString();
+  }
 }
 
 /**
@@ -270,6 +289,9 @@ export function createMockRpcClient(mockRpc: MockAnimicaRpc): any {
     createAddress: (label?: string) => mockRpc.createAddress(label),
     walletSend: (to: string, amount: string, fee?: string) => mockRpc.walletSend(to, amount, fee),
     estimateFee: () => mockRpc.estimateFee(),
+    getPendingTransactionIds: () => mockRpc.getPendingTransactionIds(),
+    getMempoolTransaction: (txid: string) => mockRpc.getMempoolTransaction(txid),
+    getConfirmedAddressBalance: (address: string) => mockRpc.getConfirmedAddressBalance(address),
     health: async () => true,
   };
 }

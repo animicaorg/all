@@ -70,10 +70,16 @@ export class OutboxRepo {
    */
   async getPending(limit: number = 100): Promise<DepositOutboxItem[]> {
     const query = `
-      SELECT * FROM deposit_outbox
-      WHERE processed_at IS NULL
-        AND (last_retry_at IS NULL OR last_retry_at < NOW() - INTERVAL '30 seconds')
-      ORDER BY created_at ASC
+      SELECT deposit_outbox.*
+      FROM deposit_outbox
+      JOIN deposits ON deposits.id = deposit_outbox.deposit_id
+      WHERE deposit_outbox.processed_at IS NULL
+        AND deposits.provider = 'BITGO'
+        AND (
+          deposit_outbox.last_retry_at IS NULL
+          OR deposit_outbox.last_retry_at < NOW() - INTERVAL '30 seconds'
+        )
+      ORDER BY deposit_outbox.created_at ASC
       LIMIT $1
     `;
 
@@ -86,7 +92,7 @@ export class OutboxRepo {
    */
   async markProcessed(id: string): Promise<void> {
     await this.client.query(
-      "UPDATE deposit_outbox SET processed_at = NOW() WHERE id = $1",
+      "UPDATE deposit_outbox SET processed_at = NOW(), last_error = NULL WHERE id = $1",
       [id]
     );
   }

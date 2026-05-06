@@ -188,7 +188,7 @@ export class LedgerConsumer {
         
         if (orderEvent.eventType === "ACCEPTED") {
           result = await handleOrderLock(client, orderEvent, market);
-        } else if (["FILLED", "CANCELED", "EXPIRED"].includes(orderEvent.eventType)) {
+        } else if (["FILLED", "CANCELED", "EXPIRED", "REJECTED"].includes(orderEvent.eventType)) {
           result = await handleOrderRelease(client, orderEvent, market);
         } else {
           // PARTIAL_FILL, REJECTED - no ledger action needed

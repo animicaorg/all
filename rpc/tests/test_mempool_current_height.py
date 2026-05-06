@@ -16,6 +16,17 @@ def test_current_height_prefers_canonical_height_when_primary_height_is_zero(
     assert mempool_service._current_height() == 128
 
 
+def test_current_height_prefers_active_height_when_canonical_diverges(
+    monkeypatch,
+) -> None:
+    class _Ctx:
+        def get_head(self):
+            return {"height": 10320, "number": 10320, "canonicalHeight": 18877}
+
+    monkeypatch.setattr(mempool_service.deps, "get_ctx", lambda: _Ctx())
+    assert mempool_service._current_height() == 10320
+
+
 def test_current_height_reads_height_from_header_object(monkeypatch) -> None:
     header = SimpleNamespace(number=64)
 

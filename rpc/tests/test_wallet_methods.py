@@ -65,6 +65,41 @@ def test_wallet_create_address_uses_cli_store_without_returning_secret(monkeypat
         )
 
 
+def test_head_height_prefers_active_height_when_canonical_diverges(monkeypatch) -> None:
+    monkeypatch.setattr(
+        wallet_methods.chain_methods,
+        "chain_get_head",
+        lambda: {"height": 10320, "number": 10320, "canonicalHeight": 18877},
+    )
+
+    assert wallet_methods._head_height() == 10320
+
+
+def test_head_height_falls_back_to_canonical_when_active_height_is_zero(monkeypatch) -> None:
+    monkeypatch.setattr(
+        wallet_methods.chain_methods,
+        "chain_get_head",
+        lambda: {"height": 0, "canonicalHeight": 18877},
+    )
+
+    assert wallet_methods._head_height() == 18877
+
+
+def test_locked_store_preserves_frozen_rpc_errors(tmp_path) -> None:
+    wallet_file = tmp_path / "wallets.json"
+    wallet_file.write_text(
+        json.dumps({"format": "animica.wallets", "version": 2, "wallets": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(rpc_errors.InvalidTx) as exc_info:
+        with wallet_methods._locked_store(wallet_file):
+            raise rpc_errors.InvalidTx("expired", current=18877)
+
+    assert exc_info.value.message == "expired"
+    assert exc_info.value.data == {"current": 18877}
+
+
 def test_wallet_send_accepts_cex_object_payload_and_returns_txid(monkeypatch, tmp_path) -> None:
     wallet_file = tmp_path / "wallets.json"
     wallet_file.write_text(
@@ -91,7 +126,14 @@ def test_wallet_send_accepts_cex_object_payload_and_returns_txid(monkeypatch, tm
     )
 
     monkeypatch.setattr(wallet_methods.chain_methods, "chain_get_chain_identity", lambda: {"chainId": 1})
-    monkeypatch.setattr(wallet_methods.chain_methods, "chain_get_head", lambda: {"height": 12})
+    monkeypatch.setenv("ANIMICA_WALLET_RPC_TTL_BLOCKS", "120")
+    monkeypatch.setenv("ANIMICA_WALLET_RPC_VALID_AFTER_LAG_BLOCKS", "5")
+    monkeypatch.setenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200")
+    monkeypatch.setattr(
+        wallet_methods.chain_methods,
+        "chain_get_head",
+        lambda: {"height": 12, "canonicalHeight": 9999},
+    )
     monkeypatch.setattr(wallet_methods.state_methods, "state_get_next_nonce", lambda _address: 7)
     monkeypatch.setattr(wallet_methods.tx_cli, "_address_to_32_bytes", lambda _address: b"\x00" * 32)
     monkeypatch.setattr(
@@ -122,3 +164,5 @@ def test_wallet_send_accepts_cex_object_payload_and_returns_txid(monkeypatch, tm
     assert result["feeAtoms"] == "100000"
     assert result["gasLimit"] == 21000
     assert result["maxFee"] == 5
+    assert result["validAfter"] == 7
+    assert result["validUntil"] == 132

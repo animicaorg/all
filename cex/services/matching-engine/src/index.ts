@@ -12,6 +12,7 @@ import { loadEnv } from "./config.js";
 import { MarketWorker } from "./workers/market_worker.js";
 import { OutboxPublisher } from "./outbox/publisher.js";
 import { decimalToAtoms } from "./engine/deterministic.js";
+import { serializeError } from "./utils/json.js";
 import type { OrderSide, TimeInForce } from "./engine/types.js";
 
 const env = loadEnv();
@@ -142,7 +143,7 @@ const start = async () => {
           idempotencyKey: command.idempotency_key ?? command.event_id,
         });
       } catch (error) {
-        logger.error({ error, command }, "Failed to process order submit command");
+        logger.error({ error: serializeError(error), command }, "Failed to process order submit command");
       }
     }
   })().catch((error) => logger.error({ error }, "Order submit subscription failed"));
@@ -164,7 +165,7 @@ const start = async () => {
           idempotencyKey: command.idempotency_key ?? command.event_id,
         });
       } catch (error) {
-        logger.error({ error, command }, "Failed to process order cancel command");
+        logger.error({ error: serializeError(error), command }, "Failed to process order cancel command");
       }
     }
   })().catch((error) => logger.error({ error }, "Order cancel subscription failed"));

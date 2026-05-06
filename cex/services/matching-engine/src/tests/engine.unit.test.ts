@@ -45,6 +45,14 @@ const createTestOrder = (
   acceptedAt
 });
 
+describe("decimalToAtoms", () => {
+  test("converts scientific-notation prices to atoms", () => {
+    expect(decimalToAtoms("1e-8", 8)).toBe(1n);
+    expect(decimalToAtoms("1.23e-4", 8)).toBe(12300n);
+    expect(decimalToAtoms("1e+3", 8)).toBe(100000000000n);
+  });
+});
+
 describe("OrderBook", () => {
   let book: OrderBook;
 

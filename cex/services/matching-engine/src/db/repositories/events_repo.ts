@@ -5,6 +5,7 @@
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import type { OrderEvent } from "../../engine/types.js";
+import { stringifyJson } from "../../utils/json.js";
 
 export class EventsRepo {
   constructor(private client: PoolClient) {}
@@ -34,7 +35,7 @@ export class EventsRepo {
         event.marketId,
         event.eventType,
         event.sequence.toString(),
-        JSON.stringify(event.payload),
+        stringifyJson(event.payload),
         createdAt
       ]
     );
