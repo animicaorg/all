@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { jsonCodec, subjects } from "@cex/common";
 import { createRequireAuth } from "./authenticated.js";
 
+
 const router = Router();
 
 // Validation schemas
@@ -57,7 +58,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
       const market = marketResult.rows[0];
 
       // Validate price tick and size step
-      if (body.type === "LIMIT" && body.price) {
+      if (body.type && body.price) {
         const priceTick = parseFloat(market.price_tick);
         // Use epsilon comparison for floating-point precision
         const priceRemainder = body.price % priceTick;
@@ -339,13 +340,13 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
 
       const result = await pgPool.query(
         `
-        SELECT 
+        SELECT
           asset,
-          available,
-          locked
+          COALESCE(available_atoms, 0) AS available,
+          COALESCE(locked_atoms, 0) AS locked
         FROM balances
         WHERE account_id = $1
-          AND (available > 0 OR locked > 0)
+          AND (COALESCE(available_atoms, 0) > 0 OR COALESCE(locked_atoms, 0) > 0)
         ORDER BY asset
       `,
         [`user:${userId}`]

@@ -67,22 +67,23 @@ export async function handleOrderLock(
       }
     );
 
-    await ledgerRepo.addEntry(
-      tx.id,
-      accounts.locked.id,
-      assetId,
-      "DEBIT",
-      lockAmountAtoms,
-      `Order ${orderEvent.orderId} lock -> locked`
-    );
-
+    // Correct direction: AVAILABLE -> LOCKED
     await ledgerRepo.addEntry(
       tx.id,
       accounts.available.id,
       assetId,
+      "DEBIT",
+      lockAmountAtoms,
+      `Order ${orderEvent.orderId} lock: available -> locked`
+    );
+
+    await ledgerRepo.addEntry(
+      tx.id,
+      accounts.locked.id,
+      assetId,
       "CREDIT",
       lockAmountAtoms,
-      `Order ${orderEvent.orderId} lock -> available`
+      `Order ${orderEvent.orderId} lock: available -> locked`
     );
 
     await balancesRepo.updateBalance(
@@ -96,7 +97,8 @@ export async function handleOrderLock(
       `INSERT INTO order_locks (order_id, user_id, asset_id, locked_atoms, used_atoms, created_at, updated_at)
        VALUES ($1, $2, $3, $4, 0, NOW(), NOW())
        ON CONFLICT (order_id) DO UPDATE
-         SET asset_id = EXCLUDED.asset_id,
+         SET user_id = EXCLUDED.user_id,
+             asset_id = EXCLUDED.asset_id,
              locked_atoms = EXCLUDED.locked_atoms,
              updated_at = NOW()`,
       [orderEvent.orderId, orderEvent.userId, assetId, lockAmountAtoms.toString()]

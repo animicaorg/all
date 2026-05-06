@@ -132,8 +132,7 @@ export const wsMessageSchema = z.union([
   tradesUpdateSchema,
   tickerSnapshotSchema,
   tickerUpdateSchema,
-  errorMessageSchema,
-]);
+  errorMessageSchema]);
 
 export type WSMessage = z.infer<typeof wsMessageSchema>;
 export type OrderbookSnapshot = z.infer<typeof orderbookSnapshotSchema>;

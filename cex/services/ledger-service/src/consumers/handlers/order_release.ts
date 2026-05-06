@@ -29,6 +29,7 @@ export async function handleOrderRelease(
     if ((res.rowCount ?? 0) === 0) return { ok: true };
 
     const row = res.rows[0];
+    const userId = String(row.user_id);
     const assetId = String(row.asset_id);
     const lockedAtoms = BigInt(row.locked_atoms);
     const usedAtoms = BigInt(row.used_atoms);
@@ -39,8 +40,8 @@ export async function handleOrderRelease(
       return { ok: true };
     }
 
-    const accounts = await accountsRepo.ensureUserAccounts(orderEvent.userId, assetId);
-    const balance = await balancesRepo.getBalance(orderEvent.userId, assetId);
+    const accounts = await accountsRepo.ensureUserAccounts(userId, assetId);
+    const balance = await balancesRepo.getBalance(userId, assetId);
     const availableAtoms = balance?.availableAtoms ?? 0n;
     const currentLockedAtoms = balance?.lockedAtoms ?? 0n;
 
@@ -59,32 +60,33 @@ export async function handleOrderRelease(
         reason: "ORDER_RELEASE",
         orderId: orderEvent.orderId,
         eventType: orderEvent.eventType,
-        userId: orderEvent.userId,
+        userId,
         assetId,
         releasableAtoms: releasableAtoms.toString(),
       }
+    );
+
+    // Correct direction: LOCKED -> AVAILABLE
+    await ledgerRepo.addEntry(
+      tx.id,
+      accounts.locked.id,
+      assetId,
+      "DEBIT",
+      releasableAtoms,
+      `Order ${orderEvent.orderId} release: locked -> available`
     );
 
     await ledgerRepo.addEntry(
       tx.id,
       accounts.available.id,
       assetId,
-      "DEBIT",
-      releasableAtoms,
-      `Order ${orderEvent.orderId} release -> available`
-    );
-
-    await ledgerRepo.addEntry(
-      tx.id,
-      accounts.locked.id,
-      assetId,
       "CREDIT",
       releasableAtoms,
-      `Order ${orderEvent.orderId} release -> locked`
+      `Order ${orderEvent.orderId} release: locked -> available`
     );
 
     await balancesRepo.updateBalance(
-      orderEvent.userId,
+      userId,
       assetId,
       availableAtoms + releasableAtoms,
       currentLockedAtoms - releasableAtoms

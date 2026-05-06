@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownToLine, ArrowUpFromLine, Copy, Loader2, Wallet, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiClient } from '../lib/api-client';
-import type { Asset, AssetNetwork, Deposit, DepositAddress } from '../types';
+import type { Asset, AssetNetwork, Deposit, DepositAddress, Order } from '../types';
 
 type TransferAction = {
   type: 'deposit' | 'withdraw';
@@ -368,6 +368,14 @@ export default function AccountPage() {
     refetchOnMount: 'always',
   });
 
+  const { data: myOrders = [] } = useQuery({
+    queryKey: ['myOrders'],
+    queryFn: () => apiClient.getMyOrders(),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
+  });
+
   const createDepositAddress = useMutation({
     mutationFn: (assetNetworkId: string) => apiClient.createDepositAddress(assetNetworkId),
     onSuccess: (address) => {
@@ -394,7 +402,24 @@ export default function AccountPage() {
     },
   });
 
+  const cancelOrderMutation = useMutation({
+    mutationFn: (orderId: string) => apiClient.cancelOrder(orderId),
+    onSuccess: () => {
+      toast.success('Order cancelled');
+      queryClient.invalidateQueries({ queryKey: ['myOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['balances'] });
+    },
+    onError: (error) => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+
   const assetMap = new Map(assets.map((asset) => [asset.symbol, asset]));
+  const openOrders = myOrders.filter((order: Order) => {
+    const status = String(order.status ?? '').toLowerCase();
+    return status === 'open' || status === 'pending' || status === 'accepted' || status === 'partial_fill';
+  });
+
   const activeRailCount = assets.reduce(
     (count, asset) => count + asset.networks.filter((network) => network.depositsEnabled || network.withdrawalsEnabled).length,
     0
@@ -513,6 +538,57 @@ export default function AccountPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="bg-slate-800 rounded-lg overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-700">
+          <h2 className="text-lg font-semibold text-white">My Open Orders</h2>
+        </div>
+        {openOrders.length === 0 ? (
+          <div className="p-6 text-sm text-slate-400">No open orders</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-700">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Market</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Side</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Price</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Quantity</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700">
+                {openOrders.map((order: Order) => (
+                  <tr key={order.id} className="hover:bg-slate-700">
+                    <td className="px-6 py-4 text-sm text-white">{order.symbol}</td>
+                    <td className={`px-6 py-4 text-sm ${order.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
+                      {order.side.toUpperCase()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm text-white">
+                      {order.price != null ? order.price.toFixed(8) : 'Market'}
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm text-white">
+                      {order.quantity.toFixed(8)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-300">{order.status}</td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => cancelOrderMutation.mutate(order.id)}
+                        disabled={cancelOrderMutation.isPending}
+                        className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="bg-slate-800 rounded-lg overflow-hidden">
