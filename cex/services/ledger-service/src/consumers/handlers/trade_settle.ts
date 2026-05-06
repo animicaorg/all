@@ -238,7 +238,7 @@ export async function handleTradeEvent(
     log("Balances updated");
 
     // Step 8: Update order locks (reduce usedAtoms)
-    await updateOrderLocks(client, tradeEvent, amounts);
+    await updateOrderLocks(client, tradeEvent, amounts, parties);
     log("Order locks updated");
 
     log("Trade settled successfully", { tradeId: tradeEvent.tradeId });
@@ -460,23 +460,25 @@ async function updateBalances(
 async function updateOrderLocks(
   client: PoolClient,
   tradeEvent: TradeEvent,
-  amounts: TradeAmounts
+  amounts: TradeAmounts,
+  parties: TradeParties
 ): Promise<void> {
-  // Update maker order lock
+  const makerUsedAtoms = parties.makerSide === "BUY" ? amounts.quoteAmountAtoms : amounts.sizeAtoms;
+  const takerUsedAtoms = parties.takerSide === "BUY" ? amounts.quoteAmountAtoms : amounts.sizeAtoms;
+
   await client.query(
     `UPDATE order_locks
-     SET used_atoms = used_atoms + $1,
+     SET used_atoms = LEAST(locked_atoms, used_atoms + $1),
          updated_at = NOW()
      WHERE order_id = $2`,
-    [amounts.sizeAtoms.toString(), tradeEvent.makerOrderId]
+    [makerUsedAtoms.toString(), tradeEvent.makerOrderId]
   );
 
-  // Update taker order lock
   await client.query(
     `UPDATE order_locks
-     SET used_atoms = used_atoms + $1,
+     SET used_atoms = LEAST(locked_atoms, used_atoms + $1),
          updated_at = NOW()
      WHERE order_id = $2`,
-    [amounts.sizeAtoms.toString(), tradeEvent.takerOrderId]
+    [takerUsedAtoms.toString(), tradeEvent.takerOrderId]
   );
 }
