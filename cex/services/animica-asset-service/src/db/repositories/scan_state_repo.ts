@@ -18,6 +18,14 @@ export interface ScanState {
   lock_expires_at: Date | null;
 }
 
+function toSafeHeight(value: unknown, field: string): number {
+  const height = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(height)) {
+    throw new Error(`Invalid ${field}: ${String(value)}`);
+  }
+  return height;
+}
+
 export class ScanStateRepository {
   constructor(
     private pool: Pool,
@@ -28,14 +36,15 @@ export class ScanStateRepository {
    * Initialize scan state for an asset network
    */
   async initialize(assetNetworkId: string, startHeight: number = 0): Promise<void> {
+    const normalizedStartHeight = Math.max(0, toSafeHeight(startHeight, "startHeight"));
     const query = `
       INSERT INTO animica_scan_state (asset_network_id, cursor_height, cursor_hash)
       VALUES ($1, $2, NULL)
       ON CONFLICT (asset_network_id) DO NOTHING
     `;
     
-    await this.pool.query(query, [assetNetworkId, startHeight]);
-    this.logger.info({ assetNetworkId, startHeight }, "Scan state initialized");
+    await this.pool.query(query, [assetNetworkId, normalizedStartHeight]);
+    this.logger.info({ assetNetworkId, startHeight: normalizedStartHeight }, "Scan state initialized");
   }
   
   /**
@@ -112,7 +121,17 @@ export class ScanStateRepository {
     `;
     
     const result = await this.pool.query(query, [assetNetworkId]);
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (!row) return null;
+
+    return {
+      ...row,
+      cursor_height: toSafeHeight(row.cursor_height, "cursor_height"),
+      finalized_height:
+        row.finalized_height === null || row.finalized_height === undefined
+          ? null
+          : toSafeHeight(row.finalized_height, "finalized_height"),
+    };
   }
   
   /**
@@ -125,6 +144,7 @@ export class ScanStateRepository {
     client?: PoolClient
   ): Promise<void> {
     const executor = client || this.pool;
+    const normalizedHeight = Math.max(0, toSafeHeight(height, "height"));
     
     const query = `
       UPDATE animica_scan_state
@@ -132,7 +152,7 @@ export class ScanStateRepository {
       WHERE asset_network_id = $1
     `;
     
-    await executor.query(query, [assetNetworkId, height, hash]);
+    await executor.query(query, [assetNetworkId, normalizedHeight, hash]);
   }
   
   /**
@@ -145,6 +165,7 @@ export class ScanStateRepository {
     client?: PoolClient
   ): Promise<void> {
     const executor = client || this.pool;
+    const normalizedHeight = Math.max(0, toSafeHeight(height, "height"));
     
     const query = `
       UPDATE animica_scan_state
@@ -152,7 +173,7 @@ export class ScanStateRepository {
       WHERE asset_network_id = $1
     `;
     
-    await executor.query(query, [assetNetworkId, height, hash]);
-    this.logger.warn({ assetNetworkId, height, hash }, "Scan cursor rolled back");
+    await executor.query(query, [assetNetworkId, normalizedHeight, hash]);
+    this.logger.warn({ assetNetworkId, height: normalizedHeight, hash }, "Scan cursor rolled back");
   }
 }

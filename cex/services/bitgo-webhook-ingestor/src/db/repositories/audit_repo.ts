@@ -27,8 +27,9 @@ export class AuditRepo {
       INSERT INTO audit_logs (
         event_type, resource_type, resource_id,
         user_id, actor_id, actor_type,
+        action, entity_type, entity_id,
         changes, metadata, ip_address
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     `;
 
     await this.client.query(query, [
@@ -38,6 +39,9 @@ export class AuditRepo {
       entry.userId || null,
       entry.actorId || null,
       entry.actorType,
+      entry.eventType,
+      entry.resourceType,
+      entry.resourceId,
       JSON.stringify(entry.changes),
       JSON.stringify(entry.metadata),
       entry.ipAddress || null,

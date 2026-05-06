@@ -5,6 +5,13 @@
 import { z } from "zod";
 import { baseEnvSchema, loadEnv } from "@cex/common";
 
+const envBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
+  if (["0", "false", "no", "off"].includes(value.toLowerCase())) return false;
+  return value;
+}, z.boolean());
+
 const configSchema = baseEnvSchema.partial().extend({
   SERVICE_NAME: z.string().default("animica-asset-service"),
   LOG_LEVEL: z.string().default("info"),
@@ -24,6 +31,9 @@ const configSchema = baseEnvSchema.partial().extend({
   ANIMICA_SCAN_BATCH: z.coerce.number().default(200),
   ANIMICA_SCAN_POLL_MS: z.coerce.number().default(2000),
   ANIMICA_MAX_REORG_DEPTH: z.coerce.number().default(200),
+  ANIMICA_MEMPOOL_SCAN_ENABLED: envBoolean.default(true),
+  ANIMICA_MEMPOOL_MAX_TXS: z.coerce.number().default(500),
+  ANIMICA_BALANCE_FALLBACK_ENABLED: envBoolean.default(true),
   
   // Wallet configuration
   ANIMICA_WALLET_MODE: z.enum(["hotwallet", "watch"]).default("hotwallet"),
@@ -46,6 +56,7 @@ const configSchema = baseEnvSchema.partial().extend({
   SCAN_WORKER_INTERVAL_MS: z.coerce.number().default(5000), // 5 seconds
   WITHDRAWAL_POLL_INTERVAL_MS: z.coerce.number().default(30000), // 30 seconds
   RECONCILE_INTERVAL_MS: z.coerce.number().default(300000), // 5 minutes
+  ANIMICA_OUTBOX_PROCESSOR_INTERVAL_MS: z.coerce.number().default(5000),
   
   // RPC client settings
   RPC_TIMEOUT_MS: z.coerce.number().default(30000),

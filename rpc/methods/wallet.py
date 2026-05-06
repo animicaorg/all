@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import ipaddress
 import math
 import os
@@ -26,6 +25,51 @@ except Exception:  # pragma: no cover
 
 _LABEL_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,120}$")
 _STORE_LOCK = threading.Lock()
+
+
+class _LockedWalletStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lock_path = path.with_suffix(path.suffix + ".lock")
+        self.lock_file: Any | None = None
+        self.store: dict[str, Any] | None = None
+        self.thread_lock_acquired = False
+
+    def __enter__(self) -> dict[str, Any]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _STORE_LOCK.acquire()
+        self.thread_lock_acquired = True
+        try:
+            self.lock_file = self.lock_path.open("a+", encoding="utf-8")
+            if fcntl is not None:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)
+            self.store = wallet_cli._load_store(self.path)
+            return self.store
+        except BaseException:
+            self._release()
+            raise
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        try:
+            if exc_type is None and self.store is not None:
+                wallet_cli._save_store(self.path, self.store)
+        finally:
+            self._release()
+        return False
+
+    def _release(self) -> None:
+        try:
+            if self.lock_file is not None:
+                try:
+                    if fcntl is not None:
+                        fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                finally:
+                    self.lock_file.close()
+                    self.lock_file = None
+        finally:
+            if self.thread_lock_acquired:
+                self.thread_lock_acquired = False
+                _STORE_LOCK.release()
 
 
 def _env_truthy(name: str) -> bool:
@@ -72,21 +116,8 @@ def _wallet_path(wallet_file: Any | None = None) -> Path:
     return wallet_cli._wallet_file_path(None)
 
 
-@contextlib.contextmanager
-def _locked_store(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    with _STORE_LOCK:
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                store = wallet_cli._load_store(path)
-                yield store
-                wallet_cli._save_store(path, store)
-            finally:
-                if fcntl is not None:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+def _locked_store(path: Path) -> _LockedWalletStore:
+    return _LockedWalletStore(path)
 
 
 def _ctx_headers(ctx: Any | None) -> dict[str, str]:
@@ -221,13 +252,91 @@ def _normalize_send_payload(
     return payload
 
 
+def _height_from_mapping(source: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = source.get(key)
+        if value is None:
+            continue
+        try:
+            return _coerce_int(value, field=f"head.{key}", minimum=0)
+        except rpc_errors.InvalidParams:
+            continue
+    return None
+
+
+def _height_from_object(source: Any, keys: tuple[str, ...]) -> int | None:
+    if isinstance(source, dict):
+        return _height_from_mapping(source, keys)
+    for key in keys:
+        value = getattr(source, key, None)
+        if value is None:
+            continue
+        try:
+            return _coerce_int(value, field=f"head.{key}", minimum=0)
+        except rpc_errors.InvalidParams:
+            continue
+    return None
+
+
+def _head_height_from_snapshot(head: Any) -> int | None:
+    active_keys = (
+        "height",
+        "headHeight",
+        "head_height",
+        "blockHeight",
+        "block_height",
+        "number",
+    )
+    canonical_keys = ("canonicalHeight", "canonical_height")
+
+    sources: list[Any] = []
+    if isinstance(head, dict):
+        sources.append(head)
+        header = head.get("header")
+        if header is not None:
+            sources.append(header)
+    elif isinstance(head, (tuple, list)):
+        if head:
+            try:
+                first = _coerce_int(head[0], field="head.height", minimum=0)
+            except rpc_errors.InvalidParams:
+                first = 0
+            if first > 0:
+                return first
+            if len(head) >= 2:
+                nested = _head_height_from_snapshot(head[1])
+                if nested is not None and nested > 0:
+                    return nested
+            return first
+    else:
+        try:
+            return _coerce_int(head, field="head.height", minimum=0)
+        except rpc_errors.InvalidParams:
+            return None
+
+    zero_height: int | None = None
+    for source in sources:
+        height = _height_from_object(source, active_keys)
+        if height is None:
+            continue
+        if height > 0:
+            return height
+        zero_height = 0
+
+    for source in sources:
+        height = _height_from_object(source, canonical_keys)
+        if height is not None:
+            return height
+
+    return zero_height
+
+
 def _head_height() -> int:
     try:
         head = chain_methods.chain_get_head()
-        if isinstance(head, dict):
-            value = head.get("height") or head.get("number") or head.get("canonicalHeight")
-            if value is not None:
-                return int(value)
+        height = _head_height_from_snapshot(head)
+        if height is not None:
+            return height
     except Exception:
         pass
     return 0
@@ -425,7 +534,19 @@ def wallet_send(
             field="ttlBlocks",
             minimum=1,
         )
-        valid_after = head_height
+        max_ttl_blocks = _coerce_int(
+            os.getenv("ANIMICA_MAX_TX_TTL_BLOCKS", "200"),
+            field="maxTtlBlocks",
+            minimum=1,
+        )
+        ttl_blocks = min(ttl_blocks, max_ttl_blocks)
+        valid_after_lag = _coerce_int(
+            os.getenv("ANIMICA_WALLET_RPC_VALID_AFTER_LAG_BLOCKS", "5"),
+            field="validAfterLagBlocks",
+            minimum=0,
+        )
+        valid_after_lag = min(valid_after_lag, max(0, max_ttl_blocks - ttl_blocks))
+        valid_after = max(0, head_height - valid_after_lag)
         valid_until = head_height + ttl_blocks
         try:
             nonce = int(state_methods.state_get_next_nonce(from_address))

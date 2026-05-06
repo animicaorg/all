@@ -47,8 +47,26 @@ export interface CreateDepositParams {
   tag: string | null;
   amountAtoms: string;
   confirmationsRequired: number;
-  blockHeight: number;
-  blockHash: string;
+  blockHeight: number | null;
+  blockHash: string | null;
+  status?: "PENDING" | "DETECTED";
+}
+
+function toNullableSafeHeight(value: unknown, field: string): number | null {
+  if (value === null || value === undefined) return null;
+  const height = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(height) || height < 0) {
+    throw new Error(`Invalid ${field}: ${String(value)}`);
+  }
+  return height;
+}
+
+function toNumber(value: unknown, field: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${field}: ${String(value)}`);
+  }
+  return parsed;
 }
 
 export class DepositsRepository {
@@ -64,6 +82,7 @@ export class DepositsRepository {
     const executor = client || this.pool;
     const normalizedTag = params.tag || "";
     const normalizedVout = params.vout || "0";
+    const status = params.status ?? "DETECTED";
     
     const query = `
       INSERT INTO deposits (
@@ -74,13 +93,24 @@ export class DepositsRepository {
       VALUES (
         $1, $2, 'ANIMICA_NODE', $3, $4, $5, $6, $7,
         $8, 0, $9, $10, $11,
-        'DETECTED', $12
+        $12, $13
       )
       ON CONFLICT (asset_network_id, txid, address, tag, vout)
       DO UPDATE SET
+        user_id = COALESCE(EXCLUDED.user_id, deposits.user_id),
         confirmations = deposits.confirmations,
-        block_height = EXCLUDED.block_height,
-        block_hash = EXCLUDED.block_hash,
+        confirmations_required = EXCLUDED.confirmations_required,
+        block_height = COALESCE(EXCLUDED.block_height, deposits.block_height),
+        block_hash = COALESCE(EXCLUDED.block_hash, deposits.block_hash),
+        status = CASE
+          WHEN deposits.status = 'PENDING' AND EXCLUDED.block_height IS NOT NULL THEN 'DETECTED'
+          WHEN deposits.status = 'REORGED' AND EXCLUDED.block_height IS NOT NULL THEN 'DETECTED'
+          ELSE deposits.status
+        END,
+        unassigned = CASE
+          WHEN EXCLUDED.user_id IS NOT NULL THEN false
+          ELSE deposits.unassigned
+        END,
         updated_at = NOW()
       RETURNING *
     `;
@@ -97,11 +127,12 @@ export class DepositsRepository {
       params.confirmationsRequired,
       params.blockHeight,
       params.blockHash,
+      status,
       params.userId === null, // unassigned
     ];
     
     const result = await executor.query(query, values);
-    return result.rows[0];
+    return this.mapRow(result.rows[0]);
   }
 
   /**
@@ -131,6 +162,7 @@ export class DepositsRepository {
         provider: deposit.provider,
         txid: deposit.txid,
         address: deposit.address,
+        coin: assetSymbol,
         network: "ANIMICA",
       },
       depositId: deposit.id,
@@ -142,6 +174,29 @@ export class DepositsRepository {
        ON CONFLICT (idempotency_key) DO NOTHING`,
       [deposit.id, idempotencyKey, JSON.stringify(payload)]
     );
+  }
+
+  /**
+   * Sum all non-failed/non-reorged deposits already accounted for an address.
+   */
+  async getAccountedAmountByAddress(
+    assetNetworkId: string,
+    address: string,
+    client?: PoolClient
+  ): Promise<bigint> {
+    const executor = client || this.pool;
+    const result = await executor.query(
+      `
+        SELECT COALESCE(SUM(amount_atoms), 0)::text AS total
+        FROM deposits
+        WHERE asset_network_id = $1
+          AND LOWER(address) = LOWER($2)
+          AND status NOT IN ('FAILED', 'REORGED')
+      `,
+      [assetNetworkId, address]
+    );
+
+    return BigInt(result.rows[0]?.total || "0");
   }
   
   /**
@@ -175,9 +230,9 @@ export class DepositsRepository {
     
     const query = `
       UPDATE deposits
-      SET status = $2, updated_at = NOW(),
-          confirmed_at = CASE WHEN $2 = 'CONFIRMED' AND confirmed_at IS NULL THEN NOW() ELSE confirmed_at END,
-          credited_at = CASE WHEN $2 = 'CREDITED' AND credited_at IS NULL THEN NOW() ELSE credited_at END
+      SET status = $2::text, updated_at = NOW(),
+          confirmed_at = CASE WHEN $2::text = 'CONFIRMED' AND confirmed_at IS NULL THEN NOW() ELSE confirmed_at END,
+          credited_at = CASE WHEN $2::text = 'CREDITED' AND credited_at IS NULL THEN NOW() ELSE credited_at END
       WHERE id = $1
     `;
     
@@ -200,7 +255,7 @@ export class DepositsRepository {
     `;
     
     const result = await this.pool.query(query, [assetNetworkId, status, limit]);
-    return result.rows;
+    return result.rows.map((row) => this.mapRow(row));
   }
   
   /**
@@ -219,7 +274,7 @@ export class DepositsRepository {
     `;
     
     const result = await this.pool.query(query, [assetNetworkId, fromHeight, toHeight]);
-    return result.rows;
+    return result.rows.map((row) => this.mapRow(row));
   }
   
   /**
@@ -245,5 +300,15 @@ export class DepositsRepository {
     
     await executor.query(query, [depositIds]);
     this.logger.warn({ count: depositIds.length }, "Deposits marked as reorged");
+  }
+
+  private mapRow(row: any): Deposit {
+    return {
+      ...row,
+      amount_atoms: String(row.amount_atoms),
+      confirmations: toNumber(row.confirmations, "confirmations"),
+      confirmations_required: toNumber(row.confirmations_required, "confirmations_required"),
+      block_height: toNullableSafeHeight(row.block_height, "block_height"),
+    };
   }
 }

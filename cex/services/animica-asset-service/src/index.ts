@@ -8,7 +8,7 @@ import { createLogger, createPgPool } from "@cex/common";
 import { loadConfig } from "./config.js";
 import { createServer } from "./api/server.js";
 import { createAnimicaRpcClient } from "./rpc/client.js";
-import { ScanLoopJob, PollWithdrawalsJob, ReconciliationJob } from "./jobs/index.js";
+import { ScanLoopJob, PollWithdrawalsJob, ReconciliationJob, AnimicaOutboxProcessor } from "./jobs/index.js";
 
 const config = loadConfig();
 const logger = createLogger(config.SERVICE_NAME, config.LOG_LEVEL);
@@ -69,6 +69,9 @@ async function start() {
   const reconciliationJob = new ReconciliationJob(pool, rpcClient, config, logger);
   reconciliationJob.start();
 
+  const outboxProcessor = new AnimicaOutboxProcessor(pool, config, logger);
+  outboxProcessor.start();
+
   logger.info("Background jobs started");
   logger.info("Animica asset service started successfully");
 
@@ -80,6 +83,7 @@ async function start() {
     scanLoopJob.stop();
     pollWithdrawalsJob.stop();
     reconciliationJob.stop();
+    outboxProcessor.stop();
 
     // Close HTTP server
     await new Promise<void>((resolve) => {

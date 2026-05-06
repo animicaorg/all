@@ -111,6 +111,8 @@ export default function TradingPage() {
 
   const displayOrderbook = orderbook || restOrderbook;
   const displayTrades = marketTrades.length > 0 ? marketTrades : restTrades;
+  const openOrders = myOrders.filter((order) => order.status === 'open' || order.status === 'pending');
+  const recentOrders = myOrders.slice(0, 10);
 
   const [baseAsset, quoteAsset] = symbol.split('-');
   const baseBalance = balances.find((b) => b.asset === baseAsset);
@@ -272,11 +274,11 @@ export default function TradingPage() {
           {/* My Open Orders */}
           <div className="bg-slate-800 rounded-lg p-4">
             <h2 className="text-lg font-semibold text-white mb-4">My Open Orders</h2>
-            {myOrders.length === 0 ? (
+            {openOrders.length === 0 ? (
               <p className="text-slate-400 text-sm text-center py-4">No open orders</p>
             ) : (
               <div className="space-y-2">
-                {myOrders.map((order) => (
+                {openOrders.map((order) => (
                   <div
                     key={order.id}
                     className="flex items-center justify-between text-sm border-b border-slate-700 pb-2"
@@ -289,7 +291,7 @@ export default function TradingPage() {
                       <span className="text-slate-300">{order.type}</span>
                     </div>
                     <div className="flex-1 text-slate-300 text-center">
-                      {order.price?.toFixed(2)} × {order.quantity.toFixed(4)}
+                      {order.price != null ? order.price.toFixed(8) : 'Market'} × {order.quantity.toFixed(4)}
                     </div>
                     <button
                       onClick={() => cancelOrderMutation.mutate(order.id)}
@@ -303,12 +305,43 @@ export default function TradingPage() {
               </div>
             )}
           </div>
+
+          <div className="bg-slate-800 rounded-lg p-4">
+            <h2 className="text-lg font-semibold text-white mb-4">Recent Orders</h2>
+            {recentOrders.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-4">No orders yet</p>
+            ) : (
+              <div className="space-y-2">
+                {recentOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="flex items-center justify-between text-sm border-b border-slate-700 pb-2"
+                  >
+                    <div className="flex-1">
+                      <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                        {order.side.toUpperCase()}
+                      </span>
+                      {' '}
+                      <span className="text-slate-300">{order.type}</span>
+                    </div>
+                    <div className="flex-1 text-slate-300 text-center">
+                      {order.price != null ? order.price.toFixed(8) : 'Market'} × {order.quantity.toFixed(4)}
+                    </div>
+                    <div className="w-20 text-right text-slate-400 capitalize">
+                      {order.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: Order Entry */}
         <OrderEntry
           market={market}
           balances={balances}
+          referencePrice={lastPrice}
           onSubmit={(order) => createOrderMutation.mutateAsync(order)}
           isSubmitting={createOrderMutation.isPending}
         />

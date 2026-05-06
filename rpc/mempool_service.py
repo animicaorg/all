@@ -651,8 +651,65 @@ def _head_height_candidates(head: Any) -> list[int]:
 
 
 def _extract_head_height(head: Any) -> int | None:
-    candidates = _head_height_candidates(head)
-    return max(candidates) if candidates else None
+    active_keys = (
+        "height",
+        "head_height",
+        "headHeight",
+        "block_height",
+        "blockHeight",
+        "number",
+    )
+    canonical_keys = ("canonicalHeight", "canonical_height")
+
+    def _field(source: Any, keys: tuple[str, ...]) -> int | None:
+        if isinstance(source, dict):
+            getter = source.get
+        else:
+            getter = lambda key: getattr(source, key, None)
+        for key in keys:
+            height = _coerce_nonnegative_height(getter(key))
+            if height is not None:
+                return height
+        return None
+
+    if isinstance(head, dict):
+        sources: list[Any] = [head]
+        header = head.get("header")
+        if header is not None:
+            sources.append(header)
+
+        zero_height: int | None = None
+        for source in sources:
+            height = _field(source, active_keys)
+            if height is None:
+                continue
+            if height > 0:
+                return height
+            zero_height = 0
+
+        for source in sources:
+            height = _field(source, canonical_keys)
+            if height is not None:
+                return height
+        return zero_height
+
+    if isinstance(head, (tuple, list)):
+        zero_height: int | None = None
+        if head:
+            height = _coerce_nonnegative_height(head[0])
+            if height is not None:
+                if height > 0:
+                    return height
+                zero_height = 0
+        if len(head) >= 2:
+            nested = _extract_head_height(head[1])
+            if nested is not None:
+                if nested > 0:
+                    return nested
+                zero_height = 0
+        return zero_height
+
+    return _coerce_nonnegative_height(head)
 
 
 def _current_height() -> int:

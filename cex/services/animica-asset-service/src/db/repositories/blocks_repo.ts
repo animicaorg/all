@@ -16,6 +16,14 @@ export interface AnimicaBlock {
   seen_at: Date;
 }
 
+function toSafeHeight(value: unknown, field: string): number {
+  const height = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(height) || height < 0) {
+    throw new Error(`Invalid ${field}: ${String(value)}`);
+  }
+  return height;
+}
+
 export class BlocksRepository {
   constructor(
     private pool: Pool,
@@ -34,6 +42,7 @@ export class BlocksRepository {
     client?: PoolClient
   ): Promise<void> {
     const executor = client || this.pool;
+    const normalizedHeight = toSafeHeight(height, "height");
     
     const query = `
       INSERT INTO animica_blocks (asset_network_id, height, hash, parent_hash, canonical)
@@ -42,7 +51,7 @@ export class BlocksRepository {
       DO UPDATE SET hash = $3, parent_hash = $4, canonical = $5, seen_at = NOW()
     `;
     
-    await executor.query(query, [assetNetworkId, height, hash, parentHash, canonical]);
+    await executor.query(query, [assetNetworkId, normalizedHeight, hash, parentHash, canonical]);
   }
   
   /**
@@ -54,8 +63,21 @@ export class BlocksRepository {
       WHERE asset_network_id = $1 AND height = $2
     `;
     
-    const result = await this.pool.query(query, [assetNetworkId, height]);
-    return result.rows[0] || null;
+    const result = await this.pool.query(query, [assetNetworkId, toSafeHeight(height, "height")]);
+    return result.rows[0] ? this.mapRow(result.rows[0]) : null;
+  }
+
+  /**
+   * Get canonical block by height.
+   */
+  async getCanonicalByHeight(assetNetworkId: string, height: number): Promise<AnimicaBlock | null> {
+    const query = `
+      SELECT * FROM animica_blocks
+      WHERE asset_network_id = $1 AND height = $2 AND canonical = true
+    `;
+
+    const result = await this.pool.query(query, [assetNetworkId, toSafeHeight(height, "height")]);
+    return result.rows[0] ? this.mapRow(result.rows[0]) : null;
   }
   
   /**
@@ -68,6 +90,9 @@ export class BlocksRepository {
     client?: PoolClient
   ): Promise<void> {
     const executor = client || this.pool;
+    const normalizedFromHeight = toSafeHeight(fromHeight, "fromHeight");
+    const normalizedToHeight = toSafeHeight(toHeight, "toHeight");
+    if (normalizedFromHeight > normalizedToHeight) return;
     
     const query = `
       UPDATE animica_blocks
@@ -75,9 +100,9 @@ export class BlocksRepository {
       WHERE asset_network_id = $1 AND height >= $2 AND height <= $3
     `;
     
-    await executor.query(query, [assetNetworkId, fromHeight, toHeight]);
+    await executor.query(query, [assetNetworkId, normalizedFromHeight, normalizedToHeight]);
     this.logger.warn(
-      { assetNetworkId, fromHeight, toHeight },
+      { assetNetworkId, fromHeight: normalizedFromHeight, toHeight: normalizedToHeight },
       "Blocks marked as non-canonical due to reorg"
     );
   }
@@ -96,7 +121,22 @@ export class BlocksRepository {
       ORDER BY height ASC
     `;
     
-    const result = await this.pool.query(query, [assetNetworkId, fromHeight, toHeight]);
-    return result.rows;
+    const result = await this.pool.query(query, [
+      assetNetworkId,
+      toSafeHeight(fromHeight, "fromHeight"),
+      toSafeHeight(toHeight, "toHeight"),
+    ]);
+    return result.rows.map((row) => this.mapRow(row));
+  }
+
+  private mapRow(row: any): AnimicaBlock {
+    return {
+      height: toSafeHeight(row.height, "height"),
+      asset_network_id: row.asset_network_id,
+      hash: row.hash,
+      parent_hash: row.parent_hash,
+      canonical: row.canonical,
+      seen_at: row.seen_at,
+    };
   }
 }

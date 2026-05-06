@@ -345,7 +345,7 @@ export function createWebSocketServer(
         FROM markets m
         LEFT JOIN LATERAL (
           SELECT 
-            price as last_price,
+            (array_agg(price ORDER BY created_at DESC))[1] as last_price,
             SUM(size) as volume_24h,
             MAX(price) as high_24h,
             MIN(price) as low_24h,

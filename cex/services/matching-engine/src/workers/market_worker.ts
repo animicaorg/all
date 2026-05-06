@@ -169,6 +169,7 @@ export class MarketWorker {
       if (cmd.postOnly) {
         if (this.engine.getOrderBook().wouldCross(cmd.side, cmd.priceAtoms)) {
           await ordersRepo.rejectOrder(order.id, "Post-only order would cross");
+          order.status = "REJECTED";
           const result: OrderResult = {
             success: false,
             order,
@@ -201,6 +202,16 @@ export class MarketWorker {
       } catch (error) {
         // Matching error (e.g., FOK cannot fill)
         await ordersRepo.rejectOrder(order.id, (error as Error).message);
+        order.status = "REJECTED";
+        const rejectSeq = await sequenceRepo.nextSequence(this.marketId);
+        await eventsRepo.appendEvent({
+          orderId: order.id,
+          marketId: this.marketId,
+          eventType: "REJECTED",
+          sequence: rejectSeq,
+          payload: { order, reason: (error as Error).message }
+        });
+        await writeOrderEvent(outboxRepo, this.marketId, rejectSeq, "REJECTED", order);
         const result: OrderResult = {
           success: false,
           order,
@@ -212,6 +223,13 @@ export class MarketWorker {
         await idempotencyRepo.set(cmd.idempotencyKey, "matching-engine", result);
         await client.query("COMMIT");
         return result;
+      }
+
+      if (
+        matchResult.takerOrder.timeInForce === "IOC" &&
+        matchResult.takerOrder.remainingAtoms > 0n
+      ) {
+        matchResult.takerOrder.status = "EXPIRED";
       }
 
       // Write trades
@@ -253,10 +271,17 @@ export class MarketWorker {
       );
 
       // Write taker event
-      if (matchResult.takerOrder.filledAtoms > 0n) {
+      if (
+        matchResult.takerOrder.filledAtoms > 0n ||
+        matchResult.takerOrder.status === "EXPIRED"
+      ) {
         const takerSeq = await sequenceRepo.nextSequence(this.marketId);
         const eventType =
-          matchResult.takerOrder.status === "FILLED" ? "FILLED" : "PARTIAL_FILL";
+          matchResult.takerOrder.status === "FILLED"
+            ? "FILLED"
+            : matchResult.takerOrder.status === "EXPIRED"
+              ? "EXPIRED"
+              : "PARTIAL_FILL";
         await eventsRepo.appendEvent({
           orderId: matchResult.takerOrder.id,
           marketId: this.marketId,
@@ -400,6 +425,10 @@ export class MarketWorker {
       // Match order
       const matchResult = this.engine.match(order);
 
+      if (matchResult.takerOrder.remainingAtoms > 0n) {
+        matchResult.takerOrder.status = "EXPIRED";
+      }
+
       // Market orders should not rest on book
       if (matchResult.takerOrder.remainingAtoms > 0n) {
         this.logger.warn(
@@ -448,10 +477,17 @@ export class MarketWorker {
         matchResult.takerOrder.status
       );
 
-      if (matchResult.takerOrder.filledAtoms > 0n) {
+      if (
+        matchResult.takerOrder.filledAtoms > 0n ||
+        matchResult.takerOrder.status === "EXPIRED"
+      ) {
         const takerSeq = await sequenceRepo.nextSequence(this.marketId);
         const eventType =
-          matchResult.takerOrder.status === "FILLED" ? "FILLED" : "PARTIAL_FILL";
+          matchResult.takerOrder.status === "FILLED"
+            ? "FILLED"
+            : matchResult.takerOrder.status === "EXPIRED"
+              ? "EXPIRED"
+              : "PARTIAL_FILL";
         await eventsRepo.appendEvent({
           orderId: matchResult.takerOrder.id,
           marketId: this.marketId,

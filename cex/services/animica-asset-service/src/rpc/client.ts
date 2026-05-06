@@ -67,6 +67,10 @@ export class AnimicaRpcClient {
       supportsWalletCreateAddress: false,
       supportsWalletSend: false,
       supportsEstimateFee: false,
+      supportsMempoolGetPending: false,
+      supportsMempoolGet: false,
+      supportsStateGetAddressBalance: false,
+      supportsStateGetBalance: false,
     };
     
     // Test common method names
@@ -79,6 +83,10 @@ export class AnimicaRpcClient {
       { method: "wallet.createAddress", key: "supportsWalletCreateAddress" as keyof RpcCapabilities },
       { method: "wallet.send", key: "supportsWalletSend" as keyof RpcCapabilities },
       { method: "tx.estimateFee", key: "supportsEstimateFee" as keyof RpcCapabilities },
+      { method: "mempool.getPending", key: "supportsMempoolGetPending" as keyof RpcCapabilities },
+      { method: "mempool.get", key: "supportsMempoolGet" as keyof RpcCapabilities },
+      { method: "state.getAddressBalance", key: "supportsStateGetAddressBalance" as keyof RpcCapabilities },
+      { method: "state.getBalance", key: "supportsStateGetBalance" as keyof RpcCapabilities },
     ];
     
     for (const test of tests) {
@@ -209,6 +217,72 @@ export class AnimicaRpcClient {
     const result = await this.call<any>("tx.get", [txid]);
     return this.normalizeTransactionInfo(result);
   }
+
+  /**
+   * Get pending mempool transaction hashes.
+   *
+   * The current Animica RPC exposes a global mempool hash list, not an
+   * address-indexed mempool query. The scanner filters this bounded list
+   * locally against assigned deposit addresses.
+   */
+  async getPendingTransactionIds(): Promise<string[]> {
+    const result = await this.call<any>("mempool.getPending");
+    const values = Array.isArray(result)
+      ? result
+      : Array.isArray(result?.txids)
+        ? result.txids
+        : Array.isArray(result?.transactions)
+          ? result.transactions
+          : [];
+
+    return values
+      .map((value: any) => {
+        if (typeof value === "string") return value;
+        return value?.txid || value?.hash || value?.tx?.hash || null;
+      })
+      .filter((value: unknown): value is string => typeof value === "string" && value.length > 0);
+  }
+
+  /**
+   * Get a pending transaction from the mempool. Falls back to tx.get because
+   * the live RPC also returns pending transactions from that method.
+   */
+  async getMempoolTransaction(txid: string): Promise<TransactionInfo> {
+    try {
+      const result = await this.call<any>("mempool.get", [txid]);
+      return this.normalizeTransactionInfo(result);
+    } catch (error) {
+      if (error instanceof MethodNotFoundError || error instanceof InvalidParamsError) {
+        return this.getTransaction(txid);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get confirmed on-chain balance for an address.
+   *
+   * This is used as a conservative historical fallback when confirmed
+   * transaction lookups expose only hash/block metadata. It never includes
+   * pending incoming amounts in the credited value.
+   */
+  async getConfirmedAddressBalance(address: string): Promise<string> {
+    try {
+      const result = await this.call<any>("state.getAddressBalance", [address]);
+      return this.normalizeBalanceAtoms(
+        result?.confirmed_balance ?? result?.confirmedBalance ?? result?.balance ?? result
+      );
+    } catch (error) {
+      if (!(error instanceof MethodNotFoundError || error instanceof InvalidParamsError)) {
+        throw error;
+      }
+    }
+
+    const result = await this.call<any>("state.getBalance", [address]);
+    return this.normalizeBalanceAtoms(
+      result?.confirmed_balance ?? result?.confirmedBalance ?? result?.balance ?? result
+    );
+  }
   
   /**
    * Send raw transaction
@@ -264,12 +338,23 @@ export class AnimicaRpcClient {
    * Normalize block info from various formats
    */
   private normalizeBlockInfo(block: any): BlockInfo {
+    const source = block?.header || block;
+    const transactions = block?.txs || block?.transactions || source?.txs || source?.transactions || [];
+    const txs = Array.isArray(transactions)
+      ? transactions
+          .map((tx: any) => {
+            if (typeof tx === "string") return tx;
+            return tx?.txid || tx?.hash || tx?.tx?.hash || null;
+          })
+          .filter((txid: unknown): txid is string => typeof txid === "string" && txid.length > 0)
+      : [];
+
     return {
-      height: Number(block.height || block.number),
-      hash: block.hash || block.block_hash,
-      parent_hash: block.parent_hash || block.parentHash || block.prev_hash,
-      timestamp: Number(block.timestamp || block.time),
-      txs: block.txs || block.transactions || [],
+      height: Number(source.height ?? source.number),
+      hash: source.hash || source.block_hash,
+      parent_hash: source.parent_hash || source.parentHash || source.prev_hash,
+      timestamp: Number(source.timestamp ?? source.time ?? 0),
+      txs,
     };
   }
   
@@ -277,19 +362,46 @@ export class AnimicaRpcClient {
    * Normalize transaction info from various formats
    */
   private normalizeTransactionInfo(tx: any): TransactionInfo {
+    const source = tx?.tx || tx?.transaction || tx;
+    const txid = tx?.txid || tx?.hash || source?.txid || source?.hash;
+    const value = source?.value ?? source?.amount ?? tx?.value ?? tx?.amount ?? "0";
+
     return {
-      txid: tx.txid || tx.hash,
-      from: tx.from || tx.sender,
-      to: tx.to || tx.recipient,
-      value: tx.value || tx.amount || "0",
-      nonce: Number(tx.nonce || 0),
-      gas_limit: Number(tx.gas_limit || tx.gasLimit || 0),
-      gas_price: tx.gas_price || tx.gasPrice || "0",
+      txid,
+      from: source?.from || source?.sender || "",
+      to: source?.to || source?.recipient || "",
+      value: String(value),
+      nonce: Number(source?.nonce || 0),
+      gas_limit: Number(source?.gas_limit || source?.gasLimit || source?.gas || 0),
+      gas_price: String(source?.gas_price || source?.gasPrice || source?.maxFee || source?.tip || "0"),
       block_height: tx.block_height !== undefined ? Number(tx.block_height) : undefined,
       block_hash: tx.block_hash || tx.blockHash,
       confirmations: tx.confirmations !== undefined ? Number(tx.confirmations) : undefined,
       status: tx.status,
     };
+  }
+
+  private normalizeBalanceAtoms(value: any): string {
+    if (typeof value === "number") {
+      if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`Invalid balance value: ${String(value)}`);
+      }
+      return String(value);
+    }
+
+    if (typeof value !== "string") {
+      throw new Error(`Invalid balance value: ${String(value)}`);
+    }
+
+    const trimmed = value.trim();
+    if (/^0x[0-9a-fA-F]+$/.test(trimmed)) {
+      return BigInt(trimmed).toString();
+    }
+    if (/^\d+$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    throw new Error(`Invalid balance value: ${value}`);
   }
 }
 

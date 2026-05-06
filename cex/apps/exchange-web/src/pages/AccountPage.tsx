@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownToLine, ArrowUpFromLine, Copy, Loader2, Wallet, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiClient } from '../lib/api-client';
-import type { Asset, AssetNetwork, DepositAddress } from '../types';
+import type { Asset, AssetNetwork, Deposit, DepositAddress } from '../types';
 
 type TransferAction = {
   type: 'deposit' | 'withdraw';
@@ -346,6 +346,12 @@ export default function AccountPage() {
     refetchInterval: 10000,
   });
 
+  const { data: deposits = [] } = useQuery({
+    queryKey: ['deposits'],
+    queryFn: () => apiClient.getDeposits(),
+    refetchInterval: 10000,
+  });
+
   const createDepositAddress = useMutation({
     mutationFn: (assetNetworkId: string) => apiClient.createDepositAddress(assetNetworkId),
     onSuccess: (address) => {
@@ -358,7 +364,8 @@ export default function AccountPage() {
   });
 
   const createWithdrawal = useMutation({
-    mutationFn: apiClient.createWithdrawal,
+    mutationFn: (request: Parameters<typeof apiClient.createWithdrawal>[0]) =>
+      apiClient.createWithdrawal(request),
     onSuccess: () => {
       toast.success('Withdrawal submitted');
       setActiveTransfer(null);
@@ -516,6 +523,51 @@ export default function AccountPage() {
                 {assets.map((asset) => (
                   <NetworkRows key={asset.symbol} asset={asset} onDeposit={openDeposit} onWithdraw={openWithdraw} />
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-800 rounded-lg overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-700">
+          <h2 className="text-lg font-semibold text-white">Recent Deposits</h2>
+        </div>
+        {deposits.length === 0 ? (
+          <div className="p-6 text-sm text-slate-400">No deposits</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-700">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Amount</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">Confirmations</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Txid</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Address</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700">
+                {deposits.slice(0, 10).map((deposit: Deposit) => {
+                  const network = assets
+                    .flatMap((asset) => asset.networks.map((item) => ({ asset, network: item })))
+                    .find((item) => item.network.assetNetworkId === deposit.assetNetworkId);
+                  const symbol = deposit.symbol ?? network?.asset.symbol ?? '';
+                  const decimals = network?.asset.decimals ?? 0;
+                  return (
+                    <tr key={deposit.id} className="hover:bg-slate-700">
+                      <td className="px-6 py-4 text-sm text-white">{deposit.status}</td>
+                      <td className="px-6 py-4 text-right text-sm text-white">
+                        {formatAtoms(deposit.amount, decimals)} {symbol}
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm text-slate-300">
+                        {deposit.confirmations}/{deposit.confirmationsRequired}
+                      </td>
+                      <td className="max-w-sm truncate px-6 py-4 font-mono text-xs text-slate-300">{deposit.txid}</td>
+                      <td className="max-w-sm truncate px-6 py-4 font-mono text-xs text-slate-300">{deposit.address}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

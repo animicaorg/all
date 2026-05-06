@@ -88,7 +88,14 @@ export class OrdersRepo {
   ): Promise<void> {
     const filled = atomsToDecimal(filledAtoms, 8);
     const remaining = atomsToDecimal(remainingAtoms, 8);
-    const completedAt = status === "FILLED" || status === "CANCELED" ? new Date() : null;
+    const completedAt =
+      status === "FILLED" ||
+      status === "CANCELED" ||
+      status === "REJECTED" ||
+      status === "EXPIRED" ||
+      status === "CANCELED_REPLACED"
+        ? new Date()
+        : null;
 
     await this.client.query(
       `UPDATE orders

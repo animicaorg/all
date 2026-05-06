@@ -9,9 +9,92 @@ import {
   NetworksRepo,
   AuditRepo,
 } from "../db/repositories/index.js";
+import type { Withdrawal } from "../db/repositories/withdrawals_repo.js";
+import type { Wallet } from "../db/repositories/networks_repo.js";
 
 function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseBalanceAtoms(value: unknown): bigint {
+  const raw =
+    typeof value === "object" && value !== null
+      ? (value as any).confirmed_balance ??
+        (value as any).confirmedBalance ??
+        (value as any).spendable_balance ??
+        (value as any).spendableBalance ??
+        (value as any).balance
+      : value;
+
+  if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw < 0) {
+      throw new Error(`Invalid Animica balance value: ${String(raw)}`);
+    }
+    return BigInt(raw);
+  }
+
+  if (typeof raw !== "string") {
+    throw new Error(`Invalid Animica balance value: ${String(raw)}`);
+  }
+
+  const trimmed = raw.trim();
+  if (/^0x[0-9a-fA-F]+$/.test(trimmed)) return BigInt(trimmed);
+  if (/^\d+$/.test(trimmed)) return BigInt(trimmed);
+  throw new Error(`Invalid Animica balance value: ${raw}`);
+}
+
+type FundingSource = {
+  kind: "USER_DEPOSIT_ADDRESS" | "HOT_WALLET";
+  address: string | null;
+  label: string | null;
+  walletId: string | null;
+};
+
+async function getUserDepositFundingSource(
+  client: PoolClient,
+  withdrawal: Withdrawal
+): Promise<FundingSource | null> {
+  const result = await client.query(
+    `SELECT
+       user_deposit_addresses.address,
+       user_deposit_addresses.label,
+       wallets.wallet_id
+     FROM user_deposit_addresses
+     LEFT JOIN wallets ON wallets.id = user_deposit_addresses.wallet_id
+     WHERE user_deposit_addresses.user_id = $1
+       AND user_deposit_addresses.asset_network_id = $2
+       AND user_deposit_addresses.status = 'ACTIVE'
+     ORDER BY user_deposit_addresses.assigned_at DESC
+     LIMIT 1`,
+    [withdrawal.userId, withdrawal.assetNetworkId]
+  );
+
+  const row = result.rows[0];
+  const address = getString(row?.address);
+  if (!address) return null;
+
+  return {
+    kind: "USER_DEPOSIT_ADDRESS",
+    address,
+    label: getString(row?.label),
+    walletId: getString(row?.wallet_id),
+  };
+}
+
+function getHotWalletFundingSource(wallet: Wallet | null): FundingSource | null {
+  if (!wallet) return null;
+
+  const address = getString(wallet.metadata?.address);
+  const label = getString(wallet.metadata?.wallet_label) || getString(wallet.metadata?.label);
+
+  if (!address && !label) return null;
+
+  return {
+    kind: "HOT_WALLET",
+    address,
+    label,
+    walletId: wallet.providerWalletId,
+  };
 }
 
 async function callJsonRpc(rpcUrl: string, method: string, params: unknown[]) {
@@ -53,29 +136,27 @@ export async function submitToAnimicaNode(
     return { success: false, message: `Cannot submit withdrawal in ${withdrawal.status} status` };
   }
 
-  const [assetNetwork, wallet] = await Promise.all([
+  const [assetNetwork, wallet, userDepositSource] = await Promise.all([
     networksRepo.getAssetNetwork(withdrawal.assetNetworkId),
     networksRepo.getWallet(withdrawal.assetNetworkId, "HOT"),
+    getUserDepositFundingSource(client, withdrawal),
   ]);
   if (!assetNetwork) return { success: false, message: "Asset network not found" };
-  if (!wallet) {
-    await withdrawalsRepo.updateStatus(withdrawalId, "FAILED", {
-      failureCode: "NO_WALLET",
-      failureMessage: "No hot wallet configured for this asset network",
-    });
-    return { success: false, message: "No wallet configured" };
-  }
-  if (wallet.provider !== "ANIMICA_NODE") {
+  if (wallet && wallet.provider !== "ANIMICA_NODE") {
     return { success: false, message: `Wallet provider ${wallet.provider} cannot be submitted through Animica node` };
   }
 
-  const rpcUrl = getString(wallet.metadata?.rpc_url) || getString(assetNetwork.metadata?.rpc_url);
+  const rpcUrl = getString(wallet?.metadata?.rpc_url) || getString(assetNetwork.metadata?.rpc_url);
   if (!rpcUrl) {
-    await withdrawalsRepo.updateStatus(withdrawalId, "FAILED", {
-      failureCode: "NO_RPC_URL",
-      failureMessage: "No Animica RPC URL configured",
-    });
     return { success: false, message: "No RPC URL configured" };
+  }
+
+  const fundingSource = userDepositSource ?? getHotWalletFundingSource(wallet);
+  if (!fundingSource) {
+    return {
+      success: false,
+      message: "No node-managed Animica funding address configured for this withdrawal",
+    };
   }
 
   try {
@@ -85,9 +166,23 @@ export async function submitToAnimicaNode(
         amountAtoms: withdrawal.amount.toString(),
         feeAtoms: withdrawal.feeAmount.toString(),
         address: withdrawal.destinationAddress,
+        fundingSource: fundingSource.kind,
+        fromAddress: fundingSource.address,
+        fromLabel: fundingSource.label,
       },
       "Submitting withdrawal to Animica node"
     );
+
+    if (fundingSource.address) {
+      const balancePayload = await callJsonRpc(rpcUrl, "state.getBalance", [fundingSource.address]);
+      const confirmedBalance = parseBalanceAtoms(balancePayload?.result);
+      const requiredBalance = withdrawal.totalDebitAmount;
+      if (confirmedBalance < requiredBalance) {
+        throw new Error(
+          `Animica funding address has insufficient confirmed balance: required=${requiredBalance.toString()} available=${confirmedBalance.toString()}`
+        );
+      }
+    }
 
     const sendRequest: Record<string, string> = {
       to: withdrawal.destinationAddress,
@@ -96,13 +191,8 @@ export async function submitToAnimicaNode(
       fee: withdrawal.feeAmount.toString(),
       feeAtoms: withdrawal.feeAmount.toString(),
     };
-    const walletLabel =
-      getString(wallet.metadata?.wallet_label) ||
-      getString(wallet.metadata?.label) ||
-      getString(wallet.providerWalletId);
-    const fromAddress = getString(wallet.metadata?.address);
-    if (walletLabel) sendRequest.label = walletLabel;
-    if (fromAddress) sendRequest.from = fromAddress;
+    if (fundingSource.address) sendRequest.from = fundingSource.address;
+    if (!fundingSource.address && fundingSource.label) sendRequest.label = fundingSource.label;
 
     const payload = await callJsonRpc(rpcUrl, "wallet.send", [sendRequest]);
     const txid =
@@ -129,19 +219,15 @@ export async function submitToAnimicaNode(
       },
       metadata: {
         provider: "ANIMICA_NODE",
-        walletId: wallet.providerWalletId,
+        walletId: fundingSource.walletId,
+        fundingSource: fundingSource.kind,
+        fromAddress: fundingSource.address,
       },
     });
 
     return { success: true, message: `Submitted to Animica node (${txid})` };
   } catch (error: any) {
     logger.error({ error, withdrawalId }, "Failed to submit withdrawal to Animica node");
-    await withdrawalsRepo.updateStatus(withdrawalId, "FAILED", {
-      failureCode: "ANIMICA_NODE_ERROR",
-      failureMessage: error.message || "Failed to submit to Animica node",
-      incrementAttempt: true,
-      nextRetryAt: new Date(Date.now() + 60000),
-    });
     return { success: false, message: `Animica node submission failed: ${error.message}` };
   }
 }

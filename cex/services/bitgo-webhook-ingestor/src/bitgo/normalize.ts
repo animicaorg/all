@@ -19,6 +19,12 @@ const COIN_TO_NETWORK: Record<string, string> = {
   gteth: "ETH", // goerli
   sol: "SOL",
   tsol: "SOL",
+  ltc: "LTC",
+  tltc: "LTC",
+  doge: "DOGE",
+  tdoge: "DOGE",
+  zec: "ZEC",
+  tzec: "ZEC",
 };
 
 /**
@@ -32,6 +38,12 @@ const COIN_TO_ASSET: Record<string, string> = {
   gteth: "ETH",
   sol: "SOL",
   tsol: "SOL",
+  ltc: "LTC",
+  tltc: "LTC",
+  doge: "DOGE",
+  tdoge: "DOGE",
+  zec: "ZEC",
+  tzec: "ZEC",
 };
 
 /**

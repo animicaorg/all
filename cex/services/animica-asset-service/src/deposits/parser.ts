@@ -17,6 +17,10 @@ export interface ParsedDeposit {
 
 export class TransactionParser {
   constructor(private logger: Logger) {}
+
+  private normalizeAddress(address: string): string {
+    return address.trim().toLowerCase();
+  }
   
   /**
    * Parse transactions for deposits to known addresses
@@ -34,25 +38,27 @@ export class TransactionParser {
     for (const tx of txs) {
       // Skip if no destination
       if (!tx.to) continue;
+
+      const normalizedTo = this.normalizeAddress(tx.to);
       
       // Check if destination is a known deposit address
-      if (!knownAddresses.has(tx.to)) continue;
+      if (!knownAddresses.has(normalizedTo)) continue;
       
       // Parse amount
-      const amountAtoms = tx.value;
+      const amountAtoms = String(tx.value);
       
       // Skip if amount is zero or invalid
-      if (!amountAtoms || amountAtoms === "0") continue;
+      if (!/^\d+$/.test(amountAtoms) || BigInt(amountAtoms) === 0n) continue;
       
       deposits.push({
         txid: tx.txid,
-        address: tx.to,
+        address: normalizedTo,
         amountAtoms,
         vout: null, // account-based, no vout
       });
       
       this.logger.debug(
-        { txid: tx.txid, address: tx.to, amountAtoms },
+        { txid: tx.txid, address: normalizedTo, amountAtoms },
         "Deposit detected in transaction"
       );
     }

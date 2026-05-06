@@ -520,6 +520,67 @@ export function createTransfersRouter(pgPool: Pool, options: TransferRouterOptio
     }
   });
 
+  router.get("/deposits", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.userId!;
+
+      const result = await pgPool.query(
+        `
+          SELECT
+            deposits.id::text AS id,
+            deposits.asset_network_id::text AS asset_network_id,
+            deposits.txid,
+            deposits.address,
+            deposits.tag,
+            deposits.amount_atoms,
+            deposits.confirmations,
+            deposits.confirmations_required,
+            deposits.block_height,
+            deposits.block_hash,
+            deposits.status,
+            deposits.detected_at,
+            deposits.confirmed_at,
+            deposits.credited_at,
+            assets.symbol,
+            networks.code AS network_code
+          FROM deposits
+          JOIN asset_networks ON asset_networks.id = deposits.asset_network_id
+          JOIN assets ON assets.id = asset_networks.asset_id
+          JOIN networks ON networks.id = asset_networks.network_id
+          WHERE deposits.user_id = $1::uuid
+            AND COALESCE(deposits.unassigned, false) = false
+          ORDER BY COALESCE(deposits.credited_at, deposits.confirmed_at, deposits.detected_at) DESC
+          LIMIT 100
+        `,
+        [userId]
+      );
+
+      res.json({
+        deposits: result.rows.map((row) => ({
+          id: row.id,
+          assetNetworkId: row.asset_network_id,
+          txid: row.txid,
+          address: row.address,
+          tag: row.tag,
+          amount: row.amount_atoms,
+          confirmations: Number(row.confirmations ?? 0),
+          confirmationsRequired: Number(row.confirmations_required ?? 0),
+          blockHeight: row.block_height,
+          blockHash: row.block_hash,
+          status: row.status,
+          detectedAt: row.detected_at?.toISOString?.() ?? row.detected_at,
+          confirmedAt: row.confirmed_at?.toISOString?.() ?? row.confirmed_at,
+          creditedAt: row.credited_at?.toISOString?.() ?? row.credited_at,
+          symbol: row.symbol,
+          networkCode: row.network_code,
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching deposits:", error);
+      res.status(500).json({ error: "Failed to fetch deposits" });
+    }
+  });
+
   router.get("/withdrawals", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const search = new URLSearchParams();

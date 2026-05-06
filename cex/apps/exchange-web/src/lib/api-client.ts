@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosHeaders, AxiosInstance } from 'axios';
 import type {
   Market,
   Orderbook,
@@ -8,6 +8,7 @@ import type {
   Asset,
   Candle,
   DepositAddress,
+  Deposit,
   UserTrade,
   CreateOrderRequest,
   CreateWithdrawalRequest,
@@ -17,6 +18,28 @@ import type {
 import { getApiBaseUrl } from './endpoints';
 
 const API_URL = getApiBaseUrl();
+
+function mapOrderStatus(status: string): Order['status'] {
+  switch (String(status).toUpperCase()) {
+    case 'ACCEPTED':
+    case 'PARTIAL_FILL':
+    case 'OPEN':
+      return 'open';
+    case 'FILLED':
+      return 'filled';
+    case 'CANCELED':
+    case 'CANCELLED':
+      return 'cancelled';
+    case 'REJECTED':
+      return 'rejected';
+    case 'EXPIRED':
+      return 'expired';
+    case 'PENDING':
+      return 'pending';
+    default:
+      return 'pending';
+  }
+}
 
 class ApiClient {
   private client: AxiosInstance;
@@ -40,8 +63,9 @@ class ApiClient {
           const state = parsed?.state ?? parsed;
           const userId = state?.user?.id;
           if (userId) {
-            config.headers = config.headers ?? {};
-            (config.headers as any)['x-user-id'] = userId;
+            const headers = AxiosHeaders.from(config.headers);
+            headers.set('x-user-id', userId);
+            config.headers = headers;
           }
         }
       } catch {
@@ -144,11 +168,11 @@ class ApiClient {
         clientOrderId: data.clientOrderId,
         symbol: data.symbol,
         side: data.side,
-        type: data.type.toLowerCase() as 'limit' | 'market',
+        type: data.type.toLowerCase() as 'limit' | 'market' | 'post_only',
         price: data.price,
         quantity: data.quantity,
         filledQuantity: data.filledQuantity || 0,
-        status: data.status as any,
+        status: mapOrderStatus(data.status),
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -176,11 +200,11 @@ class ApiClient {
         clientOrderId: o.clientOrderId,
         symbol: o.symbol,
         side: o.side,
-        type: o.type.toLowerCase() as 'limit' | 'market',
+        type: o.type.toLowerCase() as 'limit' | 'market' | 'post_only',
         price: o.price,
         quantity: o.quantity,
         filledQuantity: o.filledQuantity || 0,
-        status: o.status,
+        status: mapOrderStatus(o.status),
         createdAt: o.createdAt,
         updatedAt: o.acceptedAt || o.createdAt,
       }));
@@ -236,6 +260,11 @@ class ApiClient {
   async createDepositAddress(assetNetworkId: string): Promise<DepositAddress> {
     const { data } = await this.client.post('/me/deposit-addresses', { assetNetworkId });
     return data.depositAddress;
+  }
+
+  async getDeposits(): Promise<Deposit[]> {
+    const { data } = await this.client.get('/deposits');
+    return data.deposits;
   }
 
   async createWithdrawal(request: CreateWithdrawalRequest): Promise<Withdrawal> {

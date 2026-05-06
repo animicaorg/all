@@ -5,6 +5,7 @@
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import type { OutboxEvent } from "../../engine/types.js";
+import { stringifyJson } from "../../utils/json.js";
 
 export class OutboxRepo {
   constructor(private client: PoolClient) {}
@@ -35,7 +36,7 @@ export class OutboxRepo {
         event.seq.toString(),
         event.type,
         event.key,
-        JSON.stringify(event.payload),
+        stringifyJson(event.payload),
         createdAt
       ]
     );

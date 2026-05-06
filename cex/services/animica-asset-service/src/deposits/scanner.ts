@@ -26,6 +26,9 @@ export interface ScannerConfig {
   scanBatch: number;
   maxReorgDepth: number;
   walletId: string; // dummy wallet ID for ANIMICA_NODE provider
+  mempoolScanEnabled?: boolean;
+  mempoolMaxTxs?: number;
+  balanceFallbackEnabled?: boolean;
 }
 
 export class BlockScanner {
@@ -36,6 +39,9 @@ export class BlockScanner {
   private addressesRepo: AddressesRepository;
   private parser: TransactionParser;
   private reorgHandler: ReorgHandler;
+  private mempoolUnsupportedLogged = false;
+  private balanceFallbackUnsupportedLogged = false;
+  private historicalPolicyLogged = false;
   
   constructor(
     private pool: Pool,
@@ -55,38 +61,31 @@ export class BlockScanner {
   /**
    * Scan a single block
    */
-  private async scanBlock(height: number, knownAddresses: Set<string>): Promise<void> {
+  private async scanBlock(height: number, knownAddresses: Set<string>): Promise<boolean> {
     this.logger.debug({ height }, "Scanning block");
     
     // Fetch block
     const block = await this.rpcClient.getBlockByHeight(height);
-    
-    // Get scan state for parent verification
-    const scanState = await this.scanStateRepo.get(this.config.assetNetworkId);
-    
-    if (!scanState) {
-      throw new Error("Scan state not initialized");
+    if (block.height !== height) {
+      throw new Error(`RPC returned block ${block.height} while scanning height ${height}`);
     }
     
-    // Verify parent linkage (reorg detection)
-    if (height > 0 && scanState.cursor_hash && block.parent_hash !== scanState.cursor_hash) {
+    const expectedParentHash = height > 0 ? await this.getExpectedParentHash(height - 1) : null;
+    if (expectedParentHash && block.parent_hash !== expectedParentHash) {
       this.logger.warn(
-        { height, expectedParent: scanState.cursor_hash, actualParent: block.parent_hash },
+        { height, expectedParent: expectedParentHash, actualParent: block.parent_hash },
         "Parent hash mismatch - reorg detected"
       );
       
-      // Handle reorg
-      await this.reorgHandler.handleReorg(
-        this.config.assetNetworkId,
-        height,
-        scanState.cursor_hash,
-        block.parent_hash,
-        this.config.maxReorgDepth
+      await this.reorgHandler.handleReorg(this.config.assetNetworkId, height - 1, this.config.maxReorgDepth);
+      return false;
+    }
+
+    if (height > 0 && !expectedParentHash) {
+      this.logger.info(
+        { height, parentHeight: height - 1 },
+        "No local parent anchor available; scanning forward without declaring a reorg"
       );
-      
-      // After reorg handling, cursor is rolled back
-      // Return to allow next iteration to re-scan
-      return;
     }
     
     // Fetch transactions for this block
@@ -138,6 +137,7 @@ export class BlockScanner {
             confirmationsRequired: this.config.confirmationsRequired,
             blockHeight: height,
             blockHash: block.hash,
+            status: "DETECTED",
           },
           client
         );
@@ -171,6 +171,26 @@ export class BlockScanner {
         client
       );
     });
+
+    return true;
+  }
+
+  private async getExpectedParentHash(parentHeight: number): Promise<string | null> {
+    const storedParent = await this.blocksRepo.getCanonicalByHeight(
+      this.config.assetNetworkId,
+      parentHeight
+    );
+    if (storedParent) return storedParent.hash;
+
+    const scanState = await this.scanStateRepo.get(this.config.assetNetworkId);
+    if (
+      scanState?.cursor_hash &&
+      scanState.cursor_height === parentHeight
+    ) {
+      return scanState.cursor_hash;
+    }
+
+    return null;
   }
   
   /**
@@ -192,6 +212,44 @@ export class BlockScanner {
     
     return txs;
   }
+
+  private async validatePersistedCursor(headHeight: number): Promise<boolean> {
+    const scanState = await this.scanStateRepo.get(this.config.assetNetworkId);
+    if (!scanState?.cursor_hash) return true;
+
+    if (scanState.cursor_height > headHeight) {
+      this.logger.warn(
+        { cursorHeight: scanState.cursor_height, headHeight },
+        "Persisted cursor is above chain head - treating as possible reorg"
+      );
+      await this.reorgHandler.handleReorg(
+        this.config.assetNetworkId,
+        headHeight,
+        this.config.maxReorgDepth
+      );
+      return false;
+    }
+
+    const cursorBlock = await this.rpcClient.getBlockByHeight(scanState.cursor_height);
+    if (cursorBlock.hash !== scanState.cursor_hash) {
+      this.logger.warn(
+        {
+          cursorHeight: scanState.cursor_height,
+          storedHash: scanState.cursor_hash,
+          chainHash: cursorBlock.hash,
+        },
+        "Persisted cursor hash no longer matches chain"
+      );
+      await this.reorgHandler.handleReorg(
+        this.config.assetNetworkId,
+        scanState.cursor_height,
+        this.config.maxReorgDepth
+      );
+      return false;
+    }
+
+    return true;
+  }
   
   /**
    * Update confirmations for pending deposits
@@ -211,9 +269,9 @@ export class BlockScanner {
     const allPending = [...pendingDeposits, ...confirmedDeposits];
     
     for (const deposit of allPending) {
-      if (!deposit.block_height) continue;
+      if (deposit.block_height === null || deposit.block_height === undefined) continue;
       
-      const confirmations = currentHeight - deposit.block_height + 1;
+      const confirmations = Math.max(0, currentHeight - deposit.block_height + 1);
       
       // Update confirmations
       await this.depositsRepo.updateConfirmations(deposit.id, confirmations);
@@ -238,6 +296,165 @@ export class BlockScanner {
       }
     }
   }
+
+  private getNextHeight(scanState: { cursor_height: number; cursor_hash: string | null }): number {
+    if (!Number.isSafeInteger(scanState.cursor_height) || scanState.cursor_height < 0) {
+      throw new Error(`Invalid cursor height: ${String(scanState.cursor_height)}`);
+    }
+    return scanState.cursor_hash ? scanState.cursor_height + 1 : scanState.cursor_height;
+  }
+
+  private async scanMempool(knownAddresses: Set<string>): Promise<number> {
+    if (this.config.mempoolScanEnabled === false || knownAddresses.size === 0) return 0;
+
+    try {
+      const pendingTxids = await this.rpcClient.getPendingTransactionIds();
+      const maxTxs = Math.max(1, this.config.mempoolMaxTxs ?? 500);
+      const txids = pendingTxids.slice(0, maxTxs);
+
+      if (pendingTxids.length > maxTxs) {
+        this.logger.warn(
+          { pendingCount: pendingTxids.length, maxTxs },
+          "Mempool pending list truncated for local address filtering"
+        );
+      }
+
+      let detected = 0;
+      for (const txid of txids) {
+        try {
+          const tx = await this.rpcClient.getMempoolTransaction(txid);
+          const deposits = this.parser.parseDeposits([tx], knownAddresses);
+
+          for (const deposit of deposits) {
+            const userId = await this.addressesRepo.getUserIdByAddress(
+              this.config.assetNetworkId,
+              deposit.address
+            );
+
+            await this.depositsRepo.upsert({
+              userId,
+              assetNetworkId: this.config.assetNetworkId,
+              walletId: this.config.walletId,
+              txid: deposit.txid,
+              vout: deposit.vout,
+              address: deposit.address,
+              tag: null,
+              amountAtoms: deposit.amountAtoms,
+              confirmationsRequired: this.config.confirmationsRequired,
+              blockHeight: null,
+              blockHash: null,
+              status: "PENDING",
+            });
+
+            detected++;
+            this.logger.info(
+              { txid: deposit.txid, address: deposit.address, amount: deposit.amountAtoms },
+              "Pending deposit detected in mempool"
+            );
+          }
+        } catch (error) {
+          this.logger.debug({ txid, error }, "Failed to inspect pending mempool transaction");
+        }
+      }
+
+      return detected;
+    } catch (error) {
+      if (!this.mempoolUnsupportedLogged) {
+        this.logger.warn(
+          { error },
+          "Mempool deposit pre-detection disabled; RPC does not expose a usable pending transaction list"
+        );
+        this.mempoolUnsupportedLogged = true;
+      }
+      return 0;
+    }
+  }
+
+  private async reconcileConfirmedAddressBalances(
+    knownAddresses: Set<string>,
+    headHeight: number,
+    headHash: string
+  ): Promise<number> {
+    if (this.config.balanceFallbackEnabled === false || knownAddresses.size === 0) return 0;
+
+    let detected = 0;
+    for (const address of knownAddresses) {
+      let confirmedBalance: bigint;
+      try {
+        confirmedBalance = BigInt(await this.rpcClient.getConfirmedAddressBalance(address));
+      } catch (error) {
+        if (!this.balanceFallbackUnsupportedLogged) {
+          this.logger.warn(
+            { error },
+            "Confirmed balance fallback disabled; RPC does not expose usable address balances"
+          );
+          this.balanceFallbackUnsupportedLogged = true;
+        }
+        return detected;
+      }
+
+      if (confirmedBalance <= 0n) continue;
+
+      const accounted = await this.depositsRepo.getAccountedAmountByAddress(
+        this.config.assetNetworkId,
+        address
+      );
+      const delta = confirmedBalance - accounted;
+      if (delta <= 0n) continue;
+
+      const userId = await this.addressesRepo.getUserIdByAddress(
+        this.config.assetNetworkId,
+        address
+      );
+      if (!userId) continue;
+
+      // Some confirmed Animica RPC transaction lookups expose only hash/block
+      // metadata, which makes historical to/value recovery impossible. In that
+      // case, credit the positive confirmed balance delta for an assigned
+      // address as a synthetic, idempotent deposit and still enforce the normal
+      // confirmation threshold from the detection height.
+      const deposit = await this.depositsRepo.upsert({
+        userId,
+        assetNetworkId: this.config.assetNetworkId,
+        walletId: this.config.walletId,
+        txid: `balance:${address}:${headHeight}`,
+        vout: "confirmed-balance",
+        address,
+        tag: null,
+        amountAtoms: delta.toString(),
+        confirmationsRequired: this.config.confirmationsRequired,
+        blockHeight: headHeight,
+        blockHash: headHash,
+        status: "DETECTED",
+      });
+
+      const confirmations = Math.max(0, headHeight - (deposit.block_height ?? headHeight) + 1);
+      await this.depositsRepo.updateConfirmations(deposit.id, confirmations);
+
+      if (confirmations >= deposit.confirmations_required) {
+        await this.depositsRepo.updateStatus(deposit.id, "CONFIRMED");
+        await this.depositsRepo.createCreditOutbox({
+          ...deposit,
+          confirmations,
+          status: "CONFIRMED",
+        });
+      }
+
+      detected++;
+      this.logger.info(
+        {
+          address,
+          amount: delta.toString(),
+          headHeight,
+          accounted: accounted.toString(),
+          confirmedBalance: confirmedBalance.toString(),
+        },
+        "Confirmed balance delta detected using address balance fallback"
+      );
+    }
+
+    return detected;
+  }
   
   /**
    * Run one scan iteration
@@ -245,6 +462,10 @@ export class BlockScanner {
   async scan(): Promise<number> {
     // Get chain head
     const head = await this.rpcClient.getHead();
+    const headHeight = Math.max(0, Number(head.height));
+    if (!Number.isSafeInteger(headHeight)) {
+      throw new Error(`Invalid chain head height: ${String(head.height)}`);
+    }
     
     // Get scan state
     const scanState = await this.scanStateRepo.get(this.config.assetNetworkId);
@@ -252,41 +473,57 @@ export class BlockScanner {
     if (!scanState) {
       throw new Error("Scan state not initialized");
     }
-    
-    // Calculate safe target height (leave confirmations_required blocks unscanned)
-    const safeHeight = head.height - (this.config.confirmationsRequired - 1);
-    
-    if (scanState.cursor_height >= safeHeight) {
-      this.logger.debug(
-        { cursor: scanState.cursor_height, safe: safeHeight },
-        "Already at safe height"
-      );
-      
-      // Update confirmations for pending deposits
-      await this.updateConfirmations(head.height);
-      
+
+    if (!(await this.validatePersistedCursor(headHeight))) {
       return 0;
     }
-    
-    // Get known deposit addresses
+
     const knownAddresses = await this.addressesRepo.getActiveAddresses(
       this.config.assetNetworkId
     );
+
+    if (!this.historicalPolicyLogged) {
+      this.logger.info(
+        { assetNetworkId: this.config.assetNetworkId },
+        "Historical scan policy: credit all on-chain deposits to currently assigned active addresses"
+      );
+      this.historicalPolicyLogged = true;
+    }
+
+    const fromHeight = this.getNextHeight(scanState);
+    const toHeight = Math.min(
+      fromHeight + Math.max(1, this.config.scanBatch) - 1,
+      headHeight
+    );
     
-    // Scan in batches
-    const fromHeight = scanState.cursor_height + 1;
-    const toHeight = Math.min(fromHeight + this.config.scanBatch - 1, safeHeight);
+    if (fromHeight > headHeight) {
+      this.logger.debug(
+        { cursor: scanState.cursor_height, headHeight },
+        "Already at chain head"
+      );
+      
+      // Update confirmations for pending deposits
+      await this.updateConfirmations(headHeight);
+      await this.scanMempool(knownAddresses);
+      await this.reconcileConfirmedAddressBalances(knownAddresses, headHeight, head.hash);
+      
+      return 0;
+    }
+
+    this.logger.info({ fromHeight, toHeight, headHeight }, "Scanning blocks");
     
-    this.logger.info({ fromHeight, toHeight, headHeight: head.height }, "Scanning blocks");
-    
+    let scanned = 0;
     for (let height = fromHeight; height <= toHeight; height++) {
-      await this.scanBlock(height, knownAddresses);
+      const completed = await this.scanBlock(height, knownAddresses);
+      if (!completed) break;
+      scanned++;
     }
     
     // Update confirmations for pending deposits
-    await this.updateConfirmations(head.height);
+    await this.updateConfirmations(headHeight);
+    await this.scanMempool(knownAddresses);
+    await this.reconcileConfirmedAddressBalances(knownAddresses, headHeight, head.hash);
     
-    const scanned = toHeight - fromHeight + 1;
     return scanned;
   }
 }

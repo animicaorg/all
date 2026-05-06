@@ -10,9 +10,45 @@
  * @returns atoms as BigInt
  */
 export function decimalToAtoms(decimal: string, decimals: number): bigint {
-  const [integer, fraction = ""] = decimal.split(".");
-  const paddedFraction = fraction.padEnd(decimals, "0").slice(0, decimals);
-  return BigInt(integer + paddedFraction);
+  const normalized = expandExponential(decimal.trim());
+  const sign = normalized.startsWith("-") ? "-" : "";
+  const unsigned = normalized.replace(/^[+-]/, "");
+  const [integerPart, fractionPart = ""] = unsigned.split(".");
+
+  if (!/^\d+$/.test(integerPart || "0") || !/^\d*$/.test(fractionPart)) {
+    throw new Error(`Invalid decimal value: ${decimal}`);
+  }
+
+  const integer = (integerPart || "0").replace(/^0+(?=\d)/, "");
+  const fraction = fractionPart.padEnd(decimals, "0").slice(0, decimals);
+  const atoms = `${integer || "0"}${fraction}`.replace(/^0+(?=\d)/, "") || "0";
+
+  return BigInt(`${sign}${atoms}`);
+}
+
+function expandExponential(decimal: string): string {
+  const normalized = decimal.toLowerCase();
+  if (!normalized.includes("e")) return decimal;
+
+  const match = normalized.match(/^([+-]?)(\d+)(?:\.(\d+))?e([+-]?\d+)$/);
+  if (!match) {
+    throw new Error(`Invalid decimal value: ${decimal}`);
+  }
+
+  const [, sign, integer, fraction = "", exponentText] = match;
+  const exponent = Number(exponentText);
+  const digits = `${integer}${fraction}`;
+  const decimalIndex = integer.length + exponent;
+
+  if (decimalIndex <= 0) {
+    return `${sign}0.${"0".repeat(Math.abs(decimalIndex))}${digits}`;
+  }
+
+  if (decimalIndex >= digits.length) {
+    return `${sign}${digits}${"0".repeat(decimalIndex - digits.length)}`;
+  }
+
+  return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
 }
 
 /**
