@@ -3,7 +3,7 @@ import { getEffectiveRpcUrl } from './rpcConfig';
 import { runDiagnosticsBundle, type DiagnosticsBundle } from './diagnostics';
 import { discoverMethods, healthProbe, rpcCall, type RpcCallOutcome } from './rpcClient';
 
-const DEFAULT_RPC_URL = 'https://mainnet.animica.org/rpc';
+const DEFAULT_RPC_URL = 'https://rpc.animica.org/rpc';
 const RETRIABLE_DIAGNOSTIC_CODES = new Set([-32603, -32602, -32010, -32011, -32012]);
 const CAPABILITY_TTL_MS = 5 * 60_000;
 

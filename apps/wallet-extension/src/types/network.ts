@@ -15,7 +15,7 @@ export interface NetworkConfig {
 }
 
 const ENV_DEFAULT_RPC = (import.meta as any)?.env?.VITE_DEFAULT_RPC_URL;
-export const DEFAULT_MAINNET_RPC_URL = ENV_DEFAULT_RPC || 'https://mainnet.animica.org/rpc';
+export const DEFAULT_MAINNET_RPC_URL = ENV_DEFAULT_RPC || 'https://rpc.animica.org/rpc';
 
 export const NETWORKS: Record<string, NetworkConfig> = {
   mainnet: {
