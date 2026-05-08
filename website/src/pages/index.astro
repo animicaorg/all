@@ -2,109 +2,157 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import {
-  howItWorks,
-  useCases,
-  modelCatalog,
-  providerSteps,
-} from "../data/aicf";
 
-const title = "Decentralized AI Compute on Animica";
+const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
 const description =
-  "Spend ANM. Run models. Contribute GPU. AICF is Animica's decentralized AI compute cloud for inference, embeddings, training, and agent workloads.";
-const aicfApiBaseUrl =
-  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  "/api";
+  "Animica is a production-ready L1 with post-quantum security, useful-work consensus, deterministic Python contracts, and operator-grade infrastructure.";
 
-const heroLiveMetrics = [
-  { key: "providers", label: "Active Providers" },
-  { key: "nodes", label: "Provider Nodes" },
-  { key: "queueUnits", label: "Queued Work Units" },
-  { key: "settlements", label: "Settlements Recorded" },
+const corePillars = [
+  {
+    title: "Post-Quantum Security",
+    detail:
+      "Dilithium and SPHINCS+ signatures protect accounts and transactions against future cryptographic threats.",
+  },
+  {
+    title: "Useful-Work Consensus",
+    detail:
+      "PoIES aligns block production with practical compute instead of pure waste.",
+  },
+  {
+    title: "Deterministic Python VM",
+    detail:
+      "Write contracts in Python with predictable execution and auditable state transitions.",
+  },
+  {
+    title: "Operator Tooling",
+    detail:
+      "Wallets, explorer, status pages, and deployment docs are designed for production operations.",
+  },
 ];
 
-const liveNetworkPanels = [
-  { key: "serviceStatus", label: "Service Status", footnote: "From AICF /status" },
-  { key: "paused", label: "Scheduler Paused", footnote: "Governance pause flag" },
-  { key: "apiLatencyMs", label: "API Latency", footnote: "Browser-observed fetch RTT" },
-  { key: "updatedAt", label: "Last Update", footnote: "UTC timestamp from status payload" },
+const startPaths = [
+  {
+    title: "Run a Node",
+    description:
+      "Join mainnet with Docker or native setup, then secure RPC and monitor sync health.",
+    href: "/node",
+  },
+  {
+    title: "Build on Animica",
+    description:
+      "Use SDKs and Studio to deploy deterministic contracts and integrate apps quickly.",
+    href: "/developers",
+  },
+  {
+    title: "Mine and Secure",
+    description:
+      "Contribute hash power with CPU/GPU guides and pool-ready workflows.",
+    href: "/mine",
+  },
+];
+
+const ecosystemProducts = [
+  {
+    title: "Wallet",
+    description:
+      "Desktop wallet releases for key management, transfers, and day-to-day ANM operations.",
+    href: "/wallet",
+  },
+  {
+    title: "Explorer",
+    description:
+      "Track blocks, transactions, addresses, contracts, and chain activity in real time.",
+    href: "/explorer",
+  },
+  {
+    title: "Studio",
+    description:
+      "Web IDE for contract authoring, simulation, and deployment pipelines.",
+    href: "/studio",
+  },
+  {
+    title: "AICF Compute",
+    description:
+      "AICF is one major workload lane on Animica, focused on decentralized AI and provider markets.",
+    href: "/providers",
+  },
 ];
 ---
 
 <BaseLayout title={title} description={description}>
   <Header slot="header" />
 
+  <section class="aicf-trade-alert-wrap" aria-label="Trading announcement">
+    <div class="aicf-container">
+      <a
+        class="aicf-trade-alert"
+        href="https://trade.animica.org"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <span class="aicf-trade-pill">Big Announcement</span>
+        <h2 class="aicf-trade-title">ANIMICA TRADE IS LIVE</h2>
+        <p class="aicf-trade-subtitle">Click here to open the official trading portal.</p>
+        <span class="aicf-trade-cta">Launch trade.animica.org -></span>
+      </a>
+    </div>
+  </section>
+
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">AICF Mainnet · Live Compute Economy</span>
-      <h1 class="aicf-heading">The AI Cloud Built on Animica</h1>
+      <span class="aicf-kicker">Post-quantum · Useful work · Python VM</span>
+      <h1 class="aicf-heading">Animica is built for verifiable, real-world compute</h1>
       <p class="aicf-subheading">
-        AICF is decentralized AI compute where developers spend ANM for model APIs and provider nodes earn ANM by supplying real GPU and CPU capacity.
-        Contracts can fund AI jobs with escrow-backed settlement.
+        A production-ready chain for builders, miners, and node operators who need transparent infrastructure,
+        deterministic execution, and durable cryptographic guarantees.
       </p>
+
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="/developers">Start Building</a>
-        <a class="aicf-ghost-btn" href="/providers">Contribute GPU</a>
-        <a class="aicf-ghost-btn" href="/downloads">Download Worker</a>
+        <a class="aicf-btn" href="/studio">Open Studio</a>
+        <a class="aicf-ghost-btn" href="/explorer">Open Explorer</a>
+        <a class="aicf-ghost-btn" href="/docs">Read Docs</a>
       </div>
 
-      <div class="aicf-grid-4" style="margin-top:1.5rem;">
-        {heroLiveMetrics.map((stat) => (
-          <article class="aicf-card">
-            <p class="aicf-muted" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.07em;">{stat.label}</p>
-            <p class="aicf-value" data-aicf-metric={stat.key}>--</p>
-          </article>
-        ))}
+      <div class="aicf-btn-row" style="margin-top:0.75rem;">
+        <a class="aicf-ghost-btn" href="/node">Run a Node</a>
+        <a class="aicf-ghost-btn" href="/wallet">Get Wallet</a>
+        <a class="aicf-ghost-btn" href="/mine">Mine</a>
       </div>
-      <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-message>Loading live AICF metrics...</p>
-    </div>
-  </section>
 
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <h2 style="font-size:1.5rem;">What AICF Is</h2>
-        <p class="aicf-muted" style="margin-top:0.7rem;">
-          AICF is the decentralized compute cloud of Animica. It combines API-grade developer ergonomics with on-chain ANM settlement, verifiable provider contribution,
-          and programmable contract funding flows.
-        </p>
-        <ul style="margin-top:0.85rem; padding-left:1rem; display:grid; gap:0.5rem;">
-          <li>OpenAI-compatible endpoints for chat and embeddings</li>
-          <li>ANM-native balances, escrow, receipts, and payouts</li>
-          <li>Provider routing by benchmark score, uptime, and reputation</li>
-          <li>Async jobs for inference, training, indexing, and agents</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.5rem;">Why It Matters</h2>
-        <p class="aicf-muted" style="margin-top:0.7rem;">
-          Useful decentralized compute only works when incentives are direct and measurable. AICF aligns demand and supply in one ANM-native marketplace:
-          developers get elastic compute, providers monetize hardware, treasury can bootstrap strategic workloads.
-        </p>
-        <div class="aicf-grid-2" style="margin-top:0.9rem;">
-          {useCases.slice(0, 4).map((item) => (
-            <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,30,0.62);">
-              <h3>{item.title}</h3>
-              <p class="aicf-muted" style="font-size:0.9rem;">{item.description}</p>
-            </div>
-          ))}
-        </div>
-      </article>
+      <div class="aicf-grid-4" style="margin-top:1.25rem;">
+        <article class="aicf-card aicf-home-stat">
+          <p class="aicf-muted">Security</p>
+          <p class="aicf-value">PQ</p>
+          <p class="aicf-muted">Dilithium + SPHINCS+</p>
+        </article>
+        <article class="aicf-card aicf-home-stat">
+          <p class="aicf-muted">Execution</p>
+          <p class="aicf-value">Python VM</p>
+          <p class="aicf-muted">Deterministic contracts</p>
+        </article>
+        <article class="aicf-card aicf-home-stat">
+          <p class="aicf-muted">Consensus</p>
+          <p class="aicf-value">PoIES</p>
+          <p class="aicf-muted">Useful-work oriented</p>
+        </article>
+        <article class="aicf-card aicf-home-stat">
+          <p class="aicf-muted">Infrastructure</p>
+          <p class="aicf-value">Mainnet</p>
+          <p class="aicf-muted">Wallet, explorer, RPC, docs</p>
+        </article>
+      </div>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">How It Works</span>
-      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Spend ANM. Route Jobs. Reward Providers.</h2>
+      <span class="aicf-kicker">Why Animica</span>
+      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Core Capabilities</h2>
       <div class="aicf-grid-4" style="margin-top:1rem;">
-        {howItWorks.map((step, idx) => (
+        {corePillars.map((item) => (
           <article class="aicf-card">
-            <p style="font-family:var(--font-mono); color:var(--brand-300);">0{idx + 1}</p>
-            <h3 style="margin-top:0.3rem;">{step.title}</h3>
-            <p class="aicf-muted" style="margin-top:0.45rem;">{step.description}</p>
+            <h3>{item.title}</h3>
+            <p class="aicf-muted" style="margin-top:0.6rem;">{item.detail}</p>
           </article>
         ))}
       </div>
@@ -112,204 +160,219 @@ const liveNetworkPanels = [
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <span class="aicf-kicker">Spend ANM for AI</span>
-        <h2 style="font-size:1.65rem; margin-top:0.8rem;">Developer Billing You Can Reason About</h2>
-        <p class="aicf-muted" style="margin-top:0.7rem;">
-          Every project balance is denominated in ANM. Requests reserve ANM budgets before execution. Final receipts settle directly against escrow.
-          No hidden fiat conversion, no opaque provider markups.
-        </p>
-        <div class="aicf-code" style="margin-top:0.9rem;">
-<pre style="margin:0;"><code>POST /v1/chat/completions
-Authorization: Bearer sk_live_aicf_...
-
-{`{
-  "model": "aicf-chat-1",
-  "messages": [{ "role": "user", "content": "summarize this contract" }],
-  "max_tokens": 512
-}`}</code></pre>
-        </div>
-      </article>
-
-      <article class="aicf-card">
-        <span class="aicf-kicker">Contribute GPU and Earn</span>
-        <h2 style="font-size:1.65rem; margin-top:0.8rem;">Provider Workflow in Minutes</h2>
-        <ol style="margin-top:0.7rem; padding-left:1.1rem; display:grid; gap:0.5rem;">
-          {providerSteps.map((step) => (
-            <li class="aicf-muted">{step}</li>
-          ))}
-        </ol>
-        <div class="aicf-btn-row" style="margin-top:1rem;">
-          <a class="aicf-btn" href="/downloads">Get Worker Bundle</a>
-          <a class="aicf-ghost-btn" href="/providers">Provider Guide</a>
-        </div>
-      </article>
+    <div class="aicf-container">
+      <span class="aicf-kicker">Get Started</span>
+      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Choose Your Path</h2>
+      <div class="aicf-grid-3" style="margin-top:1rem;">
+        {startPaths.map((path) => (
+          <a class="aicf-card aicf-link-card" href={path.href}>
+            <h3>{path.title}</h3>
+            <p class="aicf-muted" style="margin-top:0.55rem;">{path.description}</p>
+            <span class="aicf-link-card-cta">Go now -></span>
+          </a>
+        ))}
+      </div>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Built-In Models and APIs</span>
-      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Default Hosted Models. OpenAI-Compatible Shape.</h2>
-      <div class="aicf-card" style="margin-top:1rem; padding:0; overflow:auto;">
-        <table class="aicf-table">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Type</th>
-              <th>Context</th>
-              <th>Latency</th>
-              <th>Price (ANM)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {modelCatalog.map((row) => (
-              <tr>
-                <td><strong>{row.model}</strong></td>
-                <td>{row.type}</td>
-                <td>{row.context}</td>
-                <td>{row.latency}</td>
-                <td>{row.price}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div class="aicf-grid-2" style="margin-top:1rem;">
-        <div class="aicf-code">
-<pre style="margin:0;"><code>POST /v1/embeddings
-{`{
-  "model": "aicf-embed-1",
-  "input": ["decentralized compute", "anm billing"]
-}`}</code></pre>
-        </div>
-        <div class="aicf-code">
-<pre style="margin:0;"><code>POST /v1/jobs
-{`{
-  "class": "fine_tuning_training",
-  "maxBudgetAnmNanos": "4500000000",
-  "request": {"model": "aicf-train-1", "input": {...}}
-}`}</code></pre>
-        </div>
+      <span class="aicf-kicker">Ecosystem</span>
+      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Products on Animica</h2>
+      <p class="aicf-subheading" style="margin-top:0.7rem;">
+        Animica supports multiple product lanes. AICF remains important, but it is one part of the broader platform.
+      </p>
+      <div class="aicf-grid-4" style="margin-top:1rem;">
+        {ecosystemProducts.map((product) => (
+          <a class="aicf-card aicf-link-card" href={product.href}>
+            <h3>{product.title}</h3>
+            <p class="aicf-muted" style="margin-top:0.55rem;">{product.description}</p>
+            <span class="aicf-link-card-cta">Open -></span>
+          </a>
+        ))}
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <span class="aicf-kicker">Contract-Powered AI Jobs</span>
-        <h2 style="font-size:1.6rem; margin-top:0.8rem;">On-Chain Funding. Off-Chain Execution. Verifiable Settlement.</h2>
-        <p class="aicf-muted" style="margin-top:0.7rem;">
-          Contracts can initiate AI tasks by locking ANM budget in escrow. AICF workers execute, submit receipts, and trigger deterministic settlement callbacks.
-          Dispute windows and slashing hooks enforce quality and accountability.
-        </p>
-        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.5rem;">
-          <li>Escrow budget before execution</li>
-          <li>Provider attestations and challenge windows</li>
-          <li>Treasury subsidy overlays for priority workloads</li>
-        </ul>
-      </article>
-      <article class="aicf-card">
-        <span class="aicf-kicker">Live Network Stats</span>
-        <div class="aicf-grid-2" style="margin-top:0.85rem;">
-          {liveNetworkPanels.map((panel) => (
-            <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,28,0.56);">
-              <p class="aicf-muted" style="font-size:0.8rem;">{panel.label}</p>
-              <p class="aicf-value" style="font-size:1.45rem;" data-aicf-metric={panel.key}>--</p>
-              <p class="aicf-muted" style="font-size:0.82rem;">{panel.footnote}</p>
-            </div>
-          ))}
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <span class="aicf-kicker">Ecosystem Roadmap</span>
-        <h2 style="font-size:1.55rem; margin-top:0.8rem;">What Ships Next</h2>
-        <ul style="margin-top:0.8rem; padding-left:1rem; display:grid; gap:0.5rem;">
-          <li>Specialized GPU queues for model families and latency SLAs</li>
-          <li>Provider release channels with signed worker bundles</li>
-          <li>Contract-native agent orchestration templates</li>
-          <li>Fine-grained subsidy controls for ecosystem workloads</li>
-          <li>Model marketplace and custom deployment onboarding</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card" style="display:flex; flex-direction:column; justify-content:space-between;">
+    <div class="aicf-container">
+      <article class="aicf-card aicf-final-cta">
         <div>
-          <span class="aicf-kicker">Build or Supply</span>
-          <h2 style="font-size:1.8rem; margin-top:0.8rem;">Two-Sided AI Compute Economy</h2>
-          <p class="aicf-muted" style="margin-top:0.7rem;">
-            Developers get immediate API utility. Providers get ANM-denominated revenue for useful compute. AICF aligns both sides in one live network.
+          <span class="aicf-kicker">Build and Operate</span>
+          <h2 style="font-size:clamp(1.6rem,2.8vw,2.3rem); margin-top:0.85rem;">Ship production workloads on Animica</h2>
+          <p class="aicf-muted" style="margin-top:0.7rem; max-width:62ch;">
+            Start with node operations, contracts, wallets, or compute services and scale into the full ecosystem.
           </p>
         </div>
         <div class="aicf-btn-row" style="margin-top:1.1rem;">
-          <a class="aicf-btn" href="https://aicf.animica.org">Create API Key</a>
-          <a class="aicf-ghost-btn" href="/downloads">Download Worker</a>
-          <a class="aicf-ghost-btn" href="/docs">Read Docs</a>
+          <a class="aicf-btn" href="/node">Run a Node</a>
+          <a class="aicf-ghost-btn" href="/developers">Developers</a>
+          <a class="aicf-ghost-btn" href="/downloads">Downloads</a>
         </div>
       </article>
     </div>
   </section>
 
-  <script define:vars={{ aicfApiBaseUrl }}>
-    import {
-      deriveAicfCounts,
-      fetchAicfStatus,
-      formatCount,
-      formatUtc,
-    } from "../features/aicf/liveMetricsClient";
+  <style>
+    .aicf-home-stat .aicf-muted {
+      font-size: 0.84rem;
+    }
 
-    const messageEl = document.querySelector("[data-aicf-message]");
-    const metricEls = Array.from(document.querySelectorAll("[data-aicf-metric]"));
+    .aicf-home-stat .aicf-value {
+      font-size: clamp(1.3rem, 2.4vw, 1.8rem);
+      margin: 0.15rem 0;
+    }
 
-    const setMetric = (key, value) => {
-      for (const el of metricEls) {
-        if (el.getAttribute("data-aicf-metric") === key) {
-          el.textContent = value;
-        }
+    .aicf-link-card {
+      display: block;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .aicf-link-card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in oklab, var(--brand-400), #ffffff 22%);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    }
+
+    .aicf-link-card-cta {
+      display: inline-flex;
+      margin-top: 0.85rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: #ffe581;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .aicf-final-cta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .aicf-trade-alert-wrap {
+      padding: 1rem 0 0;
+    }
+
+    .aicf-trade-alert {
+      position: relative;
+      display: block;
+      overflow: hidden;
+      border-radius: 1.2rem;
+      border: 2px solid rgba(249, 214, 74, 0.85);
+      background:
+        radial-gradient(circle at 20% 24%, rgba(255, 210, 66, 0.32), transparent 55%),
+        radial-gradient(circle at 84% 74%, rgba(48, 220, 214, 0.24), transparent 58%),
+        linear-gradient(133deg, #1d205d 0%, #0c1238 42%, #0d1e47 100%);
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 239, 156, 0.2) inset;
+      padding: clamp(1.4rem, 3.2vw, 2.4rem) clamp(1rem, 3.8vw, 2.8rem);
+      text-align: center;
+      isolation: isolate;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+      animation: tradePulse 2.6s ease-in-out infinite;
+    }
+
+    .aicf-trade-alert::before {
+      content: "";
+      position: absolute;
+      inset: -40% auto -40% -20%;
+      width: 40%;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.1) 35%,
+        rgba(255, 255, 255, 0.55) 50%,
+        rgba(255, 255, 255, 0.1) 65%,
+        transparent 100%
+      );
+      transform: rotate(18deg);
+      animation: tradeSweep 3.4s linear infinite;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .aicf-trade-alert:hover {
+      transform: translateY(-2px) scale(1.008);
+      box-shadow: 0 26px 54px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 239, 156, 0.4) inset;
+    }
+
+    .aicf-trade-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: linear-gradient(130deg, #f8ecb0, #ffe252);
+      color: #2d2100;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.38rem 0.8rem;
+      box-shadow: 0 5px 16px rgba(255, 226, 82, 0.32);
+    }
+
+    .aicf-trade-title {
+      margin-top: 0.85rem;
+      font-size: clamp(1.7rem, 5.7vw, 3.9rem);
+      line-height: 0.96;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      font-weight: 900;
+      color: #f8fbff;
+      text-wrap: balance;
+      text-shadow: 0 4px 24px rgba(14, 23, 64, 0.5);
+    }
+
+    .aicf-trade-subtitle {
+      margin-top: 0.8rem;
+      font-size: clamp(0.98rem, 2.4vw, 1.22rem);
+      font-weight: 520;
+      color: rgba(232, 242, 255, 0.96);
+      text-wrap: balance;
+    }
+
+    .aicf-trade-cta {
+      margin-top: 1rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0.78rem;
+      border: 1px solid rgba(255, 220, 71, 0.58);
+      background: rgba(8, 13, 32, 0.58);
+      color: #ffe581;
+      font-family: var(--font-mono);
+      font-size: clamp(0.86rem, 1.8vw, 0.96rem);
+      padding: 0.62rem 0.95rem;
+      font-weight: 620;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    @keyframes tradeSweep {
+      0% {
+        left: -30%;
       }
-    };
-
-    const setUnavailable = () => {
-      for (const el of metricEls) {
-        el.textContent = "Unavailable";
+      100% {
+        left: 120%;
       }
-      if (messageEl) {
-        messageEl.textContent = "Live AICF metrics unavailable.";
+    }
+
+    @keyframes tradePulse {
+      0%,
+      100% {
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 239, 156, 0.2) inset;
       }
-    };
-
-    const loadMetrics = async () => {
-      try {
-        const { payload, latencyMs } = await fetchAicfStatus(aicfApiBaseUrl);
-        const counts = deriveAicfCounts(payload);
-
-        setMetric("providers", formatCount(counts.providers));
-        setMetric("nodes", formatCount(counts.nodes));
-        setMetric("queueUnits", formatCount(counts.queueUnits));
-        setMetric("settlements", formatCount(counts.settlements));
-        setMetric("serviceStatus", String(payload.status ?? "unknown").toUpperCase());
-        setMetric("paused", payload.paused ? "YES" : "NO");
-        setMetric("apiLatencyMs", `${latencyMs} ms`);
-        setMetric("updatedAt", formatUtc(payload.timestamp));
-
-        if (messageEl) {
-          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
-        }
-      } catch (error) {
-        console.error("[aicf-metrics] unable to fetch live status", error);
-        setUnavailable();
+      50% {
+        box-shadow: 0 24px 54px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 239, 156, 0.46) inset;
       }
-    };
+    }
 
-    loadMetrics().catch(() => setUnavailable());
-  </script>
+    @media (max-width: 760px) {
+      .aicf-trade-alert {
+        border-radius: 1rem;
+      }
+    }
+  </style>
 
   <Footer slot="footer" />
 </BaseLayout>

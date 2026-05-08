@@ -71,8 +71,8 @@ export type SiteConfig = {
 
 export const SITE: SiteConfig = {
   brand: {
-    name: 'AICF',
-    tagline: 'Decentralized AI compute cloud on Animica.',
+    name: 'Animica',
+    tagline: 'Post-quantum blockchain for verifiable, real-world compute.',
     logo: {
       mark: '/icons/logo.svg',
       wordmark: '/icons/wordmark.svg',
@@ -84,7 +84,7 @@ export const SITE: SiteConfig = {
   },
 
   urls: {
-    site: (import.meta.env.SITE_URL as string) || 'https://aicf.animica.org',
+    site: (import.meta.env.SITE_URL as string) || 'https://animica.org',
     docs: ENV.DOCS_URL,
     explorer: ENV.EXPLORER_URL,
     explorer2: ENV.EXPLORER2_URL,
@@ -133,7 +133,7 @@ export const SITE: SiteConfig = {
         title: 'Resources',
         items: [
           { label: 'Docs Hub', href: '/docs' },
-          { label: 'About AICF', href: '/about' },
+          { label: 'About Animica', href: '/about' },
           { label: 'FAQ', href: '/faq' },
           { label: 'Support', href: '/support' },
         ],
@@ -151,7 +151,7 @@ export const SITE: SiteConfig = {
   },
 
   contact: {
-    email: 'aicf@animica.org',
+    email: 'contact@animica.org',
     securityTxt: '/.well-known/security.txt',
     securityPolicy: '/security',
     acknowledgments: '/security/hall-of-fame',
@@ -170,9 +170,9 @@ export const SITE: SiteConfig = {
   },
 
   meta: {
-    title: 'AICF — Decentralized AI Compute Cloud on Animica',
+    title: 'Animica — Post-Quantum Blockchain Infrastructure',
     description:
-      'AICF is Animica\'s decentralized AI compute cloud where developers spend ANM for inference, embeddings, training, and agents while providers earn ANM by contributing GPU and CPU capacity.',
+      'Animica is a production-ready post-quantum blockchain with useful-work consensus, deterministic Python contracts, node tooling, explorer infrastructure, and AI compute services.',
     ogImage: '/og/og-home.png',
   },
 };
