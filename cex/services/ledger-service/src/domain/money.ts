@@ -3,7 +3,7 @@
  * 
  * All monetary values are stored as "atoms" - the smallest indivisible unit.
  * For example:
- * - 1 USDT = 1_000_000 atoms (6 decimals)
+ * - 1 USDT = 1_000_000_000_000_000_000 atoms (18 decimals on BNB Smart Chain)
  * - 1 ANM = 1_000_000_000 atoms (9 decimals)
  * - 1 BTC = 100_000_000 atoms (8 decimals)
  * 
@@ -14,10 +14,11 @@
  * Asset decimal configuration
  */
 export const ASSET_DECIMALS: Record<string, number> = {
-  USDT: 6,
+  USDT: 18,
   USDC: 6,
   ANM: 9,
   BTC: 8,
+  BNB: 18,
   LTC: 8,
   DOGE: 8,
   ZEC: 8,
@@ -83,8 +84,8 @@ export function calculateFeeBps(amountAtoms: bigint, bps: number): bigint {
  * 
  * Example: 
  * - size = 1.5 BTC = 150_000_000 atoms (8 decimals)
- * - price = 50_000 USDT = 50_000_000_000 atoms (6 decimals)
- * - quote = (150_000_000 * 50_000_000_000) / 10^8 = 75_000_000_000 atoms = 75_000 USDT
+ * - price = 50_000 quote units with 8 price decimals
+ * - quote = (150_000_000 * 5_000_000_000_000) / 10^8 = 7_500_000_000_000 quote atoms
  */
 export function multiplyAtoms(
   amountAtoms: bigint,

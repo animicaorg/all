@@ -229,7 +229,7 @@ export function createWebSocketServer(
           SUM(remaining_quantity) as total_quantity
         FROM orders
         WHERE market_id = $1
-          AND status = 'ACCEPTED'
+          AND status IN ('ACCEPTED', 'PARTIAL_FILL')
           AND remaining_quantity > 0
         GROUP BY side, price
         ORDER BY 

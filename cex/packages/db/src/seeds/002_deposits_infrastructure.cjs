@@ -62,6 +62,15 @@ exports.seed = async function seed(knex) {
       metadata: JSON.stringify({ explorer_url: "https://blockchair.com/zcash" })
     },
     {
+      id: "bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc",
+      code: "BSC",
+      name: "BNB Smart Chain",
+      type: "EVM",
+      confirmations_required: 15,
+      active: true,
+      metadata: JSON.stringify({ chain_id: 56, explorer_url: "https://bscscan.com" })
+    },
+    {
       id: "33333333-3333-3333-3333-333333333333",
       code: "ETH_SEPOLIA",
       name: "Ethereum Sepolia Testnet",
@@ -128,7 +137,7 @@ exports.seed = async function seed(knex) {
       id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
       symbol: "USDT",
       name: "Tether USD",
-      decimals: 6,
+      decimals: 18,
       active: true,
       metadata: JSON.stringify({})
     },
@@ -197,14 +206,22 @@ exports.seed = async function seed(knex) {
     {
       id: "ffffffff-0003-0003-0003-000000000003",
       asset_id: "cccccccc-cccc-cccc-cccc-cccccccccccc", // USDT
-      network_id: "22222222-2222-2222-2222-222222222222", // ETH network
-      contract_address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
-      bitgo_coin: "erc20:usdt",
+      network_id: "bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc", // BNB Smart Chain
+      contract_address: "0x55d398326f99059ff775485246999027b3197955",
+      bitgo_coin: "bsc:bsc-usd",
       deposits_enabled: true,
       withdrawals_enabled: true,
-      min_deposit_atoms: "1000000", // 1 USDT
-      confirmations_override: 6,
-      metadata: JSON.stringify({})
+      min_deposit_atoms: "1000000000000000000", // 1 USDT
+      confirmations_override: 15,
+      metadata: JSON.stringify({
+        provider: "BITGO",
+        address_coin: "bsc",
+        display_symbol: "USDT",
+        token_symbol: "BSC-USD",
+        token_standard: "BEP20",
+        flat_withdrawal_fee_atoms: "1000000000000000000",
+        flat_withdrawal_fee: "1"
+      })
     },
     {
       id: "ffffffff-0004-0004-0004-000000000004",
@@ -368,6 +385,20 @@ exports.seed = async function seed(knex) {
         flatFee: true,
         feeAsset: "ZEC",
         rationale: "Flat fee for Zcash BitGo withdrawals."
+      })
+    },
+    {
+      asset_network_id: "ffffffff-0003-0003-0003-000000000003", // USDT on BNB Smart Chain
+      min_withdrawal_atoms: "5000000000000000000", // 5 USDT
+      required_approvals: 1,
+      high_risk_approvals: 2,
+      enabled: true,
+      metadata: JSON.stringify({
+        withdrawalFeeAtoms: "1000000000000000000",
+        withdrawalFee: "1",
+        flatFee: true,
+        feeAsset: "USDT",
+        rationale: "Flat fee for BNB Smart Chain BEP-20 USDT withdrawals through BitGo."
       })
     }
   ];

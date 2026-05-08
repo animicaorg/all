@@ -15,7 +15,7 @@ const emptySettings: BitgoSettings = {
   updatedAt: null,
 };
 
-const defaultCoins = ['btc', 'eth', 'sol'];
+const defaultCoins = ['btc', 'ltc', 'doge', 'zec', 'bsc', 'bsc:bsc-usd'];
 
 type WalletMappingRow = {
   coin: string;

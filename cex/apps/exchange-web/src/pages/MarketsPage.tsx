@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Search, TrendingUp, TrendingDown } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { Seo } from '../components/Seo';
+import { breadcrumbJsonLd } from '../lib/seo';
 
 export default function MarketsPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,8 +36,42 @@ export default function MarketsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-white">Markets</h1>
+      <Seo
+        title="ANM Markets | Trade BTC/ANM, DOGE/ANM, LTC/ANM, and ZEC/ANM"
+        description="Explore live Animica Exchange markets for ANM trading pairs including BTC/ANM, DOGE/ANM, LTC/ANM, and ZEC/ANM."
+        path="/markets"
+        structuredData={[
+          breadcrumbJsonLd([
+            { name: 'Home', path: '/' },
+            { name: 'Markets', path: '/markets' },
+          ]),
+        ]}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div>
+          <p className="mb-2 text-sm font-semibold uppercase tracking-wider text-blue-300">Live ANM markets</p>
+          <h1 className="text-3xl font-bold text-white">Animica Exchange Markets</h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+            Explore live ANM trading pairs, review quote-asset pricing, and open a pair page for the order book, recent trades, USD estimates, and order entry.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/airdrop')}
+            className="rounded-md border border-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Claim ANM
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/register')}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Create Account
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -94,7 +130,7 @@ export default function MarketsPage() {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white">
-                    ${market.lastPrice.toLocaleString()}
+                    {market.lastPrice.toLocaleString()} {market.quoteAsset}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                     <div className={`flex items-center justify-end gap-1 ${
@@ -109,13 +145,13 @@ export default function MarketsPage() {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-slate-300">
-                    ${market.high24h.toLocaleString()}
+                    {market.high24h.toLocaleString()} {market.quoteAsset}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-slate-300">
-                    ${market.low24h.toLocaleString()}
+                    {market.low24h.toLocaleString()} {market.quoteAsset}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-slate-300">
-                    ${market.volume24h.toLocaleString()}
+                    {market.volume24h.toLocaleString()} {market.baseAsset}
                   </td>
                 </tr>
               ))}
@@ -129,6 +165,25 @@ export default function MarketsPage() {
           No markets found matching "{searchTerm}"
         </div>
       )}
+
+      <section className="rounded-lg bg-slate-800 p-6">
+        <h2 className="text-xl font-semibold text-white">Trade ANM on live pair pages</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          Animica Exchange pair pages are public for market research. Sign in or create an account when you are ready to claim ANM, deposit supported assets, or place an order.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3 text-sm">
+          {['BTC-ANM', 'DOGE-ANM', 'LTC-ANM', 'ZEC-ANM'].map((symbol) => (
+            <button
+              key={symbol}
+              type="button"
+              onClick={() => navigate(`/trade/${symbol}`)}
+              className="rounded-md border border-slate-600 px-3 py-2 font-semibold text-slate-100 hover:bg-slate-700"
+            >
+              {symbol.replace('-', '/')}
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

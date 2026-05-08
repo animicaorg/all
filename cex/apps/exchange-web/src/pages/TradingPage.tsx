@@ -1,12 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, X, Activity } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiClient } from '../lib/api-client';
+import { useAuthStore } from '../lib/auth-store';
 import { useWSStore } from '../lib/ws-store';
 import { OrderEntry } from '../components/OrderEntry';
 import { MarketChart } from '../components/MarketChart';
+import { Seo } from '../components/Seo';
+import { breadcrumbJsonLd, faqJsonLd, pairMeta } from '../lib/seo';
 import type { CreateOrderRequest, Market } from '../types';
 
 function isActiveOrderStatus(status: string | undefined | null): boolean {
@@ -19,6 +22,7 @@ export default function TradingPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const { subscribe, unsubscribe, orderbooks, trades, tickers, connectionState, getStats } = useWSStore();
 
@@ -66,6 +70,7 @@ export default function TradingPage() {
   const { data: myOrders = [] } = useQuery({
     queryKey: ['myOrders'],
     queryFn: () => apiClient.getMyOrders(),
+    enabled: isAuthenticated,
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
     refetchOnMount: 'always',
@@ -74,10 +79,28 @@ export default function TradingPage() {
   const { data: balances = [] } = useQuery({
     queryKey: ['balances'],
     queryFn: () => apiClient.getBalances(),
-    refetchInterval: 5000,
+    enabled: isAuthenticated,
+    staleTime: 0,
+    refetchInterval: 2000,
     refetchIntervalInBackground: true,
     refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
+
+  const quoteAssets = useMemo(() => {
+    return market ? [market.baseAsset, market.quoteAsset] : [];
+  }, [market]);
+
+  const { data: usdQuotes = [] } = useQuery({
+    queryKey: ['usdQuotes', quoteAssets.join(',')],
+    queryFn: () => apiClient.getUsdQuotes(quoteAssets),
+    enabled: quoteAssets.length > 0,
+    refetchInterval: 60_000,
+  });
+
+  const usdQuoteMap = useMemo(() => {
+    return Object.fromEntries(usdQuotes.map((quote) => [quote.asset, quote.usd]));
+  }, [usdQuotes]);
 
   const createOrderMutation = useMutation({
     mutationFn: (order: CreateOrderRequest) => apiClient.createOrder(order),
@@ -127,9 +150,34 @@ export default function TradingPage() {
 
   const lastPrice = ticker?.lastPrice || market.lastPrice;
   const priceChange = ticker?.priceChange24h || market.change24h;
+  const meta = pairMeta(symbol);
+  const pairFaqs = [
+    {
+      question: `What is the ${baseAsset}/${quoteAsset} market?`,
+      answer: `${baseAsset}/${quoteAsset} is an Animica Exchange market for trading ${baseAsset} against ${quoteAsset}. The page includes market data, order book depth, recent trades, and order entry.`,
+    },
+    {
+      question: `Do I need an account to trade ${baseAsset}/${quoteAsset}?`,
+      answer: `You can view the ${baseAsset}/${quoteAsset} market without logging in. Creating orders, claiming ANM, deposits, withdrawals, and balances require an account.`,
+    },
+  ];
 
   return (
     <div className="space-y-6">
+      <Seo
+        title={meta.title}
+        description={meta.description}
+        path={meta.path}
+        structuredData={[
+          breadcrumbJsonLd([
+            { name: 'Home', path: '/' },
+            { name: 'Markets', path: '/markets' },
+            { name: symbol, path: `/trade/${symbol}` },
+          ]),
+          faqJsonLd(pairFaqs),
+        ]}
+      />
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
@@ -139,8 +187,10 @@ export default function TradingPage() {
             <ArrowLeft size={20} />
           </button>
           <div>
-            <h1 className="text-3xl font-bold text-white">{symbol}</h1>
-            <p className="text-slate-400">{baseAsset} / {quoteAsset}</p>
+            <h1 className="text-3xl font-bold text-white">{baseAsset}/{quoteAsset} Trading</h1>
+            <p className="text-slate-400">
+              Trade {baseAsset} against {quoteAsset} on Animica Exchange
+            </p>
           </div>
           <div className="flex items-center gap-4 ml-8">
             <div>
@@ -192,6 +242,27 @@ export default function TradingPage() {
           </div>
         </div>
       )}
+
+      <section className="rounded-lg border border-slate-700 bg-slate-800 p-5">
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div>
+            <h2 className="text-xl font-semibold text-white">Live {baseAsset}/{quoteAsset} market</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+              Use this public pair page to review the order book, recent trades, and USD estimates for the {baseAsset}/{quoteAsset} market. Sign in when you are ready to place an order or manage balances.
+            </p>
+          </div>
+          {!isAuthenticated && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Link to="/register" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+                Create Account
+              </Link>
+              <Link to="/airdrop" className="rounded-md border border-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
+                Claim ANM
+              </Link>
+            </div>
+          )}
+        </div>
+      </section>
 
       <MarketChart symbol={symbol} market={market} trades={displayTrades} />
 
@@ -339,10 +410,40 @@ export default function TradingPage() {
           market={market}
           balances={balances}
           referencePrice={lastPrice}
+          usdQuotes={usdQuoteMap}
+          isAuthenticated={isAuthenticated}
           onSubmit={(order) => createOrderMutation.mutateAsync(order)}
           isSubmitting={createOrderMutation.isPending}
         />
       </div>
+
+      <section className="grid gap-5 lg:grid-cols-2">
+        <div className="rounded-lg bg-slate-800 p-5">
+          <h2 className="text-xl font-semibold text-white">Why trade {baseAsset} with {quoteAsset}?</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-300">
+            The {baseAsset}/{quoteAsset} page gives traders a direct market between {baseAsset} and {quoteAsset}. Review price movement, compare order book levels, and use the order form when your account is ready.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {markets.map((item) => item.symbol).filter((item) => item !== symbol).slice(0, 8).map((item) => (
+              <Link key={item} to={`/trade/${item}`} className="rounded-md border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-700">
+                {item.replace('-', '/')}
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg bg-slate-800 p-5">
+          <h2 className="text-xl font-semibold text-white">FAQ</h2>
+          <div className="mt-3 divide-y divide-slate-700">
+            {pairFaqs.map((faq) => (
+              <div key={faq.question} className="py-3">
+                <h3 className="font-semibold text-white">{faq.question}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{faq.answer}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

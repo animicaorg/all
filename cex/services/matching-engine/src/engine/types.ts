@@ -30,6 +30,9 @@ export interface MarketConfig {
   makerFeeBps: number; // basis points (1 bp = 0.01%)
   takerFeeBps: number;
   feeAsset: string;
+  baseDecimals?: number;
+  quoteDecimals?: number;
+  feeDecimals?: number;
   active: boolean;
 }
 

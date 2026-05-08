@@ -159,11 +159,92 @@ export interface UserTrade {
 export interface CreateOrderRequest {
   symbol: string;
   side: 'buy' | 'sell';
-  type: 'limit' | 'market' | 'post_only';
+  type: 'limit' | 'market' | 'post_only' | 'LIMIT' | 'MARKET' | 'POST_ONLY';
   price?: number;
   quantity: number;
   clientOrderId?: string;
   idempotencyKey?: string;
+}
+
+export interface UsdQuote {
+  asset: string;
+  usd: number;
+  source: 'google-finance' | 'derived';
+  sourceUrl?: string;
+  derivedFrom?: string;
+  fetchedAt: string;
+}
+
+export interface AirdropStatus {
+  settings: {
+    asset: string;
+    claimAmount: string;
+    claimAmountAtoms: string;
+    cooldownSeconds: number;
+    enabled: boolean;
+  };
+  poolBalance: string;
+  poolBalanceAtoms: string;
+  claimable: boolean;
+  lastClaimAt: string | null;
+  nextClaimAt: string | null;
+}
+
+export interface AirdropTransfer {
+  id: string;
+  asset: string;
+  amount: string;
+  amountAtoms: string;
+  claimedAt?: string;
+  depositedAt?: string;
+}
+
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  scopes: string[];
+  createdAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface CreatedApiKey {
+  apiKey: ApiKeySummary;
+  secret: string;
+}
+
+export type TradingBotMode = 'DCA' | 'GRID' | 'MAKER';
+
+export interface TradingBot {
+  id: string;
+  mode: TradingBotMode;
+  market: string;
+  status: 'RUNNING' | 'STOPPED' | 'ERROR';
+  config: {
+    side?: 'buy' | 'sell';
+    quantity?: number;
+    intervalSeconds?: number;
+    spacingPct?: number;
+    spreadPct?: number;
+    levels?: number;
+  };
+  lastError: string | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface StartTradingBotRequest {
+  mode: TradingBotMode;
+  market: string;
+  side?: 'buy' | 'sell';
+  quantity: number;
+  intervalSeconds?: number;
+  spacingPct?: number;
+  spreadPct?: number;
+  levels?: number;
 }
 
 export interface WSMessage {

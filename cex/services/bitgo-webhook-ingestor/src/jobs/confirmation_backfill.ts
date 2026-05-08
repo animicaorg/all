@@ -234,21 +234,54 @@ export class ConfirmationBackfill {
 
   private async getActiveBitGoWallets(): Promise<ActiveBitGoWallet[]> {
     const result = await this.pool.query(
-      `SELECT DISTINCT
-         asset_networks.id::text AS asset_network_id,
-         asset_networks.bitgo_coin AS coin,
-         wallets.wallet_id AS wallet_id
-       FROM wallets
-       JOIN asset_networks ON asset_networks.id = wallets.asset_network_id
-       JOIN assets ON assets.id = asset_networks.asset_id
-       JOIN networks ON networks.id = asset_networks.network_id
-       WHERE wallets.provider = 'BITGO'
-         AND wallets.status = 'ACTIVE'
-         AND asset_networks.deposits_enabled = true
-         AND assets.active = true
-         AND networks.active = true
-         AND asset_networks.bitgo_coin IS NOT NULL
-       ORDER BY asset_networks.bitgo_coin, wallets.wallet_id`
+      `WITH active_asset_networks AS (
+         SELECT
+           asset_networks.id,
+           asset_networks.id::text AS asset_network_id,
+           asset_networks.bitgo_coin AS coin,
+           LOWER(COALESCE(NULLIF(asset_networks.metadata->>'address_coin', ''), asset_networks.bitgo_coin)) AS address_coin
+         FROM asset_networks
+         JOIN assets ON assets.id = asset_networks.asset_id
+         JOIN networks ON networks.id = asset_networks.network_id
+         WHERE asset_networks.deposits_enabled = true
+           AND assets.active = true
+           AND networks.active = true
+           AND asset_networks.bitgo_coin IS NOT NULL
+       ),
+       wallet_candidates AS (
+         SELECT
+           active_asset_networks.asset_network_id,
+           active_asset_networks.coin,
+           wallets.wallet_id,
+           0 AS priority
+         FROM wallets
+         JOIN active_asset_networks
+           ON active_asset_networks.id = wallets.asset_network_id
+         WHERE wallets.provider = 'BITGO'
+           AND wallets.status = 'ACTIVE'
+
+         UNION ALL
+
+         SELECT
+           target_networks.asset_network_id,
+           target_networks.coin,
+           wallets.wallet_id,
+           1 AS priority
+         FROM active_asset_networks target_networks
+         JOIN active_asset_networks wallet_networks
+           ON wallet_networks.address_coin = target_networks.address_coin
+         JOIN wallets
+           ON wallets.asset_network_id = wallet_networks.id
+         WHERE wallets.provider = 'BITGO'
+           AND wallets.status = 'ACTIVE'
+           AND wallet_networks.id <> target_networks.id
+       )
+       SELECT DISTINCT ON (coin, wallet_id)
+         asset_network_id,
+         coin,
+         wallet_id
+       FROM wallet_candidates
+       ORDER BY coin, wallet_id, priority`
     );
 
     return result.rows.map((row) => ({

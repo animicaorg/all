@@ -38,6 +38,7 @@ type AssetNetworkRow = {
   deposits_enabled: boolean;
   withdrawals_enabled: boolean;
   provider: string;
+  metadata: Record<string, any>;
 };
 
 function stripTrailingSlash(value: string): string {
@@ -111,6 +112,7 @@ async function getAssetNetwork(pgPool: Pool, assetNetworkId: string): Promise<As
         COALESCE(asset_networks.metadata->>'rpc_url', networks.metadata->>'rpc_url') AS rpc_url,
         asset_networks.deposits_enabled,
         asset_networks.withdrawals_enabled,
+        asset_networks.metadata,
         COALESCE(
           asset_networks.metadata->>'provider',
           CASE
@@ -180,6 +182,36 @@ async function getActiveWallet(pgPool: Pool, assetNetworkId: string, provider?: 
   return result.rows[0] ?? null;
 }
 
+async function getSharedBitgoWallet(pgPool: Pool, assetNetwork: AssetNetworkRow) {
+  const addressCoin = getString(assetNetwork.metadata?.address_coin) || assetNetwork.bitgo_coin;
+  if (!addressCoin) return null;
+
+  const result = await pgPool.query(
+    `
+      SELECT wallets.id::text, wallets.provider, wallets.wallet_id, wallets.metadata
+      FROM wallets
+      JOIN asset_networks wallet_asset_networks
+        ON wallet_asset_networks.id = wallets.asset_network_id
+      WHERE wallets.asset_network_id <> $1::uuid
+        AND wallets.provider = 'BITGO'
+        AND wallets.status = 'ACTIVE'
+        AND LOWER(COALESCE(NULLIF(wallet_asset_networks.metadata->>'address_coin', ''), wallet_asset_networks.bitgo_coin)) = LOWER($2)
+      ORDER BY wallets.created_at ASC
+      LIMIT 1
+    `,
+    [assetNetwork.asset_network_id, addressCoin]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function getBitgoWallet(pgPool: Pool, assetNetwork: AssetNetworkRow) {
+  return (
+    (await getActiveWallet(pgPool, assetNetwork.asset_network_id, "BITGO")) ??
+    (await getSharedBitgoWallet(pgPool, assetNetwork))
+  );
+}
+
 async function getOrCreateAnimicaWallet(pgPool: Pool, assetNetworkId: string) {
   const existing = await getActiveWallet(pgPool, assetNetworkId, "ANIMICA_NODE");
   if (existing) return existing;
@@ -188,7 +220,7 @@ async function getOrCreateAnimicaWallet(pgPool: Pool, assetNetworkId: string) {
     `
       INSERT INTO wallets (provider, wallet_id, asset_network_id, status, metadata)
       VALUES ('ANIMICA_NODE', $1, $2::uuid, 'ACTIVE', '{"purpose":"DEPOSIT"}'::jsonb)
-      ON CONFLICT (provider, wallet_id) DO UPDATE SET
+      ON CONFLICT (provider, wallet_id, asset_network_id) DO UPDATE SET
         status = 'ACTIVE',
         updated_at = NOW()
       RETURNING id::text, provider, wallet_id, metadata
@@ -457,14 +489,15 @@ export function createTransfersRouter(pgPool: Pool, options: TransferRouterOptio
           label
         );
       } else if (provider === "BITGO" && assetNetwork.bitgo_coin) {
-        wallet = await getActiveWallet(pgPool, body.assetNetworkId, "BITGO");
+        wallet = await getBitgoWallet(pgPool, assetNetwork);
         if (!wallet) {
           return res.status(409).json({
             error: "Deposit wallet not configured",
             message: `Configure an active BitGo wallet for ${assetNetwork.asset_symbol} before creating deposit addresses.`,
           });
         }
-        createdAddress = await createBitgoAddress(pgPool, options, assetNetwork.bitgo_coin, wallet.wallet_id, label);
+        const addressCoin = getString(assetNetwork.metadata?.address_coin) || assetNetwork.bitgo_coin;
+        createdAddress = await createBitgoAddress(pgPool, options, addressCoin, wallet.wallet_id, label);
       } else if (provider === "BITCOIN_NODE") {
         wallet = await getActiveWallet(pgPool, body.assetNetworkId, "BITCOIN_NODE");
         if (!wallet) {

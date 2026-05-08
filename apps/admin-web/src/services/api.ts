@@ -83,6 +83,7 @@ export interface UserSummary {
   twofaEnabled: boolean;
   createdAt: string;
   updatedAt: string;
+  balanceTotals?: BalanceTotal[];
 }
 
 export interface RiskFlag {
@@ -100,6 +101,12 @@ export interface BalanceSummary {
   asset: string;
   available: string;
   locked: string;
+  total: string;
+}
+
+export interface BalanceTotal {
+  asset: string;
+  total: string;
 }
 
 export interface UserDetail extends UserSummary {

@@ -59,11 +59,11 @@ describe("money utilities", () => {
 
   describe("multiplyAtoms", () => {
     it("multiplies atoms by price", () => {
-      // 1.5 BTC (8 decimals) * 50_000 USDT/BTC (6 decimals)
+      // 1.5 BTC (8 decimals) * 50_000 quote units with 8 price decimals
       const sizeAtoms = 150_000_000n; // 1.5 BTC
-      const priceAtoms = 50_000_000_000n; // 50_000 USDT (6 decimals)
+      const priceAtoms = 5_000_000_000_000n;
       const result = multiplyAtoms(sizeAtoms, priceAtoms, 8);
-      expect(result).toBe(75_000_000_000n); // 75_000 USDT
+      expect(result).toBe(7_500_000_000_000n);
     });
   });
 
@@ -85,9 +85,9 @@ describe("money utilities", () => {
 
   describe("formatAtoms and parseAtoms", () => {
     it("formats and parses round-trip", () => {
-      const atoms = 1_500_000n;
+      const atoms = 1_500_000_000_000_000_000n;
       const formatted = formatAtoms(atoms, "USDT");
-      expect(formatted).toBe("1.500000 USDT");
+      expect(formatted).toBe("1.500000000000000000 USDT");
       
       const parsed = parseAtoms(formatted, "USDT");
       expect(parsed).toBe(atoms);
@@ -101,6 +101,10 @@ describe("money utilities", () => {
       expect(getAssetDecimals("DOGE")).toBe(8);
       expect(getAssetDecimals("ZEC")).toBe(8);
       expect(formatAtoms(8_694_835n, "LTC")).toBe("0.08694835 LTC");
+    });
+
+    it("uses 18 decimals for BNB Smart Chain USDT", () => {
+      expect(getAssetDecimals("USDT")).toBe(18);
     });
   });
 });

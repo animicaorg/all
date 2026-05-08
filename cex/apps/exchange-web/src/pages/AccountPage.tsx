@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDownToLine, ArrowUpFromLine, Copy, Loader2, Wallet, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Copy, Gift, Loader2, Send, Wallet, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiClient } from '../lib/api-client';
 import type { Asset, AssetNetwork, Deposit, DepositAddress, Order } from '../types';
+import { Seo } from '../components/Seo';
 
 type TransferAction = {
   type: 'deposit' | 'withdraw';
@@ -46,15 +47,17 @@ function decimalToAtoms(value: string, decimals: number): string {
 
 function formatBalance(value: number, asset: string): string {
   const maximumFractionDigits =
-    asset === 'BTC' || asset === 'LTC' || asset === 'DOGE' || asset === 'ZEC'
+    asset === 'BTC' || asset === 'BNB' || asset === 'LTC' || asset === 'DOGE' || asset === 'ZEC'
       ? 8
-      : asset === 'ANM'
-        ? 9
-        : asset === 'ETH'
-          ? 8
-          : asset === 'SOL'
-            ? 6
-            : 2;
+      : asset === 'USDT' || asset === 'USDC'
+        ? 2
+        : asset === 'ANM'
+          ? 9
+          : asset === 'ETH'
+            ? 8
+            : asset === 'SOL'
+              ? 6
+              : 2;
 
   return value.toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -64,6 +67,19 @@ function formatBalance(value: number, asset: string): string {
 
 function getErrorMessage(error: any): string {
   return error?.response?.data?.message || error?.response?.data?.error || error?.message || 'Request failed';
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString();
+}
+
+function formatCooldown(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}m`;
 }
 
 function RailStatus({ enabled }: { enabled: boolean }) {
@@ -338,24 +354,33 @@ export default function AccountPage() {
   const [activeTransfer, setActiveTransfer] = useState<TransferAction | null>(null);
   const [depositAddress, setDepositAddress] = useState<DepositAddress | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
+  const [airdropDepositAmount, setAirdropDepositAmount] = useState('');
 
-  const { data: balances = [], isLoading } = useQuery({
+  const balancesQuery = useQuery({
     queryKey: ['balances'],
     queryFn: () => apiClient.getBalances(),
+    placeholderData: [],
+    staleTime: 5000,
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
-    refetchOnMount: 'always',
+    refetchOnMount: false,
+    refetchOnWindowFocus: true,
   });
+  const balances = balancesQuery.data ?? [];
 
-  const { data: assets = [], isLoading: assetsLoading } = useQuery({
+  const assetsQuery = useQuery({
     queryKey: ['assets'],
     queryFn: () => apiClient.getAssets(),
+    placeholderData: [],
+    staleTime: 15000,
     refetchInterval: 15000,
   });
+  const assets = assetsQuery.data ?? [];
 
   const { data: withdrawals = [] } = useQuery({
     queryKey: ['withdrawals'],
     queryFn: () => apiClient.getWithdrawals(),
+    placeholderData: [],
     refetchInterval: 10000,
     refetchIntervalInBackground: true,
   });
@@ -363,18 +388,28 @@ export default function AccountPage() {
   const { data: deposits = [] } = useQuery({
     queryKey: ['deposits'],
     queryFn: () => apiClient.getDeposits(),
+    placeholderData: [],
     refetchInterval: 10000,
     refetchIntervalInBackground: true,
-    refetchOnMount: 'always',
+    refetchOnMount: false,
   });
 
   const { data: myOrders = [] } = useQuery({
     queryKey: ['myOrders'],
     queryFn: () => apiClient.getMyOrders(),
+    placeholderData: [],
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
-    refetchOnMount: 'always',
+    refetchOnMount: false,
   });
+
+  const airdropQuery = useQuery({
+    queryKey: ['airdrop'],
+    queryFn: () => apiClient.getAirdropStatus(),
+    staleTime: 15000,
+    refetchInterval: 15000,
+  });
+  const airdrop = airdropQuery.data;
 
   const createDepositAddress = useMutation({
     mutationFn: (assetNetworkId: string) => apiClient.createDepositAddress(assetNetworkId),
@@ -407,6 +442,31 @@ export default function AccountPage() {
     onSuccess: () => {
       toast.success('Order cancelled');
       queryClient.invalidateQueries({ queryKey: ['myOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['balances'] });
+    },
+    onError: (error) => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+
+  const claimAirdropMutation = useMutation({
+    mutationFn: () => apiClient.claimAirdrop(),
+    onSuccess: (claim) => {
+      toast.success(`Claimed ${claim.amount} ${claim.asset}`);
+      queryClient.invalidateQueries({ queryKey: ['airdrop'] });
+      queryClient.invalidateQueries({ queryKey: ['balances'] });
+    },
+    onError: (error) => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+
+  const depositAirdropMutation = useMutation({
+    mutationFn: (amountAtoms: string) => apiClient.depositAirdrop(amountAtoms),
+    onSuccess: (deposit) => {
+      toast.success(`Deposited ${deposit.amount} ${deposit.asset}`);
+      setAirdropDepositAmount('');
+      queryClient.invalidateQueries({ queryKey: ['airdrop'] });
       queryClient.invalidateQueries({ queryKey: ['balances'] });
     },
     onError: (error) => {
@@ -462,18 +522,29 @@ export default function AccountPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-slate-400">Loading account...</div>
-      </div>
-    );
-  }
+  const submitAirdropDeposit = () => {
+    try {
+      const anmDecimals = assetMap.get('ANM')?.decimals ?? 9;
+      depositAirdropMutation.mutate(decimalToAtoms(airdropDepositAmount, anmDecimals));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
 
   const activeBalance = activeTransfer ? balances.find((balance) => balance.asset === activeTransfer.asset.symbol) : undefined;
+  const balancesInitialLoading = balancesQuery.isPending && balances.length === 0;
+  const balancesError = balancesQuery.isError ? getErrorMessage(balancesQuery.error) : null;
+  const assetsInitialLoading = assetsQuery.isPending && assets.length === 0;
 
   return (
     <div className="space-y-6">
+      <Seo
+        title="Account | Animica Exchange"
+        description="Manage Animica Exchange balances, ANM claims, deposits, withdrawals, and open orders."
+        path="/account"
+        noindex
+      />
+
       <h1 className="text-3xl font-bold text-white">Account</h1>
 
       <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-lg p-6">
@@ -482,7 +553,14 @@ export default function AccountPage() {
           <span className="text-sm font-medium">Portfolio</span>
         </div>
         <div className="text-4xl font-bold text-white mb-4">
-          {balances.length.toLocaleString()} assets
+          {balancesInitialLoading ? (
+            <span className="inline-flex items-center gap-3 text-2xl text-blue-100">
+              <Loader2 className="animate-spin" size={24} />
+              Fetching balances
+            </span>
+          ) : (
+            `${balances.length.toLocaleString()} assets`
+          )}
         </div>
         <div className="flex flex-wrap gap-4 text-blue-200">
           <span className="inline-flex items-center gap-2 text-sm">
@@ -493,6 +571,62 @@ export default function AccountPage() {
             <ArrowUpFromLine size={16} />
             Flat withdrawal fees
           </span>
+          {balancesQuery.isFetching && !balancesInitialLoading && (
+            <span className="inline-flex items-center gap-2 text-sm">
+              <Loader2 className="animate-spin" size={16} />
+              Refreshing balances
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-slate-800 p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-slate-300">
+              <Gift size={20} />
+              <span className="text-sm font-medium">Claimable Airdrop</span>
+            </div>
+            <div className="text-3xl font-bold text-white">
+              {airdrop ? `${airdrop.settings.claimAmount} ${airdrop.settings.asset}` : '--'}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-400">
+              <span>Every {airdrop ? formatCooldown(airdrop.settings.cooldownSeconds) : '4h'}</span>
+              <span>Pool {airdrop ? `${airdrop.poolBalance} ${airdrop.settings.asset}` : '-'}</span>
+              <span>Next {formatDateTime(airdrop?.nextClaimAt)}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="block">
+              <span className="mb-2 block text-xs uppercase tracking-wider text-slate-500">Deposit ANM to Pool</span>
+              <input
+                value={airdropDepositAmount}
+                onChange={(event) => setAirdropDepositAmount(event.target.value)}
+                inputMode="decimal"
+                placeholder="0.00"
+                className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-white outline-none focus:border-blue-500 sm:w-44"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={submitAirdropDeposit}
+              disabled={depositAirdropMutation.isPending || !airdropDepositAmount}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {depositAirdropMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+              Deposit
+            </button>
+            <button
+              type="button"
+              onClick={() => claimAirdropMutation.mutate()}
+              disabled={!airdrop?.claimable || claimAirdropMutation.isPending}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {claimAirdropMutation.isPending && <Loader2 className="animate-spin" size={16} />}
+              Claim
+            </button>
+          </div>
         </div>
       </div>
 
@@ -511,30 +645,53 @@ export default function AccountPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {balances.map((balance) => (
-                <tr key={balance.asset} className="hover:bg-slate-700 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-slate-600 rounded-full flex items-center justify-center text-sm font-bold text-white mr-3">
-                        {balance.asset.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-white">{balance.asset}</div>
-                        <div className="text-xs text-slate-400">{assetMap.get(balance.asset)?.name ?? balance.asset}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white font-medium">
-                    {formatBalance(balance.total, balance.asset)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-green-400">
-                    {formatBalance(balance.available, balance.asset)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-yellow-400">
-                    {formatBalance(balance.locked, balance.asset)}
+              {balancesInitialLoading ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-slate-400">
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="animate-spin" size={16} />
+                      Fetching balances
+                    </span>
                   </td>
                 </tr>
-              ))}
+              ) : balancesError && balances.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-red-300">
+                    {balancesError}
+                  </td>
+                </tr>
+              ) : balances.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-slate-400">
+                    No balances yet
+                  </td>
+                </tr>
+              ) : (
+                balances.map((balance) => (
+                  <tr key={balance.asset} className="hover:bg-slate-700 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 bg-slate-600 rounded-full flex items-center justify-center text-sm font-bold text-white mr-3">
+                          {balance.asset.charAt(0)}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{balance.asset}</div>
+                          <div className="text-xs text-slate-400">{assetMap.get(balance.asset)?.name ?? balance.asset}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white font-medium">
+                      {formatBalance(balance.total, balance.asset)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-green-400">
+                      {formatBalance(balance.available, balance.asset)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-yellow-400">
+                      {formatBalance(balance.locked, balance.asset)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -595,7 +752,7 @@ export default function AccountPage() {
         <div className="px-6 py-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-white">Transfer Rails</h2>
         </div>
-        {assetsLoading ? (
+        {assetsInitialLoading ? (
           <div className="p-6 text-slate-400">Loading transfer rails...</div>
         ) : (
           <div className="overflow-x-auto">

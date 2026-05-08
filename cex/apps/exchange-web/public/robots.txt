@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /automation
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://trade.animica.org/sitemap.xml
