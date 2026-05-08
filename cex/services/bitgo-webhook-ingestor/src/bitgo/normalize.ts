@@ -15,10 +15,14 @@ const COIN_TO_NETWORK: Record<string, string> = {
   btc: "BTC",
   tbtc: "BTC", // testnet
   eth: "ETH",
+  erc20: "ETH",
   teth: "ETH_SEPOLIA",
   gteth: "ETH", // goerli
+  usdt: "ETH",
   sol: "SOL",
   tsol: "SOL",
+  bsc: "BSC",
+  tbsc: "BSC",
   ltc: "LTC",
   tltc: "LTC",
   doge: "DOGE",
@@ -36,14 +40,22 @@ const COIN_TO_ASSET: Record<string, string> = {
   eth: "ETH",
   teth: "ETH",
   gteth: "ETH",
+  usdt: "USDT",
   sol: "SOL",
   tsol: "SOL",
+  bsc: "BNB",
+  tbsc: "BNB",
   ltc: "LTC",
   tltc: "LTC",
   doge: "DOGE",
   tdoge: "DOGE",
   zec: "ZEC",
   tzec: "ZEC",
+};
+
+const TOKEN_TO_ASSET: Record<string, string> = {
+  "bsc-usd": "USDT",
+  usdt: "USDT",
 };
 
 /**
@@ -81,8 +93,9 @@ async function lookupAssetNetwork(
     WHERE UPPER(a.symbol) = UPPER($1)
       AND UPPER(n.code) = UPPER($2)
       AND (
-        LOWER(an.contract_address) = LOWER($3)
-        OR (an.contract_address IS NULL AND $3 IS NULL)
+        $3::text IS NULL
+        OR LOWER(an.contract_address) = LOWER($3)
+        OR an.contract_address IS NULL
       )
       AND an.deposits_enabled = true
   `;
@@ -127,7 +140,9 @@ export async function normalizeBitGoWebhook(
 
   const coinInfo = parseBitGoCoin(payload.coin);
   const networkCode = coinInfo.network;
-  const assetSymbol = coinInfo.token || COIN_TO_ASSET[payload.coin] || payload.coin.toUpperCase();
+  const assetSymbol = coinInfo.token
+    ? TOKEN_TO_ASSET[coinInfo.token.toLowerCase()] || coinInfo.token.toUpperCase()
+    : COIN_TO_ASSET[payload.coin] || payload.coin.toUpperCase();
 
   // Determine if this is incoming (deposit)
   // BitGo marks incoming transfers with positive value in entries/outputs

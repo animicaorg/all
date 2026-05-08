@@ -14,26 +14,15 @@ import type {
   CreateWithdrawalRequest,
   Withdrawal,
   PlatformStats,
+  UsdQuote,
+  AirdropStatus,
+  AirdropTransfer,
+  ApiKeySummary,
+  CreatedApiKey,
+  TradingBot,
+  StartTradingBotRequest,
 } from '../types';
 
-
-function normalizeBalanceValue(asset: string, value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  const a = String(asset || '').toUpperCase();
-
-  // Animica uses 1e9 base units.
-  if (a === 'ANM') {
-    return Number.isInteger(value) ? value / 1e9 : value;
-  }
-
-  // UTXO assets use 1e8 base units.
-  const satLike = new Set(['BTC', 'LTC', 'DOGE', 'ZEC', 'DASH', 'BCH']);
-  if (satLike.has(a)) {
-    return Number.isInteger(value) ? value / 1e8 : value;
-  }
-
-  return value;
-}
 
 import { getApiBaseUrl } from './endpoints';
 
@@ -134,12 +123,12 @@ class ApiClient {
       bids: data.bids.map((b: any) => ({
         price: b.price,
         quantity: b.quantity,
-        total: normalizeBalanceValue(b.asset, Number(b.total)),
+        total: Number(b.total ?? 0),
       })),
       asks: data.asks.map((a: any) => ({
         price: a.price,
         quantity: a.quantity,
-        total: a.total,
+        total: Number(a.total ?? 0),
       })),
       timestamp: data.timestamp,
     };
@@ -259,15 +248,66 @@ class ApiClient {
     const { data } = await this.client.get('/me/balances');
     return data.balances.map((b: any) => ({
       asset: b.asset,
-      available: normalizeBalanceValue(b.asset, Number(b.available ?? 0)),
-      locked: normalizeBalanceValue(b.asset, Number(b.locked ?? 0)),
-      total: normalizeBalanceValue(b.asset, Number(b.total ?? 0)),
+      available: Number(b.available ?? 0),
+      locked: Number(b.locked ?? 0),
+      total: Number(b.total ?? 0),
     }));
   }
 
   async getAssets(): Promise<Asset[]> {
     const { data } = await this.client.get('/assets');
     return data.assets;
+  }
+
+  async getUsdQuotes(assets: string[]): Promise<UsdQuote[]> {
+    const { data } = await this.client.get('/prices/usd', {
+      params: { assets: assets.join(',') },
+    });
+    return data.quotes ?? [];
+  }
+
+  async getAirdropStatus(): Promise<AirdropStatus> {
+    const { data } = await this.client.get('/airdrop');
+    return data;
+  }
+
+  async claimAirdrop(): Promise<AirdropTransfer> {
+    const { data } = await this.client.post('/airdrop/claim');
+    return data;
+  }
+
+  async depositAirdrop(amountAtoms: string): Promise<AirdropTransfer> {
+    const { data } = await this.client.post('/airdrop/deposit', { amountAtoms });
+    return data;
+  }
+
+  async getApiKeys(): Promise<ApiKeySummary[]> {
+    const { data } = await this.client.get('/me/api-keys');
+    return data.apiKeys ?? [];
+  }
+
+  async createApiKey(name: string, scopes: string[]): Promise<CreatedApiKey> {
+    const { data } = await this.client.post('/me/api-keys', { name, scopes });
+    return data;
+  }
+
+  async revokeApiKey(id: string): Promise<void> {
+    await this.client.delete(`/me/api-keys/${id}`);
+  }
+
+  async getTradingBots(): Promise<TradingBot[]> {
+    const { data } = await this.client.get('/me/trading-bots');
+    return data.bots ?? [];
+  }
+
+  async startTradingBot(request: StartTradingBotRequest): Promise<TradingBot> {
+    const { data } = await this.client.post('/me/trading-bots/start', request);
+    return data.bot;
+  }
+
+  async stopTradingBot(id: string): Promise<TradingBot> {
+    const { data } = await this.client.post(`/me/trading-bots/${id}/stop`);
+    return data.bot;
   }
 
   async getDepositAddresses(assetNetworkId?: string): Promise<DepositAddress[]> {

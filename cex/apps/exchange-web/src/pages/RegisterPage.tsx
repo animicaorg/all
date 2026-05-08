@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Mail, Lock, User, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import axios from 'axios';
 import { getApiBaseUrl } from '../lib/endpoints';
+import { Seo } from '../components/Seo';
 
 const API_URL = getApiBaseUrl();
 
@@ -63,8 +64,9 @@ export default function RegisterPage() {
         withCredentials: true,
       });
 
-      // Registration successful, redirect to login
-      navigate('/login', { state: { message: 'Registration successful! Please sign in.' } });
+      navigate(`/verify-email?sent=1&email=${encodeURIComponent(formData.email)}`, {
+        state: { email: formData.email },
+      });
     } catch (err: any) {
       if (err.response?.status === 409) {
         setError('Email already taken. Please use a different address.');
@@ -80,6 +82,13 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 flex items-center justify-center px-4 py-12">
+      <Seo
+        title="Create Account | Animica Exchange"
+        description="Create an Animica Exchange account to claim ANM, deposit supported assets, manage balances, and trade live ANM markets."
+        path="/register"
+        noindex
+      />
+
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>

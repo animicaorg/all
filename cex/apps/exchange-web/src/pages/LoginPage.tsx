@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Mail, Lock, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
+import { Seo } from '../components/Seo';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuthStore();
   const navigate = useNavigate();
@@ -14,13 +16,19 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setUnverifiedEmail('');
     setLoading(true);
 
     try {
       await login(email, password);
       navigate('/markets');
-    } catch (err) {
-      setError('Login failed. Please try again.');
+    } catch (err: any) {
+      if (err.response?.data?.code === 'email_unverified') {
+        setUnverifiedEmail(err.response?.data?.email || email);
+        setError('Verify your email address before signing in.');
+      } else {
+        setError(err.response?.data?.message || 'Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -28,6 +36,13 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 flex items-center justify-center px-4 py-12">
+      <Seo
+        title="Sign In | Animica Exchange"
+        description="Sign in to Animica Exchange to manage balances, claim ANM, deposit assets, and trade live ANM markets."
+        path="/login"
+        noindex
+      />
+
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
@@ -71,6 +86,14 @@ export default function LoginPage() {
             {error && (
               <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm animate-shake">
                 {error}
+                {unverifiedEmail && (
+                  <Link
+                    to={`/verify-email?email=${encodeURIComponent(unverifiedEmail)}`}
+                    className="mt-2 block text-blue-300 hover:text-blue-200"
+                  >
+                    Resend verification email
+                  </Link>
+                )}
               </div>
             )}
 

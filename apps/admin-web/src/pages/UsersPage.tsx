@@ -133,6 +133,7 @@ export default function UsersPage() {
                   <th className="px-5 py-3">User</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Role</th>
+                  <th className="px-5 py-3">Balances</th>
                   <th className="px-5 py-3">2FA</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -152,6 +153,9 @@ export default function UsersPage() {
                       <StatusBadge value={user.status} />
                     </td>
                     <td className="px-5 py-4 text-gray-600">{user.role}</td>
+                    <td className="px-5 py-4">
+                      <BalanceTotals balances={user.balanceTotals ?? []} />
+                    </td>
                     <td className="px-5 py-4">
                       <StatusBadge value={user.twofaEnabled} />
                     </td>
@@ -261,7 +265,35 @@ function AccountSummary({
   );
 }
 
-function Balances({ balances }: { balances: Array<{ asset: string; available: string; locked: string }> }) {
+function BalanceTotals({ balances }: { balances: Array<{ asset: string; total: string }> }) {
+  if (balances.length === 0) {
+    return <span className="text-xs text-gray-400">No balance</span>;
+  }
+
+  const visibleBalances = balances.slice(0, 4);
+  const remainingCount = balances.length - visibleBalances.length;
+
+  return (
+    <div className="flex max-w-md flex-wrap gap-1.5">
+      {visibleBalances.map((balance) => (
+        <span
+          key={balance.asset}
+          className="whitespace-nowrap rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700"
+        >
+          <span className="font-medium text-gray-950">{balance.asset}</span>{' '}
+          {formatDecimal(balance.total)}
+        </span>
+      ))}
+      {remainingCount > 0 && (
+        <span className="whitespace-nowrap rounded border border-gray-200 px-2 py-1 text-xs text-gray-500">
+          +{remainingCount} more
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Balances({ balances }: { balances: Array<{ asset: string; available: string; locked: string; total: string }> }) {
   if (balances.length === 0) {
     return <EmptyState title="No available balances" />;
   }
@@ -273,6 +305,7 @@ function Balances({ balances }: { balances: Array<{ asset: string; available: st
             <th className="px-4 py-3">Asset</th>
             <th className="px-4 py-3">Available</th>
             <th className="px-4 py-3">Locked</th>
+            <th className="px-4 py-3">Total</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -281,6 +314,7 @@ function Balances({ balances }: { balances: Array<{ asset: string; available: st
               <td className="px-4 py-3 font-medium text-gray-950">{balance.asset}</td>
               <td className="px-4 py-3 text-gray-700">{formatDecimal(balance.available)}</td>
               <td className="px-4 py-3 text-gray-700">{formatDecimal(balance.locked)}</td>
+              <td className="px-4 py-3 text-gray-950">{formatDecimal(balance.total)}</td>
             </tr>
           ))}
         </tbody>

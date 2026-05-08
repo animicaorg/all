@@ -1,16 +1,20 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './lib/auth-store';
 import { WSProvider } from './components/WSProvider';
-import LandingPage from './pages/LandingPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import MarketsPage from './pages/MarketsPage';
-import TradingPage from './pages/TradingPage';
-import AccountPage from './pages/AccountPage';
-import LegalPage from './pages/LegalPage';
 import Layout from './components/Layout';
+
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+const MarketsPage = lazy(() => import('./pages/MarketsPage'));
+const TradingPage = lazy(() => import('./pages/TradingPage'));
+const AccountPage = lazy(() => import('./pages/AccountPage'));
+const AutomationPage = lazy(() => import('./pages/AutomationPage'));
+const LegalPage = lazy(() => import('./pages/LegalPage'));
+const InfoPage = lazy(() => import('./pages/InfoPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,32 +40,37 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <Router>
         <WSProvider>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/" element={!isAuthenticated ? <LandingPage /> : <Navigate to="/markets" replace />} />
-            <Route path="/login" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/markets" replace />} />
-            <Route path="/register" element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/markets" replace />} />
-            <Route path="/legal" element={<LegalPage />} />
-            
-            {/* Protected routes */}
-            <Route
-              path="/*"
-              element={
-                isAuthenticated ? (
+          <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/markets" replace />} />
+              <Route path="/register" element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/markets" replace />} />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
+
+              <Route
+                path="/*"
+                element={
                   <Layout>
                     <Routes>
                       <Route path="/markets" element={<MarketsPage />} />
                       <Route path="/trade/:symbol" element={<TradingPage />} />
-                      <Route path="/account" element={<AccountPage />} />
+                      <Route path="/anm" element={<InfoPage />} />
+                      <Route path="/anm-markets" element={<InfoPage />} />
+                      <Route path="/airdrop" element={<InfoPage />} />
+                      <Route path="/fees" element={<InfoPage />} />
+                      <Route path="/how-it-works" element={<InfoPage />} />
+                      <Route path="/security" element={<InfoPage />} />
+                      <Route path="/about" element={<InfoPage />} />
+                      <Route path="/legal" element={<LegalPage />} />
+                      <Route path="/account" element={isAuthenticated ? <AccountPage /> : <Navigate to="/login" replace />} />
+                      <Route path="/automation" element={isAuthenticated ? <AutomationPage /> : <Navigate to="/login" replace />} />
                       <Route path="*" element={<Navigate to="/markets" replace />} />
                     </Routes>
                   </Layout>
-                ) : (
-                  <Navigate to="/login" replace />
-                )
-              }
-            />
-          </Routes>
+                }
+              />
+            </Routes>
+          </Suspense>
         </WSProvider>
       </Router>
     </QueryClientProvider>

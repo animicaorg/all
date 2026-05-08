@@ -1,299 +1,204 @@
 import { Link } from 'react-router-dom';
-import { TrendingUp, Shield, Zap, Globe, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { apiClient } from '../lib/api-client';
-import type { PlatformStats } from '../types';
+import { ArrowRight, CheckCircle2, Gift, KeyRound, LineChart, Wallet } from 'lucide-react';
+import { Seo } from '../components/Seo';
+import { faqJsonLd, organizationJsonLd, websiteJsonLd } from '../lib/seo';
+
+const faqs = [
+  {
+    question: 'What is Animica Exchange?',
+    answer:
+      'Animica Exchange is a live exchange interface for ANM markets, account balances, deposits, withdrawals, airdrop claims, API keys, and built-in trading bot controls.',
+  },
+  {
+    question: 'Which ANM trading pairs are available?',
+    answer: 'Animica Exchange has public pages for BTC/ANM, DOGE/ANM, LTC/ANM, and ZEC/ANM markets.',
+  },
+  {
+    question: 'Can I claim ANM?',
+    answer: 'The exchange includes an account-based ANM airdrop claim flow when the airdrop is enabled and funded.',
+  },
+];
+
+const pairLinks = [
+  { label: 'BTC/ANM', to: '/trade/BTC-ANM', detail: 'Trade ANM against Bitcoin' },
+  { label: 'DOGE/ANM', to: '/trade/DOGE-ANM', detail: 'Trade ANM against Dogecoin' },
+  { label: 'LTC/ANM', to: '/trade/LTC-ANM', detail: 'Trade ANM against Litecoin' },
+  { label: 'ZEC/ANM', to: '/trade/ZEC-ANM', detail: 'Trade ANM against Zcash' },
+];
 
 export default function LandingPage() {
-  const [stats, setStats] = useState<PlatformStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const data = await apiClient.getStats();
-        setStats(data);
-      } catch (error) {
-        console.error('Failed to load platform stats:', error);
-        // Keep stats null to show fallback message
-      } finally {
-        setStatsLoading(false);
-      }
-    };
-
-    fetchStats();
-  }, []);
-
-  const formatVolume = (volume: number) => {
-    if (volume >= 1_000_000_000) {
-      return `$${(volume / 1_000_000_000).toFixed(1)}B`;
-    } else if (volume >= 1_000_000) {
-      return `$${(volume / 1_000_000).toFixed(1)}M`;
-    } else if (volume >= 1_000) {
-      return `$${(volume / 1_000).toFixed(1)}K`;
-    } else if (volume > 0) {
-      return `$${volume.toFixed(0)}`;
-    } else {
-      return 'Coming Soon';
-    }
-  };
-
-  const formatTraders = (traders: number) => {
-    if (traders >= 1_000_000) {
-      return `${(traders / 1_000_000).toFixed(1)}M+`;
-    } else if (traders >= 1_000) {
-      return `${(traders / 1_000).toFixed(1)}K+`;
-    } else if (traders > 0) {
-      return `${traders}+`;
-    } else {
-      return 'Growing';
-    }
-  };
-
-  const formatUptime = (uptime: number | null | undefined) => {
-    if (typeof uptime !== 'number' || !Number.isFinite(uptime)) {
-      return 'N/A';
-    }
-    return `${uptime.toFixed(1)}%`;
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl animate-pulse delay-1000"></div>
-      </div>
+    <div className="min-h-screen bg-slate-950 text-white">
+      <Seo
+        title="Animica Exchange | Trade ANM, Claim ANM, Explore Live Markets"
+        description="Animica Exchange is a live ANM exchange for BTC/ANM, DOGE/ANM, LTC/ANM, and ZEC/ANM trading, ANM claims, deposits, API keys, and exchange tools."
+        path="/"
+        structuredData={[websiteJsonLd(), organizationJsonLd(), faqJsonLd(faqs)]}
+      />
 
-      {/* Navigation */}
-      <nav className="relative z-10 border-b border-slate-800/50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
-                <span className="text-xl font-bold text-white">A</span>
-              </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                Animica Exchange
-              </span>
-            </div>
-            <div className="flex items-center gap-4">
-              <Link
-                to="/login"
-                className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
-              >
-                Sign In
-              </Link>
-              <Link
-                to="/register"
-                className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-lg shadow-lg shadow-blue-500/30 transition-all transform hover:scale-105"
-              >
-                Get Started
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      {/* Hero Section */}
-      <section className="relative z-10 pt-20 pb-32 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center space-y-8">
-            <h1 className="text-5xl sm:text-6xl md:text-7xl font-bold">
-              <span className="block text-white mb-2">Trade Animica</span>
-              <span className="block bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                The Future of Digital Assets
-              </span>
-            </h1>
-            
-            <p className="text-xl text-slate-400 max-w-3xl mx-auto">
-              Experience lightning-fast trading with institutional-grade security. 
-              Buy, sell, and trade Animica tokens with confidence on our cutting-edge platform.
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-8">
-              <Link
-                to="/register"
-                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-lg font-medium rounded-xl shadow-2xl shadow-blue-500/40 transition-all transform hover:scale-105 flex items-center justify-center gap-2"
-              >
-                Start Trading Now
-                <ArrowRight size={20} />
-              </Link>
-              <Link
-                to="/legal"
-                className="w-full sm:w-auto px-8 py-4 bg-slate-800/50 hover:bg-slate-800 text-white text-lg font-medium rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2"
-              >
-                Learn More
-              </Link>
-            </div>
-
-            {/* Trust Indicators */}
-            <div className="flex flex-wrap items-center justify-center gap-8 pt-12 text-sm text-slate-400">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="text-green-500" size={20} />
-                <span>Secure Trading</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="text-green-500" size={20} />
-                <span>24/7 Support</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="text-green-500" size={20} />
-                <span>Fast Execution</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features Section */}
-      <section className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 bg-slate-900/30 backdrop-blur-sm border-y border-slate-800/50">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-white mb-4">
-              Why Choose Animica Exchange?
-            </h2>
-            <p className="text-xl text-slate-400">
-              Built for traders who demand the best
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {/* Feature 1 */}
-            <div className="bg-slate-800/30 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6 hover:bg-slate-800/50 transition-all group">
-              <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-all">
-                <TrendingUp className="text-blue-400" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Advanced Trading</h3>
-              <p className="text-slate-400">
-                Professional trading tools with real-time charts and order books
-              </p>
-            </div>
-
-            {/* Feature 2 */}
-            <div className="bg-slate-800/30 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6 hover:bg-slate-800/50 transition-all group">
-              <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4 group-hover:bg-purple-500/20 transition-all">
-                <Shield className="text-purple-400" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Bank-Grade Security</h3>
-              <p className="text-slate-400">
-                Multi-layer security with cold storage and 2FA protection
-              </p>
-            </div>
-
-            {/* Feature 3 */}
-            <div className="bg-slate-800/30 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6 hover:bg-slate-800/50 transition-all group">
-              <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center mb-4 group-hover:bg-green-500/20 transition-all">
-                <Zap className="text-green-400" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Lightning Fast</h3>
-              <p className="text-slate-400">
-                Ultra-low latency matching engine for instant order execution
-              </p>
-            </div>
-
-            {/* Feature 4 */}
-            <div className="bg-slate-800/30 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6 hover:bg-slate-800/50 transition-all group">
-              <div className="w-12 h-12 rounded-xl bg-pink-500/10 flex items-center justify-center mb-4 group-hover:bg-pink-500/20 transition-all">
-                <Globe className="text-pink-400" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Global Access</h3>
-              <p className="text-slate-400">
-                Trade from anywhere with our web and mobile platforms
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Stats Section */}
-      <section className="relative z-10 py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-3 gap-8 text-center">
-            <div className="space-y-2">
-              <div className="text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                {statsLoading ? '...' : stats ? formatVolume(stats.volume24h) : 'N/A'}
-              </div>
-              <div className="text-slate-400">24h Trading Volume</div>
-            </div>
-            <div className="space-y-2">
-              <div className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                {statsLoading ? '...' : stats ? formatTraders(stats.activeTraders) : 'N/A'}
-              </div>
-              <div className="text-slate-400">Active Traders</div>
-            </div>
-            <div className="space-y-2">
-              <div className="text-5xl font-bold bg-gradient-to-r from-pink-400 to-blue-400 bg-clip-text text-transparent">
-                {statsLoading ? '...' : stats ? formatUptime(stats.uptimePercentage) : 'N/A'}
-              </div>
-              <div className="text-slate-400">Uptime</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-r from-blue-900/20 to-purple-900/20 border-t border-slate-800/50">
-        <div className="max-w-4xl mx-auto text-center space-y-8">
-          <h2 className="text-4xl md:text-5xl font-bold text-white">
-            Ready to Start Trading?
-          </h2>
-          <p className="text-xl text-slate-400">
-            Join thousands of traders already using Animica Exchange
-          </p>
-          <Link
-            to="/register"
-            className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-lg font-medium rounded-xl shadow-2xl shadow-blue-500/40 transition-all transform hover:scale-105"
-          >
-            Create Your Account
-            <ArrowRight size={20} />
+      <header className="border-b border-slate-800 bg-slate-950/95">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <Link to="/" className="flex items-center gap-3">
+            <img src="/animica-mark.svg" alt="" className="h-9 w-9" />
+            <span className="text-lg font-bold text-white">Animica Exchange</span>
           </Link>
+          <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
+            <Link to="/markets" className="hover:text-white">Markets</Link>
+            <Link to="/anm" className="hover:text-white">ANM</Link>
+            <Link to="/airdrop" className="hover:text-white">Airdrop</Link>
+            <Link to="/fees" className="hover:text-white">Fees</Link>
+            <Link to="/security" className="hover:text-white">Security</Link>
+          </nav>
+          <div className="flex items-center gap-3">
+            <Link to="/login" className="hidden text-sm font-medium text-slate-300 hover:text-white sm:inline">
+              Sign In
+            </Link>
+            <Link to="/register" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+              Create Account
+            </Link>
+          </div>
         </div>
-      </section>
+      </header>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-800/50 py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                  <span className="text-sm font-bold text-white">A</span>
+      <main>
+        <section className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 md:py-20 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
+          <div>
+            <p className="mb-4 text-sm font-semibold uppercase tracking-wider text-blue-300">Live ANM trading</p>
+            <h1 className="max-w-4xl text-4xl font-bold leading-tight text-white md:text-6xl">
+              Trade ANM on the Animica Exchange
+            </h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
+              Animica Exchange is an emerging altcoin exchange ecosystem with live ANM markets,
+              account-based claims, deposits, API keys, and trader tools built around the Animica product roadmap.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link
+                to="/markets"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-500"
+              >
+                Explore Live Markets
+                <ArrowRight size={16} />
+              </Link>
+              <Link
+                to="/airdrop"
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-600 px-5 py-3 text-sm font-semibold text-slate-100 hover:bg-slate-900"
+              >
+                Claim ANM
+              </Link>
+            </div>
+            <div className="mt-8 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+              {['BTC/ANM, DOGE/ANM, LTC/ANM, and ZEC/ANM markets', 'ANM airdrop claim flow for accounts', 'Public market pages with order book and recent trades', 'Scoped API keys and built-in bot modes'].map((item) => (
+                <div key={item} className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 shrink-0 text-green-400" size={16} />
+                  <span>{item}</span>
                 </div>
-                <span className="font-bold text-white">Animica</span>
-              </div>
-              <p className="text-sm text-slate-400">
-                The next generation cryptocurrency exchange
-              </p>
-            </div>
-            
-            <div>
-              <h4 className="font-semibold text-white mb-4">Products</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li><Link to="/markets" className="hover:text-white transition-colors">Markets</Link></li>
-                <li><Link to="/trade/ANIMICA-USDT" className="hover:text-white transition-colors">Trading</Link></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-semibold text-white mb-4">Company</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li><Link to="/legal" className="hover:text-white transition-colors">About Us</Link></li>
-                <li><Link to="/legal" className="hover:text-white transition-colors">Legal</Link></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-semibold text-white mb-4">Support</h4>
-              <ul className="space-y-2 text-sm text-slate-400">
-                <li><Link to="/legal" className="hover:text-white transition-colors">Help Center</Link></li>
-                <li><Link to="/legal" className="hover:text-white transition-colors">Contact Us</Link></li>
-              </ul>
+              ))}
             </div>
           </div>
-          
-          <div className="pt-8 border-t border-slate-800/50 text-center text-sm text-slate-500">
-            <p>&copy; 2026 Animica Exchange. All rights reserved.</p>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-5">
+            <h2 className="text-xl font-semibold text-white">Start with a live ANM pair</h2>
+            <div className="mt-5 space-y-3">
+              {pairLinks.map((pair) => (
+                <Link
+                  key={pair.label}
+                  to={pair.to}
+                  className="block rounded-md border border-slate-800 bg-slate-950 px-4 py-3 hover:border-blue-500/60"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="font-semibold text-white">{pair.label}</div>
+                      <div className="mt-1 text-sm text-slate-400">{pair.detail}</div>
+                    </div>
+                    <ArrowRight className="text-slate-500" size={16} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-y border-slate-800 bg-slate-900/70">
+          <div className="mx-auto grid max-w-7xl gap-5 px-4 py-12 sm:px-6 md:grid-cols-4 lg:px-8">
+            {[
+              { icon: LineChart, heading: 'Live Markets', body: 'Explore ANM pair pages with charting, order book, trades, and order entry.' },
+              { icon: Gift, heading: 'Claim ANM', body: 'Use the account-based airdrop panel when the claim flow is enabled.' },
+              { icon: Wallet, heading: 'Deposit Assets', body: 'View transfer rails, deposit addresses, withdrawals, and balances from Account.' },
+              { icon: KeyRound, heading: 'API and Bots', body: 'Generate scoped API keys and run one built-in bot mode per account.' },
+            ].map((feature) => (
+              <div key={feature.heading} className="rounded-lg border border-slate-800 bg-slate-950 p-5">
+                <feature.icon className="text-blue-300" size={22} />
+                <h2 className="mt-4 text-lg font-semibold text-white">{feature.heading}</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">{feature.body}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-1">
+              <h2 className="text-3xl font-bold text-white">How to start</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                Move from market discovery to an account only when you are ready to claim, deposit, or place orders.
+              </p>
+            </div>
+            <div className="grid gap-4 lg:col-span-2">
+              {[
+                ['1', 'Explore ANM markets', 'Open the public markets page or a pair page like BTC/ANM.'],
+                ['2', 'Create your account', 'Register to unlock balances, claims, deposits, orders, API keys, and automation.'],
+                ['3', 'Claim, deposit, or trade', 'Use the Account page for ANM claims and transfers, then place orders from pair pages.'],
+              ].map(([number, heading, body]) => (
+                <div key={number} className="flex gap-4 rounded-lg border border-slate-800 bg-slate-900 p-5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-600 text-sm font-bold text-white">{number}</div>
+                  <div>
+                    <h3 className="font-semibold text-white">{heading}</h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-400">{body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-7xl px-4 pb-14 sm:px-6 lg:px-8">
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-7 text-center">
+            <h2 className="text-3xl font-bold text-white">Start trading ANM today</h2>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              Explore live ANM markets, create an account, claim ANM when eligible, and use the exchange tools from one place.
+            </p>
+            <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+              <Link to="/register" className="rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-500">
+                Create Your Account
+              </Link>
+              <Link to="/anm-markets" className="rounded-md border border-slate-600 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-900">
+                View Trading Pairs
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-4xl px-4 pb-16 sm:px-6 lg:px-8">
+          <h2 className="text-2xl font-bold text-white">FAQ</h2>
+          <div className="mt-4 divide-y divide-slate-800 rounded-lg border border-slate-800 bg-slate-900">
+            {faqs.map((faq) => (
+              <div key={faq.question} className="p-5">
+                <h3 className="font-semibold text-white">{faq.question}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-400">{faq.answer}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t border-slate-800 px-4 py-8 text-sm text-slate-500 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <p>&copy; {new Date().getFullYear()} Animica Exchange. All rights reserved.</p>
+          <div className="flex flex-wrap gap-4">
+            <Link to="/about" className="hover:text-slate-300">About</Link>
+            <Link to="/how-it-works" className="hover:text-slate-300">How It Works</Link>
+            <Link to="/security" className="hover:text-slate-300">Security</Link>
+            <Link to="/legal" className="hover:text-slate-300">Legal</Link>
           </div>
         </div>
       </footer>

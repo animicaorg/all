@@ -18,6 +18,10 @@ import { createAssetsRouter } from "./routes/assets.js";
 import { createOrdersRouter } from "./routes/orders.js";
 import { createStatsRouter } from "./routes/stats.js";
 import { createTransfersRouter } from "./routes/transfers.js";
+import { createPricesRouter } from "./routes/prices.js";
+import { createAirdropRouter } from "./routes/airdrop.js";
+import { createApiKeysRouter } from "./routes/api_keys.js";
+import { createBotsRouter, startTradingBotRunner } from "./routes/bots.js";
 import { createWebSocketServer } from "./websocket.js";
 
 const env = loadEnv(
@@ -130,6 +134,13 @@ const start = async () => {
   const assetsRouter = createAssetsRouter(pgPool);
   const ordersRouter = createOrdersRouter(pgPool, nats, env.AUTH_SERVICE_URL);
   const statsRouter = createStatsRouter(pgPool);
+  const pricesRouter = createPricesRouter(pgPool);
+  const airdropRouter = createAirdropRouter(pgPool, {
+    authServiceUrl: env.AUTH_SERVICE_URL,
+    adminApiKey: env.ADMIN_API_KEY,
+  });
+  const apiKeysRouter = createApiKeysRouter(pgPool, env.AUTH_SERVICE_URL);
+  const botsRouter = createBotsRouter(pgPool, nats, env.AUTH_SERVICE_URL);
   const transfersRouter = createTransfersRouter(pgPool, {
     authServiceUrl: env.AUTH_SERVICE_URL,
     withdrawalsServiceUrl: env.WITHDRAWALS_SERVICE_URL,
@@ -147,6 +158,10 @@ const start = async () => {
   app.use(assetsRouter);
   app.use(ordersRouter);
   app.use(statsRouter);
+  app.use(pricesRouter);
+  app.use(airdropRouter);
+  app.use(apiKeysRouter);
+  app.use(botsRouter);
   app.use(transfersRouter);
 
   // Preserve /api/v1 compatibility expected by web clients.
@@ -156,6 +171,10 @@ const start = async () => {
   app.use("/api/v1", assetsRouter);
   app.use("/api/v1", ordersRouter);
   app.use("/api/v1", statsRouter);
+  app.use("/api/v1", pricesRouter);
+  app.use("/api/v1", airdropRouter);
+  app.use("/api/v1", apiKeysRouter);
+  app.use("/api/v1", botsRouter);
   app.use("/api/v1", transfersRouter);
 
   // Start HTTP server
@@ -199,11 +218,13 @@ const start = async () => {
 
   // Start WebSocket server
   const wss = createWebSocketServer(server, pgPool, nats);
+  const tradingBotRunner = startTradingBotRunner(pgPool, nats);
   logger.info({ path: "/ws" }, "WebSocket server started");
 
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down gracefully...");
+    clearInterval(tradingBotRunner);
     wss.close();
     await nats.drain();
     await pgPool.end();

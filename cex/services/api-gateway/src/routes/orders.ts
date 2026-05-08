@@ -4,7 +4,11 @@ import { NatsConnection } from "nats";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { jsonCodec, subjects } from "@cex/common";
-import { createRequireAuth } from "./authenticated.js";
+import {
+  createApiKeyVerifier,
+  createRequireAuth,
+  requireApiKeyScope,
+} from "./authenticated.js";
 
 
 const router = Router();
@@ -21,11 +25,15 @@ const createOrderSchema = z.object({
 });
 
 export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServiceUrl: string): any {
-  const requireAuth = createRequireAuth(authServiceUrl);
+  const requireAuth = createRequireAuth(authServiceUrl, {
+    verifyApiKey: createApiKeyVerifier(pgPool),
+  });
+  const requireReadScope = requireApiKeyScope("read");
+  const requireTradeScope = requireApiKeyScope("trade");
   /**
    * POST /orders - Create a new order
    */
-  router.post("/orders", requireAuth, async (req: any, res) => {
+  router.post("/orders", requireAuth, requireTradeScope, async (req: any, res) => {
     try {
       const body = createOrderSchema.parse(req.body);
       const userId = req.userId;
@@ -145,7 +153,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
   /**
    * DELETE /orders/:id - Cancel an order
    */
-  router.delete("/orders/:id", requireAuth, async (req: any, res) => {
+  router.delete("/orders/:id", requireAuth, requireTradeScope, async (req: any, res) => {
     try {
       const orderId = req.params.id;
       const userId = req.userId;
@@ -162,7 +170,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
 
       const order = orderResult.rows[0];
 
-      if (order.status !== "ACCEPTED") {
+      if (order.status !== "ACCEPTED" && order.status !== "PARTIAL_FILL") {
         return res.status(400).json({ error: "Order cannot be cancelled", status: order.status });
       }
 
@@ -194,7 +202,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
   /**
    * GET /me/orders - Get user's orders
    */
-  router.get("/me/orders", requireAuth, async (req: any, res) => {
+  router.get("/me/orders", requireAuth, requireReadScope, async (req: any, res) => {
     try {
       res.set("Cache-Control", "no-store");
       const userId = req.userId;
@@ -268,7 +276,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
   /**
    * GET /me/trades - Get user's trade history
    */
-  router.get("/me/trades", requireAuth, async (req: any, res) => {
+  router.get("/me/trades", requireAuth, requireReadScope, async (req: any, res) => {
     try {
       const userId = req.userId;
       const symbol = req.query.symbol as string | undefined;
@@ -333,7 +341,7 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
   /**
    * GET /me/balances - Get user's balances
    */
-  router.get("/me/balances", requireAuth, async (req: any, res) => {
+  router.get("/me/balances", requireAuth, requireReadScope, async (req: any, res) => {
     try {
       res.set("Cache-Control", "no-store");
       const userId = req.userId;
@@ -342,11 +350,11 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
         `
         SELECT
           asset,
-          COALESCE(available_atoms, 0) AS available,
-          COALESCE(locked_atoms, 0) AS locked
+          COALESCE(available, 0) AS available,
+          COALESCE(locked, 0) AS locked
         FROM balances
         WHERE account_id = $1
-          AND (COALESCE(available_atoms, 0) > 0 OR COALESCE(locked_atoms, 0) > 0)
+          AND (COALESCE(available, 0) > 0 OR COALESCE(locked, 0) > 0)
         ORDER BY asset
       `,
         [`user:${userId}`]

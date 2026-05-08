@@ -423,8 +423,7 @@ export function createWalletsRouter(
         const insertedRows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
           `INSERT INTO wallets (provider, wallet_id, asset_network_id, status, metadata)
            VALUES ($1, $2, $3::uuid, 'ACTIVE', $4::jsonb)
-           ON CONFLICT (provider, wallet_id) DO UPDATE SET
-             asset_network_id = EXCLUDED.asset_network_id,
+           ON CONFLICT (provider, wallet_id, asset_network_id) DO UPDATE SET
              status = 'ACTIVE',
              metadata = COALESCE(wallets.metadata, '{}'::jsonb) || EXCLUDED.metadata,
              updated_at = NOW()

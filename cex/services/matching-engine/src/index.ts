@@ -10,7 +10,6 @@ import express from "express";
 import { createLogger, createPgPool, connectNats, createRedis, jsonCodec, subjects } from "@cex/common";
 import { loadEnv } from "./config.js";
 import { MarketWorker } from "./workers/market_worker.js";
-import { OutboxPublisher } from "./outbox/publisher.js";
 import { decimalToAtoms } from "./engine/deterministic.js";
 import { serializeError } from "./utils/json.js";
 import type { OrderSide, TimeInForce } from "./engine/types.js";
@@ -47,12 +46,6 @@ const start = async () => {
 
   const server = app.listen(env.PORT, "0.0.0.0", () => {
     logger.info({ port: env.PORT }, "matching-engine listening");
-  });
-
-  // Start outbox publisher
-  const outboxPublisher = new OutboxPublisher(pgPool, nats, logger);
-  outboxPublisher.start().catch((error) => {
-    logger.error({ error }, "Outbox publisher error");
   });
 
   const workersByMarketId = new Map<string, MarketWorker>();
@@ -125,7 +118,7 @@ const start = async () => {
             clientOrderId: command.client_order_id,
             marketId: target.marketId,
             side: toSide(command.side),
-            sizeAtoms: decimalToAtoms(String(command.quantity), 8),
+            sizeAtoms: decimalToAtoms(String(command.quantity), target.worker.getBaseDecimals()),
             idempotencyKey: command.idempotency_key ?? command.event_id,
           });
           continue;
@@ -137,7 +130,7 @@ const start = async () => {
           marketId: target.marketId,
           side: toSide(command.side),
           priceAtoms: decimalToAtoms(String(command.price), 8),
-          sizeAtoms: decimalToAtoms(String(command.quantity), 8),
+          sizeAtoms: decimalToAtoms(String(command.quantity), target.worker.getBaseDecimals()),
           timeInForce: toTimeInForce(orderType),
           postOnly: orderType === "POST_ONLY",
           idempotencyKey: command.idempotency_key ?? command.event_id,
@@ -173,7 +166,6 @@ const start = async () => {
   const shutdown = async () => {
     logger.info("Shutting down matching engine");
     clearInterval(marketRefreshInterval);
-    outboxPublisher.stop();
     await nats.drain();
     await pgPool.end();
     redis.disconnect();

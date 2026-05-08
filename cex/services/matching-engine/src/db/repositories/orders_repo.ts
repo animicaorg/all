@@ -8,7 +8,7 @@ import { atomsToDecimal, decimalToAtoms } from "../../engine/deterministic.js";
 import type { Order, OrderSide, OrderType, TimeInForce, OrderStatus } from "../../engine/types.js";
 
 export class OrdersRepo {
-  constructor(private client: PoolClient) {}
+  constructor(private client: PoolClient, private baseDecimals = 8) {}
 
   /**
    * Create a new order (NEW -> ACCEPTED)
@@ -28,7 +28,7 @@ export class OrdersRepo {
   }): Promise<Order> {
     const orderId = uuidv4();
     const price = atomsToDecimal(order.priceAtoms, 8);
-    const size = atomsToDecimal(order.sizeAtoms, 8);
+    const size = atomsToDecimal(order.sizeAtoms, this.baseDecimals);
 
     await this.client.query(
       `INSERT INTO orders (
@@ -86,8 +86,8 @@ export class OrdersRepo {
     remainingAtoms: bigint,
     status: OrderStatus
   ): Promise<void> {
-    const filled = atomsToDecimal(filledAtoms, 8);
-    const remaining = atomsToDecimal(remainingAtoms, 8);
+    const filled = atomsToDecimal(filledAtoms, this.baseDecimals);
+    const remaining = atomsToDecimal(remainingAtoms, this.baseDecimals);
     const completedAt =
       status === "FILLED" ||
       status === "CANCELED" ||
@@ -205,9 +205,9 @@ export class OrdersRepo {
       orderType: row.order_type as OrderType,
       timeInForce: row.time_in_force as TimeInForce,
       priceAtoms: decimalToAtoms(row.price as string, 8),
-      sizeAtoms: decimalToAtoms(row.quantity as string, 8),
-      filledAtoms: decimalToAtoms(row.filled_quantity as string, 8),
-      remainingAtoms: decimalToAtoms(row.remaining_quantity as string, 8),
+      sizeAtoms: decimalToAtoms(row.quantity as string, this.baseDecimals),
+      filledAtoms: decimalToAtoms(row.filled_quantity as string, this.baseDecimals),
+      remainingAtoms: decimalToAtoms(row.remaining_quantity as string, this.baseDecimals),
       postOnly: row.post_only as boolean,
       status: row.status as OrderStatus,
       acceptedAt: new Date(row.accepted_at as string),

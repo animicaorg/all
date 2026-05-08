@@ -61,7 +61,7 @@ export class NetworksRepo {
   }
 
   async getWallet(assetNetworkId: string, walletType: string = "HOT"): Promise<Wallet | null> {
-    const result = await this.client.query(
+    const direct = await this.client.query(
       `SELECT
         id,
         asset_network_id,
@@ -78,7 +78,39 @@ export class NetworksRepo {
       LIMIT 1`,
       [assetNetworkId, walletType]
     );
-    return result.rows.length > 0 ? this.mapWalletRow(result.rows[0]) : null;
+    if (direct.rows.length > 0) {
+      return this.mapWalletRow(direct.rows[0]);
+    }
+
+    const shared = await this.client.query(
+      `WITH target_network AS (
+        SELECT LOWER(COALESCE(NULLIF(metadata->>'address_coin', ''), bitgo_coin)) AS address_coin
+        FROM asset_networks
+        WHERE id = $1
+      )
+      SELECT
+        wallets.id,
+        wallets.asset_network_id,
+        COALESCE(wallets.metadata->>'purpose', $2) AS wallet_type,
+        wallets.provider,
+        wallets.wallet_id AS provider_wallet_id,
+        COALESCE(LOWER(wallets.status) NOT IN ('disabled', 'inactive', 'closed', 'paused'), true) AS enabled,
+        wallets.metadata
+      FROM wallets
+      JOIN asset_networks wallet_asset_networks
+        ON wallet_asset_networks.id = wallets.asset_network_id
+      JOIN target_network
+        ON target_network.address_coin = LOWER(COALESCE(NULLIF(wallet_asset_networks.metadata->>'address_coin', ''), wallet_asset_networks.bitgo_coin))
+      WHERE wallets.asset_network_id <> $1
+        AND wallets.provider = 'BITGO'
+        AND COALESCE(wallets.metadata->>'purpose', $2) = $2
+        AND COALESCE(LOWER(wallets.status) NOT IN ('disabled', 'inactive', 'closed', 'paused'), true)
+      ORDER BY wallets.created_at ASC
+      LIMIT 1`,
+      [assetNetworkId, walletType]
+    );
+
+    return shared.rows.length > 0 ? this.mapWalletRow(shared.rows[0]) : null;
   }
 
   private mapAssetNetworkRow(row: any): AssetNetwork {

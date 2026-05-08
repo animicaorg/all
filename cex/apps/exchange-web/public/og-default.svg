@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Animica Exchange social preview">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect x="72" y="72" width="1056" height="486" rx="28" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <path d="M192 430 306 200l114 230h-54l-24-51h-72l-24 51h-54Zm114-151-27 58h54l-27-58Z" fill="#60a5fa"/>
+  <text x="470" y="260" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="700">Animica Exchange</text>
+  <text x="470" y="332" fill="#cbd5e1" font-family="Inter, Arial, sans-serif" font-size="34">Trade ANM against BTC, DOGE, LTC, and ZEC</text>
+  <text x="470" y="398" fill="#93c5fd" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="600">Live ANM markets • Claim flow • Account tools</text>
+</svg>

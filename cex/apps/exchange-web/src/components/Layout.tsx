@@ -10,7 +10,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuthStore();
+  const { isAuthenticated, user, logout } = useAuthStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
@@ -20,7 +20,16 @@ export default function Layout({ children }: LayoutProps) {
 
   const navItems = [
     { path: '/markets', label: 'Markets' },
-    { path: '/account', label: 'Account' }];
+    { path: '/anm', label: 'ANM' },
+    { path: '/airdrop', label: 'Airdrop' },
+    { path: '/fees', label: 'Fees' },
+    ...(isAuthenticated
+      ? [
+          { path: '/account', label: 'Account' },
+          { path: '/automation', label: 'Automation' },
+        ]
+      : []),
+  ];
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col">
@@ -49,14 +58,27 @@ export default function Layout({ children }: LayoutProps) {
               </nav>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-slate-400 hidden sm:inline">{user?.email}</span>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white"
-              >
-                <LogOut size={16} />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
+              {isAuthenticated ? (
+                <>
+                  <span className="text-sm text-slate-400 hidden sm:inline">{user?.email}</span>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white"
+                  >
+                    <LogOut size={16} />
+                    <span className="hidden sm:inline">Logout</span>
+                  </button>
+                </>
+              ) : (
+                <div className="hidden items-center gap-3 sm:flex">
+                  <Link to="/login" className="text-sm font-medium text-slate-300 hover:text-white">
+                    Sign In
+                  </Link>
+                  <Link to="/register" className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+                    Create Account
+                  </Link>
+                </div>
+              )}
               <button
                 className="md:hidden"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -84,6 +106,24 @@ export default function Layout({ children }: LayoutProps) {
                   {item.label}
                 </Link>
               ))}
+              {!isAuthenticated && (
+                <div className="grid grid-cols-2 gap-2 px-3 pt-2">
+                  <Link
+                    to="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="rounded-md border border-slate-600 px-3 py-2 text-center text-sm font-medium text-slate-200"
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    to="/register"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="rounded-md bg-blue-600 px-3 py-2 text-center text-sm font-semibold text-white"
+                  >
+                    Create Account
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         )}

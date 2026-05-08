@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import type { Market, Balance, CreateOrderRequest } from '../types';
@@ -9,6 +10,8 @@ interface OrderEntryProps {
   onSubmit: (order: CreateOrderRequest) => Promise<any>;
   isSubmitting: boolean;
   referencePrice?: number;
+  usdQuotes?: Record<string, number | undefined>;
+  isAuthenticated?: boolean;
 }
 
 type OrderMode = 'limit' | 'market';
@@ -27,15 +30,49 @@ function roundToStep(value: number, step: number | undefined, direction: 'down' 
   return (direction === 'down' ? Math.floor(scaled) : Math.ceil(scaled)) * step;
 }
 
-export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEntryProps) {
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'USD unavailable';
+  if (value < 0.01) return `$${value.toFixed(6)}`;
+  return value.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatAsset(value: number, asset: string, decimals = 8): string {
+  return `${value.toFixed(decimals)} ${asset}`;
+}
+
+function displayDecimals(asset: string): number {
+  if (asset === 'USDT' || asset === 'USDC') return 2;
+  if (asset === 'ANM') return 8;
+  return 8;
+}
+
+export function OrderEntry({ market, balances, onSubmit, isSubmitting, usdQuotes = {}, isAuthenticated = true }: OrderEntryProps) {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderMode, setOrderMode] = useState<OrderMode>('limit');
+  const [valueDisplay, setValueDisplay] = useState<'asset' | 'usd'>('asset');
   const [price, setPrice] = useState('');
   const [quantity, setQuantity] = useState('');
 
   const baseBalance = balances.find((b) => b.asset === market.baseAsset);
   const quoteBalance = balances.find((b) => b.asset === market.quoteAsset);
   const priceDecimals = stepDecimals(market.priceTick);
+  const parsedPrice = parseFloat(price);
+  const parsedQuantity = parseFloat(quantity);
+  const baseUsd = usdQuotes[market.baseAsset];
+  const directQuoteUsd = usdQuotes[market.quoteAsset];
+  const impliedQuoteUsd =
+    market.quoteAsset === 'ANM' && Number.isFinite(parsedPrice) && parsedPrice > 0 && baseUsd
+      ? baseUsd / parsedPrice
+      : directQuoteUsd;
+  const amountUsd =
+    Number.isFinite(parsedQuantity) && parsedQuantity > 0 && baseUsd
+      ? parsedQuantity * baseUsd
+      : null;
 
   const availableBalance = useMemo(() => {
     return side === 'buy'
@@ -57,6 +94,25 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
     return (total * feeBps) / 10000;
   }, [total, market.makerFeeBps]);
 
+  const totalUsd = useMemo(() => {
+    if (orderMode === 'limit' && total > 0) {
+      if (impliedQuoteUsd) return total * impliedQuoteUsd;
+      return amountUsd;
+    }
+    return amountUsd;
+  }, [amountUsd, impliedQuoteUsd, orderMode, total]);
+
+  const feeUsd = estimatedFee > 0 && impliedQuoteUsd ? estimatedFee * impliedQuoteUsd : null;
+  const availableAsset = side === 'buy' ? market.quoteAsset : market.baseAsset;
+  const availableUsd =
+    side === 'buy'
+      ? impliedQuoteUsd
+        ? availableBalance * impliedQuoteUsd
+        : null
+      : baseUsd
+        ? availableBalance * baseUsd
+        : null;
+
   const handleSetPercentage = (percent: number) => {
     if (!availableBalance) return;
 
@@ -66,11 +122,11 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
         if (!Number.isFinite(pr) || pr <= 0) return;
         const maxQty = (availableBalance * percent) / pr;
         const rounded = roundToStep(maxQty, market.sizeStep, 'down');
-        setQuantity(rounded.toFixed(8));
+        setQuantity(rounded.toFixed(displayDecimals(market.baseAsset)));
       }
     } else {
       const qty = roundToStep(availableBalance * percent, market.sizeStep, 'down');
-      setQuantity(qty.toFixed(8));
+      setQuantity(qty.toFixed(displayDecimals(market.baseAsset)));
     }
   };
 
@@ -121,6 +177,11 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
   };
 
   const handleSubmit = async () => {
+    if (!isAuthenticated) {
+      toast.error('Create an account to place orders');
+      return;
+    }
+
     const error = validate();
     if (error) {
       toast.error(error);
@@ -130,7 +191,7 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
     const order: CreateOrderRequest = {
       symbol: market.symbol,
       side,
-      type: orderMode,
+      type: orderMode.toUpperCase() as 'LIMIT' | 'MARKET',
       quantity: parseFloat(quantity),
       clientOrderId: uuidv4(),
       idempotencyKey: uuidv4(),
@@ -200,6 +261,31 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
         </button>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => setValueDisplay('asset')}
+          className={`py-2 rounded text-sm font-medium transition-colors ${
+            valueDisplay === 'asset'
+              ? 'bg-slate-600 text-white'
+              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+          }`}
+        >
+          Asset
+        </button>
+        <button
+          type="button"
+          onClick={() => setValueDisplay('usd')}
+          className={`py-2 rounded text-sm font-medium transition-colors ${
+            valueDisplay === 'usd'
+              ? 'bg-slate-600 text-white'
+              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+          }`}
+        >
+          USD
+        </button>
+      </div>
+
       {orderMode === 'limit' && (
         <div className="mb-4">
           <label className="block text-sm text-slate-400 mb-2">
@@ -213,6 +299,12 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
             step={market.priceTick || 0.01}
             className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          {Number.isFinite(parsedPrice) && parsedPrice > 0 && impliedQuoteUsd && (
+            <div className="mt-2 flex justify-between text-xs text-slate-400">
+              <span>Implied {market.quoteAsset}</span>
+              <span>{formatUsd(impliedQuoteUsd)}</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -246,14 +338,29 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
         <div className="mb-4 p-3 bg-slate-700 rounded space-y-2">
           <div className="flex justify-between text-sm">
             <span className="text-slate-400">Total</span>
-            <span className="text-white font-medium">
-              {total.toFixed(2)} {market.quoteAsset}
+            <span className="text-right text-white font-medium">
+              {valueDisplay === 'usd' ? formatUsd(totalUsd) : formatAsset(total, market.quoteAsset, displayDecimals(market.quoteAsset))}
+              {valueDisplay === 'usd' && (
+                <span className="block text-xs font-normal text-slate-400">
+                  {formatAsset(total, market.quoteAsset, displayDecimals(market.quoteAsset))}
+                </span>
+              )}
+              {valueDisplay === 'asset' && totalUsd != null && (
+                <span className="block text-xs font-normal text-slate-400">
+                  {formatUsd(totalUsd)}
+                </span>
+              )}
             </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-400">Est. Fee ({(market.makerFeeBps || 10) / 100}%)</span>
-            <span className="text-white">
-              {estimatedFee.toFixed(4)} {market.quoteAsset}
+            <span className="text-right text-white">
+              {valueDisplay === 'usd' ? formatUsd(feeUsd) : formatAsset(estimatedFee, market.quoteAsset, displayDecimals(market.quoteAsset))}
+              {valueDisplay === 'usd' && (
+                <span className="block text-xs text-slate-400">
+                  {formatAsset(estimatedFee, market.quoteAsset, displayDecimals(market.quoteAsset))}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -262,25 +369,39 @@ export function OrderEntry({ market, balances, onSubmit, isSubmitting }: OrderEn
       <div className="mb-4 p-3 bg-slate-700 rounded">
         <div className="flex justify-between text-sm">
           <span className="text-slate-400">
-            Available {side === 'buy' ? market.quoteAsset : market.baseAsset}
+            Available {availableAsset}
           </span>
-          <span className="text-white font-medium">
-            {availableBalance.toFixed(side === 'buy' ? 2 : 8)}
+          <span className="text-right text-white font-medium">
+            {valueDisplay === 'usd' ? formatUsd(availableUsd) : availableBalance.toFixed(displayDecimals(availableAsset))}
+            {valueDisplay === 'usd' && (
+              <span className="block text-xs font-normal text-slate-400">
+                {availableBalance.toFixed(displayDecimals(availableAsset))} {availableAsset}
+              </span>
+            )}
           </span>
         </div>
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={isSubmitting}
-        className={`w-full py-3 rounded font-semibold transition-colors ${
-          side === 'buy'
-            ? 'bg-green-600 hover:bg-green-700 text-white'
-            : 'bg-red-600 hover:bg-red-700 text-white'
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
-      >
-        {isSubmitting ? 'Placing...' : `${side === 'buy' ? 'Buy' : 'Sell'} ${market.baseAsset}`}
-      </button>
+      {isAuthenticated ? (
+        <button
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          className={`w-full py-3 rounded font-semibold transition-colors ${
+            side === 'buy'
+              ? 'bg-green-600 hover:bg-green-700 text-white'
+              : 'bg-red-600 hover:bg-red-700 text-white'
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {isSubmitting ? 'Placing...' : `${side === 'buy' ? 'Buy' : 'Sell'} ${market.baseAsset}`}
+        </button>
+      ) : (
+        <Link
+          to="/register"
+          className="block w-full rounded bg-blue-600 py-3 text-center font-semibold text-white transition-colors hover:bg-blue-500"
+        >
+          Create Account to Trade
+        </Link>
+      )}
     </div>
   );
 }

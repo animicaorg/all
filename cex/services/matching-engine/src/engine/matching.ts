@@ -5,8 +5,7 @@
 
 import { v4 as uuidv4 } from "uuid";
 import { OrderBook } from "./orderbook.js";
-import { calculateQuoteAmount, generateTradeId } from "./deterministic.js";
-import { calculateTradeFees } from "./fees.js";
+import { calculateFee, generateTradeId } from "./deterministic.js";
 import type {
   Order,
   Trade,
@@ -23,6 +22,9 @@ export interface MatchResult {
   makerUpdates: Map<string, Order>;
   takerOrder: any;
 }
+
+const PRICE_DECIMALS = 8;
+const PRICE_SCALE = 10n ** BigInt(PRICE_DECIMALS);
 
 export class MatchingEngine {
   private orderBook: OrderBook;
@@ -174,16 +176,15 @@ export class MatchingEngine {
    */
   private createFill(makerOrder: any, takerOrder: any, fillSize: bigint): Fill {
     const priceAtoms = makerOrder.priceAtoms; // Maker price wins
-    const quoteAmountAtoms = calculateQuoteAmount(priceAtoms, fillSize, 8);
-    const fees = calculateTradeFees(quoteAmountAtoms, this.marketConfig);
+    const quoteAmountAtoms = this.calculateQuoteAmountAtoms(priceAtoms, fillSize);
 
     return {
       makerOrderId: makerOrder.id,
       takerOrderId: takerOrder.id,
       priceAtoms,
       sizeAtoms: fillSize,
-      makerFeeAtoms: fees.makerFeeAtoms,
-      takerFeeAtoms: fees.takerFeeAtoms
+      makerFeeAtoms: this.calculateOrderFeeAtoms(makerOrder, quoteAmountAtoms, this.marketConfig.makerFeeBps),
+      takerFeeAtoms: this.calculateOrderFeeAtoms(takerOrder, quoteAmountAtoms, this.marketConfig.takerFeeBps)
     };
   }
 
@@ -192,8 +193,7 @@ export class MatchingEngine {
    */
   private createTrade(makerOrder: any, takerOrder: any, fill: Fill): Trade {
     const sequence = this.nextSequence();
-    const quoteAmountAtoms = calculateQuoteAmount(fill.priceAtoms, fill.sizeAtoms, 8);
-    const fees = calculateTradeFees(quoteAmountAtoms, this.marketConfig);
+    const quoteAmountAtoms = this.calculateQuoteAmountAtoms(fill.priceAtoms, fill.sizeAtoms);
 
     return {
       id: generateTradeId(
@@ -208,14 +208,33 @@ export class MatchingEngine {
       priceAtoms: fill.priceAtoms,
       sizeAtoms: fill.sizeAtoms,
       quoteAmountAtoms,
-      makerFeeAtoms: fees.makerFeeAtoms,
-      takerFeeAtoms: fees.takerFeeAtoms,
-      feeAsset: fees.feeAsset,
-      feeBpsMaker: fees.feeBpsMaker,
-      feeBpsTaker: fees.feeBpsTaker,
+      makerFeeAtoms: this.calculateOrderFeeAtoms(makerOrder, quoteAmountAtoms, this.marketConfig.makerFeeBps),
+      takerFeeAtoms: this.calculateOrderFeeAtoms(takerOrder, quoteAmountAtoms, this.marketConfig.takerFeeBps),
+      feeAsset: this.marketConfig.feeAsset,
+      feeBpsMaker: this.marketConfig.makerFeeBps,
+      feeBpsTaker: this.marketConfig.takerFeeBps,
       sequence,
       createdAt: new Date()
     };
+  }
+
+  private calculateQuoteAmountAtoms(priceAtoms: bigint, sizeAtoms: bigint): bigint {
+    const baseScale = 10n ** BigInt(this.marketConfig.baseDecimals ?? 8);
+    const quoteScale = 10n ** BigInt(this.marketConfig.quoteDecimals ?? 8);
+    return (priceAtoms * sizeAtoms * quoteScale) / (PRICE_SCALE * baseScale);
+  }
+
+  private calculateOrderFeeAtoms(order: Order, quoteAmountAtoms: bigint, feeBps: number): bigint {
+    const receivedAsset =
+      order.side === "BUY"
+        ? this.marketConfig.baseAsset.toUpperCase()
+        : this.marketConfig.quoteAsset.toUpperCase();
+
+    if (this.marketConfig.feeAsset.toUpperCase() !== receivedAsset) {
+      return 0n;
+    }
+
+    return calculateFee(quoteAmountAtoms, feeBps);
   }
 
   /**

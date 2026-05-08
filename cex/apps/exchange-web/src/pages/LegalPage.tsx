@@ -1,8 +1,22 @@
 import { AlertTriangle } from 'lucide-react';
+import { Seo } from '../components/Seo';
+import { breadcrumbJsonLd } from '../lib/seo';
 
 export default function LegalPage() {
   return (
     <div className="max-w-4xl mx-auto py-8">
+      <Seo
+        title="Legal Disclaimer and Risk Warning | Animica Exchange"
+        description="Read the Animica Exchange legal disclaimer and digital asset risk warning before using ANM markets or exchange account features."
+        path="/legal"
+        structuredData={[
+          breadcrumbJsonLd([
+            { name: 'Home', path: '/' },
+            { name: 'Legal Disclaimer', path: '/legal' },
+          ]),
+        ]}
+      />
+
       <div className="bg-slate-800 rounded-lg shadow-xl p-8">
         <div className="flex items-center gap-4 mb-8">
           <AlertTriangle className="text-red-500" size={48} />

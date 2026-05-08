@@ -34,6 +34,7 @@ interface UserRow {
   twofa_enabled: boolean | null;
   created_at: Date;
   updated_at: Date | null;
+  balance_totals?: BalanceRow[] | null;
 }
 
 interface RiskFlagRow {
@@ -47,6 +48,13 @@ interface RiskFlagRow {
   closed_at: Date | null;
 }
 
+interface BalanceRow {
+  asset: string;
+  available: string;
+  locked: string;
+  total: string;
+}
+
 function mapUser(row: UserRow) {
   return {
     id: row.id,
@@ -56,6 +64,12 @@ function mapUser(row: UserRow) {
     twofaEnabled: row.twofa_enabled ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
+    balanceTotals: Array.isArray(row.balance_totals)
+      ? row.balance_totals.map((balance) => ({
+          asset: balance.asset,
+          total: balance.total,
+        }))
+      : [],
   };
 }
 
@@ -134,19 +148,41 @@ export function createUsersRouter(
         const total = await countSql(prisma, `SELECT COUNT(*)::bigint AS count FROM users ${whereSql}`, ...values);
         const users = await rowsSql<UserRow>(
           prisma,
-          `SELECT
-            id::text AS id,
-            email::text AS email,
-            ${expr.status} AS status,
-            ${expr.role} AS role,
-            ${expr.twofa} AS twofa_enabled,
-            created_at,
-            ${expr.updatedAt} AS updated_at
-          FROM users
-          ${whereSql}
-          ORDER BY created_at DESC
-          OFFSET $${values.length + 1}
-          LIMIT $${values.length + 2}`,
+          `WITH page_users AS (
+            SELECT
+              id::text AS id,
+              email::text AS email,
+              ${expr.status} AS status,
+              ${expr.role} AS role,
+              ${expr.twofa} AS twofa_enabled,
+              created_at,
+              ${expr.updatedAt} AS updated_at
+            FROM users
+            ${whereSql}
+            ORDER BY created_at DESC
+            OFFSET $${values.length + 1}
+            LIMIT $${values.length + 2}
+          )
+          SELECT
+            page_users.*,
+            COALESCE(
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'asset', balances.asset,
+                    'available', balances.available::text,
+                    'locked', balances.locked::text,
+                    'total', (balances.available + balances.locked)::text
+                  )
+                  ORDER BY balances.asset
+                )
+                FROM balances
+                WHERE balances.account_id = 'user:' || page_users.id
+                  AND (balances.available <> 0 OR balances.locked <> 0)
+              ),
+              '[]'::jsonb
+            ) AS balance_totals
+          FROM page_users`,
           ...values,
           (page - 1) * limit,
           limit
@@ -198,7 +234,7 @@ export function createUsersRouter(
         }
 
         const riskFlagsExist = await tableExists(prisma, 'risk_flags');
-        const [riskFlags, recentOrders] = await Promise.all([
+        const [riskFlags, recentOrders, balances] = await Promise.all([
           riskFlagsExist
             ? rowsSql<RiskFlagRow>(
                 prisma,
@@ -222,6 +258,19 @@ export function createUsersRouter(
             "SELECT COUNT(*)::bigint AS count FROM orders WHERE user_id = $1::uuid AND created_at >= NOW() - interval '30 days'",
             req.params.id
           ),
+          rowsSql<BalanceRow>(
+            prisma,
+            `SELECT
+              asset,
+              available::text AS available,
+              locked::text AS locked,
+              (available + locked)::text AS total
+            FROM balances
+            WHERE account_id = 'user:' || $1::text
+              AND (available <> 0 OR locked <> 0)
+            ORDER BY asset`,
+            req.params.id
+          ),
         ]);
 
         res.json({
@@ -233,7 +282,7 @@ export function createUsersRouter(
               kycCases: [],
               riskFlags: riskFlags.map(mapRiskFlag),
             },
-            balances: [],
+            balances,
             stats: {
               recentOrders,
             },
