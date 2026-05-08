@@ -998,7 +998,7 @@ async function handleTestRpcConnection(url: string): Promise<{
   error?: string;
 }> {
   const validation = validateRpcUrl(url);
-  const result = await rpcPing({ rpcUrl: validation.normalizedUrl, timeoutMs: 5000 });
+  const result = await rpcPing({ rpcUrl: validation.normalizedUrl, timeoutMs: 20_000 });
   setLastPingDebug(result.rawResponse ?? null, result.error ?? null);
 
   return {

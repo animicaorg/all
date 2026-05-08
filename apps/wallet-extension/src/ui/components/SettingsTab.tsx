@@ -324,7 +324,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
           type="text"
           value={rpcInput}
           onChange={(event) => setRpcInput(event.target.value)}
-          placeholder="https://mainnet.animica.org/rpc"
+          placeholder="https://rpc.animica.org/rpc"
           disabled={isBusy || isTestingRpc}
         />
 

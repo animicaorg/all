@@ -28,7 +28,7 @@ export interface RpcPingResult {
   rawResponse?: unknown;
 }
 
-const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 function nowMs(): number {
   return performanceObj?.now?.() ?? Date.now();
