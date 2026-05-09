@@ -70,10 +70,14 @@ class ApiClient {
         if (raw) {
           const parsed = JSON.parse(raw);
           const state = parsed?.state ?? parsed;
-          const userId = state?.user?.id;
+          const userId =
+            state?.user?.id ??
+            state?.userId ??
+            state?.user?.userId ??
+            null;
           if (userId) {
             const headers = AxiosHeaders.from(config.headers);
-            headers.set('x-user-id', userId);
+            headers.set('x-user-id', String(userId));
             config.headers = headers;
           }
         }

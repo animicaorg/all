@@ -304,15 +304,9 @@ const start = async () => {
            VALUES ($1, 'email', false, $2, 'invalid_password')`, [normalizedEmail, req.ip || 'unknown']);
                 return res.status(401).json({ message: "Invalid credentials" });
             }
-            if (env.EMAIL_VERIFICATION_REQUIRED && !user.email_verified) {
-                await pgPool.query(`INSERT INTO login_attempts (identifier, identifier_type, success, ip_address, failure_reason)
-           VALUES ($1, 'email', false, $2, 'email_unverified')`, [normalizedEmail, req.ip || 'unknown']);
-                return res.status(403).json({
-                    code: "email_unverified",
-                    message: "Verify your email address before signing in.",
-                    email: user.email,
-                });
-            }
+            // TEMP REPAIR: allow existing unverified users to sign in so exchange
+            // account endpoints keep working after SMTP rollout. Frontend still gets
+            // emailVerified so it can prompt for verification without breaking auth.
             // Generate session
             const sessionId = generateSessionId();
             // Update user's session
@@ -328,7 +322,9 @@ const start = async () => {
                 message: "Login successful",
                 userId: user.id,
                 email: user.email,
-                fullName: user.full_name
+                fullName: user.full_name,
+                emailVerified: !!user.email_verified,
+                verificationRequired: !!env.EMAIL_VERIFICATION_REQUIRED
             });
         }
         catch (error) {
@@ -413,18 +409,9 @@ const start = async () => {
             if (!user.active) {
                 return res.status(403).json({ message: "Account is disabled" });
             }
-            if (env.EMAIL_VERIFICATION_REQUIRED && !user.email_verified) {
-                await pgPool.query("UPDATE users SET current_session_id = NULL WHERE id = $1", [user.id]).catch(() => undefined);
-                req.session.destroy((error) => {
-                    if (error)
-                        logger.error({ error }, "Session destruction error");
-                });
-                return res.status(403).json({
-                    code: "email_unverified",
-                    message: "Verify your email address before using Animica Exchange.",
-                    email: user.email,
-                });
-            }
+            // TEMP REPAIR: do not destroy active sessions for unverified legacy users.
+            // Return user info and emailVerified flag so the frontend can continue
+            // authenticated account calls and show verification UI separately.
             res.json({
                 id: user.id,
                 email: user.email,
