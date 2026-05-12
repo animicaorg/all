@@ -4,7 +4,7 @@ import session from "express-session";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { baseEnvSchema, connectNats, createLogger, createPgPool, createRedis, loadEnv } from "@cex/common";
-import { verifyPassword, generateSessionId, getUserSessionCookieOptions } from "@cex/security/auth";
+import { verifyPassword, generateSessionId } from "@cex/security/auth";
 import { registerUser, RegistrationError, normalizeEmail, } from "./registration.js";
 import { createEmailVerificationToken, findUserForVerificationEmail, verifyEmailToken, } from "./email_verification.js";
 import { isSmtpConfigured, renderVerificationEmail, sendSmtpMail, } from "./smtp_mailer.js";
@@ -88,15 +88,18 @@ const start = async () => {
         });
     };
     // Session configuration
-    const sessionConfig = getUserSessionCookieOptions((process.env.NODE_ENV ?? "development") === "production");
+    const isProduction = (process.env.NODE_ENV ?? "development") === "production";
     app.use(session({
         secret: env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
+        proxy: true,
+        name: "animica.sid",
         cookie: {
-            secure: sessionConfig.secure,
-            httpOnly: sessionConfig.httpOnly,
-            sameSite: sessionConfig.sameSite
+            secure: isProduction,
+            httpOnly: true,
+            sameSite: isProduction ? "none" : "lax",
+            maxAge: 1000 * 60 * 60 * 24 * 7
         }
     }));
     // Passport configuration
@@ -167,7 +170,12 @@ const start = async () => {
                     message: "Email verification is required, but SMTP is not configured.",
                 });
             }
-            const user = await registerUser(pgPool, req.body);
+            const user = await registerUser(pgPool, {
+                ...req.body,
+                ipAddress: req.ip || null,
+                userAgent: req.get("user-agent") || null,
+                deviceFingerprint: typeof req.body?.deviceFingerprint === "string" ? req.body.deviceFingerprint : null,
+            });
             if (env.EMAIL_VERIFICATION_REQUIRED) {
                 try {
                     await sendVerificationEmail(user);

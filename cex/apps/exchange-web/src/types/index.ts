@@ -199,6 +199,39 @@ export interface AirdropTransfer {
   depositedAt?: string;
 }
 
+export interface ReferralHistoryItem {
+  id: string;
+  status: string;
+  reason: string | null;
+  referredEmail: string | null;
+  rewardAtoms: string;
+  reward: string;
+  createdAt: string;
+  updatedAt?: string;
+  rewardedAt: string | null;
+}
+
+export interface ReferralSummary {
+  code: string;
+  referralLink: string;
+  reward: {
+    asset: string;
+    amount: string;
+    amountAtoms: string;
+    signupAmount: string;
+    signupAmountAtoms: string;
+    source: string;
+  };
+  totals: {
+    referrals: number;
+    qualified: number;
+    rewarded: number;
+    earnedAtoms: string;
+    earned: string;
+  };
+  recent: ReferralHistoryItem[];
+}
+
 export interface ApiKeySummary {
   id: string;
   name: string;

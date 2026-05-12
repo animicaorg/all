@@ -8,6 +8,7 @@ import {
   requireApiKeyScope,
   type AuthenticatedRequest,
 } from "./authenticated.js";
+import { processReferralQualification } from "./referrals.js";
 
 const AIRDROP_SETTINGS_ID = "default";
 const DEFAULT_ASSET = "ANM";
@@ -16,6 +17,9 @@ const DEFAULT_DECIMALS = 9;
 type AirdropRouterOptions = {
   authServiceUrl: string;
   adminApiKey?: string;
+  referralRewardAtoms?: string;
+  referralRequireEmailVerified?: boolean;
+  referralMinAccountAgeSeconds?: number;
 };
 
 type AirdropSettings = {
@@ -297,6 +301,12 @@ export function createAirdropRouter(pgPool: Pool, options: AirdropRouterOptions)
         `,
         [claimId, req.userId, settings.asset, settings.claimAmount, settings.claimAmountAtoms]
       );
+
+      await processReferralQualification(client, req.userId!, "airdrop_claim", {
+        rewardAtoms: options.referralRewardAtoms,
+        requireEmailVerified: options.referralRequireEmailVerified,
+        minAccountAgeSeconds: options.referralMinAccountAgeSeconds,
+      });
 
       await client.query("COMMIT");
       res.json({

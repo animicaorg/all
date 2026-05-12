@@ -20,6 +20,7 @@ import { createStatsRouter } from "./routes/stats.js";
 import { createTransfersRouter } from "./routes/transfers.js";
 import { createPricesRouter } from "./routes/prices.js";
 import { createAirdropRouter } from "./routes/airdrop.js";
+import { createReferralsRouter } from "./routes/referrals.js";
 import { createApiKeysRouter } from "./routes/api_keys.js";
 import { createBotsRouter, startTradingBotRunner } from "./routes/bots.js";
 import { createWebSocketServer } from "./websocket.js";
@@ -42,7 +43,14 @@ const env = loadEnv(
       CONFIG_ENCRYPTION_KEY: z.string().optional(),
       ADMIN_API_KEY: z.string().optional(),
       ANIMICA_RPC_URL: z.string().url().optional(),
-      ANIMICA_RPC_ADMIN_TOKEN: z.string().optional()
+      ANIMICA_RPC_ADMIN_TOKEN: z.string().optional(),
+      FRONTEND_URL: z.string().url().default("http://trade.animica.org"),
+      REFERRAL_REWARD_ATOMS: z.string().regex(/^\d+$/).default("100000000000"),
+      REFERRAL_REQUIRE_EMAIL_VERIFIED: z
+        .enum(["true", "false"])
+        .default("true")
+        .transform((value) => value === "true"),
+      REFERRAL_MIN_ACCOUNT_AGE_SECONDS: z.coerce.number().int().min(0).default(0),
     }),
     { defaultPort: 3000 }
   )
@@ -132,12 +140,28 @@ const start = async () => {
   const authProxyRouter = createAuthProxyRouter({ authServiceUrl: env.AUTH_SERVICE_URL });
   const marketsRouter = createMarketsRouter(pgPool);
   const assetsRouter = createAssetsRouter(pgPool);
-  const ordersRouter = createOrdersRouter(pgPool, nats, env.AUTH_SERVICE_URL);
+  const referralProcessingOptions = {
+    rewardAtoms: env.REFERRAL_REWARD_ATOMS,
+    requireEmailVerified: env.REFERRAL_REQUIRE_EMAIL_VERIFIED,
+    minAccountAgeSeconds: env.REFERRAL_MIN_ACCOUNT_AGE_SECONDS,
+  };
+  const ordersRouter = createOrdersRouter(pgPool, nats, env.AUTH_SERVICE_URL, referralProcessingOptions);
   const statsRouter = createStatsRouter(pgPool);
   const pricesRouter = createPricesRouter(pgPool);
   const airdropRouter = createAirdropRouter(pgPool, {
     authServiceUrl: env.AUTH_SERVICE_URL,
     adminApiKey: env.ADMIN_API_KEY,
+    referralRewardAtoms: referralProcessingOptions.rewardAtoms,
+    referralRequireEmailVerified: referralProcessingOptions.requireEmailVerified,
+    referralMinAccountAgeSeconds: referralProcessingOptions.minAccountAgeSeconds,
+  });
+  const referralsRouter = createReferralsRouter(pgPool, {
+    authServiceUrl: env.AUTH_SERVICE_URL,
+    frontendUrl: env.FRONTEND_URL,
+    adminApiKey: env.ADMIN_API_KEY,
+    rewardAtoms: referralProcessingOptions.rewardAtoms,
+    requireEmailVerified: referralProcessingOptions.requireEmailVerified,
+    minAccountAgeSeconds: referralProcessingOptions.minAccountAgeSeconds,
   });
   const apiKeysRouter = createApiKeysRouter(pgPool, env.AUTH_SERVICE_URL);
   const botsRouter = createBotsRouter(pgPool, nats, env.AUTH_SERVICE_URL);
@@ -160,6 +184,7 @@ const start = async () => {
   app.use(statsRouter);
   app.use(pricesRouter);
   app.use(airdropRouter);
+  app.use(referralsRouter);
   app.use(apiKeysRouter);
   app.use(botsRouter);
   app.use(transfersRouter);
@@ -173,6 +198,7 @@ const start = async () => {
   app.use("/api/v1", statsRouter);
   app.use("/api/v1", pricesRouter);
   app.use("/api/v1", airdropRouter);
+  app.use("/api/v1", referralsRouter);
   app.use("/api/v1", apiKeysRouter);
   app.use("/api/v1", botsRouter);
   app.use("/api/v1", transfersRouter);
