@@ -9,6 +9,10 @@ import {
   createRequireAuth,
   requireApiKeyScope,
 } from "./authenticated.js";
+import {
+  processReferralQualificationInTransaction,
+  type ReferralProcessingOptions,
+} from "./referrals.js";
 
 
 const router = Router();
@@ -24,7 +28,12 @@ const createOrderSchema = z.object({
   idempotencyKey: z.string().optional(),
 });
 
-export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServiceUrl: string): any {
+export function createOrdersRouter(
+  pgPool: Pool,
+  nats: NatsConnection,
+  authServiceUrl: string,
+  referralOptions: ReferralProcessingOptions = {}
+): any {
   const requireAuth = createRequireAuth(authServiceUrl, {
     verifyApiKey: createApiKeyVerifier(pgPool),
   });
@@ -116,6 +125,10 @@ export function createOrdersRouter(pgPool: Pool, nats: NatsConnection, authServi
       };
 
       nats.publish(subjects.orderSubmit, jsonCodec.encode(orderCommand));
+
+      processReferralQualificationInTransaction(pgPool, userId, "order_submitted", referralOptions).catch((error) => {
+        console.error("Error processing referral qualification for order:", error);
+      });
 
       // Create response
       const response = {

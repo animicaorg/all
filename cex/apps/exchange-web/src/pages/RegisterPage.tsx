@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Mail, Lock, User, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, Mail, Lock, User, ArrowRight, CheckCircle2, XCircle, Gift } from 'lucide-react';
 import axios from 'axios';
 import { getApiBaseUrl } from '../lib/endpoints';
 import { Seo } from '../components/Seo';
@@ -13,11 +13,25 @@ export default function RegisterPage() {
     email: '',
     password: '',
     confirmPassword: '',
+    referralCode: '',
   });
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const urlCode = searchParams.get('ref') || searchParams.get('referralCode');
+    const savedCode = window.localStorage.getItem('animica-referral-code');
+    const code = (urlCode || savedCode || '').trim().toUpperCase();
+    if (urlCode && code) {
+      window.localStorage.setItem('animica-referral-code', code);
+    }
+    if (code) {
+      setFormData((current) => ({ ...current, referralCode: code }));
+    }
+  }, [searchParams]);
 
   // Password strength calculation
   const calculatePasswordStrength = (password: string) => {
@@ -60,10 +74,12 @@ export default function RegisterPage() {
         fullName: formData.fullName,
         email: formData.email,
         password: formData.password,
+        referralCode: formData.referralCode.trim() || undefined,
       }, {
         withCredentials: true,
       });
 
+      window.localStorage.removeItem('animica-referral-code');
       navigate(`/verify-email?sent=1&email=${encodeURIComponent(formData.email)}`, {
         state: { email: formData.email },
       });
@@ -261,6 +277,33 @@ export default function RegisterPage() {
                     )}
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* Referral Code Input */}
+            <div className="space-y-2">
+              <label htmlFor="referralCode" className="block text-sm font-medium text-slate-300">
+                Referral Code
+              </label>
+              <div className="relative">
+                <Gift className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  id="referralCode"
+                  name="referralCode"
+                  type="text"
+                  value={formData.referralCode}
+                  onChange={(e) => {
+                    const referralCode = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    setFormData({ ...formData, referralCode });
+                    if (referralCode) {
+                      window.localStorage.setItem('animica-referral-code', referralCode);
+                    } else {
+                      window.localStorage.removeItem('animica-referral-code');
+                    }
+                  }}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-900/50 border border-slate-600 text-white placeholder-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  placeholder="Optional"
+                />
               </div>
             </div>
 

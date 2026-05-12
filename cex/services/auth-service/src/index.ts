@@ -232,7 +232,13 @@ app.use(session({
         });
       }
 
-      const user = await registerUser(pgPool, req.body);
+      const user = await registerUser(pgPool, {
+        ...req.body,
+        ipAddress: req.ip || null,
+        userAgent: req.get("user-agent") || null,
+        deviceFingerprint:
+          typeof req.body?.deviceFingerprint === "string" ? req.body.deviceFingerprint : null,
+      });
 
       if (env.EMAIL_VERIFICATION_REQUIRED) {
         try {

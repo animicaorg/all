@@ -17,6 +17,8 @@ import type {
   UsdQuote,
   AirdropStatus,
   AirdropTransfer,
+  ReferralHistoryItem,
+  ReferralSummary,
   ApiKeySummary,
   CreatedApiKey,
   TradingBot,
@@ -283,6 +285,18 @@ class ApiClient {
   async depositAirdrop(amountAtoms: string): Promise<AirdropTransfer> {
     const { data } = await this.client.post('/airdrop/deposit', { amountAtoms });
     return data;
+  }
+
+  async getReferralSummary(): Promise<ReferralSummary> {
+    const { data } = await this.client.get('/me/referral');
+    return data;
+  }
+
+  async getReferralHistory(limit = 25, offset = 0): Promise<ReferralHistoryItem[]> {
+    const { data } = await this.client.get('/me/referral/history', {
+      params: { limit, offset },
+    });
+    return data.referrals ?? [];
   }
 
   async getApiKeys(): Promise<ApiKeySummary[]> {
