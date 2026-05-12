@@ -15,6 +15,8 @@ interface AnimicaProvider {
   animica_switchChain(chainId: number | string): Promise<void>;
   animica_signMessage(message: string): Promise<string>;
   animica_sendTransaction(tx: any): Promise<string>;
+  animica_getBalance(address: string): Promise<string>;
+  animica_getNonce(address: string): Promise<number>;
   animica_watchAsset(payload: any): Promise<boolean>;
   animica_addToken(token: any): Promise<boolean>;
 
@@ -126,6 +128,14 @@ class AnimicaProviderImpl implements AnimicaProvider {
 
   async animica_sendTransaction(tx: any): Promise<string> {
     return this.request({ method: 'animica_sendTransaction', params: [tx] });
+  }
+
+  async animica_getBalance(address: string): Promise<string> {
+    return this.request({ method: 'animica_getBalance', params: [address] });
+  }
+
+  async animica_getNonce(address: string): Promise<number> {
+    return this.request({ method: 'animica_getNonce', params: [address] });
   }
 
   async animica_watchAsset(payload: any): Promise<boolean> {

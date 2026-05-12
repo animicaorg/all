@@ -14,20 +14,41 @@ export async function fetchChainContext(
   rpcCall: (method: string, params: any) => Promise<any>
 ): Promise<ChainContext> {
   try {
-    const identity = await rpcCall('chain.getChainIdentity', []);
+    const attempts = ['chain.getChainIdentity', 'chain_getChainIdentity', 'chain.getIdentity'];
+    let identity: any = null;
+    let lastError: unknown = null;
+
+    for (const method of attempts) {
+      try {
+        identity = await rpcCall(method, []);
+        if (identity) break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
     
     if (!identity) {
-      throw new Error('chain.getChainIdentity returned empty result');
+      throw new Error(`chain identity returned empty result${lastError ? ` (${String((lastError as any)?.message || lastError)})` : ''}`);
     }
     
     // Extract fields
-    const chainId = identity.chainId || identity.chain_id;
+    const chainIdRaw = identity.chainId ?? identity.chain_id;
     const genesisHashHex = identity.genesisHash || identity.genesis_hash;
     const network = identity.network || identity.name || 'unknown';
     const forkId = identity.forkId || identity.fork_id || null;
-    
-    if (typeof chainId !== 'number') {
-      throw new Error(`Invalid chain_id: ${chainId}`);
+
+    let chainId = Number.NaN;
+    if (typeof chainIdRaw === 'number') {
+      chainId = chainIdRaw;
+    } else if (typeof chainIdRaw === 'string') {
+      try {
+        chainId = chainIdRaw.startsWith('0x') ? Number(BigInt(chainIdRaw)) : Number(chainIdRaw);
+      } catch {
+        chainId = Number.NaN;
+      }
+    }
+    if (!Number.isFinite(chainId) || !Number.isInteger(chainId) || chainId < 0) {
+      throw new Error(`Invalid chain_id: ${chainIdRaw}`);
     }
     
     if (typeof genesisHashHex !== 'string' || !genesisHashHex) {

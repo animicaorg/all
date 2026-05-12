@@ -41,7 +41,7 @@ describe('wallet download manifest normalization', () => {
     expect(cards).toEqual([]);
   });
 
-  it('renders macOS DMG and ZIP download cards', () => {
+  it('renders only the macOS ZIP download card', () => {
     const manifest: WalletManifest = {
       version: 'v1.2.3-test',
       macos: {
@@ -64,11 +64,11 @@ describe('wallet download manifest normalization', () => {
 
     expect(cards).toHaveLength(1);
     expect(cards[0]?.key).toBe('macos');
-    expect(cards[0]?.downloads).toHaveLength(2);
-    expect(cards[0]?.downloads[0]?.label).toBe('macOS Disk Image (.dmg)');
-    expect(cards[0]?.downloads[1]?.label).toBe('Portable ZIP');
+    expect(cards[0]?.downloads).toHaveLength(1);
+    expect(cards[0]?.downloads[0]?.label).toBe('Portable ZIP');
+    expect(cards[0]?.downloads[0]?.primary).toBe(true);
     expect(cards[0]?.checksums[0]?.href).toBe('/animicawallet.sha256');
-    expect(cards[0]?.checksums[0]?.label).toBe('SHA-256 checksums');
+    expect(cards[0]?.checksums[0]?.label).toBe('SHA-256 checksum');
   });
 
   it('renders Linux files without requiring every optional artifact', () => {

@@ -24,6 +24,7 @@ interface WatchedToken {
   chainId: number;
   name?: string;
   image?: string;
+  tokenId?: string;
 }
 
 function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTabProps) {
@@ -39,6 +40,7 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
   const [forceRawTxCompat, setForceRawTxCompat] = useState(false);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const [watchedTokens, setWatchedTokens] = useState<WatchedToken[]>([]);
+  const [watchedNfts, setWatchedNfts] = useState<WatchedToken[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -76,13 +78,22 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
 
   async function loadWatchedTokens() {
     try {
-      const result = await chrome.runtime.sendMessage({ method: 'wallet_getTokens' });
-      if (result?.error) {
-        throw new Error(result.error);
+      const [tokensResult, nftsResult] = await Promise.all([
+        chrome.runtime.sendMessage({ method: 'wallet_getTokens' }),
+        chrome.runtime.sendMessage({ method: 'wallet_getNfts' }),
+      ]);
+
+      if (tokensResult?.error) {
+        throw new Error(tokensResult.error);
       }
-      setWatchedTokens(Array.isArray(result) ? result : []);
+      if (nftsResult?.error) {
+        throw new Error(nftsResult.error);
+      }
+      setWatchedTokens(Array.isArray(tokensResult) ? tokensResult : []);
+      setWatchedNfts(Array.isArray(nftsResult) ? nftsResult : []);
     } catch {
       setWatchedTokens([]);
+      setWatchedNfts([]);
     }
   }
 
@@ -374,6 +385,29 @@ function SettingsTab({ network, onNetworkChange, onAccountsChanged }: SettingsTa
                 <div style={{ fontWeight: 600 }}>{token.symbol} {token.name ? `· ${token.name}` : ''}</div>
                 <div style={{ fontSize: '11px', color: '#666' }}>Decimals: {token.decimals} · Type: {token.type}</div>
                 <div style={{ fontSize: '11px', color: '#888', wordBreak: 'break-all' }}>{token.address}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0, fontSize: '16px' }}>Watched NFTs</h3>
+        {watchedNfts.length === 0 && (
+          <div style={{ fontSize: '12px', color: '#666' }}>
+            No watched NFTs on this network yet. Dapps can add NFTs via <code>animica_watchAsset</code>.
+          </div>
+        )}
+        {watchedNfts.length > 0 && (
+          <div style={{ display: 'grid', gap: '8px' }}>
+            {watchedNfts.map((nft) => (
+              <div key={`${nft.chainId}:${nft.address.toLowerCase()}:${(nft.tokenId || '').toLowerCase()}`} style={{ padding: '10px', background: '#f9f9f9', borderRadius: '8px' }}>
+                <div style={{ fontWeight: 600 }}>{nft.name || nft.symbol}</div>
+                <div style={{ fontSize: '11px', color: '#666' }}>
+                  Type: {nft.type}
+                  {nft.tokenId ? ` · Token ID: ${nft.tokenId}` : ''}
+                </div>
+                <div style={{ fontSize: '11px', color: '#888', wordBreak: 'break-all' }}>{nft.address}</div>
               </div>
             ))}
           </div>

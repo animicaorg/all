@@ -26,6 +26,16 @@ let unlockedPassword: string | null = null;
 const DEBUG_WALLET = true; // Always enabled for troubleshooting
 let balanceRequestSeq = 1;
 const balanceAbortByKey = new Map<string, AbortController>();
+let lastPopupOpenedAt = 0;
+
+const NFT_ASSET_TYPES = new Set([
+  'ANM721',
+  'ANM1155',
+  'ERC721',
+  'ERC1155',
+  'NFT',
+  'COLLECTIBLE',
+]);
 
 function debugLog(message: string, details?: unknown): void {
   if (!DEBUG_WALLET) return;
@@ -151,7 +161,36 @@ function summarizeRawTx(rawTx: string): Record<string, unknown> {
   };
 }
 
-function parseBytesData(value: unknown): Uint8Array | undefined {
+function bytesTo0xHex(bytes: Uint8Array): string {
+  return `0x${Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function isNumericByteObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Uint8Array) return false;
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every((key) => /^\d+$/.test(key));
+}
+
+function parseNumericByteObject(value: Record<string, unknown>): Uint8Array | undefined {
+  const entries = Object.entries(value)
+    .map(([index, item]) => [Number(index), item] as const)
+    .sort((a, b) => a[0] - b[0]);
+
+  if (entries.length === 0) return undefined;
+  if (entries[0][0] !== 0) return undefined;
+
+  const bytes = new Uint8Array(entries.length);
+  for (let i = 0; i < entries.length; i += 1) {
+    const [position, rawByte] = entries[i];
+    if (position !== i) return undefined;
+    if (!Number.isInteger(rawByte) || rawByte < 0 || rawByte > 255) return undefined;
+    bytes[i] = rawByte as number;
+  }
+
+  return bytes;
+}
+
+function coerceBytes(value: unknown): Uint8Array | undefined {
   if (value === undefined || value === null) return undefined;
   if (value instanceof Uint8Array) return value;
   if (Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
@@ -160,18 +199,53 @@ function parseBytesData(value: unknown): Uint8Array | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed === '' || trimmed === '0x' || trimmed === '0X') return new Uint8Array();
-    if (!/^0x[0-9a-f]+$/i.test(trimmed)) {
-      throw new Error('Invalid data: must be 0x-prefixed hex');
-    }
+    if (!/^0x[0-9a-f]+$/i.test(trimmed) || trimmed.length % 2 !== 0) return undefined;
     const hex = trimmed.slice(2);
-    if (hex.length % 2 !== 0) throw new Error('Invalid data: hex length must be even');
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
       bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
     }
     return bytes;
   }
-  throw new Error('Invalid data: expected 0x-hex string or byte array');
+  if (isNumericByteObject(value)) {
+    return parseNumericByteObject(value);
+  }
+  return undefined;
+}
+
+function normalizeAccountBinaryFields(account: Account): Account {
+  const normalizedPublicKey = coerceBytes((account as any).publicKey);
+  const normalizedSecretKey = coerceBytes((account as any).secretKey);
+  return {
+    ...account,
+    publicKey: normalizedPublicKey || new Uint8Array(),
+    secretKey: normalizedSecretKey && normalizedSecretKey.length > 0 ? normalizedSecretKey : undefined,
+    watchOnly: !(normalizedSecretKey && normalizedSecretKey.length > 0),
+  };
+}
+
+function normalizeClaimedOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return null;
+  }
+}
+
+function parseBytesData(value: unknown): Uint8Array | undefined {
+  const bytes = coerceBytes(value);
+  if (bytes) return bytes;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return new Uint8Array();
+    // Allow plain text payloads (e.g. contract-call JSON envelopes) in addition to 0x-hex.
+    return new TextEncoder().encode(value);
+  }
+  throw new Error('Invalid data: expected byte array, text, or 0x-hex string');
 }
 
 function parseChainIdValue(value: unknown): number | null {
@@ -253,16 +327,17 @@ function resolveNetworkId(input: unknown, networkConfigs: VaultData['networkConf
   throw new Error('Invalid network target');
 }
 
-type WatchTokenInput = {
+type WatchAssetInput = {
   type: string;
   address: string;
   symbol: string;
   decimals: number;
   name?: string;
   image?: string;
+  tokenId?: string;
 };
 
-function parseWatchTokenParams(input: unknown): WatchTokenInput {
+function parseWatchAssetParams(input: unknown): WatchAssetInput {
   const payload = Array.isArray(input) ? input[0] : input;
   if (!payload || typeof payload !== 'object') {
     throw new Error('Invalid watchAsset params: expected payload object');
@@ -277,24 +352,42 @@ function parseWatchTokenParams(input: unknown): WatchTokenInput {
     : candidate;
 
   const address = typeof source.address === 'string' ? source.address.trim() : '';
-  const symbol = typeof source.symbol === 'string' ? source.symbol.trim().toUpperCase() : '';
+  const tokenId = source.tokenId ?? source.token_id ?? source.id;
+  const parsedTokenId = typeof tokenId === 'string' && tokenId.trim().length > 0
+    ? tokenId.trim()
+    : typeof tokenId === 'number' && Number.isFinite(tokenId)
+      ? String(Math.trunc(tokenId))
+      : undefined;
+
+  const isNft = NFT_ASSET_TYPES.has(type);
+  const symbol = typeof source.symbol === 'string' && source.symbol.trim().length > 0
+    ? source.symbol.trim().toUpperCase()
+    : isNft
+      ? 'NFT'
+      : '';
   const decimalsRaw = source.decimals;
-  const decimals = typeof decimalsRaw === 'number'
-    ? Math.trunc(decimalsRaw)
-    : typeof decimalsRaw === 'string' && /^\d+$/.test(decimalsRaw.trim())
-      ? Number(decimalsRaw.trim())
-      : NaN;
+  const decimals = isNft
+    ? 0
+    : typeof decimalsRaw === 'number'
+      ? Math.trunc(decimalsRaw)
+      : typeof decimalsRaw === 'string' && /^\d+$/.test(decimalsRaw.trim())
+        ? Number(decimalsRaw.trim())
+        : NaN;
   const name = typeof source.name === 'string' && source.name.trim().length > 0 ? source.name.trim() : undefined;
   const image = typeof source.image === 'string' && source.image.trim().length > 0 ? source.image.trim() : undefined;
 
   if (!address || address.length > 256) throw new Error('Invalid token address');
-  if (!symbol || symbol.length > 16) throw new Error('Invalid token symbol');
+  if (!symbol || symbol.length > 24) throw new Error('Invalid token symbol');
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 30) throw new Error('Invalid token decimals');
 
-  return { type, address, symbol, decimals, name, image };
+  return { type, address, symbol, decimals, name, image, tokenId: parsedTokenId };
 }
 
 function ensureVaultDefaults(vaultData: VaultData): VaultData {
+  if (!Array.isArray(vaultData.accounts)) vaultData.accounts = [];
+  vaultData.accounts = vaultData.accounts.map((account) => normalizeAccountBinaryFields(account));
+  if (!vaultData.permissions || typeof vaultData.permissions !== 'object') vaultData.permissions = {};
+  if (!vaultData.txCache || typeof vaultData.txCache !== 'object') vaultData.txCache = {};
   if (!vaultData.watchedTokens) vaultData.watchedTokens = [];
   return vaultData;
 }
@@ -369,9 +462,52 @@ function resolveSenderOrigin(sender: chrome.runtime.MessageSender): string {
   return 'unknown';
 }
 
+function resolveRequestOrigin(sender: chrome.runtime.MessageSender, message: unknown): string {
+  const senderOrigin = resolveSenderOrigin(sender);
+  const claimedOrigin = normalizeClaimedOrigin((message as Record<string, unknown> | null | undefined)?.origin);
+
+  if (!claimedOrigin) return senderOrigin;
+  if (senderOrigin === 'unknown') return claimedOrigin;
+  if (senderOrigin === claimedOrigin) return claimedOrigin;
+
+  console.warn('[wallet-bg] Ignoring mismatched claimed origin', { senderOrigin, claimedOrigin });
+  return senderOrigin;
+}
+
+async function maybeOpenWalletPopup(reason: string): Promise<void> {
+  const now = Date.now();
+  if (now - lastPopupOpenedAt < 700) return;
+  lastPopupOpenedAt = now;
+
+  try {
+    const actionApi: any = chrome.action;
+    if (typeof actionApi?.openPopup === 'function') {
+      await actionApi.openPopup();
+      return;
+    }
+  } catch (error) {
+    debugLog('action.openPopup failed', { reason, error: error instanceof Error ? error.message : String(error) });
+  }
+
+  try {
+    await chrome.windows.create({
+      type: 'popup',
+      url: chrome.runtime.getURL('src/ui/popup.html'),
+      width: 390,
+      height: 640,
+      focused: true,
+    });
+  } catch (error) {
+    console.warn('[wallet-bg] Failed to open wallet popup', {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleMessage(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
   const { method, params } = message;
-  const origin = resolveSenderOrigin(sender);
+  const origin = resolveRequestOrigin(sender, message);
 
   switch (method) {
     case 'wallet_unlock':
@@ -440,6 +576,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'wallet_getWatchedAssets':
       return handleGetWatchedTokens();
 
+    case 'wallet_getNfts':
+      return handleGetWatchedNfts();
+
     case 'wallet_getDebugState':
       return handleGetDebugState();
     
@@ -463,6 +602,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'provider_getChainId':
       return handleProviderGetChainId();
 
+    case 'net_version':
+      return handleProviderGetNetworkVersion();
+
     case 'wallet_switchEthereumChain':
     case 'animica_switchChain':
       await handleSwitchNetwork(params);
@@ -477,6 +619,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'animica_sendTransaction':
     case 'provider_sendTransaction':
       return handleProviderSendTransaction(origin, params);
+
+    case 'provider_signMessage':
+    case 'animica_signMessage':
+    case 'personal_sign':
+      return handleProviderSignMessage(origin, method, params);
+
+    case 'animica_getBalance':
+      return handleProviderGetBalance(params);
+
+    case 'eth_getBalance':
+      return handleProviderGetBalanceHex(params);
+
+    case 'animica_getNonce':
+      return handleProviderGetNonce(params);
     
     default:
       throw new Error(`Unknown method: ${method}`);
@@ -630,7 +786,7 @@ async function handleGetCurrentNetwork(): Promise<any> {
   let rpcChainId: number | null = null;
   let rpcWarning: string | null = null;
   try {
-    const client = await getRpcClient(network.rpcUrls?.[0]);
+    const client = await getRpcClient(network.rpcUrls);
     rpcChainId = await client.getChainId();
     if (rpcChainId !== network.chainId) {
       rpcWarning = 'RPC chain_id mismatch; switch network';
@@ -770,7 +926,7 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     }
 
     const network = vaultData.networkConfigs[vaultData.currentNetwork];
-    const client = await getRpcClient(network.rpcUrls?.[0]);
+    const client = await getRpcClient(network.rpcUrls);
 
     const activeWallet = await resolveActiveWallet(vaultData);
     if (activeWallet.address !== fromAddress) {
@@ -1052,7 +1208,20 @@ async function handleGetWatchedTokens(): Promise<WatchedToken[]> {
   ensureVaultDefaults(vaultData);
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
   return (vaultData.watchedTokens || [])
-    .filter((token) => token.chainId === network.chainId)
+    .filter((token) => token.chainId === network.chainId && !NFT_ASSET_TYPES.has((token.type || '').toUpperCase()))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+async function handleGetWatchedNfts(): Promise<WatchedToken[]> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  ensureVaultDefaults(vaultData);
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  return (vaultData.watchedTokens || [])
+    .filter((token) => token.chainId === network.chainId && NFT_ASSET_TYPES.has((token.type || '').toUpperCase()))
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
@@ -1064,9 +1233,11 @@ async function handleWatchAsset(origin: string, params: unknown): Promise<boolea
 
   ensureVaultDefaults(vaultData);
   const network = vaultData.networkConfigs[vaultData.currentNetwork];
-  const parsed = parseWatchTokenParams(params);
+  await maybeOpenWalletPopup('watchAsset');
+  const parsed = parseWatchAssetParams(params);
   const now = Date.now();
-  const normalizedAddress = parsed.address.toLowerCase();
+  const tokenIdSuffix = parsed.tokenId ? `:${parsed.tokenId.toLowerCase()}` : '';
+  const normalizedAddress = `${parsed.address.toLowerCase()}${tokenIdSuffix}`;
   const tokens = vaultData.watchedTokens || [];
 
   const nextToken: WatchedToken = {
@@ -1077,12 +1248,14 @@ async function handleWatchAsset(origin: string, params: unknown): Promise<boolea
     chainId: network.chainId,
     name: parsed.name,
     image: parsed.image,
+    tokenId: parsed.tokenId,
     addedAt: now,
     addedByOrigin: origin !== 'unknown' ? origin : undefined,
   };
 
   const existingIndex = tokens.findIndex((token) =>
-    token.chainId === network.chainId && token.address.toLowerCase() === normalizedAddress,
+    token.chainId === network.chainId &&
+    `${token.address.toLowerCase()}${token.tokenId ? `:${token.tokenId.toLowerCase()}` : ''}` === normalizedAddress,
   );
 
   if (existingIndex >= 0) {
@@ -1103,6 +1276,10 @@ async function handleWatchAsset(origin: string, params: unknown): Promise<boolea
 }
 
 async function handleRequestAccounts(origin: string): Promise<string[]> {
+  if (origin === 'unknown') {
+    throw new Error('Unable to determine requesting origin');
+  }
+
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     throw new Error('Wallet is locked');
@@ -1118,9 +1295,10 @@ async function handleRequestAccounts(origin: string): Promise<string[]> {
     await saveVaultData(vaultData);
     return existing;
   }
-  
-  // TODO: Show approval popup
-  // For now, auto-approve with current account
+
+  await maybeOpenWalletPopup('requestAccounts');
+
+  // Current flow still auto-approves active account once popup is shown.
   const activeWallet = await resolveActiveWallet(vaultData);
   const currentAccount = activeWallet.address;
   if (!currentAccount) {
@@ -1135,13 +1313,21 @@ async function handleRequestAccounts(origin: string): Promise<string[]> {
 }
 
 async function handleProviderGetAccounts(origin: string): Promise<string[]> {
+  if (origin === 'unknown') return [];
+
   const vaultData = getUnlockedVault();
   if (!vaultData) {
     return [];
   }
   
   const permissions = new PermissionManager(vaultData.permissions);
-  return permissions.getAuthorizedAccounts(origin);
+  const accounts = permissions.getAuthorizedAccounts(origin);
+  if (accounts.length > 0) {
+    permissions.updateLastUsed(origin);
+    vaultData.permissions = permissions.toJSON();
+    await saveVaultData(vaultData);
+  }
+  return accounts;
 }
 
 async function handleProviderGetChainId(): Promise<number> {
@@ -1157,6 +1343,11 @@ async function handleProviderGetChainId(): Promise<number> {
 async function handleProviderGetChainIdHex(): Promise<string> {
   const chainId = await handleProviderGetChainId();
   return toHexChainId(chainId);
+}
+
+async function handleProviderGetNetworkVersion(): Promise<string> {
+  const chainId = await handleProviderGetChainId();
+  return String(chainId);
 }
 
 function normalizeProviderSendTransactionParams(params: any): any {
@@ -1176,6 +1367,10 @@ function normalizeProviderSendTransactionParams(params: any): any {
 }
 
 async function handleProviderSendTransaction(origin: string, params: any): Promise<string> {
+  if (origin === 'unknown') {
+    throw new Error('Unable to determine requesting origin');
+  }
+
   // Check permission
   const vaultData = getUnlockedVault();
   if (!vaultData) {
@@ -1185,16 +1380,139 @@ async function handleProviderSendTransaction(origin: string, params: any): Promi
   const normalizedParams = normalizeProviderSendTransactionParams(params);
   const permissions = new PermissionManager(vaultData.permissions);
   const authorized = permissions.getAuthorizedAccounts(origin);
+  const fromAddress = typeof normalizedParams.from === 'string' ? normalizedParams.from : authorized[0];
+  if (typeof fromAddress !== 'string' || !fromAddress) {
+    throw new Error('Not authorized');
+  }
+  const matchedAuthorizedAddress = authorized.find((address) => address.toLowerCase() === fromAddress.toLowerCase());
+  normalizedParams.from = matchedAuthorizedAddress || fromAddress;
 
-  if (!authorized.includes(normalizedParams.from)) {
+  if (!matchedAuthorizedAddress) {
     throw new Error('Not authorized');
   }
 
-  // TODO: Show transaction approval popup
-  // For now, auto-approve
+  await maybeOpenWalletPopup('sendTransaction');
+  permissions.updateLastUsed(origin);
+  vaultData.permissions = permissions.toJSON();
+  await saveVaultData(vaultData);
 
   const result = await handleSendTransaction(normalizedParams);
   return result.txid;
+}
+
+function normalizeProviderSignMessageParams(method: string, params: unknown): { message: string; from?: string } {
+  if (method === 'personal_sign') {
+    if (!Array.isArray(params) || params.length < 1) {
+      throw new Error('Invalid personal_sign params');
+    }
+    const first = params[0];
+    const second = params[1];
+    const looksLikeAnimicaAddress = (value: unknown): value is string =>
+      typeof value === 'string' && /^anim1[02-9ac-hj-np-z]+$/i.test(value);
+
+    if (looksLikeAnimicaAddress(first) && typeof second === 'string') {
+      return { message: second, from: first };
+    }
+    if (typeof first === 'string') {
+      return { message: first, from: looksLikeAnimicaAddress(second) ? second : undefined };
+    }
+    throw new Error('Invalid personal_sign params');
+  }
+
+  const payload = Array.isArray(params) ? params[0] : params;
+  if (typeof payload === 'string') return { message: payload };
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid signMessage params');
+
+  const candidate = payload as Record<string, unknown>;
+  const message = typeof candidate.message === 'string' ? candidate.message : '';
+  const from = typeof candidate.from === 'string' ? candidate.from : undefined;
+
+  if (!message) throw new Error('Missing message');
+  return { message, from };
+}
+
+async function handleProviderSignMessage(origin: string, method: string, params: unknown): Promise<string> {
+  if (origin === 'unknown') {
+    throw new Error('Unable to determine requesting origin');
+  }
+
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  const request = normalizeProviderSignMessageParams(method, params);
+  const permissions = new PermissionManager(vaultData.permissions);
+  const authorized = permissions.getAuthorizedAccounts(origin);
+  const signerAddress = request.from || authorized[0];
+  const matchedSignerAddress = signerAddress
+    ? authorized.find((address) => address.toLowerCase() === signerAddress.toLowerCase())
+    : undefined;
+  if (!matchedSignerAddress) {
+    throw new Error('Not authorized');
+  }
+
+  const account = vaultData.accounts.find((candidate) => candidate.address === matchedSignerAddress);
+  if (!account) {
+    throw new Error('Account not found');
+  }
+  if (!account.secretKey || account.secretKey.length === 0) {
+    throw new Error('Cannot sign: account is watch-only or missing secret key');
+  }
+
+  await maybeOpenWalletPopup('signMessage');
+  permissions.updateLastUsed(origin);
+  vaultData.permissions = permissions.toJSON();
+  await saveVaultData(vaultData);
+
+  const signBytes = new TextEncoder().encode(`animica:${method}:${request.message}`);
+  const signature = await sign(signBytes, account.secretKey, account.algId);
+  return bytesTo0xHex(signature);
+}
+
+function normalizeAddressParam(params: unknown): string | undefined {
+  if (Array.isArray(params) && typeof params[0] === 'string' && params[0].trim().length > 0) {
+    return params[0].trim();
+  }
+  if (typeof params === 'string' && params.trim().length > 0) {
+    return params.trim();
+  }
+  if (params && typeof params === 'object') {
+    const address = (params as Record<string, unknown>).address;
+    if (typeof address === 'string' && address.trim().length > 0) return address.trim();
+  }
+  return undefined;
+}
+
+async function resolveProviderAddress(params: unknown): Promise<string> {
+  const requestedAddress = normalizeAddressParam(params);
+  if (requestedAddress) return requestedAddress;
+
+  const vaultData = getUnlockedVault();
+  if (!vaultData) throw new Error('Wallet is locked');
+  const activeWallet = await resolveActiveWallet(vaultData);
+  return activeWallet.address;
+}
+
+async function handleProviderGetBalance(params: unknown): Promise<string> {
+  const address = await resolveProviderAddress(params);
+  const result = await handleGetBalance(address);
+  return result.confirmed;
+}
+
+async function handleProviderGetBalanceHex(params: unknown): Promise<string> {
+  const balance = await handleProviderGetBalance(params);
+  return `0x${BigInt(balance).toString(16)}`;
+}
+
+async function handleProviderGetNonce(params: unknown): Promise<number> {
+  const address = await resolveProviderAddress(params);
+  const vaultData = getUnlockedVault();
+  if (!vaultData) throw new Error('Wallet is locked');
+
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  const client = await getRpcClient(network.rpcUrls);
+  return client.getPendingNonce(address);
 }
 
 async function saveVaultData(vaultData: VaultData): Promise<void> {
