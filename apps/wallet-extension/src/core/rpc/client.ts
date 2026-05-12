@@ -158,7 +158,13 @@ export class RpcClient {
   private lastCallAttempts: RpcAttemptDebug[] = [];
 
   constructor(urls: string[], options: RpcClientOptions = {}) {
-    this.urls = urls;
+    this.urls = Array.from(
+      new Set(
+        urls
+          .map((url) => (typeof url === 'string' ? url.trim() : ''))
+          .filter((url) => url.length > 0),
+      ),
+    );
     this.timeoutMs = options.timeoutMs ?? RPC_TIMEOUT_MS;
   }
 
@@ -174,6 +180,16 @@ export class RpcClient {
   }
 
   async call(method: string, params: JsonRpcParams = [], schema?: string, options: RpcCallOptions = {}): Promise<any> {
+    if (this.urls.length === 0) {
+      throw new Error('No RPC endpoints configured');
+    }
+
+    // If every URL has been marked failed, clear the circuit so the next call can retry.
+    // Otherwise, single-endpoint wallets can get stuck in a permanent failed state.
+    if (this.failedUrls.size >= this.urls.length) {
+      this.failedUrls.clear();
+    }
+
     let lastError: Error | null = null;
     const fetchImpl = getFetch();
     const setTimeoutImpl = getSetTimeout();

@@ -6,6 +6,7 @@ export interface WatchedToken {
   chainId: number;
   name?: string;
   image?: string;
+  tokenId?: string;
   addedAt: number;
   addedByOrigin?: string;
 }

@@ -192,13 +192,6 @@ function normalizeDownload(
   };
 }
 
-function hasMultipleChecksummedDownloads(platform: WalletManifestPlatform): boolean {
-  let count = 0;
-  if (platform.installer_url && platform.installer_filename) count += 1;
-  if (platform.zip_url && platform.zip_filename) count += 1;
-  return count > 1;
-}
-
 export function normalizeWalletManifest(manifest: WalletManifest | null): WalletPlatformCard[] {
   if (!manifest) {
     return [];
@@ -254,19 +247,12 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
   if (manifest.macos) {
     const macDownloads = [
       normalizeDownload(
-        manifest.macos.installer_url,
-        manifest.macos.installer_filename,
-        'macOS Disk Image (.dmg)',
-        manifest.macos.installer_size_bytes,
-        manifest.macos.installer_sha256,
-        true,
-      ),
-      normalizeDownload(
         manifest.macos.zip_url,
         manifest.macos.zip_filename,
         'Portable ZIP',
         manifest.macos.zip_size_bytes,
         manifest.macos.zip_sha256,
+        true,
       ),
     ].filter((entry): entry is WalletDownloadEntry => entry !== null);
 
@@ -275,7 +261,7 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
       if (manifest.macos.checksum_url) {
         checksums.push({
           href: manifest.macos.checksum_url,
-          label: hasMultipleChecksummedDownloads(manifest.macos) ? 'SHA-256 checksums' : 'SHA-256 checksum',
+          label: macDownloads.length > 1 ? 'SHA-256 checksums' : 'SHA-256 checksum',
         });
       }
 
@@ -288,9 +274,8 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
         downloads: macDownloads,
         checksums,
         instructions: [
-          'Download the .dmg, open it, and drag Animica Wallet into Applications.',
+          'Download the ZIP and extract Animica Wallet.',
           'If Gatekeeper warns, verify the SHA-256 checksum before first launch.',
-          'Use the portable ZIP only when you need a non-installed copy.',
         ],
       });
     }
@@ -366,11 +351,8 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
 
 function buildLegacyMacCard(): WalletPlatformCard | null {
   const downloads = [
-    hasPublicWalletFile('animicawallet.dmg')
-      ? normalizeDownload('/wallet/animicawallet.dmg', 'animicawallet.dmg', 'macOS Disk Image (.dmg)', undefined, undefined, true)
-      : null,
     hasPublicWalletFile('animicawalletmac.zip')
-      ? normalizeDownload('/wallet/animicawalletmac.zip', 'animicawalletmac.zip', 'Portable ZIP')
+      ? normalizeDownload('/wallet/animicawalletmac.zip', 'animicawalletmac.zip', 'Portable ZIP', undefined, undefined, true)
       : null,
   ].filter((entry): entry is WalletDownloadEntry => entry !== null);
 
@@ -394,9 +376,8 @@ function buildLegacyMacCard(): WalletPlatformCard | null {
     downloads,
     checksums,
     instructions: [
-      'Download the .dmg, open it, and drag Animica Wallet into Applications.',
+      'Download the ZIP and extract Animica Wallet.',
       'If Gatekeeper warns, verify the SHA-256 checksum before first launch.',
-      'Use the portable ZIP only when you need a non-installed copy.',
     ],
   };
 }

@@ -4,10 +4,6 @@
   "macos": {
     "architecture": "universal",
     "build_label": "v0.1.1-2cdfe1513",
-    "installer_url": "/wallet/animicawallet.dmg",
-    "installer_filename": "animicawallet.dmg",
-    "installer_sha256": "fcb4d56a1351e6cd28ab45b8027084a1587754acd4f25918c5e3bc6873b0d1c8",
-    "installer_size_bytes": 122900834,
     "zip_url": "/wallet/animicawalletmac.zip",
     "zip_filename": "animicawalletmac.zip",
     "zip_sha256": "3724210c435e6e1147a954f991a21867ebf0c2424fa659b724e84105dc8974ad",

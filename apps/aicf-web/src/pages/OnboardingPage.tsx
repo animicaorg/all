@@ -14,6 +14,7 @@ export function OnboardingPage() {
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [networkStatus, setNetworkStatus] = useState<Record<string, unknown> | null>(null);
+  const [hasWalletProvider, setHasWalletProvider] = useState(false);
 
   useEffect(() => {
     aicfApi
@@ -24,8 +25,23 @@ export function OnboardingPage() {
       });
   }, []);
 
+  useEffect(() => {
+    const syncProviderState = () => {
+      setHasWalletProvider(Boolean(getAnimicaProvider()));
+    };
+
+    syncProviderState();
+    const pollId = window.setInterval(syncProviderState, 1_000);
+    const onInit = () => syncProviderState();
+    window.addEventListener('animica#initialized', onInit as EventListener);
+
+    return () => {
+      window.clearInterval(pollId);
+      window.removeEventListener('animica#initialized', onInit as EventListener);
+    };
+  }, []);
+
   const demand = useMemo(() => deriveNetworkDemand(networkStatus), [networkStatus]);
-  const hasWalletProvider = Boolean(getAnimicaProvider());
 
   async function signIn() {
     setIsSubmitting(true);
@@ -71,7 +87,7 @@ export function OnboardingPage() {
         </div>
 
         <div className="onboarding-actions">
-          <button disabled={!hasWalletProvider || isSubmitting} onClick={signIn} type="button">
+          <button disabled={isSubmitting} onClick={signIn} type="button">
             {isSubmitting ? 'Connecting wallet...' : `Connect wallet and sign in as ${role}`}
           </button>
           <p className="muted">

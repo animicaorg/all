@@ -18,6 +18,8 @@ window.addEventListener('message', async (event) => {
     const response = await chrome.runtime.sendMessage({
       method,
       params,
+      origin: window.location.origin,
+      href: window.location.href,
     });
 
     if (response?.error) {
