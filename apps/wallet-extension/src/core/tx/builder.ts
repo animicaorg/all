@@ -70,7 +70,7 @@ export async function buildAndSignTransfer(
   
   // Sign transaction
   const signingBytes = getSigningBytes(unsignedTx);
-  const signature = await sign(signingBytes, secretKey, algId);
+  const signature = await sign(signingBytes, secretKey, algId, publicKey);
   
   const pqSig: PqSignature = {
     alg: algId,

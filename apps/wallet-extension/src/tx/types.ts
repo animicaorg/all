@@ -14,7 +14,9 @@ export interface TxBody {
   data: Uint8Array;
   memo: string;
   timestamp: number;
-  kind: number; // 0 = transfer, 1 = contract call, etc.
+  kind: number;            // 0=transfer, 1=deploy, 2=call, 3=transfer-with-data
+  code?: Uint8Array;       // kind=1 deploy payload
+  manifest?: Uint8Array;   // kind=1 deploy payload
 }
 
 export interface TxAuth {
@@ -50,8 +52,8 @@ export interface SigningPreimage {
 }
 
 export interface TxBuildParams {
-  from: string;        // bech32 address
-  to: string;          // bech32 address
+  from: string;                     // bech32 address (sender)
+  to?: string;                      // bech32 address; required for transfer/call, omitted for deploy
   value: bigint | number;
   fee: bigint | number;
   gas_limit: bigint | number;
@@ -59,6 +61,14 @@ export interface TxBuildParams {
   data?: Uint8Array;
   memo?: string;
   timestamp?: number;
+  /**
+   * Explicit kind override.
+   *   0=transfer, 1=deploy (contract create), 2=call (contract call with data)
+   * If omitted: deploy when {code,manifest} present, call when data present, else transfer.
+   */
+  kind?: number;
+  code?: Uint8Array;                // kind=1 deploy: contract bytecode
+  manifest?: Uint8Array;            // kind=1 deploy: contract manifest JSON bytes
 }
 
 export interface SignedTxResult {

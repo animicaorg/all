@@ -96,7 +96,12 @@ export async function buildAndSignTransaction(
   secretKey: Uint8Array,
   publicKey: Uint8Array,
   algId: number,
-  signFunc: (message: Uint8Array, secretKey: Uint8Array, algId: number) => Promise<Uint8Array>
+  signFunc: (
+    message: Uint8Array,
+    secretKey: Uint8Array,
+    algId: number,
+    publicKey?: Uint8Array,
+  ) => Promise<Uint8Array>
 ): Promise<SignedTxResult> {
   // Validate inputs
   if (!secretKey || secretKey.length === 0) {
@@ -108,38 +113,68 @@ export async function buildAndSignTransaction(
   if (!params.from || typeof params.from !== 'string') {
     throw new Error('from address is required');
   }
-  if (!params.to || typeof params.to !== 'string') {
-    throw new Error('to address is required');
-  }
   if (!context.genesis_hash || context.genesis_hash.length !== 32) {
     throw new Error('context.genesis_hash is required (32 bytes)');
   }
   if (!context.network) {
     throw new Error('context.network is required');
   }
-  
+
+  // Pick the tx kind. Explicit override wins; otherwise infer:
+  //   deploy if code/manifest provided,
+  //   call if data provided,
+  //   transfer otherwise.
+  const hasDeployPayload = !!(params.code && params.code.length > 0)
+    || !!(params.manifest && params.manifest.length > 0);
+  const hasCallData = !!(params.data && params.data.length > 0);
+  let kind: number;
+  if (typeof params.kind === 'number') {
+    kind = params.kind;
+  } else if (hasDeployPayload) {
+    kind = 1;
+  } else if (hasCallData) {
+    kind = 2;
+  } else {
+    kind = 0;
+  }
+
+  // Validate per-kind requirements
+  if (kind === 1) {
+    if (!params.code || params.code.length === 0) {
+      throw new Error('deploy tx requires code bytes');
+    }
+    if (!params.manifest || params.manifest.length === 0) {
+      throw new Error('deploy tx requires manifest bytes');
+    }
+  } else {
+    if (!params.to || typeof params.to !== 'string') {
+      throw new Error('to address is required for transfer/call');
+    }
+  }
+
   // Convert algId to schemeId
   const schemeId = algIdToSchemeId(algId);
   if (schemeId === null) {
     throw new Error(`Unsupported algorithm ID: 0x${algId.toString(16)}`);
   }
-  
+
   // Validate scheme and key lengths
   validateScheme(schemeId, publicKey);
-  
+
   // CRITICAL: Validate address/pubkey binding
-  // This prevents signing with the wrong key
   validateAddressBinding(params.from, publicKey, algId);
-  
-  // Build transaction body
+
+  // Build transaction body. Deploy txs have no `to` — we still include a
+  // zeroed 32-byte buffer in the internal representation; toCanonicalBodyShape
+  // ignores it for kind=1 and emits the {code,manifest} payload instead.
   const payloadData = params.data || new Uint8Array();
-  const kind = payloadData.length > 0 ? 2 : 0; // 0=transfer, 2=contract call
+  const toAddrBytes = params.to ? addressToBytes(params.to) : new Uint8Array(32);
   const body: TxBody = {
     version: 1,
     chain_id: context.chain_id,
     nonce: params.nonce,
     from_addr: addressToBytes(params.from),
-    to_addr: addressToBytes(params.to),
+    to_addr: toAddrBytes,
     value: params.value,
     fee: params.fee,
     gas_limit: params.gas_limit,
@@ -147,15 +182,19 @@ export async function buildAndSignTransaction(
     memo: params.memo || '',
     timestamp: params.timestamp || Math.floor(Date.now() / 1000),
     kind,
+    code: params.code,
+    manifest: params.manifest,
   };
   
-  // Sign the transaction
+  // Sign the transaction. We pass the chain's alg_id (4097/4098) — not the
+  // wallet-internal scheme_id (1/2) — because both the canonical sign_bytes
+  // wrapper and the wire envelope's sigs[].alg field key off alg_id.
   const auth = await signTxBody(
     body,
     context,
     secretKey,
     publicKey,
-    schemeId,
+    algId,
     signFunc
   );
   

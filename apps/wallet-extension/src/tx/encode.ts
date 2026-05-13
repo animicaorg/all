@@ -108,28 +108,34 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 }
 
 /**
- * Encode a CBOR map (major type 5) with canonical key ordering
+ * Encode a CBOR map (major type 5) with canonical key ordering.
+ *
+ * Object.entries surfaces all keys as strings. The server-side canonical
+ * encoder (Python/cbor2) preserves integer keys for the signing preimage
+ * (keys 1..7 in `{1: domain, ..., 7: body}`), so numeric-string keys here
+ * must be re-encoded as CBOR integers to match. Otherwise the wallet's
+ * preimage diverges from the chain's preimage and PQ verification fails.
  */
 function encodeMap(obj: Record<string | number, unknown>): number[] {
-  // Encode each key-value pair and collect as bytes
   const pairs: Array<{ key: Uint8Array; value: Uint8Array }> = [];
-  
+
   for (const [key, value] of Object.entries(obj)) {
-    const keyBytes = new Uint8Array(encodeValue(key));
+    const keyEncoded = /^(0|[1-9]\d*)$/.test(key) && Number(key) <= Number.MAX_SAFE_INTEGER
+      ? encodeValue(Number(key))
+      : encodeValue(key);
+    const keyBytes = new Uint8Array(keyEncoded);
     const valueBytes = new Uint8Array(encodeValue(value));
     pairs.push({ key: keyBytes, value: valueBytes });
   }
-  
-  // Sort pairs by encoded key bytes (canonical ordering)
+
   pairs.sort((a, b) => compareBytes(a.key, b.key));
-  
-  // Build result
+
   const result = [...encodeAdditionalInfo(5, BigInt(pairs.length))];
   for (const pair of pairs) {
     result.push(...Array.from(pair.key));
     result.push(...Array.from(pair.value));
   }
-  
+
   return result;
 }
 
@@ -257,14 +263,82 @@ export function encodeTxAuth(auth: {
     signature_bytes: auth.signature_bytes,
     prehash_id: auth.prehash_id,
   };
-  
+
   return encodeCanonical(obj);
 }
 
 /**
- * Encode a complete transaction envelope to canonical CBOR
- * 
- * The envelope contains body and auth, but NOT txid (which is derived).
+ * Build the canonical V1 tx body shape that the Animica node consumes:
+ *
+ *   transfer (t=0): payload.v = { to, amount, data }
+ *   deploy   (t=1): payload.v = { code, manifest }
+ *   call     (t=2): payload.v = { to, data }
+ *
+ * Layout matches sdk/python/omni_sdk/tx/encode.py exactly so the wallet's
+ * preimage bytes match what the node will reproduce. The node's
+ * normalize_tx_body short-circuits when v/gas/payload are present and uses
+ * this body verbatim for both signing preimage and txid.
+ */
+export function toCanonicalBodyShape(body: {
+  chain_id: number;
+  nonce: number;
+  from_addr: Uint8Array;
+  to_addr: Uint8Array;
+  value: bigint | number;
+  fee: bigint | number;
+  gas_limit: bigint | number;
+  data: Uint8Array;
+  kind?: number;
+  code?: Uint8Array;
+  manifest?: Uint8Array;
+}): Record<string, unknown> {
+  const kind = typeof body.kind === 'number' ? body.kind : 0;
+
+  let payloadV: Record<string, unknown>;
+  if (kind === 1) {
+    payloadV = {
+      code: body.code ?? new Uint8Array(),
+      manifest: body.manifest ?? new Uint8Array(),
+    };
+  } else if (kind === 2) {
+    payloadV = {
+      to: body.to_addr,
+      data: body.data,
+    };
+  } else {
+    payloadV = {
+      to: body.to_addr,
+      amount: body.value,
+      data: body.data,
+    };
+  }
+
+  return {
+    v: 1,
+    chainId: body.chain_id,
+    from: body.from_addr,
+    gas: {
+      price: body.fee,
+      limit: body.gas_limit,
+    },
+    payload: {
+      t: kind,
+      v: payloadV,
+    },
+    accessList: [],
+    nonce: body.nonce,
+  };
+}
+
+/**
+ * Encode a complete transaction envelope to canonical CBOR.
+ *
+ * Wire shape mirrors the node's canonical envelope:
+ *   { tx: <canonical body>, sigs: [{ alg, pubkey, sig }] }
+ *
+ * The previous {body, auth} shape was rejected by the node with
+ * "-32602 Missing 'sig' object" because the chain's envelope normalizer
+ * looks for `sig` / `sigs` and the body field for `from` (not `from_addr`).
  */
 export function encodeTxEnvelope(envelope: {
   body: {
@@ -280,6 +354,8 @@ export function encodeTxEnvelope(envelope: {
     memo: string;
     timestamp: number;
     kind: number;
+    code?: Uint8Array;
+    manifest?: Uint8Array;
   };
   auth: {
     scheme_id: number;
@@ -289,27 +365,15 @@ export function encodeTxEnvelope(envelope: {
   };
 }): Uint8Array {
   const obj = {
-    body: {
-      version: envelope.body.version,
-      chain_id: envelope.body.chain_id,
-      nonce: envelope.body.nonce,
-      from_addr: envelope.body.from_addr,
-      to_addr: envelope.body.to_addr,
-      value: envelope.body.value,
-      fee: envelope.body.fee,
-      gas_limit: envelope.body.gas_limit,
-      data: envelope.body.data,
-      memo: envelope.body.memo,
-      timestamp: envelope.body.timestamp,
-      kind: envelope.body.kind,
-    },
-    auth: {
-      scheme_id: envelope.auth.scheme_id,
-      pubkey_bytes: envelope.auth.pubkey_bytes,
-      signature_bytes: envelope.auth.signature_bytes,
-      prehash_id: envelope.auth.prehash_id,
-    },
+    tx: toCanonicalBodyShape(envelope.body),
+    sigs: [
+      {
+        alg: envelope.auth.scheme_id,
+        pubkey: envelope.auth.pubkey_bytes,
+        sig: envelope.auth.signature_bytes,
+      },
+    ],
   };
-  
+
   return encodeCanonical(obj);
 }

@@ -130,6 +130,9 @@ const walletExtension = loadWalletExtensionDownloadData();
           <div>
             <h2 class="text-xl font-semibold">Browser Extension</h2>
             <p class="mt-2 text-sm opacity-80">Lightweight wallet for dApps and contract approvals.</p>
+            {walletExtension.version && (
+              <p class="mt-1 text-xs opacity-70">Version <code>{walletExtension.version}</code></p>
+            )}
           </div>
           <a
             href={walletExtension.download?.href ?? links.docs.page("WALLET")}

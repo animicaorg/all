@@ -83,6 +83,7 @@ export interface WalletExtensionDownloadData {
   download?: WalletDownloadEntry;
   checksumLink?: WalletChecksumLink;
   instructions: string[];
+  version?: string;
 }
 
 const walletPublicDirCandidates: Array<string | URL> = [
@@ -504,8 +505,11 @@ export function loadWalletDownloadPageData(): WalletDownloadPageData {
 export function loadWalletExtensionDownloadData(): WalletExtensionDownloadData {
   const zipFilename = 'animica-wallet-extension-chrome.zip';
   const checksumFilename = 'animica-wallet-extension-chrome.sha256';
+  const versionFilename = 'animica-wallet-extension-chrome.version';
   const checksumContents = readPublicWalletFile(checksumFilename);
   const checksum = parseSha256(checksumContents);
+  const versionRaw = readPublicWalletFile(versionFilename);
+  const version = versionRaw ? versionRaw.trim().split(/\s+/)[0] || undefined : undefined;
 
   return {
     download: hasPublicWalletFile(zipFilename)
@@ -529,5 +533,6 @@ export function loadWalletExtensionDownloadData(): WalletExtensionDownloadData {
       'Open chrome://extensions, enable Developer mode, and click “Load unpacked”.',
       'Select the extracted folder containing manifest.json and verify the checksum before first use.',
     ],
+    version,
   };
 }

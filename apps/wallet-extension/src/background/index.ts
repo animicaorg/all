@@ -1,5 +1,6 @@
 // Background service worker
 
+import { sha3_256 } from 'js-sha3';
 import { loadVault, saveVault, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
 import { stringifyForStorage, toJsonSafe } from '../core/rpc/safeJson';
@@ -475,11 +476,36 @@ function normalizeErrorForUi(error: unknown): { message: string; [key: string]: 
   return { message: String(error) };
 }
 
-// Message handler
+// Message handler.
+//
+// chrome.runtime.sendMessage requires JSON-cloneable values. Any BigInt or
+// Uint8Array in a handler's return tree would otherwise blow up with
+// "Do not know how to serialize a BigInt" before reaching the caller —
+// which is exactly the failure mode dapps and AICF pages hit when calling
+// provider methods. Route every response through toJsonSafe('rpc') so
+// BigInt -> decimal string and Uint8Array -> 0x-hex consistently.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleMessage(message, sender).then(sendResponse).catch(error => {
-    sendResponse({ error: normalizeErrorForUi(error) });
-  });
+  handleMessage(message, sender)
+    .then((result) => {
+      try {
+        sendResponse(toJsonSafe(result, 'rpc'));
+      } catch (sanitizeError) {
+        sendResponse({
+          error: normalizeErrorForUi(
+            sanitizeError instanceof Error
+              ? sanitizeError
+              : new Error('Failed to serialize provider response'),
+          ),
+        });
+      }
+    })
+    .catch((error) => {
+      try {
+        sendResponse({ error: toJsonSafe(normalizeErrorForUi(error), 'rpc') });
+      } catch {
+        sendResponse({ error: { message: 'Internal wallet error' } });
+      }
+    });
   return true; // Keep channel open for async response
 });
 
@@ -653,6 +679,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'provider_sendTransaction':
       return handleProviderSendTransaction(origin, params);
 
+    case 'animica_deployContract':
+    case 'provider_deployContract':
+      return handleProviderDeployContract(origin, params);
+
     case 'provider_signMessage':
     case 'animica_signMessage':
     case 'personal_sign':
@@ -666,7 +696,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'animica_getNonce':
       return handleProviderGetNonce(params);
-    
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }
@@ -895,12 +925,36 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
       signal: controller.signal,
       requestId,
     });
-  
-    // Calculate pending outgoing
+
+    // Reconcile local pending state with chain state: any tx whose nonce
+    // has already been consumed on chain (nonce < committed_nonce) is now
+    // confirmed, so it should stop reducing the available balance.
     const txStore = TxStore.fromJSON(vaultData.txCache);
+    let cacheChanged = false;
+    try {
+      const client = await getRpcClient(network.rpcUrls);
+      const committedNonce = await client.getNonce(normalizedAddress, 'latest');
+      const updated = txStore.markIncludedByCommittedNonce(normalizedAddress, committedNonce);
+      if (updated > 0) cacheChanged = true;
+    } catch (nonceErr) {
+      // Non-fatal: stay with previous pending estimate. Surface in debug only.
+      debugLog('balance.fetch.nonce_reconcile_failed', {
+        address: normalizedAddress,
+        error: nonceErr instanceof Error ? nonceErr.message : String(nonceErr),
+      });
+    }
+
     const pendingOutgoing = txStore.getPendingOutgoing(normalizedAddress);
-  
     const available = confirmed - pendingOutgoing;
+
+    if (cacheChanged) {
+      vaultData.txCache = txStore.toJSON();
+      try { await saveVaultData(vaultData); } catch (saveErr) {
+        debugLog('balance.fetch.cache_persist_failed', {
+          error: saveErr instanceof Error ? saveErr.message : String(saveErr),
+        });
+      }
+    }
 
     console.debug('[wallet-bg] balance.fetch.end', {
       requestId,
@@ -933,7 +987,7 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   }
 }
 
-async function handleSendTransaction(params: any): Promise<{ txid: string }> {
+async function handleSendTransaction(params: any): Promise<{ txid: string; contractAddress?: string }> {
   try {
     const vaultData = getUnlockedVault();
     if (!vaultData) {
@@ -941,21 +995,48 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     }
 
     ensureVaultDefaults(vaultData);
-    
+
     // Validate params
     if (!params.from || typeof params.from !== 'string') {
       throw new Error('Invalid from address');
     }
-    if (!params.to || typeof params.to !== 'string') {
+
+    // Determine tx kind. Explicit kind overrides; otherwise infer from
+    // params: presence of `code` + `manifest` => deploy (kind=1), data
+    // present => call (kind=2), otherwise transfer (kind=0). The wallet's
+    // canonical body shape selects the matching payload for each kind.
+    const deployCode = parseBytesData(params.code);
+    const deployManifest = parseBytesData(params.manifest);
+    const hasDeployPayload = !!(deployCode && deployCode.length > 0)
+      && !!(deployManifest && deployManifest.length > 0);
+    const txData = parseBytesData(params.data);
+    let txKind: number;
+    if (typeof params.kind === 'number') {
+      txKind = params.kind;
+    } else if (hasDeployPayload) {
+      txKind = 1;
+    } else if (txData && txData.length > 0) {
+      txKind = 2;
+    } else {
+      txKind = 0;
+    }
+
+    // Deploys have no `to` address. For transfer/call we still require it.
+    if (txKind !== 1 && (!params.to || typeof params.to !== 'string')) {
       throw new Error('Invalid to address');
     }
 
     const fromAddress = params.from.trim();
-    const toAddress = params.to.trim();
+    const toAddress = txKind === 1 ? '' : params.to.trim();
     const amountBaseUnits = parseBaseUnitAmount(params.amount ?? params.value ?? 0);
-    const txData = parseBytesData(params.data);
-    if (amountBaseUnits === 0n && (!txData || txData.length === 0)) {
+    if (txKind === 0 && amountBaseUnits === 0n && (!txData || txData.length === 0)) {
       throw new Error('Transaction must include a non-zero amount or non-empty data payload');
+    }
+    if (txKind === 1 && (!deployCode || deployCode.length === 0)) {
+      throw new Error('Deploy tx requires code bytes');
+    }
+    if (txKind === 1 && (!deployManifest || deployManifest.length === 0)) {
+      throw new Error('Deploy tx requires manifest bytes');
     }
 
     const network = vaultData.networkConfigs[vaultData.currentNetwork];
@@ -970,6 +1051,55 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     const account = vaultData.accounts.find(a => a.address === activeWallet.address);
     if (!account) {
       throw new Error('Account not found');
+    }
+
+    // Authoritative balance + pending check. Without this, the UI's stale
+    // balance snapshot lets the user click Send twice in quick succession
+    // and the chain's mempool admits both (no balance reservation server
+    // side), so the wallet appears to allow double-spending. Re-checking
+    // here against fresh on-chain balance + local pendingOutgoing closes
+    // that window.
+    try {
+      const normalizedFrom = fromAddress.toLowerCase();
+      const txStorePre = TxStore.fromJSON(vaultData.txCache);
+      let committedNonceForSpend: number | null = null;
+      try {
+        committedNonceForSpend = await client.getNonce(normalizedFrom, 'latest');
+      } catch (nonceErr) {
+        debugLog('send.precheck.nonce_failed', {
+          error: nonceErr instanceof Error ? nonceErr.message : String(nonceErr),
+        });
+      }
+      if (committedNonceForSpend !== null) {
+        txStorePre.markIncludedByCommittedNonce(normalizedFrom, committedNonceForSpend);
+        vaultData.txCache = txStorePre.toJSON();
+      }
+      const confirmedBase = await getBalance(normalizedFrom, {
+        rpcUrl: await getRpcUrl(network.rpcUrls?.[0]),
+        chainId: network.chainId,
+      });
+      const pendingOut = txStorePre.getPendingOutgoing(normalizedFrom);
+      const available = confirmedBase - pendingOut;
+      if (amountBaseUnits > available) {
+        const formatBase = (v: bigint) => {
+          const div = 1_000_000_000n;
+          const whole = v / div;
+          const frac = (v % div).toString().padStart(9, '0').replace(/0+$/, '');
+          return frac.length ? `${whole}.${frac}` : whole.toString();
+        };
+        throw new Error(
+          `Insufficient balance: ${formatBase(amountBaseUnits)} ANM requested, ` +
+          `${formatBase(available)} ANM available (${formatBase(pendingOut)} ANM reserved by pending sends).`
+        );
+      }
+    } catch (precheckErr) {
+      if (precheckErr instanceof Error && precheckErr.message.startsWith('Insufficient balance')) {
+        throw precheckErr;
+      }
+      debugLog('send.precheck.failed', {
+        error: precheckErr instanceof Error ? precheckErr.message : String(precheckErr),
+      });
+      // Continue: chain will catch insufficient funds with its own error.
     }
 
     const fromAddressInfo = decodeAddress(fromAddress);
@@ -1029,10 +1159,17 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
     // as bigint and use safeBigInt for fee/gas so dapps sending strings,
     // hex, or already-bigint values all work; numbers go through BigInt
     // without crashing on misconfigured defaults.
+    // Deploys need a much larger default gas limit because payloads carry
+    // contract bytecode + manifest. 21k (transfer default) underprices
+    // even a tiny token deploy.
+    const defaultGasLimitForKind = txKind === 1
+      ? safeBigInt(vaultData.settings.defaultGasLimit, 2_000_000n)
+      : safeBigInt(vaultData.settings.defaultGasLimit, 21_000n);
+
     const result = await buildAndSignTransaction(
       {
         from: activeWallet.address,
-        to: toAddress,
+        to: txKind === 1 ? undefined : toAddress,
         value: amountBaseUnits,
         fee: safeBigInt(
           params.gasPrice ?? params.maxFeePerGas ?? params.fee,
@@ -1040,11 +1177,14 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
         ),
         gas_limit: safeBigInt(
           params.gasLimit ?? params.gas,
-          safeBigInt(vaultData.settings.defaultGasLimit, 21_000n),
+          defaultGasLimitForKind,
         ),
         nonce,
         data: txData,
         memo: params.memo || '',
+        kind: txKind,
+        code: txKind === 1 ? deployCode : undefined,
+        manifest: txKind === 1 ? deployManifest : undefined,
       },
       context,
       account.secretKey,
@@ -1129,10 +1269,58 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
 
     txStore.upsert(pendingTx);
     vaultData.txCache = txStore.toJSON();
-    
+
     await saveVaultData(vaultData);
-    
-    return { txid: submittedTxHash };
+
+    // For deploys, deterministically derive the contract address so the
+    // caller (launcher UI) gets a usable address back without waiting for
+    // chain indexing. Matches core/utils/deploy_metadata.derive_python_vm_package_address:
+    //   sha3_256(DOMAIN_V1 || u128be(chain_id) || sender[-32:] ||
+    //            0x01 || u128be(nonce) || code_hash || manifest_hash)
+    let contractAddress: string | undefined;
+    if (txKind === 1 && deployCode && deployManifest) {
+      try {
+        const senderDigest = decodeAddress(activeWallet.address).digest;
+        const codeHash = new Uint8Array(sha3_256.array(deployCode));
+        const manifestHash = new Uint8Array(sha3_256.array(deployManifest));
+        const domain = new TextEncoder().encode('animica/deploy/python_vm_package/v1');
+        const u128be = (v: number | bigint): Uint8Array => {
+          let n = typeof v === 'bigint' ? v : BigInt(v);
+          if (n < 0n) n = 0n;
+          const out = new Uint8Array(16);
+          for (let i = 15; i >= 0; i--) {
+            out[i] = Number(n & 0xffn);
+            n >>= 8n;
+          }
+          return out;
+        };
+        const paddedSender = new Uint8Array(32);
+        paddedSender.set(senderDigest.subarray(Math.max(0, senderDigest.length - 32)));
+        const buf = new Uint8Array(
+          domain.length + 16 + 32 + 1 + 16 + 32 + 32,
+        );
+        let off = 0;
+        buf.set(domain, off); off += domain.length;
+        buf.set(u128be(context.chain_id), off); off += 16;
+        buf.set(paddedSender, off); off += 32;
+        buf[off] = 0x01; off += 1; // tag = nonce-style
+        buf.set(u128be(nonce), off); off += 16;
+        buf.set(codeHash, off); off += 32;
+        buf.set(manifestHash, off); off += 32;
+        const derived = new Uint8Array(sha3_256.array(buf));
+        contractAddress = '0x' + Array.from(derived)
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+      } catch (deriveErr) {
+        debugLog('deploy.address_derive_failed', {
+          error: deriveErr instanceof Error ? deriveErr.message : String(deriveErr),
+        });
+      }
+    }
+
+    return contractAddress
+      ? { txid: submittedTxHash, contractAddress }
+      : { txid: submittedTxHash };
   } catch (error) {
     // Log for debugging
     console.error('[wallet-bg] handleSendTransaction failed:', error);
@@ -1406,6 +1594,55 @@ function normalizeProviderSendTransactionParams(params: any): any {
   return params;
 }
 
+async function handleProviderDeployContract(
+  origin: string,
+  params: any,
+): Promise<{ txid: string; contractAddress?: string }> {
+  if (origin === 'unknown') {
+    throw new Error('Unable to determine requesting origin');
+  }
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+
+  const payload = Array.isArray(params) ? params[0] : params;
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid deploy params: expected { from?, code, manifest, value?, gasLimit?, gasPrice? }');
+  }
+  const obj = payload as Record<string, unknown>;
+  if (!obj.code) throw new Error('Deploy params missing `code`');
+  if (!obj.manifest) throw new Error('Deploy params missing `manifest`');
+
+  const permissions = new PermissionManager(vaultData.permissions);
+  const authorized = permissions.getAuthorizedAccounts(origin);
+  const fromAddress = typeof obj.from === 'string' ? obj.from : authorized[0];
+  if (typeof fromAddress !== 'string' || !fromAddress) {
+    throw new Error('Not authorized');
+  }
+  const matchedAuthorized = authorized.find(
+    (address) => address.toLowerCase() === fromAddress.toLowerCase(),
+  );
+  if (!matchedAuthorized) {
+    throw new Error('Not authorized');
+  }
+
+  await maybeOpenWalletPopup('deployContract');
+  permissions.updateLastUsed(origin);
+  vaultData.permissions = permissions.toJSON();
+  await saveVaultData(vaultData);
+
+  return handleSendTransaction({
+    from: matchedAuthorized,
+    code: obj.code,
+    manifest: obj.manifest,
+    value: obj.value ?? 0,
+    gasLimit: obj.gasLimit ?? obj.gas,
+    gasPrice: obj.gasPrice ?? obj.maxFeePerGas ?? obj.fee,
+    kind: 1,
+  });
+}
+
 async function handleProviderSendTransaction(origin: string, params: any): Promise<string> {
   if (origin === 'unknown') {
     throw new Error('Unable to determine requesting origin');
@@ -1481,6 +1718,13 @@ async function handleProviderSignMessage(origin: string, method: string, params:
     throw new Error('Wallet is locked');
   }
 
+  // Force account-binary normalization so publicKey / secretKey are real
+  // Uint8Array regardless of how they were last persisted (numeric-keyed
+  // object form from chrome.storage is otherwise a Record<string, number>
+  // and breaks sign(), which is what dapps and AICF hit as
+  // "invalid signature errors").
+  ensureVaultDefaults(vaultData);
+
   const request = normalizeProviderSignMessageParams(method, params);
   const permissions = new PermissionManager(vaultData.permissions);
   const authorized = permissions.getAuthorizedAccounts(origin);
@@ -1506,7 +1750,7 @@ async function handleProviderSignMessage(origin: string, method: string, params:
   await saveVaultData(vaultData);
 
   const signBytes = new TextEncoder().encode(`animica:${method}:${request.message}`);
-  const signature = await sign(signBytes, account.secretKey, account.algId);
+  const signature = await sign(signBytes, account.secretKey, account.algId, account.publicKey);
   return bytesTo0xHex(signature);
 }
 

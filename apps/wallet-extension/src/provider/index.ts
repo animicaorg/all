@@ -15,6 +15,7 @@ interface AnimicaProvider {
   animica_switchChain(chainId: number | string): Promise<void>;
   animica_signMessage(message: string): Promise<string>;
   animica_sendTransaction(tx: any): Promise<string>;
+  animica_deployContract(args: AnimicaDeployArgs): Promise<AnimicaDeployResult>;
   animica_getBalance(address: string): Promise<string>;
   animica_getNonce(address: string): Promise<number>;
   animica_watchAsset(payload: any): Promise<boolean>;
@@ -23,6 +24,30 @@ interface AnimicaProvider {
   // Event handling
   on(event: string, handler: (...args: any[]) => void): void;
   removeListener(event: string, handler: (...args: any[]) => void): void;
+}
+
+/**
+ * Args for animica_deployContract.
+ *
+ * `code` and `manifest` may be:
+ *  - `Uint8Array` (preferred; will be hex-encoded at the content boundary)
+ *  - `0x`-prefixed hex string
+ *  - decimal-byte array
+ *
+ * `manifest` for python-vm packages is the UTF-8 encoded JSON manifest.
+ */
+export interface AnimicaDeployArgs {
+  from?: string;
+  code: Uint8Array | string | number[];
+  manifest: Uint8Array | string | number[];
+  value?: bigint | number | string;
+  gasLimit?: bigint | number | string;
+  gasPrice?: bigint | number | string;
+}
+
+export interface AnimicaDeployResult {
+  txid: string;
+  contractAddress?: string;
 }
 
 const METHOD_ALIASES: Record<string, string> = {
@@ -128,6 +153,10 @@ class AnimicaProviderImpl implements AnimicaProvider {
 
   async animica_sendTransaction(tx: any): Promise<string> {
     return this.request({ method: 'animica_sendTransaction', params: [tx] });
+  }
+
+  async animica_deployContract(args: AnimicaDeployArgs): Promise<AnimicaDeployResult> {
+    return this.request({ method: 'animica_deployContract', params: [args] });
   }
 
   async animica_getBalance(address: string): Promise<string> {

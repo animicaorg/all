@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { Account } from '../../types/wallet';
 import { formatANM } from '../../services/balances';
-import { useBalancesStore } from '../../store/balances';
+import { useBalancesStore, balancesStoreActions } from '../../store/balances';
 
 
 type SignaturePolicyUiError = {
@@ -76,19 +76,23 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   const liveBalance = useBalancesStore(store => store.getBalanceState(currentAccount.address));
 
   function getAvailableBaseUnits(): bigint | null {
+    // balance.available already subtracts the sum of pending outgoing txs in
+    // the local cache, so prefer it over the live (confirmed-only) value.
+    // Without this, "Max" would refill to the full confirmed balance after
+    // a send, letting the user resubmit the same funds.
+    if (balance?.available) {
+      try {
+        return BigInt(balance.available);
+      } catch {
+        // fall through
+      }
+    }
     try {
       if (liveBalance?.status === 'ok' && liveBalance.valueAtomic) {
         return BigInt(liveBalance.valueAtomic);
       }
     } catch {
-      // fall through to legacy path
-    }
-    if (balance?.available) {
-      try {
-        return BigInt(balance.available);
-      } catch {
-        return null;
-      }
+      // ignore
     }
     return null;
   }
@@ -169,10 +173,15 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       setTo('');
       setAmount('');
 
-      // Refresh balance after a short delay
-      setTimeout(() => {
-        onSent();
-      }, 1000);
+      // Refresh immediately so the next click sees the pending tx reserved
+      // against the displayed balance. Waiting was a small but real double-
+      // submit window.
+      try {
+        await balancesStoreActions.refreshBalance(currentAccount.address, true);
+      } catch {
+        // non-fatal
+      }
+      onSent();
     } catch (err: any) {
       setError(formatSendError(err));
     } finally {
