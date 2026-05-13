@@ -76,7 +76,7 @@ longer the primary path for new users.
 
 | Command | Description |
 | --- | --- |
-| `install-runtime [--manifest-url URL] [--force]` | Install (or re-install) the managed runtime |
+| `install-runtime [--channel stable\|beta\|dev] [--manifest-url URL] [--force]` | Install (or re-install) the managed runtime |
 | `runtime status` | Where the runtime lives, which version is active |
 | `runtime repair` | Verify every install has its marker + entry |
 | `runtime remove --all \| --channel C --version V` | Delete one or all installed runtimes |
@@ -126,7 +126,9 @@ miner alongside the node.
 | `ANIMICA_NODE_HOME` | Override the daemon state dir (default `~/.animica/node`) |
 | `ANIMICA_NODE_CONFIG` | Override the config file path |
 | `ANIMICA_RUNTIME_HOME` | Override the managed-runtime install root (default `~/.animica/runtime`) |
+| `ANIMICA_RUNTIME_CHANNEL` | Select `stable`, `beta`, or `dev` when no manifest URL override is set |
 | `ANIMICA_RUNTIME_MANIFEST_URL` | Override the manifest URL `install-runtime` fetches |
+| `ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY` | Ed25519 public key used to verify signed manifests |
 
 ## Release engineering
 
@@ -137,16 +139,24 @@ points at using the scripts under `scripts/`:
 # Build a runtime tarball for the current host.
 node scripts/build-runtime-bundle.mjs \
   --version 0.2.0 \
-  --src    /path/to/animica/python/source \
-  --python /path/to/relocatable/python \
-  --out    dist/runtime-bundles
+  --platform linux \
+  --arch x64 \
+  --src ../../python \
+  --python /path/to/target/relocatable/python \
+  --output dist/runtime-bundles
 
 # Generate the manifest after building tarballs for every target platform.
 node scripts/generate-runtime-manifest.mjs \
-  --dir     dist/runtime-bundles \
-  --base    https://releases.animica.org/runtime/stable \
+  --input dist/runtime-bundles \
+  --channel stable \
+  --base https://releases.animica.org/runtime/stable \
   --version 0.2.0 \
-  --out     dist/runtime-bundles/manifest.json
+  --output dist/runtime-bundles/manifest.json
+
+# Validate manifest, hashes, and archive layout before upload.
+node scripts/validate-runtime-release.mjs \
+  --input dist/runtime-bundles \
+  --manifest dist/runtime-bundles/manifest.json
 
 # Upload everything under dist/runtime-bundles/ to the release host.
 ```
@@ -154,6 +164,8 @@ node scripts/generate-runtime-manifest.mjs \
 Both scripts are pure Node.js and produce identical output across hosts.
 The test suite (`test/bundle-roundtrip.test.ts`) installs a freshly built
 bundle into a temp dir to prove the full pipeline before publishing.
+See [RUNTIME_RELEASE.md](./RUNTIME_RELEASE.md) for Linux/Windows target
+commands, validation, upload commands, Nginx config, and troubleshooting.
 
 ## Integration with `animica-agent`
 

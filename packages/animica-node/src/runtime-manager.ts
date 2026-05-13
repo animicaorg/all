@@ -28,7 +28,7 @@
  * messages. Nothing is "downgraded silently" to legacy paths from here.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify as verifyCryptoSignature } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, openSync, closeSync, readdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -39,7 +39,12 @@ import { pipeline } from "node:stream/promises";
 
 import { safeParse, safeStringify } from "@animica/agent-core";
 
+export const RUNTIME_RELEASE_BASE_URL = "https://releases.animica.org/runtime";
+export const RUNTIME_CHANNELS = ["stable", "beta", "dev"] as const;
+export type RuntimeChannel = (typeof RUNTIME_CHANNELS)[number];
 export const DEFAULT_CHANNEL = "stable";
+export const DEFAULT_STABLE_MANIFEST_URL = `${RUNTIME_RELEASE_BASE_URL}/stable/manifest.json`;
+export const RUNTIME_MANIFEST_SCHEMA_VERSION = 1;
 
 export interface RuntimeAsset {
   /** Tarball URL (.tar.gz). */
@@ -63,8 +68,18 @@ export interface RuntimeManifest {
   generatedAt: string;
   /** Per-platform-arch entries. Keys are like "linux-x64", "darwin-arm64", "win32-x64". */
   assets: Record<string, RuntimeAsset>;
-  /** Optional signature payload (e.g. minisign / cosign). Honored if present; ignored if absent. */
-  signature?: { algorithm: string; value: string };
+  /**
+   * Optional signature over the canonical manifest JSON with this field
+   * omitted. Ed25519 is implemented; unsigned manifests remain accepted for
+   * backwards compatibility until the hosted channel has a pinned key.
+   */
+  signature?: RuntimeManifestSignature;
+}
+
+export interface RuntimeManifestSignature {
+  algorithm: "ed25519";
+  keyId?: string;
+  value: string;
 }
 
 export interface RuntimePaths {
@@ -104,10 +119,20 @@ export interface CurrentPointer {
 }
 
 /** Default manifest URL. Operators or CI can override with ANIMICA_RUNTIME_MANIFEST_URL. */
-export function defaultManifestUrl(): string {
-  return (
-    process.env.ANIMICA_RUNTIME_MANIFEST_URL ??
-    `https://releases.animica.org/runtime/${DEFAULT_CHANNEL}/manifest.json`
+export function defaultManifestUrl(opts: { channel?: string } = {}): string {
+  if (process.env.ANIMICA_RUNTIME_MANIFEST_URL) return process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+  return manifestUrlForChannel(opts.channel ?? process.env.ANIMICA_RUNTIME_CHANNEL ?? DEFAULT_CHANNEL);
+}
+
+export function manifestUrlForChannel(channel: string): string {
+  const c = normalizeRuntimeChannel(channel);
+  return `${RUNTIME_RELEASE_BASE_URL}/${c}/manifest.json`;
+}
+
+export function normalizeRuntimeChannel(channel: string): RuntimeChannel {
+  if ((RUNTIME_CHANNELS as readonly string[]).includes(channel)) return channel as RuntimeChannel;
+  throw new ManifestError(
+    `unsupported runtime channel "${channel}". Expected one of: ${RUNTIME_CHANNELS.join(", ")}`,
   );
 }
 
@@ -125,37 +150,142 @@ export function platformKey(): string {
 /* -------------------- manifest loading -------------------- */
 
 export class ManifestError extends Error {}
+export class ManifestSignatureError extends ManifestError {}
 export class IntegrityError extends Error {}
 export class LockHeldError extends Error {}
 export class NoManifestError extends Error {}
+export class DownloadError extends Error {}
 export class UnsupportedPlatformError extends Error {}
 
-function ensureValidManifest(value: unknown): RuntimeManifest {
+export function validateRuntimeManifest(value: unknown): RuntimeManifest {
   if (typeof value !== "object" || value === null) throw new ManifestError("manifest is not an object");
   const m = value as Partial<RuntimeManifest>;
-  if (typeof m.schema !== "number" || m.schema < 1) throw new ManifestError("manifest.schema missing or invalid");
+  if (m.schema !== RUNTIME_MANIFEST_SCHEMA_VERSION)
+    throw new ManifestError(`manifest.schema must be ${RUNTIME_MANIFEST_SCHEMA_VERSION}`);
   if (typeof m.channel !== "string" || !m.channel) throw new ManifestError("manifest.channel missing");
+  if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(m.channel))
+    throw new ManifestError("manifest.channel contains unsupported characters");
   if (typeof m.version !== "string" || !/^\d+\.\d+\.\d+/.test(m.version))
     throw new ManifestError("manifest.version missing or not semver");
+  if (typeof m.generatedAt !== "string" || Number.isNaN(Date.parse(m.generatedAt)))
+    throw new ManifestError("manifest.generatedAt missing or invalid");
   if (typeof m.assets !== "object" || m.assets === null)
     throw new ManifestError("manifest.assets missing");
+  if (Object.keys(m.assets).length === 0) throw new ManifestError("manifest.assets must not be empty");
   for (const [k, v] of Object.entries(m.assets!)) {
+    if (!/^(linux|darwin|win32)-[a-z0-9][a-z0-9._-]*$/.test(k))
+      throw new ManifestError(`assets[${k}] has an invalid platform key`);
     if (typeof v !== "object" || v === null) throw new ManifestError(`assets[${k}] is not an object`);
     const a = v as RuntimeAsset;
     if (typeof a.url !== "string" || !/^https?:\/\//.test(a.url))
       throw new ManifestError(`assets[${k}].url must be http(s)`);
     if (typeof a.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(a.sha256))
       throw new ManifestError(`assets[${k}].sha256 must be a 64-char hex digest`);
+    if (a.bytes !== undefined && (!Number.isSafeInteger(a.bytes) || a.bytes <= 0))
+      throw new ManifestError(`assets[${k}].bytes must be a positive integer when present`);
     if (typeof a.entry !== "string" || !a.entry)
       throw new ManifestError(`assets[${k}].entry must be a non-empty path`);
+    if (a.entry.startsWith("/") || a.entry.includes("..") || /^[a-zA-Z]:/.test(a.entry))
+      throw new ManifestError(`assets[${k}].entry must stay inside the runtime bundle`);
+  }
+  if (m.signature !== undefined) {
+    if (typeof m.signature !== "object" || m.signature === null)
+      throw new ManifestError("manifest.signature must be an object when present");
+    const s = m.signature as Partial<RuntimeManifestSignature>;
+    if (s.algorithm !== "ed25519")
+      throw new ManifestError("manifest.signature.algorithm must be ed25519");
+    if (s.keyId !== undefined && (typeof s.keyId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(s.keyId)))
+      throw new ManifestError("manifest.signature.keyId invalid");
+    if (typeof s.value !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(s.value))
+      throw new ManifestError("manifest.signature.value must be base64");
   }
   return m as RuntimeManifest;
 }
 
+function sortedForJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedForJson);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      const v = (value as Record<string, unknown>)[k];
+      if (v !== undefined) out[k] = sortedForJson(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function canonicalRuntimeManifestPayload(manifest: RuntimeManifest): string {
+  const { signature: _signature, ...unsigned } = manifest;
+  return JSON.stringify(sortedForJson(unsigned));
+}
+
+export function verifyRuntimeManifestSignature(
+  manifest: RuntimeManifest,
+  opts: { publicKey?: string } = {},
+): void {
+  if (!manifest.signature) return;
+  const publicKeyText = opts.publicKey ?? process.env.ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY;
+  if (!publicKeyText) {
+    throw new ManifestSignatureError(
+      "manifest is signed, but no trusted public key is configured. Set ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY to the Ed25519 public key PEM or SPKI base64.",
+    );
+  }
+  let publicKey: ReturnType<typeof createPublicKey>;
+  try {
+    const normalized = publicKeyText.includes("BEGIN PUBLIC KEY")
+      ? publicKeyText.replace(/\\n/g, "\n")
+      : Buffer.from(publicKeyText, "base64");
+    publicKey = createPublicKey(
+      typeof normalized === "string"
+        ? normalized
+        : { key: normalized, format: "der", type: "spki" },
+    );
+  } catch (err) {
+    throw new ManifestSignatureError(`trusted manifest public key is invalid: ${(err as Error).message}`);
+  }
+  const ok = verifyCryptoSignature(
+    null,
+    Buffer.from(canonicalRuntimeManifestPayload(manifest), "utf8"),
+    publicKey,
+    Buffer.from(manifest.signature.value, "base64"),
+  );
+  if (!ok) throw new ManifestSignatureError("manifest signature verification failed");
+}
+
+function localPathFromManifestUrl(url: string): string | null {
+  if (url.startsWith("file://")) return new URL(url).pathname;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && existsSync(url)) return url;
+  return null;
+}
+
+function describeNetworkFailure(err: unknown): string {
+  const e = err as Error & { code?: string; cause?: unknown };
+  const text = `${e.message ?? String(err)} ${(e.cause as Error | undefined)?.message ?? ""}`;
+  if (e.name === "AbortError") return "request timed out";
+  if (/certificate|self[- ]signed|CERT_|UNABLE_TO_VERIFY|TLS|SSL/i.test(text))
+    return `TLS certificate validation failed (${text.trim()})`;
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|network|fetch failed/i.test(text))
+    return `network connection failed (${text.trim()})`;
+  return text.trim();
+}
+
 export async function fetchManifest(
   url = defaultManifestUrl(),
-  opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number; manifestPublicKey?: string } = {},
 ): Promise<RuntimeManifest> {
+  const localPath = localPathFromManifestUrl(url);
+  if (localPath) {
+    let body: unknown;
+    try {
+      body = safeParse(readFileSync(localPath, "utf8"));
+    } catch (err) {
+      throw new ManifestError(`manifest at ${localPath} is not valid JSON: ${(err as Error).message}`);
+    }
+    const manifest = validateRuntimeManifest(body);
+    verifyRuntimeManifestSignature(manifest, { publicKey: opts.manifestPublicKey });
+    return manifest;
+  }
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new ManifestError("no fetch implementation available");
   const ac = new AbortController();
@@ -164,18 +294,27 @@ export async function fetchManifest(
   try {
     res = await fetchImpl(url, { signal: ac.signal });
   } catch (err) {
-    throw new NoManifestError(`failed to fetch manifest from ${url}: ${(err as Error).message}`);
+    throw new NoManifestError(`failed to fetch runtime manifest from ${url}: ${describeNetworkFailure(err)}`);
   } finally {
     clearTimeout(t);
   }
-  if (!res.ok) throw new NoManifestError(`manifest fetch HTTP ${res.status} from ${url}`);
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new NoManifestError(
+        `runtime manifest was not found (HTTP 404) at ${url}. Verify that the release channel exists and that manifest.json has been uploaded.`,
+      );
+    }
+    throw new NoManifestError(`runtime manifest fetch failed with HTTP ${res.status} ${res.statusText || ""} from ${url}`.trim());
+  }
   let body: unknown;
   try {
     body = await res.json();
   } catch (err) {
     throw new ManifestError(`manifest is not valid JSON: ${(err as Error).message}`);
   }
-  return ensureValidManifest(body);
+  const manifest = validateRuntimeManifest(body);
+  verifyRuntimeManifestSignature(manifest, { publicKey: opts.manifestPublicKey });
+  return manifest;
 }
 
 /* -------------------- pointer state -------------------- */
@@ -286,6 +425,8 @@ export interface InstallOptions {
   onProgress?: (info: { phase: "download" | "extract" | "verify" | "activate"; bytes?: number; total?: number }) => void;
   /** Used by tests to swap fetch. */
   fetchImpl?: typeof fetch;
+  /** Trusted Ed25519 public key for signed manifests. Defaults to ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY. */
+  manifestPublicKey?: string;
 }
 
 export interface InstallResult {
@@ -313,12 +454,18 @@ export async function installRuntime(opts: InstallOptions = {}): Promise<Install
   const paths = getRuntimePaths();
   mkdirSync(paths.versionsDir, { recursive: true });
   return withLock(async () => {
-    const manifest = opts.manifest ?? (await fetchManifest(opts.manifestUrl, { fetchImpl: opts.fetchImpl }));
+    const manifest = opts.manifest
+      ? validateRuntimeManifest(opts.manifest)
+      : await fetchManifest(opts.manifestUrl, {
+          fetchImpl: opts.fetchImpl,
+          manifestPublicKey: opts.manifestPublicKey,
+        });
+    verifyRuntimeManifestSignature(manifest, { publicKey: opts.manifestPublicKey });
     const pk = opts.platformKey ?? platformKey();
     const asset = manifest.assets[pk];
     if (!asset) {
       throw new UnsupportedPlatformError(
-        `no runtime asset for platform ${pk} in manifest ${manifest.channel}@${manifest.version}`,
+        `no runtime asset for platform ${pk} in manifest ${manifest.channel}@${manifest.version}. Available platforms: ${Object.keys(manifest.assets).sort().join(", ")}`,
       );
     }
     const installDirName = `${manifest.channel}-${manifest.version}-${pk}`;
@@ -358,9 +505,19 @@ export async function installRuntime(opts: InstallOptions = {}): Promise<Install
     const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     const headers: Record<string, string> = {};
     if (downloadedSoFar > 0) headers.Range = `bytes=${downloadedSoFar}-`;
-    const res = await fetchImpl(asset.url, { headers });
+    let res: Response;
+    try {
+      res = await fetchImpl(asset.url, { headers });
+    } catch (err) {
+      throw new DownloadError(`failed to download runtime artifact from ${asset.url}: ${describeNetworkFailure(err)}`);
+    }
     if (!res.ok && res.status !== 206) {
-      throw new ManifestError(`download HTTP ${res.status} from ${asset.url}`);
+      if (res.status === 404) {
+        throw new DownloadError(
+          `runtime artifact was not found (HTTP 404) at ${asset.url}. The manifest may point at a file that was not uploaded.`,
+        );
+      }
+      throw new DownloadError(`runtime artifact download failed with HTTP ${res.status} ${res.statusText || ""} from ${asset.url}`.trim());
     }
     // If server didn't honor Range (status 200 instead of 206), restart fresh.
     const append = res.status === 206 && downloadedSoFar > 0;
@@ -535,7 +692,7 @@ export interface RuntimeStatus {
   platformKey: string;
 }
 
-export function runtimeStatus(): RuntimeStatus {
+export function runtimeStatus(opts: { manifestUrl?: string; channel?: string } = {}): RuntimeStatus {
   const paths = getRuntimePaths();
   const active = findActiveInstall();
   const installs: InstalledRuntime[] = [];
@@ -550,7 +707,13 @@ export function runtimeStatus(): RuntimeStatus {
       }
     }
   }
-  return { active, installs, paths, manifestUrl: defaultManifestUrl(), platformKey: platformKey() };
+  return {
+    active,
+    installs,
+    paths,
+    manifestUrl: opts.manifestUrl ?? defaultManifestUrl({ channel: opts.channel }),
+    platformKey: platformKey(),
+  };
 }
 
 export interface RepairReport {

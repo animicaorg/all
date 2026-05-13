@@ -1,6 +1,6 @@
 /**
  * CLI surface for managed runtime operations:
- *   animica-node install-runtime [--manifest-url <url>] [--force]
+ *   animica-node install-runtime [--channel stable|beta|dev] [--manifest-url <url>] [--force]
  *   animica-node runtime status
  *   animica-node runtime repair
  *   animica-node runtime remove [--all|--channel <c> --version <v>]
@@ -22,10 +22,13 @@ import {
   runtimeStatus,
   fetchManifest,
   NoManifestError,
+  DownloadError,
   IntegrityError,
   ManifestError,
+  ManifestSignatureError,
   UnsupportedPlatformError,
   LockHeldError,
+  normalizeRuntimeChannel,
 } from "./runtime-manager.js";
 import { resolveBackend } from "./backend.js";
 
@@ -53,8 +56,50 @@ function err(text: string, exit = 1): CmdResult {
   return { exit, output: `error: ${text}\n` };
 }
 
+function manifestUrlFromArgs(args: string[]): string {
+  const explicitUrl = parseFlag(args, "manifest-url");
+  if (explicitUrl) return explicitUrl;
+  const channel = parseFlag(args, "channel");
+  if (channel) return defaultManifestUrl({ channel: normalizeRuntimeChannel(channel) });
+  return defaultManifestUrl();
+}
+
+function runtimeErrorMessage(e: unknown): string {
+  if (e instanceof IntegrityError) {
+    return [
+      `integrity check failed: ${e.message}`,
+      "The partial download was discarded; nothing was activated.",
+      "If this is a hosted channel, regenerate manifest.json from the exact uploaded tarballs and re-upload it.",
+    ].join("\n");
+  }
+  if (e instanceof UnsupportedPlatformError) {
+    return `${e.message}\nPublish a runtime bundle for this platform or choose a channel that contains one.`;
+  }
+  if (e instanceof NoManifestError) {
+    return `${e.message}\nCheck network/TLS/DNS, or set ANIMICA_RUNTIME_MANIFEST_URL to a local manifest. Operators can also set ANIMICA_NODE_BIN to use a manually built runtime.`;
+  }
+  if (e instanceof ManifestSignatureError) {
+    return `manifest signature rejected: ${e.message}`;
+  }
+  if (e instanceof ManifestError) {
+    return `manifest is invalid: ${e.message}`;
+  }
+  if (e instanceof DownloadError) {
+    return `${e.message}\nThe runtime artifact was not installed. Verify the manifest URLs and hosted files.`;
+  }
+  if (e instanceof LockHeldError) {
+    return e.message;
+  }
+  return (e as Error).message;
+}
+
 export async function runInstallRuntime(args: string[]): Promise<CmdResult> {
-  const url = parseFlag(args, "manifest-url") ?? defaultManifestUrl();
+  let url: string;
+  try {
+    url = manifestUrlFromArgs(args);
+  } catch (e) {
+    return err((e as Error).message, 64);
+  }
   const force = boolFlag(args, "force");
   const json = boolFlag(args, "json");
   try {
@@ -83,25 +128,19 @@ export async function runInstallRuntime(args: string[]): Promise<CmdResult> {
       ].join("\n") + "\n",
     );
   } catch (e) {
-    const msg =
-      e instanceof IntegrityError
-        ? `integrity check failed: ${e.message}\nThe partial download was discarded; nothing was activated.`
-        : e instanceof UnsupportedPlatformError
-          ? e.message
-          : e instanceof NoManifestError
-            ? `${e.message}\nIf you're offline, set ANIMICA_RUNTIME_MANIFEST_URL to a local copy or use ANIMICA_NODE_BIN.`
-            : e instanceof ManifestError
-              ? `manifest is invalid: ${e.message}`
-              : e instanceof LockHeldError
-                ? e.message
-                : (e as Error).message;
-    return err(msg);
+    return err(runtimeErrorMessage(e));
   }
 }
 
 export function runRuntimeStatus(args: string[]): CmdResult {
   const json = boolFlag(args, "json");
-  const s = runtimeStatus();
+  let manifestUrl: string;
+  try {
+    manifestUrl = manifestUrlFromArgs(args);
+  } catch (e) {
+    return err((e as Error).message, 64);
+  }
+  const s = runtimeStatus({ manifestUrl });
   if (json) return ok(safeStringify(s, { indent: 2 }) + "\n");
   const lines: string[] = [];
   lines.push(`platform: ${s.platformKey}`);
@@ -159,7 +198,13 @@ export function runRuntimePrune(args: string[]): CmdResult {
 
 export async function runRuntimeDoctor(args: string[]): Promise<CmdResult> {
   const json = boolFlag(args, "json");
-  const s = runtimeStatus();
+  let manifestUrl: string;
+  try {
+    manifestUrl = manifestUrlFromArgs(args);
+  } catch (e) {
+    return err((e as Error).message, 64);
+  }
+  const s = runtimeStatus({ manifestUrl });
   const lines: string[] = [];
   // Manifest reachability (best-effort).
   let manifestStatus: { ok: boolean; error?: string; version?: string } = { ok: false };
@@ -167,7 +212,7 @@ export async function runRuntimeDoctor(args: string[]): Promise<CmdResult> {
     const m = await fetchManifest(s.manifestUrl, { timeoutMs: 5_000 });
     manifestStatus = { ok: true, version: `${m.channel}@${m.version}` };
   } catch (e) {
-    manifestStatus = { ok: false, error: (e as Error).message?.slice(0, 200) };
+    manifestStatus = { ok: false, error: runtimeErrorMessage(e).slice(0, 400) };
   }
   // Effective backend (managed first, falling back to legacy only if necessary).
   const backendStrict = resolveBackend({ allowLegacy: false });
@@ -229,7 +274,7 @@ export async function ensureRuntimeOrInstall(args: { autoInstall?: boolean; mani
     return {
       ok: false,
       backendSource: eff.source,
-      message: `runtime auto-install failed: ${(e as Error).message}`,
+      message: `runtime auto-install failed: ${runtimeErrorMessage(e)}`,
     };
   }
 }

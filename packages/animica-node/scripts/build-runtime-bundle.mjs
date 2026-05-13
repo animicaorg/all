@@ -15,14 +15,17 @@
  *
  * Inputs:
  *
- *   --src      <dir>       Source dir to copy into share/animica (defaults to ./animica)
+ *   --src      <dir>       Animica Python source root or package dir to copy
+ *                          into share/animica (default: repo python/)
  *   --python   <dir>       Pre-built python tree to copy into python/
  *                          (e.g. a relocatable distribution from python-build-standalone)
  *   --channel  <name>      Release channel (default: stable)
  *   --version  <semver>    Release version (REQUIRED)
- *   --platform <key>       Target platform key, e.g. linux-x64, darwin-arm64, win32-x64
- *                          (default: current host)
+ *   --platform <key|os>    Target platform key, e.g. linux-x64, darwin-arm64, win32-x64.
+ *                          If only OS is supplied, combine it with --arch.
+ *   --arch     <arch>      Target arch when --platform is just OS (x64, arm64)
  *   --out      <dir>       Output dir (default: ./dist/runtime-bundles)
+ *   --output   <dir>       Alias for --out
  *
  * This script is a release-engineering tool. It does NOT host anything,
  * does NOT publish anything. The tarballs it emits must then be uploaded
@@ -49,12 +52,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
   if (i !== -1 && i + 1 < process.argv.length) return process.argv[i + 1];
+  return fallback;
+}
+
+function firstArg(names, fallback) {
+  for (const name of names) {
+    const v = arg(name);
+    if (v !== undefined) return v;
+  }
   return fallback;
 }
 
@@ -70,12 +81,23 @@ function hostPlatformKey() {
   return `${p}-${a}`;
 }
 
+function defaultSrcDir() {
+  const candidates = [
+    join(process.cwd(), "python"),
+    resolve(process.cwd(), "..", "..", "python"),
+    join(process.cwd(), "animica"),
+  ];
+  return candidates.find((p) => existsSync(join(p, "animica", "__init__.py")) || existsSync(join(p, "__init__.py"))) ?? candidates[0];
+}
+
 const channel = arg("channel", "stable");
 const version = arg("version");
-const platformKey = arg("platform", hostPlatformKey());
-const srcDir = arg("src", join(process.cwd(), "animica"));
+const platformArg = arg("platform", hostPlatformKey());
+const archArg = arg("arch");
+const platformKey = platformArg.includes("-") ? platformArg : `${platformArg}-${archArg ?? process.arch}`;
+const srcDir = arg("src", defaultSrcDir());
 const pythonDir = arg("python");
-const outDir = arg("out", join(process.cwd(), "dist", "runtime-bundles"));
+const outDir = firstArg(["out", "output"], join(process.cwd(), "dist", "runtime-bundles"));
 
 if (!version) {
   process.stderr.write("error: --version is required\n");
@@ -83,6 +105,10 @@ if (!version) {
 }
 if (!existsSync(srcDir)) {
   process.stderr.write(`error: --src ${srcDir} does not exist\n`);
+  process.exit(64);
+}
+if (!existsSync(join(srcDir, "animica", "__init__.py")) && !existsSync(join(srcDir, "__init__.py"))) {
+  process.stderr.write(`error: --src ${srcDir} must be the Python source root containing animica/__init__.py or the animica package directory containing __init__.py\n`);
   process.exit(64);
 }
 
@@ -97,7 +123,9 @@ mkdirSync(join(stage, "bin"), { recursive: true });
 mkdirSync(join(stage, "share", "animica"), { recursive: true });
 mkdirSync(join(stage, "python"), { recursive: true });
 
-// Copy share (animica source tree).
+// Copy the Python source into share/animica. The launcher puts both share/
+// and share/animica on PYTHONPATH so either a source root (animica/...) or an
+// animica package directory keeps working.
 cpSync(srcDir, join(stage, "share", "animica"), {
   recursive: true,
   filter: (s) => {
@@ -140,7 +168,7 @@ else
   echo "animica: no python interpreter found in bundle or on PATH" >&2
   exit 127
 fi
-PYTHONPATH="$RUNTIME_ROOT/share/animica:\${PYTHONPATH:-}" exec "$PY" -m animica.cli.main "$@"
+PYTHONPATH="$RUNTIME_ROOT/share:$RUNTIME_ROOT/share/animica:\${PYTHONPATH:-}" exec "$PY" -m animica.cli.main "$@"
 `;
 
 const winLauncher = `@echo off
@@ -159,7 +187,7 @@ where python >nul 2>nul && (set "PY=python") || (
   exit /b 127
 )
 :run
-set "PYTHONPATH=%RUNTIME_ROOT%\\share\\animica;%PYTHONPATH%"
+set "PYTHONPATH=%RUNTIME_ROOT%\\share;%RUNTIME_ROOT%\\share\\animica;%PYTHONPATH%"
 "%PY%" -m animica.cli.main %*
 `;
 

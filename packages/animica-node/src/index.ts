@@ -55,7 +55,7 @@ CORE
   reset --yes                   Wipe the configured data dir
 
 RUNTIME
-  install-runtime [--manifest-url <url>] [--force]
+  install-runtime [--channel stable|beta|dev] [--manifest-url <url>] [--force]
                                 Install the managed Animica node runtime
   runtime status                Where the runtime lives, which version is active
   runtime repair                Verify all installs have the marker + entry
@@ -84,7 +84,10 @@ ENV
   ANIMICA_NODE_HOME             Override the daemon state dir
   ANIMICA_NODE_CONFIG           Override the config file path
   ANIMICA_RUNTIME_HOME          Override ~/.animica/runtime/ install root
+  ANIMICA_RUNTIME_CHANNEL       Select stable, beta, or dev when no manifest URL override is set
   ANIMICA_RUNTIME_MANIFEST_URL  Override the manifest URL for install-runtime
+  ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY
+                                Ed25519 public key for signed runtime manifests
 `;
 
 export async function run(argv: string[]): Promise<number> {

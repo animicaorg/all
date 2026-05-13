@@ -18,9 +18,11 @@ import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_STABLE_MANIFEST_URL,
   defaultManifestUrl,
   fetchManifest,
   installRuntime,
+  manifestUrlForChannel,
   platformKey,
   pruneRuntime,
   removeRuntime,
@@ -31,6 +33,7 @@ import {
   IntegrityError,
   UnsupportedPlatformError,
   ManifestError,
+  validateRuntimeManifest,
   type RuntimeManifest,
   getRuntimePaths,
 } from "../src/runtime-manager.js";
@@ -123,7 +126,7 @@ function startFixture(opts: { withSignature?: boolean } = {}): Promise<Fixture> 
               entry: "bin/animica",
             },
           },
-          ...(opts.withSignature ? { signature: { algorithm: "test", value: "abc" } } : {}),
+          ...(opts.withSignature ? { signature: { algorithm: "ed25519", value: Buffer.from("abc").toString("base64") } } : {}),
         };
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(manifestBody));
@@ -198,6 +201,25 @@ function startFixture(opts: { withSignature?: boolean } = {}): Promise<Fixture> 
 /* ---------------- tests ---------------- */
 
 describe("runtime-manager: manifest", () => {
+  it("defaultManifestUrl resolves the stable hosted channel by default", () => {
+    const beforeUrl = process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    const beforeChannel = process.env.ANIMICA_RUNTIME_CHANNEL;
+    delete process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    delete process.env.ANIMICA_RUNTIME_CHANNEL;
+    expect(defaultManifestUrl()).toBe(DEFAULT_STABLE_MANIFEST_URL);
+    if (beforeUrl === undefined) delete process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    else process.env.ANIMICA_RUNTIME_MANIFEST_URL = beforeUrl;
+    if (beforeChannel === undefined) delete process.env.ANIMICA_RUNTIME_CHANNEL;
+    else process.env.ANIMICA_RUNTIME_CHANNEL = beforeChannel;
+  });
+
+  it("manifestUrlForChannel supports stable, beta, and dev", () => {
+    expect(manifestUrlForChannel("stable")).toBe("https://releases.animica.org/runtime/stable/manifest.json");
+    expect(manifestUrlForChannel("beta")).toBe("https://releases.animica.org/runtime/beta/manifest.json");
+    expect(manifestUrlForChannel("dev")).toBe("https://releases.animica.org/runtime/dev/manifest.json");
+    expect(() => manifestUrlForChannel("nightly")).toThrow(/unsupported runtime channel/);
+  });
+
   it("fetchManifest accepts a well-formed manifest", async () => {
     const fix = await startFixture();
     const m = await fetchManifest(fix.manifestUrl);
@@ -209,6 +231,53 @@ describe("runtime-manager: manifest", () => {
   it("fetchManifest rejects an invalid manifest", async () => {
     const fix = await startFixture();
     await expect(fetchManifest(`${fix.url}/bad-manifest.json`)).rejects.toBeInstanceOf(ManifestError);
+    await fix.close();
+  });
+
+  it("validateRuntimeManifest rejects artifacts missing sha256", () => {
+    const bad = {
+      schema: 1,
+      channel: "stable",
+      version: "0.1.0",
+      generatedAt: new Date().toISOString(),
+      assets: {
+        [platformKey()]: {
+          url: "https://releases.animica.org/runtime/stable/a.tar.gz",
+          entry: "bin/animica",
+        },
+      },
+    };
+    expect(() => validateRuntimeManifest(bad)).toThrow(/sha256/);
+  });
+
+  it("defaultManifestUrl supports channel env but keeps URL override highest priority", () => {
+    const beforeUrl = process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    const beforeChannel = process.env.ANIMICA_RUNTIME_CHANNEL;
+    delete process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    process.env.ANIMICA_RUNTIME_CHANNEL = "beta";
+    expect(defaultManifestUrl()).toBe("https://releases.animica.org/runtime/beta/manifest.json");
+    process.env.ANIMICA_RUNTIME_MANIFEST_URL = "http://custom/manifest.json";
+    process.env.ANIMICA_RUNTIME_CHANNEL = "dev";
+    expect(defaultManifestUrl()).toBe("http://custom/manifest.json");
+    if (beforeUrl === undefined) delete process.env.ANIMICA_RUNTIME_MANIFEST_URL;
+    else process.env.ANIMICA_RUNTIME_MANIFEST_URL = beforeUrl;
+    if (beforeChannel === undefined) delete process.env.ANIMICA_RUNTIME_CHANNEL;
+    else process.env.ANIMICA_RUNTIME_CHANNEL = beforeChannel;
+  });
+
+  it("fetchManifest rejects signed manifests when no trusted key is configured", async () => {
+    const before = process.env.ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY;
+    delete process.env.ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY;
+    const fix = await startFixture({ withSignature: true });
+    await expect(fetchManifest(fix.manifestUrl)).rejects.toThrow(/no trusted public key/);
+    await fix.close();
+    if (before === undefined) delete process.env.ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY;
+    else process.env.ANIMICA_RUNTIME_MANIFEST_PUBLIC_KEY = before;
+  });
+
+  it("installRuntime rejects missing platform match before download", async () => {
+    const fix = await startFixture();
+    await expect(installRuntime({ manifest: fix.manifest, platformKey: "linux-nope" })).rejects.toBeInstanceOf(UnsupportedPlatformError);
     await fix.close();
   });
 
@@ -284,9 +353,10 @@ describe("runtime-manager: install pipeline", () => {
 
   it("refuses when no asset is published for the running platform", async () => {
     const fix = await startFixture();
+    const otherPlatform = platformKey() === "linux-arm64" ? "linux-x64" : "linux-arm64";
     const fake: RuntimeManifest = {
       ...fix.manifest,
-      assets: { "no-such-platform-zz": fix.manifest.assets[platformKey()] },
+      assets: { [otherPlatform]: fix.manifest.assets[platformKey()] },
     };
     await expect(installRuntime({ manifest: fake })).rejects.toBeInstanceOf(UnsupportedPlatformError);
     await fix.close();

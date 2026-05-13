@@ -1,0 +1,115 @@
+name: animica-node runtime release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Runtime version to package
+        required: true
+        default: "0.1.0"
+      channel:
+        description: Release channel
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - beta
+          - dev
+  pull_request:
+    paths:
+      - "packages/animica-node/**"
+      - ".github/workflows/animica-runtime-release.yml"
+
+jobs:
+  build-runtime:
+    name: build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: windows-latest
+            platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.13"
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: install filtered workspace deps
+        run: pnpm --filter "@animica/agent-core" --filter "animica-node" install --no-frozen-lockfile
+      - name: build animica-node
+        run: |
+          pnpm --filter "@animica/agent-core" build
+          pnpm --filter "animica-node" build
+      - name: build runtime bundle
+        shell: bash
+        run: |
+          set -eux
+          cd packages/animica-node
+          node scripts/build-runtime-bundle.mjs \
+            --channel "${{ inputs.channel || 'dev' }}" \
+            --version "${{ inputs.version || '0.0.0-ci' }}" \
+            --platform "${{ matrix.platform }}" \
+            --src ../../python \
+            --output dist/runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: packages/animica-node/dist/runtime/*.tar.gz
+          retention-days: 14
+
+  manifest:
+    name: manifest + validation
+    needs: build-runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.13"
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: install filtered workspace deps
+        run: pnpm --filter "@animica/agent-core" --filter "animica-node" install --no-frozen-lockfile
+      - name: build animica-node
+        run: |
+          pnpm --filter "@animica/agent-core" build
+          pnpm --filter "animica-node" build
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-*
+          merge-multiple: true
+          path: packages/animica-node/dist/runtime
+      - name: generate manifest
+        run: |
+          cd packages/animica-node
+          node scripts/generate-runtime-manifest.mjs \
+            --input dist/runtime \
+            --channel "${{ inputs.channel || 'dev' }}" \
+            --version "${{ inputs.version || '0.0.0-ci' }}" \
+            --base "https://releases.animica.org/runtime/${{ inputs.channel || 'dev' }}" \
+            --output dist/runtime/manifest.json \
+            --force
+      - name: validate release directory
+        run: |
+          cd packages/animica-node
+          node scripts/validate-runtime-release.mjs \
+            --input dist/runtime \
+            --manifest dist/runtime/manifest.json \
+            --require-platforms linux-x64,win32-x64
+      - name: smoke host-platform install path
+        run: |
+          cd packages/animica-node
+          node scripts/smoke-runtime-manifest.mjs --manifest-url "$(pwd)/dist/runtime/manifest.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-directory
+          path: packages/animica-node/dist/runtime/
+          retention-days: 30

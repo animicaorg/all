@@ -23,6 +23,12 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "test": "vitest run",
+    "runtime:bundle": "node scripts/build-runtime-bundle.mjs",
+    "runtime:manifest": "node scripts/generate-runtime-manifest.mjs",
+    "runtime:assemble": "node scripts/assemble-runtime-release.mjs",
+    "runtime:validate": "node scripts/validate-runtime-release.mjs",
+    "runtime:upload:print": "node scripts/print-runtime-upload-commands.mjs",
+    "runtime:smoke": "node scripts/smoke-runtime-manifest.mjs",
     "prepack": "npm run clean && npm run build",
     "release:dry": "npm pack --dry-run"
   },

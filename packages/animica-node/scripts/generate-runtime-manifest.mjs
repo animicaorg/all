@@ -12,10 +12,15 @@
  *
  *   node generate-runtime-manifest.mjs \
  *     --dir   <dir>     directory containing tarballs (default: dist/runtime-bundles)
- *     --base  <url>     base URL where the tarballs will be hosted (REQUIRED)
+ *     --input <dir>     Alias for --dir
+ *     --base  <url>     base URL where the tarballs will be hosted
+ *                        (default: https://releases.animica.org/runtime/<channel>)
  *     --channel <name>  filter to one channel (default: stable)
  *     --version <semver> filter to one version (REQUIRED)
  *     --out   <path>    output path (default: <dir>/manifest.json)
+ *     --output <path>   Alias for --out
+ *     --sign-key <path> Optional Ed25519 private key PEM; adds manifest.signature
+ *     --key-id <id>     Optional signature key id
  *
  * Tarball file names must follow:
  *   animica-runtime-<channel>-<version>-<platform>.tar.gz
@@ -31,7 +36,7 @@
  * unless --force is passed.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, sign } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -48,19 +53,28 @@ function arg(name, fallback) {
   if (i !== -1 && i + 1 < process.argv.length) return process.argv[i + 1];
   return fallback;
 }
+function firstArg(names, fallback) {
+  for (const name of names) {
+    const v = arg(name);
+    if (v !== undefined) return v;
+  }
+  return fallback;
+}
 function flag(name) {
   return process.argv.includes(`--${name}`);
 }
 
-const dir = arg("dir", join(process.cwd(), "dist", "runtime-bundles"));
-const base = arg("base");
+const dir = firstArg(["dir", "input"], join(process.cwd(), "dist", "runtime-bundles"));
 const channel = arg("channel", "stable");
 const version = arg("version");
-const out = arg("out", join(dir, "manifest.json"));
+const base = arg("base", `https://releases.animica.org/runtime/${channel}`);
+const out = firstArg(["out", "output"], join(dir, "manifest.json"));
 const force = flag("force");
+const signKeyPath = arg("sign-key");
+const keyId = arg("key-id");
 
-if (!base) {
-  process.stderr.write("error: --base <url> is required (e.g. https://releases.animica.org/runtime/stable)\n");
+if (!/^(stable|beta|dev)$/.test(channel)) {
+  process.stderr.write("error: --channel must be one of stable, beta, dev\n");
   process.exit(64);
 }
 if (!version) {
@@ -81,7 +95,6 @@ if (files.length === 0) {
 
 const assets = {};
 for (const f of files) {
-  const m = f.match(/^animica-runtime-([^-]+)-(.+?)-([^.]+(?:-[^.]+)*)\.tar\.gz$/);
   // Expected: animica-runtime-<channel>-<version>-<platformKey>.tar.gz
   // Use stricter slice based on known prefix.
   const platformKey = f.slice(prefix.length).replace(/\.tar\.gz$/, "");
@@ -109,6 +122,22 @@ const manifest = {
   generatedAt: new Date().toISOString(),
   assets,
 };
+
+if (Object.keys(assets).length === 0) {
+  process.stderr.write("error: no valid runtime assets were found\n");
+  process.exit(1);
+}
+
+if (signKeyPath) {
+  const privateKey = createPrivateKey(readFileSync(signKeyPath, "utf8"));
+  const signature = sign(null, Buffer.from(canonicalPayload(manifest), "utf8"), privateKey).toString("base64");
+  manifest.signature = {
+    algorithm: "ed25519",
+    ...(keyId ? { keyId } : {}),
+    value: signature,
+  };
+  process.stdout.write(`signed manifest with ${signKeyPath}${keyId ? ` (keyId=${keyId})` : ""}\n`);
+}
 
 if (existsSync(out) && !force) {
   // Refuse to overwrite if version differs — preserves existing release history.
@@ -182,4 +211,21 @@ function readStr(buf, off, len) {
     }
   }
   return buf.toString("utf8", off, end);
+}
+
+function sortedForJson(value) {
+  if (Array.isArray(value)) return value.map(sortedForJson);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const k of Object.keys(value).sort()) {
+      if (value[k] !== undefined) out[k] = sortedForJson(value[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function canonicalPayload(manifest) {
+  const { signature: _signature, ...unsigned } = manifest;
+  return JSON.stringify(sortedForJson(unsigned));
 }
