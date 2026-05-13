@@ -2,6 +2,7 @@
 
 import { loadVault, saveVault, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
+import { stringifyForStorage, toJsonSafe } from '../core/rpc/safeJson';
 import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
 import { createAccount } from '../core/wallets/account';
@@ -101,6 +102,15 @@ function safeJsonStringify(value: unknown): string {
   });
 }
 
+/**
+ * Convert any payload to a JSON-safe shape before storing inside the vault.
+ * bigint → decimal string; Uint8Array → numeric-keyed object (compatible
+ * with coerceBytes on read).
+ */
+function makePendingTxStorable<T>(value: T): T {
+  return toJsonSafe(value, 'storage') as T;
+}
+
 function captureSendRpcDebug(rpcUrl: string, method: string, params: unknown): void {
   const payload = {
     jsonrpc: '2.0',
@@ -137,6 +147,29 @@ function parseBaseUnitAmount(value: unknown): bigint {
   }
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return BigInt(value);
   throw new Error('Invalid amount: must be a non-negative base-unit integer string');
+}
+
+/**
+ * Coerce a number/bigint/string/hex value into a bigint, with a friendly
+ * fallback. Used for fee/gas defaults so a misconfigured vault setting
+ * cannot crash a send with a cryptic SyntaxError out of BigInt().
+ */
+function safeBigInt(value: unknown, fallback: bigint): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    try {
+      if (/^0x[0-9a-f]+$/i.test(trimmed)) return BigInt(trimmed);
+      if (/^\d+$/.test(trimmed)) return BigInt(trimmed);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 function algLabel(algId: number): string {
@@ -695,7 +728,7 @@ async function handleCreate(password: string): Promise<{ success: boolean }> {
     },
   };
   
-  const json = JSON.stringify(vaultData);
+  const json = stringifyForStorage(vaultData);
   const encrypted = await encrypt(json, password);
   
   await saveVault({
@@ -992,14 +1025,23 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       schemeId,
     });
     
-    // Build and sign transaction using canonical tx module
+    // Build and sign transaction using canonical tx module. We pass amounts
+    // as bigint and use safeBigInt for fee/gas so dapps sending strings,
+    // hex, or already-bigint values all work; numbers go through BigInt
+    // without crashing on misconfigured defaults.
     const result = await buildAndSignTransaction(
       {
         from: activeWallet.address,
         to: toAddress,
         value: amountBaseUnits,
-        fee: BigInt(params.gasPrice ?? params.maxFeePerGas ?? vaultData.settings.defaultGasPrice),
-        gas_limit: BigInt(params.gasLimit ?? params.gas ?? vaultData.settings.defaultGasLimit),
+        fee: safeBigInt(
+          params.gasPrice ?? params.maxFeePerGas ?? params.fee,
+          safeBigInt(vaultData.settings.defaultGasPrice, 1_000_000n),
+        ),
+        gas_limit: safeBigInt(
+          params.gasLimit ?? params.gas,
+          safeBigInt(vaultData.settings.defaultGasLimit, 21_000n),
+        ),
         nonce,
         data: txData,
         memo: params.memo || '',
@@ -1065,27 +1107,25 @@ async function handleSendTransaction(params: any): Promise<{ txid: string }> {
       hashMismatch: submittedTxHash !== result.txid,
     });
     
-    // Store in tx cache (convert to old format for now)
+    // Store in tx cache. We must convert bigint values (value/fee/gas_limit)
+    // and Uint8Array fields to JSON-safe forms BEFORE handing the body to
+    // saveVaultData, otherwise JSON.stringify in saveVaultData throws
+    // "Do not know how to serialize a BigInt".
     const txStore = TxStore.fromJSON(vaultData.txCache);
     const pendingTx: PendingTx = {
-      txid: result.txid,
-      unsignedHash: result.txid, // Use txid as placeholder
-      signedTx: {
-        tx: result.envelope.body as any,
+      txid: submittedTxHash,
+      unsignedHash: submittedTxHash,
+      signedTx: makePendingTxStorable({
+        tx: result.envelope.body,
         sigs: [{
           alg: result.envelope.auth.scheme_id,
           pubkey: result.envelope.auth.pubkey_bytes,
           sig: result.envelope.auth.signature_bytes,
         }],
-      },
+      }) as any,
       status: 'submitted' as TxStatus,
       submittedAt: Date.now(),
     };
-
-    // Match CLI semantics: use tx hash returned by tx.sendRawTransaction.
-    // Some nodes return an authoritative hash string or object payload.
-    pendingTx.txid = submittedTxHash;
-    pendingTx.unsignedHash = submittedTxHash;
 
     txStore.upsert(pendingTx);
     vaultData.txCache = txStore.toJSON();
@@ -1502,7 +1542,15 @@ async function handleProviderGetBalance(params: unknown): Promise<string> {
 
 async function handleProviderGetBalanceHex(params: unknown): Promise<string> {
   const balance = await handleProviderGetBalance(params);
-  return `0x${BigInt(balance).toString(16)}`;
+  // Defensive: balance is expected to be a decimal/0x string, but accept any
+  // numeric-like value without crashing. Anything malformed becomes 0x0.
+  try {
+    const normalized = typeof balance === 'string' ? balance.trim() : String(balance ?? '');
+    if (!normalized) return '0x0';
+    return `0x${BigInt(normalized).toString(16)}`;
+  } catch {
+    return '0x0';
+  }
 }
 
 async function handleProviderGetNonce(params: unknown): Promise<number> {
@@ -1522,7 +1570,7 @@ async function saveVaultData(vaultData: VaultData): Promise<void> {
 
   ensureVaultDefaults(vaultData);
 
-  const encrypted = await encrypt(JSON.stringify(vaultData), unlockedPassword);
+  const encrypted = await encrypt(stringifyForStorage(vaultData), unlockedPassword);
 
   await saveVault({
     version: 1,
