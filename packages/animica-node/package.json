@@ -1,6 +1,6 @@
 {
   "name": "animica-node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Animica full-node operator package. Orchestrates the bundled Python runtime under the hood and integrates with the Animica Coding Agent.",
   "license": "Apache-2.0",
   "type": "module",
@@ -33,7 +33,7 @@
     "release:dry": "npm pack --dry-run"
   },
   "dependencies": {
-    "@animica/agent-core": "workspace:*"
+    "@animica/agent-core": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

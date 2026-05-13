@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@animica/agent-sdk": "workspace:*"
+    "@animica/agent-sdk": "^0.1.1"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

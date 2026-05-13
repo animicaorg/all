@@ -1,6 +1,6 @@
 {
   "name": "animica-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Animica Coding Agent — repo-aware coding, scaffolding, RPC, wallet and miner-aware operations for the Animica network.",
   "license": "Apache-2.0",
   "type": "module",
@@ -26,8 +26,8 @@
     "release:dry": "npm pack --dry-run"
   },
   "dependencies": {
-    "@animica/agent-core": "workspace:*",
-    "@animica/agent-ui": "workspace:*"
+    "@animica/agent-core": "^0.1.1",
+    "@animica/agent-ui": "^0.1.1"
   },
   "optionalDependencies": {},
   "devDependencies": {
