@@ -244,7 +244,24 @@ function Home({ onLock }: HomeProps) {
             <div style={{ fontSize: '11px', color: '#777', marginTop: 6 }}>
               RPC: {network?.effectiveRpcUrl ? new URL(network.effectiveRpcUrl).host : 'unknown'}
             </div>
-            <button className="button" style={{ marginTop: 8 }} onClick={refreshCurrentBalance}>Refresh</button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              <button className="button" style={{ flex: '1 1 auto' }} onClick={refreshCurrentBalance}>Refresh</button>
+              <button
+                className="button button-accent"
+                style={{ flex: '1 1 auto', background: 'linear-gradient(135deg,#6c5ce7,#00b894)', color: '#fff' }}
+                onClick={() => {
+                  try {
+                    chrome.tabs?.create({ url: 'https://trade.animica.org' });
+                  } catch {
+                    window.open('https://trade.animica.org', '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                title="Open the Animica exchange in a new tab"
+                aria-label="Open Exchange"
+              >
+                💱 Open Exchange
+              </button>
+            </div>
             <button className="button" style={{ marginTop: 8 }} onClick={() => setShowDebug(v => !v)}>
               {showDebug ? 'Hide debug' : 'Show debug'}
             </button>

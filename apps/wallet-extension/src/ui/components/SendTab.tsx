@@ -47,18 +47,69 @@ function parseAnmToBaseUnits(input: string): bigint {
   return BigInt(whole) * 1_000_000_000n + BigInt(fracPadded);
 }
 
+/**
+ * Convert a base-units bigint back to an ANM decimal string with up to
+ * 9 decimal places (trailing zeros trimmed). Reverses parseAnmToBaseUnits.
+ */
+function formatBaseUnitsToAnm(baseUnits: bigint): string {
+  if (baseUnits < 0n) return '0';
+  const divisor = 1_000_000_000n;
+  const whole = baseUnits / divisor;
+  const frac = baseUnits % divisor;
+  const fracStr = frac.toString().padStart(9, '0').replace(/0+$/, '');
+  return fracStr.length ? `${whole.toString()}.${fracStr}` : whole.toString();
+}
+
+// Reserve a tiny buffer so the user can't accidentally send their entire
+// balance and run into mempool fee deductions. 0.000021 ANM mirrors the
+// "Est. Gas" hint shown below.
+const SEND_GAS_RESERVE_BASE_UNITS = 21_000n;
+
 function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
 
   const liveBalance = useBalancesStore(store => store.getBalanceState(currentAccount.address));
+
+  function getAvailableBaseUnits(): bigint | null {
+    try {
+      if (liveBalance?.status === 'ok' && liveBalance.valueAtomic) {
+        return BigInt(liveBalance.valueAtomic);
+      }
+    } catch {
+      // fall through to legacy path
+    }
+    if (balance?.available) {
+      try {
+        return BigInt(balance.available);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function setMaxAmount() {
+    const available = getAvailableBaseUnits();
+    if (available === null) {
+      setError('Balance unavailable; refresh first');
+      return;
+    }
+    const usable = available > SEND_GAS_RESERVE_BASE_UNITS
+      ? available - SEND_GAS_RESERVE_BASE_UNITS
+      : available;
+    setAmount(formatBaseUnitsToAnm(usable));
+    setError('');
+  }
 
   async function handleSend() {
     setError('');
     setSuccess('');
+    setLastTxHash(null);
 
     if (!to.trim()) {
       setError('Please enter recipient address');
@@ -114,6 +165,7 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
       }
 
       setSuccess(`Transaction sent! TXID: ${result.txid.slice(0, 16)}...`);
+      setLastTxHash(result.txid);
       setTo('');
       setAmount('');
 
@@ -176,7 +228,26 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
           disabled={loading}
         />
 
-        <label className="label">Amount (ANM)</label>
+        <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Amount (ANM)</span>
+          <button
+            type="button"
+            onClick={setMaxAmount}
+            disabled={loading || !getAvailableBaseUnits()}
+            style={{
+              background: 'transparent',
+              border: '1px solid #cbd5e1',
+              borderRadius: 4,
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              color: '#475569',
+            }}
+            title="Set amount to the maximum minus a small gas reserve"
+          >
+            Max
+          </button>
+        </label>
         <input
           type="number"
           className="input"
@@ -200,7 +271,37 @@ function SendTab({ currentAccount, network, balance, onSent }: SendTabProps) {
         </div>
 
         {error && <div className="error">{error}</div>}
-        {success && <div className="success">{success}</div>}
+        {success && (
+          <div className="success">
+            <div>{success}</div>
+            {lastTxHash && (
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(lastTxHash).catch(() => {})}
+                  style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #94a3b8', background: 'white', cursor: 'pointer' }}
+                  title="Copy full tx hash"
+                >
+                  Copy tx hash
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      chrome.tabs?.create({ url: 'https://trade.animica.org' });
+                    } catch {
+                      window.open('https://trade.animica.org', '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #94a3b8', background: 'white', cursor: 'pointer' }}
+                  title="Open the Animica exchange"
+                >
+                  Open Exchange
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           className="button"
