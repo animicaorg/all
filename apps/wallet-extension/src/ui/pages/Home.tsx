@@ -8,6 +8,18 @@ import SettingsTab from '../components/SettingsTab';
 import { formatANM } from '../../services/balances';
 import { useBalancesStore } from '../../store/balances';
 import { activeWalletStoreActions, useActiveWalletStore } from '../../store/activeWallet';
+import { stringifySafe } from '../../core/rpc/safeJson';
+
+// `JSON.stringify` throws on bigint, which breaks the debug panel when RPC
+// debug state contains balance/nonce/gas values. Use the same bigint+Uint8Array
+// safe encoder used by every other JSON boundary in the extension.
+function safeStringifyPretty(value: unknown): string {
+  try {
+    return JSON.stringify(JSON.parse(stringifySafe(value)), null, 2);
+  } catch {
+    return '[unserializable]';
+  }
+}
 
 interface HomeProps {
   onLock: () => void;
@@ -314,7 +326,7 @@ function Home({ onLock }: HomeProps) {
                     <div style={{ marginLeft: 8 }}>Method: {debugState.txRpcDebug.lastSendRequest.method}</div>
                     <div style={{ marginLeft: 8, wordBreak: 'break-all' }}>RPC URL: {debugState.txRpcDebug.lastSendRequest.rpcUrl}</div>
                     <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto' }}>
-                      {JSON.stringify(debugState.txRpcDebug.lastSendRequest.params, null, 2)}
+                      {safeStringifyPretty(debugState.txRpcDebug.lastSendRequest.params)}
                     </pre>
                     <details>
                       <summary><strong>Raw JSON-RPC request body</strong></summary>
@@ -325,7 +337,7 @@ function Home({ onLock }: HomeProps) {
                     <details style={{ marginTop: 6 }}>
                       <summary><strong>Raw send response / error</strong></summary>
                       <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto' }}>
-                        {JSON.stringify({ response: debugState?.txRpcDebug?.lastSendResponse ?? null, error: debugState?.txRpcDebug?.lastSendError ?? null }, null, 2)}
+                        {safeStringifyPretty({ response: debugState?.txRpcDebug?.lastSendResponse ?? null, error: debugState?.txRpcDebug?.lastSendError ?? null })}
                       </pre>
                     </details>
                   </div>
@@ -333,12 +345,12 @@ function Home({ onLock }: HomeProps) {
                 <details style={{ marginTop: 8 }}>
                   <summary><strong>Raw Balance Response</strong></summary>
                   <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
-                    {JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2)}
+                    {safeStringifyPretty(debugState?.lastBalanceResponse ?? null)}
                   </pre>
-                  <button 
-                    className="button" 
+                  <button
+                    className="button"
                     style={{ marginTop: 4, fontSize: 10, padding: '4px 8px' }}
-                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugState?.lastBalanceResponse ?? null, null, 2))}
+                    onClick={() => navigator.clipboard.writeText(safeStringifyPretty(debugState?.lastBalanceResponse ?? null))}
                   >
                     Copy Response
                   </button>
@@ -346,12 +358,12 @@ function Home({ onLock }: HomeProps) {
                 <details style={{ marginTop: 8 }}>
                   <summary><strong>Raw Ping Response</strong></summary>
                   <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: '#fff', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
-                    {JSON.stringify(debugState?.lastPingResponse ?? null, null, 2)}
+                    {safeStringifyPretty(debugState?.lastPingResponse ?? null)}
                   </pre>
-                  <button 
-                    className="button" 
+                  <button
+                    className="button"
                     style={{ marginTop: 4, fontSize: 10, padding: '4px 8px' }}
-                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugState?.lastPingResponse ?? null, null, 2))}
+                    onClick={() => navigator.clipboard.writeText(safeStringifyPretty(debugState?.lastPingResponse ?? null))}
                   >
                     Copy Response
                   </button>

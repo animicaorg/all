@@ -1,0 +1,47 @@
+{
+  "name": "animica-node",
+  "version": "0.1.0",
+  "description": "Animica full-node operator package. Orchestrates the bundled Python runtime under the hood and integrates with the Animica Coding Agent.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "animica-node": "./bin/animica-node.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "prepack": "npm run clean && npm run build",
+    "release:dry": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@animica/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/animica/animica.git",
+    "directory": "packages/animica-node"
+  },
+  "keywords": ["animica", "full-node", "blockchain", "rpc", "operator"]
+}

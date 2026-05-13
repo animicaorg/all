@@ -1,0 +1,11 @@
+{
+  "name": "__NAME__",
+  "kind": "aicf-agent",
+  "version": "0.1.0",
+  "model": "claude-opus-4-7",
+  "tools": ["repo", "rpc", "patches"],
+  "useful_work": {
+    "kinds": ["eval-bench", "embedding", "synthetic-code"],
+    "max_concurrency": 2
+  }
+}

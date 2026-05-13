@@ -1,0 +1,50 @@
+{
+  "name": "animica-agent",
+  "version": "0.1.0",
+  "description": "Animica Coding Agent — repo-aware coding, scaffolding, RPC, wallet and miner-aware operations for the Animica network.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "animica-agent": "./bin/animica-agent.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin",
+    "dist",
+    "templates",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run clean && npm run build",
+    "release:dry": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@animica/agent-core": "workspace:*",
+    "@animica/agent-ui": "workspace:*"
+  },
+  "optionalDependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/animica/animica.git",
+    "directory": "packages/animica-agent/cli"
+  },
+  "keywords": ["animica", "agent", "cli", "coding-agent", "miner", "rpc", "wallet"]
+}

@@ -3,6 +3,7 @@
 import { sha3_256 } from 'js-sha3';
 import { loadVault, saveVault, saveState, setUnlockedVault, getUnlockedVault, lockVault, isVaultUnlocked, loadActiveWalletId, saveActiveWalletId } from '../core/storage';
 import { encrypt, decrypt } from '../core/crypto/vault';
+import { buildCanonicalSignBytes } from '../core/crypto/sign-domain';
 import { stringifyForStorage, toJsonSafe } from '../core/rpc/safeJson';
 import { PermissionManager } from '../core/permissions';
 import { TxStore } from '../core/tx/store';
@@ -1749,7 +1750,21 @@ async function handleProviderSignMessage(origin: string, method: string, params:
   vaultData.permissions = permissions.toJSON();
   await saveVaultData(vaultData);
 
-  const signBytes = new TextEncoder().encode(`animica:${method}:${request.message}`);
+  // Canonical signing domain.
+  //
+  // Previously this string interpolated the RPC method name, so the same
+  // `message` produced different signed bytes depending on whether the
+  // dapp called `animica_signMessage`, `provider_signMessage`, or
+  // `personal_sign`. AICF (and any dapp that tries the methods in fallback
+  // order) would then see an "invalid signature" because the bytes the
+  // signature was computed over depended on which method happened to
+  // succeed first.
+  //
+  // The fix: pin the prefix to a method-independent constant so the same
+  // logical request always produces a signature over the same bytes. The
+  // method name is still carried in the RPC envelope for routing, but it
+  // does not affect signed-message semantics.
+  const signBytes = buildCanonicalSignBytes(request.message);
   const signature = await sign(signBytes, account.secretKey, account.algId, account.publicKey);
   return bytesTo0xHex(signature);
 }

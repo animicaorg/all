@@ -1,9 +1,11 @@
 /**
  * Discriminated union types for background RPC responses
- * 
+ *
  * All background message handlers should return these types instead of raw values
  * to ensure proper error handling and prevent undefined crashes.
  */
+
+import { stringifySafe } from '../core/rpc/safeJson';
 
 export type Result<T, E = string> =
   | { ok: true; value: T }
@@ -64,7 +66,10 @@ export function unwrap<T, E>(result: Result<T, E>): T {
   if (isSuccess(result)) {
     return result.value;
   }
-  throw new Error(typeof result.error === 'string' ? result.error : JSON.stringify(result.error));
+  // result.error can be any payload — RPC errors sometimes carry bigint fields.
+  // stringifySafe routes bigints to decimal strings so a real error never gets
+  // replaced with `Do not know how to serialize a BigInt`.
+  throw new Error(typeof result.error === 'string' ? result.error : stringifySafe(result.error));
 }
 
 /**

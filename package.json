@@ -6,6 +6,8 @@
     "sdk",
     "packages/shared/*",
     "packages/sdk/*",
+    "packages/animica-agent/*",
+    "packages/animica-node",
     "website",
     "explorer-web",
     "studio-web",

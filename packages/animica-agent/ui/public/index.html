@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Animica Coding Agent</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <h1>Animica</h1>
+      <p class="tagline">Coding Agent</p>
+      <nav>
+        <button class="nav-btn active" data-tab="agent">Agent</button>
+        <button class="nav-btn" data-tab="wallet">Wallet</button>
+        <button class="nav-btn" data-tab="node">Node</button>
+        <button class="nav-btn" data-tab="usefulwork">Useful Work</button>
+        <button class="nav-btn" data-tab="rewards">Rewards</button>
+        <button class="nav-btn" data-tab="settings">Settings</button>
+      </nav>
+      <div class="conn-status" id="conn-status">
+        <span class="dot" id="conn-dot"></span>
+        <span id="conn-label">connecting…</span>
+      </div>
+    </aside>
+    <main>
+      <section id="tab-agent" class="tab active">
+        <header class="tab-header">
+          <h2>Agent</h2>
+          <p class="muted" id="agent-subtitle">Ready when wallet + node are healthy</p>
+        </header>
+        <div class="card" id="readiness-card">
+          <h3>Readiness</h3>
+          <ul class="checklist" id="readiness-list">
+            <li data-key="rpc">RPC reachable: <span>…</span></li>
+            <li data-key="chain">Chain ID matches: <span>…</span></li>
+            <li data-key="wallet">Wallet configured: <span>…</span></li>
+            <li data-key="balance">Wallet funded: <span>…</span></li>
+            <li data-key="settlement">Settlement mode: <span>…</span></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Next steps</h3>
+          <ol id="next-steps">
+            <li class="muted">loading…</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>Quick links</h3>
+          <ul class="actions">
+            <li><a id="open-explorer" target="_blank" rel="noopener">Open explorer</a></li>
+            <li><a href="https://trade.animica.org" target="_blank" rel="noopener">trade.animica.org</a></li>
+            <li><a href="https://docs.animica.org" target="_blank" rel="noopener">docs.animica.org</a></li>
+            <li><a href="/api/status" target="_blank">Raw status JSON</a></li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="tab-wallet" class="tab">
+        <header class="tab-header"><h2>Wallet</h2><p class="muted">Identity, balance, funding</p></header>
+        <div class="card">
+          <h3>Address</h3>
+          <div class="row">
+            <code class="addr" id="wallet-address">—</code>
+            <button class="ghost-btn" id="copy-address">Copy</button>
+          </div>
+          <p class="muted" id="wallet-source">source: —</p>
+        </div>
+        <div class="card">
+          <h3>Balance</h3>
+          <div class="big-number"><span id="balance-amt">—</span> <span class="unit">ANM</span></div>
+          <p class="muted" id="balance-raw">—</p>
+          <button class="ghost-btn" id="refresh-balance">Refresh</button>
+        </div>
+        <div class="card warn" id="funding-card" hidden>
+          <h3>Fund your wallet</h3>
+          <ol>
+            <li>Copy your address above.</li>
+            <li>Send ANM from any funded source (recommended first amount: 1 ANM).</li>
+            <li>Once it lands, click Refresh — paid actions unlock automatically.</li>
+          </ol>
+          <p class="muted">Live spending always requires the explicit acknowledgement flag.</p>
+        </div>
+      </section>
+
+      <section id="tab-node" class="tab">
+        <header class="tab-header"><h2>Node</h2><p class="muted">Local Animica RPC</p></header>
+        <div class="card">
+          <h3>Status</h3>
+          <dl class="kv">
+            <dt>URL</dt><dd id="node-url">—</dd>
+            <dt>Chain ID</dt><dd id="node-chain">—</dd>
+            <dt>Block</dt><dd id="node-block">—</dd>
+            <dt>Client</dt><dd id="node-client">—</dd>
+            <dt>Reachable</dt><dd id="node-reachable">—</dd>
+          </dl>
+        </div>
+        <div class="card hint" id="node-hint">
+          <p class="muted">
+            If the node is not reachable, run <code>animica-agent node start</code>
+            (or <code>animica-node start</code>) and refresh.
+          </p>
+        </div>
+      </section>
+
+      <section id="tab-usefulwork" class="tab">
+        <header class="tab-header"><h2>Useful Work</h2><p class="muted">Miner runtime + jobs</p></header>
+        <div class="card">
+          <h3>Identity</h3>
+          <dl class="kv">
+            <dt>Worker</dt><dd id="uw-worker">—</dd>
+            <dt>Payout</dt><dd id="uw-payout">—</dd>
+            <dt>Hashrate</dt><dd id="uw-hashrate">—</dd>
+            <dt>Metrics</dt><dd id="uw-metrics">—</dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h3>Quick commands</h3>
+          <ul class="cmd-list">
+            <li><code>animica-agent mine start</code> — start useful-work mining</li>
+            <li><code>animica-agent mine status</code> — current status</li>
+            <li><code>animica-agent miner runtime</code> — full lifecycle view</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="tab-rewards" class="tab">
+        <header class="tab-header"><h2>Rewards</h2><p class="muted">Receipts + payout history</p></header>
+        <div class="card">
+          <h3>Settlement</h3>
+          <p class="muted" id="rewards-placeholder">
+            Run <code>animica-agent rewards --local</code> for a rollup, or
+            <code>animica-agent settlement pending</code> to see in-flight payouts.
+          </p>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab">
+        <header class="tab-header"><h2>Settings</h2><p class="muted">Project configuration</p></header>
+        <div class="card">
+          <h3>Config</h3>
+          <pre id="settings-config">loading…</pre>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

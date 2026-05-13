@@ -1,0 +1,55 @@
+name: animica-agent + animica-node
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/animica-agent/**"
+      - "packages/animica-node/**"
+      - ".github/workflows/animica-agent-and-node.yml"
+  pull_request:
+    paths:
+      - "packages/animica-agent/**"
+      - "packages/animica-node/**"
+      - ".github/workflows/animica-agent-and-node.yml"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18.20", "20.13", "22.7"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: pnpm install (filtered)
+        run: |
+          pnpm --filter "@animica/agent-core" --filter "@animica/agent-sdk" \
+               --filter "@animica/agent-ui" --filter "animica-agent" \
+               --filter "animica-node" install --no-frozen-lockfile
+      - name: build core
+        run: pnpm --filter "@animica/agent-core" build
+      - name: build sdk + ui
+        run: |
+          pnpm --filter "@animica/agent-sdk" build
+          pnpm --filter "@animica/agent-ui" build
+      - name: build cli
+        run: pnpm --filter "animica-agent" build
+      - name: build node
+        run: pnpm --filter "animica-node" build
+      - name: test core
+        run: pnpm --filter "@animica/agent-core" test
+      - name: test cli
+        run: pnpm --filter "animica-agent" test
+      - name: test node
+        run: pnpm --filter "animica-node" test
+      - name: npm pack --dry-run (agent)
+        run: pnpm --filter "animica-agent" run release:dry
+      - name: npm pack --dry-run (node)
+        run: pnpm --filter "animica-node" run release:dry

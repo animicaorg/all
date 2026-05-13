@@ -222,7 +222,11 @@ function decorateAnimicaError(error: { code?: number; message: string; data?: un
 
   if (error.code === -32012) {
     const data = error.data as Record<string, unknown> | undefined;
-    const feeSummary = data?.fee ? ` Current fee fields: ${JSON.stringify(data.fee)}` : '';
+    // data.fee can come back from the node carrying bigint-valued fields (gas
+    // price, max fee, etc.). Plain JSON.stringify would throw and mask the
+    // real `-32012 Fee too low` error with `Do not know how to serialize a
+    // BigInt`. Use stringifySafe so the operator sees the intended message.
+    const feeSummary = data?.fee ? ` Current fee fields: ${stringifySafe(data.fee)}` : '';
     return {
       ...error,
       message: `Fee too low. Increase fee and retry.${feeSummary}`,
