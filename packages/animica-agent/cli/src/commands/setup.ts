@@ -16,7 +16,6 @@
  * require the explicit ack flag elsewhere.
  */
 
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -32,6 +31,12 @@ import {
 } from "@animica/agent-core";
 
 import { boolFlag, stringFlag } from "../args.js";
+import {
+  hasUsableBackend,
+  legacyPythonImports,
+  resolveAgentBackend,
+  runBackendCli,
+} from "../backend-bridge.js";
 import { c, fail, header, info, kv, ok, warn } from "../output.js";
 import { runLaunch } from "./launch.js";
 
@@ -71,15 +76,8 @@ function markStep(state: SetupState, name: string): void {
   if (!state.completedSteps.includes(name)) state.completedSteps.push(name);
 }
 
-function pythonAvailable(): boolean {
-  const python = process.env.ANIMICA_AGENT_PYTHON ?? "python3";
-  const r = spawnSync(python, ["-c", "import sys; sys.exit(0)"], { encoding: "utf8" });
-  return r.status === 0;
-}
-
-function runPythonWallet(args: string[]) {
-  const python = process.env.ANIMICA_AGENT_PYTHON ?? "python3";
-  return spawnSync(python, ["-m", "animica.cli.main", "wallet", ...args], { encoding: "utf8" });
+function runWallet(args: string[]) {
+  return runBackendCli(["wallet", ...args]);
 }
 
 function extractAddress(text: string): string | undefined {
@@ -125,17 +123,24 @@ export async function runSetup(options: Record<string, string | boolean>): Promi
   // Step 1 — prerequisites.
   if (!state.completedSteps.includes("prereq") || opts.reset) {
     info(c.bold("Step 1/6  ") + "checking prerequisites");
-    const pyOk = pythonAvailable();
+    const backend = resolveAgentBackend();
+    const usable = hasUsableBackend();
+    // Legacy-python fallback only counts when the import probe actually works.
+    const legacyOk = backend?.source === "legacy-python" ? legacyPythonImports() : false;
     kv([
       ["node.js", process.version],
-      ["python", pyOk ? "ok" : "missing"],
       ["platform", `${process.platform}-${process.arch}`],
+      ["backend", backend?.description ?? "(none)"],
+      ["managed", usable ? "ok" : legacyOk ? "legacy-fallback" : "missing"],
     ]);
-    if (!pyOk && !opts.skipWallet) {
-      state.lastError = { step: "prereq", message: "python interpreter not found" };
+    if (!usable && !legacyOk && !opts.skipWallet) {
+      state.lastError = { step: "prereq", message: "no Animica backend available" };
       saveSetupState(paths.stateDir, state);
-      fail("Python 3 is required for wallet operations.");
-      info(c.dim("  Install python 3.10+ and re-run `animica-agent setup`, or pass --skip-wallet to defer."));
+      fail("No Animica node runtime is installed.");
+      info(c.dim("  Install the managed runtime once:"));
+      info(c.dim("    animica-node install-runtime"));
+      info(c.dim("  Or set ANIMICA_NODE_BIN=/path/to/animica to use an existing binary."));
+      info(c.dim("  Re-run `animica-agent setup` after that. Pass --skip-wallet to defer wallet provisioning."));
       return 1;
     }
     markStep(state, "prereq");
@@ -173,11 +178,11 @@ export async function runSetup(options: Record<string, string | boolean>): Promi
     info(c.bold("Step 3/6  ") + "ensuring wallet");
     const label = state.walletLabel ?? "main";
     // Address probe (if exists).
-    const probe = runPythonWallet(["address", "--label", label]);
+    const probe = runWallet(["address", "--label", label]);
     let address = probe.status === 0 ? extractAddress(probe.stdout + "\n" + probe.stderr) : undefined;
     if (!address) {
-      info(c.dim(`creating wallet label "${label}" via the Python CLI`));
-      const create = runPythonWallet(["new", "--label", label]);
+      info(c.dim(`creating wallet label "${label}" via ${probe.backend.description}`));
+      const create = runWallet(["new", "--label", label]);
       if (create.status !== 0) {
         state.lastError = { step: "wallet", message: `wallet new --label ${label} failed (exit ${create.status})` };
         saveSetupState(paths.stateDir, state);
@@ -188,7 +193,7 @@ export async function runSetup(options: Record<string, string | boolean>): Promi
       address = extractAddress(create.stdout + "\n" + create.stderr);
       if (!address) {
         // Re-probe.
-        const probe2 = runPythonWallet(["address", "--label", label]);
+        const probe2 = runWallet(["address", "--label", label]);
         address = probe2.status === 0 ? extractAddress(probe2.stdout + "\n" + probe2.stderr) : undefined;
       }
     }

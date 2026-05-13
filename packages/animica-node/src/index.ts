@@ -26,6 +26,15 @@ import {
   syncStatus,
   walletPath,
 } from "./commands.js";
+import {
+  ensureRuntimeOrInstall,
+  runInstallRuntime,
+  runRuntimeDoctor,
+  runRuntimePrune,
+  runRuntimeRemove,
+  runRuntimeRepair,
+  runRuntimeStatus,
+} from "./runtime-commands.js";
 
 const VERSION = "0.1.0";
 
@@ -36,13 +45,24 @@ USAGE
 
 CORE
   init                          Generate / refresh node.json
-  start [-f|--foreground]       Start the node (detached by default)
+  start [-f|--foreground] [--no-install]
+                                Start the node (detached by default; auto-installs runtime)
   stop                          Stop the running node
   restart                       Stop + start
   status                        Show pidfile, RPC, sync state
   logs [-f]                     Tail node logs
   doctor                        Health checks (rpc, backend, miner-safety)
   reset --yes                   Wipe the configured data dir
+
+RUNTIME
+  install-runtime [--manifest-url <url>] [--force]
+                                Install the managed Animica node runtime
+  runtime status                Where the runtime lives, which version is active
+  runtime repair                Verify all installs have the marker + entry
+  runtime remove --all | --channel <c> --version <v>
+                                Delete one or all installed runtimes
+  runtime prune [--keep N]      Drop old installs, keep most recent N + active
+  runtime doctor                Manifest reachability + backend resolution
 
 CHAIN
   rpc call <method> [params…]   Pass-through JSON-RPC call
@@ -63,6 +83,8 @@ ENV
   ANIMICA_NODE_BIN              Override the backend binary
   ANIMICA_NODE_HOME             Override the daemon state dir
   ANIMICA_NODE_CONFIG           Override the config file path
+  ANIMICA_RUNTIME_HOME          Override ~/.animica/runtime/ install root
+  ANIMICA_RUNTIME_MANIFEST_URL  Override the manifest URL for install-runtime
 `;
 
 export async function run(argv: string[]): Promise<number> {
@@ -80,7 +102,22 @@ export async function run(argv: string[]): Promise<number> {
   let r: { exit: number; output: string };
   try {
     if (head === "init") r = init();
-    else if (head === "start") r = await start(rest);
+    else if (head === "install-runtime") r = await runInstallRuntime(rest);
+    else if (head === "runtime" && rest[0] === "status") r = runRuntimeStatus(rest.slice(1));
+    else if (head === "runtime" && rest[0] === "repair") r = runRuntimeRepair(rest.slice(1));
+    else if (head === "runtime" && rest[0] === "remove") r = runRuntimeRemove(rest.slice(1));
+    else if (head === "runtime" && rest[0] === "prune") r = runRuntimePrune(rest.slice(1));
+    else if (head === "runtime" && rest[0] === "doctor") r = await runRuntimeDoctor(rest.slice(1));
+    else if (head === "start") {
+      // Auto-install the runtime if no managed/env/PATH backend resolves.
+      const noInstall = rest.includes("--no-install");
+      const ensured = await ensureRuntimeOrInstall({ autoInstall: !noInstall });
+      if (!ensured.ok) {
+        r = { exit: 1, output: `error: ${ensured.message ?? "no backend available"}\n` };
+      } else {
+        r = await start(rest);
+      }
+    }
     else if (head === "stop") r = stop();
     else if (head === "restart") r = await restart(rest);
     else if (head === "status") r = await status();

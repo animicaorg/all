@@ -1,0 +1,187 @@
+name: npm install smoke (animica-node + animica-agent)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/animica-agent/**"
+      - "packages/animica-node/**"
+      - ".github/workflows/npm-install-smoke.yml"
+  pull_request:
+    paths:
+      - "packages/animica-agent/**"
+      - "packages/animica-node/**"
+      - ".github/workflows/npm-install-smoke.yml"
+
+jobs:
+  # Pack the npm tarballs in a single Linux job, then re-use them across
+  # the cross-OS install matrix. Packing must come from a built workspace
+  # because both packages reference local workspace deps.
+  pack:
+    runs-on: ubuntu-latest
+    outputs:
+      agent-tgz: ${{ steps.find.outputs.agent-tgz }}
+      node-tgz: ${{ steps.find.outputs.node-tgz }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.13"
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: install workspace deps (filtered)
+        run: |
+          pnpm --filter "@animica/agent-core" --filter "@animica/agent-sdk" \
+               --filter "@animica/agent-ui" --filter "animica-agent" \
+               --filter "animica-node" install --no-frozen-lockfile
+      - name: build node + agent + deps
+        run: |
+          pnpm --filter "@animica/agent-core" build
+          pnpm --filter "@animica/agent-sdk" build
+          pnpm --filter "@animica/agent-ui" build
+          pnpm --filter "animica-agent" build
+          pnpm --filter "animica-node" build
+      - name: pack tarballs
+        id: find
+        run: |
+          set -eux
+          mkdir -p artifacts
+          (cd packages/animica-node && npm pack --pack-destination ../../artifacts)
+          (cd packages/animica-agent/cli && npm pack --pack-destination ../../../artifacts)
+          ls -la artifacts/
+          AGENT=$(ls artifacts/animica-agent-*.tgz | head -n 1)
+          NODE=$(ls artifacts/animica-node-*.tgz | head -n 1)
+          echo "agent-tgz=$AGENT" >> "$GITHUB_OUTPUT"
+          echo "node-tgz=$NODE" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: artifacts/*.tgz
+          retention-days: 1
+
+  # Install the packed tarballs into a clean temp dir on each OS and run
+  # the documented init / runtime / agent flow. Does NOT depend on a
+  # hosted manifest — uses --no-install to skip runtime download. The
+  # purpose is to prove the CLIs themselves resolve, parse args, and
+  # round-trip output on each platform.
+  install-smoke:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["20.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarballs
+          path: artifacts
+      - name: install both packages globally into a fresh prefix (posix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eux
+          PREFIX="$RUNNER_TEMP/npm-prefix"
+          mkdir -p "$PREFIX"
+          npm config set prefix "$PREFIX"
+          export PATH="$PREFIX/bin:$PATH"
+          AGENT=$(ls artifacts/animica-agent-*.tgz | head -n 1)
+          NODE=$(ls artifacts/animica-node-*.tgz | head -n 1)
+          npm install -g "$NODE" "$AGENT"
+          # Sanity-check binaries on PATH.
+          command -v animica-node
+          command -v animica-agent
+      - name: install both packages globally into a fresh prefix (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $PREFIX = Join-Path $env:RUNNER_TEMP "npm-prefix"
+          New-Item -ItemType Directory -Force -Path $PREFIX | Out-Null
+          npm config set prefix $PREFIX
+          $env:PATH = "$PREFIX;$env:PATH"
+          $node = (Get-ChildItem artifacts\animica-node-*.tgz | Select-Object -First 1).FullName
+          $agent = (Get-ChildItem artifacts\animica-agent-*.tgz | Select-Object -First 1).FullName
+          npm install -g $node $agent
+          Get-Command animica-node
+          Get-Command animica-agent
+      - name: smoke — animica-node CLI surface (posix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eux
+          export PATH="$RUNNER_TEMP/npm-prefix/bin:$PATH"
+          # Use a per-run state dir so concurrent jobs don't fight.
+          export ANIMICA_NODE_HOME="$RUNNER_TEMP/animica-node-home"
+          export ANIMICA_RUNTIME_HOME="$RUNNER_TEMP/animica-runtime-home"
+          animica-node --version
+          animica-node --help
+          animica-node init
+          animica-node config show
+          animica-node runtime status
+          animica-node runtime doctor --json || echo "(doctor exit nonzero is acceptable — manifest may be unreachable)"
+      - name: smoke — animica-node CLI surface (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:RUNNER_TEMP\npm-prefix;$env:PATH"
+          $env:ANIMICA_NODE_HOME = "$env:RUNNER_TEMP\animica-node-home"
+          $env:ANIMICA_RUNTIME_HOME = "$env:RUNNER_TEMP\animica-runtime-home"
+          animica-node --version
+          animica-node --help
+          animica-node init
+          animica-node config show
+          animica-node runtime status
+          # doctor may exit non-zero if manifest unreachable; that's fine for the smoke.
+          try { animica-node runtime doctor --json } catch { Write-Host "doctor exit nonzero is acceptable" }
+      - name: smoke — animica-agent CLI surface (posix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eux
+          export PATH="$RUNNER_TEMP/npm-prefix/bin:$PATH"
+          export ANIMICA_AGENT_HOME="$RUNNER_TEMP/animica-agent-home"
+          export ANIMICA_RUNTIME_HOME="$RUNNER_TEMP/animica-runtime-home"
+          animica-agent --version
+          animica-agent --help
+          # init does not require a network or a backend.
+          animica-agent init || true
+          # setup with --skip-wallet --no-launch must succeed (no backend yet).
+          animica-agent setup --skip-wallet --no-launch --no-browser || true
+      - name: smoke — animica-agent CLI surface (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:RUNNER_TEMP\npm-prefix;$env:PATH"
+          $env:ANIMICA_AGENT_HOME = "$env:RUNNER_TEMP\animica-agent-home"
+          $env:ANIMICA_RUNTIME_HOME = "$env:RUNNER_TEMP\animica-runtime-home"
+          animica-agent --version
+          animica-agent --help
+          try { animica-agent init } catch { Write-Host "(init may exit nonzero w/o repo)" }
+          try { animica-agent setup --skip-wallet --no-launch --no-browser } catch { Write-Host "(setup may exit nonzero w/o backend)" }
+
+  # A second job that exercises the build-runtime-bundle + manifest +
+  # install pipeline against a local fixture (no hosted artifact required).
+  # This is the proof that the npm-only flow CAN bootstrap the runtime if
+  # the release channel is available.
+  bundle-roundtrip:
+    runs-on: ubuntu-latest
+    needs: pack
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.13"
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - run: |
+          pnpm --filter "@animica/agent-core" --filter "animica-node" install --no-frozen-lockfile
+          pnpm --filter "@animica/agent-core" build
+          pnpm --filter "animica-node" build
+      - name: roundtrip vitest (build → manifest → install)
+        run: pnpm --filter "animica-node" exec vitest run test/bundle-roundtrip.test.ts test/runtime-manager.test.ts

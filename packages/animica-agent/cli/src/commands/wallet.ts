@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import {
   fetchBalance,
   isLikelyAnimicaAddress,
@@ -11,13 +9,13 @@ import {
 } from "@animica/agent-core";
 
 import { boolFlag, stringFlag } from "../args.js";
+import { runBackendCli } from "../backend-bridge.js";
 import { c, fail, header, info, kv, ok, warn } from "../output.js";
 
-/** Invoke the bundled Python CLI `animica wallet ...` subcommand. */
-function runPythonWallet(args: string[]): { status: number; stdout: string; stderr: string } {
-  const python = process.env.ANIMICA_AGENT_PYTHON ?? "python3";
-  const r = spawnSync(python, ["-m", "animica.cli.main", "wallet", ...args], { encoding: "utf8" });
-  return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+/** Invoke `wallet <args>` on the resolved Animica backend (managed runtime, env override, or legacy fallback). */
+function runWalletCli(args: string[]): { status: number; stdout: string; stderr: string; backendSource: string } {
+  const r = runBackendCli(["wallet", ...args]);
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, backendSource: r.backend.source };
 }
 
 /** Best-effort parse of an address out of typical Python CLI output. */
@@ -70,18 +68,19 @@ export async function runWalletCreate(
   const label = positionals[0] ?? stringFlag(options, "label") ?? "main";
   const { paths } = loadConfig();
   // Refuse to overwrite an existing label without --force.
-  const list = runPythonWallet(["list"]);
+  const list = runWalletCli(["list"]);
   if (list.status === 0 && list.stdout.includes(label) && !boolFlag(options, "force", false)) {
     info(`wallet label "${label}" already exists. Pass --force to recreate, or use a different label.`);
     info(c.dim(list.stdout.trim()));
     return 1;
   }
-  const create = runPythonWallet(["new", "--label", label]);
+  const create = runWalletCli(["new", "--label", label]);
   const combined = create.stdout + "\n" + create.stderr;
   if (create.status !== 0) {
-    fail(`wallet create failed (exit ${create.status}). Bundled Python CLI required.`);
+    fail(`wallet create failed (exit ${create.status}). No Animica backend available (source: ${create.backendSource}).`);
     if (boolFlag(options, "verbose", false)) info(combined);
-    info(c.dim("Install: pip install animica   (or set ANIMICA_AGENT_PYTHON to your interpreter)"));
+    info(c.dim("Install the managed runtime: animica-node install-runtime"));
+    info(c.dim("Or override: ANIMICA_NODE_BIN=/path/to/animica"));
     return 1;
   }
   const address = extractAddress(combined);
@@ -110,7 +109,7 @@ export async function runWalletAddress(
 ): Promise<number> {
   const { config } = loadConfig();
   const label = positionals[0] ?? stringFlag(options, "label") ?? (config as { walletLabel?: string }).walletLabel ?? "main";
-  const r = runPythonWallet(["address", "--label", label]);
+  const r = runWalletCli(["address", "--label", label]);
   const combined = r.stdout + "\n" + r.stderr;
   let address: string | undefined;
   if (r.status === 0) address = extractAddress(combined);
@@ -135,7 +134,7 @@ export async function runWalletAddress(
 }
 
 export async function runWalletList(options: Record<string, string | boolean>): Promise<number> {
-  const r = runPythonWallet(["list"]);
+  const r = runWalletCli(["list"]);
   if (r.status !== 0) {
     fail(`wallet list failed (exit ${r.status})`);
     if (boolFlag(options, "verbose", false)) info(r.stderr);
@@ -156,7 +155,7 @@ export async function runWalletFundHelp(
   const { config } = loadConfig();
   const label = positionals[0] ?? stringFlag(options, "label") ?? (config as { walletLabel?: string }).walletLabel ?? "main";
   // Resolve address from the Python CLI, falling back to the agent's view.
-  const r = runPythonWallet(["address", "--label", label]);
+  const r = runWalletCli(["address", "--label", label]);
   const address = (r.status === 0 ? extractAddress(r.stdout + "\n" + r.stderr) : undefined) ?? resolveWalletIdentity(config)?.address;
   const node = await probeNode(config.rpcUrl).catch(() => null);
   let balance: Awaited<ReturnType<typeof fetchBalance>> | null = null;

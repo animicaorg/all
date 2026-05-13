@@ -1,26 +1,29 @@
 /**
  * Backend detection & invocation for animica-node.
  *
- * We orchestrate the **existing** Python Animica node runtime that ships with
- * the monorepo (`python/animica/cli/main.py`). This is real: we never mock,
- * never re-implement, and never modify mining or node behavior — we only
- * spawn the same CLI a developer would run by hand.
+ * Resolution order (after this rewrite):
  *
- * Resolution order:
- *   1. ANIMICA_NODE_BIN=<path>            (operator override)
- *   2. installed `animica` shell command  (preferred for global installs)
- *   3. <repoRoot>/.venv/bin/python -m animica.cli.main   (devcontainer-style)
- *   4. python3 -m animica.cli.main        (last resort PATH lookup)
+ *   1. ANIMICA_NODE_BIN=<path>            (operator override; preserved)
+ *   2. Managed runtime under ~/.animica/runtime/                  ← NEW
+ *      Installed via the runtime-manager subsystem; this is the default
+ *      production path for npm-only users.
+ *   3. installed `animica` shell command  (legacy compatibility)
+ *   4. <repoRoot>/.venv/bin/python -m animica.cli.main   (legacy dev path)
+ *   5. python3 -m animica.cli.main        (final fallback, last resort)
  *
- * In all cases the bin is spawned with the user's current environment so
- * existing ANIMICA_* env vars (RPC URL, chain id, miner config) are honored
- * exactly as they would be without this package.
+ * The legacy paths (#3-#5) remain so existing dev workstations keep
+ * working, but they are NO LONGER the primary path for new users. The
+ * `Backend.source` field surfaces exactly which step matched so doctor
+ * and status can show what's actually in use.
  */
 
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
+
 import { findRepoRoot } from "@animica/agent-core";
+
+import { findActiveInstall } from "./runtime-manager.js";
 
 export interface Backend {
   kind: "wrapped-cli" | "python-module";
@@ -32,19 +35,44 @@ export interface Backend {
 
 export interface ResolveOptions {
   cwd?: string;
+  /** When false, skip legacy repo / venv / PATH fallbacks (used by `runtime status`). */
+  allowLegacy?: boolean;
 }
 
 export function resolveBackend(opts: ResolveOptions = {}): Backend {
   const cwd = opts.cwd ?? process.cwd();
-  const repoRoot = findRepoRoot(cwd);
+  // 1. Operator env override.
   const envBin = process.env.ANIMICA_NODE_BIN;
   if (envBin && existsSync(envBin)) {
     return { kind: "wrapped-cli", command: envBin, args: [], cwd, source: "env(ANIMICA_NODE_BIN)" };
   }
-  const which = spawnSync("which", ["animica"], { encoding: "utf8" });
-  if (which.status === 0 && which.stdout.trim()) {
-    return { kind: "wrapped-cli", command: which.stdout.trim(), args: [], cwd, source: "PATH" };
+  // 2. Managed runtime (production default for npm-only users).
+  const managed = findActiveInstall();
+  if (managed) {
+    const cmd = join(managed.installDir, managed.entry);
+    if (existsSync(cmd)) {
+      return {
+        kind: "wrapped-cli",
+        command: cmd,
+        args: [],
+        cwd,
+        source: `managed-runtime(${managed.channel}@${managed.version})`,
+      };
+    }
   }
+  if (opts.allowLegacy === false) {
+    // Caller asked us not to fall back. Return a probe that points at a
+    // non-existent file; the caller is responsible for handling it.
+    return { kind: "wrapped-cli", command: "", args: [], cwd, source: "no-managed-runtime" };
+  }
+  // 3. Legacy: animica on PATH.
+  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["animica"], { encoding: "utf8" });
+  if (which.status === 0 && which.stdout.trim()) {
+    const found = which.stdout.trim().split(/\r?\n/)[0];
+    return { kind: "wrapped-cli", command: found, args: [], cwd, source: "legacy(PATH)" };
+  }
+  // 4. Legacy: in-repo venv.
+  const repoRoot = findRepoRoot(cwd);
   const venvPython = join(repoRoot, ".venv", "bin", "python");
   if (existsSync(venvPython)) {
     return {
@@ -52,16 +80,16 @@ export function resolveBackend(opts: ResolveOptions = {}): Backend {
       command: venvPython,
       args: ["-m", "animica.cli.main"],
       cwd: repoRoot,
-      source: `${venvPython} -m animica.cli.main`,
+      source: `legacy(${venvPython} -m animica.cli.main)`,
     };
   }
-  // Last resort: hope python3 + animica package is on PATH.
+  // 5. Last resort.
   return {
     kind: "python-module",
     command: "python3",
     args: ["-m", "animica.cli.main"],
     cwd: repoRoot,
-    source: "python3 -m animica.cli.main",
+    source: "legacy(python3 -m animica.cli.main)",
   };
 }
 

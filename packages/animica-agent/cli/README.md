@@ -6,13 +6,27 @@ identity, useful-work jobs, ANM-denominated billing, and a local browser UI.
 
 ## Install
 
+The canonical install is from npm, alongside the node operator package:
+
 ```sh
-npm install -g animica-agent
+npm install -g animica-node animica-agent
 ```
 
-Requires Node 18.17+.
+Requires Node 18.17+. No repo clone, no `pip install animica`, no
+manually-managed `.venv`. The `animica-agent setup` flow below will
+auto-install the managed node runtime under `~/.animica/runtime/` if
+it's not already provisioned.
 
-## Quickstart
+## Quickstart (one-command happy path)
+
+```sh
+animica-node init            # ~/.animica/node/node.json
+animica-node start           # auto-installs the managed runtime + starts the node
+animica-agent setup          # wallet provisioning + readiness checks + dashboard
+animica-agent                # open the dashboard (or TTY chat if no browser)
+```
+
+## Per-command quickstart
 
 ```sh
 animica-agent init           # scaffold .animica/agent.json
@@ -27,6 +41,9 @@ animica-agent apply
 
 | Command | Description |
 | --- | --- |
+| `<no subcommand>` | Open the dashboard (or TTY chat if no display) |
+| `setup [--no-launch] [--skip-wallet] [--no-browser] [--reset]` | Guided one-time setup: prereq → node → wallet → funding → readiness → dashboard |
+| `setup status` | Show persisted setup state |
 | `init` | Create or refresh project config |
 | `doctor` | RPC / miner / wallet diagnostics |
 | `status` | Current project, network, wallet, miner snapshot |
@@ -69,6 +86,13 @@ Useful env vars:
 - `ANIMICA_AGENT_RESOURCE_MODE` — `balanced | miner-priority | agent-priority`
 - `ANIMICA_AGENT_CPU_LIMIT` — 1..100 percent
 - `ANIMICA_AGENT_CREDITS_MODE` — `off | wallet | miner | aicf | hybrid`
+
+Backend resolution (used by wallet ops):
+
+- `ANIMICA_NODE_BIN` — explicit operator override
+- otherwise the managed runtime installed by `animica-node install-runtime`
+- otherwise `animica` on PATH
+- otherwise `python3 -m animica.cli.main` (legacy dev path)
 
 Miner env (read, never written): `ANIMICA_POOL_ADDRESS`, `ANIMICA_MINER_*`,
 `ANIMICA_POOL_*`.
