@@ -1,6 +1,6 @@
 {
   "name": "@animica/agent-ui",
-  "version": "0.1.1",
+  "version": "0.1.9",
   "description": "Local browser dashboard for the Animica Coding Agent.",
   "license": "Apache-2.0",
   "type": "module",
@@ -23,7 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@animica/agent-core": "^0.1.1"
+    "@animica/agent-core": "^0.1.9"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

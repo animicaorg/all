@@ -8,6 +8,7 @@
     "packages/sdk/*",
     "packages/animica-agent/*",
     "packages/animica-node",
+    "packages/animica",
     "website",
     "explorer-web",
     "studio-web",
