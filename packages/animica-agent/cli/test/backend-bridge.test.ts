@@ -66,7 +66,7 @@ describe("backend-bridge", () => {
           : "linux";
     const a = process.arch === "x64" ? "x64" : process.arch === "arm64" ? "arm64" : process.arch;
     const platformKey = `${p}-${a}`;
-    const versionsDir = join(tmp, "versions", `stable-0.1.0-${platformKey}`);
+    const versionsDir = join(tmp, "versions", `stable-0.1.10-${platformKey}`);
     mkdirSync(join(versionsDir, "bin"), { recursive: true });
     const entry = process.platform === "win32" ? "bin/animica.cmd" : "bin/animica";
     const binPath = join(versionsDir, entry);
@@ -76,7 +76,7 @@ describe("backend-bridge", () => {
       join(versionsDir, ".animica-runtime.json"),
       JSON.stringify({
         channel: "stable",
-        version: "0.1.0",
+        version: "0.1.10",
         platformKey,
         installedAt: new Date().toISOString(),
         installDir: versionsDir,
@@ -87,7 +87,7 @@ describe("backend-bridge", () => {
       join(tmp, "current.json"),
       JSON.stringify({
         schema: 1,
-        active: { channel: "stable", version: "0.1.0", platformKey },
+        active: { channel: "stable", version: "0.1.10", platformKey },
         history: [],
       }),
     );

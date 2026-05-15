@@ -36,7 +36,7 @@ import {
   runRuntimeStatus,
 } from "./runtime-commands.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.10";
 
 const HELP = `animica-node ${VERSION} — Animica full-node operator CLI
 

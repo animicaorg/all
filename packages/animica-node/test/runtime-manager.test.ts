@@ -115,7 +115,7 @@ function startFixture(opts: { withSignature?: boolean } = {}): Promise<Fixture> 
         const manifestBody: RuntimeManifest = {
           schema: 1,
           channel: "stable",
-          version: "0.1.0",
+          version: "0.1.10",
           generatedAt: new Date().toISOString(),
           assets: {
             // Cover the runner's actual platform key so the install test runs.
@@ -170,7 +170,7 @@ function startFixture(opts: { withSignature?: boolean } = {}): Promise<Fixture> 
       const manifest: RuntimeManifest = {
         schema: 1,
         channel: "stable",
-        version: "0.1.0",
+        version: "0.1.10",
         generatedAt: new Date().toISOString(),
         assets: {
           [platformKey()]: {
@@ -223,7 +223,7 @@ describe("runtime-manager: manifest", () => {
   it("fetchManifest accepts a well-formed manifest", async () => {
     const fix = await startFixture();
     const m = await fetchManifest(fix.manifestUrl);
-    expect(m.version).toBe("0.1.0");
+    expect(m.version).toBe("0.1.10");
     expect(m.assets[platformKey()]).toBeTruthy();
     await fix.close();
   });
@@ -238,7 +238,7 @@ describe("runtime-manager: manifest", () => {
     const bad = {
       schema: 1,
       channel: "stable",
-      version: "0.1.0",
+      version: "0.1.10",
       generatedAt: new Date().toISOString(),
       assets: {
         [platformKey()]: {
@@ -311,7 +311,7 @@ describe("runtime-manager: install pipeline", () => {
     expect(r.reused).toBe(false);
     expect(r.activated).toBe(true);
     expect(existsSync(join(r.installed.installDir, r.installed.entry))).toBe(true);
-    expect(r.installed.version).toBe("0.1.0");
+    expect(r.installed.version).toBe("0.1.10");
     // After activation, resolveRuntimeEntry must point to the managed binary.
     const entry = resolveRuntimeEntry();
     expect(entry).toBeTruthy();
@@ -335,7 +335,7 @@ describe("runtime-manager: install pipeline", () => {
     const bad: RuntimeManifest = {
       schema: 1,
       channel: "stable",
-      version: "0.1.0",
+      version: "0.1.10",
       generatedAt: new Date().toISOString(),
       assets: {
         [platformKey()]: {
@@ -435,7 +435,7 @@ describe("runtime-manager: install pipeline", () => {
   it("prune drops old installs but keeps the active one", async () => {
     const fix = await startFixture();
     // Install two versions by mutating the manifest.
-    const m1 = { ...fix.manifest, version: "0.1.0" };
+    const m1 = { ...fix.manifest, version: "0.1.10" };
     const m2 = { ...fix.manifest, version: "0.2.0" };
     await installRuntime({ manifest: m1 });
     await installRuntime({ manifest: m2 });

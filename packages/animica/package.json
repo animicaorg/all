@@ -1,6 +1,6 @@
 {
   "name": "animica",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Animica meta-package. Installing `animica` pulls in the full Animica toolchain: full-node operator, coding agent CLI, core library, SDK, and local UI.",
   "license": "Apache-2.0",
   "type": "module",
@@ -9,11 +9,11 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@animica/agent-core": "^0.1.9",
-    "@animica/agent-sdk": "^0.1.9",
-    "@animica/agent-ui": "^0.1.9",
-    "animica-agent": "^0.1.9",
-    "animica-node": "^0.1.9"
+    "@animica/agent-core": "^0.1.10",
+    "@animica/agent-sdk": "^0.1.10",
+    "@animica/agent-ui": "^0.1.10",
+    "animica-agent": "^0.1.10",
+    "animica-node": "^0.1.10"
   },
   "engines": {
     "node": ">=18.17"
