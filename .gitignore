@@ -119,3 +119,10 @@ ai/flagship_agent/data/raw/
 ai/flagship_agent/data/prepared/
 ai/flagship_agent/**/*.jsonl
 ai/flagship_agent/**/*.idx
+# generated flagship artifacts
+ai/flagship_agent/runs/
+ai/flagship_agent/models/
+ai/flagship_agent/data/raw/
+ai/flagship_agent/data/prepared/
+ai/flagship_agent/**/*.jsonl
+ai/flagship_agent/**/*.idx
