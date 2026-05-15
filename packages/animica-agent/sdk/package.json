@@ -1,6 +1,6 @@
 {
   "name": "@animica/agent-sdk",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Typed SDK for embedding the Animica Coding Agent in other applications.",
   "license": "Apache-2.0",
   "type": "module",
@@ -22,7 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@animica/agent-core": "^0.1.9"
+    "@animica/agent-core": "^0.1.10"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -40,5 +40,10 @@
     "url": "https://github.com/animica/animica.git",
     "directory": "packages/animica-agent/sdk"
   },
-  "keywords": ["animica", "agent", "sdk", "embed"]
+  "keywords": [
+    "animica",
+    "agent",
+    "sdk",
+    "embed"
+  ]
 }

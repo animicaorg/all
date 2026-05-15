@@ -1,6 +1,6 @@
 {
   "name": "@animica/agent-core",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Core library for the Animica Coding Agent: config, RPC, patches, repo and miner adapters.",
   "license": "Apache-2.0",
   "type": "module",
@@ -54,5 +54,11 @@
     "url": "https://github.com/animica/animica.git",
     "directory": "packages/animica-agent/core"
   },
-  "keywords": ["animica", "agent", "blockchain", "rpc", "miner"]
+  "keywords": [
+    "animica",
+    "agent",
+    "blockchain",
+    "rpc",
+    "miner"
+  ]
 }
