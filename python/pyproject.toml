@@ -5,9 +5,23 @@ build-backend = "hatchling.build"
 [project]
 name = "animica"
 version = "0.1.0"
-description = "Animica CLI + client libs"
+description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, and useful-work jobs."
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
+keywords = ["animica", "blockchain", "cli", "node", "wallet", "miner", "useful-work"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Utilities",
+]
 dependencies = [
   "typer>=0.12.3",
   "rich>=13.7.0",
@@ -74,6 +88,21 @@ bridge = [
   "eth-account>=0.13.7,<1.0.0",
   "web3>=7.14.0,<8.0.0",
 ]
+gpu = [
+  "torch>=2.2.0",
+  "accelerate>=0.34.0,<1.0.0",
+  "transformers>=4.44.0,<5.0.0",
+  "datasets>=2.20.0,<4.0.0",
+]
+all = [
+  "animica[backend,ena,stratum,wallet_qt,operator,bridge,gpu]",
+]
+
+[project.urls]
+Homepage = "https://animica.org"
+Repository = "https://github.com/animicaorg/all"
+Documentation = "https://animica.org/docs"
+Issues = "https://github.com/animicaorg/all/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["animica"]

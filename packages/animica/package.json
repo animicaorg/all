@@ -1,13 +1,22 @@
 {
   "name": "animica",
-  "version": "0.1.11",
-  "description": "Animica meta-package. Installing `animica` pulls in the full Animica toolchain: full-node operator, coding agent CLI, core library, SDK, and local UI.",
+  "version": "0.1.12",
+  "description": "Animica meta-package. Installing `animica` pulls in the full Animica toolchain and exposes a single `animica` CLI that routes to animica-node and animica-agent.",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "animica": "./bin/animica.mjs"
+  },
   "files": [
+    "bin/animica.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "package.json"
   ],
+  "scripts": {
+    "smoke": "node ./bin/animica.mjs --help",
+    "prepack": "npm run smoke"
+  },
   "dependencies": {
     "@animica/agent-core": "^0.1.11",
     "@animica/agent-sdk": "^0.1.11",
@@ -31,6 +40,7 @@
     "meta",
     "bundle",
     "agent",
-    "full-node"
+    "full-node",
+    "cli"
   ]
 }
