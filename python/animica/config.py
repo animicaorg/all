@@ -346,7 +346,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
         "mainnet": {
             "chain_id": 1,
             "rpc_url": "http://127.0.0.1:8545/rpc",
-            "bootstrap_url": "http://127.0.0.1:8545/rpc",
+            # Default to a public mainnet RPC so a fresh node can fetch
+            # the bootstrap manifest (current head, seeds, checkpoints)
+            # before its local RPC is up. Override via ANIMICA_BOOTSTRAP_RPC_URL.
+            "bootstrap_url": "https://rpc.animica.org/rpc",
             "rpc_port": 8545,
             "p2p_port": 30333,
             "metrics_port": 9000,

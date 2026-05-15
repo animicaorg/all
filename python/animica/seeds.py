@@ -13,8 +13,12 @@ DEFAULT_P2P_PORTS = [30333, 30303, 31333, 31334]
 
 # Seed nodes per network
 NETWORK_SEEDS: Dict[str, List[str]] = {
+    # Bundled seeds are the fallback when bootstrap.getSeeds via RPC fails.
+    # We include the literal IP alongside the DNS name so a node still
+    # reaches the network if DNS is broken inside its container.
     "mainnet": [
         "mainnet.animica.org:30333",
+        "144.126.133.21:30333",
     ],
     "testnet": [
         "testnet.animica.org:30333",

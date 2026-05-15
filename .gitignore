@@ -93,4 +93,22 @@ website/public/studio/*.AppImage
 website/public/studio/*.tar.gz
 website/public/studio/*.zip
 website/public/studio/*.dmg
-website/public/studio/*.msi
+website/public/studio/*.msi# large/generated
+dist/
+build/
+node_modules/
+.venv/
+*.zip
+*.tar.gz
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.onnx
+*.parquet
+*.jsonl
+ai/flagship_agent/models/
+ai/flagship_agent/runs/
+ai/flagship_agent/data/raw/
+ai/flagship_agent/data/prepared/

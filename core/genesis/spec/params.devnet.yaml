@@ -1,0 +1,41 @@
+# Core chain parameters for Animica devnet (chain_id=1337).
+# This file is referenced by core/genesis/devnet.json via paramsRef.path.
+#
+# Mirrors mainnet params but with devnet-specific chain id + faster block
+# target so local devs see new blocks within a few seconds rather than a
+# minute. Consensus identifier diverges from mainnet because of these
+# overrides — that is intentional; devnet peers will not handshake with
+# mainnet peers (and vice versa).
+
+chain:
+  id: 1337
+  name: "Animica Devnet"
+
+genesis:
+  time: "2026-04-06T00:00:00Z"
+  hash: "0x5b9b0d304c5a1134d34b318bccada6089750868d904b3d16ba0225d356c2cc8d"
+
+policy_roots:
+  alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+  poies_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+consensus:
+  # Devnet PoIES parameters — same shape as mainnet, easier difficulty
+  # so a single CPU miner can produce blocks.
+  theta_initial: 1000000
+  theta_min: 500000
+  theta_max: 2000000
+  gamma_total_cap: 2000000
+  retarget:
+    window: 60
+    ema_alpha: 0.25
+    bounds:
+      min: 0.25
+      max: 4.0
+
+block:
+  target_seconds: 5.0
+  max_bytes: 2000000
+  max_gas: 40000000
+  tx_max_bytes: 131072
+  min_gas_price: 0

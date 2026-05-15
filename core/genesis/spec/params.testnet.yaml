@@ -1,0 +1,38 @@
+# Core chain parameters for Animica testnet (chain_id=2).
+# This file is referenced by core/genesis/testnet.json via paramsRef.path.
+#
+# Same shape as mainnet, but with chain.id=2 so testnet peers don't form a
+# valid handshake with mainnet peers (and vice versa). Production-realistic
+# difficulty so testnet operators can validate the mainnet flow without
+# burning real coins.
+
+chain:
+  id: 2
+  name: "Animica Testnet"
+
+genesis:
+  time: "2026-04-06T00:00:00Z"
+  hash: "0xc0add9a3db2602b2d721d4cabd1681a5877842c66a6cf137b1d2f21c1af8dcf7"
+
+policy_roots:
+  alg_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+  poies_policy_root: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+consensus:
+  theta_initial: 8000000
+  theta_min: 4000000
+  theta_max: 1500000000
+  gamma_total_cap: 6000000
+  retarget:
+    window: 360
+    ema_alpha: 0.2
+    bounds:
+      min: 0.5
+      max: 2.0
+
+block:
+  target_seconds: 30.0
+  max_bytes: 2000000
+  max_gas: 40000000
+  tx_max_bytes: 131072
+  min_gas_price: 0
