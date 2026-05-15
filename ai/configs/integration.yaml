@@ -1,0 +1,97 @@
+# Integration / runtime hooks. Read by agent_runtime, animica chat,
+# export_bundle.py, and the miner auto-AICF registration code.
+
+aicf:
+  # Default AICF protocol endpoint. RPC method namespace is `aicf.protocol.*`.
+  # Network-specific overrides selected by ANIMICA_NETWORK / `animica network set`.
+  endpoint:
+    mainnet: "http://127.0.0.1:8545/rpc"
+    testnet: "http://127.0.0.1:18546/rpc"
+    devnet:  "http://127.0.0.1:28545/rpc"
+    local-devnet: "http://127.0.0.1:38545/rpc"
+
+  # Job submission settings.
+  job_submit:
+    default_kind: "AI"
+    timeout_sec: 60
+    poll_interval_ms: 250
+    max_retries: 3
+    retry_backoff_ms: [500, 1500, 3500]
+
+  # Per-turn cost preview. The chat REPL surfaces an estimate before send.
+  pricing:
+    quote_method: "aicf.estimateJobCost"
+    refuse_above_balance: true
+    # Allow over-budget submissions only if user passes --yolo to animica chat.
+    yolo_env_var: "ANIMICA_CHAT_YOLO"
+
+  # Miner-side auto-registration. The mining daemon (existing PoW) ALSO
+  # registers as an AICF worker advertising the tier(s) it can serve.
+  miner_auto_register:
+    enabled_by_default: true
+    opt_out_flag: "--no-aicf"
+    opt_out_env_var: "ANIMICA_DISABLE_AICF_WORKER"
+    # Capabilities are auto-detected (GPU model, VRAM, RAM). If detection
+    # fails, the miner falls back to advertising "tiny" tier only.
+    fallback_tier_on_detect_fail: "tiny"
+
+ipfs:
+  # IPFS gateway used for downloading bundles. Multiple are tried in order.
+  gateways:
+    - "https://ipfs.io/ipfs/"
+    - "https://cloudflare-ipfs.com/ipfs/"
+    - "https://gateway.pinata.cloud/ipfs/"
+
+  # Local IPFS daemon endpoint for `add` (publish). Required when publishing
+  # bundles; falls back to the first gateway-only mode if absent (read-only).
+  api_endpoint: "http://127.0.0.1:5001"
+
+  # On-chain manifest record key. The export step writes a JSON record
+  # under this key in the AICF protocol state via aicf.protocol.publishBundle.
+  on_chain_record_key: "flagship.bundle.manifest"
+
+  # Verification: download cid bytes, recompute sha256, compare against the
+  # manifest hash from on-chain. Failure aborts the install on the miner.
+  verify_after_download: true
+
+agent_runtime:
+  # Default provider selection order for `animica chat`. First available wins.
+  provider_order:
+    - "distributed-aicf"
+    - "local-flagship"
+    - "offline"
+
+  # Provider definitions.
+  providers:
+    distributed-aicf:
+      description: "Pay AICF, miners run flagship; primary."
+      requires:
+        - "wallet_configured"
+        - "wallet_balance_above_min"
+        - "aicf_endpoint_reachable"
+
+    local-flagship:
+      description: "Local exported bundle (offline fallback)."
+      requires:
+        - "bundle_present"
+        - "bundle_available_for_real_inference"
+      bundle_root: "ai/flagship_agent/models/export"
+      bundle_pointer: "latest"
+
+    offline:
+      description: "Static responses from agent_runtime baselines."
+      requires: []
+      always_available: true
+
+# animica-agent (the existing TS coding-agent CLI) integration.
+animica_agent:
+  # When an exported bundle exists, the agent's provider list adds an entry
+  # so the agent can route prompts locally before falling back to remote.
+  expose_local_provider: true
+  descriptor_path: "ai/flagship_agent/models/export/latest/inference.json"
+
+# Cost telemetry shown in the chat REPL (Phase 8 web UI also reads this).
+telemetry:
+  # Append per-turn cost / latency records here.
+  record_path: "~/.animica/agent_runtime/telemetry.jsonl"
+  retain_days: 30

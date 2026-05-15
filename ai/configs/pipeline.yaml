@@ -1,0 +1,224 @@
+# Pipeline definition for the flagship-agent training stack.
+# Each stage is invoked in order by scripts/train_flagship_agent.sh.
+# Stages declare: name, script (relative to flagship_agent/scripts/),
+# required inputs (paths or prior stage outputs), declared outputs,
+# whether the stage is skippable when outputs already exist, and the
+# fail-fast policy.
+
+run:
+  # Pattern used to mint a deterministic run_id when one is not supplied.
+  # ${ts} is replaced with seconds-since-epoch; ${mode} with effective_mode.
+  id_pattern: "flagship-${mode}-${ts}"
+
+  # Where per-run artifacts land. Resolved relative to flagship_agent/.
+  root: "runs"
+
+  # The "latest" symlink in models/export/ points at the most recent
+  # successful run's exported bundle.
+  latest_symlink: "models/export/latest"
+
+mode:
+  # Default mode if FLAGSHIP_MODE is unset. Allowed: simulate, lite, full.
+  default: "simulate"
+
+  # In full mode on CPU-only hardware, the pipeline refuses to start unless
+  # this env var is explicitly set to 1 (defense against silent
+  # "real" runs that are actually too slow to be useful).
+  cpu_real_env_var: "FLAGSHIP_ALLOW_CPU_REAL"
+
+  # Resume support: FLAGSHIP_RESUME=latest reuses the most recent run dir
+  # and skips stages whose outputs already exist and validate.
+  resume_env_var: "FLAGSHIP_RESUME"
+
+stages:
+  - name: bootstrap_env
+    script: bootstrap_env.sh
+    inputs: []
+    outputs:
+      - runs/${run_id}/_pipeline/bootstrap.json
+    skippable: true
+    on_fail: hard
+
+  - name: inventory_repo
+    script: inventory_repo.py
+    inputs:
+      - configs/datasets.yaml
+    outputs:
+      - runs/${run_id}/inventory/files.jsonl
+      - runs/${run_id}/inventory/summary.json
+    skippable: true
+    on_fail: hard
+
+  - name: build_corpora
+    script: build_corpora.py
+    inputs:
+      - runs/${run_id}/inventory/files.jsonl
+      - configs/datasets.yaml
+    outputs:
+      - runs/${run_id}/corpora/raw.jsonl
+      - runs/${run_id}/corpora/summary.json
+    skippable: true
+    on_fail: hard
+
+  - name: clean_and_dedupe
+    script: clean_and_dedupe.py
+    inputs:
+      - runs/${run_id}/corpora/raw.jsonl
+      - configs/safety.yaml
+    outputs:
+      - runs/${run_id}/corpora/clean.jsonl
+      - runs/${run_id}/corpora/quarantine.jsonl
+      - runs/${run_id}/corpora/dedupe_stats.json
+    skippable: true
+    on_fail: hard
+
+  - name: build_graph
+    script: build_graph.py
+    inputs:
+      - runs/${run_id}/inventory/files.jsonl
+      - configs/graph.yaml
+    outputs:
+      - runs/${run_id}/graph/nodes.jsonl
+      - runs/${run_id}/graph/edges.jsonl
+      - runs/${run_id}/graph/summary.json
+    skippable: true
+    on_fail: hard
+
+  - name: build_indices
+    script: build_indices.py
+    inputs:
+      - runs/${run_id}/corpora/clean.jsonl
+      - runs/${run_id}/graph/nodes.jsonl
+      - configs/retrieval.yaml
+    outputs:
+      - runs/${run_id}/index/lexical.idx
+      - runs/${run_id}/index/metadata.jsonl
+    skippable: true
+    on_fail: hard
+
+  - name: build_datasets
+    script: build_datasets.py
+    inputs:
+      - runs/${run_id}/corpora/clean.jsonl
+      - runs/${run_id}/graph/edges.jsonl
+      - runs/${run_id}/index/metadata.jsonl
+      - configs/datasets.yaml
+      - configs/incidents.yaml
+      - configs/experts.yaml
+    outputs:
+      - runs/${run_id}/datasets/cpt.jsonl
+      - runs/${run_id}/datasets/sft.jsonl
+      - runs/${run_id}/datasets/diff.jsonl
+      - runs/${run_id}/datasets/mutation.jsonl
+      - runs/${run_id}/datasets/incidents.jsonl
+      - runs/${run_id}/datasets/eval.jsonl
+      - runs/${run_id}/datasets/summary.json
+    skippable: true
+    on_fail: hard
+
+  - name: check_contamination
+    script: check_contamination.py
+    inputs:
+      - runs/${run_id}/datasets/sft.jsonl
+      - runs/${run_id}/datasets/eval.jsonl
+    outputs:
+      - runs/${run_id}/datasets/contamination_report.json
+    skippable: true
+    on_fail: hard
+
+  - name: train_cpt
+    script: train_cpt.py
+    inputs:
+      - runs/${run_id}/datasets/cpt.jsonl
+      - configs/training.yaml
+    outputs:
+      - runs/${run_id}/training/cpt/backend.json
+      - runs/${run_id}/training/cpt/summary.json
+      - runs/${run_id}/training/cpt/checkpoints/
+    skippable: true
+    on_fail: hard
+
+  - name: train_sft
+    script: train_sft.py
+    inputs:
+      - runs/${run_id}/datasets/sft.jsonl
+      - runs/${run_id}/training/cpt/checkpoints/
+      - configs/training.yaml
+    outputs:
+      - runs/${run_id}/training/sft/backend.json
+      - runs/${run_id}/training/sft/summary.json
+      - runs/${run_id}/training/sft/checkpoints/
+    skippable: true
+    on_fail: hard
+
+  - name: evaluate_model
+    script: evaluate_model.py
+    inputs:
+      - runs/${run_id}/training/sft/checkpoints/
+      - runs/${run_id}/datasets/eval.jsonl
+      - configs/eval.yaml
+    outputs:
+      - runs/${run_id}/eval/results.json
+      - runs/${run_id}/eval/per_task.jsonl
+    skippable: true
+    on_fail: soft
+
+  - name: run_critique
+    script: run_critique.py
+    inputs:
+      - runs/${run_id}/eval/per_task.jsonl
+      - configs/safety.yaml
+    outputs:
+      - runs/${run_id}/eval/critique.json
+    skippable: true
+    on_fail: soft
+
+  - name: run_benchmark
+    script: run_benchmark.py
+    inputs:
+      - runs/${run_id}/eval/results.json
+      - configs/eval.yaml
+    outputs:
+      - runs/${run_id}/eval/benchmark.json
+    skippable: true
+    on_fail: soft
+
+  - name: export_bundle
+    script: export_bundle.py
+    inputs:
+      - runs/${run_id}/training/sft/checkpoints/
+      - runs/${run_id}/training/sft/summary.json
+      - runs/${run_id}/eval/results.json
+      - runs/${run_id}/index/
+      - configs/integration.yaml
+    outputs:
+      - models/export/${run_id}/manifest.json
+      - models/export/${run_id}/inference.json
+      - models/export/${run_id}/model/
+    skippable: true
+    on_fail: hard
+
+  - name: smoke_test_bundle
+    script: smoke_test_bundle.py
+    inputs:
+      - models/export/${run_id}/manifest.json
+    outputs:
+      - runs/${run_id}/_pipeline/smoke.json
+    skippable: false
+    on_fail: hard
+
+stage_selection:
+  # Operators can run a subset of stages via FLAGSHIP_STAGES="a,b,c"
+  env_var: "FLAGSHIP_STAGES"
+
+logging:
+  # Log directory root for the pipeline driver itself.
+  pipeline_log_dir: "runs/${run_id}/_pipeline"
+  # Per-stage log file pattern.
+  stage_log_pattern: "runs/${run_id}/_pipeline/${stage}.log"
+  # Manifest emitted at the end of every stage (success or fail).
+  stage_manifest_pattern: "runs/${run_id}/_pipeline/${stage}.manifest.json"
+  # Run-level summary written by the driver on exit.
+  run_summary: "runs/${run_id}/_pipeline/run.summary.json"
+  # Machine-readable live status JSON, updated as stages progress.
+  run_status: "runs/${run_id}/_pipeline/status.json"

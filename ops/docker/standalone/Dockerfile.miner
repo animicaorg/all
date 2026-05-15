@@ -1,0 +1,73 @@
+# Animica miner — STANDALONE image.
+#
+# Same shape as Dockerfile.node: pulls the same `animica` wheel from PyPI
+# that the host has, then runs the bundled miner CLI. Built on demand by
+# `animica node up --with-miner` when the local image is missing.
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ARG ANIMICA_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl tini libgomp1 procps \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip setuptools wheel \
+ && python -m pip install "animica==${ANIMICA_VERSION}"
+
+RUN groupadd -g 10002 animica \
+ && useradd -m -u 10002 -g 10002 -s /usr/sbin/nologin animica \
+ && mkdir -p /data /var/log/animica \
+ && chown -R animica:animica /data /var/log/animica
+
+# The miner CLI also reads ANIMICA_* env vars (see mining/cli/miner.py).
+# Compose overrides these per-network.
+ENV ANIMICA_DATA_DIR=/data \
+    HOME=/data \
+    ANIMICA_RPC_URL=http://node:8545 \
+    ANIMICA_LOG_LEVEL=INFO \
+    DEVICE=cpu \
+    THREADS=auto
+
+# Env-driven launcher — keeps the CMD POSIX-simple and lets compose set
+# THREADS=auto without us having to compute the CPU count in shell.
+RUN printf '%s\n' \
+    '#!/usr/bin/env sh' \
+    'set -e' \
+    ': "${ANIMICA_RPC_URL:=http://node:8545}"' \
+    ': "${DEVICE:=cpu}"' \
+    ': "${LOG_LEVEL:=info}"' \
+    'ARGS="--device ${DEVICE} --log-level ${LOG_LEVEL} --rpc-url ${ANIMICA_RPC_URL}"' \
+    'if [ -n "${THREADS}" ] && [ "${THREADS}" != "auto" ]; then' \
+    '  ARGS="$ARGS --threads ${THREADS}"' \
+    'fi' \
+    'if [ -n "${PAYOUT_ADDRESS}" ]; then' \
+    '  ARGS="$ARGS --payout-address ${PAYOUT_ADDRESS}"' \
+    'fi' \
+    'exec python -m mining.cli.miner start $ARGS' \
+    > /usr/local/bin/start-miner \
+ && chmod +x /usr/local/bin/start-miner
+
+WORKDIR /data
+USER animica
+
+EXPOSE 3333
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
+  CMD ps -o pid,comm | grep -q "python" || exit 1
+
+LABEL org.opencontainers.image.title="animica-miner-standalone" \
+      org.opencontainers.image.description="Animica CPU miner, slim wheel-based image for pip-only installs" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+CMD ["/usr/local/bin/start-miner"]

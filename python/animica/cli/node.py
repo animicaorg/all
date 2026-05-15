@@ -38,6 +38,7 @@ from animica.bootstrap.state import (
     save_bootstrap_state,
 )
 from animica.seeds import get_seed_nodes
+from animica.standalone_images import ensure_standalone_images
 
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, describe_timeout, resolve_timeout
 
@@ -1820,8 +1821,30 @@ def _get_compose_file(network: str) -> Path:
             f"\nExpected location: {compose_file}",
             err=True
         )
+        typer.echo(
+            "\nThis command requires the Animica source repository on disk "
+            "(docker compose builds images from `context: ../..`).",
+            err=True,
+        )
+        env_root = os.environ.get("ANIMICA_REPO_ROOT")
+        if env_root:
+            typer.echo(
+                f"ANIMICA_REPO_ROOT is set to {env_root!r} but does not contain "
+                "the expected ops/docker/ tree. Point it at a checkout of the repo.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "If you installed animica via pip, set ANIMICA_REPO_ROOT to a "
+                "checkout of the repo:",
+                err=True,
+            )
+            typer.echo(
+                "  export ANIMICA_REPO_ROOT=/path/to/animica",
+                err=True,
+            )
         raise typer.Exit(code=1)
-    
+
     return compose_file
 
 
@@ -2680,7 +2703,30 @@ def _up_impl(
     
     typer.echo(f"\nRunning: {' '.join(cmd)}")
     typer.echo("This may take a few minutes on first run...\n")
-    
+
+    # Pip-only installs use the wheel-bundled standalone compose, which
+    # references local image tags (animica-local/node:<version>) that we
+    # build on demand from a slim Dockerfile shipped in the wheel. The
+    # source-tree compose uses `build:` directives and doesn't need this.
+    image_env_overrides: dict[str, str] = {}
+    if "standalone" in str(compose_file):
+        try:
+            image_env_overrides = ensure_standalone_images(
+                include_miner=with_miner,
+            )
+        except FileNotFoundError as exc:
+            typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1)
+        except subprocess.CalledProcessError as exc:
+            typer.secho(
+                f"Error: failed to build standalone image ({exc}). "
+                "Re-run with $ANIMICA_SKIP_IMAGE_BUILD=1 to skip, or "
+                "set $NODE_IMAGE / $MINER_IMAGE to a pre-built image.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
     compose_env = _build_compose_env(
         network=network,
         compose_file=compose_file,
@@ -2692,6 +2738,7 @@ def _up_impl(
         bootstrap_setting=bootstrap_setting,
         auto_reset_genesis_mismatch=auto_reset_genesis_mismatch,
     )
+    compose_env.update(image_env_overrides)
 
     try:
         typer.echo("Compose up started.")

@@ -12,6 +12,13 @@
 /studio      https://studio.animica.org/                 302
 /explorer    https://explorer.animica.org/               302
 
+# --- Mining pool moved to its own dedicated site (pool-web) ---
+# /mine on the main site redirects to pool.animica.org so existing miner
+# bookmarks / docs / CLI prompts keep working.
+/mine        https://pool.animica.org/                   301
+/mine/*      https://pool.animica.org/:splat             301
+/pool-miner  https://pool.animica.org/                   301
+
 # --- Docs hosted elsewhere ---
 /docs        /docs/                                      301
 /docs/*      https://docs.animica.org/:splat             301

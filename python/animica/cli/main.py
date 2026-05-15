@@ -50,7 +50,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import (aicf, chain, contract, da, debug, ena, faucet, gui, key,
+from . import (aicf, chain, chat, contract, da, debug, faucet, gui, key,
                mempool, mining, network, node, p2p, peer, phase2, quantum,
                rpc, script, snapshot, stratum, studio, sync, tx, wallet)
 
@@ -160,6 +160,15 @@ def main_callback(
 app.add_typer(node.app, name="node")
 app.add_typer(wallet.app, name="wallet")
 app.add_typer(mining.app, name="miner")
+# Mount the agent_runtime miner sub-apps (pool, aicf-worker) onto the
+# existing miner app — additive only, no existing command modified.
+try:
+    from animica.cli.chat import _ensure_agent_runtime_on_path
+    _ensure_agent_runtime_on_path()
+    from agent_runtime.cli.miner import attach_to as _attach_miner_extras
+    _attach_miner_extras(mining.app)
+except Exception:    # noqa: BLE001 — extras are optional
+    pass
 app.add_typer(aicf.aicf_app, name="aicf")
 app.add_typer(phase2.phase2_app, name="phase2")
 app.add_typer(key.app, name="key")
@@ -179,7 +188,7 @@ app.add_typer(sync.app, name="sync")
 app.add_typer(snapshot.app, name="snapshot")
 app.add_typer(gui.app, name="gui")
 app.add_typer(debug.app, name="debug")
-app.add_typer(ena.app, name="ena")
+app.add_typer(chat.app, name="chat")
 app.add_typer(stratum.app, name="stratum")
 app.add_typer(stratum.app, name="pool")
 app.add_typer(quantum.app, name="quantum")

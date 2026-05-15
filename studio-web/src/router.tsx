@@ -10,6 +10,7 @@ const AIJobsPage = lazy(() => import('./pages/AI/AIJobsPage'));
 const QuantumJobsPage = lazy(() => import('./pages/Quantum/QuantumJobsPage'));
 const BeaconPage = lazy(() => import('./pages/Randomness/BeaconPage'));
 const InteractPage = lazy(() => import('./pages/Interact/InteractPage'));
+const ChatPage = lazy(() => import('./pages/Chat/ChatPage'));
 // For DA we reuse the Edit panel as a standalone page for convenience.
 const DaPanel = lazy(() => import('./pages/Edit/Panels/DaPanel'));
 
@@ -50,6 +51,9 @@ export const router = createBrowserRouter(
         // AI / Quantum job tools
         { path: 'ai', element: <AIJobsPage /> },
         { path: 'quantum', element: <QuantumJobsPage /> },
+
+        // AICF-paid chat REPL (wallet-extension powered)
+        { path: 'chat', element: <ChatPage /> },
 
         // Randomness (Beacon + commit/reveal helpers)
         { path: 'beacon', element: <BeaconPage /> },

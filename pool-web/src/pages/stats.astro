@@ -1,0 +1,98 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout
+  title="Pool Stats — Animica"
+  description="Live mining-pool stats. PoW share/payout history, AICF jobs served, per-tier worker counts."
+>
+  <section class="max-w-7xl mx-auto px-4 py-12">
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Live stats</h1>
+    <p class="mt-2 text-ink-300">
+      Real-time view of pool activity. Reads from the public mining API; falls
+      back gracefully when the API is unreachable.
+    </p>
+
+    <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Hashrate</div>
+        <div id="stat-hashrate" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Active miners</div>
+        <div id="stat-miners" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">AICF jobs / hr</div>
+        <div id="stat-aicf-rate" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Avg latency p50</div>
+        <div id="stat-latency" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+    </div>
+
+    <div class="mt-12 grid lg:grid-cols-2 gap-6">
+      <section class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <header class="flex items-baseline justify-between mb-4">
+          <h2 class="text-xl font-semibold">PoW · last 24h</h2>
+          <span class="text-xs uppercase text-ink-300 tracking-wide">blocks</span>
+        </header>
+        <div id="pow-blocks" class="text-sm text-ink-200 font-mono space-y-1">…</div>
+      </section>
+
+      <section class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <header class="flex items-baseline justify-between mb-4">
+          <h2 class="text-xl font-semibold">AICF · per tier (24h)</h2>
+          <span class="text-xs uppercase text-ink-300 tracking-wide">jobs</span>
+        </header>
+        <div id="aicf-tiers" class="text-sm text-ink-200 font-mono space-y-2">…</div>
+      </section>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{
+    miningApi: typeof __MINING_API__ !== 'undefined' ? __MINING_API__ : 'https://api.pool.animica.org',
+    aicfApi:   typeof __AICF_API__   !== 'undefined' ? __AICF_API__   : 'https://api.aicf.animica.org',
+  }}>
+    (async () => {
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v); };
+      const fmt = (n, suffix='') => Number.isFinite(n) ? n.toLocaleString() + suffix : '—';
+      const fmtRate = (h) => {
+        if (!Number.isFinite(h)) return '—';
+        if (h >= 1e12) return (h/1e12).toFixed(2) + ' TH/s';
+        if (h >= 1e9)  return (h/1e9 ).toFixed(2) + ' GH/s';
+        if (h >= 1e6)  return (h/1e6 ).toFixed(2) + ' MH/s';
+        if (h >= 1e3)  return (h/1e3 ).toFixed(2) + ' kH/s';
+        return h.toFixed(0) + ' H/s';
+      };
+      // Mining pool stats
+      try {
+        const r = await fetch(`${miningApi}/v1/pool/stats`);
+        if (r.ok) {
+          const j = await r.json();
+          set('stat-hashrate', fmtRate(j.hashrate));
+          set('stat-miners',   fmt(j.miners));
+          const blocks = (j.recent_blocks || []).slice(0, 8);
+          const el = document.getElementById('pow-blocks');
+          if (el) el.innerHTML = blocks.length
+            ? blocks.map(b => `<div class="flex justify-between gap-2"><span>#${b.height}</span><span class="text-ink-400">${new Date(b.ts*1000).toLocaleTimeString()}</span><span class="text-amber-400">${b.miner}</span></div>`).join('')
+            : '<div class="text-ink-400">no recent blocks</div>';
+        }
+      } catch (e) { console.warn('[pool-web] mining api unreachable', e); }
+      // AICF stats
+      try {
+        const r = await fetch(`${aicfApi}/v1/stats/summary`);
+        if (r.ok) {
+          const j = await r.json();
+          set('stat-aicf-rate', fmt(j.jobs_per_hour));
+          set('stat-latency',   fmt(j.latency_p50_ms, ' ms'));
+          const tierRows = Object.entries(j.by_tier || {}).map(
+            ([id, n]) => `<div class="flex justify-between gap-2"><span class="text-amber-400">${id}</span><span>${fmt(n)} jobs</span></div>`,
+          );
+          const el = document.getElementById('aicf-tiers');
+          if (el) el.innerHTML = tierRows.join('') || '<div class="text-ink-400">no jobs in window</div>';
+        }
+      } catch (e) { console.warn('[pool-web] aicf api unreachable', e); }
+    })();
+  </script>
+</BaseLayout>

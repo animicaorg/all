@@ -103,6 +103,38 @@ export const api = {
     apiGet<{ available: boolean; status?: unknown; credits?: unknown; jobs?: unknown; plans?: unknown }>(
       `/api/aicf/info${address ? `?address=${encodeURIComponent(address)}` : ''}`
     ),
+  // Network-wide AICF compute workers grouped by advertised tier (see
+  // /api/aicf/workers in api/src/server.ts).
+  getAICFWorkers: () =>
+    apiGet<{
+      available: boolean
+      reason?: string
+      total?: number
+      by_tier: Record<string, number>
+      workers: Array<{
+        address: string
+        tiers: string[]
+        hardware?: {
+          accelerator_preferred?: string
+          ram_gb?: number
+          gpus?: Array<{ name: string; vram_gb: number; backend: string }>
+        }
+        last_seen?: number
+        jobs_completed?: number
+      }>
+    }>('/api/aicf/workers'),
+  // Rolling-window AICF job stats: jobs/hr, latencies, top providers.
+  getAICFJobStats: (windowMinutes = 60) =>
+    apiGet<{
+      available: boolean
+      reason?: string
+      window_minutes: number
+      jobs_completed?: number
+      jobs_failed?: number
+      latency_p50_ms?: number | null
+      latency_p95_ms?: number | null
+      by_tier?: Record<string, number>
+    }>(`/api/aicf/job-stats?window=${windowMinutes}`),
   getMiningInfo: () =>
     apiGet<{ available: boolean; status?: unknown; template?: unknown; metrics?: unknown }>('/api/mining/info'),
   getDAInfo: () =>

@@ -282,8 +282,30 @@ def _get_compose_file(network: str) -> Path:
             f"\nExpected location: {compose_file}",
             err=True
         )
+        typer.echo(
+            "\nThis command requires the Animica source repository on disk "
+            "(docker compose builds images from `context: ../..`).",
+            err=True,
+        )
+        env_root = os.environ.get("ANIMICA_REPO_ROOT")
+        if env_root:
+            typer.echo(
+                f"ANIMICA_REPO_ROOT is set to {env_root!r} but does not contain "
+                "the expected ops/docker/ tree. Point it at a checkout of the repo.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "If you installed animica via pip, set ANIMICA_REPO_ROOT to a "
+                "checkout of the repo:",
+                err=True,
+            )
+            typer.echo(
+                "  export ANIMICA_REPO_ROOT=/path/to/animica",
+                err=True,
+            )
         raise typer.Exit(code=1)
-    
+
     return compose_file
 
 

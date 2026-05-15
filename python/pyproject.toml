@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "0.1.0"
+version = "0.1.6"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, and useful-work jobs."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -49,16 +49,6 @@ backend = [
   "uvicorn[standard]>=0.30.0,<1.0.0",
   "prometheus-client>=0.20.0,<1.0.0",
 ]
-ena = [
-  "fastapi>=0.115.0,<0.116.0",
-  "uvicorn[standard]>=0.30.0,<1.0.0",
-  "prometheus-client>=0.20.0,<1.0.0",
-  "pypdf>=5.0.0",
-  "pyarrow>=17.0.0",
-  "datasets>=2.20.0,<4.0.0",
-  "transformers>=4.44.0,<5.0.0",
-  "accelerate>=0.34.0,<1.0.0",
-]
 stratum = [
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
@@ -95,7 +85,7 @@ gpu = [
   "datasets>=2.20.0,<4.0.0",
 ]
 all = [
-  "animica[backend,ena,stratum,wallet_qt,operator,bridge,gpu]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu]",
 ]
 
 [project.urls]
@@ -106,3 +96,41 @@ Issues = "https://github.com/animicaorg/all/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["animica"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Top-level sibling Python packages imported as `<name>.*` from animica
+# at module-load time. They live next to python/ in the source tree but are
+# not pip-installable on their own, so bundle them so a pip-only `animica`
+# wheel can import without external setup.
+"../aicf" = "aicf"
+"../capabilities" = "capabilities"
+"../consensus" = "consensus"
+"../core" = "core"
+"../coretx" = "coretx"
+"../da" = "da"
+"../execution" = "execution"
+"../mempool" = "mempool"
+"../mempool2" = "mempool2"
+"../mining" = "mining"
+"../p2p" = "p2p"
+"../pq" = "pq"
+"../rpc" = "rpc"
+"../stdlib" = "stdlib"
+"../vm_py" = "vm_py"
+# AI stack — distributed AICF chat client + local flagship pipeline.
+# Bundled at top-level so `pip install animica` delivers `animica chat`
+# and the training pipeline together, no extra installs needed.
+"../ai/agent_runtime/src/agent_runtime" = "agent_runtime"
+"../ai/flagship_agent/src/flagship_agent" = "flagship_agent"
+"../ai/configs" = "animica/_data/ai/configs"
+"../ai/flagship_agent/scripts" = "animica/_data/ai/flagship_agent/scripts"
+# Standalone (image:-based) docker-compose files so `pip install animica`
+# + `animica node up` works without a source-tree checkout. See
+# python/animica/config.py::_resolve_compose_file for resolution order.
+"../ops/docker/standalone" = "animica/_data/ops/docker/standalone"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "animica",
+  "../aicf",
+]

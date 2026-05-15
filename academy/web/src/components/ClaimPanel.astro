@@ -1,0 +1,49 @@
+---
+/**
+ * Renders the claim flow for a tutorial. Bound by [slug].astro after the
+ * user toggles every step complete. Stays visible at all times so users
+ * can re-claim if a previous attempt failed (server enforces single-spend
+ * per step).
+ *
+ *   tutorialId   — slug from the content collection
+ *   rewardAnim   — display-only; actual amount is enforced server-side
+ *   stepIds      — JSON-encoded array of every step ID in this tutorial
+ */
+interface Props {
+  tutorialId: string;
+  rewardAnim: string;
+  stepIds: string[];
+}
+const { tutorialId, rewardAnim, stepIds } = Astro.props;
+---
+
+<aside
+  class="claim-panel sticky top-20 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-5"
+  data-tutorial-id={tutorialId}
+  data-step-ids={JSON.stringify(stepIds)}
+  data-reward-anim={rewardAnim}
+>
+  <div class="text-[10px] uppercase tracking-wider text-amber-400 font-semibold mb-1">
+    Reward
+  </div>
+  <div class="flex items-baseline gap-2">
+    <span class="text-3xl font-mono font-semibold text-amber-400">
+      {rewardAnim}
+    </span>
+    <span class="text-xs text-ink-300">ANIMICA</span>
+  </div>
+  <p class="text-xs text-ink-300 mt-2">
+    Mark every step complete, then claim. The wallet extension asks you to
+    sign a tiny attestation — no chain fee on your side; the pool pays out.
+  </p>
+  <div class="claim-progress mt-4 text-xs text-ink-300">
+    Progress: <span class="claim-progress-count">0</span> /{stepIds.length} steps
+  </div>
+  <button
+    class="claim-btn mt-4 w-full rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-ink-700 disabled:text-ink-400 disabled:cursor-not-allowed text-ink-950 font-semibold px-4 py-3 transition"
+    disabled
+  >
+    Complete all steps to claim
+  </button>
+  <div class="claim-result mt-3 text-xs"></div>
+</aside>

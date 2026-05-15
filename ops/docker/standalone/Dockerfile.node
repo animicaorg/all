@@ -1,0 +1,74 @@
+# Animica node — STANDALONE image.
+#
+# Slim image for pip-only users. Pulls the same `animica` wheel from PyPI
+# that the user already installed locally, so no source tree is needed at
+# build time. Built on demand by `animica node up` when the local image is
+# missing — see python/animica/cli/standalone_images.py.
+#
+# Build arg ANIMICA_VERSION pins the wheel to the host CLI's version so the
+# inside-container code matches the outside CLI.
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ARG ANIMICA_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl tini \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install the same animica wheel the host has. Both halves match because
+# the image tag carries the version (animica-local/node:<version>).
+RUN python -m pip install --upgrade pip setuptools wheel \
+ && python -m pip install "animica==${ANIMICA_VERSION}"
+
+# Non-root runtime user.
+RUN groupadd -g 10001 animica \
+ && useradd -m -u 10001 -g 10001 -s /usr/sbin/nologin animica \
+ && mkdir -p /data /var/log/animica \
+ && chown -R animica:animica /data /var/log/animica
+
+# Expose the wheel-bundled genesis directory at a stable path so the
+# compose files can set `GENESIS_PATH=/app/core/genesis/<network>.json`
+# without caring about which python interpreter version is installed.
+# Wheel layout puts core/ at site-packages root via force-include.
+RUN python -c "import core, os; print(os.path.dirname(core.__file__))" \
+      | (read CORE_DIR; mkdir -p /app && ln -s "${CORE_DIR}" /app/core)
+
+# Defaults. The compose file overrides every one of these per-network.
+# These names MUST match what `python -m rpc` reads — see rpc/__main__.py
+# in the source tree. Unprefixed RPC_HOST/RPC_PORT are NOT consulted.
+ENV ANIMICA_DATA_DIR=/data \
+    HOME=/data \
+    ANIMICA_RPC_HOST=0.0.0.0 \
+    ANIMICA_RPC_PORT=8545 \
+    ANIMICA_LOG_LEVEL=INFO \
+    ANIMICA_P2P_ENABLE=true
+
+WORKDIR /data
+USER animica
+
+EXPOSE 8545 8546 8080 30333 9000
+
+# Internal healthcheck — runs `curl` inside the container, so it doesn't
+# care about port mappings. Hits the RPC service the same way an external
+# caller would.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
+  CMD curl -fsS -X POST -H 'content-type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}' \
+        http://127.0.0.1:${ANIMICA_RPC_PORT}/rpc >/dev/null || exit 1
+
+LABEL org.opencontainers.image.title="animica-node-standalone" \
+      org.opencontainers.image.description="Animica node, slim wheel-based image for pip-only installs" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+# `python -m rpc` is the launcher that reads ANIMICA_* env vars and starts
+# the RPC server + the supporting subsystems (mempool, p2p, etc).
+CMD ["python", "-m", "rpc"]

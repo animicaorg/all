@@ -1,0 +1,32 @@
+/* Tailwind already injects base/components/utilities via the integration
+   with applyBaseStyles=true. This file holds any global overrides that
+   don't fit cleanly into a utility class. */
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Prose tweaks for tutorial bodies — slightly tighter line height than the
+   Tailwind default, since steps render inside an already-padded card. */
+.prose pre {
+  margin: 0.75rem 0;
+}
+
+.prose code:not(pre code) {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: rgba(251, 191, 36, 0.08);
+  color: #fbbf24;
+  font-size: 0.9em;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

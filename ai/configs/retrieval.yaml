@@ -1,0 +1,63 @@
+# Retrieval/index configuration. Consumed by build_indices.py and the
+# retrieval helpers used at inference time by both agent_runtime and the
+# local flagship bundle.
+
+lexical:
+  enabled: true
+  # Implementation choice. "bm25_sqlite" stores postings in SQLite (no extra
+  # daemon); "whoosh" uses pure-Python Whoosh; "tantivy" uses the Rust tantivy
+  # bindings (faster but adds a wheel dep). Auto-falls back to bm25_sqlite.
+  backend: "bm25_sqlite"
+  bm25:
+    k1: 1.5
+    b: 0.75
+  # Tokenization for indexing. "code_aware" preserves identifiers; "default"
+  # uses unicode-word tokenization.
+  tokenizer: "code_aware"
+  # Stopwords: empty for code; ENGLISH for docs/markdown.
+  stopwords_by_label:
+    "docs/markdown": "ENGLISH"
+    default: ""
+  # Path of the index file relative to runs/${run_id}/.
+  out_path: "index/lexical.idx"
+  metadata_out: "index/metadata.jsonl"
+
+# Optional dense embedding index. Off by default — heavy and not required
+# to ship a usable model. Turn on per environment when an embedding model
+# is available.
+dense:
+  enabled: false
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  dim: 384
+  backend: "faiss_flat"
+  faiss_path: "index/dense.faiss"
+  ids_path: "index/dense.ids.jsonl"
+
+# Retrieval policy at inference time.
+inference:
+  # Number of chunks pulled for grounding by default.
+  top_k: 8
+  # Maximum total tokens of retrieved context injected into the prompt.
+  max_context_tokens: 6144
+  # When the model's effective context_window is smaller than this budget,
+  # the budget is auto-shrunk to leave headroom for the system+user prompt.
+  reserve_prompt_tokens: 2048
+  # Boost chunks tagged with the same expert as the inferred user-intent
+  # category. Boost is multiplicative on the BM25/dense score.
+  expert_boost: 1.5
+  # If the retrieved set has zero hits above min_score, agent_runtime falls
+  # back to an "I don't have enough context to answer reliably" template.
+  min_score: 0.05
+
+# Citation behavior. The model is trained (via dataset multi-view) to cite
+# retrieved chunks by their path:line ranges. This config tells the runtime
+# how to surface citations.
+citations:
+  enabled: true
+  # Maximum citations rendered per response.
+  max: 5
+  # Show line ranges where available.
+  show_lines: true
+  # Verify each citation exists in the indexed corpus before showing it;
+  # silently drop fabricated citations.
+  verify_against_index: true

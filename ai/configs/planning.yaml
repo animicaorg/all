@@ -1,0 +1,107 @@
+# Planning configuration. Drives the multi-view dataset synthesis and the
+# inference-time planner used by agent_runtime to structure answers.
+
+# Each user prompt is internally classified into one or more views.
+# For each view we have a synthesizer (in build_datasets.py) and a runtime
+# template (in agent_runtime/src/agent_runtime/planner.py).
+
+views:
+  explain_view:
+    description: "Explain a piece of code, command, or system behavior."
+    detect_intents:
+      - "what does .* do"
+      - "explain "
+      - "how does .* work"
+      - "walk me through"
+    output_shape:
+      sections:
+        - "Summary"
+        - "Inputs and outputs"
+        - "Key invariants"
+        - "Where it lives"
+      max_tokens: 1024
+
+  diagnose_view:
+    description: "Given symptoms or logs, identify the likely root cause."
+    detect_intents:
+      - "why is .* failing"
+      - "why does .* error"
+      - "i'm getting "
+      - "what's wrong with"
+      - "debug "
+    output_shape:
+      sections:
+        - "Symptoms"
+        - "Likely cause"
+        - "Evidence cited"
+        - "Next steps"
+      max_tokens: 1024
+
+  patch_view:
+    description: "Produce a unified-diff patch with the smallest viable change."
+    detect_intents:
+      - "fix "
+      - "patch "
+      - "make it so "
+      - "change .* to"
+      - "should "
+    output_shape:
+      sections:
+        - "Patch"   # unified diff fenced as ```diff
+        - "Rationale"
+        - "Tests changed"
+      max_tokens: 2048
+    require_diff: true
+
+  operator_command_view:
+    description: "Produce one or more concrete shell commands to run."
+    detect_intents:
+      - "how do i run "
+      - "what command "
+      - "give me the command"
+      - "run .* and "
+    output_shape:
+      sections:
+        - "Commands"   # each in a ```bash fence
+        - "Preconditions"
+        - "Verification"
+      max_tokens: 768
+    validators_required:
+      - "command_risk_validator"
+      - "hallucinated_command_validator"
+
+  postmortem_view:
+    description: "Write a short postmortem for an incident-style prompt."
+    detect_intents:
+      - "postmortem"
+      - "what went wrong"
+      - "rca "
+      - "root cause analysis"
+    output_shape:
+      sections:
+        - "Timeline"
+        - "Impact"
+        - "Root cause"
+        - "Resolution"
+        - "Action items"
+      max_tokens: 1536
+
+planner:
+  description: "Inference-time view selection. Used by agent_runtime."
+  # If two views both match the prompt, blend them (concat sections in order).
+  allow_blend: true
+  max_views: 2
+  # Default view when nothing matches.
+  default_view: "explain_view"
+  # Hard floor: when the user's prompt is < this many chars, just answer
+  # without view structuring (avoids overhead on tiny queries).
+  min_prompt_chars_for_planning: 40
+
+# Per-view synthesis budgets for dataset construction. Keeps the SFT corpus
+# balanced across views.
+synthesis_budgets:
+  explain_view:    { target_examples: 12000 }
+  diagnose_view:   { target_examples: 8000  }
+  patch_view:      { target_examples: 10000 }
+  operator_command_view: { target_examples: 6000 }
+  postmortem_view: { target_examples: 2000  }

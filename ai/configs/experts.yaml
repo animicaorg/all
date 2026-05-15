@@ -1,0 +1,142 @@
+# Expert specializations. Each "expert" is a topic area within Animica with:
+#   - a path glob to identify relevant code/docs
+#   - a list of curated SFT seed prompts
+#   - eval tasks specific to the expert
+
+experts:
+  - id: "sync"
+    description: "Block sync, fast-sync, snapshots."
+    paths:
+      - "consensus/**"
+      - "p2p/**"
+      - "python/animica/sync/**"
+      - "docs/**sync*"
+      - "*SYNC*.md"
+    curated_seeds:
+      - "My node is stuck at height 0 even though it has 8 peers."
+      - "explain how snapshot discovery works in animica"
+      - "what's the difference between sync status and chain head"
+      - "node is reporting canonical_height < remote_head; how do I unstick it"
+    eval_tasks:
+      - id: "sync_stall_recovery"
+        prompt: "Node has been at canonical_height 12345 for 30 minutes with 5 peers. Logs show repeated peer_tx_notfound. How do I diagnose and unblock it?"
+        view: "diagnose_view"
+      - id: "snapshot_discovery_explain"
+        prompt: "Explain how a fresh node discovers and verifies snapshots from peers."
+        view: "explain_view"
+
+  - id: "p2p"
+    description: "Peer-to-peer networking, gossip, mempool propagation."
+    paths:
+      - "p2p/**"
+      - "mempool/**"
+      - "mempool2/**"
+      - "docs/**p2p*"
+      - "docs/**peer*"
+      - "*P2P*.md"
+      - "*PEER*.md"
+    curated_seeds:
+      - "Peer list shows objects instead of strings after upgrade; why?"
+      - "Why does my node keep dropping peers as ineligible?"
+      - "mempool sync request keeps returning timeout; what's the fix?"
+    eval_tasks:
+      - id: "ineligible_peer_drop"
+        prompt: "Logs report 'dropping peer X as ineligible'. Walk me through likely causes."
+        view: "diagnose_view"
+
+  - id: "rpc"
+    description: "JSON-RPC server, methods, error handling."
+    paths:
+      - "rpc/**"
+      - "python/animica/cli/rpc.py"
+      - "docs/**rpc*"
+      - "*RPC*.md"
+    curated_seeds:
+      - "How do I add a new JSON-RPC method to animica?"
+      - "RPC returns data field double-wrapped; how do I fix?"
+      - "List all RPC methods exposed by animica node."
+
+  - id: "wallet"
+    description: "Wallet keys, signing, balances, multi-key wallets."
+    paths:
+      - "wallet/**"
+      - "wallet-extension/**"
+      - "wallet-qt/**"
+      - "python/animica/wallet/**"
+      - "python/animica/cli/wallet.py"
+      - "*WALLET*.md"
+    curated_seeds:
+      - "Where does animica store wallets by default?"
+      - "I have a PQ-signed wallet; how do I export the public key?"
+      - "Transaction send fails with 'insufficient balance' but balance shows positive; diagnose."
+
+  - id: "scaffold"
+    description: "Project scaffolding via animica scaffold."
+    paths:
+      - "python/animica/cli/script.py"
+      - "templates/**"
+      - "*SCAFFOLD*.md"
+    curated_seeds:
+      - "scaffold me a new RPC handler for a token transfer method"
+      - "how do I add a new docker-compose stack via animica scaffold?"
+
+  - id: "docker_ops"
+    description: "Docker compose stacks, nginx, systemd unit files."
+    paths:
+      - "ops/**"
+      - "ops/docker/**"
+      - "ops/nginx/**"
+      - "*.service"
+      - "Dockerfile*"
+    curated_seeds:
+      - "animica node up fails with port 8545 already in use; how do I fix?"
+      - "compose file references context: ../.. ; what does that require?"
+      - "explain ops/docker/docker-compose.mainnet.yml"
+    eval_tasks:
+      - id: "compose_port_conflict"
+        prompt: "`animica node up` errors with 'RPC port 8545 is already in use by docker-pr'. Give exact commands to resolve."
+        view: "operator_command_view"
+
+  - id: "operator_repair"
+    description: "Operator shell repair flows; package manager mishaps; missing deps."
+    paths:
+      - "scripts/**"
+      - "setup.sh"
+      - "tools/**"
+    curated_seeds:
+      - "animica command not found after pip install; what's the path issue?"
+      - "I deleted my .venv; how do I rebuild without losing state?"
+      - "How do I cleanly switch the active network between mainnet/testnet/devnet?"
+
+  - id: "aicf"
+    description: "AI Compute Fund protocol; provider/staking; job lifecycle."
+    paths:
+      - "aicf/**"
+      - "python/animica/cli/aicf.py"
+      - "python/animica/cli/AICF_PROTOCOL_COMMANDS.py"
+      - "ai/agent_runtime/**"
+      - "ai/configs/integration.yaml"
+    curated_seeds:
+      - "How do I register as an AICF worker?"
+      - "What does aicf.protocol.estimateJobCost return and how is it computed?"
+      - "Walk me through the lifecycle of an AICF inference job."
+
+  - id: "ai_chat"
+    description: "animica chat REPL; wallet-paid distributed inference; local fallback."
+    paths:
+      - "ai/**"
+      - "python/animica/cli/chat.py"   # added in Phase 5
+    curated_seeds:
+      - "How does animica chat decide between distributed and local provider?"
+      - "What happens if my wallet balance is too low to pay for a turn?"
+      - "How do I switch animica chat to use a specific model tier?"
+
+# Routing: when a user prompt is classified into an expert at inference time,
+# retrieval boosts that expert's paths. The classifier is keyword-based by
+# default; trained classifier optional (off by default).
+runtime_routing:
+  classifier: "keyword"
+  # When multiple experts hit, max N applied as boost contexts.
+  max_active: 2
+  # Boost multiplier on retrieval score for chunks in the active expert paths.
+  retrieval_boost: 1.5

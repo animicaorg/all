@@ -1,0 +1,33 @@
+# Top-level subcommands accepted by `animica`. One per line.
+# The hallucinated_command validator rejects model outputs that recommend
+# `animica <X>` where X is not in this list and is not a flag.
+#
+# Keep in sync with animica/cli/main.py via:
+#   /root/animica/.venv/bin/python -c "import animica.cli.main as m; \
+#     [print(g.name) for g in m.app.registered_groups]"
+aicf
+chain
+chat
+contract
+da
+debug
+faucet
+gui
+key
+mempool
+miner
+network
+node
+p2p
+peer
+phase2
+pool
+quantum
+rpc
+script
+snapshot
+stratum
+studio
+sync
+tx
+wallet

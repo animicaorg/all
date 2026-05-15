@@ -1,0 +1,69 @@
+# Animica devnet — STANDALONE variant. See standalone/docker-compose.mainnet.yml
+# for the design notes. Single-node, ephemeral, no persistence.
+name: animica-devnet
+
+networks:
+  animica:
+    driver: bridge
+
+services:
+  node:
+    image: ${NODE_IMAGE:-animica-local/node:${ANIMICA_VERSION:-latest}}
+    container_name: animica-devnet-node
+    restart: unless-stopped
+    environment:
+      ANIMICA_NETWORK: "devnet"
+      ANIMICA_CHAIN_ID: "1337"
+      ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
+      ANIMICA_HOME: "/data/chain-1337"
+      GENESIS_PATH: "/app/core/genesis/devnet.json"
+      ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-DEBUG}"
+      ANIMICA_RPC_HOST: "0.0.0.0"
+      ANIMICA_RPC_PORT: "28545"
+      ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"*\"]}"
+      ANIMICA_P2P_ENABLE: "true"
+      ANIMICA_P2P_CHAIN_ID: "1337"
+      ANIMICA_P2P_PORT: "31335"
+      ANIMICA_P2P_LISTEN_TCP: "0.0.0.0:31335"
+      ANIMICA_P2P_DATA_DIR: "/data/chain-1337/p2p"
+      ANIMICA_PEER_STORE_PATH: "/data/chain-1337/p2p"
+      ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
+      ANIMICA_INSTANT_BLOCKS_ENABLED: "true"
+      ALLOW_AUTO_GENESIS: "1"
+      SYNC_ENABLED: "0"
+    ports:
+      - "127.0.0.1:${HOST_RPC_PORT:-28545}:28545"
+      - "${HOST_P2P_PORT:-31335}:31335"
+      - "${HOST_METRICS_PORT:-29000}:29000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://127.0.0.1:28545/rpc
+          -H 'content-type: application/json'
+          -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+          >/dev/null || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    networks: [animica]
+
+  miner:
+    image: ${MINER_IMAGE:-animica-local/miner:${ANIMICA_VERSION:-latest}}
+    container_name: animica-devnet-miner
+    profiles: [miner]
+    restart: unless-stopped
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      RPC_URL: "http://node:28545"
+      DEVICE: "${MINER_DEVICE:-cpu}"
+      THREADS: "${MINER_THREADS:-2}"
+      LOG_LEVEL: "${MINER_LOG_LEVEL:-INFO}"
+      PAYOUT_ADDRESS: "${MINER_PAYOUT_ADDRESS:-}"
+      AICF_WORKER: "${MINER_AICF_WORKER:-1}"
+      ANIMICA_NETWORK: "devnet"
+    networks: [animica]

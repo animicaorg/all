@@ -1,0 +1,260 @@
+# Dataset construction config. Consumed by inventory_repo.py,
+# build_corpora.py, clean_and_dedupe.py, build_datasets.py.
+
+inventory:
+  # Root to scan. Resolved at run time against ANIMICA_REPO_ROOT (or
+  # the auto-resolved repo root from animica/__init__.py).
+  root: "${ANIMICA_REPO_ROOT}"
+
+  # Include rules (any-of). Paths relative to root.
+  include:
+    - "*.py"
+    - "*.pyi"
+    - "*.rs"
+    - "*.go"
+    - "*.ts"
+    - "*.tsx"
+    - "*.js"
+    - "*.jsx"
+    - "*.mjs"
+    - "*.cjs"
+    - "*.sh"
+    - "*.bash"
+    - "*.toml"
+    - "*.yaml"
+    - "*.yml"
+    - "*.json"
+    - "*.md"
+    - "*.sql"
+    - "Dockerfile*"
+    - "Makefile"
+    - "*.proto"
+    - "*.html"
+    - "*.css"
+
+  # Exclude rules (any-of). Applied after include.
+  exclude:
+    - "**/.git/**"
+    - "**/__pycache__/**"
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/target/**"
+    - "**/coverage/**"
+    - "**/*.lock"
+    - "**/*.min.js"
+    - "**/*.min.css"
+    - "**/*.png"
+    - "**/*.jpg"
+    - "**/*.jpeg"
+    - "**/*.gif"
+    - "**/*.svg"
+    - "**/*.webp"
+    - "**/*.zip"
+    - "**/*.tar"
+    - "**/*.tar.gz"
+    - "**/*.whl"
+    - "**/*.so"
+    - "**/*.dylib"
+    - "**/*.dll"
+    - "**/AnimicaWallet.app/**"
+    - "**/ai/flagship_agent/models/**"
+    - "**/ai/flagship_agent/runs/**"
+    - "**/ai/flagship_agent/.venv/**"
+
+  # Maximum file size to ingest, in bytes. Larger files are recorded as
+  # `oversize=true` in the inventory but skipped from corpora.
+  max_file_bytes: 1048576
+
+  # If any single file fails to read, the pipeline records the failure
+  # and continues — unless its path matches a strict_path pattern.
+  strict_paths:
+    - "core/genesis/mainnet.json"
+    - "core/genesis/testnet.json"
+
+classification:
+  # File extension → classifier label. Used to route into the right corpus
+  # split and to pick a chunking strategy.
+  by_ext:
+    ".py": "code/python"
+    ".pyi": "code/python"
+    ".rs": "code/rust"
+    ".go": "code/go"
+    ".ts": "code/typescript"
+    ".tsx": "code/typescript"
+    ".js": "code/javascript"
+    ".jsx": "code/javascript"
+    ".mjs": "code/javascript"
+    ".cjs": "code/javascript"
+    ".sh": "code/shell"
+    ".bash": "code/shell"
+    ".toml": "config/toml"
+    ".yaml": "config/yaml"
+    ".yml": "config/yaml"
+    ".json": "config/json"
+    ".md": "docs/markdown"
+    ".sql": "code/sql"
+    ".proto": "code/proto"
+    ".html": "code/html"
+    ".css": "code/css"
+
+  # Special-case filenames (no extension or override-by-name).
+  by_name:
+    "Dockerfile": "infra/docker"
+    "Makefile": "infra/make"
+    "Containerfile": "infra/docker"
+
+  # Path → tag. Tags are non-mutually-exclusive metadata used by experts.yaml.
+  path_tags:
+    - pattern: "^docs/"
+      tag: "docs"
+    - pattern: "^ops/"
+      tag: "ops"
+    - pattern: "^aicf/"
+      tag: "aicf"
+    - pattern: "^consensus/"
+      tag: "consensus"
+    - pattern: "^mining/"
+      tag: "mining"
+    - pattern: "^rpc/"
+      tag: "rpc"
+    - pattern: "^wallet/"
+      tag: "wallet"
+    - pattern: "^p2p/"
+      tag: "p2p"
+    - pattern: "^da/"
+      tag: "da"
+    - pattern: "^python/animica/cli/"
+      tag: "cli"
+    - pattern: "^ai/"
+      tag: "ai"
+    - pattern: "test_|/tests/"
+      tag: "test"
+
+corpora:
+  # Maximum tokens per chunk. Used by syntax-aware chunker.
+  chunk_max_tokens: 2048
+
+  # Minimum tokens per chunk (small chunks are merged with their neighbor).
+  chunk_min_tokens: 64
+
+  # Overlap between adjacent chunks, in tokens. Helps preserve context.
+  chunk_overlap_tokens: 128
+
+  # Chunking strategies. Picked by classifier label.
+  strategy_by_label:
+    "code/python": "ast_top_level"
+    "code/rust": "regex_blocks"
+    "code/go": "regex_blocks"
+    "code/typescript": "regex_blocks"
+    "code/javascript": "regex_blocks"
+    "code/shell": "line_groups"
+    "code/sql": "statement_split"
+    "code/html": "regex_blocks"
+    "code/css": "regex_blocks"
+    "code/proto": "regex_blocks"
+    "config/toml": "whole_file"
+    "config/yaml": "whole_file"
+    "config/json": "whole_file"
+    "docs/markdown": "markdown_heading"
+    "infra/docker": "whole_file"
+    "infra/make": "whole_file"
+
+  # Tokenizer used to count tokens during chunking. Must match the base
+  # model. Resolved against base_model.id at run time.
+  tokenizer_source: "from_base_model"
+
+dedupe:
+  # Exact dedupe by sha256 of normalized content.
+  exact:
+    enabled: true
+    normalize: ["strip_trailing_ws", "collapse_blank_lines"]
+
+  # Near-dedupe via MinHash + LSH. Skipped in simulate mode.
+  near:
+    enabled: true
+    num_perm: 128
+    band_rows: 8
+    bands: 16
+    jaccard_threshold: 0.85
+    # In the (paths, hash) record, keep the path closest to repo root.
+    tiebreak: "shortest_path"
+
+splits:
+  # Output corpora splits.
+  cpt:
+    description: "Continual pre-training corpus; mostly raw code/docs."
+    include_labels:
+      - "code/python"
+      - "code/rust"
+      - "code/go"
+      - "code/typescript"
+      - "code/javascript"
+      - "code/shell"
+      - "code/sql"
+      - "code/proto"
+      - "code/html"
+      - "code/css"
+      - "docs/markdown"
+      - "config/toml"
+      - "config/yaml"
+      - "config/json"
+      - "infra/docker"
+      - "infra/make"
+    # Exclude tests from CPT to avoid biasing toward test idioms.
+    exclude_tags: ["test"]
+
+  sft:
+    description: "Supervised fine-tuning examples derived from corpora + experts."
+    # Each row is {messages: [{role,content}, ...]}.
+    include_synthesizers:
+      - "explain_view"
+      - "diagnose_view"
+      - "patch_view"
+      - "operator_command_view"
+      - "postmortem_view"
+    examples_per_synthesizer_per_file: 1
+    max_total_examples: 50000
+
+  diff:
+    description: "Before/after patch pairs sampled from git history."
+    git_log_max_commits: 5000
+    # Commits whose subject matches these patterns are sampled preferentially.
+    prefer_subject_patterns:
+      - "fix:"
+      - "Fix "
+      - "bug"
+      - "regression"
+      - "panic"
+      - "crash"
+      - "incident"
+
+  mutation:
+    description: "Synthetic mutations (introduce-then-fix) for resilience training."
+    # Mutator: which file types accept mutations.
+    eligible_labels:
+      - "code/python"
+      - "code/rust"
+      - "code/go"
+      - "code/typescript"
+    # Number of mutations per eligible file.
+    mutations_per_file: 2
+    # Mutator kinds.
+    mutators:
+      - "rename_local_var"
+      - "swap_branch_arms"
+      - "off_by_one"
+      - "drop_await"
+      - "swap_arg_order"
+      - "change_op"
+
+  eval:
+    description: "Held-out eval examples; never overlap with sft/cpt by content sha."
+    # Held-out fraction of sft.
+    fraction: 0.05
+    # Plus dedicated curated tasks loaded from configs/incidents.yaml and
+    # configs/experts.yaml.
+    include_curated:
+      - "incidents.replay_packs"
+      - "experts.curated_tasks"

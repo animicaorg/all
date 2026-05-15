@@ -1,0 +1,31 @@
+# Bootstrap requirements for the flagship-agent training pipeline.
+# bootstrap_env.sh picks one of these sub-files based on hardware:
+#   requirements-cpu.txt  on CPU-only hosts
+#   requirements-gpu.txt  on CUDA hosts
+# This file is the minimal common floor that always installs.
+
+# Shared primitives.
+agent_runtime>=0.1.0
+pyyaml>=6.0.1
+pydantic>=2.7.0
+rich>=13.7.0
+httpx>=0.27.0
+
+# Tokenization / data wrangling (CPU-safe).
+sentencepiece>=0.2.0
+tokenizers>=0.20.0
+safetensors>=0.4.5
+datasketch>=1.6.4
+rank_bm25>=0.2.2
+
+# datasets without torch dep for ingestion.
+datasets>=2.20.0,<4.0.0
+
+# transformers loaded with TRANSFORMERS_OFFLINE in simulate/lite mode.
+transformers>=4.44.0
+
+# peft pulled in by training mode; harmless to install up front.
+peft>=0.11.0
+
+# Test harness.
+pytest>=7.0

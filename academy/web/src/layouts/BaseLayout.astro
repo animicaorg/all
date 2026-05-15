@@ -1,0 +1,109 @@
+---
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" class="bg-ink-950 text-ink-50">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).toString()} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Animica Academy" />
+  </head>
+  <body class="min-h-screen flex flex-col font-sans antialiased">
+    <header class="border-b border-white/10 bg-ink-900/70 backdrop-blur sticky top-0 z-20">
+      <nav class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6 text-sm">
+        <a href="/" class="font-semibold tracking-tight text-lg">
+          Animica <span class="text-amber-400">Academy</span>
+        </a>
+        <a href="/tutorials" class="hover:text-amber-400 transition">Tutorials</a>
+        <a href="/achievements" class="hover:text-amber-400 transition">Achievements</a>
+        <a href="/rewards" class="hover:text-amber-400 transition">Rewards</a>
+        <span class="flex-1"></span>
+        <wallet-pill class="contents"></wallet-pill>
+        <a href="https://animica.org" class="text-ink-300 hover:text-ink-50 transition">animica.org →</a>
+      </nav>
+    </header>
+    <main class="flex-1">
+      <slot />
+    </main>
+    <footer class="border-t border-white/10 bg-ink-900/50 mt-16">
+      <div class="max-w-7xl mx-auto px-4 py-6 text-xs text-ink-300 flex flex-wrap gap-4 items-center">
+        <span>academy.animica.org</span>
+        <span class="opacity-50">•</span>
+        <a href="https://animica.org/docs" class="hover:text-ink-50">Docs</a>
+        <span class="opacity-50">•</span>
+        <a href="https://pool.animica.org" class="hover:text-ink-50">Mining pool</a>
+        <span class="opacity-50">•</span>
+        <a href="https://github.com/animicaorg" class="hover:text-ink-50">GitHub</a>
+        <span class="flex-1"></span>
+        <span class="opacity-60">© Animica</span>
+      </div>
+    </footer>
+
+    <script>
+      // Persistent wallet pill: shows "Connect" until the extension is
+      // present and connected, then short-addr + network. Connection is
+      // shared across pages via the extension itself; this just renders
+      // the current state.
+      import { readWallet, connectWallet, shortAddr } from "../lib/wallet";
+
+      class WalletPill extends HTMLElement {
+        async connectedCallback() {
+          this.innerHTML = `<button id="wp-btn" class="rounded-lg border border-amber-400/40 hover:border-amber-400 text-amber-300 px-3 py-1.5 text-xs font-medium">Connect wallet</button>`;
+          const btn = this.querySelector<HTMLButtonElement>("#wp-btn");
+          if (!btn) return;
+
+          const render = (addr: string | null) => {
+            if (addr) {
+              btn.innerHTML = `<span class="font-mono">${shortAddr(addr)}</span>`;
+              btn.classList.add("bg-amber-500/10");
+              btn.title = addr;
+            } else {
+              btn.textContent = "Connect wallet";
+              btn.classList.remove("bg-amber-500/10");
+            }
+          };
+
+          const initial = await readWallet();
+          render(initial.address);
+
+          btn.addEventListener("click", async () => {
+            try {
+              const { address } = await connectWallet();
+              render(address);
+              document.dispatchEvent(
+                new CustomEvent("animica:wallet-connected", { detail: { address } }),
+              );
+            } catch (e) {
+              btn.textContent = (e as Error).message;
+              btn.classList.add("text-red-300", "border-red-400/40");
+              setTimeout(() => {
+                btn.classList.remove("text-red-300", "border-red-400/40");
+                render(null);
+              }, 4000);
+            }
+          });
+
+          window.addEventListener("storage", async () => {
+            const w = await readWallet();
+            render(w.address);
+          });
+        }
+      }
+      if (!customElements.get("wallet-pill")) {
+        customElements.define("wallet-pill", WalletPill);
+      }
+    </script>
+  </body>
+</html>

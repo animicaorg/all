@@ -1,0 +1,94 @@
+# Animica mainnet — STANDALONE variant.
+#
+# Identical to ops/docker/docker-compose.mainnet.yml but uses pre-built
+# images instead of `build:` directives. This is the compose file shipped
+# inside the animica python wheel so a pip-only install can run
+# `animica node up` without the source tree on disk.
+#
+# The default tags (animica-local/node:<version>, animica-local/miner:<version>)
+# are built on-demand on first `animica node up` from the bundled
+# Dockerfiles in this same directory — no registry pull required.
+# Override with NODE_IMAGE / MINER_IMAGE env vars to point at a registry image:
+#   NODE_IMAGE=ghcr.io/yourorg/animica-node:0.1.6 animica node up
+#
+# Env-var names follow the source-tree compose so the same wheel that runs
+# inside the container reads the same ANIMICA_* settings — see
+# rpc/__main__.py for the canonical list.
+name: animica-mainnet
+
+networks:
+  animica:
+    driver: bridge
+
+volumes:
+  node-data:
+  node-config:
+
+services:
+  node:
+    image: ${NODE_IMAGE:-animica-local/node:${ANIMICA_VERSION:-latest}}
+    container_name: animica-mainnet-node
+    restart: unless-stopped
+    environment:
+      ANIMICA_NETWORK: "mainnet"
+      ANIMICA_CHAIN_ID: "1"
+      ANIMICA_DATA_DIR: "/data"
+      HOME: "/data"
+      ANIMICA_HOME: "/data/chain-1"
+      GENESIS_PATH: "/app/core/genesis/mainnet.json"
+      ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+      # RPC server config
+      ANIMICA_RPC_HOST: "0.0.0.0"
+      ANIMICA_RPC_PORT: "8545"
+      ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
+      # P2P config — mainnet seeds auto-loaded by chain_id
+      ANIMICA_P2P_ENABLE: "true"
+      ANIMICA_P2P_CHAIN_ID: "1"
+      ANIMICA_P2P_PORT: "30333"
+      ANIMICA_P2P_LISTEN_TCP: "0.0.0.0:30333"
+      ANIMICA_P2P_LISTEN_QUIC: "0.0.0.0:443"
+      ANIMICA_P2P_ENABLE_TCP: "true"
+      ANIMICA_P2P_ENABLE_QUIC: "true"
+      ANIMICA_P2P_DATA_DIR: "/data/chain-1/p2p"
+      ANIMICA_PEER_STORE_PATH: "/data/chain-1/p2p"
+      ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
+      ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
+      SYNC_ENABLED: "${SYNC_ENABLED:-1}"
+    volumes:
+      - node-data:/data
+      - node-config:/config
+    ports:
+      - "127.0.0.1:${HOST_RPC_PORT:-8545}:8545"
+      - "${HOST_P2P_PORT:-30333}:30333"
+      - "${HOST_METRICS_PORT:-9000}:9000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://127.0.0.1:8545/rpc
+          -H 'content-type: application/json'
+          -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+          >/dev/null || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [animica]
+
+  miner:
+    image: ${MINER_IMAGE:-animica-local/miner:${ANIMICA_VERSION:-latest}}
+    container_name: animica-mainnet-miner
+    profiles: [miner]
+    restart: unless-stopped
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      RPC_URL: "http://node:8545"
+      DEVICE: "${MINER_DEVICE:-cpu}"
+      THREADS: "${MINER_THREADS:-4}"
+      LOG_LEVEL: "${MINER_LOG_LEVEL:-INFO}"
+      PAYOUT_ADDRESS: "${MINER_PAYOUT_ADDRESS:-}"
+      AICF_WORKER: "${MINER_AICF_WORKER:-1}"
+      ANIMICA_NETWORK: "mainnet"
+    networks: [animica]

@@ -1,0 +1,50 @@
+---
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang="en" class="bg-ink-950 text-ink-50">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).toString()} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Animica Mining Pool" />
+  </head>
+  <body class="min-h-screen flex flex-col font-sans antialiased">
+    <header class="border-b border-white/10 bg-ink-900/70 backdrop-blur sticky top-0 z-20">
+      <nav class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6 text-sm">
+        <a href="/" class="font-semibold tracking-tight text-lg">Animica Pool</a>
+        <a href="/" class="hover:text-amber-400 transition">Connect</a>
+        <a href="/aicf" class="hover:text-amber-400 transition">AICF Compute</a>
+        <a href="/tiers" class="hover:text-amber-400 transition">Tiers</a>
+        <a href="/stats" class="hover:text-amber-400 transition">Stats</a>
+        <a href="/downloads" class="hover:text-amber-400 transition">Downloads</a>
+        <span class="flex-1"></span>
+        <a href="https://animica.org" class="text-ink-300 hover:text-ink-50 transition">animica.org →</a>
+      </nav>
+    </header>
+    <main class="flex-1">
+      <slot />
+    </main>
+    <footer class="border-t border-white/10 bg-ink-900/50 mt-16">
+      <div class="max-w-7xl mx-auto px-4 py-6 text-xs text-ink-300 flex flex-wrap gap-4 items-center">
+        <span>pool.animica.org</span>
+        <span class="opacity-50">•</span>
+        <a href="https://animica.org/docs" class="hover:text-ink-50">Docs</a>
+        <span class="opacity-50">•</span>
+        <a href="https://github.com/animicaorg" class="hover:text-ink-50">GitHub</a>
+        <span class="flex-1"></span>
+        <span class="opacity-60">© Animica</span>
+      </div>
+    </footer>
+  </body>
+</html>

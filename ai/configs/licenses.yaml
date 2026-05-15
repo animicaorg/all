@@ -1,0 +1,61 @@
+# License policy for corpus ingestion. Files are filtered by this policy
+# before any content goes into a dataset.
+
+repo_default:
+  # License of /root/animica itself. Used when a file inherits the repo
+  # license rather than carrying its own.
+  spdx: "Apache-2.0"
+
+# Allowlist: files whose detected license matches one of these SPDX
+# identifiers are eligible for inclusion in all dataset splits.
+allow:
+  - "Apache-2.0"
+  - "MIT"
+  - "BSD-2-Clause"
+  - "BSD-3-Clause"
+  - "ISC"
+  - "Unlicense"
+  - "CC0-1.0"
+  - "CC-BY-4.0"   # docs only
+  - "MPL-2.0"
+
+# Restricted: files with these licenses are *quarantined* — recorded in the
+# inventory but excluded from CPT/SFT corpora. They may still be used for
+# eval suites that don't redistribute their content.
+restrict:
+  - "GPL-2.0-only"
+  - "GPL-2.0-or-later"
+  - "GPL-3.0-only"
+  - "GPL-3.0-or-later"
+  - "AGPL-3.0-only"
+  - "AGPL-3.0-or-later"
+  - "LGPL-2.1-only"
+  - "LGPL-2.1-or-later"
+  - "LGPL-3.0-only"
+  - "LGPL-3.0-or-later"
+  - "CC-BY-NC-4.0"
+  - "CC-BY-SA-4.0"
+  - "CC-BY-NC-SA-4.0"
+
+# Deny: never include, never even keep in inventory metadata.
+deny:
+  - "proprietary"
+  - "commercial-only"
+  - "unknown-restrictive"
+
+detection:
+  # Detection strategy. "spdx_marker_first" looks for SPDX-License-Identifier
+  # in the file header; if absent, applies repo_default.
+  strategy: "spdx_marker_first"
+  # When `vendor_dir_inherits_vendor_license` is true, files inside
+  # third_party/ or vendor/ subtrees are checked against a LICENSE-* file
+  # in the same directory.
+  vendor_dir_inherits_vendor_license: true
+  vendor_dirs:
+    - "vendor"
+    - "third_party"
+    - "thirdparty"
+
+# Reporting. Every run writes a license summary at:
+#   runs/${run_id}/inventory/licenses.json
+report_path: "inventory/licenses.json"

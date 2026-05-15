@@ -1,0 +1,97 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+// Mirrors ai/configs/model_catalog.yaml. When the python wheel is on PATH
+// we'd ideally fetch this from /v1/catalog at runtime; the static copy
+// here is updated whenever the catalog ships.
+const tiers = [
+  {
+    id: "tiny",
+    base: "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    params: "1.5B",
+    minVram: "0 (CPU)",
+    minRam: "8 GB",
+    accel: "cpu",
+    desc: "Commodity hardware entry tier. Suitable for laptops & cloud micro-instances.",
+  },
+  {
+    id: "small",
+    base: "Qwen/Qwen2.5-Coder-7B-Instruct",
+    params: "7B",
+    minVram: "16 GB",
+    minRam: "16 GB",
+    accel: "cuda",
+    desc: "Single-consumer-GPU tier. The everyday workhorse — most miners land here.",
+  },
+  {
+    id: "flagship",
+    base: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
+    params: "16B MoE (2.4B active)",
+    minVram: "24 GB",
+    minRam: "32 GB",
+    accel: "cuda",
+    desc: "Animica-native flagship. MoE; high quality at moderate inference cost.",
+  },
+  {
+    id: "large",
+    base: "deepseek-ai/DeepSeek-Coder-V2-Instruct",
+    params: "236B MoE (21B active)",
+    minVram: "80 GB",
+    minRam: "128 GB",
+    accel: "cuda",
+    desc: "Datacenter-grade. Highest quality; reserved for capable miners.",
+  },
+];
+---
+<BaseLayout
+  title="Model Tiers — Animica Pool"
+  description="Hardware-aware model tiers miners can serve via AICF. Picks the smallest tier that fits the job request."
+>
+  <section class="max-w-7xl mx-auto px-4 py-12 md:py-16">
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Model tiers</h1>
+    <p class="mt-3 text-ink-300 max-w-2xl">
+      Miners advertise which tiers they can serve based on their hardware. The
+      AICF router picks the smallest tier that satisfies the user's request,
+      keeping latency low and the network balanced. Run
+      <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner aicf-worker hardware</code>
+      to see what your machine qualifies for.
+    </p>
+
+    <div class="mt-10 grid gap-6 md:grid-cols-2">
+      {tiers.map((t) => (
+        <article class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-2xl font-semibold tracking-tight">{t.id}</h2>
+            <span class="text-xs font-mono text-amber-400 uppercase tracking-wider">{t.accel}</span>
+          </div>
+          <p class="mt-1 text-sm text-ink-300 font-mono break-all">{t.base}</p>
+          <p class="mt-3 text-ink-200">{t.desc}</p>
+          <dl class="mt-5 grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <dt class="text-xs uppercase text-ink-300 tracking-wide">Params</dt>
+              <dd class="mt-1 font-semibold">{t.params}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase text-ink-300 tracking-wide">Min VRAM</dt>
+              <dd class="mt-1 font-semibold">{t.minVram}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase text-ink-300 tracking-wide">Min RAM</dt>
+              <dd class="mt-1 font-semibold">{t.minRam}</dd>
+            </div>
+          </dl>
+        </article>
+      ))}
+    </div>
+
+    <div class="mt-12 rounded-2xl border border-amber-400/30 bg-amber-400/[0.04] p-6">
+      <h3 class="text-lg font-semibold tracking-tight">Want to run a custom tier?</h3>
+      <p class="mt-2 text-sm text-ink-200">
+        Override the auto-detected eligibility with
+        <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner aicf-worker start --tiers tiny,small</code>.
+        Tier names come from
+        <a href="https://github.com/animicaorg/all/blob/main/ai/configs/model_catalog.yaml" class="underline">ai/configs/model_catalog.yaml</a>.
+      </p>
+    </div>
+  </section>
+</BaseLayout>

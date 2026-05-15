@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { formatError, LOCAL_RPC } from '../lib/rpcUtils'
+import AICFComputePanel from '../components/AICFComputePanel'
 
 interface AICFData {
   available: boolean
@@ -31,9 +32,12 @@ export default function AICFPage() {
       <div className="rounded-xl border border-day-200 bg-white p-6 dark:border-night-800 dark:bg-night-900">
         <h1 className="mb-1 text-2xl font-semibold">AICF — AI Compute Flywheel</h1>
         <p className="text-sm text-gray-600 dark:text-slate-400">
-          View AICF credits, jobs, plans, and claim status.
+          View AICF credits, jobs, plans, and claim status, plus live network
+          compute capacity (workers per tier, jobs/hr, latency).
         </p>
       </div>
+
+      <AICFComputePanel />
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">

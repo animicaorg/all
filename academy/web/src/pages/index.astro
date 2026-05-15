@@ -1,0 +1,169 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Animica Academy — learn Animica, earn ANIMICA"
+  description="Interactive tutorials for the Animica stack — wallet, chain, AICF compute, contracts. Complete a tutorial, sign the attestation with your wallet, and earn ANIMICA from the public reward pool."
+>
+  <section class="bg-gradient-to-b from-ink-900 to-ink-950 border-b border-white/5">
+    <div class="max-w-7xl mx-auto px-4 py-16 md:py-24 grid lg:grid-cols-[1.2fr_1fr] gap-12 items-center">
+      <div>
+        <span class="inline-block text-amber-400 text-xs uppercase tracking-[0.2em] font-semibold mb-4">
+          academy.animica.org
+        </span>
+        <h1 class="text-4xl md:text-6xl font-semibold tracking-tight leading-tight">
+          Learn Animica.<br />
+          <span class="text-amber-400">Earn ANIMICA.</span>
+        </h1>
+        <p class="mt-6 text-lg text-ink-200 max-w-xl">
+          Short, interactive tutorials for the wallet, the chain, AICF compute, and
+          contracts. Each step is verified by an extension-signed attestation, and
+          the reward pool pays you on completion — directly to the wallet you
+          signed with.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a
+            href="/tutorials"
+            class="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-3 transition"
+          >
+            Browse tutorials →
+          </a>
+          <a
+            href="/rewards"
+            class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition"
+          >
+            Reward pool
+          </a>
+          <a
+            href="/achievements"
+            class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition"
+          >
+            My achievements
+          </a>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
+          How it works
+        </div>
+        <ol class="space-y-3 text-sm text-ink-200 list-decimal pl-5 marker:text-amber-400">
+          <li>Install the Animica wallet extension, fund a tiny gas balance.</li>
+          <li>Open a tutorial and work through its steps in the embedded console.</li>
+          <li>Click <em>Claim reward</em>; the extension asks you to sign an attestation.</li>
+          <li>
+            The academy verifies the signature and submits an on-chain transfer
+            from the public reward pool to your wallet.
+          </li>
+        </ol>
+        <pool-stat class="block mt-6"></pool-stat>
+      </div>
+    </div>
+  </section>
+
+  <section class="max-w-7xl mx-auto px-4 py-16">
+    <h2 class="text-2xl font-semibold tracking-tight mb-3">Tracks</h2>
+    <p class="text-ink-300 max-w-2xl mb-8">
+      Each track is a short series of self-contained tutorials. Finish a track for
+      a badge and a bonus payout from the pool.
+    </p>
+    <div class="grid md:grid-cols-3 gap-4">
+      <a
+        href="/tutorials?track=wallet"
+        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+      >
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
+          Track
+        </div>
+        <h3 class="text-xl font-semibold">Wallet basics</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Install the extension, back up the seed, send your first tx, read a
+          balance. Tiny rewards, zero risk.
+        </p>
+      </a>
+      <a
+        href="/tutorials?track=aicf"
+        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+      >
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
+          Track
+        </div>
+        <h3 class="text-xl font-semibold">AICF compute</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Submit an inference job from <code class="font-mono text-amber-400">animica chat</code>,
+          watch it stream from a real worker, settle the credit on-chain.
+        </p>
+      </a>
+      <a
+        href="/tutorials?track=contracts"
+        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+      >
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
+          Track
+        </div>
+        <h3 class="text-xl font-semibold">Smart contracts</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Deploy a counter, write a custom selector, call from the wallet
+          extension, verify on explorer2.
+        </p>
+      </a>
+    </div>
+  </section>
+
+  <section class="max-w-7xl mx-auto px-4 pb-16">
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <h3 class="text-lg font-semibold">Why the reward pool?</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Onboarding ANIMICA users is a public good — the more people who can
+          self-custody, send a tx, and run <code class="font-mono text-amber-400">animica chat</code>,
+          the healthier the network. Anyone can deposit ANIMICA into the pool;
+          deposits are visible on-chain and used to pay tutorial completers.
+        </p>
+        <a
+          href="/rewards"
+          class="mt-4 inline-block text-amber-400 hover:underline text-sm"
+          >Top up the pool →</a
+        >
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <h3 class="text-lg font-semibold">Built on the Animica stack</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Attestations are signed by the same extension that signs your chat
+          payments on <a href="https://studio.animica.org" class="text-amber-400 hover:underline">studio.animica.org</a>.
+          Payouts are real on-chain transfers — verify them on
+          <a href="https://explorer.animica.org" class="text-amber-400 hover:underline">explorer.animica.org</a>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    import { academyApi } from "../lib/api";
+    import { baseUnitsToAnim } from "../lib/wallet";
+
+    class PoolStat extends HTMLElement {
+      async connectedCallback() {
+        this.innerHTML = `<div class="text-xs text-ink-300">Loading reward pool…</div>`;
+        try {
+          const status = await academyApi.getPoolStatus();
+          const balance = baseUnitsToAnim(status.balanceBaseUnits);
+          const paid = baseUnitsToAnim(status.paidOutBaseUnits);
+          this.innerHTML = `
+            <div class="text-xs uppercase tracking-wide text-ink-300 mb-1">Reward pool</div>
+            <div class="flex items-baseline gap-3">
+              <span class="text-2xl font-mono font-semibold text-amber-400">${balance}</span>
+              <span class="text-xs text-ink-300">ANIMICA available</span>
+            </div>
+            <div class="text-xs text-ink-300 mt-1">${paid} ANIMICA paid out · ${status.contributors} contributors</div>
+          `;
+        } catch (e) {
+          this.innerHTML = `<div class="text-xs text-ink-300">Reward pool offline (${(e as Error).message}).</div>`;
+        }
+      }
+    }
+    if (!customElements.get("pool-stat")) {
+      customElements.define("pool-stat", PoolStat);
+    }
+  </script>
+</BaseLayout>

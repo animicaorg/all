@@ -1,0 +1,95 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout
+  title="AICF Compute — Animica Pool"
+  description="AI Compute Fund. Miners earn ANIMICA serving inference jobs for animica chat users. Spare-cycle compatible with PoW mining."
+>
+  <section class="max-w-7xl mx-auto px-4 py-12 md:py-16">
+    <span class="inline-block text-amber-400 text-xs uppercase tracking-[0.2em] font-semibold mb-3">AICF — AI Compute Fund</span>
+    <h1 class="text-3xl md:text-5xl font-semibold tracking-tight max-w-3xl">
+      Get paid to run the flagship model
+    </h1>
+    <p class="mt-5 text-lg text-ink-200 max-w-3xl">
+      Every <code class="font-mono text-amber-400">animica chat</code> turn submits an
+      inference job to AICF and pays from the user's wallet. The job lands on
+      a miner with the right hardware tier. That miner runs the flagship model
+      and gets paid in ANIMICA on settlement.
+    </p>
+
+    <div class="mt-12 grid lg:grid-cols-3 gap-6">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">1. Register</div>
+        <h3 class="text-lg font-semibold">Auto-detect hardware</h3>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner aicf-worker start \
+  --address anim1...</code></pre>
+        <p class="mt-3 text-sm text-ink-300">
+          Detects GPU/CPU/VRAM/RAM, advertises eligible tiers, registers with
+          AICF. Idempotent — restart any time.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">2. Serve</div>
+        <h3 class="text-lg font-semibold">Stream tokens back</h3>
+        <p class="mt-3 text-sm text-ink-300">
+          The worker pulls a flagship bundle by IPFS CID once, then claims
+          incoming jobs from the AICF queue, runs inference, and streams the
+          response. Latency hints in the catalog set per-tier spillover.
+        </p>
+        <p class="mt-3 text-xs text-ink-400 font-mono">
+          aicf.workerClaimNextJob → aicf.workerSubmitResult
+        </p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">3. Settle</div>
+        <h3 class="text-lg font-semibold">Get paid on-chain</h3>
+        <p class="mt-3 text-sm text-ink-300">
+          Each completed job triggers an AICF settlement payment to your
+          address. Settlements are batched and visible in your wallet (and on
+          the explorer) — same chain, same finality as block rewards.
+        </p>
+      </div>
+    </div>
+
+    <section class="mt-16">
+      <h2 class="text-2xl font-semibold tracking-tight mb-2">Bundle propagation</h2>
+      <p class="text-ink-300 mb-4 max-w-2xl">
+        Flagship bundles are content-addressed and distributed via IPFS. The
+        bundle CID and sha256 are published on the Animica chain via the AICF
+        protocol, so miners can verify integrity before serving.
+      </p>
+      <div class="grid sm:grid-cols-2 gap-4 mt-6">
+        <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h3 class="font-semibold mb-2">Pull a bundle</h3>
+          <pre class="bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner aicf-worker pull \
+  bafy... \
+  --tier flagship \
+  --sha256 abc123...</code></pre>
+          <p class="mt-3 text-sm text-ink-300">
+            Tries each configured IPFS gateway in order; verifies sha256
+            before installing into <code class="font-mono">~/.animica/models/</code>.
+          </p>
+        </div>
+        <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h3 class="font-semibold mb-2">Refresh policy</h3>
+          <p class="text-sm text-ink-300">
+            Miners refresh when a newer manifest for the same tier appears
+            on-chain and the local cache is older than <code class="font-mono">refresh_after_days</code>
+            (default 30). Configure via the catalog YAML.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mt-16 rounded-2xl border border-amber-400/30 bg-amber-400/[0.04] p-6">
+      <h2 class="text-xl font-semibold tracking-tight mb-2">No chain regression</h2>
+      <p class="text-ink-200">
+        AICF is purely additive. Animica consensus stays as it is: PoW blocks,
+        same difficulty adjustment, same payout. The AICF worker runs alongside
+        your existing miner — opt out any time with
+        <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">--no-aicf</code>
+        or <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">ANIMICA_DISABLE_AICF_WORKER=1</code>.
+      </p>
+    </section>
+  </section>
+</BaseLayout>

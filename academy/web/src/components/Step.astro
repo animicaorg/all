@@ -1,0 +1,36 @@
+---
+/**
+ * Tutorial step block. Renders the step body, a "mark complete" button, and
+ * (when all steps are complete) a "claim reward" button.
+ *
+ * The component itself is just a wrapper; the [slug].astro page wires the
+ * client behavior via a custom element that scans for these markers and
+ * binds the claim flow.
+ *
+ *   id      — stable step ID (matches frontmatter.stepIds entry)
+ *   title   — user-facing step title
+ */
+interface Props {
+  id: string;
+  title: string;
+}
+const { id, title } = Astro.props;
+---
+
+<section
+  class="step relative rounded-2xl border border-white/10 bg-white/[0.03] p-6 mb-6"
+  data-step-id={id}
+>
+  <header class="flex items-baseline justify-between mb-4">
+    <h3 class="text-lg font-semibold">
+      <span class="text-amber-400 mr-2 step-badge">●</span>{title}
+    </h3>
+    <button
+      class="step-toggle text-xs rounded-lg border border-amber-400/40 hover:border-amber-400 text-amber-300 px-3 py-1.5 font-medium"
+      data-step={id}>Mark complete</button
+    >
+  </header>
+  <div class="prose prose-invert max-w-none prose-sm">
+    <slot />
+  </div>
+</section>

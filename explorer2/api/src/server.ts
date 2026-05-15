@@ -433,6 +433,73 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  // List registered AICF compute workers, grouped by advertised tier.
+  // Used by the AICF tab in explorer2 to show network-wide compute capacity.
+  app.get('/api/aicf/workers', async (_req, res) => {
+    if (!rpc) {
+      res.json({ available: false, workers: [], by_tier: {} })
+      return
+    }
+    try {
+      const raw = await rpc.call('aicf.workerList', {}).catch(async (err) => {
+        if (isRpcMethodNotFound(err)) return null
+        throw err
+      })
+      if (!raw) {
+        // Older nodes don't expose workerList yet — return empty rather than 500.
+        jsonSafe(res, { available: false, reason: 'method_unavailable', workers: [], by_tier: {} })
+        return
+      }
+      const workers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
+      const byTier: Record<string, number> = {}
+      for (const w of workers) {
+        for (const t of (w?.tiers ?? [])) {
+          byTier[String(t)] = (byTier[String(t)] ?? 0) + 1
+        }
+      }
+      jsonSafe(res, { available: true, workers, by_tier: byTier, total: workers.length })
+    } catch (err) {
+      logger.warn({ err }, 'aicf.workerList unavailable')
+      res.json({ available: false, workers: [], by_tier: {},
+                reason: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // Aggregate AICF job statistics over a rolling window. Used by AICFPage and
+  // pool.animica.org /stats. Returns gracefully-empty when the node doesn't
+  // expose the method yet.
+  app.get('/api/aicf/job-stats', async (req, res) => {
+    if (!rpc) {
+      res.json({ available: false })
+      return
+    }
+    const windowMinutes = typeof req.query.window === 'string'
+      ? parseInt(req.query.window, 10) || 60
+      : 60
+    try {
+      const raw = await rpc.call('aicf.jobStats', { window_minutes: windowMinutes })
+        .catch(async (err) => {
+          if (isRpcMethodNotFound(err)) return null
+          throw err
+        })
+      if (!raw) {
+        jsonSafe(res, {
+          available: false, reason: 'method_unavailable',
+          window_minutes: windowMinutes,
+          jobs_completed: 0, jobs_failed: 0,
+          latency_p50_ms: null, latency_p95_ms: null,
+          by_tier: {},
+        })
+        return
+      }
+      jsonSafe(res, { available: true, window_minutes: windowMinutes, ...(raw as object) })
+    } catch (err) {
+      logger.warn({ err }, 'aicf.jobStats unavailable')
+      res.json({ available: false, window_minutes: windowMinutes,
+                 reason: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
   // ── Mining ──────────────────────────────────────────────────────────────────
 
   app.get('/api/mining/info', async (_req, res) => {

@@ -1,0 +1,94 @@
+# Repo graph configuration. Consumed by build_graph.py.
+# The graph is used for retrieval boosting, dataset synthesis, and
+# grounding in inference outputs.
+
+nodes:
+  # Node kinds and how they're discovered.
+  - kind: "file"
+    discover_from: "inventory.files"
+
+  - kind: "symbol"
+    discover_from:
+      python: "ast_top_level_defs"
+      rust: "regex:^(pub )?(fn|struct|enum|trait|impl|mod) "
+      go: "regex:^func |^type |^var |^const "
+      typescript: "regex:^(export )?(async )?(function|class|interface|type|const|let|var) "
+      javascript: "regex:^(export )?(async )?(function|class|const|let|var) "
+
+  - kind: "cli_subcommand"
+    description: "Animica CLI subcommand registrations."
+    discover_from:
+      pattern: "app.add_typer\\(([^)]+)\\)"
+      file_glob: "python/animica/cli/main.py"
+
+  - kind: "rpc_method"
+    description: "JSON-RPC method handlers."
+    discover_from:
+      pattern: "rpc_method\\(['\"]([^'\"]+)['\"]"
+      file_glob: "rpc/**/*.py"
+
+  - kind: "config_setting"
+    description: "Settings consumed by code (env vars + dotted config keys)."
+    discover_from:
+      pattern: "os\\.environ\\.get\\(['\"]([A-Z_][A-Z0-9_]*)['\"]"
+
+  - kind: "docker_compose_service"
+    description: "Services declared in ops/docker/*.yml."
+    discover_from:
+      file_glob: "ops/docker/docker-compose.*.yml"
+      yaml_path: "services.*"
+
+edges:
+  - kind: "imports"
+    description: "Python import edges between files."
+    extract:
+      language: "python"
+      regex_module_imports:
+        - "^from ([\\w.]+) import"
+        - "^import ([\\w.]+)"
+    source: "file"
+    target: "file"
+
+  - kind: "calls_rpc"
+    description: "Code-site calls into an RPC method (best-effort regex)."
+    extract:
+      pattern: "(?:rpc\\.|jsonrpc\\.|client\\.)?call\\(['\"]([\\w.]+)['\"]"
+    source: "file"
+    target: "rpc_method"
+
+  - kind: "documents"
+    description: "Doc file mentions a code symbol or CLI subcommand."
+    extract:
+      pattern: "`([a-z][a-z0-9_]+)`"
+      file_glob: "docs/**/*.md"
+    source: "file"
+    target: "symbol"
+
+  - kind: "configured_by"
+    description: "Code consumes a config_setting node."
+    derived_from: "config_setting nodes; source = file in which the env var appears"
+
+  - kind: "runs_in"
+    description: "A service in a docker-compose file references a Dockerfile or context."
+    source: "docker_compose_service"
+    target: "file"
+
+# Output formats.
+out:
+  nodes_path: "graph/nodes.jsonl"
+  edges_path: "graph/edges.jsonl"
+  summary_path: "graph/summary.json"
+  # Optional GraphViz dump (handy for debugging; large).
+  graphviz_dump: false
+
+# Graph-based boosting at inference time.
+inference_boost:
+  enabled: true
+  # When the user prompt mentions a CLI subcommand, retrieve the file that
+  # registers that subcommand and the files it imports transitively to
+  # depth N.
+  cli_to_code_depth: 2
+  # Same for RPC.
+  rpc_to_code_depth: 2
+  # Same for compose services.
+  compose_to_code_depth: 1

@@ -1,0 +1,101 @@
+# Safety and content-policy configuration. Consumed by clean_and_dedupe.py
+# (secret scan + quarantine) and run_critique.py (output validators).
+
+secret_scan:
+  enabled: true
+  # Patterns matched against each ingested file. Any match → file routed
+  # to quarantine.jsonl with the matched pattern recorded.
+  patterns:
+    # Generic high-confidence tokens.
+    - name: "aws_access_key_id"
+      regex: "AKIA[0-9A-Z]{16}"
+    - name: "aws_secret_access_key"
+      regex: "(?i)aws.{0,20}?secret.{0,20}?['\"][0-9a-zA-Z/+=]{40}['\"]"
+    - name: "github_pat"
+      regex: "ghp_[0-9A-Za-z]{36}"
+    - name: "github_fine_grained_pat"
+      regex: "github_pat_[0-9A-Za-z_]{82}"
+    - name: "openai_api_key"
+      regex: "sk-[A-Za-z0-9]{20,}"
+    - name: "anthropic_api_key"
+      regex: "sk-ant-[A-Za-z0-9-]{32,}"
+    - name: "stripe_secret_key"
+      regex: "sk_live_[A-Za-z0-9]{24,}"
+    - name: "slack_token"
+      regex: "xox[abprs]-[A-Za-z0-9-]{10,}"
+    - name: "pypi_token"
+      regex: "pypi-AgEIcHlwaS5vcmcCJ[A-Za-z0-9_-]{20,}"
+    - name: "private_key_pem"
+      regex: "-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----"
+    - name: "ssh_passphrase_marker"
+      regex: "ENCRYPTED PRIVATE KEY"
+    # Animica-specific.
+    - name: "animica_wallet_seed"
+      regex: "(?i)mnemonic[:=]\\s*['\"]?[a-z]+ [a-z]+ [a-z]+ [a-z]+( [a-z]+){8,20}"
+    - name: "animica_priv_hex"
+      regex: "(?i)(animica|wallet).{0,20}priv.{0,20}['\"]?0x[0-9a-f]{64}"
+
+  # Files matching these path patterns get extra scrutiny (lower threshold).
+  high_scrutiny_paths:
+    - "^\\.env"
+    - "/secrets/"
+    - "/credentials"
+    - "kubeconfig"
+    - "id_rsa"
+    - "id_ed25519"
+
+  # Quarantine output. Quarantined files are NOT included in training corpora
+  # but their existence is recorded for auditing.
+  quarantine_out: "runs/${run_id}/corpora/quarantine.jsonl"
+
+# Output validators run during run_critique.py.
+validators:
+  patch_validator:
+    description: "Generated patches must parse as a unified diff and apply to cited base."
+    apply_dry_run: true
+    risk_threshold: "MEDIUM"
+
+  command_risk_validator:
+    description: "Refuse to recommend destructive commands without explicit confirmation."
+    high_risk_patterns:
+      - "rm -rf /"
+      - "rm -rf \\*"
+      - "rm -rf ~"
+      - "git push --force"
+      - "git push -f"
+      - "git reset --hard"
+      - "dd if="
+      - "mkfs"
+      - "shutdown -h"
+      - "DROP DATABASE"
+      - "DROP TABLE"
+      - "TRUNCATE TABLE"
+      - "DELETE FROM .* WHERE 1"
+      - "curl .* | (sudo )?(bash|sh|zsh)"
+      - "wget .* | (sudo )?(bash|sh|zsh)"
+    risk_threshold: "HIGH"
+
+  config_sanity_validator:
+    description: "Recommended config edits must not violate known invariants."
+    check_yaml_parses: true
+    check_no_duplicate_keys: true
+    forbid_disabling_auth: true
+    risk_threshold: "MEDIUM"
+
+  secret_leakage_validator:
+    description: "Output must not contain content that matches secret_scan patterns."
+    use_secret_scan_patterns: true
+    redact_on_match: true
+    risk_threshold: "HIGH"
+
+  hallucinated_command_validator:
+    description: "Refuse to recommend invented commands or fictional binaries."
+    known_binaries_file: "ai/configs/_known_binaries.txt"
+    known_animica_subcommands_file: "ai/configs/_known_animica_subcommands.txt"
+    risk_threshold: "MEDIUM"
+
+# Risk-tier policy.
+risk_tiers:
+  LOW: "log only"
+  MEDIUM: "log + warn in critique report"
+  HIGH: "log + redact in output + fail eval gate"

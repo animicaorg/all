@@ -1,0 +1,126 @@
+# Catalog of Animica-native model tiers miners can advertise serving.
+# AICF routing matches incoming job requirements against the miner's
+# declared tier capability. The training pipeline produces one bundle
+# per tier listed in `train_tiers` below.
+
+# Schema for each tier:
+#   id                 short slug used in manifests and CLI flags
+#   base_model         HF repo id used as the starting point for training
+#   active_params_b    billions of *active* params (informational; for MoE)
+#   total_params_b     billions of *total* params (informational)
+#   min_vram_gb        minimum VRAM to run inference at default precision
+#   min_ram_gb         minimum host RAM
+#   recommended_accel  cuda | mps | cpu (informational; default routing hint)
+#   precision          fp16 | bf16 | int8 | int4
+#   context_window     max prompt+completion tokens at inference
+#   typical_jobs       list of job-kind slugs this tier is well-suited for
+#   description        human-readable summary
+
+tiers:
+  - id: "tiny"
+    base_model: "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    active_params_b: 1.5
+    total_params_b: 1.5
+    min_vram_gb: 0    # CPU-runnable
+    min_ram_gb: 8
+    recommended_accel: "cpu"
+    precision: "fp32"
+    context_window: 8192
+    typical_jobs:
+      - "explain_view"
+      - "operator_command_view"
+      - "config_lookup"
+    description: "CPU-friendly entry tier. Suitable for miners on commodity hardware."
+
+  - id: "small"
+    base_model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    active_params_b: 7.0
+    total_params_b: 7.0
+    min_vram_gb: 16
+    min_ram_gb: 16
+    recommended_accel: "cuda"
+    precision: "bf16"
+    context_window: 16384
+    typical_jobs:
+      - "explain_view"
+      - "diagnose_view"
+      - "patch_view"
+      - "operator_command_view"
+      - "postmortem_view"
+    description: "Single-consumer-GPU tier. The everyday workhorse."
+
+  - id: "flagship"
+    base_model: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+    active_params_b: 2.4
+    total_params_b: 16.0
+    min_vram_gb: 24
+    min_ram_gb: 32
+    recommended_accel: "cuda"
+    precision: "bf16"
+    context_window: 32768
+    typical_jobs:
+      - "explain_view"
+      - "diagnose_view"
+      - "patch_view"
+      - "operator_command_view"
+      - "postmortem_view"
+      - "synth_task_generation"
+      - "long_context_retrieval"
+    description: "Headline Animica-native model. MoE; high quality at moderate inference cost."
+
+  - id: "large"
+    base_model: "deepseek-ai/DeepSeek-Coder-V2-Instruct"
+    active_params_b: 21.0
+    total_params_b: 236.0
+    min_vram_gb: 80
+    min_ram_gb: 128
+    recommended_accel: "cuda"
+    precision: "bf16"
+    context_window: 65536
+    typical_jobs:
+      - "explain_view"
+      - "diagnose_view"
+      - "patch_view"
+      - "operator_command_view"
+      - "postmortem_view"
+      - "synth_task_generation"
+      - "long_context_retrieval"
+      - "deep_repo_analysis"
+    description: "Datacenter-grade flagship. Highest quality; reserved for capable miners."
+
+# Default training-pipeline targets. Each id here gets its own bundle export.
+# A miner running the pipeline can override via FLAGSHIP_TIERS env var.
+train_tiers:
+  - "tiny"
+  - "small"
+  - "flagship"
+  # "large" is opt-in: requires ~8x80GB or equivalent to train. Add to this
+  # list (or set FLAGSHIP_TIERS) only when the run host can sustain it.
+
+# AICF routing preferences. When a job arrives without a tier preference,
+# the router picks the smallest tier whose typical_jobs covers the job kind.
+routing:
+  default_tier: "small"
+  # When a tier is overloaded, fall back to the next-tier-up rather than
+  # waiting. Set to false to enforce exact tier match (and queue).
+  spillover_up: true
+  # Latency-budget hints used by the router. Per-tier max wait before
+  # spillover.
+  spillover_wait_ms:
+    tiny: 2000
+    small: 5000
+    flagship: 10000
+    large: 30000
+
+# Propagation: how miners discover and download bundles.
+propagation:
+  # Each successful export pushes the bundle to IPFS and publishes the CID
+  # plus manifest hash on the Animica chain (via the AICF protocol).
+  publish_to_ipfs: true
+  publish_manifest_on_chain: true
+  # Miners pull on first registration and again on each `tier` advertisement
+  # change. Cached at ~/.animica/models/<tier>/<run_id>/.
+  miner_cache_dir: "~/.animica/models"
+  # Stale-after window. Miners refresh their bundle when a newer manifest
+  # for the same tier appears on-chain and is older than this many days.
+  refresh_after_days: 30

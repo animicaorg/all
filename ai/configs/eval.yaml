@@ -1,0 +1,104 @@
+# Evaluation configuration. Consumed by evaluate_model.py, run_critique.py,
+# run_benchmark.py.
+
+suites:
+  syntax_validity:
+    description: "Generated code must parse as the declared language."
+    weight: 0.15
+    sample_max: 500
+    enforcers:
+      "code/python": "ast.parse"
+      "code/rust": "syn::parse_file"
+      "code/go": "go/parser"
+      "code/typescript": "tsc --noEmit"
+      "code/javascript": "acorn"
+      "code/shell": "bash -n"
+
+  shell_exactness:
+    description: "Operator commands must reference real binaries and flags."
+    weight: 0.10
+    sample_max: 300
+    # When the generated command names a binary, it must exist on the
+    # bench machine OR be in the known-binaries allowlist.
+    known_binaries_file: "${ANIMICA_REPO_ROOT}/ai/configs/_known_binaries.txt"
+    forbid_invented_commands: true
+
+  patch_quality:
+    description: "Generated diffs must apply cleanly to the cited base."
+    weight: 0.20
+    sample_max: 300
+    apply_with: "git apply --check"
+    # Bonus credit if the patched repo also still builds (limited subset).
+    light_build_check: true
+
+  animica_specific:
+    description: "Animica operational-task tasks: sync stalls, P2P loops, RPC, wallet, scaffold."
+    weight: 0.35
+    # Loaded from configs/experts.yaml and configs/incidents.yaml.
+    source: "curated_tasks"
+
+  regression:
+    description: "Compare against prior exported bundle if present."
+    weight: 0.10
+    # Path relative to flagship_agent/.
+    baseline_bundle: "models/export/latest"
+    # If no baseline exists this suite contributes 0 with reason="no_baseline".
+    on_missing_baseline: "skip"
+
+  contamination:
+    description: "Train/eval overlap detection signal (lower is better)."
+    weight: 0.10
+    # Strict threshold: if any eval example has sha256 in the train set,
+    # mark as `contaminated=true`.
+    sha_overlap_threshold: 0
+    # Soft threshold via 8-gram Jaccard.
+    ngram: 8
+    near_overlap_threshold: 0.6
+
+gates:
+  # Eval results are categorical: pass/fail/warn. These thresholds decide.
+  pass_score: 0.65
+  warn_score: 0.45
+
+  # The "available_for_real_inference" verdict requires:
+  available_for_real_inference:
+    require_effective_mode: ["full"]
+    require_score_at_least: 0.55
+    forbid_contaminated: true
+
+critique:
+  description: "Self-critique pass. Runs the model on each generated answer."
+  enabled: true
+  max_samples: 200
+  validators:
+    - "patch_validator"
+    - "command_risk_validator"
+    - "config_sanity_validator"
+    - "secret_leakage_validator"
+    - "hallucinated_command_validator"
+  # When any validator marks an example HIGH risk, the critique result
+  # includes the offending sample with redaction applied.
+  redact_outputs_at: "HIGH"
+
+benchmark:
+  description: "Compare candidate bundle vs baselines."
+  enabled: true
+  baselines:
+    - name: "offline_fallback"
+      kind: "static_responder"
+      # The agent_runtime default offline answers (no model). Used as a floor.
+      script: "agent_runtime/src/agent_runtime/baselines/offline.py"
+    - name: "simulated_baseline"
+      kind: "lite_mode_model"
+      bundle_path: "models/export/_simulated"
+    - name: "previous_bundle"
+      kind: "latest_export_minus_one"
+      bundle_path: "models/export/latest"
+
+  metrics:
+    - "exact_match"
+    - "patch_applies"
+    - "syntax_valid"
+    - "ttft_ms"
+    - "latency_ms_p50"
+    - "latency_ms_p95"

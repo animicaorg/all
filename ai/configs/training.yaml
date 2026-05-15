@@ -1,0 +1,173 @@
+# Training configuration for the flagship coding model.
+# Consumed by train_cpt.py and train_sft.py.
+
+tiers:
+  # The set of model tiers this run trains. Resolved against
+  # ai/configs/model_catalog.yaml: each tier id here is looked up in
+  # `tiers[]` and its `base_model` is used as the training starting point.
+  # Override at run time with FLAGSHIP_TIERS="tiny,small,flagship".
+  # An exported bundle is produced per tier.
+  source: "ai/configs/model_catalog.yaml#train_tiers"
+
+base_model:
+  # Legacy single-model entrypoint, used when `tiers` resolves to a single
+  # entry. Multi-tier runs ignore this field and pull base_model from
+  # the catalog.
+  id: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+
+  # Local cache directory for the base model. Resolved relative to
+  # flagship_agent/. Created on first download.
+  cache_dir: "models/base"
+
+  # When true, training.yaml requested model id must match the actually
+  # loaded model id exactly (no quiet substitution).
+  strict_id_match: true
+
+  # In strict full mode any id matching these regexes is rejected before
+  # training starts. Prevents "shipped lite/simulate as full".
+  placeholders_reject:
+    - "^placeholder"
+    - "^TODO"
+    - "^sshleifer/tiny-"
+    - "^hf-internal-testing/"
+
+  # Trust remote code only for known-vetted repos. Required for DeepSeek-V2
+  # MoE architecture (`trust_remote_code=True` at load).
+  trust_remote_code: true
+
+  # Revision pin. Empty string = main. For reproducibility set a commit hash.
+  revision: ""
+
+  # Files to verify exist after download.
+  required_files:
+    - "config.json"
+    - "tokenizer.json"
+
+modes:
+  simulate:
+    # No model load. Stubs out training step counts and writes a fake summary.
+    description: "Artifacts only; no real model loaded; no GPU/CPU compute."
+
+  lite:
+    description: "Tiny sanity pass; loads a tokenizer only, fakes a few training steps."
+    # In lite mode the base model id can be overridden to a tiny model.
+    override_base_model_id: "hf-internal-testing/tiny-random-LlamaForCausalLM"
+    # Force this override only in lite; refuse if FLAGSHIP_MODE != lite.
+    override_only_in_mode: "lite"
+
+  full:
+    description: "Real CPT + SFT training; loads base_model.id; honors strict mode."
+    require_accelerator: true
+    # Permitted accelerators in priority order. The pipeline picks the first
+    # available unless ACCEL_FORCE is set.
+    accelerator_order: ["cuda", "mps", "cpu"]
+    # CPU is allowed only if FLAGSHIP_ALLOW_CPU_REAL=1.
+    cpu_gate_env_var: "FLAGSHIP_ALLOW_CPU_REAL"
+
+  # Default precision per accelerator.
+  precision:
+    cuda: "bf16"
+    mps: "fp16"
+    cpu: "fp32"
+
+# Continual pre-training (CPT) stage settings.
+cpt:
+  enabled: true
+  # Sequence length. Reduced from base default to fit on small accelerators.
+  seq_len: 4096
+  # Effective batch = micro_batch * grad_accum.
+  micro_batch: 1
+  grad_accum: 32
+  # Maximum steps. Each step covers micro_batch * seq_len tokens.
+  max_steps: 2000
+  warmup_steps: 50
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  lr_scheduler: "cosine"
+  # Save and validate every N steps; resumable from latest checkpoint.
+  save_every: 200
+  eval_every: 200
+  eval_max_batches: 50
+  # When loss > guard_loss_threshold for guard_window consecutive evals the
+  # stage exits hard (prevents wasting compute on broken setups).
+  guard_loss_threshold: 100.0
+  guard_window: 3
+
+  # LoRA adapter configuration. If lora.enabled=false, train full params.
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+
+# Supervised fine-tuning (SFT) stage settings.
+sft:
+  enabled: true
+  seq_len: 4096
+  micro_batch: 1
+  grad_accum: 16
+  num_epochs: 3
+  warmup_ratio: 0.03
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  lr_scheduler: "cosine"
+  save_every: 200
+  eval_every: 200
+  eval_max_batches: 100
+  # SFT inherits LoRA from CPT by default. Set merge_before_sft=true to
+  # merge CPT LoRA into base weights and train a fresh adapter on top.
+  merge_before_sft: false
+  guard_loss_threshold: 50.0
+  guard_window: 3
+
+  lora:
+    enabled: true
+    rank: 32
+    alpha: 64
+    dropout: 0.05
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+
+# Checkpointing.
+checkpoint:
+  # Keep the N most recent checkpoints per stage; older are pruned.
+  keep_last: 3
+  # When true, the latest checkpoint is symlinked at .../checkpoints/latest.
+  latest_symlink: true
+
+# Determinism knobs. Honored when set; we don't claim bitwise reproducibility
+# under bf16/fp16.
+determinism:
+  seed: 1337
+  deterministic_algorithms: false
+  cudnn_deterministic: false
+
+# Honesty flags emitted to backend.json after the stage finishes.
+honesty:
+  emit_backend_json: true
+  # Fields that must appear in every backend.json. The trainer fails hard if
+  # any of these can't be populated truthfully.
+  required_fields:
+    - "requested_mode"
+    - "effective_mode"
+    - "requested_base_model"
+    - "loaded_base_model"
+    - "accelerator_requested"
+    - "accelerator_effective"
+    - "precision"
+    - "fallback_reasons"
+    - "available_for_real_inference"

@@ -1,0 +1,156 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Reward pool — Animica Academy"
+  description="Top up the academy reward pool, watch the public balance, and see how much ANIMICA has been paid out to learners."
+>
+  <section class="max-w-7xl mx-auto px-4 py-12">
+    <h1 class="text-3xl font-semibold tracking-tight mb-2">Reward pool</h1>
+    <p class="text-ink-300 max-w-2xl mb-8">
+      The reward pool is a single on-chain address whose balance funds every
+      tutorial payout. Anyone can deposit; deposits and payouts are public
+      transactions you can verify on explorer2.
+    </p>
+
+    <div class="grid lg:grid-cols-[1.3fr_1fr] gap-8 items-start">
+      <div>
+        <pool-summary class="block"></pool-summary>
+        <h2 class="text-xl font-semibold mt-10 mb-4">Top contributors</h2>
+        <pool-contributors class="block"></pool-contributors>
+      </div>
+
+      <aside class="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-6 sticky top-20">
+        <div class="text-[10px] uppercase tracking-wider text-amber-400 font-semibold mb-1">
+          Deposit
+        </div>
+        <h2 class="text-xl font-semibold mb-3">Top up the pool</h2>
+        <p class="text-sm text-ink-300 mb-4">
+          The wallet extension shows the full destination and amount for
+          explicit confirmation. We never bypass that surface.
+        </p>
+        <deposit-form class="block"></deposit-form>
+      </aside>
+    </div>
+  </section>
+
+  <script>
+    import { connectWallet, depositToRewardPool, readWallet, baseUnitsToAnim, shortAddr } from "../lib/wallet";
+    import { academyApi } from "../lib/api";
+
+    declare const __REWARD_POOL_ADDR__: string;
+
+    class PoolSummary extends HTMLElement {
+      async connectedCallback() {
+        this.innerHTML = `<div class="text-sm text-ink-300">Loading…</div>`;
+        try {
+          const status = await academyApi.getPoolStatus();
+          this.innerHTML = `
+            <div class="grid sm:grid-cols-3 gap-4">
+              <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                <div class="text-[10px] uppercase tracking-wider text-ink-300 font-semibold">Balance</div>
+                <div class="mt-1 text-3xl font-mono font-semibold text-amber-400">${baseUnitsToAnim(status.balanceBaseUnits)}</div>
+                <div class="text-xs text-ink-300 mt-1">ANIMICA available</div>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                <div class="text-[10px] uppercase tracking-wider text-ink-300 font-semibold">Paid out</div>
+                <div class="mt-1 text-3xl font-mono font-semibold text-teal-400">${baseUnitsToAnim(status.paidOutBaseUnits)}</div>
+                <div class="text-xs text-ink-300 mt-1">to learners</div>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                <div class="text-[10px] uppercase tracking-wider text-ink-300 font-semibold">Contributors</div>
+                <div class="mt-1 text-3xl font-mono font-semibold">${status.contributors}</div>
+                <div class="text-xs text-ink-300 mt-1">unique wallets</div>
+              </div>
+            </div>
+            <div class="mt-4 text-xs text-ink-300">
+              Pool address: <a class="font-mono text-amber-400 hover:underline" href="https://explorer.animica.org/address/${status.poolAddress}" target="_blank" rel="noopener">${shortAddr(status.poolAddress, 14)}</a>
+            </div>
+          `;
+        } catch (e) {
+          this.innerHTML = `<div class="text-sm text-ink-300">Pool offline (${(e as Error).message}).</div>`;
+        }
+      }
+    }
+    if (!customElements.get("pool-summary")) customElements.define("pool-summary", PoolSummary);
+
+    class PoolContributors extends HTMLElement {
+      async connectedCallback() {
+        try {
+          const status = await academyApi.getPoolStatus();
+          this.innerHTML = `
+            <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-sm text-ink-300">
+              ${status.contributors} contributors have deposited into the pool.
+              The full leaderboard is available via the explorer; this site only
+              shows the totals to keep this page snappy.
+              <a class="block mt-3 text-amber-400 hover:underline" href="https://explorer.animica.org/address/${status.poolAddress}" target="_blank" rel="noopener">
+                View pool address on explorer →
+              </a>
+            </div>
+          `;
+        } catch {
+          this.innerHTML = "";
+        }
+      }
+    }
+    if (!customElements.get("pool-contributors")) customElements.define("pool-contributors", PoolContributors);
+
+    class DepositForm extends HTMLElement {
+      async connectedCallback() {
+        const poolAddr = __REWARD_POOL_ADDR__;
+        this.innerHTML = `
+          <label class="text-xs uppercase tracking-wider text-ink-300 font-semibold">Amount (ANIMICA)</label>
+          <input id="dep-amt" type="text" inputmode="decimal" placeholder="50" class="mt-1 w-full rounded-lg bg-ink-950 border border-white/10 px-3 py-2 text-lg font-mono focus:border-amber-400 outline-none" />
+          <label class="block mt-3 text-xs uppercase tracking-wider text-ink-300 font-semibold">Memo (optional)</label>
+          <input id="dep-memo" type="text" maxlength="120" placeholder="from <name> with love" class="mt-1 w-full rounded-lg bg-ink-950 border border-white/10 px-3 py-2 text-sm focus:border-amber-400 outline-none" />
+          <button id="dep-go" class="mt-4 w-full rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-ink-700 text-ink-950 font-semibold px-4 py-3 transition">Deposit</button>
+          <div id="dep-result" class="mt-3 text-xs"></div>
+          <div class="text-[11px] text-ink-300 mt-4 font-mono break-all">→ ${poolAddr}</div>
+        `;
+
+        const btn = this.querySelector<HTMLButtonElement>("#dep-go")!;
+        const amt = this.querySelector<HTMLInputElement>("#dep-amt")!;
+        const memo = this.querySelector<HTMLInputElement>("#dep-memo")!;
+        const out = this.querySelector<HTMLElement>("#dep-result")!;
+
+        btn.addEventListener("click", async () => {
+          out.textContent = "";
+          btn.disabled = true;
+          btn.textContent = "Sending…";
+          try {
+            const state = await readWallet();
+            const address = state.address ?? (await connectWallet()).address;
+            const result = await depositToRewardPool({
+              poolAddr,
+              amountAnim: amt.value,
+              memo: memo.value || undefined,
+            });
+            try {
+              await academyApi.recordDeposit({
+                address,
+                txHash: result.txHash,
+                amountAnim: amt.value,
+              });
+            } catch {
+              /* leaderboard reconciles from chain anyway */
+            }
+            out.innerHTML = `<span class="text-amber-300">Sent ${amt.value} ANIMICA</span><br/><a class="font-mono underline break-all" href="https://explorer.animica.org/tx/${result.txHash}" target="_blank" rel="noopener">${result.txHash.slice(0, 20)}…</a>`;
+            btn.textContent = "Deposited ✓";
+            setTimeout(() => {
+              btn.textContent = "Deposit";
+              btn.disabled = false;
+              amt.value = "";
+              memo.value = "";
+            }, 4000);
+          } catch (e) {
+            out.textContent = (e as Error).message;
+            btn.textContent = "Deposit";
+            btn.disabled = false;
+          }
+        });
+      }
+    }
+    if (!customElements.get("deposit-form")) customElements.define("deposit-form", DepositForm);
+  </script>
+</BaseLayout>

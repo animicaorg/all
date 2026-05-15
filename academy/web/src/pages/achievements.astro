@@ -1,0 +1,82 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Achievements — Animica Academy"
+  description="Your earned tutorial badges and track completions. Connect your wallet to load."
+>
+  <section class="max-w-7xl mx-auto px-4 py-12">
+    <h1 class="text-3xl font-semibold tracking-tight mb-2">Achievements</h1>
+    <p class="text-ink-300 max-w-2xl mb-8">
+      Badges are awarded to your wallet address. Track-completion badges also
+      release a bonus payout from the reward pool.
+    </p>
+    <achievements-grid class="block"></achievements-grid>
+  </section>
+
+  <script>
+    import { readWallet, connectWallet } from "../lib/wallet";
+    import { academyApi } from "../lib/api";
+
+    class AchievementsGrid extends HTMLElement {
+      async connectedCallback() {
+        this.render();
+        document.addEventListener("animica:wallet-connected", () => this.render());
+      }
+
+      async render() {
+        let { address } = await readWallet();
+        if (!address) {
+          this.innerHTML = `
+            <div class="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-6 text-center">
+              <p class="text-sm text-ink-200 mb-3">Connect your wallet to see your badges.</p>
+              <button id="ach-connect" class="rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-2.5 transition">Connect wallet</button>
+            </div>
+          `;
+          this.querySelector("#ach-connect")?.addEventListener("click", async () => {
+            try {
+              await connectWallet();
+              this.render();
+            } catch (e) {
+              alert((e as Error).message);
+            }
+          });
+          return;
+        }
+
+        this.innerHTML = `<div class="text-sm text-ink-300">Loading achievements…</div>`;
+        try {
+          const { badges } = await academyApi.getAchievements(address);
+          if (badges.length === 0) {
+            this.innerHTML = `
+              <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+                <p class="text-sm text-ink-200">No badges yet — complete a tutorial to earn your first.</p>
+                <a class="mt-3 inline-block text-amber-400 hover:underline text-sm" href="/tutorials">Browse tutorials →</a>
+              </div>
+            `;
+            return;
+          }
+          const cards = badges.map(b => {
+            const earned = b.awardedAt !== null;
+            return `
+              <div class="rounded-2xl border ${earned ? "border-amber-400/40 bg-amber-500/5" : "border-white/10 bg-white/[0.03]"} p-5">
+                <div class="text-3xl ${earned ? "" : "opacity-30 grayscale"}">${earned ? "🏆" : "🔒"}</div>
+                <h3 class="mt-3 font-semibold ${earned ? "text-amber-300" : ""}">${b.title}</h3>
+                <p class="mt-1 text-xs text-ink-300">${b.description}</p>
+                <div class="mt-3 flex items-baseline justify-between text-xs">
+                  <span class="font-mono ${earned ? "text-amber-400" : "text-ink-300"}">+${b.rewardAnim} ANIMICA</span>
+                  <span class="text-ink-300">${earned ? new Date(b.awardedAt!).toLocaleDateString() : "locked"}</span>
+                </div>
+              </div>
+            `;
+          }).join("");
+          this.innerHTML = `<div class="grid sm:grid-cols-2 md:grid-cols-3 gap-4">${cards}</div>`;
+        } catch (e) {
+          this.innerHTML = `<div class="text-sm text-red-300">Failed to load: ${(e as Error).message}</div>`;
+        }
+      }
+    }
+    if (!customElements.get("achievements-grid")) customElements.define("achievements-grid", AchievementsGrid);
+  </script>
+</BaseLayout>

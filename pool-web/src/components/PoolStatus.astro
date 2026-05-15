@@ -1,0 +1,69 @@
+---
+// Live pool status component. Fetches host/port + sync state from the
+// mining API and displays them prominently.
+---
+<section class="bg-gradient-to-br from-ink-800 to-ink-900 border border-white/10 rounded-2xl p-6 md:p-8 shadow-xl">
+  <header class="flex flex-wrap items-baseline justify-between gap-3 mb-6">
+    <h2 class="text-2xl font-semibold tracking-tight">Pool Status</h2>
+    <span id="status-chip"
+      class="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 text-emerald-300 border border-emerald-400/30 text-xs px-3 py-1">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span>checking…</span>
+    </span>
+  </header>
+
+  <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <dt class="text-xs uppercase tracking-wide text-ink-300">Stratum host</dt>
+      <dd id="stratum-host" class="mt-2 font-mono text-amber-400 break-all">…</dd>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <dt class="text-xs uppercase tracking-wide text-ink-300">Stratum port</dt>
+      <dd id="stratum-port" class="mt-2 font-mono text-amber-400">…</dd>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <dt class="text-xs uppercase tracking-wide text-ink-300">Connected miners</dt>
+      <dd id="miner-count" class="mt-2 font-mono text-ink-50">…</dd>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <dt class="text-xs uppercase tracking-wide text-ink-300">Network</dt>
+      <dd id="network" class="mt-2 font-mono text-ink-50">…</dd>
+    </div>
+  </dl>
+</section>
+
+<script is:inline define:vars={{
+  miningApi: typeof __MINING_API__ !== 'undefined' ? __MINING_API__ : 'https://api.pool.animica.org',
+  poolUrl:   typeof __POOL_URL__   !== 'undefined' ? __POOL_URL__   : 'stratum+tcp://pool.animica.org:5333',
+}}>
+  (async () => {
+    const chip      = document.getElementById('status-chip');
+    const setText   = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v); };
+    const setChip   = (label, cls) => {
+      if (!chip) return;
+      chip.className = `inline-flex items-center gap-2 rounded-full text-xs px-3 py-1 border ${cls}`;
+      chip.textContent = label;
+    };
+    // Fall back to static config when API is unreachable.
+    const parsed = poolUrl.replace(/^stratum\+tcp:\/\//, '').split(':');
+    setText('stratum-host', parsed[0] || '—');
+    setText('stratum-port', parsed[1] || '—');
+
+    try {
+      const r = await fetch(`${miningApi}/v1/pool/status`, { headers: { accept: 'application/json' } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (j.host) setText('stratum-host', j.host);
+      if (j.port) setText('stratum-port', String(j.port));
+      if (typeof j.connected_miners === 'number') setText('miner-count', j.connected_miners);
+      if (j.network) setText('network', j.network);
+      setChip(j.synced ? 'live · synced' : 'live · syncing',
+        j.synced
+          ? 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30'
+          : 'bg-amber-400/10 text-amber-300 border-amber-400/30');
+    } catch (err) {
+      setChip('offline', 'bg-rose-400/10 text-rose-300 border-rose-400/30');
+      console.warn('[pool-web] status fetch failed:', err);
+    }
+  })();
+</script>

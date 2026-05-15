@@ -1,0 +1,226 @@
+# Incident replay packs. Each pack is derived from a real Animica
+# operational failure mode (or close-to-real) and is used to:
+#   1. seed SFT examples in build_datasets.py
+#   2. produce eval tasks in the eval split
+#   3. serve as benchmark prompts in run_benchmark.py
+#
+# Pack schema:
+#   id          short slug
+#   title       one-line description
+#   tags        list of tags consumed by experts.yaml / retrieval boosting
+#   context     short markdown describing the situation
+#   prompt      the user-facing prompt fed to the model
+#   gold        canonical expected response (used for exact-match scoring)
+#   gold_view   which view (planning.yaml) the gold response follows
+#   citations   list of file path globs the gold answer cites
+#   risks       list of high-risk traps to watch for in critique
+
+packs:
+  - id: "npm_publish_mistake"
+    title: "Operator accidentally published a broken npm package version."
+    tags: ["docker_ops", "operator_repair"]
+    context: |
+      An operator ran `npm publish` from `packages/animica-node` after a
+      partial build and the published 0.1.x tarball is missing the dist/
+      directory. Downstream `npm install animica` users now see
+      "[animica] cannot find 'animica-node'".
+    prompt: |
+      I shipped a broken 0.1.x animica npm package; consumers report
+      "[animica] cannot find 'animica-node'". What do I do to unblock
+      everyone fastest without forcing a major version bump?
+    gold_view: "operator_command_view"
+    gold: |
+      Commands:
+      ```bash
+      # 1. Rebuild dist/ from a clean checkout
+      cd packages/animica-node && rm -rf dist && pnpm install && pnpm build
+      # 2. Bump the patch version
+      pnpm version patch
+      # 3. Publish the corrected tarball
+      pnpm publish
+      ```
+      Preconditions: clean tree on the publish branch; pnpm logged in to npm.
+      Verification: `npm view animica-node@<new-version> dist.tarball` resolves,
+      and `npm install animica@<corresponding-bundle>` succeeds in a fresh dir.
+    citations:
+      - "packages/animica-node/**"
+      - "package.json"
+    risks:
+      - "Recommending `npm publish --force` (does not exist in npm)."
+      - "Recommending `git push --force` to main."
+
+  - id: "runtime_manifest_mismatch"
+    title: "Managed runtime install ends up with a stale current.json."
+    tags: ["docker_ops", "operator_repair"]
+    context: |
+      `animica install-runtime` succeeded for stable-0.1.11-linux-x64 but
+      `animica runtime status` still shows 0.1.3 active and `animica start`
+      loads the older Python entrypoint.
+    prompt: |
+      After install-runtime my runtime status still shows the old version.
+      How do I make it actually switch and verify the swap worked?
+    gold_view: "operator_command_view"
+    gold: |
+      Commands:
+      ```bash
+      cat ~/.animica/runtime/current.json
+      animica install-runtime --force --channel stable
+      animica runtime repair
+      animica runtime status
+      ```
+      Preconditions: ~/.animica/runtime writable; network reachable.
+      Verification: current.json `active.version` equals the latest installed
+      version; `animica --version` matches.
+    citations:
+      - "packages/animica-node/src/runtime-manager.ts"
+      - "packages/animica-node/dist/backend.js"
+
+  - id: "container_name_conflict"
+    title: "animica node up fails because an existing container holds the port."
+    tags: ["docker_ops"]
+    context: |
+      Reusing a host that previously ran the same compose stack: the new
+      `animica node up` fails with "container name already in use" or
+      "port 8545 already in use".
+    prompt: |
+      My second `animica node up` errors with the RPC port already in use,
+      bound by docker-pr. What's the canonical recovery?
+    gold_view: "operator_command_view"
+    gold: |
+      Commands:
+      ```bash
+      animica node down --volumes
+      ss -ltnp | grep 8545
+      docker ps --format '{{.Names}} {{.Ports}}' | grep 8545
+      docker rm -f $(docker ps -aq -f name=animica-mainnet-node)
+      animica node up
+      ```
+      Preconditions: docker daemon running; no concurrent operator on host.
+      Verification: `animica status` shows the new container's PID and RPC port.
+
+  - id: "no_gpu_strict_failure"
+    title: "Operator tries to run full-mode training on a CPU-only host."
+    tags: ["ai_chat", "operator_repair"]
+    context: |
+      FLAGSHIP_MODE=full bash ai/flagship_agent/scripts/train_flagship_agent.sh
+      on a host without CUDA. The pipeline must refuse with a clear message
+      and instructions for either getting a GPU or opting into CPU real mode.
+    prompt: |
+      FLAGSHIP_MODE=full failed with "no accelerator available". I only have
+      CPUs. What are my options?
+    gold_view: "operator_command_view"
+    gold: |
+      Commands:
+      ```bash
+      # Option A: explicit opt-in to CPU real training (slow but real).
+      FLAGSHIP_MODE=full FLAGSHIP_ALLOW_CPU_REAL=1 \
+        bash ai/flagship_agent/scripts/train_flagship_agent.sh
+
+      # Option B: lite mode (sanity smoke; not a real model).
+      FLAGSHIP_MODE=lite \
+        bash ai/flagship_agent/scripts/train_flagship_agent.sh
+
+      # Option C: simulate only (no compute).
+      FLAGSHIP_MODE=simulate \
+        bash ai/flagship_agent/scripts/train_flagship_agent.sh
+      ```
+      Verification: backend.json shows `effective_mode` equals the requested
+      mode and `available_for_real_inference` is true only for option A.
+    risks:
+      - "Pretending lite or simulate produced a real bundle."
+
+  - id: "node_genesis_only"
+    title: "Node starts but is stuck at genesis with peers connected."
+    tags: ["sync", "p2p"]
+    context: |
+      Fresh node with peers, but height stays at 0. Likely culprits:
+      bootstrap_url wrong, chain ID mismatch, or snapshot discovery failing.
+    prompt: |
+      Fresh mainnet node, 5 peers, height stuck at 0 for 10 minutes. What's
+      wrong?
+    gold_view: "diagnose_view"
+    gold: |
+      Symptoms: height = 0 with peers connected; no chain progress.
+      Likely cause: snapshot discovery failed or chain ID mismatch with peers.
+      Evidence cited: `animica sync status`, `animica peers`, `animica config show`.
+      Next steps: confirm chain ID via `animica chain head`; if mismatch,
+      re-set the network and restart; if matched, retry snapshot via
+      `animica snapshot discover --retry-forever`.
+
+  - id: "peer_add_object_bytes"
+    title: "Peer add API returns objects instead of byte strings (post-upgrade)."
+    tags: ["p2p"]
+    context: |
+      A peer-add RPC returns a list of peer objects after a transport upgrade
+      but the consumer expects bytestrings, producing a TypeError downstream.
+    prompt: |
+      animica peers list returned a TypeError today after I upgraded the npm
+      package. The peer entries look like dicts now, not strings. Patch it.
+    gold_view: "patch_view"
+    gold: |
+      Patch:
+      ```diff
+      --- a/python/animica/cli/peer.py
+      +++ b/python/animica/cli/peer.py
+      @@
+      -    for p in peers:
+      -        print(p.decode())
+      +    for p in peers:
+      +        if isinstance(p, (bytes, bytearray)):
+      +            print(p.decode())
+      +        elif isinstance(p, dict):
+      +            print(p.get("addr") or p.get("id") or repr(p))
+      +        else:
+      +            print(str(p))
+      ```
+      Rationale: peer entries are now dicts post-upgrade; accept both shapes
+      for forward+backward compatibility.
+
+  - id: "p2p_connected_no_progress"
+    title: "P2P connected but block_height not advancing."
+    tags: ["sync", "p2p"]
+    context: |
+      Node connected to peers, mempool active, but block_height ticking very
+      slowly or not at all.
+    prompt: |
+      My node sees mempool activity and 6 peers but block_height advances by
+      1 every ~5 minutes instead of every ~10 seconds. Diagnose.
+    gold_view: "diagnose_view"
+    gold: |
+      Symptoms: chain progressing 50x slower than expected; mempool not stalled.
+      Likely cause: difficulty adjustment misconfigured (max_block_time too
+      high), or miner reward distribution path failing intermittently.
+      Evidence cited: `animica chain head`, `animica mining status`, recent
+      block timestamps from `animica chain blocks --last 50`.
+      Next steps: inspect MAX_BLOCK_TIME and MIN_BLOCK_SPACING in chain config;
+      compare against recent block timestamps; check miner logs.
+
+  - id: "local_provider_fallback_confusion"
+    title: "User thinks they're using distributed when actually on local fallback."
+    tags: ["ai_chat"]
+    context: |
+      animica chat silently fell back to local-flagship because the wallet
+      ran out of funds mid-session. The user keeps getting answers but they're
+      now from the local bundle, not the distributed AICF model.
+    prompt: |
+      animica chat is giving me much shorter, less detailed answers than
+      yesterday and seems to ignore newer features. What's happening?
+    gold_view: "diagnose_view"
+    gold: |
+      Symptoms: regression in answer quality between sessions.
+      Likely cause: the active provider silently switched from
+      distributed-aicf to local-flagship (lower-tier model + older
+      training data) because the wallet balance fell below the per-turn
+      reserve.
+      Evidence cited: `animica chat /provider` output; wallet balance via
+      `animica wallet balance`; agent_runtime telemetry log.
+      Next steps: top up the wallet, then `/provider distributed-aicf` to
+      switch back. Set ANIMICA_CHAT_REQUIRE_DISTRIBUTED=1 if silent
+      fallback isn't acceptable.
+
+# Synthesis quota for incident packs.
+synthesis:
+  # How many SFT examples to generate per pack (across views).
+  examples_per_pack: 6
+  # Fraction of packs reserved for eval; the rest go to SFT.
+  eval_holdout_fraction: 0.30

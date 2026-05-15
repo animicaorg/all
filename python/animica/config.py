@@ -262,6 +262,65 @@ def _env_bool(env_var: str, default: bool = False) -> bool:
     return parse_env_bool(value, default, name=env_var, log=logger)
 
 
+def _resolve_resource_root() -> Path:
+    """Resolve the directory containing ``ops/`` and ``core/genesis/``.
+
+    Resolution order:
+
+    1. ``$ANIMICA_REPO_ROOT`` if set.
+    2. ``Path(__file__).resolve().parents[2]`` — works for source-tree checkouts
+       and for the bundled managed runtime.
+
+    The path is returned without an existence check so callers can produce a
+    consistent "file not found" error with the offending path; downstream
+    helpers (e.g. ``_get_compose_file``) surface the actionable hint.
+    """
+    override = os.environ.get("ANIMICA_REPO_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_compose_file(network: str, source_path: Path) -> Path:
+    """Resolve the compose file path for ``network``.
+
+    Resolution order:
+
+    1. ``$ANIMICA_COMPOSE_FILE`` if set — operator override, used as-is.
+    2. The source-tree path under ``<repo>/ops/docker/``, unless
+       ``$ANIMICA_USE_BUNDLED_COMPOSE=1`` forces the wheel-bundled variant.
+    3. The wheel-bundled standalone compose file at
+       ``<animica_pkg>/_data/ops/docker/standalone/docker-compose.<network>.yml``.
+       This is what makes a plain ``pip install animica`` + ``animica node up``
+       work without a source checkout on disk — the standalone variants use
+       ``image:`` (registry pull) instead of ``build:`` (source context).
+
+    Returns the first existing path; otherwise returns the source-tree path
+    so the caller's "file not found" message remains actionable.
+    """
+    override = os.environ.get("ANIMICA_COMPOSE_FILE")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    use_bundled = os.environ.get("ANIMICA_USE_BUNDLED_COMPOSE") == "1"
+
+    if not use_bundled and source_path.exists():
+        return source_path
+
+    # Look for the wheel-bundled standalone compose file.
+    try:
+        anchor = Path(__file__).resolve().parent   # <animica_pkg>/
+        bundled = (anchor / "_data" / "ops" / "docker" / "standalone"
+                   / f"docker-compose.{network}.yml")
+        if bundled.exists():
+            return bundled
+    except Exception:    # noqa: BLE001 — defensive; fall through
+        pass
+
+    # Return the source path so the "not found" error message stays helpful.
+    return source_path
+
+
 def get_network_defaults(network: str) -> dict[str, any]:
     """
     Get default configuration values for a specific network.
@@ -281,9 +340,8 @@ def get_network_defaults(network: str) -> dict[str, any]:
     - devnet: Uses ops/docker/docker-compose.devnet.yml (full stack with monitoring)
     - local-devnet: Uses tests/devnet/docker-compose.yml (minimal multi-node setup)
     """
-    # Get repository root (3 levels up from this file)
-    repo_root = Path(__file__).resolve().parents[2]
-    
+    repo_root = _resolve_resource_root()
+
     network_configs = {
         "mainnet": {
             "chain_id": 1,
@@ -292,7 +350,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "rpc_port": 8545,
             "p2p_port": 30333,
             "metrics_port": 9000,
-            "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
+            "compose_file": _resolve_compose_file(
+                "mainnet",
+                repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
+            ),
             "genesis_path": str(repo_root / "core" / "genesis" / "mainnet.json"),
             "data_dir": _network_data_dir(1),
             "db_name": "animica.db",
@@ -304,7 +365,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "rpc_port": 18546,
             "p2p_port": 31334,
             "metrics_port": 19000,
-            "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
+            "compose_file": _resolve_compose_file(
+                "testnet",
+                repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
+            ),
             "genesis_path": str(repo_root / "core" / "genesis" / "testnet.json"),
             "data_dir": _network_data_dir(2),
             "db_name": "animica.db",
@@ -316,7 +380,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "rpc_port": 28545,
             "p2p_port": 31335,
             "metrics_port": 29000,
-            "compose_file": repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
+            "compose_file": _resolve_compose_file(
+                "devnet",
+                repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
+            ),
             "genesis_path": str(repo_root / "core" / "genesis" / "devnet.json"),
             "data_dir": _network_data_dir(1337),
             "db_name": "animica.db",
