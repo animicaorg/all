@@ -1,6 +1,6 @@
 {
   "name": "@animica/agent-core",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Core library for the Animica Coding Agent: config, RPC, patches, repo and miner adapters.",
   "license": "Apache-2.0",
   "type": "module",

@@ -74,7 +74,7 @@ import {
   runNodeStatus,
 } from "./commands/node-passthrough.js";
 
-const VERSION = "0.1.10";
+const VERSION = "0.1.11";
 
 const HELP = `animica-agent ${VERSION} — Animica Coding Agent CLI
 

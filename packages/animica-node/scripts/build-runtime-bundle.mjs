@@ -116,12 +116,35 @@ mkdirSync(outDir, { recursive: true });
 
 const stage = join(tmpdir(), `animica-bundle-${randomBytes(6).toString("hex")}`);
 mkdirSync(stage, { recursive: true });
+
 process.stdout.write(`staging in ${stage}\n`);
 
 // Lay out the bundle.
 mkdirSync(join(stage, "bin"), { recursive: true });
 mkdirSync(join(stage, "share", "animica"), { recursive: true });
 mkdirSync(join(stage, "python"), { recursive: true });
+
+// Ensure ops/ is present in the bundle so the Python CLI can resolve compose
+// files. `animica/config.py::get_network_defaults` derives a `repo_root` via
+// `Path(__file__).resolve().parents[2]`, which inside the installed runtime is
+// the `share/` directory. Without `share/ops/docker/docker-compose.<net>.yml`,
+// `animica node up` exits immediately with "Docker Compose file not found"
+// and the network container (e.g. `animica-mainnet-node`) is never created.
+// We look for ops/ next to srcDir (i.e. <repo>/ops alongside <repo>/python).
+const candidateOpsDirs = [
+  resolve(srcDir, "..", "ops"),
+  join(process.cwd(), "ops"),
+  resolve(process.cwd(), "..", "..", "ops"),
+];
+const repoOps = candidateOpsDirs.find((p) => existsSync(p));
+if (repoOps) {
+  cpSync(repoOps, join(stage, "share", "ops"), { recursive: true });
+  process.stdout.write(`bundled ops/ from ${repoOps}\n`);
+} else {
+  process.stderr.write(
+    "warning: could not locate ops/ next to --src; the bundle will not include docker-compose files, and 'animica node up' will fail at runtime.\n",
+  );
+}
 
 // Copy the Python source into share/animica. The launcher puts both share/
 // and share/animica on PYTHONPATH so either a source root (animica/...) or an
