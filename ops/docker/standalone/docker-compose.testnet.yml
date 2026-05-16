@@ -7,7 +7,10 @@ networks:
     driver: bridge
 
 volumes:
+  # Match the source-tree compose's volume name so pip and source installs
+  # share data. CLI exports ANIMICA_NAMED_DATA_VOLUME with the genesis tag.
   node-data:
+    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_testnet_chain_2_data}"
   node-config:
 
 services:

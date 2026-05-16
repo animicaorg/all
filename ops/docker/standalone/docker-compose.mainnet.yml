@@ -21,7 +21,13 @@ networks:
     driver: bridge
 
 volumes:
+  # Use the same canonical name as ops/docker/docker-compose.mainnet.yml so a
+  # node started via `pip install animica` writes to the same docker volume
+  # as one started from a source-tree checkout. The CLI computes the genesis-
+  # tagged name (animica_mainnet_chain_1_<genesis_tag>_data) and exports it
+  # as ANIMICA_NAMED_DATA_VOLUME — both compose files honor it.
   node-data:
+    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_mainnet_chain_1_data}"
   node-config:
 
 services:
