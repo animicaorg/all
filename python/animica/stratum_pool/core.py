@@ -38,7 +38,7 @@ from mining.pow_validation import (derive_block_target_int as _pow_block_target_
                                    derive_share_threshold_micro as _pow_share_threshold_micro,
                                    evaluate_digest as _pow_evaluate_digest,
                                    normalize_share_ratio as _pow_normalize_share_ratio)
-from mining.share_submitter import JsonRpcClient, RpcError
+from mining.share_submitter import JsonRpcClient, RpcError, TransportError
 from mining.stratum_server import ShareValidator, StratumJob
 from mining.template_block import (build_submit_block_payload,
                                    hash_candidate_header,
@@ -433,13 +433,27 @@ class MiningCoreAdapter:
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._rpc = JsonRpcClient(rpc_url, timeout_s=rpc_timeout_s)
+        self._rpc_timeout_s = float(rpc_timeout_s)
         self._validator = ShareValidator()
         self._chain_id = chain_id
         self._pool_address = pool_address
         self._log = logger or logging.getLogger("animica.stratum_pool.core")
 
     async def _rpc_call(self, method: str, params: Any) -> Any:
-        return await asyncio.to_thread(self._rpc.call, method, params)
+        # Hard outer cap: httpx has its own timeout, but it runs inside a
+        # worker thread. If the default thread pool is saturated, that timeout
+        # never fires from asyncio's point of view and the await hangs. Wrap
+        # with wait_for so a stuck thread cannot stall the poll loop forever.
+        outer_timeout = self._rpc_timeout_s + 2.0
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._rpc.call, method, params),
+                timeout=outer_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TransportError(
+                f"rpc call exceeded {outer_timeout:.1f}s outer timeout: {method}"
+            ) from exc
 
     @property
     def chain_id(self) -> int:

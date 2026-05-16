@@ -53,8 +53,8 @@ const tiers = [
       Miners advertise which tiers they can serve based on their hardware. The
       AICF router picks the smallest tier that satisfies the user's request,
       keeping latency low and the network balanced. Run
-      <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner aicf-worker hardware</code>
-      to see what your machine qualifies for.
+      <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner setup</code>
+      to see what your machine qualifies for and install the matching bundle.
     </p>
 
     <div class="mt-10 grid gap-6 md:grid-cols-2">
@@ -88,7 +88,7 @@ const tiers = [
       <h3 class="text-lg font-semibold tracking-tight">Want to run a custom tier?</h3>
       <p class="mt-2 text-sm text-ink-200">
         Override the auto-detected eligibility with
-        <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner aicf-worker start --tiers tiny,small</code>.
+        <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner setup --tiers tiny,small</code>.
         Tier names come from
         <a href="https://github.com/animicaorg/all/blob/main/ai/configs/model_catalog.yaml" class="underline">ai/configs/model_catalog.yaml</a>.
       </p>

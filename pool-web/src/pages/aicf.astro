@@ -21,11 +21,18 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
         <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">1. Register</div>
         <h3 class="text-lg font-semibold">Auto-detect hardware</h3>
-        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner aicf-worker start \
-  --address anim1...</code></pre>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner setup
+animica miner mine-blocks \
+  --address anim1... \
+  --pool-stratum stratum+tcp://pool.animica.org:5333 \
+  --aicf-endpoint https://rpc.pool.animica.org/aicf \
+  --count 0</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          Detects GPU/CPU/VRAM/RAM, advertises eligible tiers, registers with
-          AICF. Idempotent — restart any time.
+          <code class="font-mono">setup</code> detects GPU/CPU/VRAM/RAM and
+          installs the right model bundle.
+          <code class="font-mono">mine-blocks</code> registers with AICF and
+          serves jobs alongside PoW &mdash; no local full node required when
+          <code class="font-mono">--aicf-endpoint</code> is set.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
@@ -61,13 +68,14 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       <div class="grid sm:grid-cols-2 gap-4 mt-6">
         <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <h3 class="font-semibold mb-2">Pull a bundle</h3>
-          <pre class="bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner aicf-worker pull \
-  bafy... \
-  --tier flagship \
-  --sha256 abc123...</code></pre>
+          <pre class="bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner setup --tiers flagship</code></pre>
           <p class="mt-3 text-sm text-ink-300">
-            Tries each configured IPFS gateway in order; verifies sha256
-            before installing into <code class="font-mono">~/.animica/models/</code>.
+            Resolves the published bundle for each tier and installs into
+            <code class="font-mono">~/.animica/models/</code> via the
+            configured IPFS gateways. Verifies sha256 before extracting.
+            Pin a specific CID with
+            <code class="font-mono">ANIMICA_AICF_TIER_FLAGSHIP_CID</code> or
+            a <code class="font-mono">--bundles-file</code>.
           </p>
         </div>
         <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">

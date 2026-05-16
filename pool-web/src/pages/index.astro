@@ -44,37 +44,42 @@ import PoolStatus from "../components/PoolStatus.astro";
   <section id="connect" class="max-w-7xl mx-auto px-4 py-16">
     <h2 class="text-3xl font-semibold tracking-tight mb-2">Connect in three commands</h2>
     <p class="text-ink-300 mb-8 max-w-2xl">
-      The Animica python package ships the pool client, the AICF worker, and
-      the hardware detector. Install it once, connect once, run forever.
+      One command (<code class="font-mono text-amber-400">animica miner mine-blocks</code>)
+      runs both PoW and the AICF inference worker side-by-side. No local full
+      node required &mdash; point AICF at any reachable endpoint with
+      <code class="font-mono">--aicf-endpoint</code>.
     </p>
     <div class="grid lg:grid-cols-3 gap-4">
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
         <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 1 — install</div>
         <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>pip install animica</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          Bundles the chain CLI, the AICF chat client, and the AICF worker — no
-          extra installs needed.
+          Bundles the chain CLI, the AI compute worker, and the hardware
+          detector. Nothing else to install.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 2 — connect</div>
-        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica miner pool-client connect \
-  stratum+tcp://pool.animica.org:5333 \
-  --wallet anim1...</code></pre>
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 2 — install AI model</div>
+        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica miner setup</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          Records the pool address; hardware auto-detection runs and prints your
-          eligible tiers.
+          Detects CPU/RAM/GPU, picks the tier(s) your machine can serve, and
+          downloads the matching model bundles into
+          <code class="font-mono">~/.animica/models/</code>. Re-run any time
+          you change hardware.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 3 — start</div>
-        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code># PoW miner (existing flow)
-animica miner cpu --address anim1...
-
-# In parallel: AICF compute worker
-animica miner aicf-worker start --address anim1...</code></pre>
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 3 — start mining</div>
+        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica miner mine-blocks \
+  --address anim1... \
+  --pool-stratum stratum+tcp://pool.animica.org:5333 \
+  --aicf-endpoint https://rpc.pool.animica.org/aicf \
+  --count 0</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          Both can run on the same host. Opt out of AICF with <code class="font-mono">--no-aicf</code>.
+          PoW + AICF both run from this one command. AICF is on by default;
+          opt out with <code class="font-mono">--no-aicf</code>.
+          <code class="font-mono">--aicf-endpoint</code> removes the need for a
+          local Animica node.
         </p>
       </div>
     </div>
@@ -85,10 +90,11 @@ animica miner aicf-worker start --address anim1...</code></pre>
       <div>
         <h2 class="text-2xl font-semibold tracking-tight mb-3">Hardware-aware tier selection</h2>
         <p class="text-ink-300 mb-4">
-          Run <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner aicf-worker hardware</code>
-          to see which model tiers your machine is eligible to serve. The pool
-          routes AICF jobs to the smallest tier that satisfies the request —
-          and your machine earns from whatever it can serve.
+          Run <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner setup</code>
+          to detect your hardware and pre-install the model tier(s) you're
+          eligible to serve. The pool routes AICF jobs to the smallest tier
+          that satisfies the request — your machine earns from whatever it
+          can serve.
         </p>
         <ul class="space-y-2 text-sm text-ink-200">
           <li class="flex items-center gap-2"><span class="text-amber-400">●</span> Auto-detects CPU, RAM, GPU VRAM</li>
@@ -97,7 +103,7 @@ animica miner aicf-worker start --address anim1...</code></pre>
         </ul>
       </div>
       <div class="rounded-2xl border border-white/10 bg-ink-950 p-6">
-        <pre class="text-sm font-mono text-ink-100 overflow-x-auto"><code><span class="text-amber-400">$</span> animica miner aicf-worker hardware
+        <pre class="text-sm font-mono text-ink-100 overflow-x-auto"><code><span class="text-amber-400">$</span> animica miner setup
 <span class="text-ink-300">{
   "os": "Linux",
   "arch": "x86_64",

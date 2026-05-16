@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -60,6 +63,66 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     @app.get("/healthz")
     async def health():
         return metrics.health()
+
+    # --- pool-web (pool.animica.org) compatibility surface ----------------
+    # The static site at /pool-web fetches /v1/pool/status and /v1/pool/stats
+    # against this API. Keep these endpoints stable and CORS-friendly.
+
+    def _iso_to_epoch(ts_value: Any) -> int:
+        if not ts_value:
+            return 0
+        if isinstance(ts_value, (int, float)):
+            return int(ts_value)
+        if isinstance(ts_value, str):
+            normalized = ts_value.replace("Z", "+00:00")
+            try:
+                return int(datetime.fromisoformat(normalized).timestamp())
+            except ValueError:
+                return 0
+        return 0
+
+    @app.get("/v1/pool/status")
+    async def pool_status_v1(request: Request):
+        resolved = portal.resolve(request)
+        summary = metrics.pool_summary()
+        health_payload = metrics.health()
+        return {
+            "host": resolved.public_host,
+            "port": int(resolved.public_port),
+            "stratum_url": resolved.stratum_url,
+            "connected_miners": int(summary.get("num_miners") or 0),
+            "network": resolved.network or str(summary.get("network") or ""),
+            "synced": bool(
+                resolved.pool_enabled
+                and str(health_payload.get("status") or "").lower() == "ok"
+            ),
+        }
+
+    @app.get("/v1/pool/stats")
+    async def pool_stats_v1(limit: int = Query(8, ge=1, le=50)):
+        summary = metrics.pool_summary()
+        blocks_payload = metrics.recent_blocks()
+        recent: list[dict[str, Any]] = []
+        for blk in (blocks_payload.get("items") or [])[:limit]:
+            recent.append(
+                {
+                    "height": blk.get("height"),
+                    "ts": _iso_to_epoch(blk.get("timestamp")),
+                    "miner": blk.get("worker") or blk.get("address") or "",
+                    "reward": blk.get("reward"),
+                    "tx_count": blk.get("tx_count"),
+                }
+            )
+        return {
+            "hashrate": float(summary.get("pool_hashrate") or 0.0),
+            "hashrate_1m": float(summary.get("hashrate_1m") or 0.0),
+            "hashrate_15m": float(summary.get("hashrate_15m") or 0.0),
+            "hashrate_1h": float(summary.get("hashrate_1h") or 0.0),
+            "miners": int(summary.get("num_miners") or 0),
+            "blocks_found_total": int(summary.get("blocks_found_total") or 0),
+            "recent_blocks": recent,
+            "last_update": summary.get("last_update"),
+        }
 
     @app.get("/api/mining/config", name="mining_config")
     async def mining_config(request: Request):

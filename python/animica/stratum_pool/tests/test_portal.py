@@ -110,6 +110,34 @@ class DummyMetrics:
             "last_payout_error": None,
         }
 
+    def recent_blocks(self) -> dict[str, object]:
+        return {
+            "items": [
+                {
+                    "height": 321,
+                    "hash": "0xabc",
+                    "timestamp": "2026-04-07T12:00:00+00:00",
+                    "found_by_pool": True,
+                    "reward": "1000",
+                    "tx_count": 3,
+                    "worker": "rig-1",
+                    "address": "anim1foo",
+                },
+                {
+                    "height": 320,
+                    "hash": "0xabd",
+                    "timestamp": "2026-04-07T11:59:00+00:00",
+                    "found_by_pool": True,
+                    "reward": "1000",
+                    "tx_count": 1,
+                    "worker": "",
+                    "address": "anim1bar",
+                },
+            ],
+            "total": 2,
+            "blocks_found_total": 2,
+        }
+
 
 def test_resolve_public_config_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
@@ -262,6 +290,51 @@ async def test_api_mining_config_reports_both_mode_instructions(
         assert config_payload["pool_mode"] == "both"
         assert "pps" in config_payload["pool_mode_instructions"].lower()
         assert "solo" in config_payload["pool_mode_instructions"].lower()
+
+
+@pytest.mark.asyncio
+async def test_v1_pool_status_and_stats_for_pool_web(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANIMICA_MINING_DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("ANIMICA_PUBLIC_STRATUM_HOST", "pool.animica.test")
+    monkeypatch.setenv("ANIMICA_PUBLIC_STRATUM_PORT", "5333")
+    cfg = PoolConfig(
+        host="0.0.0.0",
+        port=3333,
+        api_host="0.0.0.0",
+        api_port=8550,
+        network="devnet",
+    )
+    app = create_app(DummyMetrics(cfg))
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://api.pool.animica.test"
+    ) as client:
+        status_res = await client.get("/v1/pool/status")
+        assert status_res.status_code == 200
+        status = status_res.json()
+        assert status["host"] == "pool.animica.test"
+        assert status["port"] == 5333
+        assert status["network"] == "devnet"
+        assert status["connected_miners"] == 3
+        assert status["synced"] is True
+        assert status["stratum_url"].startswith("stratum")
+
+        stats_res = await client.get("/v1/pool/stats", params={"limit": 1})
+        assert stats_res.status_code == 200
+        stats = stats_res.json()
+        assert stats["hashrate"] == 12.5
+        assert stats["miners"] == 3
+        assert len(stats["recent_blocks"]) == 1
+        block = stats["recent_blocks"][0]
+        assert block["height"] == 321
+        assert block["miner"] == "rig-1"
+        assert isinstance(block["ts"], int)
+        assert block["ts"] > 0
 
 
 def test_build_bundle_input_uses_placeholder_defaults() -> None:

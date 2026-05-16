@@ -247,6 +247,94 @@ def _fmt_hashrate(rate: float) -> str:
     return f"{rate:.0f} H/s"
 
 
+def _start_aicf_worker(address: str) -> tuple[Callable[[], None], dict]:
+    """Spawn the agent_runtime AICF worker in a background thread.
+
+    This is the real network-AICF compute path: the worker registers with the
+    AICF endpoint, advertises hardware-eligible tiers, claims inference jobs,
+    runs them against a locally installed model bundle, and submits results.
+
+    Returns ``(stop_fn, stats)``. ``stats["started"]`` indicates whether the
+    worker actually started — when False, the caller should print a hint
+    pointing at ``animica miner setup``.
+    """
+    stats: dict[str, object] = {
+        "started": False,
+        "tiers": [],
+        "endpoint": None,
+        "reason": None,
+    }
+
+    try:
+        from agent_runtime.aicf_worker import AICFWorker, is_disabled
+        from agent_runtime.config import load_config
+        from agent_runtime.errors import AgentRuntimeError
+    except Exception as exc:  # noqa: BLE001 — agent_runtime is optional
+        stats["reason"] = f"agent_runtime not installed: {exc}"
+        return (lambda: None), stats
+
+    if is_disabled():
+        stats["reason"] = "ANIMICA_DISABLE_AICF_WORKER=1"
+        return (lambda: None), stats
+
+    try:
+        cfg = load_config()
+        # Allow the miner to point at a *remote* AICF endpoint instead of a
+        # local node — that's the path that lets a miner serve AI requests
+        # without running a full Animica node locally.
+        override = (
+            os.environ.get("ANIMICA_AICF_ENDPOINT")
+            or os.environ.get("AICF_URL")
+        )
+        if override:
+            try:
+                network = os.environ.get("ANIMICA_NETWORK") or "mainnet"
+                cfg.integration["aicf"]["endpoint"][network] = override.strip()
+            except Exception:  # noqa: BLE001
+                pass
+        worker = AICFWorker(cfg=cfg, address=address)
+    except AgentRuntimeError as exc:
+        stats["reason"] = exc.message if hasattr(exc, "message") else str(exc)
+        return (lambda: None), stats
+    except Exception as exc:  # noqa: BLE001
+        stats["reason"] = f"failed to construct AICFWorker: {exc}"
+        return (lambda: None), stats
+
+    stats["started"] = True
+    stats["tiers"] = list(worker.tiers)
+    stats["endpoint"] = worker.endpoint
+
+    def _runner() -> None:
+        try:
+            worker.run()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            try:
+                worker.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    thread = threading.Thread(
+        target=_runner, name="animica.aicf_worker", daemon=True,
+    )
+    thread.start()
+
+    stopped = {"v": False}
+
+    def _stop() -> None:
+        if stopped["v"]:
+            return
+        stopped["v"] = True
+        try:
+            worker.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        thread.join(timeout=5.0)
+
+    return _stop, stats
+
+
 def _start_solo_useful_work() -> tuple[Callable[[], None], dict]:
     """Spawn AI/quantum/storage/VDF useful-work workers in their own
     asyncio loop running in a background thread, so solo mining keeps the
@@ -1513,6 +1601,208 @@ async def _run_pool_stratum_miner(
     return accepted_blocks
 
 
+@app.command("setup")
+def setup(
+    tiers: Optional[str] = typer.Option(
+        None,
+        "--tiers",
+        help=(
+            "Comma-separated tier ids to install (e.g. 'tiny,small'). "
+            "Default: install all tiers eligible for the detected hardware."
+        ),
+    ),
+    bundles_file: Optional[Path] = typer.Option(
+        None,
+        "--bundles-file",
+        help=(
+            "Path to a JSON file mapping tier -> {cid, sha256}. Default: "
+            "look at ~/.animica/aicf_bundles.json or env vars "
+            "ANIMICA_AICF_TIER_<TIER>_CID / _SHA256."
+        ),
+    ),
+    skip_download: bool = typer.Option(
+        False,
+        "--skip-download",
+        help="Detect hardware and prepare cache dirs but do not pull bundles.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a JSON report."),
+) -> None:
+    """Bootstrap this machine for Animica AI compute (AICF).
+
+    Runs four steps:
+
+      1. Detect hardware (CPU, RAM, GPUs) and pick eligible model tiers.
+      2. Prepare the on-disk model cache directory (``~/.animica/models``).
+      3. For each tier with a configured bundle CID, download the bundle
+         from the configured IPFS gateways into the cache.
+      4. Print a one-line "next step" pointing at ``animica miner mine-blocks``.
+
+    Tier → CID mapping is read in this order: ``--bundles-file``,
+    ``~/.animica/aicf_bundles.json``, then env vars
+    ``ANIMICA_AICF_TIER_<TIER>_CID`` (and optional ``_SHA256``). When no CID
+    is configured for a tier, the step is skipped with a hint — the worker
+    will still register and serve any tier that does have a local bundle.
+    """
+    try:
+        from agent_runtime.aicf_worker import pull_bundle, resolve_tiers
+        from agent_runtime.config import load_config
+        from agent_runtime.errors import AgentRuntimeError, BundleError
+        from agent_runtime.hardware import attach_eligible_tiers, detect_hardware
+    except Exception as exc:  # noqa: BLE001
+        typer.secho(
+            f"Error: agent_runtime is not installed ({exc}). "
+            "Install the full animica package: `pip install animica`.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    report: dict[str, object] = {
+        "hardware": None,
+        "eligible_tiers": [],
+        "tiers_requested": None,
+        "installed": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    cfg = load_config()
+    profile = detect_hardware()
+    attach_eligible_tiers(profile, dict(cfg.model_catalog))
+    report["hardware"] = profile.to_dict()
+    report["eligible_tiers"] = list(profile.eligible_tiers or [])
+
+    override = None
+    if tiers:
+        override = [t.strip() for t in tiers.split(",") if t.strip()]
+        report["tiers_requested"] = override
+    resolved_tiers = resolve_tiers(profile, dict(cfg.model_catalog), override=override)
+
+    cache_root_raw = (
+        cfg.integration.get("aicf", {}).get("miner_cache_dir")
+        or cfg.model_catalog["propagation"]["miner_cache_dir"]
+    )
+    cache_root = Path(str(cache_root_raw)).expanduser()
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    if not json_output:
+        typer.secho("=== Animica miner setup ===", fg=typer.colors.CYAN)
+        typer.echo(f"Detected: {profile.os}/{profile.arch}, "
+                   f"{profile.cpu_cores_logical} cores, "
+                   f"{profile.ram_gb:.1f} GB RAM, "
+                   f"accel={profile.accelerator_preferred}")
+        typer.echo(f"Eligible tiers: {', '.join(profile.eligible_tiers or ['(none)'])}")
+        typer.echo(f"Cache dir: {cache_root}")
+        typer.echo(f"Tiers to install: {', '.join(resolved_tiers)}")
+
+    # Load tier -> {cid, sha256} mapping.
+    bundles_map: dict[str, dict] = {}
+    candidate_paths: list[Path] = []
+    if bundles_file:
+        candidate_paths.append(bundles_file)
+    candidate_paths.append(Path("~/.animica/aicf_bundles.json").expanduser())
+    for path in candidate_paths:
+        try:
+            if path.is_file():
+                import json as _json
+                bundles_map = _json.loads(path.read_text(encoding="utf-8")) or {}
+                if not json_output:
+                    typer.echo(f"Loaded bundle map from {path}")
+                break
+        except Exception as exc:  # noqa: BLE001
+            report["errors"].append(f"could not read {path}: {exc}")
+
+    def _lookup_bundle(tier: str) -> Optional[dict]:
+        entry = bundles_map.get(tier)
+        if isinstance(entry, dict) and entry.get("cid"):
+            return entry
+        env_cid = os.environ.get(f"ANIMICA_AICF_TIER_{tier.upper()}_CID")
+        env_sha = os.environ.get(f"ANIMICA_AICF_TIER_{tier.upper()}_SHA256")
+        if env_cid:
+            return {"cid": env_cid, "sha256": env_sha}
+        return None
+
+    if skip_download:
+        report["skipped"] = list(resolved_tiers)
+        if not json_output:
+            typer.secho("--skip-download set; not pulling any bundles.",
+                        fg=typer.colors.YELLOW)
+    else:
+        for tier in resolved_tiers:
+            entry = _lookup_bundle(tier)
+            if not entry:
+                report["skipped"].append(tier)
+                if not json_output:
+                    typer.secho(
+                        f"  - tier {tier}: no bundle CID configured "
+                        f"(set ANIMICA_AICF_TIER_{tier.upper()}_CID or add "
+                        "an entry to ~/.animica/aicf_bundles.json).",
+                        fg=typer.colors.YELLOW,
+                    )
+                continue
+            cid = str(entry["cid"]).strip()
+            sha256 = entry.get("sha256")
+            if not json_output:
+                typer.secho(f"  - tier {tier}: pulling {cid[:14]}…",
+                            fg=typer.colors.CYAN)
+            try:
+                path = pull_bundle(cid, tier=tier, cfg=cfg,
+                                   verify_sha256=sha256)
+                report["installed"].append({"tier": tier, "path": str(path),
+                                              "cid": cid})
+                if not json_output:
+                    typer.secho(f"      installed at {path}",
+                                fg=typer.colors.GREEN)
+            except BundleError as exc:
+                report["errors"].append(
+                    f"tier {tier}: bundle error: {getattr(exc, 'message', str(exc))}"
+                )
+                if not json_output:
+                    typer.secho(
+                        f"      bundle error: {getattr(exc, 'message', str(exc))}",
+                        fg=typer.colors.RED,
+                    )
+            except AgentRuntimeError as exc:
+                report["errors"].append(
+                    f"tier {tier}: {getattr(exc, 'message', str(exc))}"
+                )
+                if not json_output:
+                    typer.secho(
+                        f"      failed: {getattr(exc, 'message', str(exc))}",
+                        fg=typer.colors.RED,
+                    )
+
+    if json_output:
+        import json as _json
+        typer.echo(_json.dumps(report, indent=2, default=str))
+        return
+
+    typer.echo("")
+    if report["installed"]:
+        typer.secho(
+            f"Installed {len(report['installed'])} bundle(s). "
+            "Your machine is ready to serve AICF compute.",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(
+            "No bundles installed. The miner will still run, but only "
+            "tiers with an existing local bundle will earn AICF credits.",
+            fg=typer.colors.YELLOW,
+        )
+    typer.echo("")
+    typer.secho("Next step:", fg=typer.colors.CYAN)
+    typer.echo(
+        "  animica miner mine-blocks \\\n"
+        "      --address anim1... \\\n"
+        "      --pool-stratum stratum+tcp://pool.animica.org:5333 \\\n"
+        "      --count 0"
+    )
+    typer.echo(
+        "  (count=0 mines indefinitely; PoW + AICF compute run in parallel.)"
+    )
+
+
 @app.command("mine-blocks")
 def mine_blocks(
     address: Optional[str] = typer.Argument(
@@ -1555,6 +1845,28 @@ def mine_blocks(
             "Attach AI/quantum/storage/VDF UsefulWorkProof envelopes to "
             "outgoing stratum shares (default: enabled). Disable if your "
             "pool doesn't credit bonus AICF credits."
+        ),
+    ),
+    aicf: bool = typer.Option(
+        True,
+        "--aicf/--no-aicf",
+        help=(
+            "Also run the AICF compute worker in parallel: serves real "
+            "inference jobs from the network and earns AICF credits on top "
+            "of PoW block rewards. Requires `animica miner setup` to have "
+            "installed at least one model bundle. Default: enabled."
+        ),
+    ),
+    aicf_endpoint: Optional[str] = typer.Option(
+        None,
+        "--aicf-endpoint",
+        envvar="ANIMICA_AICF_ENDPOINT",
+        help=(
+            "Override the AICF protocol endpoint URL used by the worker. "
+            "Set this when the miner is NOT running a local Animica full "
+            "node — point it at a public/remote node (e.g. "
+            "https://rpc.pool.animica.org/aicf). Without this, AICF defaults "
+            "to the network's local 127.0.0.1 endpoint."
         ),
     ),
     threads: int = typer.Option(
@@ -1825,6 +2137,47 @@ def mine_blocks(
     
     # Resolve address from label or validate raw Bech32 address
     resolved_address = _resolve_payout_address(final_address)
+
+    # ─── AICF compute worker (parallel earnings stream) ─────────────────────
+    # The AICF worker runs alongside PoW in a background thread, regardless of
+    # whether we're mining solo or against a stratum pool. It registers with
+    # the network's AICF endpoint, claims inference jobs that match the
+    # locally detected hardware tier(s), runs them, and submits results.
+    aicf_stop = (lambda: None)
+    aicf_stats: dict[str, object] = {"started": False}
+    if aicf:
+        # The CLI flag wins over the env var, then the env var, then the
+        # network-default 127.0.0.1 endpoint from integration.yaml.
+        if aicf_endpoint:
+            os.environ["ANIMICA_AICF_ENDPOINT"] = aicf_endpoint.strip()
+        try:
+            aicf_stop, aicf_stats = _start_aicf_worker(resolved_address)
+        except Exception as _aicf_exc:  # noqa: BLE001 — best-effort
+            aicf_stats = {"started": False, "reason": repr(_aicf_exc)}
+        if aicf_stats.get("started"):
+            tiers_str = ", ".join(str(t) for t in (aicf_stats.get("tiers") or [])) or "auto"
+            typer.secho(
+                f"AICF compute worker active (tiers={tiers_str}, "
+                f"endpoint={aicf_stats.get('endpoint')}). "
+                "Earnings accrue in parallel to PoW.",
+                fg=typer.colors.CYAN,
+            )
+        else:
+            reason = str(aicf_stats.get("reason") or "AICF worker unavailable")
+            typer.secho(
+                f"AICF compute worker did not start: {reason}",
+                fg=typer.colors.YELLOW,
+            )
+            typer.secho(
+                "  Tip: run `animica miner setup` to install a model bundle, "
+                "then re-run with --aicf, or pass --no-aicf to silence this.",
+                fg=typer.colors.YELLOW,
+            )
+        try:
+            import atexit as _atexit
+            _atexit.register(aicf_stop)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ─── Stratum pool path ──────────────────────────────────────────────────
     # `--pool-stratum` shifts mining away from local RPC: the pool issues
