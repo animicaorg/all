@@ -244,6 +244,122 @@ def _eprint(msg: str) -> None:
 # Bundle pull (IPFS download)                                                 #
 # --------------------------------------------------------------------------- #
 
+def _miner_cache_root(cfg: Config) -> Path:
+    raw = (cfg.integration.get("aicf", {}).get("miner_cache_dir")
+           or cfg.model_catalog["propagation"]["miner_cache_dir"])
+    return Path(str(raw)).expanduser()
+
+
+def _slugify_repo(repo_id: str) -> str:
+    return repo_id.replace("/", "__").replace(":", "_")
+
+
+def _tier_spec(catalog: dict, tier: str) -> dict:
+    for t in catalog.get("tiers") or []:
+        if isinstance(t, dict) and str(t.get("id")) == tier:
+            return t
+    raise BundleError(
+        f"tier {tier!r} not found in model_catalog",
+        hint="check ai/configs/model_catalog.yaml for valid tier ids",
+    )
+
+
+def bootstrap_bundle_from_hf(
+    tier: str,
+    *,
+    cfg: Optional[Config] = None,
+    repo_id: Optional[str] = None,
+    revision: Optional[str] = None,
+) -> Path:
+    """Download a tier's base model directly from HuggingFace Hub and shape
+    it into a local AICF bundle layout that :class:`LocalBundleRunner` can
+    load.
+
+    Used by ``animica miner setup`` as the default source when no IPFS CID
+    has been configured for a tier. This means a fresh `pip install animica`
+    + `animica miner setup` produces a working AICF worker with zero manual
+    configuration.
+
+    Layout written on disk::
+
+        <cache>/<tier>/hf-<sanitized-repo>/
+            manifest.json
+            inference.json
+            model/   <- HF snapshot lives here
+    """
+    cfg = cfg or load_config()
+    spec = _tier_spec(dict(cfg.model_catalog), tier)
+    repo_id = repo_id or str(spec.get("base_model") or "").strip()
+    if not repo_id:
+        raise BundleError(
+            f"tier {tier!r} has no base_model in model_catalog; cannot bootstrap",
+        )
+
+    cache_root = _miner_cache_root(cfg)
+    bundle_dir = cache_root / tier / f"hf-{_slugify_repo(repo_id)}"
+    model_dir = bundle_dir / "model"
+    manifest_path = bundle_dir / "manifest.json"
+    inference_path = bundle_dir / "inference.json"
+
+    # Skip the download if a previous bootstrap already populated this dir.
+    if manifest_path.is_file() and inference_path.is_file() and any(
+            model_dir.glob("*")):
+        return bundle_dir
+
+    try:
+        from huggingface_hub import snapshot_download   # type: ignore
+    except Exception as exc:    # noqa: BLE001
+        raise BundleError(
+            f"huggingface_hub is required for HF bootstrap: {exc}",
+            hint="install it with: pip install huggingface_hub",
+        ) from exc
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            local_dir=str(model_dir),
+            allow_patterns=[
+                "*.json", "*.txt", "*.model", "*.safetensors",
+                "tokenizer*", "vocab*", "merges*", "special_tokens*",
+                "generation_config*", "chat_template*", "*.tiktoken",
+            ],
+        )
+    except Exception as exc:    # noqa: BLE001
+        import shutil as _shutil
+        _shutil.rmtree(bundle_dir, ignore_errors=True)
+        raise BundleError(
+            f"could not download base model {repo_id!r} from HuggingFace: {exc}",
+            hint="set HF_TOKEN if the repo is gated; check network access",
+        ) from exc
+
+    precision = str(spec.get("precision") or "fp32")
+    inference_spec = {
+        "schema": 1,
+        "tier": tier,
+        "model_subdir": "model",
+        "precision": precision,
+        "trust_remote_code": True,
+        "context_window": int(spec.get("context_window") or 8192),
+    }
+    manifest = {
+        "schema": 1,
+        "run_id": f"hf-{_slugify_repo(repo_id)}",
+        "tier": tier,
+        "base_model": repo_id,
+        "effective_mode": "base-only",
+        "available_for_real_inference": True,
+        "artifacts": {"model": "model/"},
+        "source": "huggingface",
+        "revision": revision or "main",
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    inference_path.write_text(
+        json.dumps(inference_spec, indent=2), encoding="utf-8")
+    return bundle_dir
+
+
 def pull_bundle(cid: str, *, tier: str,
                 cfg: Optional[Config] = None,
                 verify_sha256: Optional[str] = None) -> Path:

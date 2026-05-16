@@ -81,8 +81,6 @@ def _detect_cpu(profile: HardwareProfile) -> None:
     if cpuinfo:
         profile.cpu_model = cpuinfo.get("model name", "") or cpuinfo.get(
             "Model name", "")
-        # Estimate physical cores by counting unique core id values.
-        # Falls back to logical if /proc/cpuinfo doesn't expose them.
         try:
             ids = set()
             with open("/proc/cpuinfo", "r", encoding="utf-8") as fh:
@@ -93,9 +91,52 @@ def _detect_cpu(profile: HardwareProfile) -> None:
         except OSError:
             profile.cpu_cores_physical = profile.cpu_cores_logical
     else:
-        # macOS / BSD path
+        # macOS / BSD / Windows path.
         profile.cpu_model = platform.processor() or platform.machine()
         profile.cpu_cores_physical = profile.cpu_cores_logical
+        if platform.system() == "Windows":
+            # platform.processor() on Windows often returns something like
+            # "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel". Try to
+            # surface the friendlier brand string from the registry.
+            try:
+                import winreg  # type: ignore
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                ) as key:
+                    name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+                    if name:
+                        profile.cpu_model = str(name).strip()
+            except OSError:
+                pass
+
+
+def _detect_ram_windows() -> float:
+    """Return total physical RAM in GB on Windows via GlobalMemoryStatusEx."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", wintypes.DWORD),
+                ("dwMemoryLoad", wintypes.DWORD),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return float(stat.ullTotalPhys) / (1024 ** 3)
+    except Exception:   # noqa: BLE001 — best-effort detector
+        pass
+    return 0.0
 
 
 def _detect_ram(profile: HardwareProfile) -> None:
@@ -121,6 +162,17 @@ def _detect_ram(profile: HardwareProfile) -> None:
                 profile.ram_gb = float(out) / (1024 ** 3)
             except (subprocess.SubprocessError, ValueError, OSError):
                 pass
+    if profile.ram_gb == 0.0 and platform.system() == "Windows":
+        profile.ram_gb = _detect_ram_windows()
+    if profile.ram_gb == 0.0:
+        # Last-ditch fallback: psutil if installed. Avoids leaving the
+        # profile at 0.0 GB on platforms where the platform-specific paths
+        # failed but the user has a portable lib available.
+        try:
+            import psutil  # type: ignore
+            profile.ram_gb = float(psutil.virtual_memory().total) / (1024 ** 3)
+        except Exception:   # noqa: BLE001
+            pass
 
 
 def _detect_nvidia_gpus(profile: HardwareProfile) -> None:

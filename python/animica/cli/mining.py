@@ -1620,6 +1620,15 @@ def setup(
             "ANIMICA_AICF_TIER_<TIER>_CID / _SHA256."
         ),
     ),
+    source: str = typer.Option(
+        "auto",
+        "--source",
+        help=(
+            "Where to fetch bundles from: 'auto' (IPFS CID if configured, "
+            "else HuggingFace base model), 'ipfs' (require a CID), or "
+            "'huggingface' (always pull the base model from HF)."
+        ),
+    ),
     skip_download: bool = typer.Option(
         False,
         "--skip-download",
@@ -1633,18 +1642,27 @@ def setup(
 
       1. Detect hardware (CPU, RAM, GPUs) and pick eligible model tiers.
       2. Prepare the on-disk model cache directory (``~/.animica/models``).
-      3. For each tier with a configured bundle CID, download the bundle
-         from the configured IPFS gateways into the cache.
+      3. For each selected tier, install a bundle:
+           - If an IPFS CID is configured for the tier, pull from IPFS.
+           - Otherwise (--source auto, the default), pull the tier's
+             base model directly from HuggingFace Hub and wrap it as a
+             local bundle so the miner can serve AICF jobs immediately.
       4. Print a one-line "next step" pointing at ``animica miner mine-blocks``.
 
     Tier → CID mapping is read in this order: ``--bundles-file``,
     ``~/.animica/aicf_bundles.json``, then env vars
     ``ANIMICA_AICF_TIER_<TIER>_CID`` (and optional ``_SHA256``). When no CID
-    is configured for a tier, the step is skipped with a hint — the worker
-    will still register and serve any tier that does have a local bundle.
+    is configured and ``--source=auto`` (default), the tier's ``base_model``
+    from the model catalog is downloaded from HuggingFace and shaped into a
+    local bundle. Pass ``--source ipfs`` to require a CID; pass
+    ``--source huggingface`` to always pull the base model from HF.
     """
     try:
-        from agent_runtime.aicf_worker import pull_bundle, resolve_tiers
+        from agent_runtime.aicf_worker import (
+            bootstrap_bundle_from_hf,
+            pull_bundle,
+            resolve_tiers,
+        )
         from agent_runtime.config import load_config
         from agent_runtime.errors import AgentRuntimeError, BundleError
         from agent_runtime.hardware import attach_eligible_tiers, detect_hardware
@@ -1656,6 +1674,17 @@ def setup(
             err=True,
         )
         raise typer.Exit(2)
+
+    source = (source or "auto").strip().lower()
+    if source not in {"auto", "ipfs", "huggingface", "hf"}:
+        typer.secho(
+            f"Error: --source must be one of auto|ipfs|huggingface (got {source!r}).",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    if source == "hf":
+        source = "huggingface"
 
     report: dict[str, object] = {
         "hardware": None,
@@ -1722,6 +1751,12 @@ def setup(
             return {"cid": env_cid, "sha256": env_sha}
         return None
 
+    def _tier_base_model(tier: str) -> str:
+        for t in (cfg.model_catalog.get("tiers") or []):
+            if isinstance(t, dict) and str(t.get("id")) == tier:
+                return str(t.get("base_model") or "")
+        return ""
+
     if skip_download:
         report["skipped"] = list(resolved_tiers)
         if not json_output:
@@ -1729,16 +1764,65 @@ def setup(
                         fg=typer.colors.YELLOW)
     else:
         for tier in resolved_tiers:
-            entry = _lookup_bundle(tier)
-            if not entry:
+            entry = _lookup_bundle(tier) if source != "huggingface" else None
+            use_hf = entry is None and source in {"auto", "huggingface"}
+            if entry is None and not use_hf:
                 report["skipped"].append(tier)
                 if not json_output:
                     typer.secho(
                         f"  - tier {tier}: no bundle CID configured "
-                        f"(set ANIMICA_AICF_TIER_{tier.upper()}_CID or add "
-                        "an entry to ~/.animica/aicf_bundles.json).",
+                        f"(set ANIMICA_AICF_TIER_{tier.upper()}_CID, add "
+                        "an entry to ~/.animica/aicf_bundles.json, or "
+                        "rerun with --source huggingface).",
                         fg=typer.colors.YELLOW,
                     )
+                continue
+            if use_hf:
+                base_model = _tier_base_model(tier)
+                if not base_model:
+                    report["skipped"].append(tier)
+                    if not json_output:
+                        typer.secho(
+                            f"  - tier {tier}: no base_model in catalog; "
+                            "cannot bootstrap from HuggingFace.",
+                            fg=typer.colors.YELLOW,
+                        )
+                    continue
+                if not json_output:
+                    typer.secho(
+                        f"  - tier {tier}: pulling base model "
+                        f"{base_model} from HuggingFace…",
+                        fg=typer.colors.CYAN,
+                    )
+                try:
+                    path = bootstrap_bundle_from_hf(tier, cfg=cfg)
+                    report["installed"].append({
+                        "tier": tier, "path": str(path),
+                        "source": "huggingface", "repo_id": base_model,
+                    })
+                    if not json_output:
+                        typer.secho(f"      installed at {path}",
+                                    fg=typer.colors.GREEN)
+                except BundleError as exc:
+                    report["errors"].append(
+                        f"tier {tier}: HF bootstrap failed: "
+                        f"{getattr(exc, 'message', str(exc))}"
+                    )
+                    if not json_output:
+                        typer.secho(
+                            f"      HF bootstrap failed: "
+                            f"{getattr(exc, 'message', str(exc))}",
+                            fg=typer.colors.RED,
+                        )
+                except AgentRuntimeError as exc:
+                    report["errors"].append(
+                        f"tier {tier}: {getattr(exc, 'message', str(exc))}"
+                    )
+                    if not json_output:
+                        typer.secho(
+                            f"      failed: {getattr(exc, 'message', str(exc))}",
+                            fg=typer.colors.RED,
+                        )
                 continue
             cid = str(entry["cid"]).strip()
             sha256 = entry.get("sha256")
@@ -1749,7 +1833,7 @@ def setup(
                 path = pull_bundle(cid, tier=tier, cfg=cfg,
                                    verify_sha256=sha256)
                 report["installed"].append({"tier": tier, "path": str(path),
-                                              "cid": cid})
+                                              "cid": cid, "source": "ipfs"})
                 if not json_output:
                     typer.secho(f"      installed at {path}",
                                 fg=typer.colors.GREEN)
