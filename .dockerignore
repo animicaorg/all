@@ -25,3 +25,39 @@ animica_dump_PART1_20251124_223900.txt
 animica_dump_PART2_20251124_223900.txt
 animica_dump_index_20251124_223900.txt
 *.log
+
+# Big binaries that aren't needed at build time (wallet installers, the
+# Mac .app bundle, native build outputs, prebuilt CEX assets).
+AnimicaWallet.app/
+AnimicaWallet*.dmg
+AnimicaWallet*.exe
+AnimicaWallet*.zip
+native/
+cex/
+extras/
+
+# Local SQLite + WAL files used by dev tooling — never needed in an image.
+*.db
+*.db-wal
+*.db-shm
+
+# AI training artifacts (model checkpoints, datasets, runs/). Only
+# ai/agent_runtime/src/, ai/flagship_agent/src/, ai/configs/, and
+# ai/flagship_agent/scripts/ are needed by the wheel build; the rest are
+# multi-GB training outputs that don't belong in any image context.
+ai/flagship_agent/runs/
+ai/flagship_agent/data/
+ai/flagship_agent/models/
+ai/flagship_agent/manifests/
+ai/flagship_agent/evals/
+ai/*/runs/
+runs/
+checkpoints/
+
+# Frontend build artifacts already covered by node_modules/ + dist/, but
+# academy/explorer2/studio-web are nested under their own subtrees.
+academy/web/.astro/
+academy/web/dist/
+explorer2/web/dist/
+studio-web/dist/
+pool-web/dist/

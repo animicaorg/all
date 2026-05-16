@@ -27,6 +27,31 @@ RUN python -m pip install --upgrade pip setuptools wheel
 WORKDIR /app
 COPY python /app/python
 COPY pq /app/pq
+# Sibling Python packages that python/pyproject.toml force-includes into
+# the animica wheel. Without these, `pip wheel /app/python` fails with
+# FileNotFoundError because hatchling resolves the force-include paths
+# relative to /app/python's pyproject.toml location.
+COPY aicf /app/aicf
+COPY capabilities /app/capabilities
+COPY consensus /app/consensus
+COPY core /app/core
+COPY coretx /app/coretx
+COPY da /app/da
+COPY execution /app/execution
+COPY mempool /app/mempool
+COPY mempool2 /app/mempool2
+COPY mining /app/mining
+COPY p2p /app/p2p
+COPY rpc /app/rpc
+COPY stdlib /app/stdlib
+COPY vm_py /app/vm_py
+# AI stack: only the small subdirs the wheel actually bundles. ai/runs,
+# ai/data, ai/models are excluded by .dockerignore so we don't ship
+# training artifacts into the image.
+COPY ai /app/ai
+# Standalone compose files bundled into the wheel (for pip-only users
+# whose nodes need `animica node up` without a source checkout).
+COPY ops/docker/standalone /app/ops/docker/standalone
 
 # Build wheels we want to vendor into the runtime. We include an extended set of
 # deps commonly used by the node (FastAPI/uvicorn, pydantic, websockets, etc.).
