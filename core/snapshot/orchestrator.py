@@ -244,39 +244,33 @@ class SnapshotOrchestrator:
             snapshot_dir = snapshots_dir / f"chain-{self.chain_id}-height-{height}"
             snapshot_dir.mkdir(parents=True, exist_ok=True)
             
-            # Export snapshot
-            result = await asyncio.to_thread(
+            # Export snapshot. export_snapshot returns a SnapshotManifest on
+            # success and raises on failure; the outer try/except below maps
+            # exceptions to (False, error).
+            await asyncio.to_thread(
                 export_snapshot,
                 block_db=self.block_db,
                 state_db=self.state_db,
                 checkpoint_height=height,
-                output_dir=str(snapshot_dir),
-                chain_id=self.chain_id,
+                output_dir=snapshot_dir,
                 compress=True,
             )
-            
+
             elapsed = time.perf_counter() - start_time
-            
-            if result.get("success"):
-                _log.info(f"Snapshot created successfully at height {height} (elapsed: {elapsed:.1f}s)")
-                self.status.snapshots_created += 1
-                self.status.last_snapshot_height = height
-                self.status.last_snapshot_time = time.time()
-                upsert_snapshot(snapshot_dir, snapshots_dir=self.get_snapshots_dir())
-                
-                # Verify if configured
-                if self.config.verify_on_create:
-                    verified, error = await self.verify_snapshot(height)
-                    if not verified:
-                        _log.warning(f"Snapshot verification failed: {error}")
-                        self.status.warnings.append(f"Snapshot {height} verification failed: {error}")
-                
-                return True, None
-            else:
-                error = result.get("error", "Unknown error")
-                _log.error(f"Snapshot creation failed: {error}")
-                self.status.snapshots_failed += 1
-                return False, error
+            _log.info(f"Snapshot created successfully at height {height} (elapsed: {elapsed:.1f}s)")
+            self.status.snapshots_created += 1
+            self.status.last_snapshot_height = height
+            self.status.last_snapshot_time = time.time()
+            upsert_snapshot(snapshot_dir, snapshots_dir=self.get_snapshots_dir())
+
+            # Verify if configured
+            if self.config.verify_on_create:
+                verified, error = await self.verify_snapshot(height)
+                if not verified:
+                    _log.warning(f"Snapshot verification failed: {error}")
+                    self.status.warnings.append(f"Snapshot {height} verification failed: {error}")
+
+            return True, None
                 
         except Exception as e:
             error_msg = str(e)
