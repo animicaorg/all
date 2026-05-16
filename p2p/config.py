@@ -49,18 +49,20 @@ from .constants import PROTOCOL_ID
 # Default fallback seeds (mainnet).
 # Use a neutral bootstrap IP so the network does not depend on domain seeds.
 MAINNET_SEEDS: Final[tuple[str, ...]] = (
+    # 3.12.224.189 is the primary mainnet verifier; 144.x is a rotation
+    # backup that may be resetting.
+    "/ip4/3.12.224.189/tcp/30333",
     "/dns4/mainnet.animica.org/tcp/30333",
-    "/ip4/144.126.133.21/udp/443/quic-v1",
     "/ip4/144.126.133.21/tcp/30333",
 )
 
 TESTNET_SEEDS: Final[tuple[str, ...]] = (
-    "/ip4/144.126.133.21/udp/443/quic-v1",
+    "/ip4/3.12.224.189/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
 )
 
 DEVNET_SEEDS: Final[tuple[str, ...]] = (
-    "/ip4/144.126.133.21/udp/443/quic-v1",
+    "/ip4/3.12.224.189/tcp/30333",
     "/ip4/144.126.133.21/tcp/30333",
 )
 

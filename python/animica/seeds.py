@@ -16,21 +16,27 @@ NETWORK_SEEDS: Dict[str, List[str]] = {
     # Bundled seeds are the fallback when bootstrap.getSeeds via RPC fails.
     # We include the literal IP alongside the DNS name so a node still
     # reaches the network if DNS is broken inside its container.
+    # 3.12.224.189 is the primary mainnet seed (verifier node). The other
+    # entries are fallbacks in case the primary is in a reset/rotation.
     "mainnet": [
+        "3.12.224.189:30333",
         "mainnet.animica.org:30333",
         "144.126.133.21:30333",
     ],
     "testnet": [
+        "3.12.224.189:30333",
         "testnet.animica.org:30333",
         "rpc.testnet.animica.org:30333",
         "144.126.133.21:30333",
     ],
     "devnet": [
+        "3.12.224.189:30333",
         "devnet.animica.org:30333",
         "144.126.133.21:30333",
     ],
     "local-devnet": [
         "127.0.0.1:30333",
+        "3.12.224.189:30333",
         "144.126.133.21:30333",
     ],
 }

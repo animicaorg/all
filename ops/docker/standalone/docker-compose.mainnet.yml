@@ -66,6 +66,10 @@ services:
       P2P_SEEDS: "${P2P_SEEDS:-}"
       ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"
+      # RPC pull-sync fallback. Pip-installed nodes use this to advance
+      # past genesis even when the P2P swarm is unreachable or running an
+      # incompatible handshake — see p2p/sync/rpc_pull.py.
+      ANIMICA_RPC_SYNC_FALLBACK_URL: "${ANIMICA_RPC_SYNC_FALLBACK_URL:-https://rpc.animica.org/rpc}"
     volumes:
       - node-data:/data
       - node-config:/config

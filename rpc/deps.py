@@ -1534,6 +1534,54 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                     f"Failed to start core P2P service: {e}", exc_info=True
                 )
 
+        # Optional HTTP/RPC pull-sync fallback. Useful when public P2P
+        # seeds are unreachable or running an incompatible handshake
+        # protocol (the typical "pip node stuck at genesis" failure
+        # mode). Activates when ANIMICA_RPC_SYNC_FALLBACK_URL is set in
+        # the environment. See p2p/sync/rpc_pull.py for the loop body.
+        try:
+            from p2p.sync.rpc_pull import create_from_env as _create_rpc_pull
+            from core.chain.block_import import import_block as _core_import_block
+            from core.chain.head import read_head as _core_read_head
+
+            def _local_head_for_pull():
+                try:
+                    head = _core_read_head(_CTX.block_db)
+                    if head is None:
+                        return (0, b"")
+                    return (int(head[0]), bytes(head[1] or b""))
+                except Exception:
+                    return (0, b"")
+
+            _genesis_path_for_pull = getattr(_CTX.cfg, "genesis_path", None) if _CTX.cfg else None
+
+            def _import_for_pull(block_dict):
+                try:
+                    return _core_import_block(
+                        _CTX.block_db,
+                        _CTX.state_db,
+                        _CTX.tx_index,
+                        block_dict,
+                        genesis_path=_genesis_path_for_pull,
+                    )
+                except Exception as exc:
+                    return False, str(exc)
+
+            _rpc_pull = _create_rpc_pull(
+                local_head=_local_head_for_pull,
+                import_block=_import_for_pull,
+            )
+            if _rpc_pull is not None:
+                await _rpc_pull.start()
+                register("rpc_pull_sync", _rpc_pull)
+                logging.getLogger("animica.rpc.deps").info(
+                    "RPC pull-sync fallback enabled"
+                )
+        except Exception as e:
+            logging.getLogger("animica.rpc.deps").warning(
+                f"RPC pull-sync setup failed: {e}", exc_info=True
+            )
+
         # Initialize PTL service if enabled
         ptl_enabled = os.environ.get("ANIMICA_PTL_ENABLE", "").lower() in {"1", "true", "yes", "on"}
         if not ptl_enabled:
@@ -1601,6 +1649,17 @@ async def shutdown() -> None:
                 except Exception as e:
                     logging.getLogger("animica.rpc.deps").warning(
                         f"Failed to stop PTL service: {e}", exc_info=True
+                    )
+
+            # Stop RPC pull-sync fallback if running
+            rpc_pull = get("rpc_pull_sync")
+            if rpc_pull is not None:
+                try:
+                    await rpc_pull.stop()
+                    logging.getLogger("animica.rpc.deps").info("RPC pull-sync stopped")
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop RPC pull-sync: {e}", exc_info=True
                     )
             
             # Stop snapshot orchestrator if initialized
