@@ -63,6 +63,16 @@ services:
       ANIMICA_P2P_DATA_DIR: "/data/chain-1/p2p"
       ANIMICA_PEER_STORE_PATH: "/data/chain-1/p2p"
       ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
+      # Snapshot bootstrap. Pip nodes use this to skip past gaps in
+      # block availability on the public RPC (see p2p/sync/rpc_pull.py).
+      # The manifest URL points to the canonical bootstrap host; serve a
+      # signed SnapshotManifest JSON at that path. Override per-deployment
+      # by exporting ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET before `node up`.
+      ANIMICA_SNAPSHOT_AUTO: "${ANIMICA_SNAPSHOT_AUTO:-true}"
+      ANIMICA_SNAPSHOT_INTERVAL: "${ANIMICA_SNAPSHOT_INTERVAL:-1000}"
+      ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET: "${ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET:-https://rpc.animica.org/snapshots/mainnet/manifest.json}"
+      ANIMICA_SNAPSHOT_MANIFEST_URL_FALLBACKS: "${ANIMICA_SNAPSHOT_MANIFEST_URL_FALLBACKS:-}"
+      ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS: "${ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS:-500}"
       P2P_SEEDS: "${P2P_SEEDS:-}"
       ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"

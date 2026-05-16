@@ -225,11 +225,27 @@ class RpcPullSync:
     async def _tick(self, client: Any) -> bool:
         head = await _rpc_call(client, self._url, "chain.getHead", {}, timeout=10.0)
         if not isinstance(head, dict):
-            return False
+            raise RuntimeError(
+                f"chain.getHead returned non-dict ({type(head).__name__}); "
+                "refusing to treat as remote tip"
+            )
+        raw_height = head.get("height")
+        if raw_height is None:
+            raw_height = head.get("number")
+        if raw_height is None:
+            raise RuntimeError(
+                f"chain.getHead response missing height/number: {head!r}"
+            )
         try:
-            remote_height = int(head.get("height") or head.get("number") or 0)
-        except (TypeError, ValueError):
-            remote_height = 0
+            remote_height = int(raw_height)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"chain.getHead height is not an integer: {raw_height!r}"
+            ) from exc
+        if remote_height < 0:
+            raise RuntimeError(
+                f"chain.getHead returned negative height: {remote_height}"
+            )
         local_height, _ = self._safe_local_head()
         if remote_height <= local_height:
             return False

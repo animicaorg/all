@@ -38,7 +38,7 @@ class SnapshotConfig:
     """Configuration for snapshot orchestration."""
     
     # Creation settings
-    interval: int = 2000  # Blocks between snapshots
+    interval: int = 1000  # Blocks between snapshots
     auto_create: bool = True
     
     # Storage settings
@@ -62,7 +62,7 @@ class SnapshotConfig:
     def from_env(cls) -> SnapshotConfig:
         """Load configuration from environment variables."""
         return cls(
-            interval=int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "2000")),
+            interval=int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "1000")),
             auto_create=os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true").lower() in ("true", "1", "yes"),
             data_dir=Path(os.getenv("ANIMICA_DATA_DIR", "~/.animica")).expanduser() if os.getenv("ANIMICA_DATA_DIR") else None,
             max_snapshots=int(os.getenv("ANIMICA_SNAPSHOT_MAX_KEEP", "10")),

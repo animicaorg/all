@@ -1287,7 +1287,7 @@ def _warn_if_unsynced(rpc: str, *, threshold: int = 5) -> bool:
         lag_known = True
         if best_header_height - head_height > threshold:
             behind = True
-    if not lag_known and phase and phase not in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+    if not lag_known and phase and phase not in {"SYNCED", "TARGET_REACHED"}:
         behind = True
 
     if behind:

@@ -593,9 +593,9 @@ def _extract_sync_progress(
         synchronized = sync_status.get("synchronized")
         phase = str(sync_status.get("phase") or "").upper()
         if synchronized is None and phase:
-            if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+            if phase in {"SYNCED", "TARGET_REACHED"}:
                 synchronized = True
-            elif phase in {"HEADERS", "BLOCKS", "SYNCING"}:
+            elif phase in {"HEADERS", "BLOCKS", "SYNCING", "IDLE", "STALLED"}:
                 synchronized = False
 
         current_candidates = [

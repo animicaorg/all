@@ -144,7 +144,11 @@ def assess_tx_submission_readiness(
         return True, info
     if syncing_flag is False:
         return True, info
-    if phase in {"SYNCED", "IDLE", "TARGET_REACHED"}:
+    # IDLE is ambiguous on pip-installed nodes — it can mean "no peers",
+    # "behind target but no eligible peers", or "sync disabled", none of
+    # which are "at tip". Require explicit synchronized=True or one of the
+    # canonical at-tip phases.
+    if phase in {"SYNCED", "TARGET_REACHED"}:
         return True, info
 
     # If heights are at tip and no work in progress, allow

@@ -1097,8 +1097,14 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     head_info = head.get()
     head_height = int(head_info.get("height") or 0) if head_info else 0
 
-    # Automatic snapshot bootstrap for empty/genesis-only DBs
-    if init_error is None and head_height <= 0:
+    # Automatic snapshot bootstrap. Fires on every startup; the policy's
+    # min_advance_blocks (default 500) gates whether the remote snapshot is
+    # far enough ahead of our local head to be worth applying. This means:
+    #   - empty DB (height 0): always apply if a manifest exists
+    #   - mid-sync stuck node (e.g. head=515 with remote at 12k): apply,
+    #     overwriting the partial DB via apply_snapshot_atomic's backup+swap
+    #   - mostly-caught-up node (e.g. head=12100): skipped automatically
+    if init_error is None:
         try:
             from p2p.sync.snapshot_sync import auto_bootstrap_from_manifest
 
