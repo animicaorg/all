@@ -96,10 +96,12 @@ class DistributedAICFProvider(Provider):
     name = "distributed-aicf"
 
     def __init__(self, *, cfg: Config, rpc_url: str,
-                 wallet_path: Optional[str] = None) -> None:
+                 wallet_path: Optional[str] = None,
+                 wallet_label: Optional[str] = None) -> None:
         self.cfg = cfg
         self.rpc_url = rpc_url
         self.wallet_path = wallet_path
+        self.wallet_label = wallet_label
         self.client = AICFClient(
             endpoint=rpc_url,
             timeout_sec=float(cfg.integration["aicf"]["job_submit"][
@@ -119,6 +121,7 @@ class DistributedAICFProvider(Provider):
                 wallet_path=self.wallet_path,
                 rpc_url=self.rpc_url,
                 network=os.environ.get("ANIMICA_NETWORK", ""),
+                wallet_label=self.wallet_label,
             )
         return self._wallet
 
@@ -358,14 +361,16 @@ class ProviderCascade:
     """Owns provider instances; walks through them per the configured order."""
 
     def __init__(self, cfg: Config, *, rpc_url: str,
-                 wallet_path: Optional[str] = None) -> None:
+                 wallet_path: Optional[str] = None,
+                 wallet_label: Optional[str] = None) -> None:
         self.cfg = cfg
         order = list(cfg.integration["agent_runtime"]["provider_order"])
         self._providers: list[Provider] = []
         for name in order:
             if name == "distributed-aicf":
                 self._providers.append(DistributedAICFProvider(
-                    cfg=cfg, rpc_url=rpc_url, wallet_path=wallet_path))
+                    cfg=cfg, rpc_url=rpc_url, wallet_path=wallet_path,
+                    wallet_label=wallet_label))
             elif name == "local-flagship":
                 self._providers.append(LocalFlagshipProvider(cfg=cfg))
             elif name == "offline":

@@ -223,10 +223,12 @@ def _confirm_cost(console: Console, prompt: str) -> bool:
 
 
 def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
-              yolo: bool, console: Console) -> int:
+              yolo: bool, console: Console,
+              wallet_label: Optional[str] = None) -> int:
     try:
         cascade = ProviderCascade(cfg, rpc_url=rpc_url,
-                                  wallet_path=wallet_path)
+                                  wallet_path=wallet_path,
+                                  wallet_label=wallet_label)
     except (ConfigError, WalletError) as exc:
         console.print(f"[red]{exc.render()}[/red]")
         return 2
@@ -354,8 +356,13 @@ def main(
     ),
     wallet: Optional[str] = typer.Option(
         None, "--wallet",
-        help="Path to a wallet file (default: pinned wallet under "
-              "~/.animica/wallets/).",
+        help="Path to a wallet file. Default: ~/.animica/wallets.json (v2 "
+              "bundle), then pinned wallet under ~/.animica/wallets/.",
+    ),
+    wallet_label: Optional[str] = typer.Option(
+        None, "--wallet-label",
+        help="Label of the wallet to use inside a v2 bundle (e.g. 'hot'). "
+              "Defaults to the bundle's 'default', else the first entry.",
     ),
     yolo: bool = typer.Option(
         False, "--yolo",
@@ -390,7 +397,7 @@ def main(
         os.environ["ANIMICA_CHAT_YOLO"] = "1"
 
     rc = _run_repl(cfg, rpc_url=endpoint, wallet_path=wallet,
-                   yolo=yolo, console=console)
+                   yolo=yolo, console=console, wallet_label=wallet_label)
     raise typer.Exit(code=rc)
 
 

@@ -77,12 +77,23 @@ def _default_wallet_dir() -> Path:
     return Path("~/.animica/wallets").expanduser()
 
 
+def _default_animica_dir() -> Path:
+    override = os.environ.get("ANIMICA_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path("~/.animica").expanduser()
+
+
 def _select_wallet_file(explicit: Optional[str]) -> Path:
     if explicit:
         p = Path(explicit).expanduser()
         if not p.is_file():
             raise WalletError(f"wallet file not found: {p}")
         return p
+    # v2 multi-wallet bundle (preferred, written by `animica wallet new` today).
+    bundle = _default_animica_dir() / "wallets.json"
+    if bundle.is_file():
+        return bundle
     wallet_dir = _default_wallet_dir()
     # Prefer the wallet pinned via animica CLI state when available.
     pin = wallet_dir / ".active"
@@ -100,25 +111,92 @@ def _select_wallet_file(explicit: Optional[str]) -> Path:
         for cand in sorted(wallet_dir.glob("*.json")):
             return cand
     raise WalletError(
-        f"no wallet configured; place a wallet file under {wallet_dir} or "
-        "pass --wallet <path>",
+        f"no wallet configured; expected {bundle} or a file under "
+        f"{wallet_dir}; pass --wallet <path> to override",
         hint="`animica wallet new` to mint one; "
              "or `animica wallet import` to bring an existing one.",
     )
 
 
+def _resolve_wallet_entry(
+    raw: Mapping[str, Any], path: Path, label: Optional[str]
+) -> Mapping[str, Any]:
+    """Pick the right wallet from a file.
+
+    Supports two on-disk shapes:
+
+      • flat:   ``{"address": "...", "scheme": ..., "chain_id": ...}``
+        — older wallets exported by external tooling. Returned as-is.
+      • v2 bundle: ``{"format": "animica.wallets", "version": 2,
+                      "wallets": [{label, address, ...}, ...], "default": "..."}``
+        — what `animica wallet new` writes. We pick by `label` if given,
+        else the bundle's ``default`` entry, else the first wallet.
+
+    Raises ``WalletError`` with an actionable hint if no usable entry is
+    found.
+    """
+    # Flat layout — return as-is.
+    if raw.get("address") or raw.get("addr"):
+        return raw
+
+    wallets = raw.get("wallets")
+    if isinstance(wallets, list) and wallets:
+        # Selector precedence: explicit label > $ANIMICA_WALLET_LABEL >
+        # bundle["default"] > first entry.
+        selector = label or os.environ.get("ANIMICA_WALLET_LABEL") or raw.get("default")
+        chosen: Optional[Mapping[str, Any]] = None
+        if selector:
+            for w in wallets:
+                if isinstance(w, Mapping) and str(w.get("label", "")) == str(selector):
+                    chosen = w
+                    break
+            if chosen is None:
+                labels = ", ".join(
+                    str(w.get("label", "?")) for w in wallets if isinstance(w, Mapping)
+                )
+                raise WalletError(
+                    f"wallet label {selector!r} not found in {path}",
+                    hint=f"available labels: {labels}",
+                )
+        if chosen is None:
+            chosen = wallets[0]
+        if not isinstance(chosen, Mapping) or not (
+            chosen.get("address") or chosen.get("addr")
+        ):
+            raise WalletError(
+                f"selected wallet entry in {path} has no 'address' field"
+            )
+        return chosen
+
+    raise WalletError(
+        f"wallet at {path} has no 'address' field and no 'wallets' bundle",
+        hint="wallet files must include a top-level 'address' (flat) "
+             "or a 'wallets' array (v2 bundle)",
+    )
+
+
 def load_wallet_info(*, wallet_path: Optional[str] = None,
                      rpc_url: Optional[str] = None,
-                     network: str = "") -> WalletInfo:
+                     network: str = "",
+                     wallet_label: Optional[str] = None) -> WalletInfo:
     """Read the wallet file + query balance via JSON-RPC. Never raises on
-    transient RPC failure — balance stays 0.0 with a note appended."""
+    transient RPC failure — balance stays 0.0 with a note appended.
+
+    Accepts both the flat single-wallet schema and the v2 multi-wallet
+    bundle. ``wallet_label`` picks an entry from the v2 bundle by label;
+    omit it (or the ``ANIMICA_WALLET_LABEL`` env var) to use the bundle's
+    ``default`` wallet, or the first entry if no default is pinned.
+    """
     path = _select_wallet_file(wallet_path)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise WalletError(f"failed to read wallet at {path}: {exc}") from exc
+    if not isinstance(raw, Mapping):
+        raise WalletError(f"wallet at {path} is not a JSON object")
 
-    address = str(raw.get("address") or raw.get("addr") or "")
+    entry = _resolve_wallet_entry(raw, path, wallet_label)
+    address = str(entry.get("address") or entry.get("addr") or "")
     if not address:
         raise WalletError(
             f"wallet at {path} has no 'address' field",
@@ -127,9 +205,9 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
     info = WalletInfo(
         address=address,
         network=network,
-        chain_id=int(raw.get("chain_id", 0) or 0),
+        chain_id=int(entry.get("chain_id", 0) or 0),
         backing_file=str(path),
-        scheme=str(raw.get("scheme", "")),
+        scheme=str(entry.get("scheme") or entry.get("alg_name") or ""),
     )
     if rpc_url:
         try:
