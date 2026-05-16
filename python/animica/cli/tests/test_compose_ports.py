@@ -135,3 +135,51 @@ def test_devnet_compose_rpc_host_env() -> None:
     # Check that RPC_HOST is set to 0.0.0.0
     rpc_host = env.get("RPC_HOST", "")
     assert "0.0.0.0" in rpc_host, f"Expected RPC host 0.0.0.0, got: {rpc_host}"
+
+
+@pytest.mark.parametrize(
+    "compose_file",
+    [
+        "ops/docker/docker-compose.mainnet.yml",
+        "ops/docker/docker-compose.testnet.yml",
+        "ops/docker/docker-compose.devnet.yml",
+        "ops/docker/standalone/docker-compose.mainnet.yml",
+        "ops/docker/standalone/docker-compose.testnet.yml",
+        "ops/docker/standalone/docker-compose.devnet.yml",
+    ],
+)
+def test_node_compose_forwards_bootstrap_seed_env(compose_file: str) -> None:
+    """Bootstrap-discovered seed env vars must reach the node container."""
+    path = get_repo_root() / compose_file
+
+    with open(path) as f:
+        config = yaml.safe_load(f)
+
+    env = config["services"]["node"].get("environment", {})
+
+    assert "ANIMICA_P2P_SEEDS" in env
+    assert "P2P_SEEDS" in env
+
+
+@pytest.mark.parametrize(
+    "compose_file",
+    [
+        "ops/docker/docker-compose.mainnet.yml",
+        "ops/docker/docker-compose.testnet.yml",
+        "ops/docker/docker-compose.devnet.yml",
+        "ops/docker/standalone/docker-compose.mainnet.yml",
+        "ops/docker/standalone/docker-compose.testnet.yml",
+        "ops/docker/standalone/docker-compose.devnet.yml",
+    ],
+)
+def test_node_compose_sets_animica_genesis_path(compose_file: str) -> None:
+    """RPC config reads ANIMICA_GENESIS_PATH, while older paths read GENESIS_PATH."""
+    path = get_repo_root() / compose_file
+
+    with open(path) as f:
+        config = yaml.safe_load(f)
+
+    env = config["services"]["node"].get("environment", {})
+
+    assert "GENESIS_PATH" in env
+    assert "ANIMICA_GENESIS_PATH" in env

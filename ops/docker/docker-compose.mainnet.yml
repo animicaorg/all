@@ -61,6 +61,7 @@ services:
       ANIMICA_COMPOSE_FILE: "${ANIMICA_COMPOSE_FILE:-/app/ops/docker/docker-compose.mainnet.yml}"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1}"
       GENESIS_PATH: "${GENESIS_PATH:-/app/core/genesis/mainnet.json}"
+      ANIMICA_GENESIS_PATH: "${ANIMICA_GENESIS_PATH:-/app/core/genesis/mainnet.json}"
       ANIMICA_DATA_DIR: "/data"
       HOME: "/data"
       ANIMICA_HOME: "/data/chain-${ANIMICA_CHAIN_ID:-1}"
@@ -90,6 +91,7 @@ services:
       # Optional advertised address (public IP/host for inbound peers):
       # Example: ANIMICA_P2P_ADVERTISE_ADDR=203.0.113.10:30333
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
+      ANIMICA_P2P_SEEDS: "${ANIMICA_P2P_SEEDS:-}"
       ANIMICA_P2P_DATA_DIR: "/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p"
       ANIMICA_PEER_STORE_PATH: "/data/chain-${ANIMICA_CHAIN_ID:-1}/p2p"
       ANIMICA_SNAPSHOT_DIR: "/data/snapshots"

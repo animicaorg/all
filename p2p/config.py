@@ -145,14 +145,22 @@ def _load_seeds_from_env(chain_id: int | None = None) -> tuple[str, ...]:
 
     Priority:
     1. ANIMICA_P2P_SEEDS (explicit seed list)
-    2. ANIMICA_P2P_NETWORK (network name: mainnet/testnet/devnet)
-    3. chain_id parameter (use network-specific seeds)
-    4. DEFAULT_SEEDS (mainnet fallback)
+    2. P2P_SEEDS (legacy explicit seed list)
+    3. ANIMICA_P2P_NETWORK (network name: mainnet/testnet/devnet)
+    4. chain_id parameter (use network-specific seeds)
+    5. DEFAULT_SEEDS (mainnet fallback)
     """
     # Check for explicit seed list
     raw = os.getenv("ANIMICA_P2P_SEEDS")
     if raw is not None:
         parsed = _csv(raw)
+        if parsed:
+            return tuple(_validate_advertised_addrs(parsed))
+        # Treat empty or separator-only values as unset so defaults apply.
+
+    legacy_raw = os.getenv("P2P_SEEDS")
+    if legacy_raw is not None:
+        parsed = _csv(legacy_raw)
         if parsed:
             return tuple(_validate_advertised_addrs(parsed))
         # Treat empty or separator-only values as unset so defaults apply.

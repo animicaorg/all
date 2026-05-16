@@ -36,6 +36,7 @@ services:
       HOME: "/data"
       ANIMICA_HOME: "/data/chain-1"
       GENESIS_PATH: "/app/core/genesis/mainnet.json"
+      ANIMICA_GENESIS_PATH: "/app/core/genesis/mainnet.json"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
       # RPC server config
       ANIMICA_RPC_HOST: "0.0.0.0"
@@ -49,9 +50,12 @@ services:
       ANIMICA_P2P_LISTEN_QUIC: "0.0.0.0:443"
       ANIMICA_P2P_ENABLE_TCP: "true"
       ANIMICA_P2P_ENABLE_QUIC: "true"
+      ANIMICA_P2P_SEEDS: "${ANIMICA_P2P_SEEDS:-}"
+      ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
       ANIMICA_P2P_DATA_DIR: "/data/chain-1/p2p"
       ANIMICA_PEER_STORE_PATH: "/data/chain-1/p2p"
       ANIMICA_SNAPSHOT_DIR: "/data/snapshots"
+      P2P_SEEDS: "${P2P_SEEDS:-}"
       ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"
     volumes:

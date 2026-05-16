@@ -141,6 +141,28 @@ class TestSeedLoadingFromEnv:
         assert "/ip4/5.6.7.8/tcp/5678" in seeds
         assert not any("144.126.133.21" in s for s in seeds)
 
+    def test_legacy_p2p_seeds_override_defaults(self, monkeypatch):
+        """Test that P2P_SEEDS remains an explicit seed-list override."""
+        monkeypatch.delenv("ANIMICA_P2P_SEEDS", raising=False)
+        monkeypatch.delenv("ANIMICA_P2P_NETWORK", raising=False)
+        monkeypatch.delenv("ANIMICA_NETWORK", raising=False)
+        monkeypatch.setenv("P2P_SEEDS", "10.1.2.3:30333,legacy.seed.local:30333")
+
+        seeds = p2p_config._load_seeds_from_env(chain_id=1)
+
+        assert "/ip4/10.1.2.3/tcp/30333" in seeds
+        assert "/dns4/legacy.seed.local/tcp/30333" in seeds
+        assert not any(FALLBACK_SEED_IP in s for s in seeds)
+
+    def test_animica_p2p_seeds_take_precedence_over_legacy(self, monkeypatch):
+        """Test that canonical ANIMICA_P2P_SEEDS wins over legacy P2P_SEEDS."""
+        monkeypatch.setenv("ANIMICA_P2P_SEEDS", "10.9.8.7:30333")
+        monkeypatch.setenv("P2P_SEEDS", "10.1.2.3:30333")
+
+        seeds = p2p_config._load_seeds_from_env(chain_id=1)
+
+        assert seeds == ("/ip4/10.9.8.7/tcp/30333",)
+
     def test_empty_seeds_env_falls_back_to_defaults(self, monkeypatch):
         """Test that empty ANIMICA_P2P_SEEDS falls back to network defaults."""
         monkeypatch.setenv("ANIMICA_P2P_SEEDS", "")
