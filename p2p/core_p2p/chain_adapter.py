@@ -134,9 +134,28 @@ class CoreChainAdapter:
         return bytes(tx.hash())
 
     def _head_header(self) -> Optional[Header]:
+        # `P2PDeps.head()` returns `(height, head_hash_bytes)` — despite the
+        # type annotation suggesting a `Header` object, the underlying
+        # `core.chain.head.get_head(block_db)` returns the head hash as
+        # bytes. Resolve the actual Header by hash (preferred) or by height
+        # fallback. Returning the raw hash here led to `'bytes' object has
+        # no attribute 'height'` in `_encode_header`, which crashed every
+        # outbound dial from the core p2p service and left pip-installed
+        # nodes stuck at genesis with no peers.
         try:
-            _height, header = self.deps.head()
-            return header
+            height, head_ref = self.deps.head()
         except Exception as exc:
             log.warning("core p2p head lookup failed", exc_info=exc)
             return None
+        if isinstance(head_ref, Header):
+            return head_ref
+        try:
+            if isinstance(head_ref, (bytes, bytearray)) and len(head_ref) == 32:
+                header = self.deps.header_by_hash(bytes(head_ref))
+                if header is not None:
+                    return header
+            if isinstance(height, int):
+                return self.deps.header_by_number(int(height))
+        except Exception as exc:
+            log.warning("core p2p head header resolve failed", exc_info=exc)
+        return None
