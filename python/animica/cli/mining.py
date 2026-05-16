@@ -13,6 +13,7 @@ import importlib
 import json
 import math
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -20,6 +21,7 @@ from urllib.parse import urlsplit
 
 import asyncio
 import logging
+import threading
 
 import typer
 from animica.coin import COIN_UNIT
@@ -151,6 +153,7 @@ def _mine_header(
     target_int: int,
     *,
     workers: int | None = None,
+    stats: dict | None = None,
 ) -> tuple[int | None, bytes | None]:
     # Increased from 1000000 to 10000000 for better PoW success rate
     max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000")))
@@ -168,7 +171,13 @@ def _mine_header(
 
         resolved_workers = resolve_worker_count(workers)
 
+    if stats is not None:
+        stats.setdefault("hashes", 0)
+        stats.setdefault("workers", resolved_workers)
+        stats["t_start"] = time.monotonic()
+
     def _scan_window(start_nonce: int, end_nonce: int) -> tuple[int | None, bytes | None]:
+        window_size = end_nonce - start_nonce
         if resolved_workers > 1:
             from mining.parallel_nonce_search import parallel_nonce_search, pow_check_nonce
 
@@ -176,22 +185,36 @@ def _mine_header(
                 pow_check_nonce,
                 (header, target_int),
                 start_nonce,
-                end_nonce - start_nonce,
+                window_size,
                 resolved_workers,
             )
             if result and isinstance(result.payload, tuple):
                 digest = result.payload[0]
                 if isinstance(digest, (bytes, bytearray)):
+                    if stats is not None:
+                        # When found: workers shared the window; total
+                        # actual probes ≈ winning worker's attempts × workers.
+                        stats["hashes"] += int(result.attempts) * resolved_workers
                     return result.nonce, bytes(digest)
+            if stats is not None:
+                # Not found: every worker scanned its full stride.
+                stats["hashes"] += window_size
             return None, None
 
+        attempts = 0
         for nonce in range(start_nonce, end_nonce):
             try:
                 candidate_hash = hash_candidate_header(header, nonce=nonce)
             except Exception:
+                attempts += 1
                 continue
+            attempts += 1
             if candidate_hash.digest_int <= target_int:
+                if stats is not None:
+                    stats["hashes"] += attempts
                 return nonce, candidate_hash.digest
+        if stats is not None:
+            stats["hashes"] += attempts
         return None, None
 
     # Use random starting nonce for each block to prevent nonce growth issues
@@ -199,14 +222,150 @@ def _mine_header(
     # Randomize in 32-bit space for better distribution and to avoid large nonce values
     import secrets
     start_nonce = secrets.randbelow(2**32)
-    
-    for _ in range(max(1, total_windows)):
-        nonce, digest = _scan_window(start_nonce, start_nonce + max_nonce)
-        if nonce is not None and digest is not None:
-            return nonce, digest
-        # Wrap around at 64-bit boundary to prevent overflow
-        start_nonce = (start_nonce + max_nonce) & 0xFFFFFFFFFFFFFFFF
-    return None, None
+
+    try:
+        for _ in range(max(1, total_windows)):
+            nonce, digest = _scan_window(start_nonce, start_nonce + max_nonce)
+            if nonce is not None and digest is not None:
+                return nonce, digest
+            # Wrap around at 64-bit boundary to prevent overflow
+            start_nonce = (start_nonce + max_nonce) & 0xFFFFFFFFFFFFFFFF
+        return None, None
+    finally:
+        if stats is not None:
+            stats["elapsed_s"] = max(1e-6, time.monotonic() - stats["t_start"])
+
+
+def _fmt_hashrate(rate: float) -> str:
+    """Format a hashes/sec rate with a sensible SI prefix."""
+    if rate >= 1e9:
+        return f"{rate / 1e9:.2f} GH/s"
+    if rate >= 1e6:
+        return f"{rate / 1e6:.2f} MH/s"
+    if rate >= 1e3:
+        return f"{rate / 1e3:.2f} kH/s"
+    return f"{rate:.0f} H/s"
+
+
+def _start_solo_useful_work() -> tuple[Callable[[], None], dict]:
+    """Spawn AI/quantum/storage/VDF useful-work workers in their own
+    asyncio loop running in a background thread, so solo mining keeps the
+    machine busy with verifiable AI/Quantum/Storage/VDF compute alongside
+    the PoW search.
+
+    Returns ``(stop_fn, stats)``. ``stats`` is a dict with integer counters
+    keyed by ``"ai" / "quantum" / "storage" / "vdf"``, plus ``"started"``
+    (bool) so callers can tell whether any worker actually came up.
+
+    The counters are updated by transparently wrapping
+    ``mining.uw_inbox.push_result`` — every successful enqueue (i.e., a
+    completed job that produced a valid receipt envelope) bumps the
+    matching kind. The patch is idempotent across calls.
+    """
+    stats: dict[str, int | bool] = {
+        "ai": 0, "quantum": 0, "storage": 0, "vdf": 0, "started": False,
+    }
+
+    try:
+        from mining import uw_inbox as _uw_inbox
+    except Exception:
+        return (lambda: None), stats
+
+    if not getattr(_uw_inbox, "_animica_count_patched", False):
+        _orig_push = _uw_inbox.push_result
+
+        def _counting_push(record):
+            kind = ""
+            try:
+                raw_kind = (
+                    getattr(record, "kind", None)
+                    if not isinstance(record, dict)
+                    else record.get("kind")
+                )
+                kind = (raw_kind or "").lower()
+            except Exception:
+                kind = ""
+            ok = _orig_push(record)
+            if ok:
+                bucket = None
+                if kind == "ai":
+                    bucket = "ai"
+                elif kind in {"quantum", "qrng"}:
+                    bucket = "quantum"
+                elif kind in {"storage", "po_st"}:
+                    bucket = "storage"
+                elif kind == "vdf":
+                    bucket = "vdf"
+                if bucket is not None:
+                    stats[bucket] = int(stats.get(bucket, 0)) + 1
+            return ok
+
+        _uw_inbox.push_result = _counting_push       # type: ignore[assignment]
+        _uw_inbox._animica_count_patched = True      # type: ignore[attr-defined]
+        _uw_inbox._animica_stats = stats             # type: ignore[attr-defined]
+    else:
+        # Reuse counters from the prior call so everything aggregates.
+        prior = getattr(_uw_inbox, "_animica_stats", None)
+        if isinstance(prior, dict):
+            stats = prior
+
+    loop = asyncio.new_event_loop()
+    stop_evt_holder: dict[str, Optional[asyncio.Event]] = {"e": None}
+    ready_evt = threading.Event()
+
+    def _runner() -> None:
+        asyncio.set_event_loop(loop)
+        stop_evt = asyncio.Event()
+        stop_evt_holder["e"] = stop_evt
+
+        async def _gather() -> None:
+            tasks = []
+            for mod_name in ("ai_worker", "quantum_worker",
+                             "storage_worker", "vdf_worker"):
+                try:
+                    mod = importlib.import_module(f"mining.{mod_name}")
+                except Exception:
+                    continue
+                run_fn = getattr(mod, "run", None)
+                if not callable(run_fn):
+                    continue
+                tasks.append(asyncio.create_task(
+                    run_fn(stop_evt), name=f"uw.{mod_name}",
+                ))
+            stats["started"] = bool(tasks)
+            ready_evt.set()
+            if not tasks:
+                await stop_evt.wait()
+                return
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            loop.run_until_complete(_gather())
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(
+        target=_runner, name="animica.useful_work", daemon=True,
+    )
+    thread.start()
+    ready_evt.wait(timeout=5.0)
+
+    def _stop() -> None:
+        evt = stop_evt_holder.get("e")
+        if evt is None:
+            return
+        try:
+            loop.call_soon_threadsafe(evt.set)
+        except Exception:
+            pass
+        thread.join(timeout=5.0)
+
+    return _stop, stats
 
 
 def _format_rpc_error(error: Exception) -> str:
@@ -1399,9 +1558,11 @@ def mine_blocks(
         ),
     ),
     threads: int = typer.Option(
-        1,
+        0,
         "--threads",
-        help="CPU threads for PoW search (0=auto)",
+        help="CPU threads for PoW search. 0 (default) auto-detects all "
+              "cores (minus one) so mining saturates the machine. Use a "
+              "positive integer to cap.",
     ),
     allow_remote_rpc: bool = typer.Option(
         False,
@@ -1829,7 +1990,36 @@ def mine_blocks(
     typer.echo(
         f"Using {resolved_workers} CPU thread(s) for PoW search",
     )
-    
+
+    # Spawn AI/Quantum/Storage/VDF useful-work workers for the duration of
+    # this solo mining session. They run in a background asyncio loop and
+    # consume CPU/GPU per their own configuration (env vars). Receipts go
+    # into the standard `mining.uw_inbox` queue; we just instrument it to
+    # report job counts in the final summary.
+    uw_stop, uw_stats = (lambda: None), {"started": False,
+                                          "ai": 0, "quantum": 0,
+                                          "storage": 0, "vdf": 0}
+    if pool_useful_work:
+        try:
+            uw_stop, uw_stats = _start_solo_useful_work()
+            if uw_stats.get("started"):
+                typer.secho(
+                    "Useful-work workers active in background "
+                    "(AI / Quantum / Storage / VDF). Job counts will be "
+                    "shown in the final summary.",
+                    fg=typer.colors.CYAN,
+                )
+        except Exception as _uw_exc:    # noqa: BLE001 — best-effort
+            typer.secho(
+                f"Note: useful-work workers did not start ({_uw_exc}); "
+                "PoW search will still saturate CPU.",
+                fg=typer.colors.YELLOW,
+            )
+
+    # Per-session hashrate accumulators.
+    session_hashes = 0
+    session_pow_seconds = 0.0
+
     if no_timeout:
         typer.secho(
             "⚠ RPC timeout disabled - operations will wait indefinitely",
@@ -2215,11 +2405,17 @@ def mine_blocks(
                     header = header_from_template_view(header_view)
                     target_hex = template.get("target")
                     target_int = int(target_hex, 16) if isinstance(target_hex, str) else int(target_hex or 0)
+                    pow_stats: dict = {}
                     nonce, digest = _mine_header(
                         header,
                         target_int,
                         workers=resolved_workers,
+                        stats=pow_stats,
                     )
+                    block_hashes = int(pow_stats.get("hashes", 0))
+                    block_pow_s = float(pow_stats.get("elapsed_s", 0.0))
+                    session_hashes += block_hashes
+                    session_pow_seconds += block_pow_s
                     if nonce is None or digest is None:
                         typer.secho(
                             f"Warning: Block {total_mined + 1}/{count} failed to find PoW",
@@ -2710,12 +2906,17 @@ def mine_blocks(
                         else "unknown"
                     )
 
+                    block_rate = (
+                        block_hashes / block_pow_s if block_pow_s > 0 else 0.0
+                    )
                     typer.secho(
                         f"  ACCEPTED: Block {total_mined}/{count} (height: {final_height}, "
                         f"head: {new_head_hash or 'unknown'}, "
                         f"reward: {reward_text}, "
                         f"credited: {credited_text}, "
-                        f"balance_now: {balance_now if balance_now is not None else 'unknown'})",
+                        f"balance_now: {balance_now if balance_now is not None else 'unknown'}, "
+                        f"hashrate: {_fmt_hashrate(block_rate)} over "
+                        f"{block_hashes:,} hashes in {block_pow_s:.1f}s)",
                         fg=typer.colors.GREEN,
                         bold=True,
                     )
@@ -2817,7 +3018,28 @@ def mine_blocks(
                     typer.echo("Sample exclusions:")
                     for tx_hash, reason in list(rejected_by_hash_sample.items())[:5]:
                         typer.echo(f"  {tx_hash}: {reason}")
-    
+
+            avg_rate = (
+                session_hashes / session_pow_seconds
+                if session_pow_seconds > 0 else 0.0
+            )
+            typer.secho(
+                f"PoW work: {session_hashes:,} hashes in "
+                f"{session_pow_seconds:.1f}s "
+                f"({_fmt_hashrate(avg_rate)} avg, "
+                f"{resolved_workers} thread(s))",
+                fg=typer.colors.CYAN,
+            )
+            if uw_stats.get("started"):
+                typer.secho(
+                    "Useful-work jobs served: "
+                    f"AI={uw_stats.get('ai', 0)}  "
+                    f"Quantum={uw_stats.get('quantum', 0)}  "
+                    f"Storage={uw_stats.get('storage', 0)}  "
+                    f"VDF={uw_stats.get('vdf', 0)}",
+                    fg=typer.colors.CYAN,
+                )
+
     except typer.Exit:
         raise
     except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
@@ -2843,7 +3065,7 @@ def mine_blocks(
         elif "timed out" in error_str.lower():
             # Fallback: check error message for timeout indication
             is_timeout = True
-        
+
         if is_timeout and not no_timeout:
             typer.secho(
                 "Hint: For long-running operations, consider using --no-timeout flag",
@@ -2851,6 +3073,11 @@ def mine_blocks(
                 err=True,
             )
         raise typer.Exit(5)
+    finally:
+        try:
+            uw_stop()
+        except Exception:
+            pass
 
 
 @app.command("credits")

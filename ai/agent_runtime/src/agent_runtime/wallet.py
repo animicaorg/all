@@ -84,16 +84,53 @@ def _default_animica_dir() -> Path:
     return Path("~/.animica").expanduser()
 
 
-def _select_wallet_file(explicit: Optional[str]) -> Path:
+def _select_wallet_file(explicit: Optional[str]) -> tuple[Path, Optional[str]]:
+    """Resolve ``--wallet <X>`` to (bundle_path, override_label).
+
+    ``X`` may be a file path, a label inside the default bundle, or a
+    bech32 address / public-key hex of an entry inside the default bundle.
+    The override_label (when non-None) tells the caller to pick that entry
+    out of the bundle, regardless of the bundle's own ``default``.
+    """
     if explicit:
         p = Path(explicit).expanduser()
-        if not p.is_file():
-            raise WalletError(f"wallet file not found: {p}")
-        return p
+        if p.is_file():
+            return p, None
+        # Not a file — interpret as label / address / public_key_hex against
+        # the default v2 bundle. This is what users get when they paste an
+        # address from `animica wallet list` into `chat --wallet ...`.
+        bundle = _default_animica_dir() / "wallets.json"
+        if bundle.is_file():
+            try:
+                raw = json.loads(bundle.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise WalletError(
+                    f"failed to read wallet bundle at {bundle}: {exc}"
+                ) from exc
+            wallets = raw.get("wallets") if isinstance(raw, Mapping) else None
+            if isinstance(wallets, list):
+                for w in wallets:
+                    if not isinstance(w, Mapping):
+                        continue
+                    label = str(w.get("label", "") or "")
+                    addr = str(w.get("address") or w.get("addr") or "")
+                    pkh = str(w.get("public_key_hex") or "")
+                    if explicit in {label, addr, pkh}:
+                        return bundle, label or None
+                labels = ", ".join(
+                    str(w.get("label", "?"))
+                    for w in wallets if isinstance(w, Mapping)
+                )
+                raise WalletError(
+                    f"wallet identifier {explicit!r} is not a file and was "
+                    f"not found by label/address in {bundle}",
+                    hint=f"available labels: {labels or '(none)'}",
+                )
+        raise WalletError(f"wallet file not found: {p}")
     # v2 multi-wallet bundle (preferred, written by `animica wallet new` today).
     bundle = _default_animica_dir() / "wallets.json"
     if bundle.is_file():
-        return bundle
+        return bundle, None
     wallet_dir = _default_wallet_dir()
     # Prefer the wallet pinned via animica CLI state when available.
     pin = wallet_dir / ".active"
@@ -103,16 +140,16 @@ def _select_wallet_file(explicit: Optional[str]) -> Path:
             tgt = (wallet_dir / target) if not Path(target).is_absolute() \
                 else Path(target)
             if tgt.is_file():
-                return tgt
+                return tgt, None
         except OSError:
             pass
     # Fallback: first .json in wallet_dir, alphabetical.
     if wallet_dir.is_dir():
         for cand in sorted(wallet_dir.glob("*.json")):
-            return cand
+            return cand, None
     raise WalletError(
         f"no wallet configured; expected {bundle} or a file under "
-        f"{wallet_dir}; pass --wallet <path> to override",
+        f"{wallet_dir}; pass --wallet <path|label|address> to override",
         hint="`animica wallet new` to mint one; "
              "or `animica wallet import` to bring an existing one.",
     )
@@ -187,7 +224,7 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
     omit it (or the ``ANIMICA_WALLET_LABEL`` env var) to use the bundle's
     ``default`` wallet, or the first entry if no default is pinned.
     """
-    path = _select_wallet_file(wallet_path)
+    path, identifier_label = _select_wallet_file(wallet_path)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -195,7 +232,9 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
     if not isinstance(raw, Mapping):
         raise WalletError(f"wallet at {path} is not a JSON object")
 
-    entry = _resolve_wallet_entry(raw, path, wallet_label)
+    # Explicit --wallet-label still wins; otherwise honor the label we
+    # matched from the --wallet identifier itself.
+    entry = _resolve_wallet_entry(raw, path, wallet_label or identifier_label)
     address = str(entry.get("address") or entry.get("addr") or "")
     if not address:
         raise WalletError(

@@ -356,8 +356,10 @@ def main(
     ),
     wallet: Optional[str] = typer.Option(
         None, "--wallet",
-        help="Path to a wallet file. Default: ~/.animica/wallets.json (v2 "
-              "bundle), then pinned wallet under ~/.animica/wallets/.",
+        help="Wallet file path, label, or bech32 address. When not a file, "
+              "the value is looked up in ~/.animica/wallets.json by label / "
+              "address / public_key_hex. Default: bundle's selected wallet, "
+              "then pinned wallet under ~/.animica/wallets/.",
     ),
     wallet_label: Optional[str] = typer.Option(
         None, "--wallet-label",

@@ -450,6 +450,7 @@ def test_mine_blocks_threads_option(monkeypatch: Any) -> None:
         target_int: int,
         *,
         workers: int | None = None,
+        stats: dict | None = None,
     ) -> tuple[int | None, bytes | None]:
         captured["workers"] = workers
         return 0, b"\x00" * 32
@@ -929,10 +930,12 @@ def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
     )
     
     assert result.exit_code == 0
-    # Should have 2 sleep calls for 3 blocks (no sleep after last block)
-    assert len(sleep_calls) == 2
-    # Each sleep should be 2 seconds
-    assert all(s == 2.0 for s in sleep_calls)
+    # Filter out sleeps from background useful-work workers (they sleep
+    # at sub-second intervals); we only care about the 2s block-pacing
+    # delays the CLI inserts between accepted blocks.
+    block_pacing_sleeps = [s for s in sleep_calls if s == 2.0]
+    # Should have 2 block-pacing sleeps for 3 blocks (none after last block)
+    assert len(block_pacing_sleeps) == 2
 
 
 def _create_mock_rpc_client_with_device_tracking() -> tuple[type, dict[str, Any]]:
