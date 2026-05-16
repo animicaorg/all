@@ -500,6 +500,70 @@ def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
 
+# ---------- Orchestrator entrypoint ----------
+
+
+async def run(stop_evt: asyncio.Event | None = None) -> None:
+    """
+    Module-level entrypoint launched by `mining.orchestrator`.
+
+    Runs the AI worker until `stop_evt` is set. Each completed
+    ResultRecord is converted into a `compute.receipt.v1`
+    UsefulWorkProof envelope and pushed into `mining.uw_inbox`, where
+    the share scanner attaches it to the next outgoing share.
+
+    Honors env vars (see `AiWorker.create_from_env`):
+      - AICF_URL / AICF_API_KEY: use a real AICF HTTP backend
+      - AI_WORKER_POLL_MS, AI_WORKER_QUEUE
+      - ANIMICA_AI_WORKER_MODEL (default: "tiny-devnet")
+      - ANIMICA_AI_WORKER_INTERVAL_S (seconds between enqueued jobs, default: 5.0)
+    """
+    from . import uw_inbox
+
+    if stop_evt is None:
+        stop_evt = asyncio.Event()
+
+    model = os.getenv("ANIMICA_AI_WORKER_MODEL", "tiny-devnet")
+    try:
+        interval_s = max(0.5, float(os.getenv("ANIMICA_AI_WORKER_INTERVAL_S", "5.0")))
+    except Exception:
+        interval_s = 5.0
+
+    worker = AiWorker.create_from_env()
+    await worker.start()
+    log_prefix = "[ai_worker.run]"
+    try:
+        next_enqueue = 0.0
+        while not stop_evt.is_set():
+            now = time.time()
+            if now >= next_enqueue:
+                try:
+                    salt = int(now).to_bytes(8, "big")
+                    prompt = b"animica.useful-work:" + salt
+                    await worker.enqueue(
+                        model=model, prompt=prompt, max_tokens=32, salt=salt
+                    )
+                except Exception as exc:
+                    # The queue may be full; log at debug and back off
+                    import logging as _logging
+
+                    _logging.getLogger("mining.ai_worker").debug(
+                        "%s enqueue failed: %s", log_prefix, exc
+                    )
+                next_enqueue = now + interval_s
+
+            # Drain completed records into the shared UW inbox.
+            for rec in worker.pop_ready(max_n=16):
+                uw_inbox.push_result(rec)
+
+            try:
+                await asyncio.wait_for(stop_evt.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await worker.stop()
+
+
 # ---------- CLI (dev) ----------
 
 

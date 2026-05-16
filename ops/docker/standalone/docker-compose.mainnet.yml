@@ -42,14 +42,22 @@ services:
       ANIMICA_RPC_HOST: "0.0.0.0"
       ANIMICA_RPC_PORT: "8545"
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
-      # P2P config — mainnet seeds auto-loaded by chain_id
+      # P2P config — mainnet seeds auto-loaded by chain_id.
+      # Pip-installed nodes typically live behind NAT, so:
+      #   - listen on TCP only (QUIC needs UDP/443 mapped + privileged binding,
+      #     WS needs a separate host port). The seeds also accept TCP, so
+      #     outbound dialing still finds the network.
+      #   - turn OFF inbound-reachability enforcement so NAT'd nodes are not
+      #     rejected during HELLO ("outbound_only_no_inbound"). Operators with
+      #     a public IP can opt back in by setting this env var to "true".
       ANIMICA_P2P_ENABLE: "true"
       ANIMICA_P2P_CHAIN_ID: "1"
       ANIMICA_P2P_PORT: "30333"
       ANIMICA_P2P_LISTEN_TCP: "0.0.0.0:30333"
-      ANIMICA_P2P_LISTEN_QUIC: "0.0.0.0:443"
       ANIMICA_P2P_ENABLE_TCP: "true"
-      ANIMICA_P2P_ENABLE_QUIC: "true"
+      ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-false}"
+      ANIMICA_P2P_ENABLE_WS: "${ANIMICA_P2P_ENABLE_WS:-false}"
+      ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY: "${ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY:-false}"
       ANIMICA_P2P_SEEDS: "${ANIMICA_P2P_SEEDS:-}"
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
       ANIMICA_P2P_DATA_DIR: "/data/chain-1/p2p"

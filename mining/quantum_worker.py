@@ -660,6 +660,65 @@ class ExternalQuantumProvider:
         )
 
 
+# ---------- Orchestrator entrypoint ----------
+
+
+async def run(stop_evt: asyncio.Event | None = None) -> None:
+    """
+    Module-level entrypoint launched by `mining.orchestrator`. Produces a
+    steady stream of simulated quantum circuits, drains completed results,
+    and pushes them through `mining.uw_inbox` as UsefulWorkProof envelopes.
+
+    Honors `ANIMICA_QUANTUM_WORKER_INTERVAL_S` (default 6.0s) between jobs.
+    """
+    from . import uw_inbox
+
+    if stop_evt is None:
+        stop_evt = asyncio.Event()
+
+    try:
+        interval_s = max(0.5, float(os.getenv("ANIMICA_QUANTUM_WORKER_INTERVAL_S", "6.0")))
+    except Exception:
+        interval_s = 6.0
+
+    worker = QuantumWorker.create_from_env()
+    await worker.start()
+    counter = 0
+    try:
+        next_enqueue = 0.0
+        while not stop_evt.is_set():
+            now = time.time()
+            if now >= next_enqueue:
+                try:
+                    seed = sha3_256(b"animica.useful-work:" + counter.to_bytes(8, "big"))
+                    await worker.enqueue(
+                        width=6,
+                        depth=12,
+                        shots=128,
+                        trap_fraction=0.1,
+                        circuit_json=b'{"name":"miner-useful-work","v":1}',
+                        trap_seed=seed,
+                    )
+                    counter += 1
+                except Exception as exc:
+                    import logging as _logging
+
+                    _logging.getLogger("mining.quantum_worker").debug(
+                        "run enqueue failed: %s", exc
+                    )
+                next_enqueue = now + interval_s
+
+            for rec in worker.pop_ready(max_n=8):
+                uw_inbox.push_result(rec)
+
+            try:
+                await asyncio.wait_for(stop_evt.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await worker.stop()
+
+
 # ---------- CLI (dev) ----------
 
 

@@ -53,6 +53,10 @@ KEY_WORKER_REGISTRY = "aicf.worker.{provider_id}.{worker_id}"
 KEY_WORKER_STATS_JOBS = "aicf.worker_stats.{provider_id}.{worker_id}.jobs"
 KEY_WORKER_STATS_TOKENS = "aicf.worker_stats.{provider_id}.{worker_id}.tokens"
 KEY_WORKER_STATS_FEES = "aicf.worker_stats.{provider_id}.{worker_id}.fees"
+# Enumerable list of miner addresses with credits in an epoch — required so
+# the deterministic auto-payout at epoch finalization can iterate recipients
+# without a state-DB scan.
+KEY_EPOCH_MINERS = "aicf.epoch.{epoch}.miners"
 
 
 @dataclass
@@ -386,6 +390,46 @@ def set_min_claim_amount(state: Any, amount: int) -> None:
 # --------------------------------------------------------------------------------------
 
 
+def get_epoch_miners(state: Any, epoch: int) -> List[bytes]:
+    """Return the (deterministically ordered) list of miner addresses with
+    credits in an epoch. Used by the auto-payout to iterate recipients."""
+    key = KEY_EPOCH_MINERS.format(epoch=epoch)
+    try:
+        val = state.get(key)
+    except Exception:
+        return []
+    if val is None:
+        return []
+    miners: List[bytes] = []
+    # Stored as a sorted list of hex strings to keep the encoding adapter-agnostic.
+    if isinstance(val, (list, tuple)):
+        for entry in val:
+            if isinstance(entry, (bytes, bytearray)):
+                miners.append(bytes(entry))
+            elif isinstance(entry, str):
+                try:
+                    miners.append(bytes.fromhex(entry))
+                except Exception:
+                    continue
+    return miners
+
+
+def _set_epoch_miners(state: Any, epoch: int, miners: List[bytes]) -> None:
+    key = KEY_EPOCH_MINERS.format(epoch=epoch)
+    state.put(key, [m.hex() for m in miners])
+
+
+def _register_epoch_miner(state: Any, epoch: int, miner_address: bytes) -> None:
+    """Idempotently record that a miner has credits in `epoch`."""
+    current = get_epoch_miners(state, epoch)
+    if miner_address in current:
+        return
+    current.append(bytes(miner_address))
+    # Sort to keep the order deterministic across nodes regardless of insertion order.
+    current.sort()
+    _set_epoch_miners(state, epoch, current)
+
+
 def add_credits(
     state: Any,
     epoch: int,
@@ -394,22 +438,25 @@ def add_credits(
 ) -> None:
     """
     Add credits to a miner for a specific epoch.
-    
+
     This is called when a block is accepted on the canonical chain.
     """
     if credits <= 0:
         return
-    
+
     # Add to user's credits
     current_user = get_credits_user(state, epoch, miner_address)
     new_user = safe_add(current_user, credits)
     set_credits_user(state, epoch, miner_address, new_user)
-    
+
     # Add to total credits
     current_total = get_credits_total(state, epoch)
     new_total = safe_add(current_total, credits)
     set_credits_total(state, epoch, new_total)
-    
+
+    # Track recipient list so finalize_epoch can auto-distribute.
+    _register_epoch_miner(state, epoch, miner_address)
+
     log.debug(
         f"AICF: Added {credits} credits to {miner_address.hex()[:16]}... "
         f"in epoch {epoch} (total: {new_total})"
@@ -470,6 +517,88 @@ def finalize_epoch(
     )
     
     return budget
+
+
+def distribute_epoch_to_miners(
+    state: Any,
+    epoch: int,
+    *,
+    credit_balance: Any,
+) -> List[Tuple[bytes, int]]:
+    """
+    Automatically convert AICF credits to ANM for every miner who earned
+    credits in `epoch`. Called immediately after `finalize_epoch`.
+
+    The budget for the epoch already encodes AI-usage spend on the network
+    (ENA call fees + transaction fee slices + block-reward slice — see
+    `add_inflow`). At the boundary we split that budget pro-rata to each
+    miner's credit share and credit ANM straight to their balance so users
+    do not have to submit a claim transaction.
+
+    Args:
+        state: mutable state handle (with get/put).
+        epoch: the just-finalized epoch.
+        credit_balance: callable `credit_balance(address, amount)` that
+            credits ANM to an address and debits the AICF pool side via
+            normal accounting. The caller supplies this so we stay free of
+            heavy imports here.
+
+    Returns:
+        List of `(address, amount_paid)` tuples for telemetry/logging.
+    """
+    budget = get_budget(state, epoch)
+    if budget <= 0:
+        return []
+
+    credits_total = get_credits_total(state, epoch)
+    if credits_total <= 0:
+        return []
+
+    miners = get_epoch_miners(state, epoch)
+    if not miners:
+        return []
+
+    pool = get_pool_balance(state)
+    payouts: List[Tuple[bytes, int]] = []
+    distributed = 0
+    for miner in miners:
+        # Skip miners who already pulled this epoch via a manual claim TX.
+        if get_last_claimed_epoch(state, miner) >= epoch:
+            continue
+        credits_user = get_credits_user(state, epoch, miner)
+        if credits_user <= 0:
+            continue
+        share = safe_mul_div(budget, credits_user, credits_total)
+        if share <= 0:
+            continue
+        # Defensive: stop if pool has been drained by manual claims so we
+        # don't credit ANM out of thin air.
+        if distributed + share > pool:
+            share = pool - distributed
+            if share <= 0:
+                break
+        try:
+            credit_balance(miner, share)
+        except Exception as exc:
+            log.error(
+                f"AICF auto-payout: credit_balance failed for "
+                f"{miner.hex()[:16]}...: {exc}",
+                exc_info=True,
+            )
+            continue
+        distributed += share
+        set_last_claimed_epoch(state, miner, epoch)
+        payouts.append((bytes(miner), int(share)))
+
+    if distributed > 0:
+        set_pool_balance(state, pool - distributed)
+        log.info(
+            f"AICF auto-payout: distributed {distributed} nANM to "
+            f"{len(payouts)} miner(s) for epoch {epoch} "
+            f"(budget={budget}, credits_total={credits_total})"
+        )
+
+    return payouts
 
 
 def compute_claimable(
@@ -931,6 +1060,8 @@ __all__ = [
     "add_credits",
     "add_inflow",
     "finalize_epoch",
+    "distribute_epoch_to_miners",
+    "get_epoch_miners",
     "compute_claimable",
     "process_claim",
     "process_partial_claim",

@@ -291,6 +291,110 @@ def _normalize_hex(h: str) -> str:
     return h
 
 
+# ---------------- Orchestrator entrypoint ----------------
+
+
+async def run(stop_evt: asyncio.Event | None = None) -> None:
+    """
+    Module-level entrypoint launched by `mining.orchestrator`.
+
+    VDF requires a real RSA modulus and base; if `VDF_MODULUS_HEX` is not
+    set in the environment, this function simply idles until `stop_evt` is
+    set so the orchestrator can run the other useful-work workers without
+    crashing.
+
+    When configured, each completed proof is converted into a synthetic
+    ResultRecord-like object (output_digest = sha3_256(proof_body)) and
+    pushed through `mining.uw_inbox`.
+    """
+    import logging as _logging
+
+    log = _logging.getLogger("mining.vdf_worker")
+
+    if stop_evt is None:
+        stop_evt = asyncio.Event()
+
+    n_hex = os.getenv("VDF_MODULUS_HEX")
+    if not n_hex:
+        log.info(
+            "VDF worker idling: VDF_MODULUS_HEX is unset. "
+            "Set this env var to enable on-chain VDF useful-work proofs."
+        )
+        try:
+            await stop_evt.wait()
+        finally:
+            return
+
+    from . import uw_inbox
+
+    try:
+        t_iter = max(1, int(os.getenv("VDF_ITERATIONS", "200000")))
+    except Exception:
+        t_iter = 200_000
+    try:
+        interval_s = max(1.0, float(os.getenv("ANIMICA_VDF_WORKER_INTERVAL_S", "30.0")))
+    except Exception:
+        interval_s = 30.0
+    label_prefix = os.getenv("VDF_LABEL_PREFIX", "animica.vdf.useful-work:")
+    base = sha3_256(label_prefix.encode())
+    g_hex = os.getenv("VDF_BASE_HEX") or base.hex()
+
+    worker = VDFWorker.create_from_env()
+    await worker.start()
+    counter = 0
+    try:
+        next_enqueue = 0.0
+        while not stop_evt.is_set():
+            now = time.time()
+            if now >= next_enqueue:
+                try:
+                    spec = VDFJobSpec(
+                        modulus_n_hex=n_hex,
+                        base_g_hex=g_hex,
+                        iterations=t_iter,
+                        label=b"animica.vdf.useful-work\0"
+                        + counter.to_bytes(8, "big"),
+                    )
+                    await worker.enqueue(spec)
+                    counter += 1
+                except Exception as exc:
+                    log.debug("vdf run enqueue failed: %s", exc)
+                next_enqueue = now + interval_s
+
+            for r in worker.pop_ready(max_n=4):
+                try:
+                    body = r.proof_body if isinstance(r.proof_body, dict) else {}
+                    payload = (
+                        b"vdf-proof:"
+                        + r.task_id.encode()
+                        + b":"
+                        + repr(sorted(body.items())).encode()
+                    )
+                    digest = sha3_256(payload)
+                    metrics = dict(r.metrics) if isinstance(r.metrics, dict) else {}
+
+                    class _Rec:
+                        kind = "VDF"
+                        provider_id = "vdf-local"
+
+                    rec = _Rec()
+                    rec.task_id = r.task_id  # type: ignore[attr-defined]
+                    rec.output_digest = digest  # type: ignore[attr-defined]
+                    rec.attestation = {"provider": "vdf-local"}  # type: ignore[attr-defined]
+                    rec.metrics = metrics  # type: ignore[attr-defined]
+                    rec.completed_at = time.time()  # type: ignore[attr-defined]
+                    uw_inbox.push_result(rec)
+                except Exception as exc:
+                    log.debug("vdf result conversion failed: %s", exc)
+
+            try:
+                await asyncio.wait_for(stop_evt.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await worker.stop()
+
+
 # ---------------- Demo CLI ----------------
 
 

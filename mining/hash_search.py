@@ -445,6 +445,18 @@ async def scan_forever(
                         share_payload["parentHash"] = parent.get("hash")
                 if "txs" in current_tpl:
                     share_payload["txs"] = current_tpl.get("txs")
+                # Attach any pending Useful Work Proofs queued by the
+                # AI/Quantum/Storage/VDF workers (see mining.uw_inbox). The
+                # node-side UWP verifier credits bonus AICF credits to the
+                # miner when these are accepted.
+                try:
+                    from . import uw_inbox as _uw_inbox
+
+                    uw_proofs = _uw_inbox.drain(max_n=4)
+                    if uw_proofs:
+                        share_payload["attachedProofs"] = uw_proofs
+                except Exception:
+                    pass
                 await out_queue.put(share_payload)
 
             # Yield control to allow other async tasks to run

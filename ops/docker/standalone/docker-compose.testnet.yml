@@ -27,10 +27,16 @@ services:
       ANIMICA_RPC_HOST: "0.0.0.0"
       ANIMICA_RPC_PORT: "18546"
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
+      # See mainnet compose for the reasoning behind TCP-only + no inbound
+      # reachability enforcement. Operators with a public IP can opt back in.
       ANIMICA_P2P_ENABLE: "true"
       ANIMICA_P2P_CHAIN_ID: "2"
       ANIMICA_P2P_PORT: "31334"
       ANIMICA_P2P_LISTEN_TCP: "0.0.0.0:31334"
+      ANIMICA_P2P_ENABLE_TCP: "true"
+      ANIMICA_P2P_ENABLE_QUIC: "${ANIMICA_P2P_ENABLE_QUIC:-false}"
+      ANIMICA_P2P_ENABLE_WS: "${ANIMICA_P2P_ENABLE_WS:-false}"
+      ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY: "${ANIMICA_P2P_ENFORCE_INBOUND_REACHABILITY:-false}"
       ANIMICA_P2P_SEEDS: "${ANIMICA_P2P_SEEDS:-}"
       ANIMICA_P2P_ADVERTISE_ADDR: "${ANIMICA_P2P_ADVERTISE_ADDR:-}"
       ANIMICA_P2P_DATA_DIR: "/data/chain-2/p2p"

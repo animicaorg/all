@@ -234,6 +234,12 @@ def _default_share_encoder(share: Any) -> Dict[str, Any]:
         payload["height"] = m["height"]
     if "shareTarget" in m:
         payload["shareTarget"] = m["shareTarget"]
+    # Forward any UWP envelopes attached by the scanner so the node-side
+    # UWP verifier (rpc.methods.miner._process_attached_proofs) can credit
+    # bonus AICF credits to the miner.
+    attached = m.get("attachedProofs") or m.get("attached_proofs")
+    if isinstance(attached, list) and attached:
+        payload["attachedProofs"] = attached
 
     return payload
 

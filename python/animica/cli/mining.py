@@ -1146,6 +1146,194 @@ def generate_payout_address(
         raise typer.Exit(1)
 
 
+def _parse_pool_stratum_url(raw: str) -> tuple[str, int]:
+    """
+    Parse a stratum pool endpoint into (host, port).
+    Accepts: `stratum+tcp://host:port`, `tcp://host:port`, or `host:port`.
+    """
+    if not raw or not isinstance(raw, str):
+        raise ValueError("empty stratum URL")
+    candidate = raw.strip()
+    for prefix in ("stratum+tcp://", "stratum://", "tcp://"):
+        if candidate.lower().startswith(prefix):
+            candidate = candidate[len(prefix):]
+            break
+    # Strip optional path/query
+    for sep in ("/", "?"):
+        if sep in candidate:
+            candidate = candidate.split(sep, 1)[0]
+    if ":" not in candidate:
+        raise ValueError(
+            f"stratum URL must include a port (got {raw!r}); "
+            "use e.g. stratum+tcp://pool.example.com:23454"
+        )
+    host, port_str = candidate.rsplit(":", 1)
+    host = host.strip()
+    if not host:
+        raise ValueError(f"empty host in stratum URL {raw!r}")
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise ValueError(f"invalid stratum port in {raw!r}: {exc}") from None
+    if not (0 < port < 65536):
+        raise ValueError(f"stratum port out of range in {raw!r}: {port}")
+    return host, port
+
+
+async def _run_pool_stratum_miner(
+    *,
+    host: str,
+    port: int,
+    worker: str,
+    address: str,
+    target_blocks: int,
+    scan_window: int = 100_000,
+    framing: str = "lines",
+    enable_useful_work: bool = True,
+    device: str = "auto",
+    threads: int = 0,
+) -> int:
+    """
+    Run the CPU stratum miner against `host:port` and return the number of
+    accepted blocks. Stops when `target_blocks` accepted blocks have been
+    submitted or when the connection drops / SIGINT is received.
+
+    When `enable_useful_work` is True (default), AI/quantum/storage/VDF
+    workers are spawned alongside the miner so completed useful-work
+    receipts are converted into `compute.receipt.v1` envelopes and
+    attached to outgoing stratum shares (see `mining.uw_inbox`). The
+    pool / node-side UWP verifier credits bonus AICF credits to the
+    miner when each proof is accepted.
+    """
+    import asyncio as _asyncio
+    import signal as _signal
+
+    # Lazy imports: the mining package is heavy and only needed in this branch.
+    from mining.internal_cpu_miner import CpuStratumMiner
+
+    stop = _asyncio.Event()
+    accepted_blocks = 0
+    accepted_shares = 0
+    target_blocks = max(1, int(target_blocks))
+
+    uw_tasks: list[_asyncio.Task] = []
+    if enable_useful_work:
+        try:
+            from mining import (
+                ai_worker as _ai,
+                quantum_worker as _quantum,
+                storage_worker as _storage,
+                vdf_worker as _vdf,
+            )
+        except Exception:
+            _ai = _quantum = _storage = _vdf = None  # type: ignore[assignment]
+
+        worker_runners = [
+            ("ai_worker", getattr(_ai, "run", None)),
+            ("quantum_worker", getattr(_quantum, "run", None)),
+            ("storage_worker", getattr(_storage, "run", None)),
+            ("vdf_worker", getattr(_vdf, "run", None)),
+        ]
+        for label, fn in worker_runners:
+            if fn is None:
+                continue
+            uw_tasks.append(_asyncio.create_task(fn(stop), name=f"uw.{label}"))
+        if uw_tasks:
+            typer.secho(
+                f"Useful-work workers active: {len(uw_tasks)} "
+                "(AI/Quantum/Storage/VDF). Receipts will be attached to "
+                "shares as compute.receipt.v1 envelopes.",
+                fg=typer.colors.CYAN,
+            )
+
+    miner = CpuStratumMiner(
+        host=host,
+        port=port,
+        agent="animica-cli/0.1",
+        worker=worker,
+        address=address,
+        scan_window=int(scan_window),
+        device=device,
+        threads=int(threads),
+    )
+
+    # Wrap the underlying client's submit_share to capture accepted/isBlock so
+    # the CLI can stop after `target_blocks` accepted blocks.
+    original_submit = miner._client.submit_share
+
+    async def _counting_submit(job_id, hashshare, proofs=None, txs=None, extranonce2="0x00"):
+        nonlocal accepted_blocks, accepted_shares
+        res = await original_submit(
+            job_id,
+            hashshare,
+            proofs=proofs,
+            txs=txs,
+            extranonce2=extranonce2,
+        )
+        result = res.get("result") if isinstance(res, dict) else None
+        if isinstance(result, dict):
+            if result.get("accepted"):
+                accepted_shares += 1
+            if result.get("isBlock") or result.get("is_block"):
+                accepted_blocks += 1
+                typer.secho(
+                    f"  ✓ block accepted: height={result.get('height')} "
+                    f"hash={result.get('hash')} "
+                    f"({accepted_blocks}/{target_blocks})",
+                    fg=typer.colors.GREEN,
+                )
+                if accepted_blocks >= target_blocks:
+                    stop.set()
+            elif result.get("accepted"):
+                typer.echo(f"  share accepted (total shares={accepted_shares})")
+            else:
+                reason = result.get("reason") or "unknown"
+                typer.secho(f"  share rejected: {reason}", fg=typer.colors.YELLOW)
+        return res
+
+    miner._client.submit_share = _counting_submit  # type: ignore[assignment]
+
+    for sig in (_signal.SIGINT, _signal.SIGTERM):
+        try:
+            _asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+
+    typer.echo(
+        f"Connecting to stratum pool {host}:{port} as worker={worker} address={address}"
+    )
+    try:
+        await miner.start()
+    except Exception as exc:
+        typer.secho(
+            f"Error: failed to connect to stratum pool {host}:{port}: {exc}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Stratum miner running. Target: {target_blocks} accepted block(s). "
+        "Press Ctrl-C to stop."
+    )
+    try:
+        await stop.wait()
+    finally:
+        try:
+            await miner.stop()
+        except Exception:
+            pass
+        # Stop useful-work workers and drain their tasks.
+        if uw_tasks:
+            for t in uw_tasks:
+                t.cancel()
+            await _asyncio.gather(*uw_tasks, return_exceptions=True)
+    typer.echo(
+        f"Stopped. accepted_blocks={accepted_blocks} accepted_shares={accepted_shares}"
+    )
+    return accepted_blocks
+
+
 @app.command("mine-blocks")
 def mine_blocks(
     address: Optional[str] = typer.Argument(
@@ -1161,6 +1349,33 @@ def mine_blocks(
         None,
         "--address",
         help="Payout address (option, for backward compat): wallet label or Bech32 address",
+    ),
+    pool_stratum: Optional[str] = typer.Option(
+        None,
+        "--pool-stratum",
+        help=(
+            "Pool stratum endpoint (e.g. stratum+tcp://pool.example.com:23454). "
+            "When set, mining runs against the pool instead of the local RPC."
+        ),
+    ),
+    pool_worker: Optional[str] = typer.Option(
+        None,
+        "--pool-worker",
+        help="Worker name reported to the stratum pool. Defaults to the payout address.",
+    ),
+    pool_scan_window: int = typer.Option(
+        100_000,
+        "--pool-scan-window",
+        help="Nonce window size scanned per stratum job (only used with --pool-stratum).",
+    ),
+    pool_useful_work: bool = typer.Option(
+        True,
+        "--pool-useful-work/--no-pool-useful-work",
+        help=(
+            "Attach AI/quantum/storage/VDF UsefulWorkProof envelopes to "
+            "outgoing stratum shares (default: enabled). Disable if your "
+            "pool doesn't credit bonus AICF credits."
+        ),
     ),
     threads: int = typer.Option(
         1,
@@ -1428,7 +1643,77 @@ def mine_blocks(
     
     # Resolve address from label or validate raw Bech32 address
     resolved_address = _resolve_payout_address(final_address)
-    
+
+    # ─── Stratum pool path ──────────────────────────────────────────────────
+    # `--pool-stratum` shifts mining away from local RPC: the pool issues
+    # job templates, drives difficulty, and credits payouts to the wallet
+    # address we authorize with. We dispatch BEFORE the local-node sync
+    # check because pool mining doesn't require a local RPC node.
+    if pool_stratum:
+        import asyncio as _asyncio
+
+        try:
+            host, port = _parse_pool_stratum_url(pool_stratum)
+        except ValueError as exc:
+            typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(2)
+        worker_name = (pool_worker or resolved_address).strip()
+        if not worker_name:
+            worker_name = resolved_address
+
+        # Resolve the device once at the CLI level so we can announce it
+        # before the miner starts. `--device auto` (the default) prefers
+        # GPU and falls back to CPU; see mining.device.auto_detect_device.
+        # The stratum scanner inside CpuStratumMiner does the same
+        # detection internally, but resolving here gives the user a clear
+        # banner before connection starts.
+        pool_device = (device.strip().lower() if isinstance(device, str) else "auto")
+        if gpu:
+            pool_device = "cuda"
+        if pool_device == "auto":
+            try:
+                import sys as _sys
+                _repo_root = Path(__file__).resolve().parents[3]
+                if str(_repo_root) not in _sys.path:
+                    _sys.path.insert(0, str(_repo_root))
+                from mining.device import auto_detect_device as _auto
+                pool_device = _auto() or "cpu"
+            except Exception:
+                pool_device = "cpu"
+        typer.secho(
+            f"Pool mining: target={count} block(s), pool={host}:{port}, "
+            f"worker={worker_name}, payout={resolved_address}, device={pool_device}",
+            fg=typer.colors.CYAN,
+        )
+        try:
+            scan_window_int = int(pool_scan_window)
+        except (TypeError, ValueError):
+            scan_window_int = 100_000
+        accepted = _asyncio.run(
+            _run_pool_stratum_miner(
+                host=host,
+                port=port,
+                worker=worker_name,
+                address=resolved_address,
+                target_blocks=int(count),
+                scan_window=scan_window_int,
+                enable_useful_work=bool(pool_useful_work),
+                device=pool_device,
+                threads=int(resolved_workers) if resolved_workers else 0,
+            )
+        )
+        if accepted < int(count):
+            typer.secho(
+                f"Pool mining ended with {accepted}/{count} accepted block(s).",
+                fg=typer.colors.YELLOW,
+            )
+            raise typer.Exit(1 if accepted == 0 else 0)
+        typer.secho(
+            f"Pool mining complete: {accepted}/{count} block(s) accepted.",
+            fg=typer.colors.GREEN,
+        )
+        return
+
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
     guard_bootstrap_rpc(url, allow_remote=allow_remote_rpc, method="miner.getBlockTemplate")

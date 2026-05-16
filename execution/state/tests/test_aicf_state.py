@@ -10,11 +10,13 @@ from execution.state.aicf_state import (
     add_inflow,
     compute_claimable,
     compute_epoch,
+    distribute_epoch_to_miners,
     finalize_epoch,
     get_budget,
     get_credits_total,
     get_credits_user,
     get_epoch_length,
+    get_epoch_miners,
     get_inflow,
     get_last_claimed_epoch,
     get_pool_balance,
@@ -338,3 +340,64 @@ def test_compute_claimable_skip_zero_credits_epochs():
     
     assert claimable.epochs == [0]
     assert claimable.total_claimable == 500_000_000
+
+
+def test_get_epoch_miners_tracks_recipients():
+    state = MockState()
+    a = b"\x01" * 32
+    b = b"\x02" * 32
+    add_credits(state, 7, a, 1_000)
+    add_credits(state, 7, b, 2_000)
+    add_credits(state, 7, a, 500)  # duplicate insert must be idempotent
+    miners = get_epoch_miners(state, 7)
+    assert sorted(miners) == sorted([a, b])
+    # Sorted deterministically across calls
+    assert miners == sorted(miners)
+
+
+def test_distribute_epoch_to_miners_credits_pro_rata():
+    state = MockState()
+    a = b"\x01" * 32
+    b = b"\x02" * 32
+
+    # Two miners earn credits 3:1 in epoch 0; AI usage drives 1_000_000 nANM
+    # of inflows; 50% epoch_payout_bps gives 500_000 distributable budget.
+    add_credits(state, 0, a, 3_000)
+    add_credits(state, 0, b, 1_000)
+    add_inflow(state, 0, 1_000_000)
+    finalize_epoch(state, 0, epoch_payout_bps=5000)
+
+    paid: list[tuple[bytes, int]] = []
+
+    def fake_credit(address: bytes, amount: int) -> None:
+        paid.append((bytes(address), int(amount)))
+
+    payouts = distribute_epoch_to_miners(state, 0, credit_balance=fake_credit)
+    assert len(payouts) == 2
+    by_addr = {addr: amt for addr, amt in payouts}
+    # 500_000 * 3 / 4 = 375_000 ; 500_000 * 1 / 4 = 125_000
+    assert by_addr[a] == 375_000
+    assert by_addr[b] == 125_000
+    # The pool's virtual counter has been debited by the same total.
+    assert get_pool_balance(state) == 1_000_000 - 500_000
+    # And last_claimed_epoch is bumped so a second pass is a no-op.
+    assert get_last_claimed_epoch(state, a) == 0
+    assert get_last_claimed_epoch(state, b) == 0
+    paid.clear()
+    again = distribute_epoch_to_miners(state, 0, credit_balance=fake_credit)
+    assert again == [] and paid == []
+
+
+def test_distribute_epoch_skips_miners_who_already_claimed():
+    state = MockState()
+    a = b"\x01" * 32
+    add_credits(state, 0, a, 1_000)
+    add_inflow(state, 0, 1_000_000)
+    finalize_epoch(state, 0, epoch_payout_bps=5000)
+    # Simulate a manual claim TX bumping the cursor.
+    process_claim(state, a, current_epoch=2)
+    paid: list[tuple[bytes, int]] = []
+    distribute_epoch_to_miners(
+        state, 0, credit_balance=lambda addr, amt: paid.append((addr, amt))
+    )
+    assert paid == []
