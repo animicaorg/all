@@ -1146,18 +1146,34 @@ def generate_payout_address(
         raise typer.Exit(1)
 
 
-def _parse_pool_stratum_url(raw: str) -> tuple[str, int]:
+def _parse_pool_stratum_url(raw: str) -> tuple[str, int, bool]:
     """
-    Parse a stratum pool endpoint into (host, port).
-    Accepts: `stratum+tcp://host:port`, `tcp://host:port`, or `host:port`.
+    Parse a stratum pool endpoint into (host, port, tls).
+
+    Accepts:
+      - stratum+tcp://host:port  (plain TCP)
+      - stratum://host:port      (plain TCP)
+      - tcp://host:port          (plain TCP)
+      - stratum+ssl://host:port  (TLS — also accepts stratum+tls://, ssl://, tls://)
+      - host:port                (plain TCP)
     """
     if not raw or not isinstance(raw, str):
         raise ValueError("empty stratum URL")
     candidate = raw.strip()
-    for prefix in ("stratum+tcp://", "stratum://", "tcp://"):
-        if candidate.lower().startswith(prefix):
+    tls = False
+    tls_prefixes = ("stratum+ssl://", "stratum+tls://", "ssl://", "tls://")
+    plain_prefixes = ("stratum+tcp://", "stratum://", "tcp://")
+    lowered = candidate.lower()
+    for prefix in tls_prefixes:
+        if lowered.startswith(prefix):
             candidate = candidate[len(prefix):]
+            tls = True
             break
+    else:
+        for prefix in plain_prefixes:
+            if lowered.startswith(prefix):
+                candidate = candidate[len(prefix):]
+                break
     # Strip optional path/query
     for sep in ("/", "?"):
         if sep in candidate:
@@ -1177,7 +1193,7 @@ def _parse_pool_stratum_url(raw: str) -> tuple[str, int]:
         raise ValueError(f"invalid stratum port in {raw!r}: {exc}") from None
     if not (0 < port < 65536):
         raise ValueError(f"stratum port out of range in {raw!r}: {port}")
-    return host, port
+    return host, port, tls
 
 
 async def _run_pool_stratum_miner(
@@ -1192,6 +1208,8 @@ async def _run_pool_stratum_miner(
     enable_useful_work: bool = True,
     device: str = "auto",
     threads: int = 0,
+    tls: bool = False,
+    tls_verify: bool = True,
 ) -> int:
     """
     Run the CPU stratum miner against `host:port` and return the number of
@@ -1255,6 +1273,8 @@ async def _run_pool_stratum_miner(
         scan_window=int(scan_window),
         device=device,
         threads=int(threads),
+        tls=tls,
+        tls_verify=tls_verify,
     )
 
     # Wrap the underlying client's submit_share to capture accepted/isBlock so
@@ -1354,7 +1374,8 @@ def mine_blocks(
         None,
         "--pool-stratum",
         help=(
-            "Pool stratum endpoint (e.g. stratum+tcp://pool.example.com:23454). "
+            "Pool stratum endpoint. Plain TCP: stratum+tcp://host:port. "
+            "TLS: stratum+ssl://host:port (or stratum+tls://, ssl://, tls://). "
             "When set, mining runs against the pool instead of the local RPC."
         ),
     ),
@@ -1653,7 +1674,7 @@ def mine_blocks(
         import asyncio as _asyncio
 
         try:
-            host, port = _parse_pool_stratum_url(pool_stratum)
+            host, port, tls = _parse_pool_stratum_url(pool_stratum)
         except ValueError as exc:
             typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
             raise typer.Exit(2)
@@ -1681,7 +1702,8 @@ def mine_blocks(
             except Exception:
                 pool_device = "cpu"
         typer.secho(
-            f"Pool mining: target={count} block(s), pool={host}:{port}, "
+            f"Pool mining: target={count} block(s), pool={host}:{port}"
+            f"{' (TLS)' if tls else ''}, "
             f"worker={worker_name}, payout={resolved_address}, device={pool_device}",
             fg=typer.colors.CYAN,
         )
@@ -1693,6 +1715,7 @@ def mine_blocks(
             _run_pool_stratum_miner(
                 host=host,
                 port=port,
+                tls=tls,
                 worker=worker_name,
                 address=resolved_address,
                 target_blocks=int(count),

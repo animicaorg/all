@@ -55,6 +55,8 @@ class StratumClient:
         agent: str = "animica-stratum-client/0.1",
         framing: str = "lines",  # "lines" | "lenpref"
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        tls: bool = False,
+        tls_verify: bool = True,
     ) -> None:
         assert framing in ("lines", "lenpref")
         self.host = host
@@ -62,6 +64,8 @@ class StratumClient:
         self.agent = agent
         self.framing = framing
         self.loop = loop or asyncio.get_event_loop()
+        self.tls = bool(tls)
+        self.tls_verify = bool(tls_verify)
 
         self.reader: asyncio.StreamReader
         self.writer: asyncio.StreamWriter
@@ -70,6 +74,13 @@ class StratumClient:
         self._pending: Dict[int, asyncio.Future] = {}
         self._rx_task: Optional[asyncio.Task] = None
         self._closed = False
+        # Stats used to make EOF diagnostics actionable: was the server
+        # disconnecting us silently after subscribe (protocol mismatch)
+        # or did it actually answer something first?
+        self._connect_started_at: float = 0.0
+        self._first_byte_at: float = 0.0
+        self._frames_received: int = 0
+        self._bytes_received: int = 0
 
         # Session state
         self.session: Optional[SubscribeReply] = None
@@ -84,10 +95,21 @@ class StratumClient:
     # ------------- transport -------------
 
     async def connect(self) -> None:
-        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+        self._connect_started_at = time.monotonic()
+        ssl_ctx = None
+        if self.tls:
+            import ssl as _ssl
+            ssl_ctx = _ssl.create_default_context()
+            if not self.tls_verify:
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+        self.reader, self.writer = await asyncio.open_connection(
+            self.host, self.port, ssl=ssl_ctx
+        )
         self._rx_task = self.loop.create_task(self._rx_loop())
         log.info(
             f"[client] connected to {self.host}:{self.port} framing={self.framing}"
+            f"{' tls' if self.tls else ''}"
         )
 
     async def close(self) -> None:
@@ -101,10 +123,13 @@ class StratumClient:
             pass
         if self._rx_task:
             self._rx_task.cancel()
-        # Reject any pending futures
+        # Reject any pending futures with the same hint we logged from the
+        # rx loop, so callers (CLI) see *why* the connection closed instead
+        # of a generic "connection closed".
+        hint = self._eof_hint()
         for fut in list(self._pending.values()):
             if not fut.done():
-                fut.set_exception(RuntimeError("connection closed"))
+                fut.set_exception(RuntimeError(f"connection closed: {hint}"))
         self._pending.clear()
         log.info("[client] closed")
 
@@ -222,6 +247,9 @@ class StratumClient:
                 chunk = await self.reader.read(65536)
                 if not chunk:
                     raise ConnectionResetError("eof")
+                if self._first_byte_at == 0.0:
+                    self._first_byte_at = time.monotonic()
+                self._bytes_received += len(chunk)
 
                 # Decode frames
                 objs: List[JSON]
@@ -232,13 +260,41 @@ class StratumClient:
                     objs = list(decode_lines(buf))
 
                 for obj in objs:
+                    self._frames_received += 1
                     await self._handle_incoming(obj)
         except asyncio.CancelledError:  # pragma: no cover
             return
         except Exception as e:
-            log.warning(f"[client] rx loop error: {e}")
+            log.warning(f"[client] rx loop error: {e} ({self._eof_hint()})")
         finally:
             await self.close()
+
+    def _eof_hint(self) -> str:
+        """Build a human hint about what likely happened when the rx loop exits.
+
+        EOF before any bytes from the server is almost always a
+        protocol/transport mismatch — the pool isn't an Animica stratum
+        server, or it expects TLS, or it filtered us out before
+        responding. Surfacing this directly in the log avoids leaving
+        operators to chase a 3-letter error.
+        """
+        elapsed_ms = int((time.monotonic() - self._connect_started_at) * 1000) if self._connect_started_at else -1
+        if self._bytes_received == 0:
+            tls_hint = " try stratum+ssl://" if not self.tls else ""
+            return (
+                f"server closed connection after {elapsed_ms}ms with no response; "
+                f"pool likely isn't an Animica stratum endpoint{tls_hint} "
+                f"or rejected the {self.framing} framing"
+            )
+        if self._frames_received == 0:
+            return (
+                f"server sent {self._bytes_received}B but no complete frame "
+                f"({self.framing} framing) — server may speak a different stratum dialect"
+            )
+        return (
+            f"server closed after {self._frames_received} frame(s) and "
+            f"{self._bytes_received}B"
+        )
 
     async def _handle_incoming(self, obj: JSON) -> None:
         # Response

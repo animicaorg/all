@@ -106,8 +106,12 @@ class CpuStratumMiner:
         device: str = "auto",
         threads: int = 0,
         batch_size: int = 0,
+        tls: bool = False,
+        tls_verify: bool = True,
     ) -> None:
-        self._client = StratumClient(host, port, agent=agent)
+        self._client = StratumClient(
+            host, port, agent=agent, tls=tls, tls_verify=tls_verify
+        )
         self._worker = worker
         self._address = address
         self._scanner = HashScanner()
