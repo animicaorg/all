@@ -215,13 +215,13 @@ from importlib.metadata import version
 
 import fastapi
 import prometheus_client
+import rpc
 import rpc.server
-import ena.services.ena_node.main
 import animica.stratum_pool.cli
 print(version("fastapi"), version("prometheus-client"))
 PY
   then
-    die "Installation verification failed: backend/runtime imports failed (fastapi, prometheus_client, rpc.server, ena.services.ena_node.main, animica.stratum_pool.cli)"
+    die "Installation verification failed: backend/runtime imports failed (fastapi, prometheus_client, rpc, rpc.server, animica.stratum_pool.cli)"
   fi
 
   log "✓ Installation verified successfully"

@@ -13,8 +13,8 @@ from importlib.metadata import version
 
 import fastapi
 import prometheus_client
+import rpc
 import rpc.server
-import ena.services.ena_node.main
 import animica.stratum_pool.cli
 
 print("fastapi", version("fastapi"))
