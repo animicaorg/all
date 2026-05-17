@@ -445,15 +445,27 @@ class MiningCoreAdapter:
         # never fires from asyncio's point of view and the await hangs. Wrap
         # with wait_for so a stuck thread cannot stall the poll loop forever.
         outer_timeout = self._rpc_timeout_s + 2.0
-        try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(self._rpc.call, method, params),
-                timeout=outer_timeout,
-            )
-        except asyncio.TimeoutError as exc:
-            raise TransportError(
-                f"rpc call exceeded {outer_timeout:.1f}s outer timeout: {method}"
-            ) from exc
+        last_exc: Optional[Exception] = None
+        # One retry on transient transport errors so a single dropped packet or
+        # brief node hiccup doesn't fail the entire poll cycle.
+        for attempt in range(2):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self._rpc.call, method, params),
+                    timeout=outer_timeout,
+                )
+            except asyncio.TimeoutError as exc:
+                last_exc = TransportError(
+                    f"rpc call exceeded {outer_timeout:.1f}s outer timeout: {method}"
+                )
+                last_exc.__cause__ = exc
+            except TransportError as exc:
+                last_exc = exc
+            if attempt == 0:
+                self._log.debug("rpc transport error on %s, retrying: %s", method, last_exc)
+                await asyncio.sleep(0.25)
+        assert last_exc is not None
+        raise last_exc
 
     @property
     def chain_id(self) -> int:
@@ -1099,6 +1111,45 @@ class MiningCoreAdapter:
             payload["disable_block_time_limits"] = True
         try:
             result: Json = await self._rpc_call("miner.submitBlock", payload)
+        except TransportError as exc:
+            # Network/timeout on submission — surface a structured rejection so the
+            # validator returns a clean reason instead of letting the exception
+            # bubble into the generic "share validation failed" trap. The block
+            # candidate is lost for this share; the miner will mine a new one.
+            error_reason = f"transport_error:{exc}"
+            self._log.warning(
+                "stratum_block_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": True,
+                    "reason": error_reason,
+                    "stale_template": False,
+                    "transport_error": True,
+                },
+            )
+            self._log_share_reject(
+                submit_params=submit_params,
+                job=job,
+                reason=error_reason,
+                share_hash_hex="0x" + candidate_hash.digest.hex(),
+                share_target_int=int(share_target_int),
+                block_target_int=block_target,
+                template_height=template_height or None,
+                template_parent_hash=template_parent_hash,
+                head_hash=head_hash,
+                head_height=head_height,
+                stale_by_server=False,
+                local_prevalidation_ok=local_prevalidation_ok,
+                nonce=nonce_int,
+                digest_int=digest_int,
+                frozen_theta_micro=theta_micro,
+                share_threshold_micro=share_threshold_micro,
+                live_theta_micro=live_theta_micro,
+                head_changed=False,
+            )
+            return False, error_reason, is_block, tx_count
         except RpcError as exc:
             error_reason = f"rpc:{exc.code}:{exc}"
             error_data = getattr(exc, "data", None)
@@ -1333,6 +1384,43 @@ class MiningCoreAdapter:
         )
         try:
             result: Json = await self._rpc_call("miner.submitWork", payload)
+        except TransportError as exc:
+            # Transport hiccup during share submission — caller gets a
+            # structured rejection reason; the share is dropped and the miner
+            # will submit a new one on the next notify. Avoids surfacing as an
+            # opaque "share validation failed" through the broad except above.
+            error_reason = f"transport_error:{exc}"
+            head_hash, head_height, _ = await self._head_hash_height()
+            self._log.warning(
+                "stratum_share_submit_result",
+                extra={
+                    "job_id": job.job_id,
+                    "template_id": job.template_id,
+                    "accepted": False,
+                    "is_block": bool(is_block),
+                    "reason": error_reason,
+                    "transport_error": True,
+                },
+            )
+            self._log.warning(
+                "stratum_share_rejected",
+                extra={
+                    "worker": submit_params.get("_worker") or submit_params.get("worker"),
+                    "session_id": submit_params.get("_session_id"),
+                    "job_id": job.job_id,
+                    "source_job_id": job.source_job_id,
+                    "address": submit_params.get("_address"),
+                    "reason": error_reason,
+                    "current_head_height": head_height,
+                    "current_head_hash": head_hash,
+                    "template_height": job.height,
+                    "template_parent_hash": job.parent_hash,
+                    "stale_by_server_state": False,
+                    "local_prevalidation_ok": True,
+                    "transport_error": True,
+                },
+            )
+            return False, error_reason, is_block, tx_count
         except RpcError as exc:
             head_hash, head_height, _ = await self._head_hash_height()
             self._log.warning(

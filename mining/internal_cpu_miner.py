@@ -12,6 +12,8 @@ intentionally simple so tests can assert on specific nonces.
 
 import asyncio
 import logging
+import os
+import secrets
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -138,6 +140,14 @@ class CpuStratumMiner:
         self._share_target: float = 0.0
         self._theta_micro: int = 0
         self._stop = asyncio.Event()
+        # The currently-running mine task per active notify. Cancelling
+        # this when a new notify arrives prevents stale work from racing
+        # with the new job.
+        self._mine_task: Optional[asyncio.Task] = None
+        # Threads count used to fan out parallel CPU scans across worker
+        # processes. 0 means "use all CPUs minus one" (the default in
+        # resolve_worker_count). Stored for the continuous-scan loop.
+        self._threads = int(threads)
 
     @property
     def device_name(self) -> str:
@@ -171,12 +181,14 @@ class CpuStratumMiner:
         *,
         theta_micro: int,
         share_ratio: float,
+        start_nonce: int = 0,
     ) -> Optional[CpuMinerResult]:
         target_int = micro_threshold_to_target256(
             max(1, int(theta_micro * max(share_ratio, 1e-9)))
         )
         header = header_from_template_view(header_view, nonce=0)
-        for nonce in range(self._scan_window):
+        end = start_nonce + self._scan_window
+        for nonce in range(start_nonce, end):
             candidate_hash = hash_candidate_header(header, nonce=nonce)
             if candidate_hash.digest_int > target_int:
                 continue
@@ -200,6 +212,13 @@ class CpuStratumMiner:
 
     async def stop(self) -> None:
         self._stop.set()
+        task = self._mine_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):    # noqa: BLE001
+                pass
         await self._client.close()
 
     async def _on_set_difficulty(self, share_target: float, theta_micro: int) -> None:
@@ -207,15 +226,30 @@ class CpuStratumMiner:
         self._theta_micro = int(theta_micro)
 
     async def _on_notify(self, job: dict) -> None:
-        # Spawn the scan+submit work in a separate task so the client's rx
-        # loop (which calls this handler) is free to receive the submit
-        # response. Otherwise the submit awaits a future that only resolves
-        # once the rx loop returns — classic deadlock.
+        # Cancel any in-flight mine task for the previous notify before
+        # starting fresh work. The previous task's nonce range may already
+        # be invalid (different parent hash / target), so finishing it is
+        # pure wasted compute. Spawn the new task on the event loop so the
+        # client's rx loop stays free to receive submit responses.
         if self._stop.is_set():
             return
-        asyncio.create_task(self._mine_and_submit(dict(job)))
+        prev = self._mine_task
+        if prev is not None and not prev.done():
+            prev.cancel()
+        self._mine_task = asyncio.create_task(
+            self._mine_continuously(dict(job)),
+            name=f"stratum-mine:{job.get('jobId', '?')}",
+        )
 
-    async def _mine_and_submit(self, job: dict) -> None:
+    async def _mine_continuously(self, job: dict) -> None:
+        """Keep scanning new nonce windows for `job` until cancelled or stopped.
+
+        Replaces the legacy one-shot-per-notify scan that left the CPU/GPU
+        idle between notifies. Each iteration scans `scan_window` nonces
+        starting from a fresh stride; found shares are submitted and the
+        loop continues so we keep submitting shares (and any block found)
+        until the pool sends a new notify, which cancels this task.
+        """
         if self._stop.is_set():
             return
         header = job.get("header") or {}
@@ -227,111 +261,171 @@ class CpuStratumMiner:
         )
         if theta_micro <= 0:
             log.warning(
-                "[cpu-miner] missing thetaMicro; cannot mine job %s", job.get("jobId")
+                "[cpu-miner] missing thetaMicro; cannot mine job %s",
+                job.get("jobId"),
             )
             return
         share_ratio = float(job.get("shareTarget") or self._share_target or 0.0)
         if share_ratio <= 0.0:
             share_ratio = 1.0
-        share = None
+
         header_template = self._header_template_from_job(job)
+        sign_hex = header.get("signBytes") if isinstance(header, dict) else None
+        prefix: Optional[bytes] = None
+        if (
+            header_template is None
+            and isinstance(sign_hex, str)
+            and sign_hex.startswith("0x")
+        ):
+            try:
+                prefix = bytes.fromhex(sign_hex[2:])
+            except ValueError:
+                prefix = None
+        if header_template is None and prefix is None:
+            log.warning(
+                "[cpu-miner] missing usable header template; cannot mine job %s",
+                job.get("jobId"),
+            )
+            return
+
+        t_share_micro = max(1, int(theta_micro * share_ratio))
+        mix_seed: bytes = b"\x00" * 32
+        if isinstance(header, dict):
+            mix_hex = (
+                header.get("mixSeed")
+                or (job.get("hints") or {}).get("mixSeed")
+                or ""
+            )
+            if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
+                try:
+                    mix_seed = bytes.fromhex(mix_hex[2:])
+                except ValueError:
+                    pass
+
+        # Random starting nonce per worker keeps two miners on the same
+        # template from racing the same nonce range. The pool also rotates
+        # extranonce2 server-side, but starting random adds defense in depth.
+        next_start = secrets.randbelow(2**32)
+        windows = 0
+        try:
+            while not self._stop.is_set():
+                share = await self._scan_one_window(
+                    job=job,
+                    header_template=header_template,
+                    prefix=prefix,
+                    mix_seed=mix_seed,
+                    theta_micro=theta_micro,
+                    share_ratio=share_ratio,
+                    t_share_micro=t_share_micro,
+                    start_nonce=next_start,
+                )
+                windows += 1
+                if share is not None:
+                    await self._submit_found_share(job, share)
+                # Slide the search window forward; wrap at 64-bit nonce
+                # space to avoid overflow during long mining runs.
+                next_start = (next_start + self._scan_window) & 0xFFFFFFFFFFFFFFFF
+                # Yield to the event loop so the rx loop can run and
+                # process incoming notify / submit responses; without this
+                # await, a CPU-only scan_batch call would starve everything
+                # else on the loop.
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            log.debug(
+                "[stratum-miner] mining task cancelled for job %s after %d window(s)",
+                job.get("jobId"),
+                windows,
+            )
+            raise
+
+    async def _scan_one_window(
+        self,
+        *,
+        job: dict,
+        header_template: Optional[dict],
+        prefix: Optional[bytes],
+        mix_seed: bytes,
+        theta_micro: int,
+        share_ratio: float,
+        t_share_micro: int,
+        start_nonce: int,
+    ) -> Optional[CpuMinerResult]:
+        """Run a single scan window for `job` and return the first share found.
+
+        Heavy CPU work runs in a worker thread via `asyncio.to_thread` so the
+        rx loop can keep servicing pool messages. The device backend (GPU)
+        gets called directly because it returns quickly after dispatching a
+        kernel and the caller already awaits between windows.
+        """
         if header_template is not None:
-            share = self._scan_header_template(
+            return await asyncio.to_thread(
+                self._scan_header_template,
                 header_template,
                 theta_micro=theta_micro,
                 share_ratio=share_ratio,
+                start_nonce=start_nonce,
             )
-        else:
-            sign_hex = header.get("signBytes")
-            if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
+
+        assert prefix is not None
+        if self._device is not None:
+            try:
+                prepared = self._device.prepare_header(prefix, mix_seed)
+                found = self._device.scan(
+                    prepared,
+                    theta_micro=float(t_share_micro),
+                    start_nonce=start_nonce,
+                    iterations=self._scan_window,
+                    max_found=1,
+                    thread_id=0,
+                )
+            except Exception as exc:
                 log.warning(
-                    "[cpu-miner] missing usable header template; cannot mine job %s",
-                    job.get("jobId"),
+                    "[stratum-miner] %s scan failed (%s); falling back to "
+                    "pure-Python HashScanner for this job",
+                    self._device_name,
+                    exc,
                 )
-                return
-            prefix = bytes.fromhex(sign_hex[2:])
-            t_share_micro = max(1, int(theta_micro * share_ratio))
-            # Prefer the hardware-aware device backend (GPU when available)
-            # over the pure-Python HashScanner. The device returns the same
-            # dict shape (nonce, hash/digest, h_micro/d_ratio) so we can
-            # build CpuMinerResult uniformly.
-            if self._device is not None:
-                mix_hex = (
-                    header.get("mixSeed")
-                    or (job.get("hints") or {}).get("mixSeed")
-                    or ""
-                )
-                if isinstance(mix_hex, str) and mix_hex.startswith("0x"):
-                    mix_seed = bytes.fromhex(mix_hex[2:])
-                else:
-                    mix_seed = b"\x00" * 32
-                try:
-                    prepared = self._device.prepare_header(prefix, mix_seed)
-                    found = self._device.scan(
-                        prepared,
-                        theta_micro=float(t_share_micro),
-                        start_nonce=0,
-                        iterations=self._scan_window,
-                        max_found=1,
-                        thread_id=0,
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "[stratum-miner] %s scan failed (%s); falling back to "
-                        "pure-Python HashScanner for this job",
-                        self._device_name,
-                        exc,
-                    )
-                    found = None
-                if found:
-                    entry = found[0]
-                    nonce_val = int(entry.get("nonce") or 0)
-                    h_micro_val = entry.get("h_micro")
-                    if h_micro_val is None:
-                        digest = entry.get("digest") or entry.get("hash") or b""
-                        if isinstance(digest, str) and digest.startswith("0x"):
-                            digest = bytes.fromhex(digest[2:])
-                        if isinstance(digest, (bytes, bytearray)) and digest:
-                            h_micro_val = h_micro_from_digest(bytes(digest))
-                        else:
-                            h_micro_val = 0
-                    share = CpuMinerResult(
-                        job_id=str(job.get("jobId") or "unknown"),
-                        nonce=nonce_val,
-                        h_micro=int(h_micro_val),
-                        accepted=False,
-                        is_block=False,
-                        reason=None,
-                    )
-                    # Skip the pure-Python scan below; we already have a share.
-                    # Use the same code path as before to submit.
-                    return await self._submit_found_share(job, share)
-            shares = self._scanner.scan_batch(
-                prefix,
-                t_share_micro,
-                nonce_start=0,
-                nonce_count=self._scan_window,
-                theta_micro=theta_micro,
-            )
-            if shares:
-                found = shares[0]
-                share = CpuMinerResult(
+                found = None
+            if found:
+                entry = found[0]
+                nonce_val = int(entry.get("nonce") or 0)
+                h_micro_val = entry.get("h_micro")
+                if h_micro_val is None:
+                    digest = entry.get("digest") or entry.get("hash") or b""
+                    if isinstance(digest, str) and digest.startswith("0x"):
+                        digest = bytes.fromhex(digest[2:])
+                    if isinstance(digest, (bytes, bytearray)) and digest:
+                        h_micro_val = h_micro_from_digest(bytes(digest))
+                    else:
+                        h_micro_val = 0
+                return CpuMinerResult(
                     job_id=str(job.get("jobId") or "unknown"),
-                    nonce=found.nonce,
-                    h_micro=found.h_micro,
+                    nonce=nonce_val,
+                    h_micro=int(h_micro_val),
                     accepted=False,
                     is_block=False,
                     reason=None,
                 )
 
-        if share is None:
-            log.warning(
-                "[stratum-miner] no shares found in window for job %s",
-                job.get("jobId"),
+        shares = await asyncio.to_thread(
+            self._scanner.scan_batch,
+            prefix,
+            t_share_micro,
+            nonce_start=start_nonce,
+            nonce_count=self._scan_window,
+            theta_micro=theta_micro,
+        )
+        if shares:
+            found_share = shares[0]
+            return CpuMinerResult(
+                job_id=str(job.get("jobId") or "unknown"),
+                nonce=found_share.nonce,
+                h_micro=found_share.h_micro,
+                accepted=False,
+                is_block=False,
+                reason=None,
             )
-            return
-
-        await self._submit_found_share(job, share)
+        return None
 
     async def _submit_found_share(self, job: dict, share: CpuMinerResult) -> None:
         """Submit a single share to the pool, attaching any pending UW proofs."""

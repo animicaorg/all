@@ -27,6 +27,11 @@ from typing import Any, Mapping, Optional
 from agent_runtime.errors import WalletError
 
 
+# Base-unit conversion factor: 1 ANIMICA (ANM) = 10**9 nANM (base units).
+# Mirrors animica.coin and the chain's getBalance return shape.
+_NANM_PER_ANM = 1_000_000_000
+
+
 @dataclass
 class WalletInfo:
     """Public-facing summary of the configured wallet."""
@@ -38,6 +43,8 @@ class WalletInfo:
     chain_id: int = 0
     backing_file: str = ""
     scheme: str = ""              # ed25519, secp256k1, dilithium, sphincs, ...
+    balance_lookup_ok: bool = False
+    balance_lookup_error: str = ""
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -253,29 +260,114 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
             info.balance_animica, info.pending_animica = _fetch_balance(
                 rpc_url, address,
             )
+            info.balance_lookup_ok = True
         except Exception as exc:   # noqa: BLE001 — non-fatal here
+            info.balance_lookup_error = str(exc)
             info.notes.append(f"balance_lookup_failed: {exc}")
     return info
 
 
-def _fetch_balance(rpc_url: str, address: str) -> tuple[float, float]:
-    """Read balance via the same JSON-RPC method animica wallet uses."""
+def _parse_balance_nanm(result: Any) -> int:
+    """Parse a balance RPC result into integer nANM (base units).
+
+    Tolerates the three response shapes the chain emits across method
+    variants: hex string (state.getBalance), decimal string
+    (state.getAddressBalance.confirmed_balance), or raw int/float.
+    """
+    if isinstance(result, Mapping):
+        # state.getAddressBalance returns a dict; pick the confirmed field.
+        for k in ("confirmed_balance", "balance", "spendable_balance"):
+            if k in result:
+                return _parse_balance_nanm(result[k])
+        raise WalletError(f"unexpected balance dict shape: {dict(result)!r}")
+    if isinstance(result, str):
+        s = result.strip()
+        if not s:
+            return 0
+        try:
+            if s.lower().startswith("0x"):
+                return int(s, 16)
+            return int(s)
+        except ValueError as exc:
+            raise WalletError(f"invalid balance string: {result!r}") from exc
+    if isinstance(result, bool):    # narrower than int — refuse it
+        raise WalletError(f"invalid balance bool: {result!r}")
+    if isinstance(result, (int, float)):
+        return int(result)
+    raise WalletError(f"unexpected balance type: {type(result).__name__}")
+
+
+# Order matches python/animica/cli/wallet.py::BALANCE_METHODS plus the rich
+# variant used by Studio. We try each until one succeeds — different node
+# builds expose different aliases and we want a single source of truth here.
+_BALANCE_METHODS = (
+    "state.getBalance",
+    "state_getBalance",
+    "chain_getBalance",
+    "eth_getBalance",
+    "state.getAddressBalance",
+)
+
+_NONCE_METHODS = (
+    "state.getNextNonce",
+    "state_getNextNonce",
+    "state.getPendingNonce",
+    "state.getNonce",
+    "state_getNonce",
+)
+
+
+def _rpc_call(rpc_url: str, method: str, params: Any, *,
+              timeout: float = 10.0) -> Any:
     import httpx
-    body = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "animica.getBalance",
-        "params": {"address": address},
-    }
-    r = httpx.post(rpc_url, json=body, timeout=10.0)
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    r = httpx.post(rpc_url, json=body, timeout=timeout)
     r.raise_for_status()
     data = r.json()
-    if "error" in data and data["error"]:
-        raise WalletError(f"getBalance rpc error: {data['error']}")
-    result = data.get("result") or {}
-    balance = float(result.get("balance", 0.0))
-    pending = float(result.get("pending", 0.0))
-    return balance, pending
+    if data.get("error"):
+        err = data["error"]
+        msg = err.get("message") if isinstance(err, Mapping) else str(err)
+        raise WalletError(f"{method} rpc error: {msg}")
+    return data.get("result")
+
+
+def _fetch_balance(rpc_url: str, address: str) -> tuple[float, float]:
+    """Read balance via the same JSON-RPC methods animica wallet uses.
+
+    Returns balance in ANIMICA (ANM), converted from the chain's native
+    nANM (10**9 nANM per ANM). Pending is best-effort: only the rich
+    method exposes it, and most node builds report 0 for non-mempool
+    wallets. We don't fail the whole call if pending parsing trips.
+    """
+    last_exc: Optional[Exception] = None
+    for method in _BALANCE_METHODS:
+        # state.getBalance variants accept positional [address]; the rich
+        # variant tolerates either positional or object params.
+        params: Any = [address]
+        try:
+            result = _rpc_call(rpc_url, method, params)
+        except (WalletError, Exception) as exc:    # noqa: BLE001
+            last_exc = exc
+            continue
+        if result is None:
+            last_exc = WalletError(f"{method} returned null result")
+            continue
+        balance_nanm = _parse_balance_nanm(result)
+        pending_nanm = 0
+        if isinstance(result, Mapping):
+            for k in ("pending_outgoing", "pending"):
+                if k in result and result[k] is not None:
+                    try:
+                        pending_nanm = _parse_balance_nanm(result[k])
+                    except WalletError:
+                        pending_nanm = 0
+                    break
+        return (balance_nanm / _NANM_PER_ANM,
+                pending_nanm / _NANM_PER_ANM)
+    assert last_exc is not None
+    raise WalletError(
+        f"balance lookup failed via all known methods: {last_exc}",
+    ) from last_exc
 
 
 # --------------------------------------------------------------------------- #
@@ -358,17 +450,31 @@ def sign_payment(wallet: WalletInfo, *, amount_animica: float,
 
 
 def get_next_nonce(rpc_url: str, address: str) -> int:
-    import httpx
-    body = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "animica.getNextNonce",
-        "params": {"address": address},
-    }
-    r = httpx.post(rpc_url, json=body, timeout=10.0)
-    r.raise_for_status()
-    data = r.json()
-    if data.get("error"):
-        raise WalletError(f"getNextNonce rpc error: {data['error']}")
-    result = data.get("result") or {}
-    return int(result.get("nonce", 0))
+    last_exc: Optional[Exception] = None
+    for method in _NONCE_METHODS:
+        try:
+            result = _rpc_call(rpc_url, method, [address])
+        except Exception as exc:    # noqa: BLE001
+            last_exc = exc
+            continue
+        if result is None:
+            last_exc = WalletError(f"{method} returned null result")
+            continue
+        # Some node builds return a dict {"nonce": N}; most return int.
+        if isinstance(result, Mapping):
+            if "nonce" in result:
+                return int(result["nonce"])
+            if "next_nonce" in result:
+                return int(result["next_nonce"])
+        if isinstance(result, str):
+            s = result.strip()
+            return int(s, 16) if s.lower().startswith("0x") else int(s)
+        if isinstance(result, (int, float)):
+            return int(result)
+        last_exc = WalletError(
+            f"{method} returned unexpected shape: {type(result).__name__}",
+        )
+    assert last_exc is not None
+    raise WalletError(
+        f"nonce lookup failed via all known methods: {last_exc}",
+    ) from last_exc

@@ -130,6 +130,13 @@ class DistributedAICFProvider(Provider):
             wi = self._wallet_info()
         except WalletError as exc:
             return False, f"wallet_unavailable: {exc.message}"
+        # Distinguish "balance lookup failed" (RPC down, wrong method, etc.)
+        # from "balance is genuinely zero" — both used to report as
+        # wallet_balance_zero, which masked node connectivity problems.
+        if not wi.balance_lookup_ok:
+            return False, (
+                f"balance_lookup_failed: {wi.balance_lookup_error or 'unknown'}"
+            )
         if wi.balance_animica <= 0.0:
             return False, "wallet_balance_zero"
         if not self.client.ping():

@@ -6,6 +6,8 @@ import time
 from typing import Awaitable, Callable, List, Optional
 
 from .config import PoolConfig
+from mining.share_submitter import TransportError
+
 from .core import MiningCoreAdapter, MiningJob, TemplateUnavailable
 
 
@@ -219,6 +221,12 @@ class JobManager:
                         "head": exc.head,
                     },
                 )
+            except TransportError as exc:
+                # Transient RPC failure: the loop already backs off and retries,
+                # so a concise warning is enough — a full traceback every poll
+                # tick floods the log with no extra signal.
+                self._log.warning("job poll rpc transport error: %s", exc)
+                success = False
             except Exception:  # noqa: BLE001
                 self._log.warning("job poll failed", exc_info=True)
                 success = False
