@@ -125,8 +125,13 @@ _WORKER_CLAIM_GRACE_S = float(
     os.environ.get("ANIMICA_AICF_WORKER_CLAIM_GRACE_S", "30.0")
 )
 # How long a worker lease is valid; if a worker claims and goes silent,
-# the job becomes reclaimable after this many seconds.
-_WORKER_LEASE_S = 60.0
+# the job becomes reclaimable after this many seconds. The default is
+# generous so a miner downloading multi-GB model weights on its first
+# inference job does not have its lease reclaimed mid-download. Override
+# with ANIMICA_AICF_WORKER_LEASE_S to enforce stricter SLAs.
+_WORKER_LEASE_S = float(
+    os.environ.get("ANIMICA_AICF_WORKER_LEASE_S", "600.0")
+)
 
 
 # ---------------------------------------------------------------------------

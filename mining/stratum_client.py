@@ -246,7 +246,52 @@ class StratumClient:
             f"[client] subscribed session={self.session.session_id} "
             f"ex1={self.session.extranonce1} ex2sz={self.session.extranonce2_size} framing={self.framing}"
         )
+        # AICF pre-load: if we advertised AICF tiers, kick off model load
+        # in the background NOW so the first inference job doesn't have to
+        # wait minutes for a multi-GB HF snapshot to download.
+        aicf_feats = features.get("aicf") if isinstance(features, dict) else None
+        if isinstance(aicf_feats, dict) and aicf_feats.get("tiers"):
+            asyncio.create_task(self._preload_aicf_engine(aicf_feats))
         return self.session
+
+    async def _preload_aicf_engine(self, aicf_features: dict) -> None:
+        """Trigger model download + load in the background after subscribe.
+
+        Without this, the first ``mining.aicf.notify`` from the pool kicks
+        off a multi-minute model download while a chat user waits at the
+        prompt. Doing it once at miner-start hides the latency behind PoW
+        share submission. Errors here are non-fatal — the labeled-stub
+        fallback still keeps the protocol round-trip working.
+        """
+        log.info("[client] AICF: pre-loading inference engine in background…")
+        try:
+            from animica.stratum_pool.aicf_inference import get_engine
+        except Exception as exc:
+            log.warning(f"[client] aicf preload: engine unavailable: {exc}")
+            return
+        # Resolve the model the engine will use — match the same logic as
+        # the runtime generate() path so we warm the right cache.
+        import os as _os
+        tier = "standard"
+        tiers = aicf_features.get("tiers") or []
+        if isinstance(tiers, list) and tiers:
+            tier = str(tiers[0])
+        # Run the model load on a thread so the asyncio event loop keeps
+        # serving PoW notifies and share submits while the download runs.
+        try:
+            engine = get_engine()
+            def _do_warmup() -> None:
+                try:
+                    res = engine.generate({"prompt": "hello"}, tier=tier)
+                    log.info(
+                        f"[client] AICF: engine ready backend={res.used_backend} "
+                        f"model={res.used_model}"
+                    )
+                except Exception as exc:
+                    log.warning(f"[client] aicf preload generate failed: {exc}")
+            await asyncio.to_thread(_do_warmup)
+        except Exception as exc:
+            log.warning(f"[client] aicf preload failed: {exc}")
 
     async def authorize(self, worker: str, address: str) -> bool:
         res = await self._call(

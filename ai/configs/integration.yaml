@@ -13,7 +13,9 @@ aicf:
   # Job submission settings.
   job_submit:
     default_kind: "AI"
-    timeout_sec: 60
+    # 300s gives miners headroom to load a multi-GB model on first job
+    # and run real inference on CPU-bound hardware. Override per-deploy.
+    timeout_sec: 300
     poll_interval_ms: 250
     max_retries: 3
     retry_backoff_ms: [500, 1500, 3500]
