@@ -79,6 +79,12 @@ services:
       ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET: "${ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET:-https://rpc.animica.org/snapshots/mainnet/manifest.json}"
       ANIMICA_SNAPSHOT_MANIFEST_URL_FALLBACKS: "${ANIMICA_SNAPSHOT_MANIFEST_URL_FALLBACKS:-}"
       ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS: "${ANIMICA_SNAPSHOT_MIN_ADVANCE_BLOCKS:-500}"
+      # AICF job queue + worker ledger persistence. SQLite-backed, lives
+      # at <ANIMICA_DATA_DIR>/aicf_jobs.db by default. To share the queue
+      # across multiple pool processes (cross-host failover) point each
+      # process at the same DB file on a shared mount, or override here
+      # with ANIMICA_AICF_JOB_DB=/some/shared/path/aicf_jobs.db.
+      ANIMICA_AICF_JOB_DB: "${ANIMICA_AICF_JOB_DB:-}"
       P2P_SEEDS: "${P2P_SEEDS:-}"
       ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"

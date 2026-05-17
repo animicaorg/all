@@ -32,7 +32,9 @@ now they provide the helpers we use here (pricing, job id derivation).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 import threading
 import time
 import uuid
@@ -43,6 +45,53 @@ from rpc.errors import InternalError, InvalidParams
 from rpc.methods import method
 
 log = logging.getLogger("animica.rpc.aicf_jobs")
+
+
+# ---------------------------------------------------------------------------
+# Treasury address & settlement config
+# ---------------------------------------------------------------------------
+
+# Where user → AICF-pool transfers go on-chain. Env-overridable so each
+# deployment can rotate. The default is a documented well-known burn-style
+# address per chain_id; protocol can later sweep it into the AICF state pool.
+_DEFAULT_TREASURY_BY_CHAIN: Dict[int, str] = {
+    # Mainnet treasury — set by the operator. User-funded inference jobs
+    # transfer their estimated cost into this address; the protocol will
+    # later sweep it into the AICF state pool for epoch payouts. Operators
+    # can override per-node via ANIMICA_AICF_TREASURY_ADDRESS.
+    1: "anim1zqpf6a5hvup7kggxdutt3tgswz4aa9rwlpsz8ywf73m4l5cmzhfk7pcnh6kgt",
+}
+_TREASURY_ENV = "ANIMICA_AICF_TREASURY_ADDRESS"
+
+# Should submitInferenceJob require a valid signed payment txn that we
+# successfully broadcast to the mempool? Default off so node startups
+# without mining/peering still serve the chat protocol — flip to "1" in
+# production to enforce on-chain settlement strictly.
+_REQUIRE_SETTLEMENT_ENV = "ANIMICA_AICF_REQUIRE_SETTLEMENT"
+
+
+def _treasury_address_for(chain_id: int) -> str:
+    override = os.environ.get(_TREASURY_ENV, "").strip()
+    if override:
+        return override
+    if chain_id in _DEFAULT_TREASURY_BY_CHAIN:
+        return _DEFAULT_TREASURY_BY_CHAIN[chain_id]
+    # Derive a deterministic placeholder for unknown chains. SHA3-256 of
+    # a label is the same algorithm the constants above use; this keeps
+    # them reproducible without ever needing a private key.
+    digest = hashlib.sha3_256(f"aicf-treasury-chain-{chain_id}".encode()).digest()
+    try:
+        from pq.py.address import encode_address  # type: ignore
+        return encode_address(digest, alg_id=0x1001)
+    except Exception:
+        # Last-resort hex form if bech32 encoder isn't reachable. The
+        # tx-body builder accepts hex too.
+        return "0x" + digest.hex()
+
+
+def _require_settlement() -> bool:
+    raw = os.environ.get(_REQUIRE_SETTLEMENT_ENV, "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +145,11 @@ class _JobRecord:
     claim_owner: Optional[str] = None
     claim_expires_at: Optional[float] = None
     error: Optional[str] = None
+    # On-chain settlement: filled when the payment txn is broadcast.
+    payment_tx_hash: Optional[str] = None
+    payment_accepted: bool = False
+    payment_status: Optional[str] = None
+    settled_chain_id: Optional[int] = None
 
 
 @dataclass
@@ -106,6 +160,13 @@ class _WorkerInfo:
     registered_at: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     jobs_completed: int = 0
+    # Earnings ledger. `earnings_pending_animica` accumulates the cost
+    # of each job the worker has completed but which has not yet been
+    # settled on-chain (treasury → state-pool sweep is a future
+    # consensus upgrade). `earnings_paid_animica` is the running total
+    # of confirmed payouts; right now only ever populated manually.
+    earnings_pending_animica: float = 0.0
+    earnings_paid_animica: float = 0.0
 
 
 class _AicfJobStore:
@@ -194,7 +255,344 @@ class _AicfJobStore:
             return list(self._workers.values())
 
 
-_STORE = _AicfJobStore()
+# ---------------------------------------------------------------------------
+# SQLite-backed persistent store
+# ---------------------------------------------------------------------------
+#
+# Same API as _AicfJobStore so the rest of the module is store-agnostic.
+# Persists job queue + worker ledger across node restarts under a
+# SQLite file at ANIMICA_AICF_JOB_DB (default: <ANIMICA_DATA_DIR>/aicf_jobs.db).
+# WAL journal mode + busy_timeout makes the same file safe to open
+# concurrently from multiple pool/node processes — that's how
+# "cross-pool job sharing" works without consensus replication: every
+# process pointing at the same DB file (or a shared mount) sees the
+# same claims/results in real time.
+
+import json as _json
+import sqlite3 as _sqlite3
+
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    spec_json TEXT NOT NULL,
+    payment_json TEXT NOT NULL,
+    estimated_cost REAL NOT NULL,
+    tier TEXT NOT NULL,
+    state TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    provider_id TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    claimed_at REAL,
+    completed_at REAL,
+    claim_owner TEXT,
+    claim_expires_at REAL,
+    error TEXT,
+    payment_tx_hash TEXT,
+    payment_accepted INTEGER NOT NULL DEFAULT 0,
+    payment_status TEXT,
+    settled_chain_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
+CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
+
+CREATE TABLE IF NOT EXISTS workers (
+    address TEXT PRIMARY KEY,
+    tiers_json TEXT NOT NULL,
+    hardware_json TEXT NOT NULL,
+    registered_at REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    jobs_completed INTEGER NOT NULL DEFAULT 0,
+    earnings_pending_animica REAL NOT NULL DEFAULT 0,
+    earnings_paid_animica REAL NOT NULL DEFAULT 0
+);
+"""
+
+
+def _resolve_job_db_path() -> Optional[str]:
+    override = os.environ.get("ANIMICA_AICF_JOB_DB", "").strip()
+    if override:
+        return override
+    data_dir = os.environ.get("ANIMICA_DATA_DIR", "").strip()
+    if not data_dir:
+        return None  # caller falls back to in-memory store
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+    except Exception as exc:
+        log.warning("aicf_jobs: cannot create data dir %s: %s", data_dir, exc)
+        return None
+    return os.path.join(data_dir, "aicf_jobs.db")
+
+
+class _SqliteAicfJobStore:
+    """SQLite-backed AICF job + worker store.
+
+    Same API surface as _AicfJobStore so call sites are unchanged.
+    Connection is opened per-thread (sqlite3 connections aren't safe
+    to share across threads); we route all writes through a single
+    file lock by using WAL + busy_timeout instead of an in-process
+    lock so multi-process operation works the same as multi-thread.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._tls = threading.local()
+        # Initialize schema once.
+        conn = self._conn()
+        with conn:
+            conn.executescript(_SCHEMA_SQL)
+
+    def _conn(self) -> _sqlite3.Connection:
+        conn = getattr(self._tls, "conn", None)
+        if conn is None:
+            conn = _sqlite3.connect(
+                self._db_path,
+                timeout=10.0,
+                isolation_level=None,  # autocommit; we use explicit txns
+                check_same_thread=True,
+            )
+            conn.row_factory = _sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            self._tls.conn = conn
+        return conn
+
+    # ---------- (de)serialization ----------
+
+    @staticmethod
+    def _job_from_row(row: _sqlite3.Row) -> _JobRecord:
+        return _JobRecord(
+            job_id=row["job_id"],
+            spec=_json.loads(row["spec_json"]),
+            payment=_json.loads(row["payment_json"]),
+            estimated_cost=float(row["estimated_cost"]),
+            tier=row["tier"],
+            state=row["state"],
+            text=row["text"] or "",
+            provider_id=row["provider_id"] or "",
+            created_at=float(row["created_at"]),
+            claimed_at=row["claimed_at"],
+            completed_at=row["completed_at"],
+            claim_owner=row["claim_owner"],
+            claim_expires_at=row["claim_expires_at"],
+            error=row["error"],
+            payment_tx_hash=row["payment_tx_hash"],
+            payment_accepted=bool(row["payment_accepted"]),
+            payment_status=row["payment_status"],
+            settled_chain_id=row["settled_chain_id"],
+        )
+
+    @staticmethod
+    def _worker_from_row(row: _sqlite3.Row) -> _WorkerInfo:
+        return _WorkerInfo(
+            address=row["address"],
+            tiers=_json.loads(row["tiers_json"]),
+            hardware=_json.loads(row["hardware_json"]),
+            registered_at=float(row["registered_at"]),
+            last_seen=float(row["last_seen"]),
+            jobs_completed=int(row["jobs_completed"]),
+            earnings_pending_animica=float(row["earnings_pending_animica"]),
+            earnings_paid_animica=float(row["earnings_paid_animica"]),
+        )
+
+    # ---------- jobs ----------
+
+    def submit(self, job: _JobRecord) -> None:
+        conn = self._conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO jobs ("
+            "  job_id,spec_json,payment_json,estimated_cost,tier,state,text,"
+            "  provider_id,created_at,claimed_at,completed_at,claim_owner,"
+            "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
+            "  payment_status,settled_chain_id"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                job.job_id,
+                _json.dumps(job.spec),
+                _json.dumps(job.payment),
+                job.estimated_cost,
+                job.tier,
+                job.state,
+                job.text,
+                job.provider_id,
+                job.created_at,
+                job.claimed_at,
+                job.completed_at,
+                job.claim_owner,
+                job.claim_expires_at,
+                job.error,
+                job.payment_tx_hash,
+                1 if job.payment_accepted else 0,
+                job.payment_status,
+                job.settled_chain_id,
+            ),
+        )
+
+    def get(self, job_id: str) -> Optional[_JobRecord]:
+        row = self._conn().execute(
+            "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+        return self._job_from_row(row) if row else None
+
+    def claim_next(self, worker_addr: str, tiers: List[str]) -> Optional[_JobRecord]:
+        now = time.time()
+        conn = self._conn()
+        # Single transaction so concurrent claimers can't pick the
+        # same job. SQLite serializes writers, busy_timeout handles
+        # the cross-process case.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            params: list = []
+            tier_filter = ""
+            if tiers:
+                placeholders = ",".join(["?"] * len(tiers))
+                tier_filter = f" AND tier IN ({placeholders})"
+                params.extend(tiers)
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE state='pending'" + tier_filter
+                + " ORDER BY created_at ASC LIMIT 1",
+                tuple(params),
+            ).fetchone()
+            if row is None:
+                # Try reclaiming an expired lease before giving up.
+                params2: list = [now]
+                if tiers:
+                    placeholders = ",".join(["?"] * len(tiers))
+                    params2.extend(tiers)
+                    expired_q = (
+                        "SELECT * FROM jobs WHERE state='claimed'"
+                        " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
+                        + f" AND tier IN ({placeholders})"
+                        + " ORDER BY claim_expires_at ASC LIMIT 1"
+                    )
+                else:
+                    expired_q = (
+                        "SELECT * FROM jobs WHERE state='claimed'"
+                        " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
+                        " ORDER BY claim_expires_at ASC LIMIT 1"
+                    )
+                row = conn.execute(expired_q, tuple(params2)).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            conn.execute(
+                "UPDATE jobs SET state='claimed',claim_owner=?,claimed_at=?,"
+                "claim_expires_at=? WHERE job_id=?",
+                (worker_addr, now, now + _WORKER_LEASE_S, row["job_id"]),
+            )
+            conn.execute("COMMIT")
+            updated = self.get(row["job_id"])
+            return updated
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def complete(
+        self,
+        job_id: str,
+        *,
+        text: str,
+        provider_id: str,
+    ) -> Optional[_JobRecord]:
+        now = time.time()
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                "UPDATE jobs SET state='completed',text=?,provider_id=?,"
+                "completed_at=? WHERE job_id=?",
+                (text, provider_id, now, job_id),
+            )
+        return self.get(job_id)
+
+    def fail(self, job_id: str, error: str) -> Optional[_JobRecord]:
+        now = time.time()
+        with self._conn():
+            self._conn().execute(
+                "UPDATE jobs SET state='failed',error=?,completed_at=? "
+                "WHERE job_id=?",
+                (error, now, job_id),
+            )
+        return self.get(job_id)
+
+    # ---------- workers ----------
+
+    def register_worker(self, info: _WorkerInfo) -> None:
+        self._conn().execute(
+            "INSERT INTO workers (address,tiers_json,hardware_json,"
+            "registered_at,last_seen,jobs_completed,"
+            "earnings_pending_animica,earnings_paid_animica) "
+            "VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(address) DO UPDATE SET "
+            "  tiers_json=excluded.tiers_json,"
+            "  hardware_json=excluded.hardware_json,"
+            "  last_seen=excluded.last_seen",
+            (
+                info.address,
+                _json.dumps(info.tiers),
+                _json.dumps(info.hardware),
+                info.registered_at,
+                info.last_seen,
+                info.jobs_completed,
+                info.earnings_pending_animica,
+                info.earnings_paid_animica,
+            ),
+        )
+
+    def get_worker(self, address: str) -> Optional[_WorkerInfo]:
+        conn = self._conn()
+        now = time.time()
+        conn.execute("UPDATE workers SET last_seen=? WHERE address=?", (now, address))
+        row = conn.execute(
+            "SELECT * FROM workers WHERE address=?", (address,)
+        ).fetchone()
+        return self._worker_from_row(row) if row else None
+
+    def all_workers(self) -> List[_WorkerInfo]:
+        rows = self._conn().execute("SELECT * FROM workers").fetchall()
+        return [self._worker_from_row(r) for r in rows]
+
+    # ---------- earnings credit (atomic) ----------
+    # The call sites do `w.jobs_completed += 1; w.earnings_pending_animica += ...`
+    # but with SQLite, mutating an in-memory copy doesn't persist. We
+    # expose a credit() helper used at the worker-credit call site.
+
+    def credit_worker_completion(self, address: str, amount: float) -> None:
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                "UPDATE workers SET jobs_completed=jobs_completed+1,"
+                "earnings_pending_animica=earnings_pending_animica+? "
+                "WHERE address=?",
+                (float(amount or 0.0), address),
+            )
+
+
+def _make_store() -> Any:
+    """Pick a job store at module load. Prefer SQLite when a data dir
+    is configured; fall back to in-memory otherwise. Set
+    ANIMICA_AICF_JOB_STORE=memory to force the in-memory path (useful
+    in tests or when running on a read-only filesystem)."""
+    forced = os.environ.get("ANIMICA_AICF_JOB_STORE", "").strip().lower()
+    if forced == "memory":
+        log.info("aicf_jobs: using in-memory store (forced)")
+        return _AicfJobStore()
+    path = _resolve_job_db_path()
+    if path is None:
+        log.info("aicf_jobs: using in-memory store (no data dir)")
+        return _AicfJobStore()
+    try:
+        store = _SqliteAicfJobStore(path)
+        log.info("aicf_jobs: using SQLite store at %s", path)
+        return store
+    except Exception as exc:
+        log.warning(
+            "aicf_jobs: SQLite store init failed (%s); falling back to memory", exc
+        )
+        return _AicfJobStore()
+
+
+_STORE = _make_store()
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +622,59 @@ def _price_job(prompt_tokens: int, max_output_tokens: int, tier: str) -> float:
     rate = _TIER_PRICE_PER_KTOK.get(tier, _TIER_PRICE_PER_KTOK[_DEFAULT_TIER])
     total_tokens = max(0, prompt_tokens) + max(0, max_output_tokens)
     return round((total_tokens / 1000.0) * rate, 9)
+
+
+def _decode_payment_envelope(blob: Any) -> Optional[Dict[str, Any]]:
+    """Decode the txn_hex hex string from a SignedPayment blob into the
+    canonical {sig, body} dict. Returns None when the input doesn't look
+    like a signed-tx envelope (so callers can fall back to "no settlement")."""
+    if not isinstance(blob, Mapping):
+        return None
+    txn_hex = str(blob.get("txn_hex") or blob.get("txnHex") or "").strip()
+    if not txn_hex:
+        return None
+    raw = txn_hex
+    if raw.startswith("0x") or raw.startswith("0X"):
+        raw = raw[2:]
+    try:
+        raw_bytes = bytes.fromhex(raw)
+    except ValueError:
+        return None
+    try:
+        import cbor2  # type: ignore
+        decoded = cbor2.loads(raw_bytes)
+    except Exception:
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    return {"raw_bytes": raw_bytes, "decoded": dict(decoded), "txn_hex": "0x" + raw}
+
+
+async def _broadcast_payment(raw_hex: str) -> Dict[str, Any]:
+    """Submit the payment txn to the local mempool via the existing
+    tx.sendRawTransaction dispatcher. Returns {accepted, tx_hash, status, reason}."""
+    try:
+        from rpc.methods import dispatch
+    except Exception as exc:
+        return {"accepted": False, "tx_hash": None, "status": "dispatcher_unavailable", "reason": str(exc)}
+    try:
+        result = await dispatch("tx.sendRawTransaction", {"rawTx": raw_hex})
+    except Exception as exc:
+        return {"accepted": False, "tx_hash": None, "status": "submit_failed", "reason": str(exc)}
+    # tx.sendRawTransaction returns either a plain hex tx_hash string or a
+    # structured dict (when it wants to flag warnings / status).
+    if isinstance(result, str):
+        return {"accepted": True, "tx_hash": result, "status": "accepted", "reason": None}
+    if isinstance(result, Mapping):
+        tx_hash = result.get("tx_hash") or result.get("hash")
+        accepted = bool(result.get("accepted_to_mempool") or result.get("persisted_to_chain"))
+        return {
+            "accepted": accepted,
+            "tx_hash": tx_hash,
+            "status": result.get("status") or ("accepted" if accepted else "rejected"),
+            "reason": result.get("reason"),
+        }
+    return {"accepted": False, "tx_hash": None, "status": "unexpected_result", "reason": repr(result)[:200]}
 
 
 def _stub_response(prompt: str, tier: str) -> str:
@@ -282,8 +733,8 @@ def _schedule_fallback(job_id: str) -> None:
 
 @method("aicf.estimateJobCost", desc="Estimate cost of a distributed-AICF job")
 async def estimate_job_cost(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     prompt_tokens = _coerce_int(p.get("prompt_tokens"), 0)
@@ -302,8 +753,8 @@ async def estimate_job_cost(
 
 @method("aicf.submitInferenceJob", desc="Submit a distributed-AICF inference job")
 async def submit_inference_job(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     spec = p.get("spec")
@@ -329,6 +780,48 @@ async def submit_inference_job(
         estimated_cost=cost,
         tier=tier,
     )
+
+    # Real on-chain settlement: decode the SignedPayment envelope and
+    # broadcast the underlying tx via tx.sendRawTransaction. This moves
+    # value from the user's wallet into the AICF treasury on the next
+    # mined block. The body's `to` field must already match the
+    # treasury address — we don't rewrite it server-side.
+    decoded = _decode_payment_envelope(payment)
+    if decoded is not None:
+        broadcast = await _broadcast_payment(decoded["txn_hex"])
+        rec.payment_tx_hash = broadcast.get("tx_hash")
+        rec.payment_accepted = bool(broadcast.get("accepted"))
+        rec.payment_status = broadcast.get("status")
+        try:
+            body = decoded["decoded"].get("body") or {}
+            chain_field = body.get("chainId")
+            if isinstance(chain_field, int):
+                rec.settled_chain_id = chain_field
+        except Exception:
+            pass
+        if not rec.payment_accepted and _require_settlement():
+            reason = broadcast.get("reason") or broadcast.get("status") or "unknown"
+            raise InvalidParams(
+                f"submitInferenceJob: payment rejected by mempool: {reason}"
+            )
+        log.info(
+            "aicf_jobs: payment broadcast accepted=%s tx_hash=%s status=%s",
+            rec.payment_accepted,
+            rec.payment_tx_hash,
+            rec.payment_status,
+        )
+    elif _require_settlement():
+        raise InvalidParams(
+            "submitInferenceJob: payment envelope could not be decoded; "
+            "settlement is required by ANIMICA_AICF_REQUIRE_SETTLEMENT"
+        )
+    else:
+        log.info(
+            "aicf_jobs: payment envelope not decoded; accepting without "
+            "on-chain settlement (set ANIMICA_AICF_REQUIRE_SETTLEMENT=1 to "
+            "make this a hard error)"
+        )
+
     _STORE.submit(rec)
     _schedule_fallback(job_id)
     log.info("aicf_jobs: submitted job_id=%s tier=%s est_cost=%.9f", job_id, tier, cost)
@@ -337,13 +830,39 @@ async def submit_inference_job(
         "accepted_tier": tier,
         "provider_id": "",   # filled in on completion
         "estimated_cost_animica": cost,
+        "payment_tx_hash": rec.payment_tx_hash,
+        "payment_accepted": rec.payment_accepted,
+        "payment_status": rec.payment_status,
+    }
+
+
+@method("aicf.getTreasuryAddress", desc="Get the on-chain AICF treasury address for this node")
+async def get_treasury_address(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    chain_id = _coerce_int((params or {}).get("chain_id"), 0)
+    if chain_id <= 0:
+        # Best-effort: pull from the RPC ctx if available.
+        try:
+            chain_id = int(getattr(ctx, "chain_id", 0) or 0)
+        except Exception:
+            chain_id = 0
+    if chain_id <= 0:
+        chain_id = 1
+    addr = _treasury_address_for(chain_id)
+    return {
+        "treasury_address": addr,
+        "chain_id": chain_id,
+        "source": "env" if os.environ.get(_TREASURY_ENV) else "default",
+        "require_settlement": _require_settlement(),
     }
 
 
 @method("aicf.streamJob", desc="Stream chunks for an in-flight AICF job")
 async def stream_job(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     job_id = _coerce_str(p.get("job_id"))
@@ -377,8 +896,8 @@ async def stream_job(
 
 @method("aicf.jobStatus", desc="Get the current status of an AICF job")
 async def job_status(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     job_id = _coerce_str(p.get("job_id"))
@@ -396,13 +915,16 @@ async def job_status(
         "error": job.error,
         "created_at": job.created_at,
         "completed_at": job.completed_at,
+        "payment_tx_hash": job.payment_tx_hash,
+        "payment_accepted": job.payment_accepted,
+        "payment_status": job.payment_status,
     }
 
 
 @method("aicf.settleJob", desc="Settle and return final result for a completed AICF job")
 async def settle_job(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     job_id = _coerce_str(p.get("job_id"))
@@ -428,6 +950,9 @@ async def settle_job(
         "latency_ms": latency_ms,
         "state": job.state,
         "error": job.error,
+        "payment_tx_hash": job.payment_tx_hash,
+        "payment_accepted": job.payment_accepted,
+        "payment_status": job.payment_status,
     }
 
 
@@ -438,8 +963,8 @@ async def settle_job(
 
 @method("aicf.workerRegister", desc="Register a worker to claim AICF jobs", aliases=("aicf_workerRegister",))
 async def worker_register(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     address = _coerce_str(p.get("address")).strip()
@@ -460,8 +985,8 @@ async def worker_register(
 
 @method("aicf.workerStatus", desc="Get status of a registered AICF worker", aliases=("aicf_workerStatus",))
 async def worker_status(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     address = _coerce_str(p.get("address")).strip()
@@ -478,13 +1003,61 @@ async def worker_status(
         "registered_at": w.registered_at,
         "last_seen": w.last_seen,
         "jobs_completed": w.jobs_completed,
+        "earnings_pending_animica": w.earnings_pending_animica,
+        "earnings_paid_animica": w.earnings_paid_animica,
+    }
+
+
+@method(
+    "aicf.workerEarnings",
+    desc="Get pending and paid AICF earnings for a worker address",
+    aliases=("aicf_workerEarnings",),
+)
+async def worker_earnings(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Per-worker earnings ledger.
+
+    ``earnings_pending_animica`` accumulates each completed-job cost; it
+    represents value the worker has earned but which has not been swept
+    from the on-chain treasury into the AICF state pool yet. That sweep
+    is a future consensus-level operation — when wired, the pending
+    amount becomes claimable via the existing aicf.claim / aicf.getClaimable
+    flow.
+
+    Until then, this ledger is the canonical reference for "what does
+    the network owe me." Persistence is in-memory and resets on node
+    restart, just like the rest of the AICF job queue.
+    """
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    if not address:
+        raise InvalidParams("workerEarnings: 'address' is required")
+    w = _STORE.get_worker(address)
+    if w is None:
+        return {
+            "registered": False,
+            "address": address,
+            "earnings_pending_animica": 0.0,
+            "earnings_paid_animica": 0.0,
+            "jobs_completed": 0,
+            "note": "settlement_pending_consensus_upgrade",
+        }
+    return {
+        "registered": True,
+        "address": w.address,
+        "jobs_completed": w.jobs_completed,
+        "earnings_pending_animica": w.earnings_pending_animica,
+        "earnings_paid_animica": w.earnings_paid_animica,
+        "note": "settlement_pending_consensus_upgrade",
     }
 
 
 @method("aicf.workerClaimNextJob", desc="Claim the next pending AICF job", aliases=("aicf_workerClaimNextJob",))
 async def worker_claim_next_job(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Optional[Dict[str, Any]]:
     p = dict(params or {})
     address = _coerce_str(p.get("address")).strip()
@@ -508,8 +1081,8 @@ async def worker_claim_next_job(
 
 @method("aicf.workerSubmitResult", desc="Submit the result of a claimed AICF job", aliases=("aicf_workerSubmitResult",))
 async def worker_submit_result(
-    ctx: Any,
-    params: Mapping[str, Any] | None = None,
+    ctx: Any = None,
+    **params: Any,
 ) -> Dict[str, Any]:
     p = dict(params or {})
     address = _coerce_str(p.get("address")).strip()
@@ -527,10 +1100,28 @@ async def worker_submit_result(
     if job.state not in {"claimed", "pending"}:
         # Already completed (e.g. local stub raced ahead) — accept idempotently
         return {"accepted": False, "state": job.state}
-    _STORE.complete(job_id, text=text, provider_id=address)
-    w = _STORE.get_worker(address)
-    if w is not None:
-        w.jobs_completed += 1
+    completed = _STORE.complete(job_id, text=text, provider_id=address)
+    # Credit the worker for the full estimated cost of the job. With the
+    # SQLite store, in-memory dataclass mutation doesn't persist — use
+    # the atomic credit helper when available so the IOU survives a
+    # node restart. With the in-memory store, fall back to direct field
+    # mutation. See aicf.workerEarnings for retrieval; once the
+    # treasury→state-pool sweep activates (consensus rule), these IOUs
+    # become claimable via aicf.claim.
+    amount = float(completed.estimated_cost or 0.0) if completed else 0.0
+    if hasattr(_STORE, "credit_worker_completion"):
+        try:
+            _STORE.credit_worker_completion(address, amount)
+        except Exception as exc:
+            log.warning("aicf_jobs: credit_worker_completion failed: %s", exc)
+    else:
+        w = _STORE.get_worker(address)
+        if w is not None:
+            w.jobs_completed += 1
+            try:
+                w.earnings_pending_animica += amount
+            except (TypeError, ValueError):
+                pass
     return {"accepted": True, "state": "completed", "job_id": job_id}
 
 

@@ -888,11 +888,37 @@ class StratumCpuMiner:
         return await future
 
     async def _subscribe(self) -> None:
+        # AICF model-serving opt-in. Miners that have downloaded inference
+        # bundles set ANIMICA_AICF_TIERS (e.g. "standard,premium") so the
+        # pool can register them as AICF workers for those tiers via
+        # aicf.workerRegister. Without the env var, no tiers are sent and
+        # the pool treats this miner as PoW-only.
+        import os as _os
+        aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+        aicf_features: dict = {}
+        if aicf_tiers_env:
+            tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+            if tiers:
+                aicf_features["tiers"] = tiers
+                hardware: dict = {}
+                for key, env in (
+                    ("gpu", "ANIMICA_AICF_GPU"),
+                    ("vram_gb", "ANIMICA_AICF_VRAM_GB"),
+                    ("model", "ANIMICA_AICF_MODEL"),
+                ):
+                    val = _os.environ.get(env, "").strip()
+                    if val:
+                        hardware[key] = val
+                if hardware:
+                    aicf_features["hardware"] = hardware
+        features: dict = {"framing": "lines"}
+        if aicf_features:
+            features["aicf"] = aicf_features
         response = await self._call(
             "mining.subscribe",
             {
                 "agent": "animica-cpu-miner/0.1.1",
-                "features": {"framing": "lines"},
+                "features": features,
                 "algo": "hashshare",
             },
         )
@@ -967,6 +993,8 @@ class StratumCpuMiner:
                         await self._restart_current_job()
                 elif method == "mining.notify":
                     await self._handle_notify(params)
+                elif method == "mining.aicf.notify":
+                    asyncio.create_task(self._handle_aicf_notify(params))
         except asyncio.CancelledError:
             return
         except Exception as exc:
@@ -983,6 +1011,55 @@ class StratumCpuMiner:
         self._mining_task = asyncio.create_task(
             self._mine_job(token, dict(self._current_job))
         )
+
+    async def _handle_aicf_notify(self, params: dict[str, Any]) -> None:
+        """Run inference on the JobSpec the pool pushed and submit
+        the result back via mining.aicf.submit. Runs in a separate
+        task so PoW mining isn't blocked. Inference itself runs on
+        a thread because transformers.generate() is synchronous."""
+        job_id = str(params.get("jobId") or "")
+        spec = params.get("spec") or {}
+        tier = str(params.get("tier") or "standard")
+        if not job_id or not isinstance(spec, dict):
+            self.log.warning("Bad mining.aicf.notify payload: %r", params)
+            return
+        try:
+            from animica.stratum_pool.aicf_inference import get_engine
+        except Exception as exc:
+            self.log.warning("aicf inference engine not importable: %s", exc)
+            return
+        engine = get_engine()
+        try:
+            result = await asyncio.to_thread(engine.generate, spec, tier=tier)
+        except Exception as exc:
+            self.log.warning("aicf inference failed job=%s: %s", job_id, exc)
+            return
+        self.log.info(
+            "aicf job done id=%s tier=%s backend=%s latency=%dms model=%s",
+            job_id,
+            tier,
+            result.used_backend,
+            result.latency_ms,
+            result.used_model,
+        )
+        try:
+            await self._send({
+                "jsonrpc": "2.0",
+                "id": None,
+                "method": "mining.aicf.submit",
+                "params": {
+                    "worker": self.config.worker,
+                    "jobId": job_id,
+                    "text": result.text,
+                    "latencyMs": int(result.latency_ms),
+                    "attestation": {
+                        "backend": result.used_backend,
+                        "model": result.used_model,
+                    },
+                },
+            })
+        except Exception as exc:
+            self.log.warning("Failed to send mining.aicf.submit for %s: %s", job_id, exc)
 
     async def _restart_current_job(self) -> None:
         if self._current_job is None:

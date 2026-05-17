@@ -175,6 +175,13 @@ class Method(str, Enum):
     SUBMIT = "mining.submit"
     GET_VERSION = "mining.get_version"
     EXTRANONCE_SUBSCRIBE = "mining.extranonce.subscribe"
+    # AICF inference work distribution. The same stratum connection a
+    # miner uses for PoW templates also receives inference JobSpecs via
+    # AICF_NOTIFY and replies with AICF_SUBMIT. See rpc/methods/aicf_jobs.py
+    # for the chain-side queue and the architecture-miners-as-aicf-workers
+    # project memory note.
+    AICF_NOTIFY = "mining.aicf.notify"
+    AICF_SUBMIT = "mining.aicf.submit"
 
 
 # ---------------------- Dataclasses (schema) ----------------------
@@ -649,6 +656,71 @@ def res_submit_v1(
         else {"code": RpcErrorCodes.INVALID_SHARE, "message": reason or "rejected"}
     )
     return {"id": id, "result": bool(accepted), "error": err}
+
+
+# ---------------------- AICF inference work helpers ------------------
+
+
+def push_aicf_notify(
+    job_id: str,
+    spec: JSON,
+    tier: str,
+    *,
+    claim_expires_at: Optional[float] = None,
+    estimated_cost_animica: Optional[float] = None,
+) -> JSON:
+    """Server → miner: a JobSpec the miner should run inference on.
+
+    The miner replies with `mining.aicf.submit` carrying the resulting
+    text. The pool then relays that to `aicf.workerSubmitResult` on the
+    local node, which marks the job completed in the AICF job store.
+    """
+    payload: JSON = {
+        "jobId": job_id,
+        "spec": spec,
+        "tier": tier,
+    }
+    if claim_expires_at is not None:
+        payload["claimExpiresAt"] = float(claim_expires_at)
+    if estimated_cost_animica is not None:
+        payload["estimatedCostAnimica"] = float(estimated_cost_animica)
+    return make_request(Method.AICF_NOTIFY, payload, id=None)
+
+
+def req_aicf_submit(
+    worker: str,
+    job_id: str,
+    text: str,
+    *,
+    latency_ms: int = 0,
+    attestation: Optional[JSON] = None,
+    id: Union[int, str, None] = 5,
+) -> JSON:
+    """Miner → server: inference result for a previously-notified job."""
+    payload: JSON = {
+        "worker": worker,
+        "jobId": job_id,
+        "text": text,
+        "latencyMs": int(latency_ms),
+    }
+    if attestation is not None:
+        payload["attestation"] = attestation
+    return make_request(Method.AICF_SUBMIT, payload, id=id)
+
+
+def res_aicf_submit(
+    id: Union[int, str, None],
+    accepted: bool,
+    state: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> JSON:
+    """Server → miner: acknowledgement of an `mining.aicf.submit`."""
+    result: JSON = {"accepted": bool(accepted)}
+    if state:
+        result["state"] = state
+    if reason:
+        result["reason"] = reason
+    return make_result(id, result)
 
 
 # ---------------------- Tiny self-test (manual) ----------------------

@@ -7,7 +7,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import replace
-from typing import Awaitable, Callable, Deque, Optional
+from typing import Awaitable, Callable, Deque, Dict, Optional
 
 from core.utils.pow import micro_threshold_to_target256
 from mining.stratum_server import StratumJob, StratumServer
@@ -125,8 +125,61 @@ class StratumPoolServer:
             max_cached_jobs=128,
             validator=self._validator,
             submit_hook=self._handle_share_submit,
+            on_worker_authorized=self._register_aicf_worker,
+            on_aicf_result=self._handle_aicf_result,
             pool_mode=config.pool_mode,
         )
+        self._aicf_dispatcher_task: Optional[asyncio.Task] = None
+        self._aicf_dispatcher_stop = asyncio.Event()
+        # AICF jobs the pool has pushed but not yet seen a result for.
+        # Maps job_id → (worker_address, expires_at). Used to time out
+        # claims back to the node's job store if a miner goes silent.
+        self._aicf_inflight: Dict[str, tuple[str, float]] = {}
+        self._aicf_poll_interval_s = 2.0
+
+    async def _register_aicf_worker(self, session: object, features: dict) -> None:
+        """Auto-register the authorized miner as an AICF worker.
+
+        Miners advertise their served model tiers + hardware via the
+        `aicf` key in mining.subscribe features:
+
+            features = {"aicf": {"tiers": ["standard","premium"],
+                                  "hardware": {"gpu": "rtx5090", "vram_gb": 24}}}
+
+        A miner that omits `aicf` is registered with an empty tier list,
+        which the aicf job dispatcher treats as "PoW-only — do not route
+        inference here". This keeps the call non-disruptive for old
+        miners while letting model-serving miners opt in just by adding
+        the features key.
+        """
+        if not getattr(session, "authorized", False):
+            return
+        address = getattr(session, "address", None) or getattr(session, "worker", None)
+        if not address:
+            return
+        aicf_features = (features or {}).get("aicf") or {}
+        if not isinstance(aicf_features, dict):
+            aicf_features = {}
+        tiers = aicf_features.get("tiers") or []
+        if not isinstance(tiers, list):
+            tiers = []
+        hardware = aicf_features.get("hardware") or {}
+        if not isinstance(hardware, dict):
+            hardware = {}
+        try:
+            await self._adapter._rpc_call(
+                "aicf.workerRegister",
+                {"address": str(address), "tiers": list(tiers), "hardware": dict(hardware)},
+            )
+            self._log.info(
+                "aicf-worker registered via stratum: address=%s tiers=%s",
+                address,
+                tiers,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "aicf.workerRegister failed for stratum session: %s", exc
+            )
 
     def set_submit_hook(
         self,
@@ -236,10 +289,130 @@ class StratumPoolServer:
         self._job_manager.subscribe(self._on_new_job)
         self._job_manager.start()
         await self._server.start()
+        self._aicf_dispatcher_stop.clear()
+        self._aicf_dispatcher_task = asyncio.create_task(
+            self._aicf_dispatch_loop(), name="aicf_dispatch_loop"
+        )
 
     async def stop(self) -> None:
+        self._aicf_dispatcher_stop.set()
+        if self._aicf_dispatcher_task is not None:
+            try:
+                await asyncio.wait_for(self._aicf_dispatcher_task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._aicf_dispatcher_task.cancel()
+            self._aicf_dispatcher_task = None
         await self._server.stop()
         await self._job_manager.stop()
+
+    async def _aicf_dispatch_loop(self) -> None:
+        """Periodically claim AICF jobs for each connected AICF-capable
+        miner and push them via mining.aicf.notify.
+
+        Implementation note: we claim ON BEHALF of the miner using their
+        payout address — the node's job queue is per-worker-address, so
+        the same address that authorized via stratum is what we send to
+        `aicf.workerClaimNextJob`. The job's lease keeps it claimed until
+        the miner replies with mining.aicf.submit (which flows back to
+        aicf.workerSubmitResult via _handle_aicf_result).
+        """
+        while not self._aicf_dispatcher_stop.is_set():
+            try:
+                await self._dispatch_one_round()
+            except Exception as exc:
+                self._log.warning("aicf dispatcher tick failed: %s", exc)
+            try:
+                await asyncio.wait_for(
+                    self._aicf_dispatcher_stop.wait(),
+                    timeout=self._aicf_poll_interval_s,
+                )
+            except asyncio.TimeoutError:
+                continue
+
+    async def _dispatch_one_round(self) -> None:
+        sessions = self._server.list_aicf_capable_sessions()
+        if not sessions:
+            return
+        now = time.time()
+        # Drop expired in-flight bookkeeping so stale entries don't
+        # gate future claims; the node's lease timeout reclaims them.
+        expired = [jid for jid, (_a, exp) in self._aicf_inflight.items() if exp < now]
+        for jid in expired:
+            self._aicf_inflight.pop(jid, None)
+        # Sessions whose address is already serving an in-flight job
+        # are skipped — one job at a time per miner keeps things simple
+        # and prevents over-allocation.
+        busy = {addr for (addr, _exp) in self._aicf_inflight.values()}
+        for sess in sessions:
+            addr = (sess.address or "").strip()
+            if not addr or addr in busy:
+                continue
+            feats = sess.subscribed_features or {}
+            aicf_feats = feats.get("aicf") if isinstance(feats, dict) else None
+            tiers = list((aicf_feats or {}).get("tiers") or [])
+            try:
+                claimed = await self._adapter._rpc_call(
+                    "aicf.workerClaimNextJob",
+                    {"address": addr, "tiers": tiers},
+                )
+            except Exception as exc:
+                self._log.debug("aicf.workerClaimNextJob failed for %s: %s", addr, exc)
+                continue
+            if not isinstance(claimed, dict) or not claimed.get("job_id"):
+                continue
+            job_id = str(claimed["job_id"])
+            spec = claimed.get("spec") or {}
+            tier = str(claimed.get("tier") or "standard")
+            cost = claimed.get("estimated_cost_animica")
+            expires = float(claimed.get("claim_expires_at") or (now + 60))
+            ok = await self._server.push_aicf_job(
+                worker_address=addr,
+                job_id=job_id,
+                spec=spec if isinstance(spec, dict) else {},
+                tier=tier,
+                claim_expires_at=expires,
+                estimated_cost_animica=(
+                    float(cost) if isinstance(cost, (int, float)) else None
+                ),
+            )
+            if ok:
+                self._aicf_inflight[job_id] = (addr, expires)
+                busy.add(addr)
+
+    async def _handle_aicf_result(self, session: object, params: dict) -> dict:
+        """Relay a miner's mining.aicf.submit to aicf.workerSubmitResult.
+        Returns the dict shipped back to the miner."""
+        job_id = str(params.get("jobId") or "")
+        text = params.get("text") or ""
+        latency_ms = params.get("latencyMs") or 0
+        address = (getattr(session, "address", None) or "").strip()
+        if not job_id or not address:
+            return {"accepted": False, "reason": "missing_jobId_or_address"}
+        try:
+            r = await self._adapter._rpc_call(
+                "aicf.workerSubmitResult",
+                {
+                    "address": address,
+                    "job_id": job_id,
+                    "text": str(text),
+                    "latency_ms": int(latency_ms) if isinstance(latency_ms, (int, float)) else 0,
+                },
+            )
+        except Exception as exc:
+            self._log.warning(
+                "aicf.workerSubmitResult relay failed job=%s: %s", job_id, exc
+            )
+            return {"accepted": False, "reason": str(exc)}
+        # Clear the in-flight slot regardless of outcome — the node has
+        # the authoritative state now.
+        self._aicf_inflight.pop(job_id, None)
+        if not isinstance(r, dict):
+            return {"accepted": False, "reason": "unexpected_response"}
+        return {
+            "accepted": bool(r.get("accepted")),
+            "state": r.get("state"),
+            "reason": r.get("reason"),
+        }
 
     async def _on_new_job(self, job: MiningJob) -> None:
         frozen_job = freeze_mining_job(job, fallback_chain_id=self._config.chain_id)

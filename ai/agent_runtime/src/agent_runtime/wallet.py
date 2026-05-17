@@ -405,11 +405,17 @@ def preview_payment(wallet: WalletInfo, estimated_cost: float, *,
 def sign_payment(wallet: WalletInfo, *, amount_animica: float,
                  recipient: str, chain_id: int, nonce: int,
                  job_metadata: Optional[Mapping[str, Any]] = None,
+                 rpc_url: Optional[str] = None,
                  ) -> SignedPayment:
     """Construct + sign an AICF payment transaction.
 
     Delegates to ``animica.wallet`` if importable. Otherwise raises so we
     never silently produce an unsigned txn that the network would reject.
+
+    When ``rpc_url`` is given, fetches the chain identity (genesis hash,
+    fork id, network name) from the node and passes it to the signer.
+    This is required for the signature to verify on chains where genesis
+    is part of the PQ signing domain — which is all production chains.
 
     This function deliberately does not re-implement signing; the chain's
     canonical signer lives in the existing Python wallet helpers, and
@@ -426,13 +432,35 @@ def sign_payment(wallet: WalletInfo, *, amount_animica: float,
             detail={"import_error": str(exc)},
         ) from exc
 
+    chain_identity: Optional[Mapping[str, Any]] = None
+    current_height: Optional[int] = None
+    if rpc_url:
+        try:
+            ident = _rpc_call(rpc_url, "chain.getChainIdentity", [])
+        except Exception:
+            ident = None
+        if isinstance(ident, Mapping):
+            chain_identity = ident
+        try:
+            head = _rpc_call(rpc_url, "chain.getHead", [])
+        except Exception:
+            head = None
+        if isinstance(head, Mapping):
+            try:
+                current_height = int(head.get("height") or head.get("number") or 0)
+            except (TypeError, ValueError):
+                current_height = None
+
     try:
         signed_hex = sign_payment_tx(
             wallet_path=wallet.backing_file,
+            from_address=wallet.address,
             recipient=recipient,
             amount=amount_animica,
             nonce=nonce,
             chain_id=chain_id,
+            chain_identity=chain_identity,
+            current_height=current_height,
         )
     except Exception as exc:    # noqa: BLE001 — wrap into WalletError
         raise WalletError(

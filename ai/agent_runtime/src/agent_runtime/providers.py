@@ -163,14 +163,29 @@ class DistributedAICFProvider(Provider):
                 preview.reason or "insufficient_balance",
             )
         nonce = get_next_nonce(self.rpc_url, wi.address)
-        recipient = self.cfg.integration["aicf"].get("treasury_address",
-                                                      "aicf-treasury")
+        # Treasury address — prefer the on-chain canonical (aicf.getTreasuryAddress
+        # served by the local node). Fall back to the integration config, and
+        # finally to a placeholder that the server-side payment decoder will
+        # reject if ANIMICA_AICF_REQUIRE_SETTLEMENT=1. The fetched address is
+        # also a valid bech32, which the placeholder "aicf-treasury" was not.
+        recipient = ""
+        try:
+            tres = self.client._rpc("aicf.getTreasuryAddress", {})
+            if isinstance(tres, dict):
+                recipient = str(tres.get("treasury_address") or "")
+        except Exception:
+            recipient = ""
+        if not recipient:
+            recipient = str(self.cfg.integration["aicf"].get(
+                "treasury_address", "aicf-treasury"
+            ))
         signed = sign_payment(
             wi,
             amount_animica=quote.estimated_cost_animica,
             recipient=str(recipient),
             chain_id=wi.chain_id,
             nonce=nonce,
+            rpc_url=self.rpc_url,
             job_metadata={"job_kind": spec.job_kind,
                            "tier": spec.tier_preferred},
         )

@@ -17,12 +17,13 @@ from .pow_validation import (derive_block_target_int, digest_from_sign_bytes,
 from .stratum_protocol import (InvalidParams, InvalidRequest, Method,
                                MethodNotFound, RpcErrorCodes, decode_lenpref,
                                decode_lines, encode_lenpref, encode_lines,
-                               make_error, make_result, push_notify,
-                               push_notify_v1, push_set_difficulty,
-                               push_set_difficulty_v1, req_submit,
-                               req_subscribe, res_authorize, res_authorize_v1,
-                               res_submit, res_submit_v1, res_subscribe,
-                               res_subscribe_v1, validate_request)
+                               make_error, make_result, push_aicf_notify,
+                               push_notify, push_notify_v1,
+                               push_set_difficulty, push_set_difficulty_v1,
+                               req_submit, req_subscribe, res_aicf_submit,
+                               res_authorize, res_authorize_v1, res_submit,
+                               res_submit_v1, res_subscribe, res_subscribe_v1,
+                               validate_request)
 from .templates import MiningJob, share_target_to_difficulty
 
 try:
@@ -94,6 +95,10 @@ class Session:
     accepted_share_streak: int = 0
     is_v1: bool = False
     subscription_ids: Tuple[str, str] = ("subscription-id-1", "subscription-id-2")
+    # Features dict the miner sent on mining.subscribe. Captured so the
+    # AUTHORIZE hook can forward AICF tier / hardware metadata to the
+    # worker-registration callback without re-parsing the wire payload.
+    subscribed_features: Dict[str, Any] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_seen = time.time()
@@ -322,6 +327,22 @@ class StratumServer:
                 Awaitable[None],
             ]
         ] = None,
+        # Fired after a miner successfully completes mining.authorize.
+        # Used by the pool to register the miner as an AICF worker via
+        # aicf.workerRegister so distributed-inference jobs can be served
+        # by the same hardware that's mining PoW. See
+        # rpc/methods/aicf_jobs.py and the "miners are AICF workers"
+        # architecture note in the project memory.
+        on_worker_authorized: Optional[
+            Callable[[Session, JSON], Awaitable[None]]
+        ] = None,
+        # Fired when a miner sends mining.aicf.submit with an inference
+        # result. The pool relays this to aicf.workerSubmitResult on the
+        # local node, which finalizes the job. Returns the result dict
+        # (accepted, state, reason) which is shipped back to the miner.
+        on_aicf_result: Optional[
+            Callable[[Session, JSON], Awaitable[JSON]]
+        ] = None,
         pool_mode: str = "pps",
         session_vardiff_enabled: bool = True,
     ) -> None:
@@ -341,6 +362,8 @@ class StratumServer:
         self._send_timeout_secs = max(float(send_timeout_secs), 0.0)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
+        self._on_worker_authorized = on_worker_authorized
+        self._on_aicf_result = on_aicf_result
         self._pool_mode = _normalize_pool_mode(
             pool_mode, default="pps", allow_both=True
         )
@@ -438,6 +461,69 @@ class StratumServer:
             self._jobs.pop(drop_id, None)
             if drop_id == self._current_job_id:
                 self._current_job_id = self._job_order[-1] if self._job_order else None
+
+    def _find_authorized_session_by_address(self, address: str) -> Optional[Session]:
+        addr = (address or "").strip()
+        if not addr:
+            return None
+        for sess in self._sessions.values():
+            if sess.authorized and (sess.address or "").strip() == addr:
+                return sess
+        return None
+
+    def list_aicf_capable_sessions(self) -> List[Session]:
+        """All authorized sessions whose subscribe features advertised
+        a non-empty AICF tier list. The pool dispatcher uses this to
+        decide which miners are eligible for inference work."""
+        out: List[Session] = []
+        for sess in self._sessions.values():
+            if not sess.authorized:
+                continue
+            feats = sess.subscribed_features or {}
+            aicf = feats.get("aicf") if isinstance(feats, dict) else None
+            if isinstance(aicf, dict) and aicf.get("tiers"):
+                out.append(sess)
+        return out
+
+    async def push_aicf_job(
+        self,
+        *,
+        worker_address: str,
+        job_id: str,
+        spec: JSON,
+        tier: str,
+        claim_expires_at: Optional[float] = None,
+        estimated_cost_animica: Optional[float] = None,
+    ) -> bool:
+        """Push an AICF JobSpec to the miner registered at worker_address.
+
+        Returns True if a session was found and the notify was queued.
+        The miner is expected to reply asynchronously with
+        ``mining.aicf.submit`` (handled by the on_aicf_result callback).
+        """
+        sess = self._find_authorized_session_by_address(worker_address)
+        if sess is None:
+            return False
+        msg = push_aicf_notify(
+            job_id,
+            spec,
+            tier,
+            claim_expires_at=claim_expires_at,
+            estimated_cost_animica=estimated_cost_animica,
+        )
+        try:
+            await self._send(sess, msg)
+        except Exception as exc:
+            log.warning(
+                f"[Stratum] failed to push aicf job={job_id} to "
+                f"address={worker_address}: {exc}"
+            )
+            return False
+        log.info(
+            "[Stratum] aicf.notify job=%s tier=%s address=%s",
+            job_id, tier, worker_address,
+        )
+        return True
 
     async def publish_job(
         self,
@@ -1030,6 +1116,15 @@ class StratumServer:
             if framing not in ("lines", "lenpref"):
                 framing = "lines"
             session.framing = framing
+            # Stash the full features dict so the AUTHORIZE handler can
+            # forward miner-advertised AICF tiers + hardware to the worker
+            # registration hook. Miners that don't serve inference simply
+            # omit `aicf` from their features and get registered with no
+            # tiers (so they're never selected for inference jobs).
+            try:
+                session.subscribed_features = dict(features)
+            except Exception:
+                session.subscribed_features = {}
             agent = params.get("agent", "unknown")
             log.info(
                 f"[Stratum] subscribe agent={agent} framing={framing} session={session.session_id}"
@@ -1083,6 +1178,20 @@ class StratumServer:
             log.info(
                 f"[Stratum] authorize worker={session.worker} address={session.address} mode={session.pool_mode} session={session.session_id}"
             )
+            # Fire-and-forget AICF worker registration. Miners that
+            # advertised aicf features in mining.subscribe get registered
+            # under their payout address so the local node's aicf job
+            # queue can route inference work to them. Failures here must
+            # not break mining — log and move on.
+            if self._on_worker_authorized is not None:
+                features = getattr(session, "subscribed_features", {}) or {}
+                try:
+                    await self._on_worker_authorized(session, features)
+                except Exception as exc:
+                    log.warning(
+                        "[Stratum] on_worker_authorized hook failed for "
+                        f"session={session.session_id}: {exc}"
+                    )
 
         elif method == Method.SET_DIFFICULTY:
             # Clients should not be sending this; treat as request to fetch current settings
@@ -1219,6 +1328,59 @@ class StratumServer:
                 session,
                 make_result(id_val, {"name": "animica-stratum", "version": "0.1.0"}),
             )
+
+        elif method == Method.AICF_NOTIFY:
+            # Server-push-only — miners must not send this direction.
+            await self._send(
+                session,
+                make_error(
+                    id_val, RpcErrorCodes.INVALID_REQUEST,
+                    "mining.aicf.notify is server-push only",
+                ),
+            )
+
+        elif method == Method.AICF_SUBMIT:
+            if not session.authorized:
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.UNAUTHORIZED, "not authorized"),
+                )
+                return
+            job_id = str(params.get("jobId") or "")
+            text = params.get("text")
+            if not job_id or text is None:
+                await self._send(
+                    session,
+                    make_error(
+                        id_val, RpcErrorCodes.INVALID_PARAMS,
+                        "aicf.submit requires jobId and text",
+                    ),
+                )
+                return
+            if self._on_aicf_result is None:
+                # No relay configured (server running standalone); accept
+                # the result but warn that nothing was persisted.
+                log.warning(
+                    "[Stratum] aicf.submit received but on_aicf_result is "
+                    f"not configured; dropping result for job={job_id}"
+                )
+                await self._send(session, res_aicf_submit(id_val, False,
+                                                          reason="relay_unavailable"))
+                return
+            try:
+                relay_result = await self._on_aicf_result(session, dict(params))
+            except Exception as exc:
+                log.warning(
+                    f"[Stratum] aicf.submit relay failed job={job_id}: {exc}"
+                )
+                await self._send(session, res_aicf_submit(id_val, False,
+                                                          reason=str(exc)))
+                return
+            accepted = bool(relay_result.get("accepted"))
+            state = relay_result.get("state")
+            reason = relay_result.get("reason")
+            await self._send(session, res_aicf_submit(id_val, accepted,
+                                                      state=state, reason=reason))
 
         else:  # pragma: no cover - exhaustive enum
             await self._send(

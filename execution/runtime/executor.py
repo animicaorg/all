@@ -269,6 +269,20 @@ def apply_block(
                 # If journal operations fail, continue without crashing; state may be partially applied.
                 pass
 
+    # Post-block consensus hook: sweep the AICF treasury balance into
+    # the state pool's current-epoch inflow. This runs after all txs
+    # in the block have applied (so any value that landed in the
+    # treasury this block is included) and before the state root is
+    # computed (so the root reflects the swept state). Deterministic;
+    # every node executing this block applies the same sweep.
+    try:
+        from execution.state.aicf_treasury import sweep_treasury_into_pool
+        sweep_treasury_into_pool(state, block_env=block_env, params=params)
+    except Exception:
+        # Sweep failures are logged inside the helper; they must not
+        # halt block execution.
+        pass
+
     # Commit the outer checkpoint (if any)
     if use_journal and jh is not None and outer_cp is not None:
         try:
