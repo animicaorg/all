@@ -318,7 +318,7 @@ _NONCE_METHODS = (
 
 
 def _rpc_call(rpc_url: str, method: str, params: Any, *,
-              timeout: float = 10.0) -> Any:
+              timeout: float = 60.0) -> Any:
     import httpx
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     r = httpx.post(rpc_url, json=body, timeout=timeout)

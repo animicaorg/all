@@ -106,6 +106,29 @@ class StratumClient:
         self.reader, self.writer = await asyncio.open_connection(
             self.host, self.port, ssl=ssl_ctx
         )
+        # Aggressive TCP keepalive on the client socket. Without this, Windows
+        # clients on long-idle Stratum sessions surface
+        # "Semaphore timeout period has expired" (WSAETIMEDOUT) when NAT or
+        # firewall state expires between notifies. 30s idle → first probe,
+        # 15s between probes, give up after 5 misses.
+        try:
+            import socket as _sock
+            raw = self.writer.get_extra_info("socket")
+            if raw is not None:
+                raw.setsockopt(_sock.SOL_SOCKET, _sock.SO_KEEPALIVE, 1)
+                for opt_name, opt_val in (
+                    ("TCP_KEEPIDLE", 30),
+                    ("TCP_KEEPINTVL", 15),
+                    ("TCP_KEEPCNT", 5),
+                ):
+                    opt = getattr(_sock, opt_name, None)
+                    if opt is not None:
+                        try:
+                            raw.setsockopt(_sock.IPPROTO_TCP, opt, opt_val)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         self._rx_task = self.loop.create_task(self._rx_loop())
         log.info(
             f"[client] connected to {self.host}:{self.port} framing={self.framing}"

@@ -955,6 +955,24 @@ class StratumServer:
         try:
             if sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                # Default Linux TCP keepalive sends the first probe only after
+                # 7200s of idle — long after any NAT/router idle timeout, and
+                # long after Windows clients give up with WSAETIMEDOUT
+                # ("Semaphore timeout period has expired"). Tighten so the OS
+                # itself keeps the TCP path warm: first probe at 30s idle,
+                # then every 15s, give up after 5 misses (= ~105s to detect a
+                # truly dead peer).
+                for opt_name, opt_val in (
+                    ("TCP_KEEPIDLE", 30),
+                    ("TCP_KEEPINTVL", 15),
+                    ("TCP_KEEPCNT", 5),
+                ):
+                    opt = getattr(socket, opt_name, None)
+                    if opt is not None:
+                        try:
+                            sock.setsockopt(socket.IPPROTO_TCP, opt, opt_val)
+                        except Exception:
+                            pass
         except Exception:
             # Keepalive is best-effort; do not fail if platform does not support tweaks
             pass
