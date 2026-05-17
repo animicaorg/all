@@ -112,7 +112,7 @@ class Sha256RpcAdapter:
         self,
         rpc_url: str,
         pool_address: str,
-        rpc_timeout_s: float = 15.0,
+        rpc_timeout_s: float = 300.0,
         *,
         logger: Optional[logging.Logger] = None,
     ) -> None:

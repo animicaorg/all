@@ -41,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="rpc_timeout",
         type=float,
         default=None,
-        help="RPC request timeout in seconds (default: ANIMICA_STRATUM_RPC_TIMEOUT or 15.0)",
+        help="RPC request timeout in seconds (default: ANIMICA_STRATUM_RPC_TIMEOUT or 300.0)",
     )
     parser.add_argument(
         "--chain-id", dest="chain_id", type=int, default=None, help="Chain id"

@@ -117,8 +117,13 @@ _TIER_LATENCY_MS: Dict[str, int] = {
 }
 
 # How long to wait for an external worker to claim a job before the local
-# fallback kicks in. Keeps chat usable on a fresh node with no providers.
-_WORKER_CLAIM_GRACE_S = 2.0
+# fallback kicks in. Keeps chat usable on a fresh node with no providers
+# while still giving real miners a fair window to receive the notify,
+# load the model, run inference, and submit results back. Override with
+# ANIMICA_AICF_WORKER_CLAIM_GRACE_S to favor stubs on a no-miner node.
+_WORKER_CLAIM_GRACE_S = float(
+    os.environ.get("ANIMICA_AICF_WORKER_CLAIM_GRACE_S", "30.0")
+)
 # How long a worker lease is valid; if a worker claims and goes silent,
 # the job becomes reclaimable after this many seconds.
 _WORKER_LEASE_S = 60.0

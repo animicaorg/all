@@ -158,8 +158,31 @@ class StratumClient:
     # ------------- protocol -------------
 
     async def subscribe(self) -> SubscribeReply:
+        # AICF model-serving opt-in. Miners that have downloaded inference
+        # bundles set ANIMICA_AICF_TIERS (e.g. "standard,premium") to
+        # advertise served tiers. The pool reads these features on
+        # mining.authorize and calls aicf.workerRegister so distributed
+        # inference jobs route to this miner. Without the env var the
+        # subscribe payload is unchanged — pure PoW miners stay
+        # backward-compatible.
+        import os as _os
+        features: dict = {"framing": self.framing}
+        aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+        if aicf_tiers_env:
+            tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+            if tiers:
+                hardware: dict = {}
+                for key, env in (
+                    ("gpu", "ANIMICA_AICF_GPU"),
+                    ("vram_gb", "ANIMICA_AICF_VRAM_GB"),
+                    ("model", "ANIMICA_AICF_MODEL"),
+                ):
+                    val = _os.environ.get(env, "").strip()
+                    if val:
+                        hardware[key] = val
+                features["aicf"] = {"tiers": tiers, "hardware": hardware}
         req = req_subscribe(
-            agent=self.agent, features={"framing": self.framing}
+            agent=self.agent, features=features
         )  # uses Method.SUBSCRIBE
         req["id"] = self._next_id()
         fut: asyncio.Future = self.loop.create_future()
@@ -187,6 +210,11 @@ class StratumClient:
         )
         ok = bool(res.get("result", {}).get("authorized", False))
         log.info(f"[client] authorize worker={worker} address={address} ok={ok}")
+        # Stash for mining.aicf.submit, which needs the worker name in
+        # its params so the pool can credit the right miner.
+        if ok:
+            self.worker = worker
+            self.address = address
         return ok
 
     async def get_version(self) -> JSON:
@@ -329,8 +357,62 @@ class StratumClient:
             if self.on_notify:
                 await self.on_notify(params)
 
+        elif method == "mining.aicf.notify":
+            # Inference job dispatched by the pool. Run in a background
+            # task so the reader loop isn't blocked by model generation.
+            asyncio.create_task(self._handle_aicf_notify(params))
+
         else:
             log.debug(f"[client] unhandled message: {obj}")
+
+    async def _handle_aicf_notify(self, params: Dict[str, Any]) -> None:
+        """Run inference on the JobSpec and reply with mining.aicf.submit.
+
+        Routes through the shared animica.stratum_pool.aicf_inference
+        engine — same code path as the reference miner so behavior is
+        consistent regardless of which Stratum client a miner uses.
+        """
+        job_id = str(params.get("jobId") or "")
+        spec = params.get("spec") or {}
+        tier = str(params.get("tier") or "standard")
+        if not job_id or not isinstance(spec, dict):
+            log.warning(f"[client] bad mining.aicf.notify: {params!r}")
+            return
+        try:
+            from animica.stratum_pool.aicf_inference import get_engine
+        except Exception as exc:
+            log.warning(f"[client] aicf inference engine unavailable: {exc}")
+            return
+        engine = get_engine()
+        try:
+            result = await asyncio.to_thread(engine.generate, spec, tier=tier)
+        except Exception as exc:
+            log.warning(f"[client] aicf inference failed job={job_id}: {exc}")
+            return
+        log.info(
+            f"[client] aicf job done id={job_id} tier={tier} "
+            f"backend={result.used_backend} latency={result.latency_ms}ms "
+            f"model={result.used_model}"
+        )
+        try:
+            req = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "method": "mining.aicf.submit",
+                "params": {
+                    "worker": self.worker or "",
+                    "jobId": job_id,
+                    "text": result.text,
+                    "latencyMs": int(result.latency_ms),
+                    "attestation": {
+                        "backend": result.used_backend,
+                        "model": result.used_model,
+                    },
+                },
+            }
+            await self._send_obj(req)
+        except Exception as exc:
+            log.warning(f"[client] failed to send mining.aicf.submit job={job_id}: {exc}")
 
     # ------------- demo helpers -------------
 

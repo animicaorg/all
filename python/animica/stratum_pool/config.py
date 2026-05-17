@@ -22,7 +22,7 @@ class PoolConfig:
     db_url: str = "sqlite:///animica_pool.db"
     chain_id: int = 1
     pool_address: str = ""
-    rpc_timeout: float = 15.0
+    rpc_timeout: float = 300.0
     min_difficulty: float = 0.01
     max_difficulty: float = 1.0
     poll_interval: float = 1.0

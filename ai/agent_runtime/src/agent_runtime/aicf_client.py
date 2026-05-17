@@ -90,7 +90,7 @@ class JobResult:
 class AICFClient:
     """Thin JSON-RPC client for the AICF protocol surface."""
 
-    def __init__(self, endpoint: str, *, timeout_sec: float = 60.0,
+    def __init__(self, endpoint: str, *, timeout_sec: float = 300.0,
                  poll_interval_ms: int = 250, max_retries: int = 3,
                  retry_backoff_ms: Optional[list[int]] = None) -> None:
         if not endpoint:
