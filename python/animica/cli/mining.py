@@ -13,6 +13,7 @@ import importlib
 import json
 import math
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -1871,6 +1872,83 @@ def setup(
         typer.echo(f"Cache dir: {cache_root}")
         typer.echo(f"Tiers to install: {', '.join(resolved_tiers)}")
 
+    # ---- ML stack: torch / transformers / accelerate -----------------------
+    # Real inference (vs the labeled stub) needs these three. Detect what is
+    # already importable and pip-install only what is missing so re-running
+    # `animica miner setup` is idempotent on a fully-provisioned box.
+    ml_stack_status: dict[str, dict] = {}
+    ml_missing: list[str] = []
+    for pkg in ("torch", "transformers", "accelerate"):
+        try:
+            mod = __import__(pkg)
+            ml_stack_status[pkg] = {
+                "installed": True,
+                "version": getattr(mod, "__version__", "?"),
+            }
+        except Exception as exc:
+            ml_stack_status[pkg] = {"installed": False, "error": str(exc)}
+            ml_missing.append(pkg)
+    report["ml_stack"] = ml_stack_status
+
+    if not skip_download and ml_missing:
+        if not json_output:
+            typer.secho(
+                f"ML stack missing: {', '.join(ml_missing)} — installing via pip…",
+                fg=typer.colors.CYAN,
+            )
+        import subprocess as _sub
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *ml_missing]
+        try:
+            proc = _sub.run(cmd, capture_output=not json_output, text=True)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip()[-500:]
+                report["errors"].append(f"pip install ml-stack failed: {err}")
+                if not json_output:
+                    typer.secho(
+                        f"  pip install failed (rc={proc.returncode}): {err}",
+                        fg=typer.colors.RED,
+                    )
+            else:
+                # Re-detect after install so the report reflects reality.
+                for pkg in ml_missing:
+                    try:
+                        # Drop any cached import failure so reimport works.
+                        import importlib as _il
+                        _il.invalidate_caches()
+                        mod = _il.import_module(pkg)
+                        ml_stack_status[pkg] = {
+                            "installed": True,
+                            "version": getattr(mod, "__version__", "?"),
+                            "installed_by_setup": True,
+                        }
+                    except Exception as exc:
+                        ml_stack_status[pkg] = {"installed": False, "error": str(exc)}
+                if not json_output:
+                    typer.secho(
+                        "  ML stack installed: "
+                        + ", ".join(
+                            f"{p}=={ml_stack_status[p].get('version', '?')}"
+                            for p in ml_missing
+                            if ml_stack_status[p]["installed"]
+                        ),
+                        fg=typer.colors.GREEN,
+                    )
+        except Exception as exc:
+            report["errors"].append(f"pip install ml-stack failed: {exc}")
+            if not json_output:
+                typer.secho(
+                    f"  pip install failed: {exc}", fg=typer.colors.RED
+                )
+    elif not ml_missing and not json_output:
+        typer.secho(
+            "ML stack present: "
+            + ", ".join(
+                f"{p}=={ml_stack_status[p].get('version', '?')}"
+                for p in ("torch", "transformers", "accelerate")
+            ),
+            fg=typer.colors.GREEN,
+        )
+
     # Load tier -> {cid, sha256} mapping.
     bundles_map: dict[str, dict] = {}
     candidate_paths: list[Path] = []
@@ -1935,19 +2013,47 @@ def setup(
                             fg=typer.colors.YELLOW,
                         )
                     continue
+                # Detect "already downloaded" state so we don't re-fetch a
+                # multi-GB model on every `animica miner setup` invocation.
+                # Mirrors the layout used by bootstrap_bundle_from_hf: see
+                # ai/agent_runtime/src/agent_runtime/aicf_worker.py.
+                slug = (
+                    base_model.replace("/", "_")
+                    .replace(":", "_")
+                    .replace("\\", "_")
+                )
+                bundle_dir_probe = cache_root / tier / f"hf-{slug}"
+                model_dir_probe = bundle_dir_probe / "model"
+                manifest_probe = bundle_dir_probe / "manifest.json"
+                inference_probe = bundle_dir_probe / "inference.json"
+                already_cached = bool(
+                    manifest_probe.is_file()
+                    and inference_probe.is_file()
+                    and model_dir_probe.is_dir()
+                    and any(model_dir_probe.iterdir())
+                )
                 if not json_output:
-                    typer.secho(
-                        f"  - tier {tier}: pulling base model "
-                        f"{base_model} from HuggingFace…",
-                        fg=typer.colors.CYAN,
-                    )
+                    if already_cached:
+                        typer.secho(
+                            f"  - tier {tier}: base model {base_model} "
+                            f"already cached at {bundle_dir_probe} — "
+                            "skipping download.",
+                            fg=typer.colors.GREEN,
+                        )
+                    else:
+                        typer.secho(
+                            f"  - tier {tier}: pulling base model "
+                            f"{base_model} from HuggingFace…",
+                            fg=typer.colors.CYAN,
+                        )
                 try:
                     path = bootstrap_bundle_from_hf(tier, cfg=cfg)
                     report["installed"].append({
                         "tier": tier, "path": str(path),
                         "source": "huggingface", "repo_id": base_model,
+                        "cached_before_setup": already_cached,
                     })
-                    if not json_output:
+                    if not json_output and not already_cached:
                         typer.secho(f"      installed at {path}",
                                     fg=typer.colors.GREEN)
                 except BundleError as exc:
