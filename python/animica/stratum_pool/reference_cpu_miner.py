@@ -888,16 +888,19 @@ class StratumCpuMiner:
         return await future
 
     async def _subscribe(self) -> None:
-        # AICF model-serving opt-in. Miners that have downloaded inference
-        # bundles set ANIMICA_AICF_TIERS (e.g. "standard,premium") so the
-        # pool can register them as AICF workers for those tiers via
-        # aicf.workerRegister. Without the env var, no tiers are sent and
-        # the pool treats this miner as PoW-only.
+        # AICF model-serving is ON by default. The miner advertises the
+        # "standard" tier so the pool can route inference jobs here out
+        # of the box; on miners without transformers+torch installed the
+        # inference engine falls back to a labeled stub so the protocol
+        # still round-trips. Opt out with ANIMICA_AICF_DISABLE=1.
         import os as _os
-        aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
         aicf_features: dict = {}
-        if aicf_tiers_env:
-            tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+        if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
+            aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+            if aicf_tiers_env:
+                tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+            else:
+                tiers = ["standard"]
             if tiers:
                 aicf_features["tiers"] = tiers
                 hardware: dict = {}
@@ -909,8 +912,15 @@ class StratumCpuMiner:
                     val = _os.environ.get(env, "").strip()
                     if val:
                         hardware[key] = val
-                if hardware:
-                    aicf_features["hardware"] = hardware
+                if "backend" not in hardware:
+                    try:
+                        import importlib as _il
+                        _il.import_module("transformers")
+                        _il.import_module("torch")
+                        hardware["backend"] = "transformers"
+                    except Exception:
+                        hardware["backend"] = "stub"
+                aicf_features["hardware"] = hardware
         features: dict = {"framing": "lines"}
         if aicf_features:
             features["aicf"] = aicf_features

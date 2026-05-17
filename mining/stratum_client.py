@@ -181,18 +181,29 @@ class StratumClient:
     # ------------- protocol -------------
 
     async def subscribe(self) -> SubscribeReply:
-        # AICF model-serving opt-in. Miners that have downloaded inference
-        # bundles set ANIMICA_AICF_TIERS (e.g. "standard,premium") to
-        # advertise served tiers. The pool reads these features on
-        # mining.authorize and calls aicf.workerRegister so distributed
-        # inference jobs route to this miner. Without the env var the
-        # subscribe payload is unchanged — pure PoW miners stay
-        # backward-compatible.
+        # AICF model-serving is ON by default. Every miner advertises the
+        # "standard" tier so the pool's AICF dispatcher can route inference
+        # jobs here, and the runtime falls back to a labeled stub on miners
+        # that don't have transformers+torch installed — so the protocol
+        # round-trip always completes.
+        #
+        # Override knobs (all optional):
+        #   ANIMICA_AICF_TIERS="standard,premium"  — change advertised tiers
+        #   ANIMICA_AICF_MODEL="Qwen/..."          — pin a specific HF repo
+        #   ANIMICA_AICF_GPU=true                  — hardware hint
+        #   ANIMICA_AICF_VRAM_GB=24                — hardware hint
+        #   ANIMICA_AICF_DISABLE=1                 — opt out (pure-PoW only)
         import os as _os
         features: dict = {"framing": self.framing}
-        aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
-        if aicf_tiers_env:
-            tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+        if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
+            aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+            if aicf_tiers_env:
+                tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
+            else:
+                # Sensible default: advertise standard tier so chat jobs
+                # route to this miner out of the box. Heavier tiers stay
+                # opt-in via the env var.
+                tiers = ["standard"]
             if tiers:
                 hardware: dict = {}
                 for key, env in (
@@ -203,6 +214,16 @@ class StratumClient:
                     val = _os.environ.get(env, "").strip()
                     if val:
                         hardware[key] = val
+                # Best-effort backend detection so the pool's dashboards
+                # show real capability instead of a flat "unknown".
+                if "backend" not in hardware:
+                    try:
+                        import importlib as _il
+                        _il.import_module("transformers")
+                        _il.import_module("torch")
+                        hardware["backend"] = "transformers"
+                    except Exception:
+                        hardware["backend"] = "stub"
                 features["aicf"] = {"tiers": tiers, "hardware": hardware}
         req = req_subscribe(
             agent=self.agent, features=features

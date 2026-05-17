@@ -1472,6 +1472,7 @@ async def _run_pool_stratum_miner(
     """
     import asyncio as _asyncio
     import signal as _signal
+    import time as _time
 
     # Lazy imports: the mining package is heavy and only needed in this branch.
     from mining.internal_cpu_miner import CpuStratumMiner
@@ -1479,6 +1480,18 @@ async def _run_pool_stratum_miner(
     stop = _asyncio.Event()
     accepted_blocks = 0
     accepted_shares = 0
+    rejected_shares = 0
+    rejected_by_reason: dict[str, int] = {}
+    submitted_shares = 0
+    notify_count = 0
+    diff_changes = 0
+    aicf_jobs_received = 0
+    aicf_jobs_completed = 0
+    aicf_jobs_failed = 0
+    last_share_target: float = 0.0
+    last_theta_micro: int = 0
+    last_job_id: str = ""
+    started_at = _time.monotonic()
     target_blocks = max(1, int(target_blocks))
 
     uw_tasks: list[_asyncio.Task] = []
@@ -1529,7 +1542,8 @@ async def _run_pool_stratum_miner(
     original_submit = miner._client.submit_share
 
     async def _counting_submit(job_id, hashshare, proofs=None, txs=None, extranonce2="0x00"):
-        nonlocal accepted_blocks, accepted_shares
+        nonlocal accepted_blocks, accepted_shares, rejected_shares, submitted_shares
+        submitted_shares += 1
         res = await original_submit(
             job_id,
             hashshare,
@@ -1552,13 +1566,121 @@ async def _run_pool_stratum_miner(
                 if accepted_blocks >= target_blocks:
                     stop.set()
             elif result.get("accepted"):
-                typer.echo(f"  share accepted (total shares={accepted_shares})")
+                accept_pct = (accepted_shares / submitted_shares * 100.0) if submitted_shares else 0.0
+                typer.echo(
+                    f"  share accepted job={str(job_id)[:12]} "
+                    f"shareTarget={last_share_target:.6f} "
+                    f"accepted={accepted_shares}/{submitted_shares} ({accept_pct:.1f}%)"
+                )
             else:
-                reason = result.get("reason") or "unknown"
-                typer.secho(f"  share rejected: {reason}", fg=typer.colors.YELLOW)
+                rejected_shares += 1
+                reason = str(result.get("reason") or "unknown")
+                rejected_by_reason[reason] = rejected_by_reason.get(reason, 0) + 1
+                typer.secho(
+                    f"  share rejected: {reason} "
+                    f"job={str(job_id)[:12]} "
+                    f"(rejected={rejected_shares}, top reasons: "
+                    f"{', '.join(f'{k}={v}' for k, v in sorted(rejected_by_reason.items(), key=lambda kv: -kv[1])[:3])})",
+                    fg=typer.colors.YELLOW,
+                )
         return res
 
     miner._client.submit_share = _counting_submit  # type: ignore[assignment]
+
+    # Hook notify / difficulty / AICF events so operators see the full lifecycle.
+    async def _on_notify(params):
+        nonlocal notify_count, last_job_id
+        notify_count += 1
+        jid = str(params.get("jobId") or "")
+        last_job_id = jid
+        clean = bool(params.get("cleanJobs"))
+        height = params.get("height") or params.get("blockHeight")
+        typer.echo(
+            f"  job notify #{notify_count} id={jid[:12]} "
+            f"height={height} clean={clean} "
+            f"shareTarget={params.get('shareTarget')}"
+        )
+
+    async def _on_set_difficulty(share_target, theta_micro):
+        nonlocal diff_changes, last_share_target, last_theta_micro
+        diff_changes += 1
+        last_share_target = float(share_target)
+        last_theta_micro = int(theta_micro)
+        typer.secho(
+            f"  difficulty updated #{diff_changes}: "
+            f"shareTarget={last_share_target:.6f} θμ={last_theta_micro}",
+            fg=typer.colors.CYAN,
+        )
+
+    miner._client.on_notify = _on_notify  # type: ignore[assignment]
+    miner._client.on_set_difficulty = _on_set_difficulty  # type: ignore[assignment]
+
+    # Wrap AICF inference handler so operators see when the pool dispatches
+    # an inference job to this miner and when results are submitted back.
+    original_aicf_handler = miner._client._handle_aicf_notify
+
+    async def _logging_aicf_handler(params):
+        nonlocal aicf_jobs_received, aicf_jobs_completed, aicf_jobs_failed
+        aicf_jobs_received += 1
+        job_id = str(params.get("jobId") or "")
+        tier = str(params.get("tier") or "?")
+        prompt = ""
+        spec = params.get("spec") or {}
+        if isinstance(spec, dict):
+            prompt = str(spec.get("prompt") or "")[:80]
+        typer.secho(
+            f"  AICF job received #{aicf_jobs_received} id={job_id[:12]} "
+            f"tier={tier} prompt={prompt!r}",
+            fg=typer.colors.MAGENTA,
+        )
+        t0 = _time.monotonic()
+        try:
+            await original_aicf_handler(params)
+            aicf_jobs_completed += 1
+            typer.secho(
+                f"  AICF job completed id={job_id[:12]} "
+                f"latency={int((_time.monotonic() - t0) * 1000)}ms "
+                f"({aicf_jobs_completed}/{aicf_jobs_received})",
+                fg=typer.colors.MAGENTA,
+            )
+        except Exception as exc:
+            aicf_jobs_failed += 1
+            typer.secho(
+                f"  AICF job FAILED id={job_id[:12]} error={exc} "
+                f"({aicf_jobs_failed} failures)",
+                fg=typer.colors.RED,
+            )
+            raise
+
+    miner._client._handle_aicf_notify = _logging_aicf_handler  # type: ignore[assignment]
+
+    async def _stats_loop():
+        """Print a one-line summary every 30s so operators see the miner is
+        alive even when there are no accepted shares to report."""
+        while not stop.is_set():
+            try:
+                await _asyncio.wait_for(stop.wait(), timeout=30.0)
+                return
+            except _asyncio.TimeoutError:
+                pass
+            uptime = int(_time.monotonic() - started_at)
+            hrs, rem = divmod(uptime, 3600)
+            mins, secs = divmod(rem, 60)
+            uptime_str = f"{hrs}h{mins:02d}m{secs:02d}s" if hrs else f"{mins}m{secs:02d}s"
+            accept_pct = (accepted_shares / submitted_shares * 100.0) if submitted_shares else 0.0
+            typer.secho(
+                f"  [stats] uptime={uptime_str} "
+                f"notifies={notify_count} diff_updates={diff_changes} "
+                f"submitted={submitted_shares} accepted={accepted_shares} "
+                f"rejected={rejected_shares} accept_rate={accept_pct:.1f}% "
+                f"blocks={accepted_blocks}/{target_blocks} "
+                f"aicf=({aicf_jobs_completed} ok / {aicf_jobs_failed} fail / "
+                f"{aicf_jobs_received} total) "
+                f"shareTarget={last_share_target:.6f}",
+                fg=typer.colors.BLUE,
+            )
+
+    stats_task = _asyncio.create_task(_stats_loop(), name="mine_blocks_stats")
 
     for sig in (_signal.SIGINT, _signal.SIGTERM):
         try:
@@ -1595,8 +1717,33 @@ async def _run_pool_stratum_miner(
             for t in uw_tasks:
                 t.cancel()
             await _asyncio.gather(*uw_tasks, return_exceptions=True)
-    typer.echo(
-        f"Stopped. accepted_blocks={accepted_blocks} accepted_shares={accepted_shares}"
+        stats_task.cancel()
+        try:
+            await stats_task
+        except (_asyncio.CancelledError, Exception):
+            pass
+    uptime = int(_time.monotonic() - started_at)
+    hrs, rem = divmod(uptime, 3600)
+    mins, secs = divmod(rem, 60)
+    uptime_str = f"{hrs}h{mins:02d}m{secs:02d}s" if hrs else f"{mins}m{secs:02d}s"
+    accept_pct = (accepted_shares / submitted_shares * 100.0) if submitted_shares else 0.0
+    reasons = (
+        ", ".join(f"{k}={v}" for k, v in sorted(rejected_by_reason.items(), key=lambda kv: -kv[1]))
+        or "none"
+    )
+    typer.secho(
+        "Final summary:\n"
+        f"  uptime          = {uptime_str}\n"
+        f"  blocks accepted = {accepted_blocks}/{target_blocks}\n"
+        f"  shares submitted= {submitted_shares}\n"
+        f"  shares accepted = {accepted_shares} ({accept_pct:.1f}%)\n"
+        f"  shares rejected = {rejected_shares}\n"
+        f"  reject reasons  = {reasons}\n"
+        f"  notifies        = {notify_count}\n"
+        f"  diff updates    = {diff_changes}\n"
+        f"  aicf jobs       = {aicf_jobs_completed} ok / {aicf_jobs_failed} fail / "
+        f"{aicf_jobs_received} total",
+        fg=typer.colors.GREEN if accepted_blocks >= target_blocks else typer.colors.YELLOW,
     )
     return accepted_blocks
 
