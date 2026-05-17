@@ -1891,10 +1891,10 @@ class TxRelayService:
                 async with self._lock:
                     peer_states = list(self._peer_state.values())
 
-                log.info(f"[DIAG] inv_flush tick: {len(peer_states)} peer states")
+                log.debug(f"[DIAG] inv_flush tick: {len(peer_states)} peer states")
 
                 for state in peer_states:
-                    log.info(f"[DIAG] Checking peer {state.conn_id}: eligible={self._peer_eligible(state.conn_id)}, queue_len={len(state.inv_queue)}")
+                    log.debug(f"[DIAG] Checking peer {state.conn_id}: eligible={self._peer_eligible(state.conn_id)}, queue_len={len(state.inv_queue)}")
 
                     if not self._peer_eligible(state.conn_id):
                         # Don't clear queue - keep transactions for when peer becomes eligible

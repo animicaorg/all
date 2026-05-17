@@ -9624,7 +9624,14 @@ class P2PService:
             hdr = None
         if hdr is None:
             return None
-        return self._sync_header_from_db(hdr)
+        converted = self._sync_header_from_db(hdr)
+        # Persist into the in-memory header cache so subsequent lookups
+        # (notably _build_locator, which walks ~8000 parents per sync tick
+        # via exponentially growing step sizes) don't re-read SQLite. Cache
+        # capacity is bounded by chain length, which is ~12K entries on
+        # mainnet — well under a few MB.
+        self._sync_headers[h] = converted
+        return converted
 
     def _sync_update_best_header(self, header: _SyncHeader) -> None:
         best = self._sync_best_header

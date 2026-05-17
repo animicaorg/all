@@ -2961,6 +2961,13 @@ class _OrphanBlock:
 
 
 _IMPORTER_CACHE: Dict[int, BlockImporter] = {}
+# Guards the cache so N concurrent callers don't all race past a cold miss
+# and each construct a BlockImporter (each one re-seeds fork choice from the
+# entire canonical chain — at h=12K that's tens of thousands of SQLite reads
+# per call, and we were seeing 3 concurrent miner.getBlockTemplate calls all
+# doing this work in parallel while RPCs piled up on the SQLite lock).
+import threading as _threading
+_IMPORTER_CACHE_LOCK = _threading.Lock()
 
 # Network key prefix for params.yaml lookup (e.g., "animica:1" for mainnet)
 # This matches the network key format in spec/params.yaml under the "networks" section:
@@ -3043,16 +3050,26 @@ def _get_importer(
     tx_index,
     params: ChainParams,
 ) -> BlockImporter:
+    # Fast path: cache hit, no lock.
     cached = _IMPORTER_CACHE.get(id(block_db))
     if cached is not None and cached.params.chain_id == params.chain_id:
         if cached.state_db is None and state_db is not None:
             cached.state_db = state_db
         return cached
-    importer = BlockImporter(
-        params=params, block_db=block_db, state_db=state_db, tx_index=tx_index
-    )
-    _IMPORTER_CACHE[id(block_db)] = importer
-    return importer
+    # Slow path: serialize cold-miss construction so concurrent callers share
+    # a single (expensive) BlockImporter init instead of each re-seeding fork
+    # choice from the entire chain.
+    with _IMPORTER_CACHE_LOCK:
+        cached = _IMPORTER_CACHE.get(id(block_db))
+        if cached is not None and cached.params.chain_id == params.chain_id:
+            if cached.state_db is None and state_db is not None:
+                cached.state_db = state_db
+            return cached
+        importer = BlockImporter(
+            params=params, block_db=block_db, state_db=state_db, tx_index=tx_index
+        )
+        _IMPORTER_CACHE[id(block_db)] = importer
+        return importer
 
 
 def reset_importer_cache(block_db=None) -> None:

@@ -93,10 +93,16 @@ def read_head(block_db) -> Optional[Tuple[int, bytes]]:
     elif hasattr(block_db, "get_head"):
         head = block_db.get_head()
 
-    fallback = _recover_head_from_canonical(block_db)
-    if fallback is not None:
-        # If the stored head is missing or stale, prefer the canonical tip.
-        if head is None or fallback[0] > head[0]:
+    # Only run the (expensive, O(N)) canonical-tip recovery scan when the
+    # stored head pointer is missing — i.e. when importing a prebuilt DB or
+    # after a crash. Doing this unconditionally turned every read_head() into
+    # a full scan of the canonical-height index (~12K rows at h=12204), and
+    # read_head() is called from hot paths (p2p head-watch loop, chain.getHead,
+    # miner.getBlockTemplate, etc.), pegging the asyncio event loop at 100%
+    # CPU and starving every RPC.
+    if head is None:
+        fallback = _recover_head_from_canonical(block_db)
+        if fallback is not None:
             return fallback
 
     if head is not None:

@@ -444,6 +444,19 @@ def main() -> None:
     # Lazy import uvicorn so the module is importable in tests without uvicorn installed
     import uvicorn
 
+    # The P2P stack emits per-tick / per-dial INFO logs (P2P_DIAL_FAIL,
+    # TX_RELAY_HEARTBEAT, [DIAG] inv_flush tick, etc.) that fire 10-30
+    # times per second when peers are unreachable. Each log line is
+    # processed on the asyncio event loop and starves the RPC dispatcher,
+    # producing the symptom that all RPC calls time out at ~15s. Raising
+    # these loggers to WARNING reclaims the event loop without losing
+    # signal — true errors still surface at WARNING/ERROR.
+    for noisy in (
+        "animica.p2p",  # covers .service, .transport.tcp, .txrelay, .core_p2p
+        "animica.snapshot.orchestrator",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     log.info(
         "RPC listening on http://%s:%s",
         cfg.host,

@@ -468,6 +468,17 @@ async def _maybe_await(x: Any) -> Any:
     return x
 
 
+async def _invoke_handler(fn: Callable[..., Any], args: List[Any], kwargs: Dict[str, Any]) -> Any:
+    # Async handlers run on the event loop. Sync handlers go through
+    # asyncio.to_thread so blocking I/O (SQLite reads, template builds,
+    # signature verification) doesn't stall every other in-flight RPC —
+    # one slow handler used to freeze the entire event loop, which would
+    # cascade into wedged-server territory under load.
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
+
+
 # --------------------------------------------------------------------------------------
 # Core dispatch
 # --------------------------------------------------------------------------------------
@@ -563,7 +574,7 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
         policy.authorize(resolved_method, ctx)
         fn = registry.get(resolved_method)
         args, kwargs = _bind_call_args(fn, params, ctx)
-        result = await _maybe_await(fn(*args, **kwargs))
+        result = await _invoke_handler(fn, args, kwargs)
         # Notification?
         if req_id is _NO_ID:
             return None
