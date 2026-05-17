@@ -159,6 +159,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.snapshot",
         "rpc.methods.debug",  # Debug methods for transaction tracing and diagnostics
         "rpc.methods.aicf",  # AICF (AI Compute Fund) methods
+        "rpc.methods.aicf_jobs",  # AICF inference-job protocol (estimate/submit/stream/settle/worker.*)
         "rpc.methods.ena",   # ENA (Embedded Neural Agent) methods
         "rpc.methods.phase2",  # Phase 2: GPU providers, receipts, payouts, training
         "rpc.methods.quantum",  # Quantum compute status and job stubs

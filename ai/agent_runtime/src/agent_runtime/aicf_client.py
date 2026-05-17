@@ -161,9 +161,16 @@ class AICFClient:
     # -------------------- public API -------------------- #
 
     def ping(self) -> bool:
-        """Quick reachability check. Returns False on any transport error."""
+        """Quick reachability check. Returns False on any transport error.
+
+        Uses chain.getHead as the liveness probe — it's served by every
+        running node regardless of AICF init state. The old probe
+        (aicf.protocol.getStatus) was never registered, and aicf.getStatus
+        requires AICF state to be initialized which fresh nodes don't have.
+        Both produced false-negative "endpoint unreachable" verdicts.
+        """
         try:
-            self._rpc("aicf.protocol.getStatus", {})
+            self._rpc("chain.getHead", {})
             return True
         except (AICFError, ProviderUnavailable):
             return False
