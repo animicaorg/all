@@ -263,16 +263,37 @@ def _build_agent_submit(
     *,
     tier_preferred: Optional[str],
     yolo: bool,
+    console: Optional[Console] = None,
+    max_output_tokens: int = 256,
 ) -> Callable[[str], tuple[str, float, int]]:
-    """Wrap ProviderCascade.serve so the agent loop sees a tiny callable."""
+    """Wrap ProviderCascade.serve so the agent loop sees a tiny callable.
+
+    Tool-call turns only need ~50-120 tokens (one [TOOL_CALL] block plus a
+    rationale line), so we cap output well below the chat default. On CPU
+    miners this is the difference between sub-30s per turn and the 300s
+    chat timeout firing mid-generation.
+    """
     def _submit(prompt: str) -> tuple[str, float, int]:
         req = TurnRequest(
             prompt=prompt,
             tier_preferred=tier_preferred,
             history=[],          # the agent already serialized history into prompt
             yolo=True,           # agent steps must not block on cost prompts
+            max_output_tokens=max_output_tokens,
         )
         result: TurnResult = cascade.serve(req)
+        if console is not None:
+            # Surface provider routing + fallback chain so the agent driver
+            # can show WHY a step was answered by offline-stub vs the real
+            # remote miner. Without this the agent's log shows zero-cost
+            # offline answers with no obvious explanation.
+            if result.provider != "distributed-aicf" or result.fallback_reasons:
+                console.print(
+                    f"  [dim]→ routed via {result.provider} (tier={result.tier or '-'})"
+                    + (f"; fallbacks: {'; '.join(result.fallback_reasons)}"
+                       if result.fallback_reasons else "")
+                    + "[/dim]"
+                )
         return result.text, float(result.cost_animica or 0.0), int(result.latency_ms or 0)
     return _submit
 
@@ -327,7 +348,9 @@ def run_one_agent_task(
             f"latency={turn.latency_ms}ms[/dim]"
         )
 
-    submit = _build_agent_submit(cascade, tier_preferred=tier_preferred, yolo=True)
+    submit = _build_agent_submit(
+        cascade, tier_preferred=tier_preferred, yolo=True, console=console,
+    )
     prompter = _permission_prompter(console)
     try:
         result = run_agent_loop(

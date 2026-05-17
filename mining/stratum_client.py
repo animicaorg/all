@@ -278,11 +278,20 @@ class StratumClient:
             tier = str(tiers[0])
         # Run the model load on a thread so the asyncio event loop keeps
         # serving PoW notifies and share submits while the download runs.
+        # IMPORTANT: cap warmup output at 1 token. Without the cap, the
+        # default 64 tokens hold the engine Lock for ~60s on CPU and the
+        # FIRST real chat job blocks behind preload's generate() for the
+        # full duration — which then blocks behind ITS own generation too,
+        # so the user sees a 300s chat timeout even though the model
+        # loaded fine.
         try:
             engine = get_engine()
             def _do_warmup() -> None:
                 try:
-                    res = engine.generate({"prompt": "hello"}, tier=tier)
+                    res = engine.generate(
+                        {"prompt": "hi", "max_output_tokens": 1},
+                        tier=tier,
+                    )
                     log.info(
                         f"[client] AICF: engine ready backend={res.used_backend} "
                         f"model={res.used_model}"

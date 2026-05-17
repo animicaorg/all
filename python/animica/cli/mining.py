@@ -1589,6 +1589,13 @@ async def _run_pool_stratum_miner(
     miner._client.submit_share = _counting_submit  # type: ignore[assignment]
 
     # Hook notify / difficulty / AICF events so operators see the full lifecycle.
+    # CpuStratumMiner installs its own on_notify (drives PoW search) and
+    # on_set_difficulty (updates target) inside start(). Replacing those would
+    # silence mining entirely, so we *chain* — record the originals AFTER
+    # start() runs and call them from the wrappers.
+    _orig_notify_holder: list = [None]
+    _orig_diff_holder: list = [None]
+
     async def _on_notify(params):
         nonlocal notify_count, last_job_id
         notify_count += 1
@@ -1601,6 +1608,9 @@ async def _run_pool_stratum_miner(
             f"height={height} clean={clean} "
             f"shareTarget={params.get('shareTarget')}"
         )
+        orig = _orig_notify_holder[0]
+        if orig is not None:
+            await orig(params)
 
     async def _on_set_difficulty(share_target, theta_micro):
         nonlocal diff_changes, last_share_target, last_theta_micro
@@ -1612,9 +1622,9 @@ async def _run_pool_stratum_miner(
             f"shareTarget={last_share_target:.6f} θμ={last_theta_micro}",
             fg=typer.colors.CYAN,
         )
-
-    miner._client.on_notify = _on_notify  # type: ignore[assignment]
-    miner._client.on_set_difficulty = _on_set_difficulty  # type: ignore[assignment]
+        orig = _orig_diff_holder[0]
+        if orig is not None:
+            await orig(share_target, theta_micro)
 
     # Wrap AICF inference handler so operators see when the pool dispatches
     # an inference job to this miner and when results are submitted back.
@@ -1701,6 +1711,14 @@ async def _run_pool_stratum_miner(
             err=True,
         )
         raise typer.Exit(1)
+
+    # Now that CpuStratumMiner has wired its own handlers in start(),
+    # chain our verbose-logging wrappers in front so we get the operator
+    # trace without disabling the underlying PoW loop.
+    _orig_notify_holder[0] = miner._client.on_notify  # type: ignore[assignment]
+    _orig_diff_holder[0] = miner._client.on_set_difficulty  # type: ignore[assignment]
+    miner._client.on_notify = _on_notify  # type: ignore[assignment]
+    miner._client.on_set_difficulty = _on_set_difficulty  # type: ignore[assignment]
 
     typer.echo(
         f"Stratum miner running. Target: {target_blocks} accepted block(s). "

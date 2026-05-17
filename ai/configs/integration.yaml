@@ -15,7 +15,7 @@ aicf:
     default_kind: "AI"
     # 300s gives miners headroom to load a multi-GB model on first job
     # and run real inference on CPU-bound hardware. Override per-deploy.
-    timeout_sec: 300
+    timeout_sec: 900
     poll_interval_ms: 250
     max_retries: 3
     retry_backoff_ms: [500, 1500, 3500]
