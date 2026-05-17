@@ -28,7 +28,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
@@ -36,6 +36,12 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+from agent_runtime.agentic import (
+    AgentTurn,
+    PermissionPolicy,
+    ToolSpec,
+    run_agent_loop,
+)
 from agent_runtime.config import load_config
 from agent_runtime.errors import (
     AgentRuntimeError,
@@ -111,6 +117,8 @@ class _SlashHandler:
             ("/tier <id>",     "Prefer a specific tier (tiny|small|flagship|large)."),
             ("/clear",         "Clear the screen and forget history."),
             ("/status",        "Show provider cascade status."),
+            ("/agent <task>",  "Run an agentic task with tool calls "
+                                "(read/write/edit/bash, gated)."),
         ]:
             t.add_row(*line)
         self.console.print(t)
@@ -188,6 +196,166 @@ class _SlashHandler:
                 f"{row['reason']}",
             )
 
+    def _cmd_agent(self, rest: str) -> None:
+        """Run a single agentic task: `/agent <task description>`.
+
+        The model can call read_file / write_file / edit_file / bash etc.
+        Non-safe tools prompt for confirmation per call unless --yolo-tools
+        is set on the chat session.
+        """
+        task = rest.strip()
+        if not task:
+            self.console.print(
+                "[yellow]usage: /agent <task description>[/yellow]"
+            )
+            return
+        policy: PermissionPolicy = self.state.get("agent_policy") or PermissionPolicy()
+        max_iters = int(self.state.get("agent_max_iters") or 10)
+        max_cost = float(self.state.get("agent_max_cost") or 0.5)
+        cwd = self.state.get("agent_cwd") or os.getcwd()
+        run_one_agent_task(
+            console=self.console,
+            cascade=self.cascade,
+            task=task,
+            policy=policy,
+            max_iterations=max_iters,
+            max_cost=max_cost,
+            cwd=cwd,
+            tier_preferred=self.state.get("tier_preferred"),
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Agentic driver                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _permission_prompter(console: Console):
+    """Build a prompter that asks the user about non-safe tool calls."""
+    def _prompt(tool: ToolSpec, args: dict) -> str:
+        console.print(
+            f"\n[yellow]⚠ tool {tool.name} requires permission[/yellow]"
+        )
+        # Pretty-print the arguments — but truncate long content fields
+        # so the prompt fits a terminal.
+        pretty = {}
+        for k, v in args.items():
+            sv = str(v)
+            if len(sv) > 400:
+                sv = sv[:400] + f"... (+{len(sv)-400} more)"
+            pretty[k] = sv
+        for k, v in pretty.items():
+            console.print(f"  [bold]{k}:[/bold] {v}")
+        try:
+            ans = input("Allow? [y]es / [s]ession / [n]o: ").strip().lower()
+        except EOFError:
+            return "deny"
+        if ans in {"y", "yes"}:
+            return "allow"
+        if ans in {"s", "session"}:
+            return "allow_session"
+        return "deny"
+    return _prompt
+
+
+def _build_agent_submit(
+    cascade: ProviderCascade,
+    *,
+    tier_preferred: Optional[str],
+    yolo: bool,
+) -> Callable[[str], tuple[str, float, int]]:
+    """Wrap ProviderCascade.serve so the agent loop sees a tiny callable."""
+    def _submit(prompt: str) -> tuple[str, float, int]:
+        req = TurnRequest(
+            prompt=prompt,
+            tier_preferred=tier_preferred,
+            history=[],          # the agent already serialized history into prompt
+            yolo=True,           # agent steps must not block on cost prompts
+        )
+        result: TurnResult = cascade.serve(req)
+        return result.text, float(result.cost_animica or 0.0), int(result.latency_ms or 0)
+    return _submit
+
+
+def run_one_agent_task(
+    *,
+    console: Console,
+    cascade: ProviderCascade,
+    task: str,
+    policy: PermissionPolicy,
+    max_iterations: int,
+    max_cost: float,
+    cwd: str,
+    tier_preferred: Optional[str] = None,
+) -> None:
+    """Run a single agent task to completion; print a per-iteration trace."""
+    console.print(
+        f"\n[bold cyan]── agentic task ──[/bold cyan] {task}\n"
+        f"[dim]cwd={cwd}  max_iterations={max_iterations}  "
+        f"max_cost={max_cost} ANIMICA[/dim]"
+    )
+
+    def _on_iteration(turn: AgentTurn) -> None:
+        header = f"[bold blue][{turn.iteration}][/bold blue] "
+        if turn.tool_call is not None:
+            args_inline = json.dumps(
+                turn.tool_call.arguments, default=str
+            )
+            if len(args_inline) > 200:
+                args_inline = args_inline[:200] + f"... (+{len(args_inline)-200})"
+            console.print(
+                f"{header}[magenta]tool:[/magenta] {turn.tool_call.name} "
+                f"{args_inline}",
+            )
+            if turn.tool_result is not None:
+                # Print first 400 chars of result so the trace is useful but
+                # not overwhelming.
+                preview = turn.tool_result
+                if len(preview) > 400:
+                    preview = preview[:400] + f"\n  ... (+{len(turn.tool_result)-400} more)"
+                console.print(
+                    "  [dim]result:[/dim]\n" +
+                    "\n".join("  " + ln for ln in preview.splitlines())
+                )
+        else:
+            preview = turn.assistant_text.strip()
+            if len(preview) > 800:
+                preview = preview[:800] + f"\n... (+{len(turn.assistant_text)-800} more)"
+            console.print(f"{header}[green]final answer:[/green] {preview}")
+        console.print(
+            f"  [dim]cost={turn.cost_animica:.6f} ANIMICA  "
+            f"latency={turn.latency_ms}ms[/dim]"
+        )
+
+    submit = _build_agent_submit(cascade, tier_preferred=tier_preferred, yolo=True)
+    prompter = _permission_prompter(console)
+    try:
+        result = run_agent_loop(
+            user_task=task,
+            submit_turn=submit,
+            policy=policy,
+            permission_prompter=prompter,
+            on_iteration=_on_iteration,
+            cwd=cwd,
+            max_iterations=max_iterations,
+            max_cost=max_cost,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow](agent interrupted by user)[/yellow]")
+        return
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"\n[red]agent error: {exc}[/red]")
+        return
+
+    color = "green" if result.completed else "yellow"
+    console.print(
+        f"\n[bold {color}]── agentic task finished "
+        f"({result.stop_reason}, {len(result.turns)} step(s), "
+        f"total cost {result.total_cost:.6f} ANIMICA) ──[/bold {color}]"
+    )
+    if result.final_text:
+        console.print(result.final_text)
+
 
 # --------------------------------------------------------------------------- #
 # REPL                                                                       #
@@ -224,7 +392,12 @@ def _confirm_cost(console: Console, prompt: str) -> bool:
 
 def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
               yolo: bool, console: Console,
-              wallet_label: Optional[str] = None) -> int:
+              wallet_label: Optional[str] = None,
+              *,
+              agent_policy: Optional[PermissionPolicy] = None,
+              agent_max_iters: int = 10,
+              agent_max_cost: float = 0.5,
+              agent_cwd: Optional[str] = None) -> int:
     try:
         cascade = ProviderCascade(cfg, rpc_url=rpc_url,
                                   wallet_path=wallet_path,
@@ -241,6 +414,10 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
         "require_provider": None,
         "tier_preferred":
             cfg.model_catalog["routing"].get("default_tier", "small"),
+        "agent_policy": agent_policy or PermissionPolicy(),
+        "agent_max_iters": agent_max_iters,
+        "agent_max_cost": agent_max_cost,
+        "agent_cwd": agent_cwd or os.getcwd(),
     }
     slash = _SlashHandler(console, cascade, state)
     history: list[dict[str, str]] = []
@@ -374,6 +551,34 @@ def main(
         False, "--require-distributed",
         help="Refuse to fall back to local-flagship or offline.",
     ),
+    # ---- Agentic mode flags ----
+    agentic: Optional[str] = typer.Option(
+        None, "--agentic",
+        help="Run a single agentic task (Claude Code style: read/write/edit/"
+              "bash/grep tools, gated). Pass the task description as the "
+              "argument; exits after the task completes.",
+    ),
+    yolo_tools: bool = typer.Option(
+        False, "--yolo-tools",
+        help="Auto-allow every tool call in agentic mode (CAREFUL — the "
+              "model can run rm -rf or overwrite files unattended).",
+    ),
+    read_only: bool = typer.Option(
+        False, "--read-only",
+        help="In agentic mode, refuse all non-safe tools (write/edit/bash/...).",
+    ),
+    max_iterations: int = typer.Option(
+        10, "--max-iterations",
+        help="Agentic loop iteration cap.",
+    ),
+    max_cost: float = typer.Option(
+        0.5, "--max-cost",
+        help="Agentic loop cost cap in ANIMICA. Loop stops once exceeded.",
+    ),
+    cwd: Optional[str] = typer.Option(
+        None, "--cwd",
+        help="Working directory the agent sees (default: current directory).",
+    ),
 ) -> None:
     """Interactive AICF-paid chat REPL."""
     console = Console()
@@ -398,8 +603,38 @@ def main(
     if yolo:
         os.environ["ANIMICA_CHAT_YOLO"] = "1"
 
-    rc = _run_repl(cfg, rpc_url=endpoint, wallet_path=wallet,
-                   yolo=yolo, console=console, wallet_label=wallet_label)
+    # One-shot agentic mode: run the task, print transcript, exit.
+    if agentic:
+        try:
+            cascade = ProviderCascade(cfg, rpc_url=endpoint,
+                                      wallet_path=wallet,
+                                      wallet_label=wallet_label)
+        except (ConfigError, WalletError) as exc:
+            console.print(f"[red]{exc.render()}[/red]")
+            raise typer.Exit(code=2)
+        policy = PermissionPolicy(yolo=yolo_tools, read_only=read_only)
+        run_one_agent_task(
+            console=console,
+            cascade=cascade,
+            task=agentic,
+            policy=policy,
+            max_iterations=max_iterations,
+            max_cost=max_cost,
+            cwd=cwd or os.getcwd(),
+            tier_preferred=cfg.model_catalog["routing"].get(
+                "default_tier", "small"
+            ),
+        )
+        cascade.close()
+        raise typer.Exit(code=0)
+
+    rc = _run_repl(
+        cfg, rpc_url=endpoint, wallet_path=wallet,
+        yolo=yolo, console=console, wallet_label=wallet_label,
+        agent_policy=PermissionPolicy(yolo=yolo_tools, read_only=read_only),
+        agent_max_iters=max_iterations, agent_max_cost=max_cost,
+        agent_cwd=cwd or os.getcwd(),
+    )
     raise typer.Exit(code=rc)
 
 

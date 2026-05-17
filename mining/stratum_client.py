@@ -460,6 +460,15 @@ class StratumClient:
         Routes through the shared animica.stratum_pool.aicf_inference
         engine — same code path as the reference miner so behavior is
         consistent regardless of which Stratum client a miner uses.
+
+        Deduplication: the pool re-dispatches the same job every time the
+        node-side lease expires (default 60s). Without dedup the miner
+        runs inference N times for the same job while the user waits, and
+        the inference Lock serializes a real new chat behind a queue of
+        stale duplicates. We keep two sets:
+
+          - ``_aicf_inflight_jobs``  : currently being processed
+          - ``_aicf_completed_jobs`` : already submitted (bounded LRU)
         """
         job_id = str(params.get("jobId") or "")
         spec = params.get("spec") or {}
@@ -467,16 +476,49 @@ class StratumClient:
         if not job_id or not isinstance(spec, dict):
             log.warning(f"[client] bad mining.aicf.notify: {params!r}")
             return
+        # Lazy-init dedup state. Attribute access guards keep the existing
+        # tests and demos that drive _handle_aicf_notify directly from
+        # tripping over a missing attribute.
+        if not hasattr(self, "_aicf_inflight_jobs"):
+            self._aicf_inflight_jobs: set = set()
+        if not hasattr(self, "_aicf_completed_jobs"):
+            self._aicf_completed_jobs: list = []
+        if job_id in self._aicf_inflight_jobs:
+            log.info(f"[client] aicf dedup: already processing job={job_id}, skipping")
+            return
+        if job_id in self._aicf_completed_jobs:
+            # Re-send the cached completion so the pool re-clears its
+            # in-flight slot even if the original submit was lost.
+            log.info(f"[client] aicf dedup: re-acking completed job={job_id}")
+            try:
+                await self._send_obj({
+                    "jsonrpc": "2.0", "id": None,
+                    "method": "mining.aicf.submit",
+                    "params": {
+                        "worker": self.worker or "",
+                        "jobId": job_id,
+                        "text": "",  # node already has the real result
+                        "latencyMs": 0,
+                        "attestation": {"backend": "dedup_reack",
+                                        "model": ""},
+                    },
+                })
+            except Exception:
+                pass
+            return
+        self._aicf_inflight_jobs.add(job_id)
         try:
             from animica.stratum_pool.aicf_inference import get_engine
         except Exception as exc:
             log.warning(f"[client] aicf inference engine unavailable: {exc}")
+            self._aicf_inflight_jobs.discard(job_id)
             return
         engine = get_engine()
         try:
             result = await asyncio.to_thread(engine.generate, spec, tier=tier)
         except Exception as exc:
             log.warning(f"[client] aicf inference failed job={job_id}: {exc}")
+            self._aicf_inflight_jobs.discard(job_id)
             return
         log.info(
             f"[client] aicf job done id={job_id} tier={tier} "
@@ -502,6 +544,13 @@ class StratumClient:
             await self._send_obj(req)
         except Exception as exc:
             log.warning(f"[client] failed to send mining.aicf.submit job={job_id}: {exc}")
+        finally:
+            # Mark complete (regardless of submit outcome — the pool will
+            # re-ack via dedup if it's still waiting) and trim the cache.
+            self._aicf_inflight_jobs.discard(job_id)
+            self._aicf_completed_jobs.append(job_id)
+            if len(self._aicf_completed_jobs) > 256:
+                self._aicf_completed_jobs[:] = self._aicf_completed_jobs[-256:]
 
     # ------------- demo helpers -------------
 
