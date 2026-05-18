@@ -2041,7 +2041,15 @@ def setup(
                 fg=typer.colors.CYAN,
             )
         import subprocess as _sub
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *ml_missing]
+        # pip's default per-read timeout is 15s, which routinely times out on
+        # the multi-GB torch wheel even from a fast connection. Bump it well
+        # past any reasonable network stall, and retry on transient failures.
+        cmd = [
+            sys.executable, "-m", "pip", "install", "--upgrade",
+            "--timeout", "300",
+            "--retries", "5",
+            *ml_missing,
+        ]
         try:
             proc = _sub.run(cmd, capture_output=not json_output, text=True)
             if proc.returncode != 0:
