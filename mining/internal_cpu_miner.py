@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import secrets
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -84,6 +85,33 @@ def _select_device_backend(
     return None, "cpu"
 
 
+def _proc_scan_header_template(
+    header_view: dict,
+    theta_micro: int,
+    share_ratio: float,
+    start_nonce: int,
+    scan_window: int,
+) -> Optional[tuple]:
+    """Pure-function CPU scan, designed to run inside a ProcessPoolExecutor
+    worker so the Python GIL doesn't serialize scans across cores.
+
+    Returns ``(nonce, h_micro)`` on first hit or ``None`` if the window
+    finishes with no share. Module-level + positional-args so the
+    function is picklable on every Python start method (fork/spawn).
+    """
+    target_int = micro_threshold_to_target256(
+        max(1, int(theta_micro * max(share_ratio, 1e-9)))
+    )
+    header = header_from_template_view(header_view, nonce=0)
+    end = start_nonce + scan_window
+    for nonce in range(start_nonce, end):
+        candidate_hash = hash_candidate_header(header, nonce=nonce)
+        if candidate_hash.digest_int > target_int:
+            continue
+        return (nonce, h_micro_from_digest(candidate_hash.digest))
+    return None
+
+
 class CpuStratumMiner:
     """
     Stratum miner that scans for one share per notify and submits it.
@@ -148,6 +176,23 @@ class CpuStratumMiner:
         # processes. 0 means "use all CPUs minus one" (the default in
         # resolve_worker_count). Stored for the continuous-scan loop.
         self._threads = int(threads)
+        # Lazily-created ProcessPoolExecutor for pure-Python CPU mining.
+        # We use processes (not just threads) because the per-nonce
+        # Python overhead in _scan_header_template (dataclass replace,
+        # serialize_header, dict access) holds the GIL — N threads stay
+        # serialized on that overhead even though sha3 itself releases
+        # the GIL. With processes, each worker gets its own interpreter
+        # and pins a separate core. Initialised on first mining round
+        # so simply constructing the miner doesn't fork workers.
+        self._proc_pool: Optional[ProcessPoolExecutor] = None
+
+    def _get_proc_pool(self) -> ProcessPoolExecutor:
+        if self._proc_pool is None:
+            n = self._threads if self._threads > 0 else (os.cpu_count() or 1)
+            n = max(1, n)
+            self._proc_pool = ProcessPoolExecutor(max_workers=n)
+            log.info("[cpu-miner] mining process pool started with %d workers", n)
+        return self._proc_pool
 
     @property
     def device_name(self) -> str:
@@ -219,6 +264,11 @@ class CpuStratumMiner:
                 await task
             except (asyncio.CancelledError, Exception):    # noqa: BLE001
                 pass
+        if self._proc_pool is not None:
+            # cancel_futures drops queued work; running workers finish
+            # their current 10K-nonce scan (a few ms) and then exit.
+            self._proc_pool.shutdown(wait=False, cancel_futures=True)
+            self._proc_pool = None
         await self._client.close()
 
     async def _on_set_difficulty(self, share_target: float, theta_micro: int) -> None:
@@ -307,54 +357,89 @@ class CpuStratumMiner:
         # extranonce2 server-side, but starting random adds defense in depth.
         next_start = secrets.randbelow(2**32)
         windows = 0
-        # Fan-out width: how many scan windows to run in parallel each
-        # tick. Each runs in its own asyncio.to_thread (=> its own OS
-        # thread), so even with the GIL the C hashlib.sha3_256 path
-        # releases it and we get real multi-core utilisation. Without
-        # this, _mine_continuously scanned ONE window at a time and
-        # used ~one core out of N (looked like 0% on a many-core box
-        # to anyone watching `top` for a percent in the high tens).
+        # Fan-out width: how many scan windows run in parallel per tick.
         # Honour --threads N; 0 means "all cores".
         n_workers = self._threads if self._threads > 0 else (os.cpu_count() or 1)
         n_workers = max(1, n_workers)
+        # If we can run the pure-Python header-template scan, dispatch it
+        # into a ProcessPoolExecutor so each worker pins a separate core.
+        # Threads alone don't help here: the per-nonce Python overhead
+        # (dataclass replace, serialize_header, dict access) holds the GIL
+        # and serialises all threads even though sha3 itself releases it.
+        # The fallback path (device backend / HashScanner) stays on
+        # asyncio.to_thread because the device may not be picklable.
+        use_proc_pool = header_template is not None
+        proc_pool = self._get_proc_pool() if use_proc_pool else None
+        loop = asyncio.get_running_loop()
         try:
             while not self._stop.is_set():
                 # Carve N disjoint nonce ranges and scan them in parallel.
-                # First worker to find a share wins; we cancel the rest so
-                # we can immediately submit and start the next round.
-                tasks = []
-                for i in range(n_workers):
-                    s = (next_start + i * self._scan_window) & 0xFFFFFFFFFFFFFFFF
-                    tasks.append(asyncio.create_task(self._scan_one_window(
-                        job=job,
-                        header_template=header_template,
-                        prefix=prefix,
-                        mix_seed=mix_seed,
-                        theta_micro=theta_micro,
-                        share_ratio=share_ratio,
-                        t_share_micro=t_share_micro,
-                        start_nonce=s,
-                    )))
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                # First worker to find a share wins; we let in-flight ones
+                # finish (cheap, a few ms each) so we don't throw away
+                # their work.
+                tasks: list[asyncio.Future] = []
+                if use_proc_pool and proc_pool is not None:
+                    for i in range(n_workers):
+                        s = (next_start + i * self._scan_window) & 0xFFFFFFFFFFFFFFFF
+                        tasks.append(loop.run_in_executor(
+                            proc_pool,
+                            _proc_scan_header_template,
+                            header_template,
+                            theta_micro,
+                            share_ratio,
+                            s,
+                            self._scan_window,
+                        ))
+                else:
+                    for i in range(n_workers):
+                        s = (next_start + i * self._scan_window) & 0xFFFFFFFFFFFFFFFF
+                        tasks.append(asyncio.ensure_future(self._scan_one_window(
+                            job=job,
+                            header_template=header_template,
+                            prefix=prefix,
+                            mix_seed=mix_seed,
+                            theta_micro=theta_micro,
+                            share_ratio=share_ratio,
+                            t_share_micro=t_share_micro,
+                            start_nonce=s,
+                        )))
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED
+                )
                 share: Optional[CpuMinerResult] = None
+
+                def _adopt(result: Any) -> Optional[CpuMinerResult]:
+                    if isinstance(result, CpuMinerResult):
+                        return result
+                    if isinstance(result, tuple) and len(result) == 2:
+                        nonce_val, h_micro_val = result
+                        return CpuMinerResult(
+                            job_id=str(job.get("jobId") or "unknown"),
+                            nonce=int(nonce_val),
+                            h_micro=int(h_micro_val),
+                            accepted=False,
+                            is_block=False,
+                            reason=None,
+                        )
+                    return None
+
                 for t in done:
                     try:
                         r = t.result()
                     except Exception:
                         r = None
-                    if r is not None and share is None:
-                        share = r
-                # If no early winner, let the remaining workers finish so
-                # we don't throw away the nonces they've already hashed.
-                if share is None and pending:
+                    cand = _adopt(r)
+                    if cand is not None and share is None:
+                        share = cand
+                if pending:
+                    # Always await the rest — process-pool futures can't
+                    # be cancelled mid-scan anyway, and a worker that
+                    # already found a share shouldn't be discarded.
                     rest = await asyncio.gather(*pending, return_exceptions=True)
                     for r in rest:
-                        if isinstance(r, CpuMinerResult):
-                            share = r
-                            break
-                else:
-                    for t in pending:
-                        t.cancel()
+                        cand = _adopt(r)
+                        if cand is not None and share is None:
+                            share = cand
                 windows += n_workers
                 if share is not None:
                     await self._submit_found_share(job, share)
