@@ -195,6 +195,23 @@ class InferenceEngine:
                 # model sees a raw string with no context and happily
                 # hallucinates (e.g. "Animica's mobile games division").
                 system_prompt = _resolve_system_prompt()
+                # RAG: pull top-k relevant doc chunks for this query and
+                # prepend them to the system message. The retriever is
+                # silent-noop when the index or encoder isn't available,
+                # so this stays cheap and safe on minimal installs.
+                try:
+                    from .aicf_rag import retrieve_context
+                    rag_block = retrieve_context(prompt, top_k=3)
+                except Exception as rag_exc:
+                    log.debug("aicf-rag: retrieve_context unavailable: %s", rag_exc)
+                    rag_block = ""
+                if rag_block:
+                    system_prompt = (
+                        (system_prompt + "\n\n" if system_prompt else "")
+                        + "Reference excerpts from Animica documentation "
+                        "(use these as ground truth; cite sources inline "
+                        "when relevant):\n\n" + rag_block
+                    )
                 messages = []
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
