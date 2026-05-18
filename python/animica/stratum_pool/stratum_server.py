@@ -376,7 +376,14 @@ class StratumPoolServer:
                 ),
             )
             if ok:
-                self._aicf_inflight[job_id] = (addr, expires)
+                # Cap pool-side "busy" tracking well below the node-side
+                # lease (default 10 min). The node's stub fallback fires
+                # at ~60s — keeping the worker marked busy for the full
+                # lease soft-bans it from new dispatches even after the
+                # server has moved on, which manifested as "no AICF worker
+                # picked up the job" 3 minutes after a stubbed completion.
+                local_expires = min(expires, now + 90.0)
+                self._aicf_inflight[job_id] = (addr, local_expires)
                 busy.add(addr)
 
     async def _handle_aicf_result(self, session: object, params: dict) -> dict:
