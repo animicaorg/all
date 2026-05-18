@@ -71,6 +71,11 @@ services:
       ANIMICA_HOST_CHAIN_DIR: "${ANIMICA_HOST_CHAIN_DIR:-}"
       ANIMICA_HOST_SNAPSHOTS_DIR: "${ANIMICA_HOST_SNAPSHOTS_DIR:-}"
       ANIMICA_MEMPOOL_REQUIRE_PERSIST: "${ANIMICA_MEMPOOL_REQUIRE_PERSIST:-0}"
+      # AICF settlement: require every chat turn to broadcast a successful
+      # payment txn before the job runs. Default-off was for dev/no-peer
+      # bringup; in prod a silent rejection (e.g. wallet chain_id=0
+      # mismatch) means users chat for free and providers earn nothing.
+      ANIMICA_AICF_REQUIRE_SETTLEMENT: "${ANIMICA_AICF_REQUIRE_SETTLEMENT:-1}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"

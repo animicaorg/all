@@ -842,11 +842,18 @@ async def submit_inference_job(
             raise InvalidParams(
                 f"submitInferenceJob: payment rejected by mempool: {reason}"
             )
-        log.info(
-            "aicf_jobs: payment broadcast accepted=%s tx_hash=%s status=%s",
+        # Surface the rejection reason — historically only status was
+        # logged, which hid the actual mempool error and let payments
+        # silently fail for every chat turn. When acceptance is False
+        # we want the cause front-and-center so debit regressions are
+        # caught immediately.
+        log_fn = log.warning if not rec.payment_accepted else log.info
+        log_fn(
+            "aicf_jobs: payment broadcast accepted=%s tx_hash=%s status=%s reason=%s",
             rec.payment_accepted,
             rec.payment_tx_hash,
             rec.payment_status,
+            broadcast.get("reason"),
         )
     elif _require_settlement():
         raise InvalidParams(

@@ -248,10 +248,18 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
             f"wallet at {path} has no 'address' field",
             hint="wallet files must include the public address",
         )
+    # chain_id may live on the entry, on the bundle root, or only be
+    # discoverable from the live RPC. Wallets created by `animica wallet new`
+    # don't write it (see python/animica/wallet/__init__.py), so without the
+    # RPC fallback every signed tx goes out with chainId=0 and the mempool
+    # rejects it as "Chain ID mismatch (got 0, expected 1)" — silently, on
+    # default settings, since AICF accepts unsettled jobs. Past bug: chats
+    # never debited because of this.
+    raw_chain_id = entry.get("chain_id", raw.get("chain_id", 0))
     info = WalletInfo(
         address=address,
         network=network,
-        chain_id=int(entry.get("chain_id", 0) or 0),
+        chain_id=int(raw_chain_id or 0),
         backing_file=str(path),
         scheme=str(entry.get("scheme") or entry.get("alg_name") or ""),
     )
@@ -264,6 +272,25 @@ def load_wallet_info(*, wallet_path: Optional[str] = None,
         except Exception as exc:   # noqa: BLE001 — non-fatal here
             info.balance_lookup_error = str(exc)
             info.notes.append(f"balance_lookup_failed: {exc}")
+        if info.chain_id == 0:
+            try:
+                ident = _rpc_call(rpc_url, "chain.getChainIdentity", [])
+                if isinstance(ident, Mapping):
+                    cid = ident.get("chainId") or ident.get("chain_id")
+                    if cid:
+                        info.chain_id = int(cid)
+            except Exception:
+                pass
+        if info.chain_id == 0:
+            # Last-resort fallback: head includes chainId on every node.
+            try:
+                head = _rpc_call(rpc_url, "chain.getHead", [])
+                if isinstance(head, Mapping):
+                    cid = head.get("chainId") or head.get("chain_id")
+                    if cid:
+                        info.chain_id = int(cid)
+            except Exception:
+                pass
     return info
 
 
