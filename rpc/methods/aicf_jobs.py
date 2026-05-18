@@ -1131,13 +1131,25 @@ async def worker_submit_result(
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")
-    if job.claim_owner != address:
-        raise InvalidParams(
-            f"workerSubmitResult: job {job_id} not claimed by {address}"
-        )
     if job.state not in {"claimed", "pending"}:
-        # Already completed (e.g. local stub raced ahead) — accept idempotently
+        # Already completed (e.g. local stub raced ahead, or another worker
+        # got there first) — accept idempotently.
         return {"accepted": False, "state": job.state}
+    # Don't gate completion on claim_owner equality. A worker that took a
+    # while to download the model and run inference may legitimately submit
+    # AFTER its lease expired and the job was re-claimed by another worker.
+    # If we reject those, every slow worker's first job is wasted (the
+    # observed failure mode: a cold worker takes ~70min for the model
+    # download+inference, the lease expires at 10min, the job gets
+    # reassigned, and the original worker's result is thrown away with
+    # "not claimed by <addr>"). First valid result wins; credit goes to
+    # whoever actually returns the bytes.
+    if job.claim_owner and job.claim_owner != address:
+        log.info(
+            "aicf_jobs: accepting late submit for job %s from %s "
+            "(current claim_owner=%s)",
+            job_id, address, job.claim_owner,
+        )
     completed = _STORE.complete(job_id, text=text, provider_id=address)
     # Credit the worker for the full estimated cost of the job. With the
     # SQLite store, in-memory dataclass mutation doesn't persist — use
