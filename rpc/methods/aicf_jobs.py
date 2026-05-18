@@ -697,16 +697,39 @@ def _stub_response(prompt: str, tier: str) -> str:
 
 
 async def _local_fallback_after_grace(job_id: str) -> None:
-    """If no external worker claims the job within the grace window,
-    complete it locally with a stub response so chat doesn't hang."""
+    """Stub-complete a job whose worker never came back, so chat doesn't hang.
+
+    Two cases the chat user perceives identically as "no response":
+
+    1. No worker claimed the job (state stays "pending"). Stub immediately
+       after the grace window — no provider is coming.
+    2. A worker claimed it (state -> "claimed") but never sent a result —
+       worker disconnected, errored mid-inference, or got wedged loading a
+       model. The lease default is _WORKER_LEASE_S (10 minutes); without
+       this branch, chat is unresponsive that whole time. We give the
+       worker one more grace window after claim, then ship the stub
+       anyway.
+    """
     await asyncio.sleep(_WORKER_CLAIM_GRACE_S)
     job = _STORE.get(job_id)
-    if job is None or job.state != "pending":
+    if job is None or job.state in {"completed", "failed"}:
         return
+    if job.state == "claimed":
+        # Give the worker one more grace window to actually return a result
+        # before giving up — small chat completions normally finish well
+        # inside this; a worker that hasn't is wedged.
+        await asyncio.sleep(_WORKER_CLAIM_GRACE_S)
+        job = _STORE.get(job_id)
+        if job is None or job.state in {"completed", "failed"}:
+            return
     prompt = str(job.spec.get("prompt", ""))
     text = _stub_response(prompt, job.tier)
+    prior_state = job.state
     _STORE.complete(job_id, text=text, provider_id="local-stub")
-    log.info("aicf_jobs: local-stub completed job_id=%s tier=%s", job_id, job.tier)
+    log.info(
+        "aicf_jobs: local-stub completed job_id=%s tier=%s prior_state=%s",
+        job_id, job.tier, prior_state,
+    )
 
 
 def _schedule_fallback(job_id: str) -> None:
@@ -722,15 +745,20 @@ def _schedule_fallback(job_id: str) -> None:
     def _run() -> None:
         time.sleep(_WORKER_CLAIM_GRACE_S)
         job = _STORE.get(job_id)
-        if job is None or job.state != "pending":
+        if job is None or job.state in {"completed", "failed"}:
             return
+        if job.state == "claimed":
+            time.sleep(_WORKER_CLAIM_GRACE_S)
+            job = _STORE.get(job_id)
+            if job is None or job.state in {"completed", "failed"}:
+                return
         prompt = str(job.spec.get("prompt", ""))
         text = _stub_response(prompt, job.tier)
+        prior_state = job.state
         _STORE.complete(job_id, text=text, provider_id="local-stub")
         log.info(
-            "aicf_jobs: local-stub completed (thread) job_id=%s tier=%s",
-            job_id,
-            job.tier,
+            "aicf_jobs: local-stub completed (thread) job_id=%s tier=%s prior_state=%s",
+            job_id, job.tier, prior_state,
         )
 
     threading.Thread(target=_run, daemon=True, name=f"aicf-stub-{job_id[:8]}").start()
