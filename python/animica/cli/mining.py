@@ -2022,7 +2022,10 @@ def setup(
     # `animica miner setup` is idempotent on a fully-provisioned box.
     ml_stack_status: dict[str, dict] = {}
     ml_missing: list[str] = []
-    for pkg in ("torch", "transformers", "accelerate"):
+    # sentence-transformers powers the RAG retriever in
+    # animica.stratum_pool.aicf_rag — without it the index is shipped
+    # but never queried, so the model loses its grounding excerpts.
+    for pkg in ("torch", "transformers", "accelerate", "sentence_transformers"):
         try:
             mod = __import__(pkg)
             ml_stack_status[pkg] = {
@@ -2044,11 +2047,14 @@ def setup(
         # pip's default per-read timeout is 15s, which routinely times out on
         # the multi-GB torch wheel even from a fast connection. Bump it well
         # past any reasonable network stall, and retry on transient failures.
+        # Map our import-name keys to the PyPI distribution names. Only
+        # sentence_transformers differs (underscore vs hyphen on PyPI).
+        _pip_name = {"sentence_transformers": "sentence-transformers"}
         cmd = [
             sys.executable, "-m", "pip", "install", "--upgrade",
             "--timeout", "300",
             "--retries", "5",
-            *ml_missing,
+            *[_pip_name.get(p, p) for p in ml_missing],
         ]
         try:
             proc = _sub.run(cmd, capture_output=not json_output, text=True)
@@ -2096,7 +2102,7 @@ def setup(
             "ML stack present: "
             + ", ".join(
                 f"{p}=={ml_stack_status[p].get('version', '?')}"
-                for p in ("torch", "transformers", "accelerate")
+                for p in ("torch", "transformers", "accelerate", "sentence_transformers")
             ),
             fg=typer.colors.GREEN,
         )
