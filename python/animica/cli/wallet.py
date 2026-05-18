@@ -142,19 +142,222 @@ def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
 
 
 def _load_store(wallet_file: Path) -> Dict[str, Any]:
+    """Load the wallet store, with automatic backup-driven recovery.
+
+    If the canonical file is missing or unparsable AND at least one valid
+    ``.bak.*`` snapshot exists in the same directory, we refuse to return
+    an empty store — that path is how a single bad save destroys every
+    key. Instead we promote the newest valid backup to the canonical
+    location and load from that. The previous bad file is renamed to
+    ``.corrupt.<UTC-ts>`` for forensics; we never silently delete user
+    key material.
+
+    Disable this rescue with ANIMICA_WALLET_DISABLE_BACKUP_RECOVERY=1
+    if you genuinely want a fresh empty store (e.g. fresh node bootstrap
+    on a host that happens to have stale backups around).
+    """
     try:
         parsed = load_store_canonical(wallet_file)
     except WalletParseError as exc:
+        if os.environ.get("ANIMICA_WALLET_DISABLE_BACKUP_RECOVERY", "").strip():
+            raise RuntimeError(str(exc)) from exc
+        rescued = _try_recover_from_backup(wallet_file, reason=str(exc))
+        if rescued is not None:
+            return rescued
         raise RuntimeError(str(exc)) from exc
     if parsed.failures:
+        if not os.environ.get("ANIMICA_WALLET_DISABLE_BACKUP_RECOVERY", "").strip():
+            rescued = _try_recover_from_backup(
+                wallet_file, reason="; ".join(parsed.failures)
+            )
+            if rescued is not None:
+                return rescued
         raise RuntimeError("Failed to parse wallet file:\n" + "\n".join(parsed.failures))
+    # Heuristic: if the canonical file just got recreated empty (zero
+    # wallets) but backups exist with non-empty wallet lists, this is
+    # almost certainly the "volume swapped under us" scenario from the
+    # CEX incident — promote the most recent non-empty backup so we
+    # don't accept the wipe as authoritative.
+    wallets = parsed.store.get("wallets") if isinstance(parsed.store, dict) else None
+    if isinstance(wallets, list) and len(wallets) == 0:
+        if not os.environ.get("ANIMICA_WALLET_DISABLE_BACKUP_RECOVERY", "").strip():
+            rescued = _try_recover_from_backup(
+                wallet_file,
+                reason="canonical store is empty; checking backups",
+                require_more_wallets_than=0,
+            )
+            if rescued is not None:
+                return rescued
     return parsed.store
 
 
+def _try_recover_from_backup(
+    wallet_file: Path,
+    *,
+    reason: str,
+    require_more_wallets_than: int | None = None,
+) -> Optional[Dict[str, Any]]:
+    """Promote the newest valid ``.bak.*`` snapshot if recovery is warranted.
+
+    Returns the rescued store on success, or None if no usable backup was
+    found. When ``require_more_wallets_than`` is set, only a backup with
+    strictly more wallet entries than that count is considered — used by
+    the "canonical is empty but backups have data" path so we don't
+    overwrite a legitimately empty new store with a stale snapshot.
+    """
+    parent = wallet_file.parent
+    try:
+        backups = sorted(
+            parent.glob(f"{wallet_file.name}.bak.*"),
+            key=lambda p: p.name,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    log = logging.getLogger(__name__)
+    for backup in backups:
+        try:
+            parsed = load_store_canonical(backup)
+        except WalletParseError:
+            continue
+        if parsed.failures:
+            continue
+        backup_wallets = parsed.store.get("wallets") if isinstance(parsed.store, dict) else None
+        n = len(backup_wallets) if isinstance(backup_wallets, list) else 0
+        if require_more_wallets_than is not None and n <= require_more_wallets_than:
+            continue
+        log.warning(
+            "wallet store rescue: promoting %s -> %s (reason: %s, wallets=%d)",
+            backup.name, wallet_file.name, reason, n,
+        )
+        try:
+            if wallet_file.exists():
+                from datetime import datetime as _dt, timezone as _tz
+                stamp = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%S%f")
+                wallet_file.rename(
+                    parent / f"{wallet_file.name}.corrupt.{stamp}"
+                )
+        except OSError as exc:
+            log.warning("could not preserve corrupt file: %s", exc)
+        try:
+            import shutil
+            shutil.copy2(backup, wallet_file)
+            try:
+                secure_file(wallet_file)
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("failed to copy backup into place: %s", exc)
+            return None
+        return parsed.store
+    return None
+
+
 def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
+    """Persist the wallet store with atomic-rename + dated backups.
+
+    The naive `write_text` path used previously could destroy the store
+    in two ways:
+      1. A partial write (process killed / disk full) left the file
+         truncated, after which the next load failed and any subsequent
+         save replaced what was left with the in-memory view — losing
+         every wallet that hadn't been loaded into RAM.
+      2. A volume-name change in docker-compose silently swapped the
+         backing storage, and a fresh save into the now-empty file
+         meant the previous wallets vanished with no recovery path.
+
+    We now:
+      - Serialize the new content to canonical JSON.
+      - Copy the current file (if any) to wallets.json.bak.<UTC-ts>.
+      - Trim backups to ANIMICA_WALLET_BACKUP_KEEP (default 20), keeping
+        the newest by name (timestamps sort lexicographically).
+      - Write to wallets.json.tmp.<pid>, fsync it, and rename over the
+        target so concurrent readers always see either the old or the
+        new file — never a half-written one.
+
+    Operators can override the keep count with ANIMICA_WALLET_BACKUP_KEEP=N
+    or disable backups entirely with ANIMICA_WALLET_BACKUP_KEEP=0.
+
+    The atomic-rename semantics rely on the temp file being on the same
+    filesystem as the target. Since both live in the wallet_file's
+    parent directory this is always true.
+    """
     ensure_file_dir(wallet_file, sensitive=True)
-    wallet_file.write_text(canonical_json_dumps(export_canonical_store(store)), encoding="utf-8")
-    secure_file(wallet_file)
+    serialized = canonical_json_dumps(export_canonical_store(store))
+
+    parent = wallet_file.parent
+    suffix = wallet_file.suffix or ".json"
+    # Backup the previous file before overwrite — only if it has content.
+    # Empty / missing files are skipped: there's nothing to lose, and a
+    # backup of "" would just clutter the directory.
+    try:
+        existing_size = wallet_file.stat().st_size if wallet_file.exists() else 0
+    except OSError:
+        existing_size = 0
+    if existing_size > 0:
+        try:
+            keep = int(os.environ.get("ANIMICA_WALLET_BACKUP_KEEP", "20"))
+        except ValueError:
+            keep = 20
+        if keep > 0:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+            backup_path = parent / f"{wallet_file.name}.bak.{stamp}"
+            try:
+                import shutil
+                shutil.copy2(wallet_file, backup_path)
+                try:
+                    secure_file(backup_path)
+                except Exception:
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                # Never block a save on backup failure — the canonical
+                # path is what matters for not losing keys. Log instead.
+                logging.getLogger(__name__).warning(
+                    "wallet backup failed: %s (continuing save)", exc
+                )
+
+            # Trim old backups beyond the retention count.
+            try:
+                backups = sorted(
+                    parent.glob(f"{wallet_file.name}.bak.*"),
+                    key=lambda p: p.name,
+                    reverse=True,
+                )
+                for stale in backups[keep:]:
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
+            except Exception:
+                pass
+
+    # Atomic write: temp file in the same dir, fsync, then os.replace.
+    tmp_path = parent / f"{wallet_file.name}.tmp.{os.getpid()}"
+    try:
+        with tmp_path.open("w", encoding="utf-8") as fh:
+            fh.write(serialized)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        try:
+            secure_file(tmp_path)
+        except Exception:
+            pass
+        os.replace(tmp_path, wallet_file)
+    except BaseException:
+        # Best-effort cleanup so we don't leave a stray temp file behind
+        # if write/replace was interrupted.
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    try:
+        secure_file(wallet_file)
+    except Exception:
+        pass
 
 
 def _entry_from_dict(entry: Dict[str, Any]) -> WalletEntry:
