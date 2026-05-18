@@ -86,6 +86,7 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
         resolved = portal.resolve(request)
         summary = metrics.pool_summary()
         health_payload = metrics.health()
+        payout = metrics.payout_status()
         return {
             "host": resolved.public_host,
             "port": int(resolved.public_port),
@@ -96,6 +97,15 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
                 resolved.pool_enabled
                 and str(health_payload.get("status") or "").lower() == "ok"
             ),
+            # Payout schedule — surfaced so the website can show a
+            # countdown to the next sweep. countdown_seconds is the live
+            # server-clock remaining; next_payout_at is ISO for clients
+            # that prefer to compute their own offset against local time.
+            "payouts_enabled": bool(payout.get("payouts_enabled")),
+            "payout_interval_seconds": payout.get("payout_interval_seconds"),
+            "payout_countdown_seconds": payout.get("payout_countdown_seconds"),
+            "next_payout_at": payout.get("next_payout_at"),
+            "last_payout_at": payout.get("last_payout_at"),
         }
 
     @app.get("/v1/pool/stats")

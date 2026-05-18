@@ -30,6 +30,12 @@
       <dd id="network" class="mt-2 font-mono text-ink-50">…</dd>
     </div>
   </dl>
+
+  <div class="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-wrap items-baseline gap-3">
+    <dt class="text-xs uppercase tracking-wide text-ink-300">Next payout in</dt>
+    <dd id="payout-countdown" class="font-mono text-2xl text-emerald-300 tabular-nums">—</dd>
+    <span id="payout-interval" class="text-xs text-ink-300">interval: —</span>
+  </div>
 </section>
 
 <script is:inline define:vars={{
@@ -49,21 +55,77 @@
     setText('stratum-host', parsed[0] || '—');
     setText('stratum-port', parsed[1] || '—');
 
-    try {
-      const r = await fetch(`${miningApi}/v1/pool/status`, { headers: { accept: 'application/json' } });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = await r.json();
-      if (j.host) setText('stratum-host', j.host);
-      if (j.port) setText('stratum-port', String(j.port));
-      if (typeof j.connected_miners === 'number') setText('miner-count', j.connected_miners);
-      if (j.network) setText('network', j.network);
-      setChip(j.synced ? 'live · synced' : 'live · syncing',
-        j.synced
-          ? 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30'
-          : 'bg-amber-400/10 text-amber-300 border-amber-400/30');
-    } catch (err) {
-      setChip('offline', 'bg-rose-400/10 text-rose-300 border-rose-400/30');
-      console.warn('[pool-web] status fetch failed:', err);
+    // Payout countdown state: server provides countdown_seconds + an
+    // interval; we tick locally each second and re-fetch periodically
+    // so a brief network blip doesn't freeze the display, and so the
+    // wrap-around (countdown -> interval) survives without waiting for
+    // the next status refresh.
+    let payoutTarget = null; // wall-clock ms when next payout is due
+    let payoutInterval = null; // ms between sweeps, used to advance on wrap
+    function fmtDuration(ms) {
+      if (ms === null || ms === undefined) return '—';
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const pad = (n) => String(n).padStart(2, '0');
+      return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
     }
+    function tickPayout() {
+      if (payoutTarget === null) return;
+      let remaining = payoutTarget - Date.now();
+      if (remaining < 0 && payoutInterval && payoutInterval > 0) {
+        // Sweep due/missed — roll forward into the next interval so the
+        // UI keeps a useful countdown until the next status refresh
+        // confirms the actual next_payout_at.
+        const cycles = Math.floor(-remaining / payoutInterval) + 1;
+        payoutTarget += cycles * payoutInterval;
+        remaining = payoutTarget - Date.now();
+      }
+      setText('payout-countdown', fmtDuration(remaining));
+    }
+    setInterval(tickPayout, 1000);
+
+    async function refresh() {
+      try {
+        const r = await fetch(`${miningApi}/v1/pool/status`, { headers: { accept: 'application/json' } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        if (j.host) setText('stratum-host', j.host);
+        if (j.port) setText('stratum-port', String(j.port));
+        if (typeof j.connected_miners === 'number') setText('miner-count', j.connected_miners);
+        if (j.network) setText('network', j.network);
+        setChip(j.synced ? 'live · synced' : 'live · syncing',
+          j.synced
+            ? 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30'
+            : 'bg-amber-400/10 text-amber-300 border-amber-400/30');
+
+        // Payouts panel — only show when the pool actually has a schedule.
+        if (j.payouts_enabled && j.payout_interval_seconds) {
+          payoutInterval = Number(j.payout_interval_seconds) * 1000;
+          const cd = Number(j.payout_countdown_seconds);
+          if (!Number.isNaN(cd)) {
+            payoutTarget = Date.now() + cd * 1000;
+          } else if (j.next_payout_at) {
+            const t = Date.parse(j.next_payout_at);
+            if (!Number.isNaN(t)) payoutTarget = t;
+          }
+          setText('payout-interval', `interval: ${Math.round(payoutInterval / 60000)} min`);
+          tickPayout();
+        } else {
+          payoutTarget = null;
+          payoutInterval = null;
+          setText('payout-countdown', 'manual');
+          setText('payout-interval', 'no automated sweep configured');
+        }
+      } catch (err) {
+        setChip('offline', 'bg-rose-400/10 text-rose-300 border-rose-400/30');
+        console.warn('[pool-web] status fetch failed:', err);
+      }
+    }
+    refresh();
+    // Re-sync against the server every 30s so clock drift / late
+    // payout-trigger events get reflected without a page reload.
+    setInterval(refresh, 30_000);
   })();
 </script>
