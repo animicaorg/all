@@ -52,6 +52,7 @@ PFX_ACC = b"\x01"
 PFX_CODE = b"\x02"
 PFX_STO = b"\x03"
 PFX_APPLIED_TX = b"\x04"  # New prefix for tx idempotency tracking
+PFX_AICF = b"\x05"        # Flat key/value namespace for AICF state (see get/put)
 
 
 def _assert_confirmed_balance_chokepoint() -> None:
@@ -100,11 +101,25 @@ def _k_sto(addr: bytes, skey: bytes) -> bytes:
 
 def _k_applied_tx(tx_hash: bytes) -> bytes:
     """Key for tracking applied transactions (idempotency guard).
-    
+
     Format: PFX_APPLIED_TX | tx_hash_len:u8 | tx_hash:bytes
     Value: height:int (encoded as canonical CBOR)
     """
     return PFX_APPLIED_TX + _u8(len(tx_hash)) + tx_hash
+
+
+def _k_aicf(key: str) -> bytes:
+    """Key for the flat AICF key/value namespace.
+
+    Used by execution.state.aicf_state to store epoch ledgers, credits,
+    inflows, pool balance, miner enumeration, etc. The aicf_state module
+    already prefixes its keys with "aicf." in string form; we add a
+    one-byte binary prefix so the bytes never collide with PFX_ACC /
+    PFX_CODE / PFX_STO key spaces.
+    """
+    if not isinstance(key, str):
+        raise TypeError(f"aicf key must be str, got {type(key).__name__}")
+    return PFX_AICF + key.encode("utf-8")
 
 
 def _parse_acc_key(key: bytes) -> bytes:
@@ -290,6 +305,34 @@ class StateDB:
                 # k = p | key_len | key
                 _, skey = _parse_sto_key(k)
                 yield addr, skey, v
+
+    # --- Flat AICF key/value namespace ---
+    #
+    # Generic get/put bound to PFX_AICF. The AICF state module
+    # (execution.state.aicf_state) writes ledgers, credits, inflows,
+    # pool balance, and the miner enumeration list using string keys
+    # like "aicf.epoch.{n}.inflow". These don't fit the account /
+    # storage / code shape, so they get their own prefix.
+    #
+    # Past bug: this method pair was missing. Every call to add_inflow
+    # crashed with "'StateDB' object has no attribute 'put'"; the
+    # treasury sweep caught it, rolled back the debit, and the AICF
+    # pool stayed permanently at zero. All nodes failed identically so
+    # consensus survived — see execution/state/aicf_treasury.py.
+
+    def get(self, key: str) -> Any:
+        raw = self.kv.get(_k_aicf(key))
+        if raw is None:
+            return None
+        return cbor_loads(raw)
+
+    def put(self, key: str, value: Any, batch: Optional[Batch] = None) -> None:
+        encoded = cbor_dumps(value)
+        k = _k_aicf(key)
+        if batch is None:
+            self.kv.put(k, encoded)
+        else:
+            batch.put(k, encoded)
 
     # --- Accounts iteration ---
 
