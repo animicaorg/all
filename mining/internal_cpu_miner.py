@@ -307,24 +307,60 @@ class CpuStratumMiner:
         # extranonce2 server-side, but starting random adds defense in depth.
         next_start = secrets.randbelow(2**32)
         windows = 0
+        # Fan-out width: how many scan windows to run in parallel each
+        # tick. Each runs in its own asyncio.to_thread (=> its own OS
+        # thread), so even with the GIL the C hashlib.sha3_256 path
+        # releases it and we get real multi-core utilisation. Without
+        # this, _mine_continuously scanned ONE window at a time and
+        # used ~one core out of N (looked like 0% on a many-core box
+        # to anyone watching `top` for a percent in the high tens).
+        # Honour --threads N; 0 means "all cores".
+        n_workers = self._threads if self._threads > 0 else (os.cpu_count() or 1)
+        n_workers = max(1, n_workers)
         try:
             while not self._stop.is_set():
-                share = await self._scan_one_window(
-                    job=job,
-                    header_template=header_template,
-                    prefix=prefix,
-                    mix_seed=mix_seed,
-                    theta_micro=theta_micro,
-                    share_ratio=share_ratio,
-                    t_share_micro=t_share_micro,
-                    start_nonce=next_start,
-                )
-                windows += 1
+                # Carve N disjoint nonce ranges and scan them in parallel.
+                # First worker to find a share wins; we cancel the rest so
+                # we can immediately submit and start the next round.
+                tasks = []
+                for i in range(n_workers):
+                    s = (next_start + i * self._scan_window) & 0xFFFFFFFFFFFFFFFF
+                    tasks.append(asyncio.create_task(self._scan_one_window(
+                        job=job,
+                        header_template=header_template,
+                        prefix=prefix,
+                        mix_seed=mix_seed,
+                        theta_micro=theta_micro,
+                        share_ratio=share_ratio,
+                        t_share_micro=t_share_micro,
+                        start_nonce=s,
+                    )))
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                share: Optional[CpuMinerResult] = None
+                for t in done:
+                    try:
+                        r = t.result()
+                    except Exception:
+                        r = None
+                    if r is not None and share is None:
+                        share = r
+                # If no early winner, let the remaining workers finish so
+                # we don't throw away the nonces they've already hashed.
+                if share is None and pending:
+                    rest = await asyncio.gather(*pending, return_exceptions=True)
+                    for r in rest:
+                        if isinstance(r, CpuMinerResult):
+                            share = r
+                            break
+                else:
+                    for t in pending:
+                        t.cancel()
+                windows += n_workers
                 if share is not None:
                     await self._submit_found_share(job, share)
                 # Slide the search window forward; wrap at 64-bit nonce
                 # space to avoid overflow during long mining runs.
-                next_start = (next_start + self._scan_window) & 0xFFFFFFFFFFFFFFFF
+                next_start = (next_start + n_workers * self._scan_window) & 0xFFFFFFFFFFFFFFFF
                 # Yield to the event loop so the rx loop can run and
                 # process incoming notify / submit responses; without this
                 # await, a CPU-only scan_batch call would starve everything
