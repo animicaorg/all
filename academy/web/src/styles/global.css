@@ -1,32 +1,165 @@
 /* Tailwind already injects base/components/utilities via the integration
-   with applyBaseStyles=true. This file holds any global overrides that
-   don't fit cleanly into a utility class. */
+   with applyBaseStyles=true. This file holds typography and global polish
+   that don't fit cleanly into utility classes. */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
 :root {
   color-scheme: dark;
+  --grain: radial-gradient(
+    1200px circle at 20% -10%,
+    rgba(251, 191, 36, 0.08),
+    transparent 50%
+  ),
+  radial-gradient(
+    900px circle at 95% 0%,
+    rgba(45, 212, 191, 0.06),
+    transparent 55%
+  );
 }
 
 html {
   scroll-behavior: smooth;
+  font-feature-settings: "cv11", "ss01";
 }
 
-/* Prose tweaks for tutorial bodies — slightly tighter line height than the
-   Tailwind default, since steps render inside an already-padded card. */
-.prose pre {
-  margin: 0.75rem 0;
+body {
+  background-color: #070d1b;
+  background-image: var(--grain);
+  background-attachment: fixed;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-.prose code:not(pre code) {
-  padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
-  background: rgba(251, 191, 36, 0.08);
+code,
+pre {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* --- Tutorial body typography (drop-in for @tailwindcss/typography) --- */
+.prose {
+  color: #dde6f4;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+.prose > * + * {
+  margin-top: 0.85em;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: #f1f5fb;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin-top: 1.4em;
+  margin-bottom: 0.5em;
+}
+.prose h2 { font-size: 1.4rem; }
+.prose h3 { font-size: 1.15rem; }
+.prose strong { color: #f1f5fb; font-weight: 600; }
+.prose em { color: #f1f5fb; }
+.prose ul,
+.prose ol {
+  padding-left: 1.4em;
+  margin-top: 0.7em;
+}
+.prose ul li::marker { color: #fbbf24; }
+.prose ol li::marker { color: #fbbf24; font-weight: 600; }
+.prose a {
   color: #fbbf24;
-  font-size: 0.9em;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
+.prose a:hover { color: #fcd34d; }
+.prose blockquote {
+  border-left: 3px solid #23375a;
+  padding-left: 1rem;
+  color: #b9c8e2;
+  font-style: italic;
+}
+.prose pre {
+  margin: 0.9rem 0;
+  padding: 0.95rem 1.1rem;
+  background: #050912;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: #dde6f4;
+  position: relative;
+}
+.prose pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+}
+.prose code:not(pre code) {
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.3rem;
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+  font-size: 0.88em;
+  font-weight: 500;
+}
+
+/* Compact-step variant: when prose is inside a Step card we want tighter
+   leading and less top padding so the step card stays compact. */
+.step .prose { font-size: 0.92rem; }
+.step .prose > *:first-child { margin-top: 0; }
 
 .line-clamp-3 {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* --- Subtle reveal on first paint --- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reveal {
+  animation: fadeUp 0.6s ease-out both;
+}
+.reveal-delay-1 { animation-delay: 0.05s; }
+.reveal-delay-2 { animation-delay: 0.12s; }
+.reveal-delay-3 { animation-delay: 0.2s; }
+
+/* Reusable utilities */
+.hairline { border-color: rgba(255, 255, 255, 0.08); }
+
+/* Track pill colors */
+.track-wallet { color: #fbbf24; }
+.track-aicf { color: #2dd4bf; }
+.track-contracts { color: #c084fc; }
+.track-node { color: #60a5fa; }
+
+/* Copy button on code blocks */
+.code-wrap {
+  position: relative;
+}
+.code-wrap > button.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  font-size: 0.65rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(7, 13, 27, 0.7);
+  color: #b9c8e2;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+.code-wrap:hover > button.copy-btn { opacity: 1; }
+.code-wrap > button.copy-btn:hover {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.4);
 }

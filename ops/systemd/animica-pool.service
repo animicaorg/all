@@ -1,0 +1,20 @@
+[Unit]
+Description=Animica Stratum mining pool
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/animica
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/root
+Environment=PYTHONPATH=/root/animica/python:/root/animica
+EnvironmentFile=-/etc/animica/pool.env
+ExecStart=/root/animica/ops/run.sh --profile mainnet pool
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

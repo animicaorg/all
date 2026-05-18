@@ -13,28 +13,67 @@ export async function getStaticPaths() {
 
 const { entry } = Astro.props;
 const { Content } = await entry.render();
-const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
+const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds, track } =
   entry.data;
+
+const difficultyColor: Record<string, string> = {
+  intro: "text-emerald-300",
+  intermediate: "text-amber-300",
+  advanced: "text-rose-300",
+};
+
+const trackEmoji: Record<string, string> = {
+  wallet: "🪙",
+  node: "🌐",
+  aicf: "⚡",
+  contracts: "📜",
+};
 ---
 
-<BaseLayout title={`${title} — Animica Academy`} description={summary}>
+<BaseLayout
+  active="tutorials"
+  title={`${title} — Animica Academy`}
+  description={summary}
+>
   <section class="max-w-7xl mx-auto px-4 py-12">
-    <a href="/tutorials" class="text-xs text-amber-400 hover:underline">← All tutorials</a>
-    <div class="mt-3 grid lg:grid-cols-[1fr_320px] gap-10 items-start">
+    <a
+      href={`/tutorials?track=${track}`}
+      class="inline-flex items-center gap-1 text-xs text-amber-400 hover:underline"
+    >
+      <span aria-hidden="true">←</span> All tutorials
+    </a>
+    <div class="mt-4 grid lg:grid-cols-[1fr_340px] gap-10 items-start">
       <article>
-        <header class="mb-6">
-          <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-300 mb-3">
-            <span class="text-amber-400 font-semibold">{difficulty}</span>
+        <header class="mb-8">
+          <div class="flex items-center gap-3 text-[11px] uppercase tracking-wider text-ink-300 mb-3">
+            <span class="inline-flex items-center gap-1.5">
+              <span>{trackEmoji[track] ?? "🏅"}</span>
+              <span class="capitalize">{track}</span>
+            </span>
+            <span class="opacity-50">·</span>
+            <span class={`font-semibold ${difficultyColor[difficulty] ?? "text-amber-400"}`}>{difficulty}</span>
             <span class="opacity-50">·</span>
             <span>≈ {estimatedMinutes} min</span>
             <span class="opacity-50">·</span>
             <span>{stepIds.length} steps</span>
           </div>
-          <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">{title}</h1>
-          <p class="mt-2 text-ink-200 max-w-3xl">{summary}</p>
+          <h1 class="text-3xl md:text-5xl font-semibold tracking-tight leading-[1.1]">{title}</h1>
+          <p class="mt-3 text-base text-ink-200 max-w-3xl leading-relaxed">{summary}</p>
         </header>
-        <div class="prose prose-invert max-w-none">
+
+        <div class="prose">
           <Content />
+        </div>
+
+        <div class="mt-12 rounded-2xl border border-white/10 bg-white/[0.03] p-5 flex flex-wrap items-center justify-between gap-4">
+          <div class="text-sm text-ink-300">
+            Stuck? File an issue on
+            <a href="https://github.com/animicaorg" class="text-amber-400 hover:underline">GitHub</a>
+            — every tutorial is reproducible from the CLI source it documents.
+          </div>
+          <a href="/tutorials" class="text-sm rounded-lg border border-white/10 hover:border-amber-400/50 hover:text-amber-300 px-3 py-1.5 transition">
+            Back to catalog →
+          </a>
         </div>
       </article>
       <ClaimPanel
@@ -51,11 +90,11 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
 
     const STORAGE_PREFIX = "academy:complete:";
 
-    function storageKey(tutorialId: string, address: string) {
-      return `${STORAGE_PREFIX}${address}:${tutorialId}`;
+    function storageKey(tutorialId: string, address: string | null) {
+      return `${STORAGE_PREFIX}${address ?? "anon"}:${tutorialId}`;
     }
 
-    function loadCompleted(tutorialId: string, address: string): Set<string> {
+    function loadCompleted(tutorialId: string, address: string | null): Set<string> {
       try {
         const raw = localStorage.getItem(storageKey(tutorialId, address));
         return new Set(raw ? (JSON.parse(raw) as string[]) : []);
@@ -64,12 +103,11 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
       }
     }
 
-    function saveCompleted(tutorialId: string, address: string, set: Set<string>) {
+    function saveCompleted(tutorialId: string, address: string | null, set: Set<string>) {
       localStorage.setItem(storageKey(tutorialId, address), JSON.stringify([...set]));
     }
 
-    // Sync the visible badges + claim button state.
-    function render(panel: HTMLElement, completed: Set<string>) {
+    function render(panel: HTMLElement, completed: Set<string>, apiOffline: boolean) {
       const ids: string[] = JSON.parse(panel.dataset.stepIds ?? "[]");
       const reward = panel.dataset.rewardAnim ?? "0";
 
@@ -78,22 +116,37 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
         if (!id) return;
         const done = completed.has(id);
         stepEl.classList.toggle("border-amber-400/50", done);
+        stepEl.classList.toggle("bg-amber-500/[0.04]", done);
         const badge = stepEl.querySelector(".step-badge");
         if (badge) badge.textContent = done ? "✓" : "●";
         const btn = stepEl.querySelector<HTMLButtonElement>(".step-toggle");
-        if (btn) btn.textContent = done ? "Completed" : "Mark complete";
+        if (btn) {
+          btn.textContent = done ? "Completed" : "Mark complete";
+          btn.classList.toggle("bg-amber-500/10", done);
+        }
       });
 
       const countEl = panel.querySelector(".claim-progress-count");
       if (countEl) countEl.textContent = String(completed.size);
+      const barEl = panel.querySelector<HTMLElement>(".claim-progress-bar");
+      if (barEl) {
+        const pct = ids.length === 0 ? 0 : Math.round((completed.size / ids.length) * 100);
+        barEl.style.width = `${pct}%`;
+      }
 
       const claimBtn = panel.querySelector<HTMLButtonElement>(".claim-btn");
       if (claimBtn) {
         const allDone = ids.every((s) => completed.has(s));
-        claimBtn.disabled = !allDone;
-        claimBtn.textContent = allDone
-          ? `Claim ${reward} ANIMICA`
-          : "Complete all steps to claim";
+        if (!allDone) {
+          claimBtn.disabled = true;
+          claimBtn.textContent = "Complete all steps to claim";
+        } else if (apiOffline) {
+          claimBtn.disabled = true;
+          claimBtn.textContent = "Rewards launching soon";
+        } else {
+          claimBtn.disabled = false;
+          claimBtn.textContent = `Claim ${reward} ANIMICA`;
+        }
       }
     }
 
@@ -104,6 +157,16 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
       const stepIds: string[] = JSON.parse(panel.dataset.stepIds ?? "[]");
 
       let cachedAddress: string | null = (await readWallet()).address;
+
+      // Probe the API once. If it's offline, we stay in "local progress only"
+      // mode — the user can still mark steps complete in localStorage.
+      let apiOffline = false;
+      try {
+        await academyApi.getPoolStatus();
+      } catch {
+        apiOffline = true;
+      }
+
       async function ensureAddress(): Promise<string> {
         if (cachedAddress) return cachedAddress;
         const { address: connected } = await connectWallet();
@@ -111,11 +174,9 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
         return connected;
       }
 
-      // Use server-side progress as the authoritative source when a wallet
-      // is connected; fall back to localStorage so the page is still usable
-      // when offline / mid-attestation.
-      const seed = cachedAddress ? loadCompleted(tutorialId, cachedAddress) : new Set<string>();
-      if (cachedAddress) {
+      // Seed completion state from local + (if API up + wallet known) server.
+      const seed = loadCompleted(tutorialId, cachedAddress);
+      if (cachedAddress && !apiOffline) {
         try {
           const { progress } = await academyApi.getProgress(cachedAddress);
           for (const p of progress) {
@@ -123,36 +184,35 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
           }
           saveCompleted(tutorialId, cachedAddress, seed);
         } catch {
-          /* offline — use local */
+          /* surface as offline next paint */
         }
       }
-      render(panel, seed);
+      render(panel, seed, apiOffline);
 
-      // Step toggles.
+      // Surface an "offline" hint inside the panel so the user knows why
+      // the claim button is disabled even after all steps are done.
+      if (apiOffline) {
+        const result = panel.querySelector<HTMLElement>(".claim-result");
+        if (result) {
+          result.innerHTML = `<span class="text-ink-300">Tutorial progress is saved locally. Payouts unlock with the v1 academy API.</span>`;
+        }
+      }
+
       document.querySelectorAll<HTMLButtonElement>(".step-toggle").forEach((btn) => {
-        btn.addEventListener("click", async () => {
+        btn.addEventListener("click", () => {
           const id = btn.dataset.step;
           if (!id) return;
-          let address: string;
-          try {
-            address = await ensureAddress();
-          } catch (e) {
-            alert((e as Error).message);
-            return;
-          }
-          const current = loadCompleted(tutorialId, address);
+          const current = loadCompleted(tutorialId, cachedAddress);
           if (current.has(id)) {
-            // Allow un-marking pre-finalize so the user can review.
             current.delete(id);
           } else {
             current.add(id);
           }
-          saveCompleted(tutorialId, address, current);
-          render(panel, current);
+          saveCompleted(tutorialId, cachedAddress, current);
+          render(panel, current, apiOffline);
         });
       });
 
-      // Claim flow.
       const claimBtn = panel.querySelector<HTMLButtonElement>(".claim-btn");
       const resultEl = panel.querySelector<HTMLElement>(".claim-result");
       claimBtn?.addEventListener("click", async () => {
@@ -169,8 +229,6 @@ const { title, summary, difficulty, estimatedMinutes, rewardAnim, stepIds } =
         claimBtn.textContent = "Claiming…";
         if (resultEl) resultEl.textContent = "";
 
-        // Pay out the final step in the list; the server treats this as the
-        // tutorial-completion claim and credits the full reward.
         const finalStep = stepIds[stepIds.length - 1];
         if (!finalStep) {
           claimBtn.textContent = "No steps defined";

@@ -350,13 +350,77 @@ def test_mine_blocks_missing_count() -> None:
 
 
 def test_mine_blocks_invalid_count_zero() -> None:
-    """Test that count=0 is rejected."""
+    """Test that count=0 is rejected for local mining."""
     result = runner.invoke(
         mining.app,
         ["mine-blocks", "--address", "anim1test123", "--count", "0"],
     )
     assert result.exit_code == 2
-    assert "must be greater than 0" in result.output
+    assert "count must be greater than 0 for local mining" in result.output
+
+
+def test_mine_blocks_count_zero_runs_pool_until_stopped(monkeypatch: Any) -> None:
+    """Pool mining treats count=0 as run-until-stopped."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    called: dict[str, Any] = {}
+
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: x == test_address)
+
+    async def fake_pool_miner(**kwargs: Any) -> int:
+        called.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(mining, "_run_pool_stratum_miner", fake_pool_miner)
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address",
+            test_address,
+            "--count",
+            "0",
+            "--pool-stratum",
+            "pool.animica.org:3333",
+            "--device",
+            "cpu",
+            "--no-aicf",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["host"] == "pool.animica.org"
+    assert called["port"] == 3333
+    assert called["target_blocks"] == 0
+
+
+def test_start_alias_uses_default_wallet_and_pool(monkeypatch: Any) -> None:
+    """`animica miner start --pool ...` is the friendly pool-mining alias."""
+    test_address = "anim1zqqjt3258rgnfckqxv686unmgtvkl2hn6y7afdgxthummydzr6exw9spuqzdz"
+    called: dict[str, Any] = {}
+
+    monkeypatch.setattr(mining, "_resolve_default_miner_address", lambda: test_address)
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: x == test_address)
+
+    async def fake_pool_miner(**kwargs: Any) -> int:
+        called.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(mining, "_run_pool_stratum_miner", fake_pool_miner)
+    result = runner.invoke(
+        mining.app,
+        [
+            "start",
+            "--pool",
+            "pool.animica.org:3333",
+            "--device",
+            "cpu",
+            "--no-aicf",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["host"] == "pool.animica.org"
+    assert called["port"] == 3333
+    assert called["address"] == test_address
+    assert called["target_blocks"] == 0
 
 
 def test_mine_blocks_invalid_count_negative() -> None:

@@ -1,0 +1,80 @@
+---
+title: "Send your first transaction"
+summary: "Send ANIMICA from your wallet to another address using `animica tx send`, then verify the receipt with `animica tx status`."
+track: "wallet"
+difficulty: "intro"
+order: 2
+estimatedMinutes: 4
+rewardAnim: "1.5"
+steps: 3
+stepIds: ["compose", "broadcast", "verify"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="compose" title="Compose the transfer">
+
+Pick a destination address (a friend's, or your own second wallet). Then
+preview what you're about to send with `--dry-run` — this builds and
+validates the transaction in the mempool *without* broadcasting it:
+
+```bash
+animica tx send \
+  --from anim1...your-address \
+  --to anim1...destination \
+  --value 0.1 \
+  --dry-run
+```
+
+Use the `anim1...` addresses from `animica wallet list`. The dry-run
+output shows the assembled transaction (fee, nonce, validity window).
+If it complains about the from-address being unknown, double-check
+that the label / address matches a wallet in `wallet list`.
+
+Mark this step complete after the dry-run prints a valid simulated
+transaction.
+
+</Step>
+
+<Step id="broadcast" title="Sign and broadcast">
+
+Re-run the same command without `--dry-run` to actually sign with the
+post-quantum keypair in `~/.animica/wallets.json` and broadcast to the
+node:
+
+```bash
+animica tx send \
+  --from anim1...your-address \
+  --to anim1...destination \
+  --value 0.1
+```
+
+The CLI prints the transaction hash on success. Copy it — you'll need
+it in the next step. The signing happens locally; nothing about your
+seed phrase leaves the machine.
+
+Mark this step complete once you have a transaction hash.
+
+</Step>
+
+<Step id="verify" title="Verify on-chain">
+
+Look up the receipt:
+
+```bash
+animica tx status 0x...your-tx-hash
+```
+
+You'll see one of `pending`, `included` (in a block), or `error`. Once
+included, the result shows the block height and the gas used.
+
+You can cross-check on the explorer:
+
+```
+https://explorer.animica.org/tx/0x...your-tx-hash
+```
+
+Mark this step complete after `tx status` returns `included` (or after
+you've found the transaction on the explorer).
+
+</Step>

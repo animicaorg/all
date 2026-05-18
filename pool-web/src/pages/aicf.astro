@@ -22,17 +22,13 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">1. Register</div>
         <h3 class="text-lg font-semibold">Auto-detect hardware</h3>
         <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>animica miner setup
-animica miner mine-blocks \
-  --address anim1... \
-  --pool-stratum stratum+tcp://pool.animica.org:5333 \
-  --aicf-endpoint https://rpc.pool.animica.org/aicf \
-  --count 0</code></pre>
+animica miner mine-blocks --count 0 --pool-stratum stratum+tcp://pool.animica.org:3333</code></pre>
         <p class="mt-3 text-sm text-ink-300">
           <code class="font-mono">setup</code> detects GPU/CPU/VRAM/RAM and
           installs the right model bundle.
-          <code class="font-mono">mine-blocks</code> registers with AICF and
-          serves jobs alongside PoW &mdash; no local full node required when
-          <code class="font-mono">--aicf-endpoint</code> is set.
+          <code class="font-mono">mine-blocks</code> connects to the official pool and starts PoW
+          (use <code class="font-mono">--count 0</code> to mine until you press Ctrl-C).
+          AICF setup remains available for compatible machines and can run alongside mining.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">

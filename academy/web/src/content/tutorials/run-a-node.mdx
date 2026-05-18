@@ -1,0 +1,104 @@
+---
+title: "Run a local Animica node"
+summary: "Bring up an animica node with `animica node up`, tail its logs, query the chain head, and stop it cleanly."
+track: "node"
+difficulty: "intro"
+order: 1
+estimatedMinutes: 8
+rewardAnim: "2"
+steps: 4
+stepIds: ["node-up", "head-sync", "rpc-query", "node-down"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="node-up" title="Start the node">
+
+Pick a network first — `devnet` is a single-node local chain ideal
+for tutorials. Then start the node with `animica node up`. The CLI
+runs the bundled Docker compose stack and waits for JSON-RPC to come
+up.
+
+```bash
+animica network set devnet
+animica node up
+```
+
+The first run pulls the `animica/node` image (a few hundred MB). When
+the node is ready, RPC is reachable at `http://127.0.0.1:8545`.
+
+Check status any time:
+
+```bash
+animica node status
+```
+
+Mark this step complete once `animica node status` reports the node
+is running and healthy.
+
+</Step>
+
+<Step id="head-sync" title="Tail the logs">
+
+Watch the node produce blocks in real time:
+
+```bash
+animica node logs --follow
+```
+
+You should see lines like:
+
+```
+info  block accepted height=12 txs=0 hash=0xabc…
+info  block accepted height=13 txs=0 hash=0xdef…
+```
+
+On devnet the chain mines empty blocks continuously. Sending a tx (from
+the wallet track) will produce a line with a non-zero `txs` count.
+
+Press Ctrl-C to stop following — the node keeps running. Mark this
+step complete after you've seen at least a few block-accepted lines.
+
+</Step>
+
+<Step id="rpc-query" title="Query the chain head">
+
+The CLI talks to the node over JSON-RPC. The simplest way to confirm
+this is the `chain head` helper:
+
+```bash
+animica chain head
+```
+
+It prints the current height, hash, and timestamp. For the same data
+via raw RPC (handy if you're building tooling), use:
+
+```bash
+animica rpc call chain_getHead
+```
+
+Both calls hit the same `http://127.0.0.1:8545` endpoint your node
+exposes. The height should match the latest log line from the previous
+step.
+
+Mark this step complete after either command returns the head.
+
+</Step>
+
+<Step id="node-down" title="Stop the node">
+
+When you're done, shut the node down cleanly:
+
+```bash
+animica node down
+```
+
+This stops the compose stack but preserves the chain data under
+`~/.animica/data/`. Running `animica node up` again resumes from where
+it stopped. To wipe the data and start fresh, add `--volumes` (alias
+`-v`).
+
+Mark this step complete after `animica node status` reports the node
+is no longer running.
+
+</Step>

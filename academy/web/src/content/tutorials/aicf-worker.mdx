@@ -1,0 +1,125 @@
+---
+title: "Mine Animica"
+summary: "Use `animica miner setup` and `animica miner mine-blocks` to mine PoW against the official pool. AICF inference jobs are served automatically alongside PoW for extra credits."
+track: "aicf"
+difficulty: "intermediate"
+order: 2
+estimatedMinutes: 10
+rewardAnim: "5"
+steps: 4
+stepIds: ["setup", "start-mining", "watch-shares", "verify-credits"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="setup" title="Run miner setup">
+
+`animica miner setup` probes your hardware (CPU cores, RAM, GPU, VRAM),
+prepares the on-disk model cache at `~/.animica/models/`, and downloads
+any AICF model bundles your machine qualifies for. It's idempotent —
+safe to rerun after upgrading hardware or the `animica` package.
+
+```bash
+animica miner setup
+```
+
+You'll see a one-line summary like:
+
+```
+Detected: linux/x86_64, 12 cores, 32.0 GB RAM, accel=cuda
+Eligible tiers: tiny, small
+Tiers to install: tiny, small
+```
+
+If you're tight on disk space, restrict the tiers:
+
+```bash
+animica miner setup --tiers tiny
+```
+
+Mark this step complete once setup finishes without errors.
+
+</Step>
+
+<Step id="start-mining" title="Start mining">
+
+`animica miner mine-blocks` runs the PoW miner against the Stratum
+pool. The AICF compute worker is enabled by default, so the same
+process serves real inference jobs whenever your hardware idles
+between PoW shares — both earn you ANIMICA.
+
+```bash
+animica miner mine-blocks \
+  --count 0 \
+  --pool-stratum stratum+tcp://pool.animica.org:3333
+```
+
+Flag breakdown:
+
+- `--count 0` — mine until you press Ctrl-C (any positive integer
+  caps the number of blocks).
+- `--pool-stratum` — connect to the official Stratum endpoint. Omit
+  it to mine solo against a local node.
+- AICF is on by default. Add `--no-aicf` to mine PoW only.
+
+To cap CPU usage, add `--threads N`. To force a specific GPU backend,
+add `--device cuda` (or `rocm`, `metal`, `cpu`).
+
+Mark this step complete after the miner reports a connected Stratum
+session.
+
+</Step>
+
+<Step id="watch-shares" title="Watch shares and AICF jobs">
+
+The miner logs are structured. PoW shares look like:
+
+```
+[pow]  share submitted height=18234 difficulty=2.3M
+```
+
+AICF jobs (when your tier wins a job) look like:
+
+```
+[aicf] job 0xab12… served in 4.1s, 240 tokens
+```
+
+Pool-side stats are available from the pool API:
+
+```bash
+curl -s https://pool.animica.org/api/pool/summary | jq
+```
+
+You should see your worker counted in `worker_count` and your shares
+in `pool_hashrate`. Confirmed blocks credited to the pool appear in
+`blocks_found_total`.
+
+Mark this step complete once you've seen at least one `share
+submitted` line.
+
+</Step>
+
+<Step id="verify-credits" title="Verify your credits and payouts">
+
+PoW rewards land in your wallet as block payouts; AICF rewards arrive
+as settlement transfers from the network. Check the AICF side first:
+
+```bash
+animica aicf miner-credits anim1...your-address
+```
+
+The output shows current balance, lifetime earned, and lifetime
+spent. For the full on-chain picture, look up your address on the
+[explorer](https://explorer.animica.org/) — both PoW payouts and
+AICF settlements show as normal transfers into your account.
+
+To watch the network's AICF activity in real time:
+
+```bash
+animica aicf watch --interval 10
+```
+
+Mark this step complete after you've confirmed at least one incoming
+transfer (PoW or AICF) on the explorer.
+
+</Step>

@@ -1,18 +1,70 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+// Curated badge previews so the page is meaningful even before the
+// achievements API is live — these mirror what the backend will
+// award server-side once it's deployed.
+const entries = await getCollection("tutorials");
+const previewBadges = entries
+  .slice()
+  .sort((a, b) => {
+    if (a.data.track === b.data.track) return a.data.order - b.data.order;
+    return a.data.track.localeCompare(b.data.track);
+  })
+  .map((entry) => ({
+    track: entry.data.track,
+    title: entry.data.title,
+    slug: entry.slug,
+    rewardAnim: entry.data.rewardAnim,
+    estimatedMinutes: entry.data.estimatedMinutes,
+  }));
+
+const trackEmoji: Record<string, string> = {
+  wallet: "🪙",
+  node: "🌐",
+  aicf: "⚡",
+  contracts: "📜",
+};
 ---
 
 <BaseLayout
+  active="achievements"
   title="Achievements — Animica Academy"
-  description="Your earned tutorial badges and track completions. Connect your wallet to load."
+  description="Tutorial badges and track completions. Each badge is awarded by the academy backend once a wallet has signed an attestation for every step."
 >
   <section class="max-w-7xl mx-auto px-4 py-12">
-    <h1 class="text-3xl font-semibold tracking-tight mb-2">Achievements</h1>
-    <p class="text-ink-300 max-w-2xl mb-8">
-      Badges are awarded to your wallet address. Track-completion badges also
-      release a bonus payout from the reward pool.
+    <p class="text-[11px] uppercase tracking-[0.24em] text-amber-400 font-semibold">Achievements</p>
+    <h1 class="mt-2 text-3xl md:text-4xl font-semibold tracking-tight">Your badges</h1>
+    <p class="mt-3 text-ink-300 max-w-2xl">
+      Each tutorial awards a tutorial badge to the wallet that signed its
+      completion attestation. Finishing every tutorial in a track unlocks a
+      track badge with a bonus payout from the public reward pool.
     </p>
-    <achievements-grid class="block"></achievements-grid>
+
+    <achievements-grid class="block mt-10" data-preview-count={previewBadges.length}></achievements-grid>
+
+    <div
+      data-preview-fallback
+      class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+      hidden
+    >
+      {previewBadges.map((b) => (
+        <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5 relative overflow-hidden">
+          <div class="absolute inset-0 -z-10 bg-gradient-to-br from-white/[0.03] to-transparent"></div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-3xl opacity-50 grayscale">{trackEmoji[b.track] ?? "🏅"}</div>
+            <span class="text-[10px] uppercase tracking-wider text-ink-400 font-semibold">Locked</span>
+          </div>
+          <h3 class="font-semibold leading-tight">{b.title}</h3>
+          <p class="mt-1 text-xs text-ink-400 capitalize">{b.track} track</p>
+          <div class="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px]">
+            <span class="font-mono text-ink-300">+{b.rewardAnim} ANIMICA</span>
+            <a class="text-amber-400 hover:underline" href={`/tutorials/${b.slug}`}>Start →</a>
+          </div>
+        </div>
+      ))}
+    </div>
   </section>
 
   <script>
@@ -25,39 +77,76 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         document.addEventListener("animica:wallet-connected", () => this.render());
       }
 
+      showPreview(reason: string) {
+        this.innerHTML = `
+          <div class="rounded-2xl border border-amber-400/20 bg-amber-400/[0.04] p-6 mb-2">
+            <div class="text-[10px] uppercase tracking-wider text-amber-300 font-semibold mb-2">Preview</div>
+            <h2 class="text-lg font-semibold">${reason}</h2>
+            <p class="mt-2 text-sm text-ink-200">
+              The badges below are the full catalog you can earn. Once the
+              academy backend goes live, your earned badges will glow gold and
+              show the date they were awarded.
+            </p>
+          </div>`;
+        document
+          .querySelector<HTMLElement>("[data-preview-fallback]")
+          ?.removeAttribute("hidden");
+      }
+
+      hidePreview() {
+        document
+          .querySelector<HTMLElement>("[data-preview-fallback]")
+          ?.setAttribute("hidden", "");
+      }
+
       async render() {
-        let { address } = await readWallet();
+        const { address } = await readWallet();
         if (!address) {
           this.innerHTML = `
-            <div class="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-6 text-center">
-              <p class="text-sm text-ink-200 mb-3">Connect your wallet to see your badges.</p>
-              <button id="ach-connect" class="rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-2.5 transition">Connect wallet</button>
-            </div>
-          `;
+            <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 class="text-lg font-semibold">Connect a wallet to load earned badges</h2>
+                  <p class="mt-1 text-sm text-ink-300">
+                    Or browse the full badge catalog below — every one of them is
+                    earnable today.
+                  </p>
+                </div>
+                <button id="ach-connect" class="rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-4 py-2 text-sm transition">
+                  Connect wallet
+                </button>
+              </div>
+            </div>`;
+          document
+            .querySelector<HTMLElement>("[data-preview-fallback]")
+            ?.removeAttribute("hidden");
           this.querySelector("#ach-connect")?.addEventListener("click", async () => {
             try {
               await connectWallet();
               this.render();
             } catch (e) {
-              alert((e as Error).message);
+              this.showPreview((e as Error).message || "Wallet extension not detected.");
             }
           });
           return;
         }
 
-        this.innerHTML = `<div class="text-sm text-ink-300">Loading achievements…</div>`;
+        this.innerHTML = `<div class="text-sm text-ink-300">Loading achievements for ${address.slice(0, 12)}…</div>`;
         try {
           const { badges } = await academyApi.getAchievements(address);
+          this.hidePreview();
           if (badges.length === 0) {
             this.innerHTML = `
               <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
                 <p class="text-sm text-ink-200">No badges yet — complete a tutorial to earn your first.</p>
                 <a class="mt-3 inline-block text-amber-400 hover:underline text-sm" href="/tutorials">Browse tutorials →</a>
-              </div>
-            `;
+              </div>`;
+            document
+              .querySelector<HTMLElement>("[data-preview-fallback]")
+              ?.removeAttribute("hidden");
             return;
           }
-          const cards = badges.map(b => {
+          const cards = badges.map((b) => {
             const earned = b.awardedAt !== null;
             return `
               <div class="rounded-2xl border ${earned ? "border-amber-400/40 bg-amber-500/5" : "border-white/10 bg-white/[0.03]"} p-5">
@@ -68,15 +157,15 @@ import BaseLayout from "../layouts/BaseLayout.astro";
                   <span class="font-mono ${earned ? "text-amber-400" : "text-ink-300"}">+${b.rewardAnim} ANIMICA</span>
                   <span class="text-ink-300">${earned ? new Date(b.awardedAt!).toLocaleDateString() : "locked"}</span>
                 </div>
-              </div>
-            `;
+              </div>`;
           }).join("");
           this.innerHTML = `<div class="grid sm:grid-cols-2 md:grid-cols-3 gap-4">${cards}</div>`;
-        } catch (e) {
-          this.innerHTML = `<div class="text-sm text-red-300">Failed to load: ${(e as Error).message}</div>`;
+        } catch {
+          this.showPreview("Achievements API not online yet.");
         }
       }
     }
-    if (!customElements.get("achievements-grid")) customElements.define("achievements-grid", AchievementsGrid);
+    if (!customElements.get("achievements-grid"))
+      customElements.define("achievements-grid", AchievementsGrid);
   </script>
 </BaseLayout>

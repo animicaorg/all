@@ -152,48 +152,48 @@ declare module 'astro:content' {
 
 	type ContentEntryMap = {
 		"tutorials": {
-"aicf-first-chat.md": {
-	id: "aicf-first-chat.md";
+"aicf-first-chat.mdx": {
+	id: "aicf-first-chat.mdx";
   slug: "aicf-first-chat";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
-"aicf-worker.md": {
-	id: "aicf-worker.md";
+} & { render(): Render[".mdx"] };
+"aicf-worker.mdx": {
+	id: "aicf-worker.mdx";
   slug: "aicf-worker";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
-"deploy-counter.md": {
-	id: "deploy-counter.md";
+} & { render(): Render[".mdx"] };
+"deploy-counter.mdx": {
+	id: "deploy-counter.mdx";
   slug: "deploy-counter";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
-"install-wallet.md": {
-	id: "install-wallet.md";
+} & { render(): Render[".mdx"] };
+"install-wallet.mdx": {
+	id: "install-wallet.mdx";
   slug: "install-wallet";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
-"run-a-node.md": {
-	id: "run-a-node.md";
+} & { render(): Render[".mdx"] };
+"run-a-node.mdx": {
+	id: "run-a-node.mdx";
   slug: "run-a-node";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
-"send-first-tx.md": {
-	id: "send-first-tx.md";
+} & { render(): Render[".mdx"] };
+"send-first-tx.mdx": {
+	id: "send-first-tx.mdx";
   slug: "send-first-tx";
   body: string;
   collection: "tutorials";
   data: InferEntrySchema<"tutorials">
-} & { render(): Render[".md"] };
+} & { render(): Render[".mdx"] };
 };
 
 	};

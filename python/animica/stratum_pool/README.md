@@ -51,6 +51,14 @@ animica pool test-job
 animica pool list-workers
 ```
 
+Connect with the Animica CLI:
+
+```bash
+python3 -m pip install --upgrade animica
+animica miner setup
+animica miner mine-blocks --count 0 --pool-stratum stratum+tcp://pool.animica.org:3333
+```
+
 Connect the reference Stratum miner:
 
 ```bash

@@ -1,55 +1,39 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-
-// Same downloads exposed by the main website's mining portal — the
-// canonical artifacts are produced by the animica release pipeline.
-const downloads = [
-  { os: "Linux",   arch: "x86_64", file: "animica-cpu-miner-mainnet-linux.tar.gz",   icon: "🐧" },
-  { os: "macOS",   arch: "any",    file: "animica-cpu-miner-mainnet-macos.zip",      icon: "🍎" },
-  { os: "Windows", arch: "x86_64", file: "animica-cpu-miner-mainnet-windows.zip",    icon: "🪟" },
-];
 ---
 <BaseLayout
   title="Downloads — Animica Pool"
-  description="Download the Animica miner. Or just `pip install animica` for the python package — has the same miner plus chat + AICF worker."
+  description="Install the Animica miner with `python3 -m pip install --upgrade animica` — ships the chain CLI, PoW miner, AICF compute worker, and chat REPL."
 >
   <section class="max-w-5xl mx-auto px-4 py-12 md:py-16">
     <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Downloads</h1>
+    <p class="mt-3 text-ink-300">
+      Animica is distributed as a single Python package. It runs on Linux, macOS,
+      and Windows (via WSL2) and includes everything you need to mine.
+    </p>
 
     <div class="mt-10 rounded-2xl border border-amber-400/30 bg-amber-400/[0.04] p-6">
-      <h2 class="text-xl font-semibold mb-2">Recommended: <code class="font-mono text-amber-400">pip install animica</code></h2>
+      <h2 class="text-xl font-semibold mb-2">Install: <code class="font-mono text-amber-400">python3 -m pip install --upgrade animica</code></h2>
       <p class="text-sm text-ink-200">
         Ships the chain CLI, the PoW miner, the AICF compute worker, and the
         <code class="font-mono">animica chat</code> REPL — all in one package.
       </p>
-      <pre class="mt-4 bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>pip install animica
+      <pre class="mt-4 bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>python3 -m pip install --upgrade animica
 animica --help</code></pre>
     </div>
 
-    <h2 class="mt-12 text-xl font-semibold">Standalone CPU miner builds</h2>
-    <p class="mt-1 text-sm text-ink-300">
-      Pre-built executables that don't require Python. Use these if you'd
-      rather not install the full package.
-    </p>
-    <div class="mt-6 grid sm:grid-cols-3 gap-4">
-      {downloads.map((d) => (
-        <a
-          class="rounded-2xl border border-white/10 bg-white/[0.03] p-5 hover:border-amber-400/40 transition group"
-          href={`https://downloads.animica.org/miner/${d.file}`}
-        >
-          <div class="text-3xl">{d.icon}</div>
-          <div class="mt-3 font-semibold">{d.os}</div>
-          <div class="text-xs font-mono text-ink-300">{d.arch}</div>
-          <div class="mt-3 text-xs text-amber-400 group-hover:underline break-all">{d.file}</div>
-        </a>
-      ))}
+    <div class="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+      <h2 class="text-lg font-semibold">Next steps</h2>
+      <ul class="mt-3 space-y-2 text-sm text-ink-300 list-disc list-inside">
+        <li>Follow the <a class="text-amber-400 hover:underline" href="/#detailed-setup">step-by-step miner setup</a> to create a wallet and start hashing.</li>
+        <li>Check <a class="text-amber-400 hover:underline" href="/stats">pool stats</a> for live hashrate and recent blocks.</li>
+        <li>Read the <a class="text-amber-400 hover:underline" href="/aicf">AICF compute</a> page if your machine can serve inference jobs.</li>
+      </ul>
     </div>
 
     <p class="mt-8 text-xs text-ink-400">
-      Checksums published at
-      <a class="underline hover:text-ink-50" href="https://downloads.animica.org/miner/SHA256SUMS">SHA256SUMS</a>.
-      Bundle manifest at
-      <a class="underline hover:text-ink-50" href="https://downloads.animica.org/miner/manifest.json">manifest.json</a>.
+      Source code lives at <a class="underline hover:text-ink-50" href="https://github.com/animicaorg/all">github.com/animicaorg/all</a>.
+      Build from source if you prefer; pre-built executables are no longer distributed.
     </p>
   </section>
 </BaseLayout>

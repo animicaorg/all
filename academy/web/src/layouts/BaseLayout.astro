@@ -1,9 +1,18 @@
 ---
+import "../styles/global.css";
+
 interface Props {
   title: string;
   description: string;
+  /** Optional active-nav hint: "tutorials" | "achievements" | "rewards" */
+  active?: string;
 }
-const { title, description } = Astro.props;
+const { title, description, active } = Astro.props;
+const navLinks = [
+  { href: "/tutorials", label: "Tutorials", key: "tutorials" },
+  { href: "/achievements", label: "Achievements", key: "achievements" },
+  { href: "/rewards", label: "Rewards", key: "rewards" },
+];
 ---
 
 <!doctype html>
@@ -19,48 +28,117 @@ const { title, description } = Astro.props;
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Animica Academy" />
+    <meta name="theme-color" content="#070d1b" />
   </head>
   <body class="min-h-screen flex flex-col font-sans antialiased">
-    <header class="border-b border-white/10 bg-ink-900/70 backdrop-blur sticky top-0 z-20">
-      <nav class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6 text-sm">
-        <a href="/" class="font-semibold tracking-tight text-lg">
-          Animica <span class="text-amber-400">Academy</span>
+    <header class="border-b border-white/5 bg-ink-950/70 backdrop-blur-md sticky top-0 z-30">
+      <nav class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-1 sm:gap-3 text-sm">
+        <a href="/" class="font-semibold tracking-tight text-base sm:text-lg mr-2 sm:mr-4 flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_12px_2px_rgba(251,191,36,0.6)]"></span>
+          Animica <span class="text-amber-400 hidden xs:inline">Academy</span>
         </a>
-        <a href="/tutorials" class="hover:text-amber-400 transition">Tutorials</a>
-        <a href="/achievements" class="hover:text-amber-400 transition">Achievements</a>
-        <a href="/rewards" class="hover:text-amber-400 transition">Rewards</a>
+        {navLinks.map((link) => (
+          <a
+            href={link.href}
+            class:list={[
+              "px-2.5 py-1.5 rounded-lg transition text-ink-200 hover:text-amber-300 hover:bg-amber-400/5",
+              active === link.key && "text-amber-300 bg-amber-400/10",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))}
         <span class="flex-1"></span>
         <wallet-pill class="contents"></wallet-pill>
-        <a href="https://animica.org" class="text-ink-300 hover:text-ink-50 transition">animica.org →</a>
+        <a
+          href="https://animica.org"
+          class="hidden md:inline-flex items-center gap-1 text-ink-300 hover:text-ink-50 transition text-xs ml-2"
+        >
+          animica.org <span aria-hidden="true">→</span>
+        </a>
       </nav>
     </header>
+
     <main class="flex-1">
       <slot />
     </main>
-    <footer class="border-t border-white/10 bg-ink-900/50 mt-16">
-      <div class="max-w-7xl mx-auto px-4 py-6 text-xs text-ink-300 flex flex-wrap gap-4 items-center">
-        <span>academy.animica.org</span>
-        <span class="opacity-50">•</span>
-        <a href="https://animica.org/docs" class="hover:text-ink-50">Docs</a>
-        <span class="opacity-50">•</span>
-        <a href="https://pool.animica.org" class="hover:text-ink-50">Mining pool</a>
-        <span class="opacity-50">•</span>
-        <a href="https://github.com/animicaorg" class="hover:text-ink-50">GitHub</a>
-        <span class="flex-1"></span>
-        <span class="opacity-60">© Animica</span>
+
+    <footer class="border-t border-white/5 bg-ink-950/40 mt-20">
+      <div class="max-w-7xl mx-auto px-4 py-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+        <div>
+          <div class="font-semibold text-ink-50 mb-2 flex items-center gap-2">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            Animica Academy
+          </div>
+          <p class="text-ink-300 leading-relaxed">
+            Hands-on tutorials for the Animica stack — every command is a real
+            <code class="font-mono text-amber-400">animica</code> CLI invocation.
+          </p>
+        </div>
+        <div>
+          <div class="font-semibold text-ink-50 mb-2">Learn</div>
+          <ul class="space-y-1.5 text-ink-300">
+            <li><a href="/tutorials" class="hover:text-amber-300 transition">All tutorials</a></li>
+            <li><a href="/tutorials?track=wallet" class="hover:text-amber-300 transition">Wallet basics</a></li>
+            <li><a href="/tutorials?track=node" class="hover:text-amber-300 transition">Run a node</a></li>
+            <li><a href="/tutorials?track=aicf" class="hover:text-amber-300 transition">AICF compute</a></li>
+            <li><a href="/tutorials?track=contracts" class="hover:text-amber-300 transition">Smart contracts</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-semibold text-ink-50 mb-2">Network</div>
+          <ul class="space-y-1.5 text-ink-300">
+            <li><a href="https://animica.org" class="hover:text-amber-300 transition">animica.org</a></li>
+            <li><a href="https://pool.animica.org" class="hover:text-amber-300 transition">Mining pool</a></li>
+            <li><a href="https://explorer.animica.org" class="hover:text-amber-300 transition">Explorer</a></li>
+            <li><a href="https://aicf.animica.org" class="hover:text-amber-300 transition">AICF</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-semibold text-ink-50 mb-2">Build</div>
+          <ul class="space-y-1.5 text-ink-300">
+            <li><a href="https://github.com/animicaorg" class="hover:text-amber-300 transition">GitHub</a></li>
+            <li><a href="https://animica.org/docs" class="hover:text-amber-300 transition">Docs</a></li>
+            <li><a href="/rewards" class="hover:text-amber-300 transition">Reward pool</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-white/5">
+        <div class="max-w-7xl mx-auto px-4 py-4 text-[11px] text-ink-400 flex flex-wrap gap-2 items-center justify-between">
+          <span>academy.animica.org</span>
+          <span>© Animica · Apache 2.0</span>
+        </div>
       </div>
     </footer>
 
     <script>
-      // Persistent wallet pill: shows "Connect" until the extension is
-      // present and connected, then short-addr + network. Connection is
-      // shared across pages via the extension itself; this just renders
-      // the current state.
+      // Persistent wallet pill: tries to detect the optional Animica browser
+      // extension at window.animica. When absent (the common case today), it
+      // renders a static "CLI install" hint instead of an error.
       import { readWallet, connectWallet, shortAddr } from "../lib/wallet";
 
       class WalletPill extends HTMLElement {
         async connectedCallback() {
-          this.innerHTML = `<button id="wp-btn" class="rounded-lg border border-amber-400/40 hover:border-amber-400 text-amber-300 px-3 py-1.5 text-xs font-medium">Connect wallet</button>`;
+          // Probe the extension once. If it's not present, render a tiny
+          // CTA that points to the wallet tutorial — no errors, no broken
+          // buttons.
+          const hasExtension =
+            typeof window !== "undefined" && Boolean((window as any).animica);
+
+          if (!hasExtension) {
+            this.innerHTML = `
+              <a
+                href="/tutorials/install-wallet"
+                class="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-white/10 hover:border-amber-400/50 text-ink-200 hover:text-amber-300 px-3 py-1.5 text-xs font-medium transition"
+                title="Get an animica wallet via the CLI"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-ink-300"></span>
+                Get wallet
+              </a>`;
+            return;
+          }
+
+          this.innerHTML = `<button id="wp-btn" class="rounded-lg border border-amber-400/40 hover:border-amber-400 text-amber-300 px-3 py-1.5 text-xs font-medium transition">Connect wallet</button>`;
           const btn = this.querySelector<HTMLButtonElement>("#wp-btn");
           if (!btn) return;
 
@@ -103,6 +181,41 @@ const { title, description } = Astro.props;
       }
       if (!customElements.get("wallet-pill")) {
         customElements.define("wallet-pill", WalletPill);
+      }
+
+      // Adorn fenced code blocks with a copy button. Pure progressive
+      // enhancement — runs only when JS is present, falls back to plain
+      // <pre><code> otherwise.
+      function enhanceCodeBlocks() {
+        document.querySelectorAll<HTMLPreElement>(".prose pre").forEach((pre) => {
+          if (pre.parentElement?.classList.contains("code-wrap")) return;
+          const wrap = document.createElement("div");
+          wrap.className = "code-wrap";
+          pre.parentNode?.insertBefore(wrap, pre);
+          wrap.appendChild(pre);
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = "Copy";
+          btn.className = "copy-btn";
+          btn.addEventListener("click", async () => {
+            const text = pre.innerText.trim();
+            try {
+              await navigator.clipboard.writeText(text);
+              const original = btn.textContent;
+              btn.textContent = "Copied";
+              setTimeout(() => { btn.textContent = original; }, 1200);
+            } catch {
+              btn.textContent = "Copy failed";
+              setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+            }
+          });
+          wrap.appendChild(btn);
+        });
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", enhanceCodeBlocks);
+      } else {
+        enhanceCodeBlocks();
       }
     </script>
   </body>

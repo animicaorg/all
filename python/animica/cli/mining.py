@@ -617,6 +617,53 @@ def _resolve_payout_address(address_or_label: str) -> str:
     raise typer.Exit(2)
 
 
+def _resolve_default_miner_address() -> Optional[str]:
+    """Resolve the default miner payout address without exposing wallet secrets."""
+    for env_name in ("ANIMICA_MINER_ADDRESS", "ANIMICA_DEFAULT_ADDRESS"):
+        value = os.environ.get(env_name)
+        if value and value.strip():
+            return _resolve_payout_address(value.strip())
+
+    try:
+        from animica.cli.wallet import _load_store, _wallet_file_path
+
+        store = _load_store(_wallet_file_path(None))
+    except (ImportError, FileNotFoundError, KeyError, TypeError, ValueError):
+        return None
+
+    default_address = str(store.get("default_address") or "").strip()
+    if default_address:
+        return _resolve_payout_address(default_address)
+
+    default_label = str(store.get("default") or "").strip()
+    if default_label:
+        return _resolve_payout_address(default_label)
+
+    return None
+
+
+def _require_miner_address(address_or_label: Optional[str]) -> str:
+    if address_or_label and address_or_label.strip():
+        return _resolve_payout_address(address_or_label.strip())
+
+    resolved = _resolve_default_miner_address()
+    if resolved:
+        return resolved
+
+    typer.secho(
+        "Error: no miner payout address is configured.",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    typer.secho(
+        "Set one with `animica wallet set-default <label>`, export "
+        "ANIMICA_MINER_ADDRESS, or pass `--address anim1...`.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
 def _check_sync(rpc_url: str, *, force: bool) -> None:
     try:
         head = call_rpc("chain_getHead", [], rpc_url)
@@ -1152,7 +1199,7 @@ def pool(
         None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
     ),
     listen: str = typer.Option("0.0.0.0", "--listen", help="Stratum bind host"),
-    port: int = typer.Option(5333, "--port", help="Stratum port"),
+    port: int = typer.Option(3333, "--port", help="Stratum port"),
     mode: str = typer.Option("solo", "--mode", help="Payout mode (pps|pplns|solo)"),
     coinbase_address: Optional[str] = typer.Option(
         None, "--coinbase-address", "--payout-address", help="Pool payout address"
@@ -1493,7 +1540,8 @@ async def _run_pool_stratum_miner(
     last_theta_micro: int = 0
     last_job_id: str = ""
     started_at = _time.monotonic()
-    target_blocks = max(1, int(target_blocks))
+    target_blocks = max(0, int(target_blocks))
+    target_label = "unlimited" if target_blocks == 0 else str(target_blocks)
 
     uw_tasks: list[_asyncio.Task] = []
     if enable_useful_work:
@@ -1561,10 +1609,10 @@ async def _run_pool_stratum_miner(
                 typer.secho(
                     f"  ✓ block accepted: height={result.get('height')} "
                     f"hash={result.get('hash')} "
-                    f"({accepted_blocks}/{target_blocks})",
+                    f"({accepted_blocks}/{target_label})",
                     fg=typer.colors.GREEN,
                 )
-                if accepted_blocks >= target_blocks:
+                if target_blocks and accepted_blocks >= target_blocks:
                     stop.set()
             elif result.get("accepted"):
                 accept_pct = (accepted_shares / submitted_shares * 100.0) if submitted_shares else 0.0
@@ -1684,7 +1732,7 @@ async def _run_pool_stratum_miner(
                 f"notifies={notify_count} diff_updates={diff_changes} "
                 f"submitted={submitted_shares} accepted={accepted_shares} "
                 f"rejected={rejected_shares} accept_rate={accept_pct:.1f}% "
-                f"blocks={accepted_blocks}/{target_blocks} "
+                f"blocks={accepted_blocks}/{target_label} "
                 f"aicf=({aicf_jobs_completed} ok / {aicf_jobs_failed} fail / "
                 f"{aicf_jobs_received} total) "
                 f"shareTarget={last_share_target:.6f}",
@@ -1721,7 +1769,7 @@ async def _run_pool_stratum_miner(
     miner._client.on_set_difficulty = _on_set_difficulty  # type: ignore[assignment]
 
     typer.echo(
-        f"Stratum miner running. Target: {target_blocks} accepted block(s). "
+        f"Stratum miner running. Target: {target_label} accepted block(s). "
         "Press Ctrl-C to stop."
     )
     try:
@@ -1753,7 +1801,7 @@ async def _run_pool_stratum_miner(
     typer.secho(
         "Final summary:\n"
         f"  uptime          = {uptime_str}\n"
-        f"  blocks accepted = {accepted_blocks}/{target_blocks}\n"
+        f"  blocks accepted = {accepted_blocks}/{target_label}\n"
         f"  shares submitted= {submitted_shares}\n"
         f"  shares accepted = {accepted_shares} ({accept_pct:.1f}%)\n"
         f"  shares rejected = {rejected_shares}\n"
@@ -1762,9 +1810,87 @@ async def _run_pool_stratum_miner(
         f"  diff updates    = {diff_changes}\n"
         f"  aicf jobs       = {aicf_jobs_completed} ok / {aicf_jobs_failed} fail / "
         f"{aicf_jobs_received} total",
-        fg=typer.colors.GREEN if accepted_blocks >= target_blocks else typer.colors.YELLOW,
+        fg=typer.colors.GREEN if (target_blocks == 0 or accepted_blocks >= target_blocks) else typer.colors.YELLOW,
     )
     return accepted_blocks
+
+
+@app.command("start")
+def start(
+    pool: str = typer.Option(
+        "pool.animica.org:3333",
+        "--pool",
+        help="Stratum pool endpoint, for example pool.animica.org:3333",
+        envvar="ANIMICA_MINER_POOL",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="Payout address or wallet label. Defaults to ANIMICA_MINER_ADDRESS or the default wallet.",
+        envvar="ANIMICA_MINER_ADDRESS",
+    ),
+    worker: Optional[str] = typer.Option(
+        None,
+        "--worker",
+        help="Worker name reported to the pool. Defaults to the payout address.",
+        envvar="ANIMICA_MINER_WORKER",
+    ),
+    threads: int = typer.Option(
+        0,
+        "--threads",
+        help="CPU threads for PoW search. 0 auto-detects.",
+    ),
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        help="Mining device backend (cpu, cuda, rocm, opencl, metal, auto).",
+        envvar="ANIMICA_MINER_DEVICE",
+    ),
+    gpu: bool = typer.Option(
+        False,
+        "--gpu",
+        help="Use CUDA GPU backend (alias for --device cuda).",
+    ),
+    aicf: bool = typer.Option(
+        True,
+        "--aicf/--no-aicf",
+        help="Run the AICF compute worker alongside PoW when configured.",
+    ),
+    aicf_endpoint: Optional[str] = typer.Option(
+        None,
+        "--aicf-endpoint",
+        envvar="ANIMICA_AICF_ENDPOINT",
+        help="Override the AICF endpoint used by the worker.",
+    ),
+    pool_scan_window: int = typer.Option(
+        100_000,
+        "--pool-scan-window",
+        help="Nonce window size scanned per Stratum job.",
+    ),
+) -> None:
+    """Start mining against a Stratum pool until stopped."""
+    resolved_address = _require_miner_address(address)
+    mine_blocks(
+        address=resolved_address,
+        count=0,
+        address_opt=None,
+        pool_stratum=pool,
+        pool_worker=worker,
+        pool_scan_window=pool_scan_window,
+        pool_useful_work=True,
+        aicf=aicf,
+        aicf_endpoint=aicf_endpoint,
+        threads=threads,
+        allow_remote_rpc=False,
+        device=device,
+        gpu=gpu,
+        rpc_url=None,
+        use_proxy=False,
+        verbose=False,
+        no_timeout=False,
+        include_mempool=True,
+        template_ttl_s=15,
+    )
 
 
 @app.command("setup")
@@ -1835,7 +1961,7 @@ def setup(
     except Exception as exc:  # noqa: BLE001
         typer.secho(
             f"Error: agent_runtime is not installed ({exc}). "
-            "Install the full animica package: `pip install animica`.",
+            "Install the full animica package: `python3 -m pip install --upgrade animica`.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -2148,13 +2274,10 @@ def setup(
     typer.echo("")
     typer.secho("Next step:", fg=typer.colors.CYAN)
     typer.echo(
-        "  animica miner mine-blocks \\\n"
-        "      --address anim1... \\\n"
-        "      --pool-stratum stratum+tcp://pool.animica.org:5333 \\\n"
-        "      --count 0"
+        "  animica miner mine-blocks --count 0 --pool-stratum stratum+tcp://pool.animica.org:3333"
     )
     typer.echo(
-        "  (count=0 mines indefinitely; PoW + AICF compute run in parallel.)"
+        "  (uses your default wallet; pass --address anim1... to override.)"
     )
 
 
@@ -2167,7 +2290,7 @@ def mine_blocks(
     count: int = typer.Option(
         ...,
         "--count",
-        help="Number of blocks to mine (must be > 0)",
+        help="Number of blocks to mine. With --pool-stratum, 0 mines until stopped.",
     ),
     address_opt: Optional[str] = typer.Option(
         None,
@@ -2466,10 +2589,11 @@ def mine_blocks(
 
     resolved_workers = resolve_worker_count(threads)
     
-    # Validate count
-    if count <= 0:
+    # Validate count. Pool mining supports count=0 as "run until stopped";
+    # local RPC mining keeps the historical finite-count behavior.
+    if count < 0 or (count == 0 and not pool_stratum):
         typer.secho(
-            f"Error: count must be greater than 0, got {count}",
+            f"Error: count must be greater than 0 for local mining, got {count}",
             fg=typer.colors.RED,
             err=True,
         )
@@ -2594,6 +2718,12 @@ def mine_blocks(
                 threads=int(resolved_workers) if resolved_workers else 0,
             )
         )
+        if int(count) == 0:
+            typer.secho(
+                f"Pool mining stopped: {accepted} accepted block(s).",
+                fg=typer.colors.GREEN,
+            )
+            return
         if accepted < int(count):
             typer.secho(
                 f"Pool mining ended with {accepted}/{count} accepted block(s).",

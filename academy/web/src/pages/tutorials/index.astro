@@ -2,20 +2,15 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { getCollection } from "astro:content";
 
-// Server-rendered (at build time) catalog. The backend API is the long-run
-// source of truth for rewards & step counts, but the markdown collection
-// makes the catalog discoverable without the API up; the live page also
-// fetches /tutorials at runtime to overlay current reward values and the
-// user's progress.
 const entries = await getCollection("tutorials");
-const tracks = ["wallet", "aicf", "contracts", "node"] as const;
+const tracks = ["wallet", "node", "aicf", "contracts"] as const;
 type Track = (typeof tracks)[number];
 
 const byTrack: Record<Track, typeof entries> = {
   wallet: [],
+  node: [],
   aicf: [],
   contracts: [],
-  node: [],
 };
 for (const entry of entries) {
   const t = entry.data.track as Track;
@@ -25,63 +20,99 @@ for (const t of tracks) {
   byTrack[t].sort((a, b) => a.data.order - b.data.order);
 }
 
-const trackTitles: Record<Track, string> = {
-  wallet: "Wallet basics",
-  aicf: "AICF compute",
-  contracts: "Smart contracts",
-  node: "Run a node",
+const trackMeta: Record<Track, { title: string; emoji: string; subtitle: string; accent: string }> = {
+  wallet: {
+    title: "Wallet basics",
+    emoji: "🪙",
+    subtitle: "Install the CLI, create a keypair, send transfers.",
+    accent: "from-amber-400/12",
+  },
+  node: {
+    title: "Run a node",
+    emoji: "🌐",
+    subtitle: "Start a local node, tail logs, query the chain head.",
+    accent: "from-blue-400/12",
+  },
+  aicf: {
+    title: "Mine & AICF",
+    emoji: "⚡",
+    subtitle: "Chat with AICF, mine ANIMICA, earn credits.",
+    accent: "from-teal-400/12",
+  },
+  contracts: {
+    title: "Smart contracts",
+    emoji: "📜",
+    subtitle: "Compile, deploy, call — straight from the CLI.",
+    accent: "from-purple-400/12",
+  },
+};
+
+const difficultyColor: Record<string, string> = {
+  intro: "text-emerald-300",
+  intermediate: "text-amber-300",
+  advanced: "text-rose-300",
 };
 ---
 
 <BaseLayout
-  title="Animica Academy — Tutorials"
-  description="Pick a track. Each tutorial pays ANIMICA from the public reward pool when you complete it."
+  active="tutorials"
+  title="Tutorials — Animica Academy"
+  description="Every Animica Academy tutorial: wallet, node, mining, AICF, and smart contracts. Each tutorial walks you through real `animica` CLI commands and pays ANIMICA on completion."
 >
   <section class="max-w-7xl mx-auto px-4 py-12">
-    <h1 class="text-3xl font-semibold tracking-tight mb-2">Tutorials</h1>
-    <p class="text-ink-300 max-w-2xl mb-8">
-      Each step is verified by a signed attestation from your wallet extension.
-      Completing a tutorial pays the listed reward; completing every tutorial in
-      a track awards a track badge with a bonus payout.
+    <p class="text-[11px] uppercase tracking-[0.24em] text-amber-400 font-semibold">Catalog</p>
+    <h1 class="mt-2 text-3xl md:text-4xl font-semibold tracking-tight">Tutorials</h1>
+    <p class="mt-3 text-ink-300 max-w-2xl">
+      Pick a track. Every step is a real <code class="font-mono text-amber-400">animica</code>
+      CLI command — no synthetic playground. Completing a tutorial pays the
+      listed reward; finishing every tutorial in a track awards a track badge.
     </p>
 
     {tracks.map((track) => (
-      <div class="mb-12">
-        <div class="flex items-baseline gap-3 mb-4">
-          <h2 class="text-xl font-semibold tracking-tight">{trackTitles[track]}</h2>
-          <span class="text-xs uppercase tracking-wider text-amber-400">
-            {byTrack[track].length} tutorials
+      <div class="mt-14" id={`track-${track}`}>
+        <div class="flex flex-wrap items-end justify-between gap-3 mb-5">
+          <div class="flex items-end gap-3">
+            <span class="text-3xl leading-none">{trackMeta[track].emoji}</span>
+            <div>
+              <h2 class="text-2xl font-semibold tracking-tight">{trackMeta[track].title}</h2>
+              <p class="text-sm text-ink-300">{trackMeta[track].subtitle}</p>
+            </div>
+          </div>
+          <span class="text-[11px] font-mono uppercase tracking-wider text-amber-400">
+            {byTrack[track].length} {byTrack[track].length === 1 ? "tutorial" : "tutorials"}
           </span>
         </div>
         {byTrack[track].length === 0 ? (
-          <p class="text-sm text-ink-300">Coming soon.</p>
+          <p class="text-sm text-ink-300 italic">Coming soon.</p>
         ) : (
           <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
             {byTrack[track].map((entry) => (
               <a
                 href={`/tutorials/${entry.slug}`}
-                class="block rounded-2xl border border-white/10 bg-white/[0.03] p-5 hover:border-amber-400/40 transition"
+                class:list={[
+                  "group relative block rounded-2xl border border-white/10 bg-gradient-to-br",
+                  trackMeta[track].accent,
+                  "via-white/[0.02] to-white/[0.03] p-5 hover:border-amber-400/50 hover:translate-y-[-2px] transition",
+                ]}
               >
                 <div class="flex items-baseline justify-between mb-2">
-                  <span class="text-[10px] uppercase tracking-wider text-amber-400 font-semibold">
+                  <span class={`text-[10px] uppercase tracking-wider font-semibold ${difficultyColor[entry.data.difficulty] ?? "text-amber-400"}`}>
                     {entry.data.difficulty}
                   </span>
-                  <span class="text-xs text-ink-300">
-                    ≈ {entry.data.estimatedMinutes} min
-                  </span>
+                  <span class="text-xs text-ink-300">≈ {entry.data.estimatedMinutes} min</span>
                 </div>
                 <h3 class="font-semibold text-lg leading-tight">{entry.data.title}</h3>
-                <p class="text-sm text-ink-300 mt-2 line-clamp-3">
-                  {entry.data.summary}
-                </p>
+                <p class="text-sm text-ink-300 mt-2 line-clamp-3">{entry.data.summary}</p>
                 <div class="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
-                  <span class="text-xs font-mono text-amber-400">
-                    +{entry.data.rewardAnim} ANIMICA
-                  </span>
+                  <span class="text-xs font-mono text-amber-400">+{entry.data.rewardAnim} ANIMICA</span>
                   <span class="text-xs text-ink-300 progress-dot" data-tutorial={entry.slug}>
                     — / {entry.data.steps} steps
                   </span>
                 </div>
+                <span
+                  class="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition text-amber-400 text-lg"
+                  aria-hidden="true"
+                >→</span>
               </a>
             ))}
           </div>
@@ -91,10 +122,11 @@ const trackTitles: Record<Track, string> = {
   </section>
 
   <script>
-    // Overlay per-wallet progress on each card.
     import { readWallet } from "../../lib/wallet";
     import { academyApi } from "../../lib/api";
 
+    // Overlay per-wallet progress on each card. If the API is offline, the
+    // cards stay on their dash placeholder — no error toast.
     async function hydrateProgress() {
       const { address } = await readWallet();
       if (!address) return;
@@ -120,5 +152,12 @@ const trackTitles: Record<Track, string> = {
     }
     hydrateProgress();
     document.addEventListener("animica:wallet-connected", hydrateProgress);
+
+    // Smooth-scroll to the requested track from query string (?track=aicf).
+    const trackQuery = new URLSearchParams(location.search).get("track");
+    if (trackQuery) {
+      const target = document.getElementById(`track-${trackQuery}`);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   </script>
 </BaseLayout>

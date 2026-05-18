@@ -1,139 +1,232 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const entries = await getCollection("tutorials");
+const tutorialCount = entries.length;
+const tracksCount = new Set(entries.map((e) => e.data.track)).size;
+const totalMinutes = entries.reduce(
+  (acc, e) => acc + e.data.estimatedMinutes,
+  0,
+);
+const totalReward = entries.reduce(
+  (acc, e) => acc + Number(e.data.rewardAnim),
+  0,
+);
 ---
 
 <BaseLayout
-  title="Animica Academy — learn Animica, earn ANIMICA"
-  description="Interactive tutorials for the Animica stack — wallet, chain, AICF compute, contracts. Complete a tutorial, sign the attestation with your wallet, and earn ANIMICA from the public reward pool."
+  title="Animica Academy — learn the CLI, run a node, mine ANIMICA"
+  description="Interactive tutorials for the Animica stack — wallet, chain, nodes, contracts, and AICF compute. Each tutorial is a real `animica` CLI walkthrough. Complete tutorials to earn ANIMICA from the public reward pool."
 >
-  <section class="bg-gradient-to-b from-ink-900 to-ink-950 border-b border-white/5">
-    <div class="max-w-7xl mx-auto px-4 py-16 md:py-24 grid lg:grid-cols-[1.2fr_1fr] gap-12 items-center">
-      <div>
-        <span class="inline-block text-amber-400 text-xs uppercase tracking-[0.2em] font-semibold mb-4">
+  <section class="relative overflow-hidden border-b border-white/5">
+    <div class="absolute inset-0 -z-10">
+      <div class="absolute inset-0 bg-gradient-to-b from-ink-900 via-ink-950 to-ink-950"></div>
+      <div class="absolute -top-32 -left-24 w-[36rem] h-[36rem] rounded-full bg-amber-500/10 blur-3xl"></div>
+      <div class="absolute -top-32 right-0 w-[28rem] h-[28rem] rounded-full bg-teal-500/10 blur-3xl"></div>
+    </div>
+    <div class="max-w-7xl mx-auto px-4 py-20 md:py-28 grid lg:grid-cols-[1.15fr_0.85fr] gap-12 items-center">
+      <div class="reveal">
+        <span class="inline-flex items-center gap-2 rounded-full border border-amber-400/30 bg-amber-400/5 px-3 py-1 text-[11px] uppercase tracking-[0.2em] font-semibold text-amber-300 mb-5">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
           academy.animica.org
         </span>
-        <h1 class="text-4xl md:text-6xl font-semibold tracking-tight leading-tight">
+        <h1 class="text-4xl sm:text-5xl md:text-6xl font-semibold tracking-tight leading-[1.05]">
           Learn Animica.<br />
-          <span class="text-amber-400">Earn ANIMICA.</span>
+          <span class="bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 bg-clip-text text-transparent">
+            Earn ANIMICA.
+          </span>
         </h1>
-        <p class="mt-6 text-lg text-ink-200 max-w-xl">
-          Short, interactive tutorials for the wallet, the chain, AICF compute, and
-          contracts. Each step is verified by an extension-signed attestation, and
-          the reward pool pays you on completion — directly to the wallet you
-          signed with.
+        <p class="mt-6 text-base sm:text-lg text-ink-200 max-w-xl leading-relaxed">
+          Short, hands-on tutorials for the Animica stack — wallet, node,
+          contracts, AICF compute. Every step is a real
+          <code class="font-mono text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">animica</code>
+          CLI command you run yourself. Finish a tutorial and the public reward
+          pool pays you ANIMICA.
         </p>
         <div class="mt-8 flex flex-wrap gap-3">
           <a
             href="/tutorials"
-            class="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-3 transition"
+            class="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-3 transition shadow-[0_10px_30px_-10px_rgba(251,191,36,0.55)]"
           >
-            Browse tutorials →
+            Browse tutorials <span aria-hidden="true">→</span>
           </a>
           <a
-            href="/rewards"
-            class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition"
+            href="/tutorials/install-wallet"
+            class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 hover:text-amber-300 text-ink-50 px-5 py-3 transition"
           >
-            Reward pool
-          </a>
-          <a
-            href="/achievements"
-            class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition"
-          >
-            My achievements
+            Start with the CLI
           </a>
         </div>
+
+        <dl class="mt-10 grid grid-cols-3 gap-4 max-w-md">
+          <div>
+            <dt class="text-[11px] uppercase tracking-wider text-ink-300 font-semibold">Tutorials</dt>
+            <dd class="mt-1 text-2xl font-mono font-semibold text-amber-400">{tutorialCount}</dd>
+          </div>
+          <div>
+            <dt class="text-[11px] uppercase tracking-wider text-ink-300 font-semibold">Tracks</dt>
+            <dd class="mt-1 text-2xl font-mono font-semibold text-amber-400">{tracksCount}</dd>
+          </div>
+          <div>
+            <dt class="text-[11px] uppercase tracking-wider text-ink-300 font-semibold">Pool rewards</dt>
+            <dd class="mt-1 text-2xl font-mono font-semibold text-amber-400">{totalReward}</dd>
+          </div>
+        </dl>
       </div>
-      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
-          How it works
+
+      <div class="reveal reveal-delay-1">
+        <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 shadow-2xl shadow-black/40 backdrop-blur">
+          <div class="flex items-center justify-between mb-4">
+            <span class="text-[11px] uppercase tracking-wider text-amber-400 font-semibold">Quick start</span>
+            <span class="text-[10px] text-ink-300">≈ {totalMinutes} min total</span>
+          </div>
+          <div class="rounded-xl border border-white/10 bg-ink-950 p-3 text-sm font-mono leading-relaxed">
+            <div class="flex items-center gap-2 text-ink-300 text-xs mb-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-400/70"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-400/70"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400/70"></span>
+              <span class="ml-2">~ your terminal</span>
+            </div>
+            <div><span class="text-ink-400">$</span> <span class="text-ink-100">python3 -m pip install --upgrade animica</span></div>
+            <div><span class="text-ink-400">$</span> <span class="text-ink-100">animica wallet new --label me</span></div>
+            <div><span class="text-ink-400">$</span> <span class="text-ink-100">animica wallet set-default me</span></div>
+            <div><span class="text-ink-400">$</span> <span class="text-ink-100">animica node up</span></div>
+            <div><span class="text-amber-400">✓</span> <span class="text-ink-300">node ready · http://127.0.0.1:8545</span></div>
+          </div>
+          <pool-stat class="block mt-5"></pool-stat>
         </div>
-        <ol class="space-y-3 text-sm text-ink-200 list-decimal pl-5 marker:text-amber-400">
-          <li>Install the Animica wallet extension, fund a tiny gas balance.</li>
-          <li>Open a tutorial and work through its steps in the embedded console.</li>
-          <li>Click <em>Claim reward</em>; the extension asks you to sign an attestation.</li>
-          <li>
-            The academy verifies the signature and submits an on-chain transfer
-            from the public reward pool to your wallet.
-          </li>
-        </ol>
-        <pool-stat class="block mt-6"></pool-stat>
       </div>
     </div>
   </section>
 
-  <section class="max-w-7xl mx-auto px-4 py-16">
-    <h2 class="text-2xl font-semibold tracking-tight mb-3">Tracks</h2>
-    <p class="text-ink-300 max-w-2xl mb-8">
-      Each track is a short series of self-contained tutorials. Finish a track for
-      a badge and a bonus payout from the pool.
-    </p>
+  <section class="max-w-7xl mx-auto px-4 py-16 md:py-20">
+    <div class="max-w-2xl mb-10">
+      <p class="text-[11px] uppercase tracking-[0.24em] text-amber-400 font-semibold">How it works</p>
+      <h2 class="mt-2 text-3xl md:text-4xl font-semibold tracking-tight">From install to first reward.</h2>
+      <p class="mt-3 text-ink-300">
+        Every tutorial follows the same shape: a few terminal commands, a
+        verifiable result, a tiny ANIMICA reward. No black-box dashboards —
+        you can rerun every step yourself.
+      </p>
+    </div>
     <div class="grid md:grid-cols-3 gap-4">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition group">
+        <div class="text-[10px] uppercase tracking-wider text-amber-400 font-mono mb-3">Step 01</div>
+        <h3 class="text-lg font-semibold">Install the CLI</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          <code class="font-mono text-amber-400">pip install animica</code> ships
+          the wallet, chain client, miner, contract tooling, and the AICF chat REPL.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition group">
+        <div class="text-[10px] uppercase tracking-wider text-amber-400 font-mono mb-3">Step 02</div>
+        <h3 class="text-lg font-semibold">Work through a track</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Each step prints something concrete — an address, a tx hash, a block
+          height — so you know it worked. Mark completion in the side panel.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition group">
+        <div class="text-[10px] uppercase tracking-wider text-amber-400 font-mono mb-3">Step 03</div>
+        <h3 class="text-lg font-semibold">Claim your reward</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          When the reward pool is live, finishing a tutorial dispatches an
+          on-chain transfer to the wallet you created in step 01.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="max-w-7xl mx-auto px-4 py-16 md:py-20 border-t border-white/5">
+    <div class="flex items-end justify-between flex-wrap gap-4 mb-8">
+      <div>
+        <p class="text-[11px] uppercase tracking-[0.24em] text-amber-400 font-semibold">Tracks</p>
+        <h2 class="mt-2 text-3xl md:text-4xl font-semibold tracking-tight">Pick a path.</h2>
+      </div>
+      <a href="/tutorials" class="text-sm text-amber-400 hover:underline">All tutorials →</a>
+    </div>
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
       <a
         href="/tutorials?track=wallet"
-        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+        class="group block rounded-2xl border border-white/10 bg-gradient-to-br from-amber-400/10 via-white/[0.02] to-white/[0.03] p-6 hover:border-amber-400/50 transition"
       >
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
-          Track
-        </div>
-        <h3 class="text-xl font-semibold">Wallet basics</h3>
+        <div class="text-3xl mb-3 group-hover:scale-110 transition-transform">🪙</div>
+        <h3 class="text-lg font-semibold">Wallet basics</h3>
         <p class="mt-2 text-sm text-ink-300">
-          Install the extension, back up the seed, send your first tx, read a
-          balance. Tiny rewards, zero risk.
+          Install the CLI, create a wallet, fund it, send your first tx.
         </p>
+        <div class="mt-4 text-[11px] font-mono text-amber-400">2 tutorials · ~9 min</div>
+      </a>
+      <a
+        href="/tutorials?track=node"
+        class="group block rounded-2xl border border-white/10 bg-gradient-to-br from-blue-400/10 via-white/[0.02] to-white/[0.03] p-6 hover:border-amber-400/50 transition"
+      >
+        <div class="text-3xl mb-3 group-hover:scale-110 transition-transform">🌐</div>
+        <h3 class="text-lg font-semibold">Run a node</h3>
+        <p class="mt-2 text-sm text-ink-300">
+          Bring a local node up with <code class="font-mono text-amber-400">animica node up</code>,
+          tail its logs, query the chain head.
+        </p>
+        <div class="mt-4 text-[11px] font-mono text-amber-400">1 tutorial · ~8 min</div>
       </a>
       <a
         href="/tutorials?track=aicf"
-        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+        class="group block rounded-2xl border border-white/10 bg-gradient-to-br from-teal-400/10 via-white/[0.02] to-white/[0.03] p-6 hover:border-amber-400/50 transition"
       >
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
-          Track
-        </div>
-        <h3 class="text-xl font-semibold">AICF compute</h3>
+        <div class="text-3xl mb-3 group-hover:scale-110 transition-transform">⚡</div>
+        <h3 class="text-lg font-semibold">Mine &amp; AICF</h3>
         <p class="mt-2 text-sm text-ink-300">
-          Submit an inference job from <code class="font-mono text-amber-400">animica chat</code>,
-          watch it stream from a real worker, settle the credit on-chain.
+          Run <code class="font-mono text-amber-400">animica chat</code>, then mine
+          PoW + AICF jobs with one command.
         </p>
+        <div class="mt-4 text-[11px] font-mono text-amber-400">2 tutorials · ~18 min</div>
       </a>
       <a
         href="/tutorials?track=contracts"
-        class="block rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-amber-400/40 transition"
+        class="group block rounded-2xl border border-white/10 bg-gradient-to-br from-purple-400/10 via-white/[0.02] to-white/[0.03] p-6 hover:border-amber-400/50 transition"
       >
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">
-          Track
-        </div>
-        <h3 class="text-xl font-semibold">Smart contracts</h3>
+        <div class="text-3xl mb-3 group-hover:scale-110 transition-transform">📜</div>
+        <h3 class="text-lg font-semibold">Smart contracts</h3>
         <p class="mt-2 text-sm text-ink-300">
-          Deploy a counter, write a custom selector, call from the wallet
-          extension, verify on explorer2.
+          Compile, deploy, and call a counter contract from the CLI.
         </p>
+        <div class="mt-4 text-[11px] font-mono text-amber-400">1 tutorial · ~10 min</div>
       </a>
     </div>
   </section>
 
-  <section class="max-w-7xl mx-auto px-4 pb-16">
+  <section class="max-w-7xl mx-auto px-4 py-16 md:py-20 border-t border-white/5">
     <div class="grid md:grid-cols-2 gap-6">
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <h3 class="text-lg font-semibold">Why the reward pool?</h3>
-        <p class="mt-2 text-sm text-ink-300">
+        <div class="text-[11px] uppercase tracking-wider text-amber-400 font-semibold mb-2">The reward pool</div>
+        <h3 class="text-2xl font-semibold tracking-tight">Open-funded, on-chain.</h3>
+        <p class="mt-3 text-sm text-ink-300 leading-relaxed">
           Onboarding ANIMICA users is a public good — the more people who can
-          self-custody, send a tx, and run <code class="font-mono text-amber-400">animica chat</code>,
-          the healthier the network. Anyone can deposit ANIMICA into the pool;
-          deposits are visible on-chain and used to pay tutorial completers.
+          self-custody, run a node, and earn from AICF, the healthier the
+          network. The reward pool is a single on-chain address. Anyone can
+          deposit; payouts to learners are public transactions you can verify on
+          the explorer.
         </p>
-        <a
-          href="/rewards"
-          class="mt-4 inline-block text-amber-400 hover:underline text-sm"
-          >Top up the pool →</a
-        >
+        <a href="/rewards" class="mt-5 inline-flex items-center gap-1 text-sm text-amber-400 hover:underline">
+          Pool details <span aria-hidden="true">→</span>
+        </a>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <h3 class="text-lg font-semibold">Built on the Animica stack</h3>
-        <p class="mt-2 text-sm text-ink-300">
-          Attestations are signed by the same extension that signs your chat
-          payments on <a href="https://studio.animica.org" class="text-amber-400 hover:underline">studio.animica.org</a>.
-          Payouts are real on-chain transfers — verify them on
-          <a href="https://explorer.animica.org" class="text-amber-400 hover:underline">explorer.animica.org</a>.
+        <div class="text-[11px] uppercase tracking-wider text-amber-400 font-semibold mb-2">Built on the Animica stack</div>
+        <h3 class="text-2xl font-semibold tracking-tight">Real CLI. Real chain.</h3>
+        <p class="mt-3 text-sm text-ink-300 leading-relaxed">
+          Every command in every tutorial is a real <code class="font-mono text-amber-400">animica</code>
+          subcommand — no synthetic playground, no mocked endpoints. Wallets,
+          transactions, blocks, and AICF jobs all run against the live network.
         </p>
+        <div class="mt-5 flex flex-wrap gap-3 text-sm">
+          <a href="https://animica.org/docs" class="text-amber-400 hover:underline">Docs</a>
+          <span class="opacity-30">·</span>
+          <a href="https://explorer.animica.org" class="text-amber-400 hover:underline">Explorer</a>
+          <span class="opacity-30">·</span>
+          <a href="https://pool.animica.org" class="text-amber-400 hover:underline">Pool</a>
+        </div>
       </div>
     </div>
   </section>
@@ -144,21 +237,32 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
     class PoolStat extends HTMLElement {
       async connectedCallback() {
-        this.innerHTML = `<div class="text-xs text-ink-300">Loading reward pool…</div>`;
+        this.innerHTML = `<div class="text-[11px] text-ink-400">Loading reward pool…</div>`;
         try {
           const status = await academyApi.getPoolStatus();
           const balance = baseUnitsToAnim(status.balanceBaseUnits);
           const paid = baseUnitsToAnim(status.paidOutBaseUnits);
           this.innerHTML = `
-            <div class="text-xs uppercase tracking-wide text-ink-300 mb-1">Reward pool</div>
-            <div class="flex items-baseline gap-3">
-              <span class="text-2xl font-mono font-semibold text-amber-400">${balance}</span>
-              <span class="text-xs text-ink-300">ANIMICA available</span>
+            <div class="rounded-xl border border-amber-400/20 bg-amber-400/[0.04] p-3">
+              <div class="text-[10px] uppercase tracking-wider text-amber-300 font-semibold mb-1">Reward pool · live</div>
+              <div class="flex items-baseline gap-2">
+                <span class="text-xl font-mono font-semibold text-amber-400">${balance}</span>
+                <span class="text-[11px] text-ink-300">ANIMICA available</span>
+              </div>
+              <div class="text-[11px] text-ink-300 mt-1">${paid} paid out · ${status.contributors} contributors</div>
             </div>
-            <div class="text-xs text-ink-300 mt-1">${paid} ANIMICA paid out · ${status.contributors} contributors</div>
           `;
-        } catch (e) {
-          this.innerHTML = `<div class="text-xs text-ink-300">Reward pool offline (${(e as Error).message}).</div>`;
+        } catch {
+          // Friendly fallback — the academy is useful as a learning portal
+          // even before the reward-pool API comes online.
+          this.innerHTML = `
+            <div class="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div class="text-[10px] uppercase tracking-wider text-ink-300 font-semibold mb-1">Reward pool</div>
+              <p class="text-[11px] text-ink-300 leading-relaxed">
+                Going live with the v1 academy launch. Tutorials work today; payouts will activate as the pool funds.
+              </p>
+            </div>
+          `;
         }
       }
     }

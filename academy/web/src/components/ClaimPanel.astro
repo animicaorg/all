@@ -1,9 +1,9 @@
 ---
 /**
  * Renders the claim flow for a tutorial. Bound by [slug].astro after the
- * user toggles every step complete. Stays visible at all times so users
- * can re-claim if a previous attempt failed (server enforces single-spend
- * per step).
+ * user toggles every step complete. When the academy API is offline,
+ * the panel falls back to a "rewards launching soon" notice so the
+ * tutorial page still feels intentional.
  *
  *   tutorialId   — slug from the content collection
  *   rewardAnim   — display-only; actual amount is enforced server-side
@@ -18,27 +18,44 @@ const { tutorialId, rewardAnim, stepIds } = Astro.props;
 ---
 
 <aside
-  class="claim-panel sticky top-20 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-5"
+  class="claim-panel lg:sticky lg:top-24 rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-500/[0.08] via-amber-500/[0.04] to-transparent p-5"
   data-tutorial-id={tutorialId}
   data-step-ids={JSON.stringify(stepIds)}
   data-reward-anim={rewardAnim}
 >
-  <div class="text-[10px] uppercase tracking-wider text-amber-400 font-semibold mb-1">
-    Reward
+  <div class="flex items-baseline justify-between">
+    <div class="text-[10px] uppercase tracking-wider text-amber-400 font-semibold">
+      Reward
+    </div>
+    <span class="text-[10px] uppercase tracking-wider text-ink-300 font-mono">
+      {stepIds.length} steps
+    </span>
   </div>
-  <div class="flex items-baseline gap-2">
-    <span class="text-3xl font-mono font-semibold text-amber-400">
+  <div class="mt-2 flex items-baseline gap-2">
+    <span class="text-4xl font-mono font-semibold text-amber-400">
       {rewardAnim}
     </span>
     <span class="text-xs text-ink-300">ANIMICA</span>
   </div>
-  <p class="text-xs text-ink-300 mt-2">
-    Mark every step complete, then claim. The wallet extension asks you to
-    sign a tiny attestation — no chain fee on your side; the pool pays out.
+  <p class="text-xs text-ink-300 mt-3 leading-relaxed">
+    Mark every step complete, then claim. With the wallet extension installed
+    you sign a tiny attestation; the pool pays out from
+    <a href="/rewards" class="text-amber-300 hover:underline">the reward pool</a>.
   </p>
-  <div class="claim-progress mt-4 text-xs text-ink-300">
-    Progress: <span class="claim-progress-count">0</span> /{stepIds.length} steps
+
+  <div class="claim-progress mt-4">
+    <div class="flex items-baseline justify-between text-xs text-ink-300 mb-1.5">
+      <span>Progress</span>
+      <span><span class="claim-progress-count font-mono">0</span> / {stepIds.length}</span>
+    </div>
+    <div class="h-1.5 rounded-full bg-white/5 overflow-hidden">
+      <div
+        class="claim-progress-bar h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-300"
+        style="width:0%"
+      ></div>
+    </div>
   </div>
+
   <button
     class="claim-btn mt-4 w-full rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-ink-700 disabled:text-ink-400 disabled:cursor-not-allowed text-ink-950 font-semibold px-4 py-3 transition"
     disabled
@@ -46,4 +63,15 @@ const { tutorialId, rewardAnim, stepIds } = Astro.props;
     Complete all steps to claim
   </button>
   <div class="claim-result mt-3 text-xs"></div>
+
+  <div class="mt-5 pt-4 border-t border-white/5 text-[11px] text-ink-300 space-y-1.5">
+    <div class="flex items-center gap-1.5">
+      <span class="w-1 h-1 rounded-full bg-amber-400/70"></span>
+      Your progress is saved in this browser.
+    </div>
+    <div class="flex items-center gap-1.5">
+      <span class="w-1 h-1 rounded-full bg-amber-400/70"></span>
+      Payouts go to the wallet that signs the attestation.
+    </div>
+  </div>
 </aside>

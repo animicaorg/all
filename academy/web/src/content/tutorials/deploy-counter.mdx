@@ -1,0 +1,122 @@
+---
+title: "Deploy your first contract"
+summary: "Compile a tiny counter contract, deploy it with `animica contract deploy`, call `inc()` from your wallet, and read the state back."
+track: "contracts"
+difficulty: "intermediate"
+order: 1
+estimatedMinutes: 10
+rewardAnim: "3"
+steps: 4
+stepIds: ["author", "compile", "deploy", "call-and-read"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="author" title="Author the contract">
+
+Animica contracts are plain Python files that import from `stdlib`.
+Save the following as `counter.py` somewhere convenient:
+
+```python
+# counter.py
+from stdlib import abi, events, storage
+
+KEY = b"counter:value"
+U128_MAX = (1 << 128) - 1
+
+def _load() -> int:
+    raw = storage.get(KEY)
+    return int.from_bytes(raw.rjust(16, b"\x00"), "big") if raw else 0
+
+def _store(value: int) -> None:
+    abi.require(0 <= value <= U128_MAX, b"U128_OVERFLOW")
+    storage.set(KEY, value.to_bytes(16, "big"))
+
+def get() -> int:
+    return _load()
+
+def inc(by: int = 1) -> int:
+    abi.require(by > 0, b"INC_MUST_BE_POSITIVE")
+    new_value = _load() + by
+    abi.require(new_value <= U128_MAX, b"U128_OVERFLOW")
+    _store(new_value)
+    events.emit(b"Inc", {b"by": by, b"value": new_value})
+    return new_value
+```
+
+Two public methods: `get()` returns the current value, `inc(by=1)`
+increments and returns the new value.
+
+Mark this step complete after `counter.py` exists on disk.
+
+</Step>
+
+<Step id="compile" title="Compile to IR">
+
+Compile the contract to Animica IR. The compiler also emits an ABI
+JSON describing the public methods:
+
+```bash
+animica contract compile counter.py
+```
+
+Output looks like:
+
+```
+artifact: ~/.animica/artifacts/counter-<code-hash>.ir
+abi:      ~/.animica/artifacts/counter-<code-hash>.abi.json
+```
+
+Pass `--overwrite` if you tweak the source and recompile.
+
+Mark this step complete once the compile reports artifact + ABI paths.
+
+</Step>
+
+<Step id="deploy" title="Deploy to the chain">
+
+Deploy the source (the CLI compiles it on the fly if you pass the
+`.py` file directly). Use your default wallet and save the deployment
+under the name `counter` so later commands can use the friendly name:
+
+```bash
+animica contract deploy counter.py --from me --save --name counter
+```
+
+The CLI builds and signs the deploy transaction, broadcasts it, and
+waits for the receipt. On success it prints the contract address and
+the tx hash. The `--save` flag records the deployment under
+`~/.animica/deployments.json` so you can refer to it by name.
+
+Mark this step complete after a contract address is printed.
+
+</Step>
+
+<Step id="call-and-read" title="Call inc() and read the value">
+
+Send a state-changing call to `inc()`. Pass arguments as a JSON
+array:
+
+```bash
+animica contract send counter inc --args '[5]' --from me
+```
+
+This signs a real transaction, pays gas, and waits for the receipt.
+
+Then read the current value with `contract call` — that's a local
+`eth_call`-style simulation against the latest state, no transaction
+broadcast:
+
+```bash
+animica contract call counter get
+```
+
+You should see `5` (or higher if you called `inc` more than once).
+
+You can also view the contract on the
+[explorer](https://explorer.animica.org/) — paste the contract address
+into the search bar.
+
+Mark this step complete once `get` returns the expected value.
+
+</Step>

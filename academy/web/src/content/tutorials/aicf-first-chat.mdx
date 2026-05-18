@@ -1,0 +1,113 @@
+---
+title: "Run your first AICF chat"
+summary: "Use `animica chat` to pay an AICF worker for a real LLM response, then verify the settlement on-chain."
+track: "aicf"
+difficulty: "intro"
+order: 1
+estimatedMinutes: 8
+rewardAnim: "2"
+steps: 4
+stepIds: ["preflight", "open-chat", "first-prompt", "verify-credit"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="preflight" title="Pre-flight checks">
+
+`animica chat` is an AICF-paid REPL: every prompt is dispatched to a
+worker that returns streamed tokens, and the cost is debited from your
+wallet on settlement. Before opening it, confirm the AICF endpoint is
+reachable and you have a funded wallet:
+
+```bash
+animica aicf status
+animica wallet show me
+```
+
+`aicf status` prints the configured endpoint and a per-tier health
+summary. If you don't have a funded wallet, complete the
+[wallet basics](/tutorials/install-wallet) tutorial first.
+
+Mark this step complete once `aicf status` reports at least one
+healthy tier and your wallet has a non-zero balance.
+
+</Step>
+
+<Step id="open-chat" title="Open the chat REPL">
+
+Launch the REPL. It picks your default wallet automatically.
+
+```bash
+animica chat
+```
+
+You'll see a banner with the resolved AICF endpoint, network, and the
+wallet that will pay for jobs, followed by a prompt:
+
+```
+›
+```
+
+The first turn estimates the cost and asks you to confirm. To skip
+that confirmation step (useful once you trust the pricing), restart
+with `animica chat --yolo`.
+
+Mark this step complete once the prompt appears.
+
+</Step>
+
+<Step id="first-prompt" title="Send your first prompt">
+
+Type a short question and press Enter:
+
+```
+› Explain post-quantum signatures in two sentences.
+```
+
+The client:
+
+1. Quotes a price for the job.
+2. Submits the AICF job to a worker.
+3. Streams tokens back as they're generated.
+4. Settles the cost on-chain after the stream completes.
+
+Watch the streaming output, then exit with `/quit` (or Ctrl-D).
+
+Mark this step complete after you've received at least one streamed
+response.
+
+</Step>
+
+<Step id="verify-credit" title="Verify the settlement on-chain">
+
+Each chat turn settles on-chain. The transcript prints a settlement
+line when the stream ends — something like:
+
+```
+[settled] job=0xab12… tx=0x9ce1… block=18234
+```
+
+To see network-wide AICF activity in real time:
+
+```bash
+animica aicf watch --interval 5 --max-duration 60
+```
+
+This polls the pool's summary RPC and prints any change to credit
+balances, paying-out activity, and worker counts.
+
+For your wallet's incoming AICF earnings (relevant once you run a
+worker — see the next tutorial), use:
+
+```bash
+animica aicf miner-credits anim1...your-address
+```
+
+Paste the settlement tx hash from the chat transcript into the
+[explorer](https://explorer.animica.org/) to confirm the on-chain
+record.
+
+Mark this step complete after you've located the settlement
+transaction.
+
+</Step>

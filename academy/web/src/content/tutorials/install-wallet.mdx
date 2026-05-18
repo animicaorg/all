@@ -1,0 +1,101 @@
+---
+title: "Install the CLI and create your wallet"
+summary: "Install the animica Python package, create a fresh wallet, set it as your default, and check the balance."
+track: "wallet"
+difficulty: "intro"
+order: 1
+estimatedMinutes: 5
+rewardAnim: "1"
+steps: 4
+stepIds: ["install", "create-wallet", "set-default", "balance-check"]
+---
+
+import Step from "../../components/Step.astro";
+
+<Step id="install" title="Install the animica CLI">
+
+The `animica` Python package ships every CLI used in this academy — the
+wallet manager, the chain client, the miner, the AICF chat REPL, and
+contract tooling. Install it with pip:
+
+```bash
+python3 -m pip install --upgrade animica
+animica --version
+```
+
+You should see a version line like `animica 0.x.y`. On managed Python
+installs (Debian/Ubuntu) you may need a virtualenv:
+
+```bash
+python3 -m venv ~/animica-venv
+source ~/animica-venv/bin/activate
+python3 -m pip install --upgrade animica
+```
+
+Mark this step complete once `animica --version` prints.
+
+</Step>
+
+<Step id="create-wallet" title="Create a fresh wallet">
+
+Create a new wallet labelled `me`. The CLI generates a keypair locally
+and stores it under `~/.animica/wallets.json` — the private key never
+leaves your machine.
+
+```bash
+animica wallet new --label me
+```
+
+The output prints your bech32 address (`anim1...`) and the **seed phrase**.
+Copy the seed somewhere safe (paper, not a syncing notes app, not a
+screenshot). The seed is the only way to recover this wallet — if you
+lose it, the funds are unrecoverable.
+
+Mark this step complete after the address and seed are saved.
+
+</Step>
+
+<Step id="set-default" title="Make it the default wallet">
+
+Mark `me` as the default so every subsequent CLI command uses it
+without needing `--address` flags:
+
+```bash
+animica wallet set-default me
+animica wallet list
+```
+
+`wallet list` confirms the wallet is registered and shows which one is
+flagged `(default)`.
+
+Mark this step complete once `(default)` appears next to your wallet.
+
+</Step>
+
+<Step id="balance-check" title="Check the balance">
+
+`animica wallet show` queries the chain by label and prints the
+confirmed balance plus any pending transactions:
+
+```bash
+animica wallet show me
+```
+
+A fresh wallet has a zero balance and a zero nonce — the keypair
+exists locally but the chain has no record of activity yet. On devnet
+or testnet you can fund it from the faucet — copy your address from
+the previous `wallet list` output and pass it to `faucet request`:
+
+```bash
+animica faucet request anim1...    # paste your address
+```
+
+The faucet drops a small amount of test ANIMICA into the wallet
+within seconds. On mainnet the faucet is disabled; fund the wallet
+by mining or by receiving a transfer.
+
+Mark this step complete once `animica wallet show me` reports a
+non-zero balance, or after you've confirmed the wallet exists on the
+[explorer](https://explorer.animica.org).
+
+</Step>

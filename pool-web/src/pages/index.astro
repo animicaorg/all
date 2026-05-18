@@ -1,38 +1,57 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import PoolStatus from "../components/PoolStatus.astro";
+
+const stratumAddress = "pool.animica.org:3333";
+const websiteUrl = "https://pool.animica.org";
 ---
 <BaseLayout
-  title="Animica Mining Pool"
-  description="Connect to the Animica mining pool. PoW + AICF compute, one machine, two earnings streams. Hardware-aware tier selection."
+  title="Official Animica Pool"
+  description="Official Animica mining pool. Connect CPU miners to pool.animica.org:3333 and earn Animica rewards."
 >
-  <section class="bg-gradient-to-b from-ink-900 to-ink-950 border-b border-white/5">
+  <section class="bg-gradient-to-b from-ink-900 via-ink-950 to-ink-950 border-b border-white/5">
     <div class="max-w-7xl mx-auto px-4 py-16 md:py-24">
-      <div class="grid lg:grid-cols-[1.2fr_1fr] gap-12 items-center">
+      <div class="grid lg:grid-cols-[1.12fr_0.88fr] gap-12 items-center">
         <div>
-          <span class="inline-block text-amber-400 text-xs uppercase tracking-[0.2em] font-semibold mb-4">
-            pool.animica.org
+          <span class="inline-block text-amber-400 text-xs uppercase tracking-[0.24em] font-semibold mb-4">
+            Official Animica Pool
           </span>
           <h1 class="text-4xl md:text-6xl font-semibold tracking-tight leading-tight">
-            One miner.<br/>
-            <span class="text-amber-400">Two earnings streams.</span>
+            Mine Animica on the<br />
+            <span class="text-amber-400">official pool.</span>
           </h1>
           <p class="mt-6 text-lg text-ink-200 max-w-xl">
-            Connect your hardware to the Animica pool. Earn block rewards via PoW
-            and AICF credits by serving inference jobs for <code class="font-mono text-amber-400">animica chat</code> users — on the same machine.
+            Point your Animica miner at the public Stratum endpoint. CPU mining is supported;
+            setup installs the local model bundle for optional AICF compute earnings.
           </p>
+          <div class="mt-8 grid gap-3 sm:grid-cols-2 max-w-2xl">
+            <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <p class="text-xs uppercase tracking-wide text-ink-300">Stratum</p>
+              <div class="mt-2 flex items-center gap-2">
+                <code id="stratum-address" class="font-mono text-amber-400 break-all">{stratumAddress}</code>
+                <button
+                  type="button"
+                  data-copy-target="stratum-address"
+                  class="shrink-0 rounded-lg border border-amber-400/40 px-2 py-1 text-xs text-amber-300 hover:bg-amber-400/10"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <p class="text-xs uppercase tracking-wide text-ink-300">Website</p>
+              <a class="mt-2 block font-mono text-amber-400 break-all hover:underline" href={websiteUrl}>{websiteUrl}</a>
+            </div>
+          </div>
           <div class="mt-8 flex flex-wrap gap-3">
-            <a href="#connect"
-              class="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-3 transition">
-              Connect now →
+            <a href="#quick-start" class="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-ink-950 font-semibold px-5 py-3 transition">
+              Quick Start
             </a>
-            <a href="/aicf"
-              class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition">
-              AICF compute
+            <a href="https://explorer.animica.org" class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition">
+              Explorer
             </a>
-            <a href="/tiers"
-              class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition">
-              Pick your tier
+            <a href="https://animica.org" class="inline-flex items-center gap-2 rounded-xl border border-white/15 hover:border-amber-400/50 text-ink-50 px-5 py-3 transition">
+              Main site
             </a>
           </div>
         </div>
@@ -41,111 +60,282 @@ import PoolStatus from "../components/PoolStatus.astro";
     </div>
   </section>
 
-  <section id="connect" class="max-w-7xl mx-auto px-4 py-16">
-    <h2 class="text-3xl font-semibold tracking-tight mb-2">Connect in three commands</h2>
-    <p class="text-ink-300 mb-8 max-w-2xl">
-      One command (<code class="font-mono text-amber-400">animica miner mine-blocks</code>)
-      runs both PoW and the AICF inference worker side-by-side. No local full
-      node required &mdash; point AICF at any reachable endpoint with
-      <code class="font-mono">--aicf-endpoint</code>.
-    </p>
-    <div class="grid lg:grid-cols-3 gap-4">
-      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 1 — install</div>
-        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>pip install animica</code></pre>
+  <section id="quick-start" class="max-w-7xl mx-auto px-4 py-16">
+    <div class="max-w-3xl">
+      <p class="text-xs uppercase tracking-[0.24em] text-amber-400 font-semibold">Quick Start</p>
+      <h2 class="mt-2 text-3xl font-semibold tracking-tight">Connect in three commands</h2>
+      <p class="mt-3 text-ink-300">
+        These commands use the Python package published as <code class="font-mono text-amber-400">animica</code>.
+        Run them on Linux or macOS with Python 3.10+ installed. Windows users should run them under WSL2.
+      </p>
+    </div>
+    <div class="mt-8 rounded-2xl border border-white/10 bg-ink-950 p-5">
+      <div class="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+        <span class="text-sm text-ink-300">Linux / macOS terminal</span>
+        <button
+          type="button"
+          data-copy-target="quick-start-code"
+          class="rounded-lg border border-white/15 px-3 py-1 text-xs text-ink-200 hover:border-amber-400/50 hover:text-amber-300"
+        >
+          Copy commands
+        </button>
+      </div>
+      <pre id="quick-start-code" class="mt-4 text-sm md:text-base font-mono text-ink-100 overflow-x-auto"><code>python3 -m pip install --upgrade animica
+animica miner setup
+animica miner mine-blocks --count 0 --pool-stratum stratum+tcp://pool.animica.org:3333</code></pre>
+    </div>
+
+    <div class="mt-8 grid gap-4 md:grid-cols-3">
+      <article class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">1. Install Animica</div>
         <p class="mt-3 text-sm text-ink-300">
-          Bundles the chain CLI, the AI compute worker, and the hardware
-          detector. Nothing else to install.
+          Installs the CLI, CPU miner, pool client, wallet helpers, and AICF worker.
+        </p>
+      </article>
+      <article class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">2. Run setup</div>
+        <p class="mt-3 text-sm text-ink-300">
+          Detects hardware, prepares <code class="font-mono">~/.animica/models/</code>, and is safe to rerun.
+        </p>
+      </article>
+      <article class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">3. Start mining</div>
+        <p class="mt-3 text-sm text-ink-300">
+          Connects to <code class="font-mono text-amber-400">{stratumAddress}</code>. Press Ctrl-C to stop.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section id="detailed-setup" class="max-w-7xl mx-auto px-4 py-16 border-t border-white/5">
+    <div class="max-w-3xl">
+      <p class="text-xs uppercase tracking-[0.24em] text-amber-400 font-semibold">Detailed setup</p>
+      <h2 class="mt-2 text-3xl font-semibold tracking-tight">Step-by-step walkthrough</h2>
+      <p class="mt-3 text-ink-300">
+        Use this if you want to understand what each command does, configure a dedicated payout
+        wallet, or tune the miner for your hardware.
+      </p>
+    </div>
+
+    <div class="mt-8 grid gap-4 md:grid-cols-2 max-w-4xl">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300 font-semibold">Recommended</div>
+        <p class="mt-2 text-sm text-ink-200">Python 3.10+, 4 GB RAM, 10 GB free disk (more for AICF model bundles)</p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300 font-semibold">Outbound network</div>
+        <p class="mt-2 text-sm text-ink-200">TCP 3333 to <code class="font-mono text-amber-400">pool.animica.org</code> and HTTPS for installs/downloads</p>
+      </div>
+    </div>
+
+    <ol class="mt-10 space-y-8">
+      <li class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="flex items-baseline gap-3">
+          <span class="text-amber-400 font-mono text-lg">01</span>
+          <h3 class="text-xl font-semibold tracking-tight">Install Animica</h3>
+        </div>
+        <p class="mt-3 text-ink-300 text-sm">
+          The <code class="font-mono text-amber-400">animica</code> Python package ships the CLI,
+          the CPU/GPU miner, the Stratum pool client, wallet helpers, and the AICF compute worker.
+        </p>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-sm font-mono overflow-x-auto"><code>python3 -m pip install --upgrade animica
+animica --version</code></pre>
+        <p class="mt-3 text-xs text-ink-400">
+          On managed Python installs (Debian/Ubuntu) you may need
+          <code class="font-mono">--break-system-packages</code> or a virtualenv:
+          <code class="font-mono">python3 -m venv ~/animica-venv &amp;&amp; source ~/animica-venv/bin/activate</code>.
+        </p>
+      </li>
+
+      <li class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="flex items-baseline gap-3">
+          <span class="text-amber-400 font-mono text-lg">02</span>
+          <h3 class="text-xl font-semibold tracking-tight">Create a payout wallet</h3>
+        </div>
+        <p class="mt-3 text-ink-300 text-sm">
+          The pool needs a Bech32 address (<code class="font-mono">anim1...</code>) to credit your shares.
+          Create a fresh wallet labeled <code class="font-mono">miner</code> and make it the default:
+        </p>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-sm font-mono overflow-x-auto"><code>animica wallet new --label miner
+animica wallet set-default miner
+animica wallet list</code></pre>
+        <p class="mt-3 text-xs text-ink-400">
+          Already have a wallet? Skip the first two commands and pass
+          <code class="font-mono">--address anim1...</code> (or a label) directly to <code class="font-mono">mine-blocks</code>.
+          Wallet files live under <code class="font-mono">~/.animica/wallets.json</code> — back this up before mining.
+        </p>
+      </li>
+
+      <li class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="flex items-baseline gap-3">
+          <span class="text-amber-400 font-mono text-lg">03</span>
+          <h3 class="text-xl font-semibold tracking-tight">Run hardware setup</h3>
+        </div>
+        <p class="mt-3 text-ink-300 text-sm">
+          Detects CPU, RAM, and GPUs, picks eligible model tiers, prepares
+          <code class="font-mono">~/.animica/models/</code>, and downloads any AICF model bundles
+          your machine qualifies for. It is idempotent and safe to rerun.
+        </p>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-sm font-mono overflow-x-auto"><code>animica miner setup</code></pre>
+        <p class="mt-3 text-xs text-ink-400 space-y-1">
+          Useful flags:
+          <code class="font-mono">--tiers tiny,small</code> install only specific tiers,
+          <code class="font-mono">--skip-download</code> detect hardware but skip model pulls,
+          <code class="font-mono">--source huggingface</code> always pull from HF rather than IPFS,
+          <code class="font-mono">--json</code> emit a machine-readable report.
+        </p>
+      </li>
+
+      <li class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="flex items-baseline gap-3">
+          <span class="text-amber-400 font-mono text-lg">04</span>
+          <h3 class="text-xl font-semibold tracking-tight">Start mining against the pool</h3>
+        </div>
+        <p class="mt-3 text-ink-300 text-sm">
+          <code class="font-mono">--count 0</code> mines until you press Ctrl-C.
+          <code class="font-mono">--pool-stratum</code> connects to the official Stratum endpoint;
+          omit it to mine solo against a local Animica node.
+          AICF compute runs alongside PoW by default and earns bonus credits on capable hardware.
+        </p>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-sm font-mono overflow-x-auto"><code>animica miner mine-blocks \
+  --count 0 \
+  --pool-stratum stratum+tcp://pool.animica.org:3333</code></pre>
+        <p class="mt-3 text-xs text-ink-400">
+          To run as a background daemon, wrap it in <code class="font-mono">nohup</code>, <code class="font-mono">tmux</code>,
+          or a systemd unit. Set <code class="font-mono">ANIMICA_MINER_ADDRESS</code> /
+          <code class="font-mono">ANIMICA_MINER_POOL</code> to avoid repeating flags.
+        </p>
+      </li>
+
+      <li class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div class="flex items-baseline gap-3">
+          <span class="text-amber-400 font-mono text-lg">05</span>
+          <h3 class="text-xl font-semibold tracking-tight">Verify your worker</h3>
+        </div>
+        <p class="mt-3 text-ink-300 text-sm">
+          Look for <code class="font-mono">stratum subscribed</code> in the miner output and
+          confirm shares are being submitted. The pool API exposes live worker state:
+        </p>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-3 text-sm font-mono overflow-x-auto"><code>curl -s https://pool.animica.org/api/pool/summary | jq
+curl -s https://pool.animica.org/api/pool/accounting | jq</code></pre>
+        <p class="mt-3 text-xs text-ink-400">
+          Block credits and payouts are visible on the
+          <a class="text-amber-400 hover:underline" href="https://explorer.animica.org">explorer</a>
+          once a block you contributed to is confirmed.
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="advanced" class="max-w-7xl mx-auto px-4 py-16 border-t border-white/5">
+    <div class="max-w-3xl">
+      <p class="text-xs uppercase tracking-[0.24em] text-amber-400 font-semibold">Performance &amp; advanced</p>
+      <h2 class="mt-2 text-3xl font-semibold tracking-tight">Tune the miner for your hardware</h2>
+      <p class="mt-3 text-ink-300">
+        All flags below are appended to <code class="font-mono text-amber-400">animica miner mine-blocks</code>.
+        Defaults work out of the box; reach for these when you need to cap resource use or force a backend.
+      </p>
+    </div>
+    <div class="mt-8 grid gap-4 md:grid-cols-2">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">CPU threads</div>
+        <pre class="mt-3 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>--threads 4</code></pre>
+        <p class="mt-3 text-sm text-ink-300">
+          Caps PoW search threads. Default (0) saturates all cores minus one.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 2 — install AI model</div>
-        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica miner setup</code></pre>
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">GPU backend</div>
+        <pre class="mt-3 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>--device cuda
+# or: --gpu
+# also: rocm, opencl, metal, cpu, auto</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          Detects CPU/RAM/GPU, picks the tier(s) your machine can serve, and
-          downloads the matching model bundles into
-          <code class="font-mono">~/.animica/models/</code>. Re-run any time
-          you change hardware.
+          Forces a specific accelerator. <code class="font-mono">auto</code> picks the best detected.
         </p>
       </div>
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-3">Step 3 — start mining</div>
-        <pre class="bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica miner mine-blocks \
-  --address anim1... \
-  --pool-stratum stratum+tcp://pool.animica.org:5333 \
-  --aicf-endpoint https://rpc.pool.animica.org/aicf \
-  --count 0</code></pre>
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">AICF compute</div>
+        <pre class="mt-3 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>--no-aicf       # PoW only
+--aicf-endpoint https://rpc.pool.animica.org/aicf</code></pre>
         <p class="mt-3 text-sm text-ink-300">
-          PoW + AICF both run from this one command. AICF is on by default;
-          opt out with <code class="font-mono">--no-aicf</code>.
-          <code class="font-mono">--aicf-endpoint</code> removes the need for a
-          local Animica node.
+          Disable the AI inference worker, or point it at a remote node when you do not run one locally.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold">Worker identity</div>
+        <pre class="mt-3 bg-ink-950/80 rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>--address anim1... | label
+--pool-worker rig-01</code></pre>
+        <p class="mt-3 text-sm text-ink-300">
+          Override the payout target and label this worker in the pool dashboard.
         </p>
       </div>
     </div>
   </section>
 
   <section class="max-w-7xl mx-auto px-4 py-16 border-t border-white/5">
-    <div class="grid lg:grid-cols-2 gap-12">
-      <div>
-        <h2 class="text-2xl font-semibold tracking-tight mb-3">Hardware-aware tier selection</h2>
-        <p class="text-ink-300 mb-4">
-          Run <code class="font-mono bg-ink-900 px-2 py-0.5 rounded text-amber-400">animica miner setup</code>
-          to detect your hardware and pre-install the model tier(s) you're
-          eligible to serve. The pool routes AICF jobs to the smallest tier
-          that satisfies the request — your machine earns from whatever it
-          can serve.
+    <div class="grid lg:grid-cols-2 gap-8">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <h2 class="text-2xl font-semibold tracking-tight">Wallet address guidance</h2>
+        <p class="mt-3 text-ink-300">
+          The miner needs a payout wallet. The default command uses your configured default
+          miner address. If you have not configured one yet, create or select a wallet first:
         </p>
-        <ul class="space-y-2 text-sm text-ink-200">
-          <li class="flex items-center gap-2"><span class="text-amber-400">●</span> Auto-detects CPU, RAM, GPU VRAM</li>
-          <li class="flex items-center gap-2"><span class="text-amber-400">●</span> Advertises capabilities to AICF on registration</li>
-          <li class="flex items-center gap-2"><span class="text-amber-400">●</span> Falls back to a smaller tier on detection failure</li>
+        <pre class="mt-4 bg-ink-950/80 rounded-lg p-4 text-sm font-mono overflow-x-auto"><code>animica wallet new --label miner
+animica wallet set-default miner
+animica miner mine-blocks --count 0 --pool-stratum stratum+tcp://pool.animica.org:3333</code></pre>
+        <p class="mt-3 text-sm text-ink-400">
+          You can also pass a wallet label or address directly with <code class="font-mono">--address anim1...</code>.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <h2 class="text-2xl font-semibold tracking-tight">Troubleshooting</h2>
+        <ul class="mt-4 space-y-3 text-sm text-ink-300">
+          <li><span class="text-amber-400">Connection refused:</span> confirm your firewall allows outbound TCP to <code class="font-mono">pool.animica.org:3333</code>. Test with <code class="font-mono">nc -vz pool.animica.org 3333</code>.</li>
+          <li><span class="text-amber-400">No payout address:</span> run <code class="font-mono">animica wallet set-default &lt;label&gt;</code> or pass <code class="font-mono">--address</code>.</li>
+          <li><span class="text-amber-400">Setup downloads fail:</span> rerun <code class="font-mono">animica miner setup</code> after checking disk space and network access. Add <code class="font-mono">--skip-download</code> to bring up a PoW-only miner without AICF bundles.</li>
+          <li><span class="text-amber-400">Low performance:</span> CPU mining works everywhere; use <code class="font-mono">--threads N</code> to cap CPU usage or <code class="font-mono">--device cuda</code> for NVIDIA GPUs.</li>
+          <li><span class="text-amber-400">AICF worker OOMs:</span> rerun setup with <code class="font-mono">--tiers tiny</code>, or start the miner with <code class="font-mono">--no-aicf</code> to mine PoW only.</li>
+          <li><span class="text-amber-400">Stuck on "waiting for job":</span> the pool may be between templates; if it persists more than a minute, check <code class="font-mono">https://pool.animica.org/api/pool/summary</code>.</li>
         </ul>
       </div>
-      <div class="rounded-2xl border border-white/10 bg-ink-950 p-6">
-        <pre class="text-sm font-mono text-ink-100 overflow-x-auto"><code><span class="text-amber-400">$</span> animica miner setup
-<span class="text-ink-300">{
-  "os": "Linux",
-  "arch": "x86_64",
-  "cpu_cores_logical": 16,
-  "ram_gb": 64.0,
-  "gpus": [
-    {`{`}
-      "name": "NVIDIA RTX 4090",
-      "vram_gb": 24.0,
-      "backend": "cuda"
-    {`}`}
-  ],
-  "accelerator_preferred": "cuda",
-  "eligible_tiers": ["tiny", "small", "flagship"]
-}</span></code></pre>
-      </div>
     </div>
   </section>
 
   <section class="max-w-7xl mx-auto px-4 py-16 border-t border-white/5">
-    <h2 class="text-2xl font-semibold tracking-tight mb-3">Two earnings streams</h2>
-    <div class="grid sm:grid-cols-2 gap-6 mt-8">
-      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">PoW</div>
-        <h3 class="text-xl font-semibold">Block rewards</h3>
-        <p class="mt-2 text-sm text-ink-300">
-          Hashing for the Animica chain. Pays out per share via the existing
-          stratum protocol. The chain consensus is unchanged — same coinbase,
-          same difficulty, same payout model.
-        </p>
-        <a href="/stats" class="mt-4 inline-block text-amber-400 hover:underline text-sm">View pool stats →</a>
+    <h2 class="text-2xl font-semibold tracking-tight">Pool details</h2>
+    <div class="mt-6 grid sm:grid-cols-3 gap-4">
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Name</div>
+        <div class="mt-2 font-semibold">Official Animica Pool</div>
       </div>
-      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <div class="text-xs uppercase tracking-wide text-amber-400 font-semibold mb-2">AICF</div>
-        <h3 class="text-xl font-semibold">Compute credits</h3>
-        <p class="mt-2 text-sm text-ink-300">
-          Serve inference jobs for <code class="font-mono text-amber-400">animica chat</code> users.
-          Earn ANIMICA per completed job. Spare cycles count — the AICF worker
-          schedules around your PoW load.
-        </p>
-        <a href="/aicf" class="mt-4 inline-block text-amber-400 hover:underline text-sm">Learn about AICF →</a>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Stratum</div>
+        <div class="mt-2 font-mono text-amber-400">{stratumAddress}</div>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Website</div>
+        <a class="mt-2 block font-mono text-amber-400 hover:underline" href={websiteUrl}>{websiteUrl}</a>
       </div>
     </div>
   </section>
+
+  <script is:inline>
+    document.querySelectorAll('[data-copy-target]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const id = button.getAttribute('data-copy-target');
+        const target = id ? document.getElementById(id) : null;
+        const value = target?.textContent?.trim();
+        if (!value) return;
+        try {
+          await navigator.clipboard.writeText(value);
+          const original = button.textContent;
+          button.textContent = 'Copied';
+          window.setTimeout(() => { button.textContent = original; }, 1200);
+        } catch (err) {
+          console.warn('[pool-web] copy failed', err);
+        }
+      });
+    });
+  </script>
 </BaseLayout>

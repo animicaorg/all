@@ -18,19 +18,23 @@ const { id, title } = Astro.props;
 ---
 
 <section
-  class="step relative rounded-2xl border border-white/10 bg-white/[0.03] p-6 mb-6"
+  class="step relative rounded-2xl border border-white/10 bg-white/[0.02] p-6 mb-6 transition-colors"
   data-step-id={id}
 >
-  <header class="flex items-baseline justify-between mb-4">
-    <h3 class="text-lg font-semibold">
-      <span class="text-amber-400 mr-2 step-badge">●</span>{title}
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <h3 class="text-lg font-semibold flex items-center gap-2.5">
+      <span
+        class="step-badge inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/15 text-amber-300 text-xs font-mono leading-none"
+        aria-hidden="true"
+      >●</span>
+      {title}
     </h3>
     <button
-      class="step-toggle text-xs rounded-lg border border-amber-400/40 hover:border-amber-400 text-amber-300 px-3 py-1.5 font-medium"
-      data-step={id}>Mark complete</button
-    >
+      class="step-toggle text-xs rounded-lg border border-amber-400/40 hover:border-amber-400 hover:bg-amber-400/10 text-amber-300 px-3 py-1.5 font-medium transition"
+      data-step={id}
+    >Mark complete</button>
   </header>
-  <div class="prose prose-invert max-w-none prose-sm">
+  <div class="prose max-w-none">
     <slot />
   </div>
 </section>

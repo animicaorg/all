@@ -33,8 +33,8 @@
 </section>
 
 <script is:inline define:vars={{
-  miningApi: typeof __MINING_API__ !== 'undefined' ? __MINING_API__ : 'https://api.pool.animica.org',
-  poolUrl:   typeof __POOL_URL__   !== 'undefined' ? __POOL_URL__   : 'stratum+tcp://pool.animica.org:5333',
+  miningApi: typeof __MINING_API__ !== 'undefined' ? __MINING_API__ : 'https://pool.animica.org',
+  poolUrl:   typeof __POOL_URL__   !== 'undefined' ? __POOL_URL__   : 'stratum+tcp://pool.animica.org:3333',
 }}>
   (async () => {
     const chip      = document.getElementById('status-chip');
