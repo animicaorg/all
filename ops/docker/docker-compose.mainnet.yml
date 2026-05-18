@@ -28,7 +28,14 @@ networks:
 
 volumes:
   mainnet_node_data:
-    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_mainnet_chain_1_data}"
+    # IMPORTANT: this default points to the volume the prod node has been
+    # writing into since launch. Changing it silently — or running `docker
+    # compose up -d` with a different ANIMICA_NAMED_DATA_VOLUME — recreates
+    # the container with an empty volume, which presents as a chain reset
+    # (height plummets, miners orphan, peers re-sync from genesis).
+    # Past incident: 2026-05-18 height 12289 → 200 after a compose recreate
+    # that picked the empty default.
+    name: "${ANIMICA_NAMED_DATA_VOLUME:-animica_mainnet_chain_1_31ae91ca_data}"
   mainnet_services_data:
     name: animica_mainnet_services_data
 
