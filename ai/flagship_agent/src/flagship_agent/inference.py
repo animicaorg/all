@@ -115,10 +115,19 @@ class LocalBundleRunner:
         chat_messages = list(history) + [{"role": "user", "content": prompt}]
         try:
             if hasattr(self._tokenizer, "apply_chat_template"):
-                input_ids = self._tokenizer.apply_chat_template(
+                out = self._tokenizer.apply_chat_template(
                     chat_messages, add_generation_prompt=True,
                     return_tensors="pt",
-                ).to(self._device)
+                )
+                # transformers ≥5 returns a BatchEncoding (dict-like) where
+                # earlier versions returned the raw tensor. Normalize.
+                if hasattr(out, "input_ids"):
+                    input_ids = out.input_ids
+                elif isinstance(out, dict) and "input_ids" in out:
+                    input_ids = out["input_ids"]
+                else:
+                    input_ids = out
+                input_ids = input_ids.to(self._device)
             else:
                 text = "\n".join(f"{m['role']}: {m['content']}"
                                   for m in chat_messages) + "\nassistant: "
