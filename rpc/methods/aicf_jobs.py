@@ -198,18 +198,26 @@ class _AicfJobStore:
             return self._jobs.get(job_id)
 
     def claim_next(self, worker_addr: str, tiers: List[str]) -> Optional[_JobRecord]:
+        # Empty tiers means "this worker advertised no capability" — match
+        # nothing. Past inverted semantic ("not tiers → match all") let
+        # bare-RPC callers and stack-less miners (no torch) claim every
+        # job and return stubs the user still paid for.
+        if not tiers:
+            return None
         now = time.time()
         with self._lock:
             for job in self._jobs.values():
-                if job.state == "pending" and (not tiers or job.tier in tiers):
+                if job.state == "pending" and job.tier in tiers:
                     job.state = "claimed"
                     job.claim_owner = worker_addr
                     job.claimed_at = now
                     job.claim_expires_at = now + _WORKER_LEASE_S
                     return job
-                # Reclaim expired leases
+                # Reclaim expired leases — only for jobs whose tier this
+                # worker is eligible for.
                 if (
                     job.state == "claimed"
+                    and job.tier in tiers
                     and job.claim_expires_at is not None
                     and job.claim_expires_at < now
                 ):
@@ -446,6 +454,10 @@ class _SqliteAicfJobStore:
         return self._job_from_row(row) if row else None
 
     def claim_next(self, worker_addr: str, tiers: List[str]) -> Optional[_JobRecord]:
+        # Empty tiers means "worker has no advertised capability" — match
+        # nothing. See _AicfJobStore.claim_next above for the rationale.
+        if not tiers:
+            return None
         now = time.time()
         conn = self._conn()
         # Single transaction so concurrent claimers can't pick the
@@ -453,36 +465,22 @@ class _SqliteAicfJobStore:
         # the cross-process case.
         conn.execute("BEGIN IMMEDIATE")
         try:
-            params: list = []
-            tier_filter = ""
-            if tiers:
-                placeholders = ",".join(["?"] * len(tiers))
-                tier_filter = f" AND tier IN ({placeholders})"
-                params.extend(tiers)
+            placeholders = ",".join(["?"] * len(tiers))
+            tier_filter = f" AND tier IN ({placeholders})"
             row = conn.execute(
                 "SELECT * FROM jobs WHERE state='pending'" + tier_filter
                 + " ORDER BY created_at ASC LIMIT 1",
-                tuple(params),
+                tuple(tiers),
             ).fetchone()
             if row is None:
                 # Try reclaiming an expired lease before giving up.
-                params2: list = [now]
-                if tiers:
-                    placeholders = ",".join(["?"] * len(tiers))
-                    params2.extend(tiers)
-                    expired_q = (
-                        "SELECT * FROM jobs WHERE state='claimed'"
-                        " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
-                        + f" AND tier IN ({placeholders})"
-                        + " ORDER BY claim_expires_at ASC LIMIT 1"
-                    )
-                else:
-                    expired_q = (
-                        "SELECT * FROM jobs WHERE state='claimed'"
-                        " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
-                        " ORDER BY claim_expires_at ASC LIMIT 1"
-                    )
-                row = conn.execute(expired_q, tuple(params2)).fetchone()
+                expired_q = (
+                    "SELECT * FROM jobs WHERE state='claimed'"
+                    " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
+                    + f" AND tier IN ({placeholders})"
+                    + " ORDER BY claim_expires_at ASC LIMIT 1"
+                )
+                row = conn.execute(expired_q, (now, *tiers)).fetchone()
             if row is None:
                 conn.execute("COMMIT")
                 return None

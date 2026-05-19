@@ -197,13 +197,44 @@ class StratumClient:
         features: dict = {"framing": self.framing}
         if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
             aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+            tiers_forced = bool(aicf_tiers_env)
             if aicf_tiers_env:
                 tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
             else:
                 # Sensible default: advertise standard tier so chat jobs
                 # route to this miner out of the box. Heavier tiers stay
-                # opt-in via the env var.
+                # opt-in via the env var. Suppressed below when the ML
+                # stack is missing so users don't pay for stub replies.
                 tiers = ["standard"]
+            # Detect whether the ML backend is actually loadable. If it
+            # isn't, the engine will fall back to a labeled stub for every
+            # claimed job — and the user still pays. Refuse to advertise
+            # tiers in that case so the pool routes elsewhere. Operators
+            # can override with ANIMICA_AICF_TIERS to keep the legacy
+            # behavior (e.g. to take jobs and serve stubs intentionally).
+            try:
+                import importlib as _il
+                _il.import_module("transformers")
+                _il.import_module("torch")
+                ml_backend = "transformers"
+            except Exception as _ml_exc:
+                ml_backend = "stub"
+                if tiers and not tiers_forced:
+                    log.warning(
+                        "[client] AICF tiers suppressed: ML stack not "
+                        "importable (%s). Run `animica miner setup` to "
+                        "install torch/transformers, or set "
+                        "ANIMICA_AICF_TIERS to force-advertise anyway.",
+                        _ml_exc,
+                    )
+                    tiers = []
+                elif tiers and tiers_forced:
+                    log.warning(
+                        "[client] AICF tiers %s advertised despite "
+                        "missing ML stack (%s) — every claimed job will "
+                        "return a stub. Users will pay for empty replies.",
+                        tiers, _ml_exc,
+                    )
             if tiers:
                 hardware: dict = {}
                 for key, env in (
@@ -214,16 +245,7 @@ class StratumClient:
                     val = _os.environ.get(env, "").strip()
                     if val:
                         hardware[key] = val
-                # Best-effort backend detection so the pool's dashboards
-                # show real capability instead of a flat "unknown".
-                if "backend" not in hardware:
-                    try:
-                        import importlib as _il
-                        _il.import_module("transformers")
-                        _il.import_module("torch")
-                        hardware["backend"] = "transformers"
-                    except Exception:
-                        hardware["backend"] = "stub"
+                hardware.setdefault("backend", ml_backend)
                 features["aicf"] = {"tiers": tiers, "hardware": hardware}
         req = req_subscribe(
             agent=self.agent, features=features
