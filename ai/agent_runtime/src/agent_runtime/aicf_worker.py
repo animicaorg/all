@@ -16,6 +16,7 @@ are honored everywhere this module is used.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import time
@@ -29,6 +30,36 @@ from agent_runtime.errors import AgentRuntimeError, BundleError
 from agent_runtime.hardware import (
     HardwareProfile, attach_eligible_tiers, detect_hardware,
 )
+
+
+log = logging.getLogger("agent_runtime.aicf_worker")
+
+
+def _endpoint_reachable(url: str, timeout_sec: float = 1.5) -> bool:
+    """Cheap liveness probe used to decide whether to fall back to the
+    public RPC when the configured local node isn't listening. Mirrors
+    the chat CLI's helper — we POST a tiny chain.getHead and accept any
+    well-formed JSON-RPC reply (success or structured error) as
+    'reachable'. Anything else — refused TCP, timeout, HTML 4xx/5xx
+    page — counts as unreachable."""
+    import json as _json
+    import urllib.request
+    import urllib.error
+    body = _json.dumps({"jsonrpc": "2.0", "id": 0,
+                         "method": "chain.getHead", "params": {}}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
+                                  headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            ct = (resp.headers.get("content-type") or "").lower()
+            if "application/json" not in ct:
+                return False
+            payload = _json.loads(resp.read().decode("utf-8"))
+            return isinstance(payload, dict) and (
+                "result" in payload or "error" in payload
+            )
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
 
 
 @dataclass
@@ -97,6 +128,23 @@ class AICFWorker:
         if not endpoint:
             raise AgentRuntimeError(
                 f"no AICF endpoint configured for network {network}")
+        # Same fallback the chat CLI uses: when the configured endpoint
+        # is the local node (the integration default for operators) and
+        # there's no local node listening, slide over to the public RPC
+        # so `animica miner start --address X` works on a fresh box
+        # with no extra setup. An explicit override (--aicf-endpoint or
+        # ANIMICA_AICF_ENDPOINT env, applied by the caller before
+        # construction) always wins because we won't reach this branch
+        # for a non-local endpoint.
+        if (network == "mainnet"
+                and ("127.0.0.1" in endpoint or "localhost" in endpoint)
+                and not _endpoint_reachable(endpoint)):
+            public = "https://rpc.animica.org/rpc"
+            log.info(
+                "[aicf-worker] local AICF endpoint %s not reachable; "
+                "falling back to public %s", endpoint, public,
+            )
+            endpoint = public
         self.endpoint = endpoint
         self.client = AICFClient(endpoint=endpoint)
         self.profile = detect_hardware()
