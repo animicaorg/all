@@ -4,6 +4,10 @@
 aicf:
   # Default AICF protocol endpoint. RPC method namespace is `aicf.protocol.*`.
   # Network-specific overrides selected by ANIMICA_NETWORK / `animica network set`.
+  # Local-node defaults — node operators and miners run their own RPC at
+  # 8545 and these endpoints reflect that. The `animica chat` CLI applies
+  # a separate fallback (public rpc.animica.org/rpc) when the local node
+  # isn't reachable so end-user installs work without their own node.
   endpoint:
     mainnet: "http://127.0.0.1:8545/rpc"
     testnet: "http://127.0.0.1:18546/rpc"

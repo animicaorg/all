@@ -50,6 +50,17 @@ from agent_runtime.errors import (
     WalletError,
 )
 from agent_runtime.providers import ProviderCascade, TurnRequest, TurnResult
+from agent_runtime.chat_persist import (
+    ChatPersistError,
+    Turn,
+    append_exchange,
+    list_threads_local,
+    new_thread_id,
+    read_thread,
+    remember_thread,
+    ThreadInfo,
+    derive_namespace,
+)
 
 
 app = typer.Typer(
@@ -119,6 +130,15 @@ class _SlashHandler:
             ("/status",        "Show provider cascade status."),
             ("/agent <task>",  "Run an agentic task with tool calls "
                                 "(read/write/edit/bash, gated)."),
+            ("/tiers",         "Show available tiers, the models behind "
+                                "each, and which one your next turn will "
+                                "use."),
+            ("/threads",       "List your saved chat threads (from the DA "
+                                "layer + local index)."),
+            ("/resume <id>",   "Resume an existing chat thread by id; "
+                                "fetches transcript from the DA layer."),
+            ("/new",           "Start a fresh chat thread, abandoning the "
+                                "current one (it stays in DA / resumable)."),
         ]:
             t.add_row(*line)
         self.console.print(t)
@@ -195,6 +215,142 @@ class _SlashHandler:
                 f"  [{color}]{row['name']:<20} {row['available']:<3}[/{color}] "
                 f"{row['reason']}",
             )
+
+    def _cmd_tiers(self, _: str) -> None:
+        """Show available tiers, model picks per tier, and what the next
+        turn will use. Combines local model auto-detect with whatever the
+        provider cascade can report about the network."""
+        # Local detect: what models the miner-side code would pick.
+        try:
+            from animica.stratum_pool.aicf_inference import (
+                discover_models, resolve_tier_model, _TIER_RANGES,
+            )
+            tiers = [t for t, _, _ in _TIER_RANGES]
+            picks = {t: resolve_tier_model(t) for t in tiers}
+            discovered = discover_models()
+        except Exception as exc:
+            self.console.print(
+                f"[yellow]could not load local tier ladder: {exc}[/yellow]"
+            )
+            tiers, picks, discovered = [], {}, []
+
+        # Network view: cascade providers (distributed-aicf / local-flagship
+        # / offline). Reflects what your next turn would route through.
+        self.console.print("[bold]Providers available to your chat:[/bold]")
+        for row in self.cascade.provider_status():
+            color = "green" if row["available"] == "yes" else "red"
+            self.console.print(
+                f"  [{color}]{row['name']:<20} {row['available']:<3}[/{color}] "
+                f"{row['reason']}",
+            )
+
+        if tiers:
+            self.console.print("")
+            self.console.print(
+                "[bold]Tiers and the model picked per tier "
+                "(set with [cyan]/tier <id>[/cyan]):[/bold]"
+            )
+            preferred = self.state.get("tier_preferred")
+            for t in tiers:
+                marker = " [cyan](preferred for next turn)[/cyan]" if t == preferred else ""
+                self.console.print(f"  [bold]{t:<9s}[/bold] -> {picks[t]}{marker}")
+
+        if discovered:
+            self.console.print("")
+            self.console.print(
+                f"[dim]auto-detected from local cache / bundles "
+                f"({len(discovered)} entries; "
+                f"`animica miner models` for full list):[/dim]"
+            )
+            for m in discovered[:6]:
+                sz = f"{m.approx_billions:>5.1f}B" if m.approx_billions else "    ?"
+                self.console.print(f"  [dim]{m.source:<14s} {sz}  {m.identifier}[/dim]")
+            if len(discovered) > 6:
+                self.console.print(f"  [dim]... and {len(discovered) - 6} more[/dim]")
+
+    def _cmd_threads(self, _: str) -> None:
+        wallet_addr = self.state.get("wallet_address") or ""
+        if not wallet_addr:
+            self.console.print(
+                "[yellow]no wallet address detected; threads are keyed on "
+                "your wallet so they can't be listed without one[/yellow]"
+            )
+            return
+        entries = list_threads_local(wallet_addr)
+        if not entries:
+            self.console.print("[dim]no saved threads yet[/dim]")
+            return
+        t = Table(title="Your chat threads", show_header=True, box=None)
+        t.add_column("id", style="bold cyan")
+        t.add_column("title")
+        t.add_column("turns", justify="right")
+        t.add_column("last seen", style="dim")
+        from datetime import datetime
+        active = self.state.get("thread_id")
+        for e in entries[:20]:
+            mark = "→ " if e.thread_id == active else "  "
+            last = datetime.fromtimestamp(e.last_ts).strftime("%Y-%m-%d %H:%M") if e.last_ts else "-"
+            t.add_row(f"{mark}{e.thread_id}", e.title or "(untitled)",
+                      str(e.turn_count), last)
+        self.console.print(t)
+        if len(entries) > 20:
+            self.console.print(f"[dim]... and {len(entries) - 20} more[/dim]")
+
+    def _cmd_resume(self, rest: str) -> None:
+        thread_id = rest.strip()
+        if not thread_id:
+            self.console.print("[yellow]usage: /resume <thread-id>[/yellow]")
+            return
+        wallet_addr = self.state.get("wallet_address") or ""
+        if not wallet_addr:
+            self.console.print("[yellow]no wallet address; cannot resume[/yellow]")
+            return
+        rpc_url = self.state.get("rpc_url") or ""
+        try:
+            turns = read_thread(rpc_url, wallet_addr, thread_id)
+        except ChatPersistError as exc:
+            self.console.print(f"[red]could not read thread: {exc}[/red]")
+            return
+        if not turns:
+            self.console.print(
+                f"[yellow]thread {thread_id!r} has no turns on the DA layer; "
+                f"starting fresh under that id[/yellow]"
+            )
+        self.state["thread_id"] = thread_id
+        self.state["thread_sequence"] = (
+            max((t.sequence for t in turns), default=-1) + 1
+        )
+        # Rebuild the rolling history that's passed to the next provider call.
+        history: list[dict] = self.state.setdefault("history", [])
+        history.clear()
+        for t in turns:
+            history.append({"role": t.role, "content": t.content})
+        self.console.print(
+            f"[green]resumed thread {thread_id} — {len(turns)} turn(s) "
+            f"loaded[/green]"
+        )
+        # Replay a short tail so the user sees where they left off.
+        for t in turns[-6:]:
+            label = "you" if t.role == "user" else "assistant"
+            self.console.print(f"  [dim]{label}>[/dim] {t.content[:200]}")
+        # Cache in the local index so /threads keeps showing it.
+        remember_thread(wallet_addr, ThreadInfo(
+            thread_id=thread_id,
+            wallet_address=wallet_addr,
+            namespace=derive_namespace(wallet_addr, thread_id),
+            title=(turns[0].content[:60].strip() if turns else ""),
+            first_ts=turns[0].ts if turns else 0,
+            last_ts=turns[-1].ts if turns else 0,
+            turn_count=len(turns),
+        ))
+
+    def _cmd_new(self, _: str) -> None:
+        tid = new_thread_id()
+        self.state["thread_id"] = tid
+        self.state["thread_sequence"] = 0
+        history = self.state.setdefault("history", [])
+        history.clear()
+        self.console.print(f"[cyan]started new thread: {tid}[/cyan]")
 
     def _cmd_agent(self, rest: str) -> None:
         """Run a single agentic task: `/agent <task description>`.
@@ -420,7 +576,8 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
               agent_policy: Optional[PermissionPolicy] = None,
               agent_max_iters: int = 10,
               agent_max_cost: float = 0.5,
-              agent_cwd: Optional[str] = None) -> int:
+              agent_cwd: Optional[str] = None,
+              resume_thread_id: Optional[str] = None) -> int:
     try:
         cascade = ProviderCascade(cfg, rpc_url=rpc_url,
                                   wallet_path=wallet_path,
@@ -430,6 +587,21 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
         return 2
 
     _print_banner(console, cascade, rpc_url)
+
+    # Best-effort: pull the wallet address from the distributed-aicf
+    # provider so we can persist turns under it. Falls back to "" which
+    # disables persistence (chat still works, just no DA write / resume).
+    wallet_address = ""
+    try:
+        for p in cascade._providers:  # type: ignore[attr-defined]
+            if p.name == "distributed-aicf":
+                wi = p._wallet_info()  # type: ignore[attr-defined]
+                wallet_address = wi.address or ""
+                break
+    except Exception:    # noqa: BLE001 — persistence is best-effort
+        wallet_address = ""
+
+    thread_id = resume_thread_id or new_thread_id()
     state: dict = {
         "turns": [],
         "transcript": [],
@@ -441,9 +613,48 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
         "agent_max_iters": agent_max_iters,
         "agent_max_cost": agent_max_cost,
         "agent_cwd": agent_cwd or os.getcwd(),
+        # Persistence keys read by the /threads /resume /new commands and
+        # by the post-turn writer below.
+        "wallet_address": wallet_address,
+        "rpc_url": rpc_url,
+        "thread_id": thread_id,
+        "thread_sequence": 0,
+        "history": [],
     }
     slash = _SlashHandler(console, cascade, state)
-    history: list[dict[str, str]] = []
+    history: list[dict[str, str]] = state["history"]
+
+    # If the user asked to resume a thread, hydrate it from DA before the
+    # first prompt so the model sees the conversation so far.
+    if resume_thread_id and wallet_address:
+        try:
+            prior = read_thread(rpc_url, wallet_address, resume_thread_id)
+        except ChatPersistError as exc:
+            console.print(f"[yellow]could not load thread {resume_thread_id}: {exc}[/yellow]")
+            prior = []
+        if prior:
+            for t in prior:
+                history.append({"role": t.role, "content": t.content})
+            state["thread_sequence"] = prior[-1].sequence + 1
+            console.print(
+                f"[green]resumed thread {resume_thread_id} — "
+                f"{len(prior)} prior turn(s) loaded[/green]"
+            )
+            for t in prior[-4:]:
+                label = "you" if t.role == "user" else "assistant"
+                console.print(f"  [dim]{label}>[/dim] {t.content[:200]}")
+        else:
+            console.print(
+                f"[dim]no prior turns under thread {resume_thread_id}; "
+                f"starting fresh under that id[/dim]"
+            )
+    elif wallet_address:
+        console.print(
+            f"[dim]thread {thread_id} (new); turns will persist to DA. "
+            f"`/threads` to list, `/resume <id>` to switch, `/new` for a "
+            f"fresh thread.[/dim]"
+        )
+
     try:
         while not state["exit"]:
             try:
@@ -517,6 +728,33 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
             history.append({"role": "user", "content": line})
             history.append({"role": "assistant", "content": result.text})
             state["turns"].append(result)
+
+            # Persist the exchange to DA so any client owned by the same
+            # wallet (CLI, studio.animica.org, mobile) can resume the
+            # thread later. Best-effort: a persistence failure logs a
+            # one-liner and the chat keeps going — the user already paid
+            # for the inference.
+            persist_addr = state.get("wallet_address") or ""
+            if persist_addr:
+                try:
+                    seq = int(state.get("thread_sequence", 0))
+                    append_exchange(
+                        rpc_url,
+                        wallet_address=persist_addr,
+                        thread_id=state["thread_id"],
+                        user_text=line,
+                        assistant_text=result.text,
+                        next_sequence=seq,
+                        provider=result.provider,
+                        tier=result.tier,
+                        cost_animica=result.cost_animica,
+                        latency_ms=result.latency_ms,
+                    )
+                    state["thread_sequence"] = seq + 2
+                except ChatPersistError as exc:
+                    console.print(
+                        f"  [yellow]thread persist failed: {exc}[/yellow]"
+                    )
             state["transcript"].append({
                 "user": line, "assistant": result.text,
                 "meta": {
@@ -602,6 +840,20 @@ def main(
         None, "--cwd",
         help="Working directory the agent sees (default: current directory).",
     ),
+    # ---- Chat persistence flags ----
+    thread: Optional[str] = typer.Option(
+        None, "--thread",
+        help="Resume the given chat thread by id. The transcript is "
+              "fetched from the DA layer (namespace derived from your "
+              "wallet + this id) and replayed before the first prompt. "
+              "Without this flag, a fresh thread id is generated.",
+    ),
+    list_threads: bool = typer.Option(
+        False, "--list-threads",
+        help="Print the locally-cached list of your saved threads and exit. "
+              "(Each turn is persisted to DA, so any client owned by the "
+              "same wallet can resume — this list is just the resume picker.)",
+    ),
 ) -> None:
     """Interactive AICF-paid chat REPL."""
     console = Console()
@@ -620,6 +872,23 @@ def main(
             "[red]no AICF endpoint configured for network "
             f"{network!r}[/red]")
         raise typer.Exit(code=2)
+
+    # User-friendly fallback: if the configured endpoint is the local
+    # node (the integration default) and there's no local node listening,
+    # auto-redirect to the public mainnet RPC so a fresh `pip install
+    # animica` + `animica chat` works with zero setup. An explicit
+    # --rpc-url or ANIMICA_RPC_URL override always wins.
+    if (not rpc_url
+            and not os.environ.get("ANIMICA_RPC_URL")
+            and network == "mainnet"
+            and ("127.0.0.1" in endpoint or "localhost" in endpoint)):
+        if not _endpoint_reachable(endpoint):
+            public = "https://rpc.animica.org/rpc"
+            console.print(
+                f"[dim]local node at {endpoint} not reachable — "
+                f"falling back to public RPC {public}[/dim]"
+            )
+            endpoint = public
 
     if require_distributed:
         os.environ["ANIMICA_CHAT_REQUIRE_DISTRIBUTED"] = "1"
@@ -651,14 +920,78 @@ def main(
         cascade.close()
         raise typer.Exit(code=0)
 
+    # `--list-threads` is a one-shot — print and exit, no REPL.
+    if list_threads:
+        # Resolve the wallet address the same way _run_repl does (cheaper
+        # than spinning up the full cascade — we just need an address).
+        addr = ""
+        try:
+            from agent_runtime.wallet import load_wallet_info
+            wi = load_wallet_info(
+                wallet_path=wallet, rpc_url=endpoint,
+                network=network, wallet_label=wallet_label,
+            )
+            addr = wi.address or ""
+        except Exception as exc:    # noqa: BLE001
+            console.print(f"[yellow]could not load wallet: {exc}[/yellow]")
+        if not addr:
+            console.print("[red]no wallet address; cannot list threads[/red]")
+            raise typer.Exit(code=3)
+        entries = list_threads_local(addr)
+        if not entries:
+            console.print("[dim]no saved threads for this wallet[/dim]")
+            raise typer.Exit(code=0)
+        t = Table(title=f"Chat threads for {addr[:14]}…", show_header=True, box=None)
+        t.add_column("id", style="bold cyan")
+        t.add_column("title")
+        t.add_column("turns", justify="right")
+        t.add_column("last seen", style="dim")
+        from datetime import datetime
+        for e in entries[:50]:
+            last = datetime.fromtimestamp(e.last_ts).strftime("%Y-%m-%d %H:%M") if e.last_ts else "-"
+            t.add_row(e.thread_id, e.title or "(untitled)", str(e.turn_count), last)
+        console.print(t)
+        console.print(
+            f"[dim]resume any of these with `animica chat --thread <id>`[/dim]"
+        )
+        raise typer.Exit(code=0)
+
     rc = _run_repl(
         cfg, rpc_url=endpoint, wallet_path=wallet,
         yolo=yolo, console=console, wallet_label=wallet_label,
         agent_policy=PermissionPolicy(yolo=yolo_tools, read_only=read_only),
         agent_max_iters=max_iterations, agent_max_cost=max_cost,
         agent_cwd=cwd or os.getcwd(),
+        resume_thread_id=thread,
     )
     raise typer.Exit(code=rc)
+
+
+def _endpoint_reachable(url: str, timeout_sec: float = 1.5) -> bool:
+    """Cheap liveness probe used to decide whether to fall back to the
+    public RPC when the configured local node isn't running. We post a
+    tiny chain.getHead RPC and accept any well-formed JSON-RPC reply
+    (success OR a structured error) as 'reachable'. Anything else —
+    refused TCP, timeout, HTML 4xx/5xx page — is treated as unreachable.
+    """
+    import json as _json
+    import urllib.request
+    import urllib.error
+    body = _json.dumps({"jsonrpc": "2.0", "id": 0,
+                         "method": "chain.getHead", "params": {}}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
+                                  headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            ct = (resp.headers.get("content-type") or "").lower()
+            if "application/json" not in ct:
+                return False
+            payload = _json.loads(resp.read().decode("utf-8"))
+            return isinstance(payload, dict) and (
+                "result" in payload or "error" in payload
+            )
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
 
 
 def _resolve_active_network() -> str:
