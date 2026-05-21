@@ -120,16 +120,37 @@ function composeStudioPrompt(spec: ChatJobSpec): string {
 async function rpc<T>(url: string, method: string, params: unknown): Promise<T> {
   const r = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: nextRpcId++, method, params }),
   });
-  if (!r.ok) {
-    throw new Error(`AICF RPC ${method} HTTP ${r.status}`);
+  // Read the body as text first so we can detect HTML / nginx error pages
+  // and surface a clear error instead of letting JSON.parse emit the
+  // notorious `Unexpected token '<', "<html>..." is not valid JSON` which
+  // tells the user nothing about what actually broke.
+  const raw = await r.text();
+  const ct = (r.headers.get("content-type") || "").toLowerCase();
+  const looksHtml = !ct.includes("application/json") && /^\s*<(?:!doctype|html|head|body)/i.test(raw);
+  if (!r.ok || looksHtml) {
+    const snippet = raw.replace(/\s+/g, " ").trim().slice(0, 180);
+    throw new Error(
+      `AICF RPC ${method} non-JSON response (HTTP ${r.status}` +
+      (ct ? `, ${ct}` : "") +
+      `) from ${url}` +
+      (snippet ? ` — ${snippet}` : "") +
+      ". Check the RPC URL (should be https://mainnet.animica.org/rpc).",
+    );
   }
-  const body = (await r.json()) as {
-    error?: { code: number | string; message: string; data?: unknown };
-    result?: T;
-  };
+  let body: { error?: { code: number | string; message: string; data?: unknown }; result?: T };
+  try {
+    body = JSON.parse(raw);
+  } catch (parseErr) {
+    const snippet = raw.replace(/\s+/g, " ").trim().slice(0, 180);
+    throw new Error(
+      `AICF RPC ${method} returned malformed JSON from ${url}` +
+      (snippet ? ` — ${snippet}` : "") +
+      ` (${parseErr instanceof Error ? parseErr.message : String(parseErr)})`,
+    );
+  }
   if (body.error) {
     const err = new Error(`AICF ${body.error.code}: ${body.error.message}`);
     (err as Error & { data?: unknown }).data = body.error.data;

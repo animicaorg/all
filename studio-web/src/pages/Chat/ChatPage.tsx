@@ -12,9 +12,14 @@ type Turn = {
   latencyMs?: number;
 };
 
+// Note: the public node is reachable at https://mainnet.animica.org/rpc.
+// `rpc.mainnet.animica.org` was an old guess that resolves but answers POSTs
+// with an nginx `405 Method Not Allowed` + `text/html` body, which surfaced
+// in chat as `<html> is not valid JSON` because the V8 JSON parser bit on
+// the HTML response. Never point this at the rpc.* subdomain.
 const DEFAULT_RPC_URL =
   (import.meta as ImportMeta & { env?: Record<string, string> })?.env?.VITE_AICF_RPC_URL ??
-  "https://rpc.mainnet.animica.org/rpc";
+  "https://mainnet.animica.org/rpc";
 
 /**
  * Animica Studio — Chat page.
