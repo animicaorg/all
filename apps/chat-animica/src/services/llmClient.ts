@@ -158,7 +158,16 @@ interface AicfOk {
   ok: true;
   content: string;
   provider: string;
+  // The bech32 id of the miner that actually served this turn — the
+  // routing layer ("distributed-aicf") doesn't tell the user *which*
+  // miner ran inference, so we surface the real provider_id from the
+  // AICF receipt for the UI's "served by X" line.
+  miner_id?: string;
+  // AICF job id returned by aicf.submitInferenceJob, useful for
+  // looking the turn up later via aicf.getJobStatus.
+  job_id?: string;
   tier: string;
+  requested_tier?: string;
   cost_animica: number;
   latency_ms: number;
   fallback_reasons: string[];
@@ -241,7 +250,10 @@ async function callAicf(input: LlmRequest): Promise<LlmResponse | null> {
     abi: [],
     manifest: {
       provider: out.provider,
+      miner_id: out.miner_id ?? "",
+      job_id: out.job_id ?? "",
       tier: out.tier,
+      requested_tier: out.requested_tier ?? "",
       cost_animica: out.cost_animica,
       latency_ms: out.latency_ms,
       fallback_reasons: out.fallback_reasons,

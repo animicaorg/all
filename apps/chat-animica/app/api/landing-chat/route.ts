@@ -241,9 +241,25 @@ export async function POST(req: NextRequest) {
   }
   const tier = String(body.tier || process.env.ANIMICA_AICF_TIER || "tiny");
 
-  const sys = buildSystem(tier);
-  const hist = flattenHistory(messages);
-  const composed = `${sys}\n\n=== conversation so far ===\n${hist}\n\nReply as Assistant. One concise turn.`;
+  // Send the bare user message — same as the `animica chat` CLI does.
+  // Layering a second system prompt + a fake "User:/Assistant:" transcript
+  // on top of the worker's own system prompt + RAG was confusing the
+  // small chat models (Qwen 0.5B–7B) into "I don't have enough context"
+  // boilerplate for every Animica question, while the CLI's bare-prompt
+  // path produced clean on-topic answers from the same workers.
+  //
+  // Multi-turn history is intentionally dropped for now: the worker
+  // protocol takes a single `prompt` string with no separate history
+  // arg, and flattening "User: … Assistant: …" into the message has the
+  // same double-system-prompt failure mode we just removed. When chat
+  // threads land properly (the new `animica.chat.turn.v1` DA blobs)
+  // we'll thread them via real multi-turn metadata, not by stuffing
+  // them into the user message.
+  const lastUserMessage = messages[messages.length - 1];
+  const composed = String(lastUserMessage?.content ?? "").trim();
+  if (!composed) {
+    return NextResponse.json({ error: "empty user message" }, { status: 400 });
+  }
 
   const startedAt = Date.now();
   try {
@@ -254,10 +270,19 @@ export async function POST(req: NextRequest) {
       kind: "assistant",
       content: res.content || "(no response)",
       source: res.source,
+      // Routing tag from the cascade ("distributed-aicf") — kept for
+      // back-compat. The actual miner id is `minerId` below.
       provider: manifest.provider,
+      // Bech32 id of the miner that ran inference + AICF job id, so the
+      // UI can render an explicit on-chain receipt ("served by anim1abc…
+      // · job 0xdef…") instead of an anonymous "live miner" badge.
+      minerId: manifest.miner_id || null,
+      jobId: manifest.job_id || null,
       tier: manifest.tier,
+      requestedTier: manifest.requested_tier || tier,
       costAnm: manifest.cost_animica,
       latencyMs: manifest.latency_ms ?? (Date.now() - startedAt),
+      fallbackReasons: Array.isArray(manifest.fallback_reasons) ? manifest.fallback_reasons : [],
       durationMs: Date.now() - startedAt,
       ratelimit: { remaining: rl.remaining, resetIn: rl.resetIn },
     });
