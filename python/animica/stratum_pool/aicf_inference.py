@@ -28,22 +28,267 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 log = logging.getLogger("animica.stratum_pool.aicf_inference")
 
 
-# Per-tier default model when ANIMICA_AICF_MODEL isn't set.
-_TIER_DEFAULT_MODEL: dict[str, str] = {
+# Fallback per-tier defaults used when nothing is auto-detected and no
+# operator override is set. Conservative (small) so the round-trip
+# still works on a fresh install. Auto-detection (see resolve_tier_model)
+# replaces these with larger models from the HF cache or a local bundle
+# dir whenever they're available.
+_FALLBACK_TIER_MODEL: dict[str, str] = {
     "free":     "Qwen/Qwen2.5-0.5B-Instruct",
-    "standard": "Qwen/Qwen2.5-0.5B-Instruct",
-    "premium":  "Qwen/Qwen2.5-1.5B-Instruct",
-    "elite":    "Qwen/Qwen2.5-3B-Instruct",
+    "standard": "Qwen/Qwen2.5-1.5B-Instruct",
+    "premium":  "Qwen/Qwen2.5-3B-Instruct",
+    "elite":    "Qwen/Qwen2.5-7B-Instruct",
 }
-_DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+_DEFAULT_MODEL = _FALLBACK_TIER_MODEL["standard"]
+
+# Tier → (min_billion_params, max_billion_params) used to bucket detected
+# models. Top of range is exclusive so a 7B model lands in "premium",
+# not "elite". A model whose size we can't parse goes to "standard".
+_TIER_RANGES: list[tuple[str, float, float]] = [
+    ("free",     0.0,   1.5),
+    ("standard", 1.5,   5.0),
+    ("premium",  5.0,  15.0),
+    ("elite",   15.0,  10_000.0),
+]
+
+_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b", re.IGNORECASE)
+
+
+def _parse_param_billions(name: str) -> Optional[float]:
+    """Best-effort parameter count in billions from a model id.
+
+    Recognizes patterns like `7B`, `13b`, `0.5B`, `70B`. Returns None if
+    no clear size token is found — callers default to the standard tier.
+    """
+    # Avoid matching transformer-block counts ("32B-block") by requiring a
+    # word boundary on both sides via the regex.
+    for m in _SIZE_RE.finditer(name):
+        try:
+            return float(m.group(1))
+        except ValueError:
+            continue
+    # A "-mini" / "-small" / "-tiny" hint without an explicit count.
+    # Anchor these to a hyphen / underscore boundary so substring matches
+    # like "MiniLM" or "tiny-model-config" don't trigger.
+    lname = name.lower()
+    if re.search(r"[-_/]mini([-_/]|$)", lname):
+        return 3.8   # Phi-3-mini class
+    if re.search(r"[-_/]small([-_/]|$)", lname):
+        return 7.0
+    if re.search(r"[-_/]tiny([-_/]|$)", lname):
+        return 0.5
+    if re.search(r"[-_/]medium([-_/]|$)", lname):
+        return 14.0
+    return None
+
+
+# Repo prefixes / name fragments that identify models we cannot serve as
+# chat workers (embedding-only, audio, vision-only, etc.). Discovery
+# silently filters these out so they never get picked for a chat tier.
+_NON_GENERATIVE_PREFIXES = (
+    "sentence-transformers/",
+    "BAAI/bge-",
+    "intfloat/e5-",
+    "nomic-ai/nomic-embed",
+    "thenlper/gte-",
+    "jinaai/jina-embeddings",
+)
+_NON_GENERATIVE_FRAGMENTS = (
+    "minilm",       # sentence embeddings
+    "-embed",       # generic embedding suffix
+    "embedding",
+    "reranker",
+    "cross-encoder",
+    "whisper",      # ASR
+    "wav2vec",
+    "clip-vit",     # vision encoder
+)
+
+
+def _is_generative_chat_model(identifier: str) -> bool:
+    lname = identifier.lower()
+    if any(lname.startswith(p.lower()) for p in _NON_GENERATIVE_PREFIXES):
+        return False
+    if any(frag in lname for frag in _NON_GENERATIVE_FRAGMENTS):
+        return False
+    return True
+
+
+def _classify_tier(model_id: str) -> str:
+    p = _parse_param_billions(model_id)
+    if p is None:
+        return "standard"
+    for tier, lo, hi in _TIER_RANGES:
+        if lo <= p < hi:
+            return tier
+    return "elite"
+
+
+def _scan_hf_cache() -> list[str]:
+    """Return HuggingFace repo IDs present in the local HF hub cache."""
+    cache_root = Path(
+        os.environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.environ.get("HF_HOME", "")
+        or str(Path.home() / ".cache" / "huggingface" / "hub")
+    )
+    if not cache_root.is_dir():
+        return []
+    out: list[str] = []
+    for child in cache_root.iterdir():
+        # HF lays out cache as: models--<org>--<repo> (snapshots inside).
+        name = child.name
+        if not (child.is_dir() and name.startswith("models--")):
+            continue
+        repo = name[len("models--"):].replace("--", "/", 1)
+        # Only count it if at least one snapshot exists.
+        snaps = child / "snapshots"
+        if snaps.is_dir() and any(snaps.iterdir()):
+            out.append(repo)
+    return sorted(out)
+
+
+def _scan_local_bundles() -> list[str]:
+    """Return absolute paths of local model bundles ready to load.
+
+    A bundle is any directory containing a `config.json` (transformers
+    convention). Scans operator-provided dirs first, then the Animica
+    flagship-agent default.
+    """
+    candidates: list[Path] = []
+    env_dir = os.environ.get("ANIMICA_AICF_MODEL_DIR", "").strip()
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path("/root/animica/ai/flagship_agent/models"))
+    out: list[str] = []
+    seen: set[str] = set()
+    for root in candidates:
+        if not root.is_dir():
+            continue
+        # Two patterns supported:
+        #   <root>/<bundle>/config.json     — flat layout
+        #   <root>/<family>/<bundle>/config.json — grouped (e.g. by org)
+        for cfg in list(root.glob("*/config.json")) + list(root.glob("*/*/config.json")):
+            bundle = cfg.parent
+            key = str(bundle.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return sorted(out)
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    identifier: str          # HF repo id or absolute bundle path
+    source: str              # "env_override" | "hf_cache" | "local_bundle" | "fallback"
+    approx_billions: Optional[float]
+
+
+def discover_models() -> list[ModelChoice]:
+    """Enumerate all models the miner could load without downloading.
+
+    Order: operator env overrides first, then local bundles, then HF
+    cache hits. Fallback Qwen models are appended at the tail so the
+    caller can always pick something even on a bare install.
+    """
+    out: list[ModelChoice] = []
+    seen: set[str] = set()
+
+    def _add(ident: str, source: str) -> None:
+        key = ident.strip()
+        if not key or key in seen:
+            return
+        # Skip non-chat models discovered from HF cache / bundles. Env
+        # overrides bypass the filter — operator gets the final say.
+        if source not in ("env_override",) and not _is_generative_chat_model(key):
+            return
+        seen.add(key)
+        out.append(ModelChoice(
+            identifier=key,
+            source=source,
+            approx_billions=_parse_param_billions(key),
+        ))
+
+    # Operator overrides (per-tier env vars).
+    for tier, _, _ in _TIER_RANGES:
+        ident = os.environ.get(f"ANIMICA_AICF_MODEL_{tier.upper()}", "").strip()
+        if ident:
+            _add(ident, "env_override")
+    # Operator-pinned single model wins for whichever tier it lands in.
+    pinned = os.environ.get("ANIMICA_AICF_MODEL", "").strip()
+    if pinned:
+        _add(pinned, "env_override")
+    # Local bundles + HF cache (no network needed).
+    for path in _scan_local_bundles():
+        _add(path, "local_bundle")
+    for repo in _scan_hf_cache():
+        _add(repo, "hf_cache")
+    # Fallback Qwen ladder so a fresh install still has something to
+    # advertise per tier; the engine downloads on first use.
+    for model in _FALLBACK_TIER_MODEL.values():
+        _add(model, "fallback")
+    return out
+
+
+def resolve_tier_model(tier: str) -> str:
+    """Pick the best available model for `tier`.
+
+    Resolution order:
+      1. ``ANIMICA_AICF_MODEL_<TIER>`` env override.
+      2. ``ANIMICA_AICF_MODEL`` global pin (used regardless of tier).
+      3. Largest local bundle or HF-cache hit that classifies into `tier`.
+      4. Largest model that lands in any tier ≤ requested (downshift so
+         a free-tier request never tries to load a 70B model).
+      5. ``_FALLBACK_TIER_MODEL`` hard-coded default.
+    """
+    override = os.environ.get(f"ANIMICA_AICF_MODEL_{tier.upper()}", "").strip()
+    if override:
+        return override
+    global_pin = os.environ.get("ANIMICA_AICF_MODEL", "").strip()
+    if global_pin:
+        return global_pin
+
+    target_tier_rank = {t: i for i, (t, _, _) in enumerate(_TIER_RANGES)}.get(tier, 1)
+    in_tier: list[ModelChoice] = []
+    in_or_below: list[tuple[int, ModelChoice]] = []
+    for mc in discover_models():
+        if mc.source == "fallback":
+            continue
+        mc_tier = _classify_tier(mc.identifier)
+        if mc_tier == tier:
+            in_tier.append(mc)
+        rank = {t: i for i, (t, _, _) in enumerate(_TIER_RANGES)}.get(mc_tier, -1)
+        if rank != -1 and rank <= target_tier_rank:
+            in_or_below.append((rank, mc))
+
+    def _size_key(m: ModelChoice) -> float:
+        return m.approx_billions or 0.0
+
+    if in_tier:
+        return max(in_tier, key=_size_key).identifier
+    if in_or_below:
+        # Highest tier (closest to requested) and within that, largest model.
+        in_or_below.sort(key=lambda r: (r[0], _size_key(r[1])), reverse=True)
+        return in_or_below[0][1].identifier
+    return _FALLBACK_TIER_MODEL.get(tier, _DEFAULT_MODEL)
+
+
+# Back-compat shim: anything still reading the static dict (tests, CLI)
+# gets the resolved per-tier picks at import time. Resolution is also
+# re-done on every generate() call so a miner can pick up new bundles
+# without restarting.
+_TIER_DEFAULT_MODEL: dict[str, str] = {
+    tier: resolve_tier_model(tier) for tier, _, _ in _TIER_RANGES
+}
 
 
 # System prompt prepended to every chat turn so off-the-shelf small
@@ -128,7 +373,10 @@ class InferenceEngine:
             m = meta.get("model")
             if isinstance(m, str) and m.strip():
                 return m.strip()
-        return _TIER_DEFAULT_MODEL.get(tier, _DEFAULT_MODEL)
+        # Re-resolve every call so freshly-downloaded models get picked up
+        # without restarting the miner. The lookup walks ~/.cache/huggingface
+        # and the local bundle dir — both cheap (no network).
+        return resolve_tier_model(tier)
 
     def _try_load(self, model_id: str) -> Optional[str]:
         """Load tokenizer + model. Returns None on success, error string on fail."""
@@ -219,13 +467,26 @@ class InferenceEngine:
                 chat_tmpl = getattr(self._tokenizer, "apply_chat_template", None)
                 if callable(chat_tmpl):
                     try:
-                        input_ids = chat_tmpl(
+                        out = chat_tmpl(
                             messages,
                             tokenize=True,
                             add_generation_prompt=True,
                             return_tensors="pt",
                         )
-                        inputs = {"input_ids": input_ids}
+                        # transformers ≥5 returns a BatchEncoding (dict-like)
+                        # where 4.x returned the raw tensor. Passing the
+                        # BatchEncoding straight into model.generate() crashes
+                        # in generation/utils.py reading .shape on it, which
+                        # surfaced as `aicf generation failed: AttributeError`
+                        # and stub-completed every chat job on transformers 5.
+                        if hasattr(out, "input_ids"):
+                            inputs = {"input_ids": out.input_ids}
+                            if getattr(out, "attention_mask", None) is not None:
+                                inputs["attention_mask"] = out.attention_mask
+                        elif isinstance(out, dict) and "input_ids" in out:
+                            inputs = {k: v for k, v in out.items() if k in ("input_ids", "attention_mask")}
+                        else:
+                            inputs = {"input_ids": out}
                     except Exception as tmpl_exc:
                         # Some tokenizers ship without a chat template;
                         # fall back to a plain-text framing.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "0.1.54"
+version = "0.1.59"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, and useful-work jobs."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -132,7 +132,29 @@ packages = ["animica"]
 "../ops/docker/standalone" = "animica/_data/ops/docker/standalone"
 
 [tool.hatch.build.targets.sdist]
+# The sdist must include every path the wheel force-includes, otherwise
+# `python -m build` (which builds wheel-from-sdist) fails the wheel pass.
+# Order doesn't matter; hatchling resolves paths relative to project root.
 include = [
   "animica",
   "../aicf",
+  "../capabilities",
+  "../consensus",
+  "../core",
+  "../coretx",
+  "../da",
+  "../execution",
+  "../mempool",
+  "../mempool2",
+  "../mining",
+  "../p2p",
+  "../pq",
+  "../rpc",
+  "../stdlib",
+  "../vm_py",
+  "../ai/agent_runtime/src/agent_runtime",
+  "../ai/flagship_agent/src/flagship_agent",
+  "../ai/configs",
+  "../ai/flagship_agent/scripts",
+  "../ops/docker/standalone",
 ]
