@@ -23,7 +23,14 @@ class PoolConfig:
     chain_id: int = 1
     pool_address: str = ""
     rpc_timeout: float = 300.0
-    min_difficulty: float = 0.01
+    # Micro-shares floor: 1e-5 of θ. Lets very low hashrate miners
+    # (small CPUs, single GPUs, mobile probes) submit shares often
+    # enough to get a steady PPS payout instead of going minutes
+    # between accepted shares. Per-session vardiff still clamps each
+    # client into [min_difficulty, max_difficulty]; the max stays at
+    # 1.0 (= θ) for the block-finder share. Operators who want the
+    # old conservative floor can set ANIMICA_STRATUM_MIN_DIFFICULTY.
+    min_difficulty: float = 0.00001
     max_difficulty: float = 1.0
     poll_interval: float = 1.0
     log_level: str = "INFO"
@@ -77,7 +84,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
 
     min_difficulty = float(
         overrides.get("min_difficulty")
-        or _env("ANIMICA_STRATUM_MIN_DIFFICULTY", "0.01")
+        or _env("ANIMICA_STRATUM_MIN_DIFFICULTY", "0.00001")
     )
     max_difficulty = float(
         overrides.get("max_difficulty") or _env("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.0")
