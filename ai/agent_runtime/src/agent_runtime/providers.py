@@ -64,6 +64,14 @@ class TurnRequest:
     require_provider: Optional[str] = None    # forces a single provider
     stream_callback: Optional["StreamFn"] = None
     yolo: bool = False                         # override balance refusal
+    # Pipeline routing knobs for this turn. Leave None to use the chat
+    # session defaults (see DistributedAICFProvider._pipeline_defaults).
+    # Setting decode_mode="prefill_only" reverts a single turn to the
+    # legacy prefill-parallel path without changing the session-wide
+    # default — useful for A/B comparing streaming vs prefill timing.
+    mode: Optional[str] = None
+    stages: Optional[int] = None
+    decode_mode: Optional[str] = None
 
 
 StreamFn = "callable"      # type: ignore[assignment] — informational alias
@@ -146,6 +154,28 @@ class DistributedAICFProvider(Provider):
     def serve(self, req: TurnRequest) -> TurnResult:
         t0 = time.time()
         wi = self._wallet_info()
+        # Pipeline + decode-mode defaults for the chat path. The chat
+        # client defaults to ``mode="auto"`` (let the node decide
+        # pipeline vs race based on registered workers) and
+        # ``decode_mode="streaming"`` (per-token round-trips through
+        # every stage with KV-cache state preserved). Per-turn
+        # overrides take precedence; ANIMICA_AICF_CHAT_DECODE_MODE +
+        # ANIMICA_AICF_CHAT_MODE let operators flip the default
+        # without touching code (e.g. set decode_mode=prefill_only on
+        # nodes that aren't yet on 0.1.67+).
+        env_mode = os.environ.get("ANIMICA_AICF_CHAT_MODE", "").strip() or None
+        env_decode = (
+            os.environ.get("ANIMICA_AICF_CHAT_DECODE_MODE", "").strip() or None
+        )
+        env_stages_raw = os.environ.get(
+            "ANIMICA_AICF_CHAT_STAGES", ""
+        ).strip()
+        env_stages = None
+        if env_stages_raw:
+            try:
+                env_stages = int(env_stages_raw)
+            except ValueError:
+                env_stages = None
         spec = JobSpec(
             prompt=req.prompt,
             tier_preferred=req.tier_preferred or
@@ -154,6 +184,9 @@ class DistributedAICFProvider(Provider):
             temperature=req.temperature,
             top_p=req.top_p,
             metadata={"history_len": len(req.history)},
+            mode=(req.mode or env_mode or "auto"),
+            stages=(req.stages if req.stages is not None else env_stages),
+            decode_mode=(req.decode_mode or env_decode or "streaming"),
         )
         quote = self.client.estimate_cost(spec)
         preview = preview_payment(wi, quote.estimated_cost_animica)
@@ -190,6 +223,8 @@ class DistributedAICFProvider(Provider):
                            "tier": spec.tier_preferred},
         )
         sub = self.client.submit(spec, signed_payment=signed.__dict__)
+        # Surface the node's actual routing decision (auto → race or
+        # pipeline) into metadata so the chat footer can show it.
         accumulated: list[str] = []
         cb = req.stream_callback
 
@@ -210,8 +245,13 @@ class DistributedAICFProvider(Provider):
             effective_mode="real",
             cost_animica=settle.actual_cost_animica,
             latency_ms=settle.latency_ms or int((time.time() - t0) * 1000),
-            metadata={"job_id": sub.job_id,
-                      "provider_id": settle.provider_id},
+            metadata={
+                "job_id": sub.job_id,
+                "provider_id": settle.provider_id,
+                "routing_mode": sub.mode or "",
+                "pipeline_stages": int(sub.stages or 0),
+                "decode_mode": spec.decode_mode or "",
+            },
         )
 
     def close(self) -> None:

@@ -39,6 +39,21 @@ class JobSpec:
     stop: list[str] = field(default_factory=list)
     # Extra metadata persisted with the job (for analytics / fraud detection).
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Pipeline routing knobs. None means "use the node's default" so old
+    # nodes that don't know these fields keep working (the AICFClient
+    # omits them from the wire payload when None). When set:
+    #   - mode: "auto" lets the node decide pipeline vs race based on
+    #     registered workers; "pipeline" forces a pipeline job;
+    #     "race" forces the legacy single-worker race path.
+    #   - stages: number of pipeline stages to fan out to (default 2
+    #     server-side when mode is pipeline).
+    #   - decode_mode: "streaming" runs the per-token loop where each
+    #     decoded token traverses every stage with KV cache state
+    #     preserved (animica >= 0.1.67). "prefill_only" runs the legacy
+    #     prefill-parallel path where the final stage decodes locally.
+    mode: Optional[str] = None
+    stages: Optional[int] = None
+    decode_mode: Optional[str] = None
 
 
 @dataclass
@@ -58,6 +73,11 @@ class JobSubmitResult:
     accepted_tier: str
     expected_provider_id: str
     raw: dict[str, Any] = field(default_factory=dict)
+    # What the node actually picked after auto-routing. ``mode`` will
+    # be "race" (winner-takes-all replication) or "pipeline" (N-stage
+    # chained inference). ``stages`` is non-zero only for pipeline.
+    mode: str = ""
+    stages: int = 0
 
 
 @dataclass
@@ -200,17 +220,28 @@ class AICFClient:
         ``signed_payment`` is the output of wallet.sign_payment(); it carries
         the txn hex + meta the AICF protocol verifies before accepting.
         """
+        spec_payload: dict[str, Any] = {
+            "prompt": spec.prompt,
+            "tier_preferred": spec.tier_preferred,
+            "job_kind": spec.job_kind,
+            "max_output_tokens": spec.max_output_tokens,
+            "temperature": spec.temperature,
+            "top_p": spec.top_p,
+            "stop": spec.stop,
+            "metadata": spec.metadata,
+        }
+        # Only forward pipeline knobs when explicitly set so older nodes
+        # that don't recognise the keys aren't sent fields they ignore
+        # (defensive — modern nodes drop unknown keys silently, but the
+        # wire shape matches what the server expects either way).
+        if spec.mode is not None:
+            spec_payload["mode"] = spec.mode
+        if spec.stages is not None:
+            spec_payload["stages"] = int(spec.stages)
+        if spec.decode_mode is not None:
+            spec_payload["decode_mode"] = spec.decode_mode
         raw = self._rpc("aicf.submitInferenceJob", {
-            "spec": {
-                "prompt": spec.prompt,
-                "tier_preferred": spec.tier_preferred,
-                "job_kind": spec.job_kind,
-                "max_output_tokens": spec.max_output_tokens,
-                "temperature": spec.temperature,
-                "top_p": spec.top_p,
-                "stop": spec.stop,
-                "metadata": spec.metadata,
-            },
+            "spec": spec_payload,
             "payment": dict(signed_payment),
         })
         if not isinstance(raw, dict) or "job_id" not in raw:
@@ -221,6 +252,8 @@ class AICFClient:
             accepted_tier=str(raw.get("accepted_tier", "")),
             expected_provider_id=str(raw.get("provider_id", "")),
             raw=raw,
+            mode=str(raw.get("mode", "")),
+            stages=int(raw.get("stages") or 0),
         )
 
     def stream(self, job_id: str,

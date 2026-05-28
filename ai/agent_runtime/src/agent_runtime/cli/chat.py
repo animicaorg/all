@@ -139,6 +139,11 @@ class _SlashHandler:
                                 "fetches transcript from the DA layer."),
             ("/new",           "Start a fresh chat thread, abandoning the "
                                 "current one (it stays in DA / resumable)."),
+            ("/decode <m>",    "Set the pipeline decode mode for the next "
+                                "turn (streaming | prefill_only). 'streaming' "
+                                "routes every decoded token through every "
+                                "pipeline stage; 'prefill_only' runs the "
+                                "legacy single-worker decode."),
         ]:
             t.add_row(*line)
         self.console.print(t)
@@ -352,6 +357,27 @@ class _SlashHandler:
         history.clear()
         self.console.print(f"[cyan]started new thread: {tid}[/cyan]")
 
+    def _cmd_decode(self, rest: str) -> None:
+        rest = (rest or "").strip().lower()
+        if not rest:
+            current = self.state.get("decode_mode") or "streaming"
+            self.console.print(
+                f"[cyan]current decode mode: {current}[/cyan]\n"
+                f"[dim]set with /decode streaming  or  /decode prefill_only[/dim]"
+            )
+            return
+        valid = {"streaming", "prefill_only", "prefill"}
+        if rest not in valid:
+            self.console.print(
+                f"[yellow]unknown decode mode: {rest!r} "
+                f"(valid: streaming | prefill_only)[/yellow]"
+            )
+            return
+        # Normalise the legacy shorthand "prefill" → "prefill_only".
+        mode = "prefill_only" if rest == "prefill" else rest
+        self.state["decode_mode"] = mode
+        self.console.print(f"[cyan]decode mode set to: {mode}[/cyan]")
+
     def _cmd_agent(self, rest: str) -> None:
         """Run a single agentic task: `/agent <task description>`.
 
@@ -541,13 +567,14 @@ def run_one_agent_task(
 # --------------------------------------------------------------------------- #
 
 def _print_banner(console: Console, cascade: ProviderCascade,
-                  endpoint: str) -> None:
+                  endpoint: str, *, decode_mode: str = "streaming") -> None:
     rows = cascade.provider_status()
     primary = next((r for r in rows if r["available"] == "yes"), None)
     primary_name = primary["name"] if primary else "none"
     body_lines = [
         f"endpoint:  {endpoint}",
         f"primary:   {primary_name}",
+        f"decode:    {decode_mode}  (toggle with /decode)",
         "",
     ]
     for r in rows:
@@ -577,7 +604,8 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
               agent_max_iters: int = 10,
               agent_max_cost: float = 0.5,
               agent_cwd: Optional[str] = None,
-              resume_thread_id: Optional[str] = None) -> int:
+              resume_thread_id: Optional[str] = None,
+              decode_mode_default: str = "streaming") -> int:
     try:
         cascade = ProviderCascade(cfg, rpc_url=rpc_url,
                                   wallet_path=wallet_path,
@@ -586,7 +614,7 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
         console.print(f"[red]{exc.render()}[/red]")
         return 2
 
-    _print_banner(console, cascade, rpc_url)
+    _print_banner(console, cascade, rpc_url, decode_mode=decode_mode_default)
 
     # Best-effort: pull the wallet address from the distributed-aicf
     # provider so we can persist turns under it. Falls back to "" which
@@ -620,6 +648,12 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
         "thread_id": thread_id,
         "thread_sequence": 0,
         "history": [],
+        # Pipeline decode-mode for this chat session. Defaults to
+        # "streaming" so each new token round-trips through every
+        # pipeline stage (per-token KV-cache parallelism, animica >=
+        # 0.1.67). Set with the --decode-mode CLI flag, /decode
+        # slash command, or ANIMICA_AICF_CHAT_DECODE_MODE env.
+        "decode_mode": decode_mode_default,
     }
     slash = _SlashHandler(console, cascade, state)
     history: list[dict[str, str]] = state["history"]
@@ -678,6 +712,7 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
                 history=history,
                 require_provider=require_provider,
                 yolo=yolo,
+                decode_mode=state.get("decode_mode") or None,
             )
 
             # Pre-flight: when paying via distributed-aicf, show cost.
@@ -772,6 +807,23 @@ def _run_repl(cfg, rpc_url: str, wallet_path: Optional[str],
                 f"  cost={result.cost_animica:.6f} ANIMICA"
                 f"  latency={result.latency_ms}ms[/dim]"
             )
+            # Surface the node's actual routing decision (race vs N-stage
+            # pipeline) + the decode mode so users see when streaming
+            # parallelism kicked in vs when the node fell back to race
+            # because not enough pipeline workers were registered.
+            routing_mode = (result.metadata or {}).get("routing_mode") or ""
+            stages_n = int((result.metadata or {}).get("pipeline_stages") or 0)
+            decode_mode_used = (result.metadata or {}).get("decode_mode") or ""
+            if routing_mode:
+                if routing_mode == "pipeline" and stages_n > 0:
+                    footer += (
+                        f"  [dim]routing=pipeline×{stages_n}"
+                        f" decode={decode_mode_used or '-'}[/dim]"
+                    )
+                elif routing_mode == "race":
+                    footer += "  [dim]routing=race[/dim]"
+                else:
+                    footer += f"  [dim]routing={routing_mode}[/dim]"
             if result.fallback_reasons:
                 footer += (f"  [yellow]fallbacks="
                             f"{'; '.join(result.fallback_reasons)}[/yellow]")
@@ -811,6 +863,15 @@ def main(
     require_distributed: bool = typer.Option(
         False, "--require-distributed",
         help="Refuse to fall back to local-flagship or offline.",
+    ),
+    decode_mode: str = typer.Option(
+        "streaming", "--decode-mode",
+        help="Pipeline decode mode for this chat session. 'streaming' "
+              "(default) routes each decoded token through every "
+              "pipeline stage with per-stage KV-cache state. "
+              "'prefill_only' runs the legacy prefill-parallel path "
+              "(final stage decodes locally). Toggle in-session via "
+              "the /decode slash command.",
     ),
     # ---- Agentic mode flags ----
     agentic: Optional[str] = typer.Option(
@@ -956,6 +1017,12 @@ def main(
         )
         raise typer.Exit(code=0)
 
+    # Normalise CLI shorthand: "prefill" → "prefill_only", everything
+    # else trusted as-is so future modes (e.g. "speculative") don't
+    # require a CLI patch.
+    decode_default = (decode_mode or "streaming").strip().lower()
+    if decode_default == "prefill":
+        decode_default = "prefill_only"
     rc = _run_repl(
         cfg, rpc_url=endpoint, wallet_path=wallet,
         yolo=yolo, console=console, wallet_label=wallet_label,
@@ -963,6 +1030,7 @@ def main(
         agent_max_iters=max_iterations, agent_max_cost=max_cost,
         agent_cwd=cwd or os.getcwd(),
         resume_thread_id=thread,
+        decode_mode_default=decode_default,
     )
     raise typer.Exit(code=rc)
 
