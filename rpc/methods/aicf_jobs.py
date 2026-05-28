@@ -220,6 +220,15 @@ class _JobRecord:
     # still works unchanged.
     mode: str = "race"
     stages: List[Dict[str, Any]] = field(default_factory=list)
+    # Streaming-decode coordinator state. The final stage appends the
+    # next-token id to ``decode_inbox`` after sampling each token;
+    # stage 0 long-polls the inbox to learn what to embed for the
+    # next decode step. Plain in-memory FIFO; bounded by max_new_tokens
+    # so it can never grow without bound. ``decode_step_cursor`` is
+    # the highest step_index any stage has produced — final stage uses
+    # it to label new steps without race conditions.
+    decode_inbox: List[int] = field(default_factory=list)
+    decode_step_cursor: int = 0
 
 
 @dataclass
@@ -345,6 +354,147 @@ class _AicfJobStore:
 
     # ---------- pipeline-stage operations ----------
 
+    def append_decode_step(
+        self,
+        job_id: str,
+        stage_index: int,
+        *,
+        worker_addr: str,
+        step_index: int,
+        output_b64: Optional[str],
+        output_text: Optional[str],
+        meta: Dict[str, Any],
+    ) -> tuple[Optional[_JobRecord], str]:
+        """Append a decode-step entry to ``stage.decode_steps`` (in-memory).
+
+        See _SqliteAicfJobStore.append_decode_step for the contract and
+        return values; both implementations are kept behaviour-equivalent.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None, "unknown_job"
+            if job.state in {"completed", "failed"}:
+                return job, "already_terminal"
+            stage = next(
+                (s for s in job.stages if int(s.get("index", -1)) == int(stage_index)),
+                None,
+            )
+            if stage is None:
+                return job, "unknown_stage"
+            owner = stage.get("worker_address")
+            if owner and owner != worker_addr:
+                return job, "lost_lease"
+            steps = stage.setdefault("decode_steps", [])
+            if any(int(s.get("step_index", -1)) == int(step_index) for s in steps):
+                return job, "duplicate"
+            now = time.time()
+            steps.append({
+                "step_index": int(step_index),
+                "output_b64": output_b64,
+                "output_text": output_text,
+                "completed_at": now,
+                "meta": dict(meta or {}),
+            })
+            stage["current_step"] = int(step_index)
+            highest = max(int(s.get("index", 0)) for s in job.stages)
+            is_final_stage = int(stage_index) == highest
+            # Final-stage steps stream characters into job.text inline
+            # so the terminal-step transition + the last token append
+            # happen under the same lock — otherwise a terminal step
+            # whose text-append runs after the state flip would silently
+            # drop the last character.
+            if is_final_stage and output_text:
+                job.text = (job.text or "") + str(output_text)
+            if is_final_stage and bool((meta or {}).get("is_terminal")):
+                job.state = "completed"
+                job.completed_at = now
+                job.provider_id = worker_addr
+                job.winner_address = worker_addr
+                return job, "completed_job"
+            return job, "appended"
+
+    def append_job_text(self, job_id: str, delta: str) -> Optional[_JobRecord]:
+        """Append ``delta`` to ``job.text`` atomically. Drives the
+        per-token streamJob deltas the chat client picks up."""
+        if not delta:
+            return self._jobs.get(job_id)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.state in {"completed", "failed"}:
+                return job
+            job.text = (job.text or "") + delta
+            return job
+
+    def push_decode_inbox(
+        self, job_id: str, token_id: int, *, max_inbox: int = 4096,
+    ) -> Optional[_JobRecord]:
+        """Append a token id to the per-job decode inbox.
+
+        The final stage pushes the just-sampled token; stage 0 will
+        pop it on its next poll and embed it for the next decode step.
+        Bounded by ``max_inbox`` so a runaway producer can't OOM the
+        node; an overflow drops the oldest token (oldest tokens have
+        already been embedded by stage 0 — see pop_decode_inbox)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.state in {"completed", "failed"}:
+                return job
+            job.decode_inbox.append(int(token_id))
+            if len(job.decode_inbox) > int(max_inbox):
+                job.decode_inbox = job.decode_inbox[-int(max_inbox):]
+            return job
+
+    def pop_decode_inbox(self, job_id: str) -> tuple[Optional[_JobRecord], Optional[int]]:
+        """Pop the oldest token from the decode inbox. Returns (job, token)
+        with token=None when the inbox is empty (caller polls again)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None, None
+            if not job.decode_inbox:
+                return job, None
+            token = int(job.decode_inbox.pop(0))
+            return job, token
+
+    def next_decode_step_index(self, job_id: str) -> Optional[int]:
+        """Atomically allocate a new monotonic decode step index for a job.
+        Used by the final stage so labelling step k+1 is race-free even
+        across multiple node processes sharing the SQLite store."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            job.decode_step_cursor = int(job.decode_step_cursor or 0) + 1
+            return job.decode_step_cursor
+
+    def get_decode_step(
+        self,
+        job_id: str,
+        stage_index: int,
+        step_index: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Snapshot lookup of a recorded decode-step. Returns a copy so
+        callers can read without holding the lock."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            stage = next(
+                (s for s in job.stages if int(s.get("index", -1)) == int(stage_index)),
+                None,
+            )
+            if stage is None:
+                return None
+            for s in stage.get("decode_steps") or []:
+                if int(s.get("step_index", -1)) == int(step_index):
+                    return dict(s)
+            return None
+
     def claim_pipeline_stage(
         self,
         worker_addr: str,
@@ -438,9 +588,14 @@ class _AicfJobStore:
             stage["output_b64"] = output_b64
             stage["output_text"] = output_text
             stage["meta"] = dict(meta or {})
-            # Final stage closes the job.
+            # Final stage closes the job — UNLESS the caller flagged
+            # the submit as a streaming-decode prefill landmark
+            # (meta.non_terminal). In that case the stage record stays
+            # "completed" but the wrapping job stays "claimed" so the
+            # decode loop has somewhere to write.
             highest = max(int(s.get("index", 0)) for s in job.stages)
-            if int(stage_index) == highest:
+            non_terminal = bool((meta or {}).get("non_terminal"))
+            if int(stage_index) == highest and not non_terminal:
                 job.state = "completed"
                 job.completed_at = time.time()
                 job.text = output_text or job.text
@@ -507,7 +662,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     claims_json TEXT NOT NULL DEFAULT '[]',
     winner_address TEXT,
     mode TEXT NOT NULL DEFAULT 'race',
-    stages_json TEXT NOT NULL DEFAULT '[]'
+    stages_json TEXT NOT NULL DEFAULT '[]',
+    decode_inbox_json TEXT NOT NULL DEFAULT '[]',
+    decode_step_cursor INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
@@ -585,6 +742,10 @@ class _SqliteAicfJobStore:
              "ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'race'"),
             ("stages_json",
              "ALTER TABLE jobs ADD COLUMN stages_json TEXT NOT NULL DEFAULT '[]'"),
+            ("decode_inbox_json",
+             "ALTER TABLE jobs ADD COLUMN decode_inbox_json TEXT NOT NULL DEFAULT '[]'"),
+            ("decode_step_cursor",
+             "ALTER TABLE jobs ADD COLUMN decode_step_cursor INTEGER NOT NULL DEFAULT 0"),
         ):
             try:
                 conn.execute(ddl)
@@ -638,6 +799,15 @@ class _SqliteAicfJobStore:
                 stages = []
         except (ValueError, TypeError):
             stages = []
+        try:
+            inbox_raw = (row["decode_inbox_json"]
+                         if "decode_inbox_json" in keys else "[]")
+            inbox = _json.loads(inbox_raw) if inbox_raw else []
+            if not isinstance(inbox, list):
+                inbox = []
+        except (ValueError, TypeError):
+            inbox = []
+        decode_cursor = int(row["decode_step_cursor"]) if "decode_step_cursor" in keys else 0
         return _JobRecord(
             job_id=row["job_id"],
             spec=_json.loads(row["spec_json"]),
@@ -662,6 +832,8 @@ class _SqliteAicfJobStore:
             winner_address=winner,
             mode=mode or "race",
             stages=stages,
+            decode_inbox=[int(t) for t in inbox],
+            decode_step_cursor=int(decode_cursor),
         )
 
     @staticmethod
@@ -690,8 +862,9 @@ class _SqliteAicfJobStore:
             "  provider_id,created_at,claimed_at,completed_at,claim_owner,"
             "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
             "  payment_status,settled_chain_id,replicas_wanted,claims_json,"
-            "  winner_address,mode,stages_json"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  winner_address,mode,stages_json,decode_inbox_json,"
+            "  decode_step_cursor"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.job_id,
                 _json.dumps(job.spec),
@@ -716,6 +889,8 @@ class _SqliteAicfJobStore:
                 job.winner_address,
                 job.mode or "race",
                 _json.dumps(job.stages or []),
+                _json.dumps(job.decode_inbox or []),
+                int(job.decode_step_cursor or 0),
             ),
         )
 
@@ -838,6 +1013,223 @@ class _SqliteAicfJobStore:
 
     # ---------- pipeline-stage operations ----------
 
+    def append_decode_step(
+        self,
+        job_id: str,
+        stage_index: int,
+        *,
+        worker_addr: str,
+        step_index: int,
+        output_b64: Optional[str],
+        output_text: Optional[str],
+        meta: Dict[str, Any],
+    ) -> tuple[Optional[_JobRecord], str]:
+        """Atomically append a decode-step entry inside stages_json.
+
+        Returns one of: ("unknown_job", "already_terminal",
+        "unknown_stage", "lost_lease", "duplicate", "appended",
+        "completed_job"). See _AicfJobStore.append_decode_step for
+        prose-level semantics.
+        """
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None, "unknown_job"
+            job = self._job_from_row(row)
+            if job.state in {"completed", "failed"}:
+                conn.execute("COMMIT")
+                return job, "already_terminal"
+            stages = list(job.stages)
+            target = next(
+                (i for i, s in enumerate(stages)
+                 if int(s.get("index", -1)) == int(stage_index)),
+                None,
+            )
+            if target is None:
+                conn.execute("COMMIT")
+                return job, "unknown_stage"
+            stage = dict(stages[target])
+            owner = stage.get("worker_address")
+            if owner and owner != worker_addr:
+                conn.execute("COMMIT")
+                return job, "lost_lease"
+            steps = list(stage.get("decode_steps") or [])
+            if any(int(s.get("step_index", -1)) == int(step_index) for s in steps):
+                conn.execute("COMMIT")
+                return job, "duplicate"
+            steps.append({
+                "step_index": int(step_index),
+                "output_b64": output_b64,
+                "output_text": output_text,
+                "completed_at": now,
+                "meta": dict(meta or {}),
+            })
+            stage["decode_steps"] = steps
+            stage["current_step"] = int(step_index)
+            stages[target] = stage
+
+            highest = max(int(s.get("index", 0)) for s in stages)
+            is_final_stage = int(stage_index) == highest
+            terminal = bool((meta or {}).get("is_terminal")) and is_final_stage
+            new_text = job.text or ""
+            if is_final_stage and output_text:
+                new_text = new_text + str(output_text)
+            if terminal:
+                conn.execute(
+                    "UPDATE jobs SET state='completed', provider_id=?,"
+                    " completed_at=?, winner_address=?, stages_json=?, text=?"
+                    " WHERE job_id=?",
+                    (worker_addr, now, worker_addr,
+                     _json.dumps(stages), new_text, job_id),
+                )
+            elif is_final_stage and output_text:
+                conn.execute(
+                    "UPDATE jobs SET stages_json=?, text=? WHERE job_id=?",
+                    (_json.dumps(stages), new_text, job_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE jobs SET stages_json=? WHERE job_id=?",
+                    (_json.dumps(stages), job_id),
+                )
+            conn.execute("COMMIT")
+            return self.get(job_id), ("completed_job" if terminal else "appended")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def append_job_text(self, job_id: str, delta: str) -> Optional[_JobRecord]:
+        if not delta:
+            return self.get(job_id)
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            job = self._job_from_row(row)
+            if job.state in {"completed", "failed"}:
+                conn.execute("COMMIT")
+                return job
+            new_text = (job.text or "") + delta
+            conn.execute(
+                "UPDATE jobs SET text=? WHERE job_id=?",
+                (new_text, job_id),
+            )
+            conn.execute("COMMIT")
+            return self.get(job_id)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def push_decode_inbox(
+        self, job_id: str, token_id: int, *, max_inbox: int = 4096,
+    ) -> Optional[_JobRecord]:
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            job = self._job_from_row(row)
+            if job.state in {"completed", "failed"}:
+                conn.execute("COMMIT")
+                return job
+            inbox = list(job.decode_inbox)
+            inbox.append(int(token_id))
+            if len(inbox) > int(max_inbox):
+                inbox = inbox[-int(max_inbox):]
+            conn.execute(
+                "UPDATE jobs SET decode_inbox_json=? WHERE job_id=?",
+                (_json.dumps(inbox), job_id),
+            )
+            conn.execute("COMMIT")
+            return self.get(job_id)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def pop_decode_inbox(self, job_id: str) -> tuple[Optional[_JobRecord], Optional[int]]:
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None, None
+            job = self._job_from_row(row)
+            if not job.decode_inbox:
+                conn.execute("COMMIT")
+                return job, None
+            inbox = list(job.decode_inbox)
+            token = int(inbox.pop(0))
+            conn.execute(
+                "UPDATE jobs SET decode_inbox_json=? WHERE job_id=?",
+                (_json.dumps(inbox), job_id),
+            )
+            conn.execute("COMMIT")
+            return self.get(job_id), token
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def next_decode_step_index(self, job_id: str) -> Optional[int]:
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            job = self._job_from_row(row)
+            new_cursor = int(job.decode_step_cursor or 0) + 1
+            conn.execute(
+                "UPDATE jobs SET decode_step_cursor=? WHERE job_id=?",
+                (new_cursor, job_id),
+            )
+            conn.execute("COMMIT")
+            return new_cursor
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def get_decode_step(
+        self,
+        job_id: str,
+        stage_index: int,
+        step_index: int,
+    ) -> Optional[Dict[str, Any]]:
+        job = self.get(job_id)
+        if job is None:
+            return None
+        stage = next(
+            (s for s in job.stages
+             if int(s.get("index", -1)) == int(stage_index)),
+            None,
+        )
+        if stage is None:
+            return None
+        for s in stage.get("decode_steps") or []:
+            if int(s.get("step_index", -1)) == int(step_index):
+                return dict(s)
+        return None
+
     def claim_pipeline_stage(
         self,
         worker_addr: str,
@@ -959,7 +1351,8 @@ class _SqliteAicfJobStore:
                 "meta": dict(meta or {}),
             }
             highest = max(int(s.get("index", 0)) for s in stages)
-            is_final = int(stage_index) == highest
+            non_terminal = bool((meta or {}).get("non_terminal"))
+            is_final = int(stage_index) == highest and not non_terminal
             if is_final:
                 conn.execute(
                     "UPDATE jobs SET state='completed', text=?, provider_id=?,"
@@ -2091,6 +2484,34 @@ async def pipeline_job_status(
     }
 
 
+# --------------------------------------------------------------------------- #
+# Streaming-decode protocol                                                   #
+# --------------------------------------------------------------------------- #
+#
+# Once the prefill pass completes, generation continues as a chain of
+# token-step rounds. For each new token T_k:
+#   1. Stage N-1 samples T_k from its LM-head logits, appends T_k to
+#      ``job.text`` (so streamJob delivers the character to the chat
+#      client), then calls aicf.pipelineFeedToken(job_id, T_k).
+#   2. The node enqueues T_k in ``job.decode_inbox``.
+#   3. Stage 0 long-polls aicf.pipelineGetNextTokenStep, which dequeues
+#      the oldest pending token. The stage embeds it, runs its layer
+#      range with the locally-cached KV state, and submits the result
+#      via aicf.pipelineSubmitDecodeStep with step_index=k+1.
+#   4. Middle stages long-poll aicf.pipelineGetUpstreamStep for the
+#      previous stage's step k+1 output, run their layers, submit
+#      their own step k+1.
+#   5. Stage N-1 picks up step k+1 from its upstream and the loop
+#      repeats. When the final stage decides to stop (EOS or
+#      max_new_tokens) it sets meta.is_terminal=True on its submit,
+#      which closes the job.
+#
+# All four endpoints below long-poll for ~1.5s so the chat path runs
+# at roughly 1 step per stage-RPC round-trip + the wall-clock cost of
+# the layer compute, dominated by the direct-W2W transport when
+# enabled.
+
+
 @method(
     "aicf.pipelineGetStageInfo",
     desc="Resolve a pipeline stage's worker + direct endpoint for W2W transport",
@@ -2150,6 +2571,210 @@ async def pipeline_get_stage_info(
     }
 
 
+@method(
+    "aicf.pipelineFeedToken",
+    desc="Final stage pushes the next-token id back to stage 0 for the next decode step",
+    aliases=("aicf_pipelineFeedToken",),
+)
+async def pipeline_feed_token(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    token_id = _coerce_int(p.get("token_id"), -1)
+    if not job_id or token_id < 0:
+        raise InvalidParams("pipelineFeedToken: 'job_id' and 'token_id' required")
+    job = _STORE.push_decode_inbox(job_id, token_id)
+    if job is None:
+        raise InvalidParams(f"pipelineFeedToken: unknown job_id {job_id}")
+    return {
+        "accepted": job.state not in {"completed", "failed"},
+        "job_state": job.state,
+        "inbox_depth": len(job.decode_inbox),
+    }
+
+
+@method(
+    "aicf.pipelineGetNextTokenStep",
+    desc="Stage 0 polls for the next token to embed for the current decode round",
+    aliases=("aicf_pipelineGetNextTokenStep",),
+)
+async def pipeline_get_next_token_step(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Long-poll for the next token to embed.
+
+    Stage 0 calls this after submitting the prefill. The response
+    carries a fresh monotonic step_index allocated atomically so two
+    competing stage-0 workers couldn't accidentally emit the same
+    step number even when the SQLite store is shared across pool
+    processes.
+    """
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    if not job_id:
+        raise InvalidParams("pipelineGetNextTokenStep: 'job_id' required")
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        job, token = _STORE.pop_decode_inbox(job_id)
+        if job is None:
+            raise InvalidParams(f"pipelineGetNextTokenStep: unknown job_id {job_id}")
+        if job.state in {"completed", "failed"}:
+            return {
+                "ready": False,
+                "job_state": job.state,
+                "note": "job_terminal",
+            }
+        if token is not None:
+            step_index = _STORE.next_decode_step_index(job_id)
+            return {
+                "ready": True,
+                "token_id": int(token),
+                "step_index": int(step_index or 0),
+                "job_state": job.state,
+            }
+        await asyncio.sleep(0.05)
+    return {"ready": False, "note": "timeout_keep_polling"}
+
+
+@method(
+    "aicf.pipelineSubmitDecodeStep",
+    desc="Append a decode-step output to a pipeline stage",
+    aliases=("aicf_pipelineSubmitDecodeStep",),
+)
+async def pipeline_submit_decode_step(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Each pipeline stage uses this for every decode-loop iteration.
+
+    Intermediate stages submit ``output_b64`` (the safetensors-encoded
+    hidden state) and leave ``output_text`` empty. The final stage
+    submits ``output_text`` (the decoded token text) plus
+    ``meta.is_terminal=true`` on the last step to close the job. Any
+    stage may include ``meta.next_token_id`` so the inbox push happens
+    in the same round-trip; this saves the final stage one RPC per
+    decoded token.
+    """
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    job_id = _coerce_str(p.get("job_id")).strip()
+    stage_index = _coerce_int(p.get("stage_index"), -1)
+    step_index = _coerce_int(p.get("step_index"), -1)
+    if not address or not job_id or stage_index < 0 or step_index < 0:
+        raise InvalidParams(
+            "pipelineSubmitDecodeStep: 'address', 'job_id', 'stage_index', 'step_index' required"
+        )
+    output_b64 = p.get("output_b64")
+    output_text = p.get("output_text")
+    meta = p.get("meta") or {}
+    if not isinstance(meta, Mapping):
+        meta = {}
+    job, status = _STORE.append_decode_step(
+        job_id, stage_index,
+        worker_addr=address,
+        step_index=step_index,
+        output_b64=(str(output_b64) if output_b64 is not None else None),
+        output_text=(str(output_text) if output_text is not None else None),
+        meta=dict(meta),
+    )
+    # Token-text streaming is handled atomically inside
+    # append_decode_step (final stage's output_text concatenates into
+    # job.text under the same lock as the state transition), so no
+    # extra append needed here.
+    #
+    # Convenience: piggy-back next-token feed in the same RPC so the
+    # final-stage worker doesn't need two round-trips per token.
+    next_token = (meta or {}).get("next_token_id")
+    if (next_token is not None
+            and status in {"appended", "completed_job"}
+            and job is not None
+            and job.state not in {"completed", "failed"}
+            and not bool((meta or {}).get("is_terminal"))):
+        try:
+            _STORE.push_decode_inbox(job_id, int(next_token))
+        except (TypeError, ValueError):
+            pass
+    # Credit the workers when the final stage closes out.
+    if status == "completed_job" and job is not None:
+        _credit_pipeline_stages(job)
+    return {
+        "accepted": status in {"appended", "completed_job"},
+        "status": status,
+        "job_id": job_id,
+        "stage_index": stage_index,
+        "step_index": step_index,
+        "job_state": job.state if job else None,
+    }
+
+
+@method(
+    "aicf.pipelineGetUpstreamStep",
+    desc="Long-poll for the upstream stage's output at a specific step index",
+    aliases=("aicf_pipelineGetUpstreamStep",),
+)
+async def pipeline_get_upstream_step(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Used by middle + final stages during streaming decode. Returns
+    the upstream's decode-step record once available. Stage 0's
+    "upstream" is the user prompt, which is delivered via
+    pipelineGetNextTokenStep instead."""
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    stage_index = _coerce_int(p.get("stage_index"), -1)
+    step_index = _coerce_int(p.get("step_index"), -1)
+    if not job_id or stage_index < 0 or step_index < 0:
+        raise InvalidParams(
+            "pipelineGetUpstreamStep: 'job_id', 'stage_index', 'step_index' required"
+        )
+    if stage_index == 0:
+        return {"ready": True, "note": "stage_0_has_no_upstream"}
+    upstream = stage_index - 1
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        # Surface job-terminal early so consumers can stop polling.
+        job = _STORE.get(job_id)
+        if job is None:
+            raise InvalidParams(f"pipelineGetUpstreamStep: unknown job_id {job_id}")
+        if job.state in {"completed", "failed"}:
+            # If the requested step landed already we still return it
+            # even on terminal state (final stage may need to drain).
+            entry = _STORE.get_decode_step(job_id, upstream, step_index)
+            if entry is not None:
+                return {
+                    "ready": True,
+                    "stage_index": upstream,
+                    "step_index": step_index,
+                    "output_b64": entry.get("output_b64"),
+                    "output_text": entry.get("output_text"),
+                    "meta": dict(entry.get("meta") or {}),
+                    "completed_at": entry.get("completed_at"),
+                    "job_state": job.state,
+                }
+            return {
+                "ready": False,
+                "job_state": job.state,
+                "note": "job_terminal_before_step_ready",
+            }
+        entry = _STORE.get_decode_step(job_id, upstream, step_index)
+        if entry is not None:
+            return {
+                "ready": True,
+                "stage_index": upstream,
+                "step_index": step_index,
+                "output_b64": entry.get("output_b64"),
+                "output_text": entry.get("output_text"),
+                "meta": dict(entry.get("meta") or {}),
+                "completed_at": entry.get("completed_at"),
+            }
+        await asyncio.sleep(0.05)
+    return {"ready": False, "stage_index": upstream, "note": "timeout_keep_polling"}
+
+
 __all__ = [
     "estimate_job_cost",
     "submit_inference_job",
@@ -2165,4 +2790,8 @@ __all__ = [
     "pipeline_get_upstream_activation",
     "pipeline_job_status",
     "pipeline_get_stage_info",
+    "pipeline_feed_token",
+    "pipeline_get_next_token_step",
+    "pipeline_submit_decode_step",
+    "pipeline_get_upstream_step",
 ]

@@ -570,6 +570,25 @@ class AICFWorker:
         stage: dict,
         runners: dict,
     ) -> None:
+        """Dispatch a claimed stage based on the job's decode mode.
+
+        Streaming-decode jobs (spec.decode_mode == "streaming") run
+        a real per-token loop with each stage maintaining its own KV
+        cache between rounds. Prefill-only jobs (the legacy default)
+        run a single prefill pass; the final stage does the
+        autoregressive decode locally.
+        """
+        spec = stage.get("spec") or {}
+        if str(spec.get("decode_mode") or "").lower() == "streaming":
+            self._process_streaming_stage(stage, runners)
+            return
+        self._process_prefill_only_stage(stage, runners)
+
+    def _process_prefill_only_stage(
+        self,
+        stage: dict,
+        runners: dict,
+    ) -> None:
         """Run a single pipeline stage end-to-end.
 
         Stage 0 gets the original prompt and emits the first activation.
@@ -784,6 +803,383 @@ class AICFWorker:
                 # follow-up). Mirror to jobs_completed so existing
                 # dashboards see the work.
                 self.state.jobs_completed += 1
+
+    def _process_streaming_stage(
+        self,
+        stage: dict,
+        runners: dict,    # noqa: ARG002 — unused; kept for symmetry
+    ) -> None:
+        """Run a streaming-decode stage end-to-end.
+
+        Phases:
+          1. Prefill — stage 0 embeds the prompt and runs its layers
+             with KV-cache stash; later stages pull the upstream prefill
+             activation, run their layers (caching K/V), submit.
+             The final stage submits its prefill landmark with
+             ``meta.non_terminal=True`` so the job stays open.
+          2. Decode loop — stage 0 long-polls for tokens to embed;
+             middle stages long-poll for upstream's per-step output;
+             the final stage long-polls upstream then runs LM head +
+             sample, appends the token text to job.text, feeds the
+             next token back to stage 0 (piggy-backed in submit's meta),
+             and terminates on EOS / max_new_tokens.
+
+        Real layer-shard inference is on when
+        ``ANIMICA_AICF_PIPELINE_REAL=1`` AND ``ANIMICA_AICF_PIPELINE_MODEL_ID``
+        is set; otherwise the worker falls back to a reference
+        identity-with-marker transform so the protocol still produces
+        an answer (useful for protocol-only tests).
+        """
+        job_id = str(stage.get("job_id") or "")
+        stage_index = int(stage.get("stage_index") or 0)
+        total_stages = int(stage.get("total_stages") or 1)
+        is_first = stage_index == 0
+        is_final = bool(stage.get("is_final_stage"))
+        prompt = str(stage.get("prompt") or "")
+        spec = stage.get("spec") or {}
+        max_new_tokens = int(spec.get("max_output_tokens") or 64)
+        temperature = float(spec.get("temperature") or 0.2)
+        top_p = float(spec.get("top_p") or 0.95)
+
+        use_real = (
+            os.environ.get("ANIMICA_AICF_PIPELINE_REAL", "0")
+            .strip().lower() in {"1", "true", "yes", "on"}
+        )
+
+        runner = None
+        layer_range = None
+        if use_real:
+            runner = self._get_layer_range_runner()
+        if runner is not None:
+            from flagship_agent.layer_range_inference import plan_layer_ranges
+            ranges = plan_layer_ranges(runner.total_layers, total_stages)
+            layer_range = ranges[stage_index]
+
+        try:
+            # -------- 1. Prefill --------
+            if is_first:
+                payload_b64 = self._streaming_prefill_first(
+                    runner=runner, layer_range=layer_range,
+                    job_id=job_id, prompt=prompt,
+                    stage_index=stage_index, total_stages=total_stages,
+                )
+            else:
+                payload_b64 = self._streaming_prefill_mid_or_final(
+                    runner=runner, layer_range=layer_range,
+                    job_id=job_id, stage_index=stage_index,
+                    is_final=is_final, total_stages=total_stages,
+                )
+
+            # Submit prefill landmark. Final stage marks it non-terminal
+            # so the decode loop has somewhere to write.
+            prefill_meta = {"phase": "prefill"}
+            if is_final:
+                prefill_meta["non_terminal"] = True
+            self._submit_pipeline_landmark(
+                job_id=job_id, stage_index=stage_index,
+                output_b64=payload_b64, meta=prefill_meta,
+            )
+
+            # -------- 2. Decode loop --------
+            if is_final:
+                self._streaming_final_decode_loop(
+                    runner=runner, layer_range=layer_range,
+                    job_id=job_id, stage_index=stage_index,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature, top_p=top_p,
+                )
+            else:
+                self._streaming_mid_decode_loop(
+                    runner=runner, layer_range=layer_range,
+                    job_id=job_id, stage_index=stage_index,
+                    is_first=is_first,
+                )
+        finally:
+            if runner is not None:
+                try:
+                    runner.release_cache(job_id)
+                except Exception:    # noqa: BLE001
+                    pass
+
+    def _streaming_prefill_first(
+        self, *, runner, layer_range, job_id, prompt,
+        stage_index, total_stages,
+    ):
+        import base64
+        if runner is not None:
+            payload, _meta = runner.prefill_with_cache(
+                prompt, layer_range,
+                job_id=job_id, is_first_stage=True,
+            )
+            return base64.b64encode(payload).decode("ascii")
+        # Reference transform: stash the prompt as a base64 'activation'.
+        marker = f"[prefill stage 0/{total_stages-1} @ {self.address[:12]}…]\n{prompt}"
+        return base64.b64encode(marker.encode("utf-8")).decode("ascii")
+
+    def _streaming_prefill_mid_or_final(
+        self, *, runner, layer_range, job_id, stage_index,
+        is_final, total_stages,
+    ):
+        import base64
+        # Pull upstream prefill activation. Prefill goes via the same
+        # output_b64 path that the prefill-only mode uses; we reuse
+        # the existing helpers (direct W2W with node-proxy fallback).
+        deadline = time.time() + 60.0
+        upstream_b64 = None
+        while time.time() < deadline:
+            direct = self._try_direct_upstream_fetch(job_id, stage_index)
+            if direct is not None:
+                payload, _addr, _route = direct
+                upstream_b64 = base64.b64encode(payload).decode("ascii")
+                break
+            try:
+                up = self.client.pipeline_get_upstream_activation(
+                    job_id=job_id, stage_index=stage_index,
+                )
+            except AgentRuntimeError:
+                up = None
+            if up and up.get("ready"):
+                upstream_b64 = up.get("output_b64")
+                break
+            time.sleep(0.1)
+        if upstream_b64 is None:
+            raise AgentRuntimeError(
+                "streaming prefill upstream not ready within 60s")
+        upstream_bytes = base64.b64decode(upstream_b64)
+        if runner is not None:
+            out_bytes, _meta = runner.prefill_with_cache(
+                upstream_bytes, layer_range,
+                job_id=job_id, is_first_stage=False,
+            )
+            return base64.b64encode(out_bytes).decode("ascii")
+        marker = (
+            f"[prefill stage {stage_index}/{total_stages-1} "
+            f"@ {self.address[:12]}…]\n"
+            + upstream_bytes.decode("utf-8", errors="replace")
+        )
+        return base64.b64encode(marker.encode("utf-8")).decode("ascii")
+
+    def _submit_pipeline_landmark(
+        self, *, job_id, stage_index, output_b64, meta,
+    ):
+        """Submit a prefill activation via the legacy stage-result RPC
+        so existing aicf.pipelineGetUpstreamActivation callers keep
+        seeing prefill bytes via the node-proxy path. Also stashes a
+        copy in the local transport for direct W2W."""
+        import base64
+        from agent_runtime.pipeline_transport import compute_payload_tag
+        if self._transport is not None and output_b64:
+            try:
+                raw = base64.b64decode(output_b64)
+                tag = compute_payload_tag(
+                    job_id=job_id, stage_index=stage_index,
+                    sender_address=self.address, payload=raw,
+                    shared_secret=self._pipeline_shared_secret(self.address),
+                )
+                self._transport.stash_local(
+                    job_id=job_id, stage_index=stage_index,
+                    payload=raw, tag=tag,
+                )
+            except Exception:    # noqa: BLE001
+                pass
+        self.client.pipeline_submit_stage_result(
+            address=self.address, job_id=job_id, stage_index=stage_index,
+            output_b64=output_b64, output_text=None, meta=meta,
+        )
+
+    def _streaming_mid_decode_loop(
+        self, *, runner, layer_range, job_id, stage_index, is_first,
+    ):
+        """Intermediate (or stage 0) per-step pull/run/submit loop.
+
+        Stage 0: long-poll pipelineGetNextTokenStep, get
+        (token_id, step_index), feed to its layers, submit downstream.
+        Middle stages: long-poll pipelineGetUpstreamStep at increasing
+        step indices, run their layers, submit.
+        """
+        import base64
+        from agent_runtime.pipeline_transport import compute_payload_tag
+        current_step = 1    # prefill is implicit step 0
+        loop_deadline = time.time() + 600.0     # safety net
+        while time.time() < loop_deadline:
+            try:
+                if is_first:
+                    nt = self.client.pipeline_get_next_token_step(job_id=job_id)
+                    if not nt.get("ready"):
+                        if nt.get("note") == "job_terminal":
+                            return
+                        continue
+                    step_index = int(nt["step_index"])
+                    token_id = int(nt["token_id"])
+                    if runner is not None:
+                        out_bytes, _meta = runner.decode_step_layers(
+                            token_id, layer_range,
+                            job_id=job_id, is_first_stage=True,
+                        )
+                        out_b64 = base64.b64encode(out_bytes).decode("ascii")
+                    else:
+                        marker = f"[decode step={step_index} stage=0 tok={token_id}]"
+                        out_b64 = base64.b64encode(marker.encode("utf-8")).decode("ascii")
+                else:
+                    up = self.client.pipeline_get_upstream_step(
+                        job_id=job_id, stage_index=stage_index,
+                        step_index=current_step,
+                    )
+                    if not up.get("ready"):
+                        if up.get("note", "").startswith("job_terminal"):
+                            return
+                        continue
+                    step_index = current_step
+                    up_b64 = up.get("output_b64")
+                    up_bytes = base64.b64decode(up_b64) if up_b64 else b""
+                    if runner is not None:
+                        out_bytes, _meta = runner.decode_step_layers(
+                            up_bytes, layer_range,
+                            job_id=job_id, is_first_stage=False,
+                        )
+                        out_b64 = base64.b64encode(out_bytes).decode("ascii")
+                    else:
+                        marker = (
+                            f"[decode step={step_index} stage={stage_index} "
+                            + up_bytes.decode("utf-8", errors="replace")
+                            + "]"
+                        )
+                        out_b64 = base64.b64encode(marker.encode("utf-8")).decode("ascii")
+
+                # Stash for direct W2W
+                if self._transport is not None:
+                    try:
+                        raw = base64.b64decode(out_b64)
+                        tag = compute_payload_tag(
+                            job_id=job_id, stage_index=stage_index,
+                            sender_address=self.address, payload=raw,
+                            shared_secret=self._pipeline_shared_secret(self.address),
+                        )
+                        # Per-step stash uses the same path as prefill
+                        # since downstream's GET also targets this stage
+                        # index; we differentiate by step in the meta.
+                        self._transport.stash_local(
+                            job_id=job_id, stage_index=stage_index,
+                            payload=raw, tag=tag,
+                        )
+                    except Exception:    # noqa: BLE001
+                        pass
+
+                ack = self.client.pipeline_submit_decode_step(
+                    address=self.address, job_id=job_id,
+                    stage_index=stage_index, step_index=step_index,
+                    output_b64=out_b64, output_text=None, meta={},
+                )
+                if ack.get("job_state") in {"completed", "failed"}:
+                    return
+                if ack.get("status") == "already_terminal":
+                    return
+                self.state.pipeline_stages_completed += 1
+                current_step += 1
+            except AgentRuntimeError as exc:
+                _eprint(
+                    f"[aicf-worker] streaming mid-stage error "
+                    f"job={job_id} stage={stage_index}: {exc.message}"
+                )
+                self.state.jobs_failed += 1
+                return
+        _eprint(
+            f"[aicf-worker] streaming mid-stage loop deadline reached "
+            f"job={job_id} stage={stage_index}"
+        )
+
+    def _streaming_final_decode_loop(
+        self, *, runner, layer_range, job_id, stage_index,
+        max_new_tokens, temperature, top_p,
+    ):
+        """Final stage's per-token decode loop.
+
+        Pulls upstream step k, runs its layer range + LM head + sample,
+        appends the token text to job.text, feeds the next token back
+        to stage 0 (piggy-backed via meta.next_token_id), terminates on
+        EOS or max_new_tokens.
+        """
+        import base64
+        current_step = 1
+        tokens_emitted = 0
+        # Seed the loop: feed an initial token to stage 0 (using the
+        # prompt's last token as a starting point — for a real model
+        # this is what kicks off generation). The node accepts it and
+        # stage 0 will consume it on its next poll.
+        seed_token = self._pick_seed_token(runner)
+        try:
+            self.client.pipeline_feed_token(
+                job_id=job_id, token_id=int(seed_token),
+            )
+        except AgentRuntimeError as exc:
+            _eprint(f"[aicf-worker] feed seed token failed: {exc.message}")
+            self.state.jobs_failed += 1
+            return
+
+        loop_deadline = time.time() + 600.0
+        while tokens_emitted < int(max_new_tokens) and time.time() < loop_deadline:
+            try:
+                up = self.client.pipeline_get_upstream_step(
+                    job_id=job_id, stage_index=stage_index,
+                    step_index=current_step,
+                )
+                if not up.get("ready"):
+                    if up.get("note", "").startswith("job_terminal"):
+                        return
+                    continue
+                up_b64 = up.get("output_b64")
+                up_bytes = base64.b64decode(up_b64) if up_b64 else b""
+                if runner is not None:
+                    token_id, token_text, _meta = runner.decode_step_with_head(
+                        up_bytes, layer_range, job_id=job_id,
+                        temperature=temperature, top_p=top_p,
+                    )
+                    is_eos_now = runner.is_eos(token_id)
+                else:
+                    # Reference transform: pick a deterministic next
+                    # token from upstream bytes so tests can assert the
+                    # protocol flow without a real model.
+                    token_id = (sum(up_bytes) % 95) or 1
+                    token_text = chr(token_id + 32) if 0 < token_id < 95 else "?"
+                    is_eos_now = False
+                tokens_emitted += 1
+                terminal = is_eos_now or tokens_emitted >= int(max_new_tokens)
+                meta = {"is_terminal": terminal}
+                if not terminal:
+                    meta["next_token_id"] = int(token_id)
+                self.client.pipeline_submit_decode_step(
+                    address=self.address, job_id=job_id,
+                    stage_index=stage_index, step_index=current_step,
+                    output_b64=None, output_text=token_text, meta=meta,
+                )
+                self.state.pipeline_stages_completed += 1
+                if terminal:
+                    self.state.jobs_completed += 1
+                    return
+                current_step += 1
+            except AgentRuntimeError as exc:
+                _eprint(
+                    f"[aicf-worker] streaming final-stage error "
+                    f"job={job_id}: {exc.message}"
+                )
+                self.state.jobs_failed += 1
+                return
+        _eprint(
+            f"[aicf-worker] streaming final-stage loop ended "
+            f"tokens={tokens_emitted} job={job_id}"
+        )
+
+    def _pick_seed_token(self, runner) -> int:
+        """Pick a token id to bootstrap the decode loop. With a real
+        runner we use the tokenizer's BOS or the prompt's last token;
+        with the reference transform we just use 1 (any non-EOS marker
+        works since the reference final stage doesn't care)."""
+        if runner is None:
+            return 1
+        bos = getattr(runner.tokenizer, "bos_token_id", None)
+        if bos is not None:
+            return int(bos)
+        return 1
 
     def close(self) -> None:
         if self._transport is not None:

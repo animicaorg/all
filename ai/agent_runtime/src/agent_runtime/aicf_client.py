@@ -396,6 +396,43 @@ class AICFClient:
             "stage_index": int(stage_index),
         })
 
+    # -------------------- streaming-decode helpers -------------------- #
+
+    def pipeline_feed_token(self, *, job_id: str,
+                            token_id: int) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineFeedToken", {
+            "job_id": job_id,
+            "token_id": int(token_id),
+        })
+
+    def pipeline_get_next_token_step(self, *, job_id: str
+                                     ) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineGetNextTokenStep", {"job_id": job_id})
+
+    def pipeline_submit_decode_step(
+        self, *, address: str, job_id: str, stage_index: int,
+        step_index: int, output_b64: Optional[str],
+        output_text: Optional[str], meta: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineSubmitDecodeStep", {
+            "address": address,
+            "job_id": job_id,
+            "stage_index": int(stage_index),
+            "step_index": int(step_index),
+            "output_b64": output_b64,
+            "output_text": output_text,
+            "meta": dict(meta),
+        })
+
+    def pipeline_get_upstream_step(
+        self, *, job_id: str, stage_index: int, step_index: int,
+    ) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineGetUpstreamStep", {
+            "job_id": job_id,
+            "stage_index": int(stage_index),
+            "step_index": int(step_index),
+        })
+
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #

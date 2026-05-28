@@ -515,5 +515,211 @@ def test_layer_range_runner_end_to_end_synthetic():
     """Placeholder — covered separately in flagship_agent tests."""
 
 
+# --------------------------------------------------------------------------- #
+# Streaming-decode protocol                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_streaming_decode_protocol_appends_each_token_to_job_text():
+    """End-to-end streaming-decode flow via the RPC handlers.
+
+    Drives a 2-stage job: 2 prefill submits (final stage marks
+    non_terminal so the job stays open), then a sequence of decode
+    rounds where each round produces a single character that
+    accumulates in job.text. The terminal step closes the job.
+    The test asserts: progressive job.text grows monotonically;
+    final settle returns the full accumulated string; multi-party
+    credit applies after the terminal step.
+    """
+    m = _import_module(force_memory=True)
+
+    async def go():
+        await m.worker_register(address="w0", tiers=["pipeline"], hardware={})
+        await m.worker_register(address="w1", tiers=["pipeline"], hardware={})
+        sub = await m.submit_inference_job(
+            spec={"prompt": "q", "stages": 2},
+            payment={"txn_hex": ""},
+        )
+        jid = sub["job_id"]
+
+        await m.pipeline_claim_stage(address="w0")
+        await m.pipeline_claim_stage(address="w1")
+
+        # Prefill submits — final stage marks non-terminal.
+        await m.pipeline_submit_stage_result(
+            address="w0", job_id=jid, stage_index=0,
+            output_b64="cHJl", output_text=None, meta={},
+        )
+        await m.pipeline_submit_stage_result(
+            address="w1", job_id=jid, stage_index=1,
+            output_b64="cHJl", output_text=None,
+            meta={"non_terminal": True},
+        )
+        # Sanity: job still open after prefill.
+        s = await m.pipeline_job_status(job_id=jid)
+        assert s["state"] == "claimed", s
+
+        # Streaming decode loop — produce "hi!"
+        chars = list("hi!")
+        progressive = ""
+        for i, ch in enumerate(chars):
+            await m.pipeline_feed_token(job_id=jid, token_id=i + 10)
+            nt = await m.pipeline_get_next_token_step(job_id=jid)
+            assert nt["ready"], nt
+            step_index = int(nt["step_index"])
+
+            # Stage 0 emits the step
+            await m.pipeline_submit_decode_step(
+                address="w0", job_id=jid, stage_index=0,
+                step_index=step_index, output_b64="c3RlcA==",
+                output_text=None, meta={},
+            )
+            # Upstream visible to stage 1
+            up = await m.pipeline_get_upstream_step(
+                job_id=jid, stage_index=1, step_index=step_index,
+            )
+            assert up["ready"]
+            assert up["output_b64"] == "c3RlcA=="
+
+            # Final stage emits text + marks terminal on last
+            terminal = i == len(chars) - 1
+            meta = {"is_terminal": True} if terminal else {}
+            await m.pipeline_submit_decode_step(
+                address="w1", job_id=jid, stage_index=1,
+                step_index=step_index, output_b64=None,
+                output_text=ch, meta=meta,
+            )
+            progressive += ch
+            # Progressive text matches what we've appended so far
+            status_now = await m.pipeline_job_status(job_id=jid)
+            assert status_now["text"] == progressive, (
+                status_now["text"], progressive
+            )
+
+        # Job is terminal after the final step
+        final_status = await m.pipeline_job_status(job_id=jid)
+        assert final_status["state"] == "completed"
+        assert final_status["text"] == "hi!"
+
+        settle = await m.settle_job(job_id=jid)
+        assert settle["text"] == "hi!"
+        assert settle["settled"] is True
+
+        # Multi-party credit applied — both workers credited
+        cost = float(sub["estimated_cost_animica"])
+        e0 = await m.worker_earnings(address="w0")
+        e1 = await m.worker_earnings(address="w1")
+        assert e0["jobs_completed"] == 1
+        assert e1["jobs_completed"] == 1
+        assert abs(e0["earnings_pending_animica"] - cost / 2) < 1e-8
+        assert abs(e1["earnings_pending_animica"] - cost / 2) < 1e-8
+
+    _run(go())
+
+
+def test_streaming_decode_piggybacked_next_token_short_circuits_feed():
+    """meta.next_token_id on the final-stage submit pushes to the
+    inbox in the same RPC, so the worker doesn't need a separate
+    pipelineFeedToken call per token."""
+    m = _import_module(force_memory=True)
+
+    async def go():
+        await m.worker_register(address="w0", tiers=["pipeline"], hardware={})
+        await m.worker_register(address="w1", tiers=["pipeline"], hardware={})
+        sub = await m.submit_inference_job(
+            spec={"prompt": "q", "stages": 2},
+            payment={"txn_hex": ""},
+        )
+        jid = sub["job_id"]
+        await m.pipeline_claim_stage(address="w0")
+        await m.pipeline_claim_stage(address="w1")
+        await m.pipeline_submit_stage_result(
+            address="w0", job_id=jid, stage_index=0,
+            output_b64="cHJl", output_text=None, meta={},
+        )
+        await m.pipeline_submit_stage_result(
+            address="w1", job_id=jid, stage_index=1,
+            output_b64="cHJl", output_text=None,
+            meta={"non_terminal": True},
+        )
+
+        # Seed first token via feed_token; subsequent rounds rely on
+        # the piggy-back so we never call feed_token again until terminal.
+        await m.pipeline_feed_token(job_id=jid, token_id=7)
+        for i in range(3):
+            nt = await m.pipeline_get_next_token_step(job_id=jid)
+            assert nt["ready"]
+            step = int(nt["step_index"])
+            await m.pipeline_submit_decode_step(
+                address="w0", job_id=jid, stage_index=0,
+                step_index=step, output_b64="c3Q=",
+                output_text=None, meta={},
+            )
+            terminal = i == 2
+            await m.pipeline_submit_decode_step(
+                address="w1", job_id=jid, stage_index=1,
+                step_index=step, output_b64=None,
+                output_text=f"t{i}",
+                meta=(
+                    {"is_terminal": True}
+                    if terminal
+                    else {"next_token_id": 100 + i}
+                ),
+            )
+        settle = await m.settle_job(job_id=jid)
+        assert settle["text"] == "t0t1t2"
+
+    _run(go())
+
+
+def test_streaming_decode_works_against_sqlite_store():
+    db_path = tempfile.mktemp(suffix=".db")
+    m = _import_module(force_memory=False, db_path=db_path)
+    try:
+        async def go():
+            await m.worker_register(address="w0", tiers=["pipeline"], hardware={})
+            await m.worker_register(address="w1", tiers=["pipeline"], hardware={})
+            sub = await m.submit_inference_job(
+                spec={"prompt": "q", "stages": 2},
+                payment={"txn_hex": ""},
+            )
+            jid = sub["job_id"]
+            await m.pipeline_claim_stage(address="w0")
+            await m.pipeline_claim_stage(address="w1")
+            await m.pipeline_submit_stage_result(
+                address="w0", job_id=jid, stage_index=0,
+                output_b64="cHJl", output_text=None, meta={},
+            )
+            await m.pipeline_submit_stage_result(
+                address="w1", job_id=jid, stage_index=1,
+                output_b64="cHJl", output_text=None,
+                meta={"non_terminal": True},
+            )
+            expected = "abc"
+            for i, ch in enumerate(expected):
+                await m.pipeline_feed_token(job_id=jid, token_id=i + 1)
+                nt = await m.pipeline_get_next_token_step(job_id=jid)
+                step = int(nt["step_index"])
+                await m.pipeline_submit_decode_step(
+                    address="w0", job_id=jid, stage_index=0,
+                    step_index=step, output_b64="c3Q=",
+                    output_text=None, meta={},
+                )
+                meta = {"is_terminal": True} if i == len(expected) - 1 else {}
+                await m.pipeline_submit_decode_step(
+                    address="w1", job_id=jid, stage_index=1,
+                    step_index=step, output_b64=None,
+                    output_text=ch, meta=meta,
+                )
+            settle = await m.settle_job(job_id=jid)
+            assert settle["text"] == expected
+        _run(go())
+    finally:
+        try:
+            os.unlink(db_path)
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":     # pragma: no cover — manual smoke
     pytest.main([__file__, "-v"])

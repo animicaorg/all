@@ -141,6 +141,61 @@ def test_final_stage_generates_text_deterministically_with_temp_zero():
     assert len(text_a) > 0
 
 
+def test_streaming_decode_cache_and_step_apis_compose():
+    """Prefill caches K/V, decode_step_layers + decode_step_with_head
+    reuse it across a sequence of single-token rounds, and the run is
+    deterministic at temperature=0."""
+    runner = _make_runner(n_layers=4)
+    ranges = plan_layer_ranges(runner.total_layers, 2)
+    p0, _ = runner.prefill_with_cache(
+        "hi", ranges[0], job_id="JOB", is_first_stage=True,
+    )
+    p1, _ = runner.prefill_with_cache(
+        p0, ranges[1], job_id="JOB", is_first_stage=False,
+    )
+    assert len(p0) > 0 and len(p1) > 0
+
+    # Streaming-decode 3 tokens.
+    seq_ids = []
+    seq_texts = []
+    next_token = 5
+    for _ in range(3):
+        d0, _ = runner.decode_step_layers(
+            next_token, ranges[0], job_id="JOB", is_first_stage=True,
+        )
+        token_id, token_text, _ = runner.decode_step_with_head(
+            d0, ranges[1], job_id="JOB", temperature=0.0,
+        )
+        seq_ids.append(token_id)
+        seq_texts.append(token_text)
+        next_token = token_id
+
+    # Determinism: same starting token + cache state -> same sequence.
+    runner2 = _make_runner(n_layers=4)
+    runner2.prefill_with_cache(
+        "hi", ranges[0], job_id="JOB2", is_first_stage=True,
+    )
+    runner2.prefill_with_cache(
+        p0, ranges[1], job_id="JOB2", is_first_stage=False,
+    )
+    seq_ids2 = []
+    next_token = 5
+    for _ in range(3):
+        d0, _ = runner2.decode_step_layers(
+            next_token, ranges[0], job_id="JOB2", is_first_stage=True,
+        )
+        token_id, _txt, _ = runner2.decode_step_with_head(
+            d0, ranges[1], job_id="JOB2", temperature=0.0,
+        )
+        seq_ids2.append(token_id)
+        next_token = token_id
+    assert seq_ids == seq_ids2, (seq_ids, seq_ids2)
+
+    # release_cache drops state
+    runner.release_cache("JOB")
+    assert "JOB" not in runner._kv_caches
+
+
 def test_three_stage_pipeline_covers_all_layers():
     runner = _make_runner(n_layers=6)
     ranges = plan_layer_ranges(runner.total_layers, 3)

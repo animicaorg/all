@@ -229,6 +229,13 @@ class LayerRangeRunner:
         self.device = device or self._infer_device(model)
         self.dtype = dtype or next(iter(model.parameters())).dtype
         self.model.eval()
+        # Streaming-decode KV cache: ``_kv_caches[job_id]`` maps each
+        # layer-in-range index to its rolling (K, V) tensor pair.
+        # Independent caches per job mean concurrent jobs don't share
+        # state; ``release_cache(job_id)`` is called once the job
+        # closes so memory doesn't leak. For a stage that holds only a
+        # layer range, only layers IN that range get a cache entry.
+        self._kv_caches: Dict[str, List[Optional[tuple]]] = {}
         log.info(
             "LayerRangeRunner ready: total_layers=%d device=%s dtype=%s",
             self.total_layers, self.device, self.dtype,
@@ -288,21 +295,61 @@ class LayerRangeRunner:
         return hidden @ embed.weight.T
 
     def _run_range(self, hidden: Any, layer_range: LayerRange,
-                   attention_mask: Optional[Any] = None) -> Any:
+                   attention_mask: Optional[Any] = None,
+                   *,
+                   job_id: Optional[str] = None,
+                   use_cache: bool = False) -> Any:
         """Forward through layers [start, end). The decoder block's
         signature varies by architecture; we try the common HF call
-        shape first and fall back to a positional call when that fails."""
+        shape first and fall back to a positional call when that fails.
+
+        When ``use_cache`` is True and ``job_id`` is set, each layer's
+        (K, V) tensors are stashed in ``self._kv_caches[job_id]`` and
+        the next call to this method on the same (job_id, layer index)
+        uses the previously-stashed cache as ``past_key_value``. This
+        is what unlocks single-token forward passes during streaming
+        decode — each layer touches only the new token's K/V append
+        instead of re-running the prefill."""
         torch = self._torch
+        cache = None
+        if use_cache and job_id is not None:
+            cache = self._kv_caches.setdefault(
+                job_id, [None] * self.total_layers,
+            )
         for i in range(layer_range.start, layer_range.end):
             layer = self.layers[i]
-            try:
-                out = layer(hidden, attention_mask=attention_mask)
-            except TypeError:
-                out = layer(hidden)
+            past = cache[i] if cache is not None else None
+            out = None
+            if use_cache:
+                # Prefer the HF call shape with past_key_value +
+                # use_cache=True. Falls through to attention-mask-only
+                # and then bare-positional for synthetic test layers.
+                try:
+                    out = layer(
+                        hidden,
+                        attention_mask=attention_mask,
+                        past_key_value=past,
+                        use_cache=True,
+                    )
+                except TypeError:
+                    out = None
+            if out is None:
+                try:
+                    out = layer(hidden, attention_mask=attention_mask)
+                except TypeError:
+                    out = layer(hidden)
+            present_kv = None
             if isinstance(out, (tuple, list)):
                 hidden = out[0]
+                # HF decoder layer return shape: (hidden_states,
+                # present_key_value, [attn_weights, ...]). Treat any
+                # non-None tuple element of len>1 as a candidate K/V.
+                if len(out) > 1:
+                    present_kv = out[1]
             else:
                 hidden = out
+            if cache is not None and present_kv is not None:
+                cache[i] = present_kv
         return hidden
 
     # ---- public API ---------------------------------------------------- #
@@ -437,6 +484,172 @@ class LayerRangeRunner:
             "max_new_tokens": int(max_new_tokens),
             "generated_tokens": int(input_ids.shape[-1]),
         }
+
+    # ---- streaming-decode API ----------------------------------------- #
+
+    def prefill_with_cache(
+        self,
+        prompt_or_payload: Any,
+        layer_range: LayerRange,
+        *,
+        job_id: str,
+        is_first_stage: bool,
+    ) -> Tuple[bytes, Dict[str, Any]]:
+        """Run prefill on ``layer_range`` and remember per-layer K/V.
+
+        Stage 0 calls this with the prompt string; later stages pass
+        the upstream's serialized prefill activation. The returned
+        bytes carry the post-range hidden state for the downstream
+        stage. The K/V cache for layers in ``layer_range`` is stashed
+        under ``self._kv_caches[job_id]`` so subsequent decode-step
+        calls can reuse it.
+
+        Equivalent to ``embed_and_run_prefix`` / ``run_layers`` but
+        with ``use_cache=True`` and the inputs' token-ids retained so
+        the downstream stages can locate them later (each stage
+        re-runs only its own layer range; the input_ids tensor rides
+        along verbatim for the final stage's eventual decode loop).
+        """
+        torch = self._torch
+        if is_first_stage:
+            if not isinstance(prompt_or_payload, str):
+                raise TypeError("first stage expects a prompt string")
+            ids = self.tokenizer(prompt_or_payload, return_tensors="pt")
+            input_ids = ids["input_ids"].to(self.device)
+            attention_mask = ids.get("attention_mask")
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+            with torch.no_grad():
+                hidden = self._embed_input_ids(input_ids)
+                hidden = self._run_range(
+                    hidden, layer_range,
+                    attention_mask=attention_mask,
+                    job_id=job_id, use_cache=True,
+                )
+        else:
+            tensors = _safetensors_loads(prompt_or_payload)
+            input_ids = tensors["input_ids"].to(self.device)
+            hidden = tensors["hidden"].to(self.device).to(self.dtype)
+            attention_mask = (
+                tensors["attention_mask"].to(self.device)
+                if "attention_mask" in tensors else None
+            )
+            with torch.no_grad():
+                hidden = self._run_range(
+                    hidden, layer_range,
+                    attention_mask=attention_mask,
+                    job_id=job_id, use_cache=True,
+                )
+        out: Dict[str, Any] = {
+            "hidden": hidden.cpu().contiguous(),
+            "input_ids": input_ids.cpu(),
+        }
+        if attention_mask is not None:
+            out["attention_mask"] = attention_mask.cpu()
+        return _safetensors_dumps(out), {
+            "stage_kind": "prefill_cached",
+            "layer_range": layer_range.as_dict(),
+            "prompt_tokens": int(input_ids.shape[-1]),
+        }
+
+    def decode_step_layers(
+        self,
+        token_or_payload: Any,
+        layer_range: LayerRange,
+        *,
+        job_id: str,
+        is_first_stage: bool,
+    ) -> Tuple[bytes, Dict[str, Any]]:
+        """Single-token forward pass through this stage's layer range.
+
+        Stage 0 passes the next-token id (int) so it gets embedded
+        before running through layers. Later stages pass the upstream's
+        serialized decode-step activation. The KV cache stashed by
+        ``prefill_with_cache`` (and previous decode_step_layers calls)
+        is used and extended for each layer; the returned bytes carry
+        the new hidden state for the downstream stage."""
+        torch = self._torch
+        if is_first_stage:
+            if not isinstance(token_or_payload, int):
+                raise TypeError(
+                    "first stage expects an int token_id for decode_step_layers"
+                )
+            token_t = torch.tensor(
+                [[int(token_or_payload)]], dtype=torch.long, device=self.device,
+            )
+            with torch.no_grad():
+                hidden = self._embed_input_ids(token_t)
+                hidden = self._run_range(
+                    hidden, layer_range, attention_mask=None,
+                    job_id=job_id, use_cache=True,
+                )
+        else:
+            tensors = _safetensors_loads(token_or_payload)
+            hidden = tensors["hidden"].to(self.device).to(self.dtype)
+            with torch.no_grad():
+                hidden = self._run_range(
+                    hidden, layer_range, attention_mask=None,
+                    job_id=job_id, use_cache=True,
+                )
+        return _safetensors_dumps({
+            "hidden": hidden.cpu().contiguous(),
+        }), {
+            "stage_kind": "decode",
+            "layer_range": layer_range.as_dict(),
+        }
+
+    def decode_step_with_head(
+        self,
+        payload: bytes,
+        layer_range: LayerRange,
+        *,
+        job_id: str,
+        temperature: float = 0.2,
+        top_p: float = 0.95,
+    ) -> Tuple[int, str, Dict[str, Any]]:
+        """Final stage's per-token closer. Runs the last layer range +
+        final norm + LM head, samples one token, and returns
+        ``(token_id, token_text, meta)``. The token_text is the chunk
+        appended to job.text and streamed to the chat client."""
+        torch = self._torch
+        tensors = _safetensors_loads(payload)
+        hidden = tensors["hidden"].to(self.device).to(self.dtype)
+        with torch.no_grad():
+            hidden = self._run_range(
+                hidden, layer_range, attention_mask=None,
+                job_id=job_id, use_cache=True,
+            )
+            hidden = self._final_norm(hidden)
+            # Last-position logits.
+            last = hidden[..., -1:, :]
+            logits = self._lm_head(last)[..., -1, :]
+            token = self._sample(logits, temperature=temperature, top_p=top_p)
+        token_id = int(token.item())
+        # ``tokenizer.decode([token])`` is the canonical way to get the
+        # one-token text. Some tokenizers don't decode special tokens;
+        # the final-stage worker treats ``""`` as a silent step (no
+        # character delta but the decode loop continues).
+        try:
+            token_text = self.tokenizer.decode(
+                [token_id], skip_special_tokens=False,
+            )
+        except Exception:    # noqa: BLE001
+            token_text = ""
+        return token_id, token_text, {
+            "stage_kind": "decode_head",
+            "layer_range": layer_range.as_dict(),
+        }
+
+    def is_eos(self, token_id: int) -> bool:
+        """True when ``token_id`` is the tokenizer's EOS marker."""
+        eos = getattr(self.tokenizer, "eos_token_id", None)
+        return eos is not None and int(token_id) == int(eos)
+
+    def release_cache(self, job_id: str) -> None:
+        """Free the KV cache for ``job_id``. Workers call this once the
+        job transitions to a terminal state so a long-running miner
+        doesn't accumulate cache memory across thousands of chats."""
+        self._kv_caches.pop(job_id, None)
 
     # ---- sampling ------------------------------------------------------ #
 
