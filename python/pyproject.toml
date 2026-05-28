@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "0.1.64"
+version = "0.1.65"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, and useful-work jobs."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -99,62 +99,54 @@ Issues = "https://github.com/animicaorg/all/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["animica"]
 
+# Custom build hook materialises sibling source dirs (../aicf,
+# ../ai/agent_runtime/src/agent_runtime, etc.) into python/_build_vendor/
+# before the wheel/sdist is assembled. See python/hatch_build.py for the
+# list of vendored paths and the rationale (hatchling's sdist `include`
+# silently ignores paths above the project root, which used to break
+# `python -m build`).
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel.force-include]
 # Top-level sibling Python packages imported as `<name>.*` from animica
-# at module-load time. They live next to python/ in the source tree but are
-# not pip-installable on their own, so bundle them so a pip-only `animica`
-# wheel can import without external setup.
-"../aicf" = "aicf"
-"../capabilities" = "capabilities"
-"../consensus" = "consensus"
-"../core" = "core"
-"../coretx" = "coretx"
-"../da" = "da"
-"../execution" = "execution"
-"../mempool" = "mempool"
-"../mempool2" = "mempool2"
-"../mining" = "mining"
-"../p2p" = "p2p"
-"../pq" = "pq"
-"../rpc" = "rpc"
-"../stdlib" = "stdlib"
-"../vm_py" = "vm_py"
+# at module-load time. They live next to python/ in the source tree;
+# the build hook copies them into _build_vendor/ so both wheel-from-source
+# and wheel-from-sdist see them at a stable, in-project path.
+"_build_vendor/aicf" = "aicf"
+"_build_vendor/capabilities" = "capabilities"
+"_build_vendor/consensus" = "consensus"
+"_build_vendor/core" = "core"
+"_build_vendor/coretx" = "coretx"
+"_build_vendor/da" = "da"
+"_build_vendor/execution" = "execution"
+"_build_vendor/mempool" = "mempool"
+"_build_vendor/mempool2" = "mempool2"
+"_build_vendor/mining" = "mining"
+"_build_vendor/p2p" = "p2p"
+"_build_vendor/pq" = "pq"
+"_build_vendor/rpc" = "rpc"
+"_build_vendor/stdlib" = "stdlib"
+"_build_vendor/vm_py" = "vm_py"
 # AI stack — distributed AICF chat client + local flagship pipeline.
 # Bundled at top-level so `pip install animica` delivers `animica chat`
 # and the training pipeline together, no extra installs needed.
-"../ai/agent_runtime/src/agent_runtime" = "agent_runtime"
-"../ai/flagship_agent/src/flagship_agent" = "flagship_agent"
-"../ai/configs" = "animica/_data/ai/configs"
-"../ai/flagship_agent/scripts" = "animica/_data/ai/flagship_agent/scripts"
+"_build_vendor/agent_runtime" = "agent_runtime"
+"_build_vendor/flagship_agent" = "flagship_agent"
+"_build_vendor/_data_ai_configs" = "animica/_data/ai/configs"
+"_build_vendor/_data_ai_flagship_agent_scripts" = "animica/_data/ai/flagship_agent/scripts"
 # Standalone (image:-based) docker-compose files so `pip install animica`
 # + `animica node up` works without a source-tree checkout. See
 # python/animica/config.py::_resolve_compose_file for resolution order.
-"../ops/docker/standalone" = "animica/_data/ops/docker/standalone"
+"_build_vendor/_data_ops_docker_standalone" = "animica/_data/ops/docker/standalone"
 
 [tool.hatch.build.targets.sdist]
-# The sdist must include every path the wheel force-includes, otherwise
-# `python -m build` (which builds wheel-from-sdist) fails the wheel pass.
-# Order doesn't matter; hatchling resolves paths relative to project root.
+# Include the materialised vendor dir + the hook script. The hook runs
+# first thing in every build, so _build_vendor/ is always populated
+# from the latest source before hatchling reads it. The same dir is
+# packed into the sdist, so wheel-from-sdist also has all the inputs.
 include = [
   "animica",
-  "../aicf",
-  "../capabilities",
-  "../consensus",
-  "../core",
-  "../coretx",
-  "../da",
-  "../execution",
-  "../mempool",
-  "../mempool2",
-  "../mining",
-  "../p2p",
-  "../pq",
-  "../rpc",
-  "../stdlib",
-  "../vm_py",
-  "../ai/agent_runtime/src/agent_runtime",
-  "../ai/flagship_agent/src/flagship_agent",
-  "../ai/configs",
-  "../ai/flagship_agent/scripts",
-  "../ops/docker/standalone",
+  "_build_vendor",
+  "hatch_build.py",
 ]

@@ -72,6 +72,7 @@ class WorkerState:
     jobs_completed: int = 0
     jobs_failed: int = 0
     jobs_raced_and_lost: int = 0
+    pipeline_stages_completed: int = 0
     earnings_animica: float = 0.0
     last_heartbeat_at: float = 0.0
     stopping: bool = False
@@ -85,6 +86,7 @@ class WorkerState:
             "jobs_completed": self.jobs_completed,
             "jobs_failed": self.jobs_failed,
             "jobs_raced_and_lost": self.jobs_raced_and_lost,
+            "pipeline_stages_completed": self.pipeline_stages_completed,
             "earnings_animica": self.earnings_animica,
             "last_heartbeat_at": self.last_heartbeat_at,
         }
@@ -153,6 +155,18 @@ class AICFWorker:
         self.tiers = resolve_tiers(self.profile,
                                     dict(cfg.model_catalog),
                                     override=tiers_override)
+        # Opt-in pipeline-stage capability. With ANIMICA_AICF_PIPELINE_WORKER=1
+        # the worker advertises the synthetic "pipeline" tier so the node
+        # promotes new jobs to pipeline mode. Off by default to keep the
+        # legacy single-worker behavior intact for miners running on a
+        # single CPU/GPU; the chat side already auto-falls-back to race
+        # when no pipeline workers are registered.
+        self.pipeline_enabled = (
+            os.environ.get("ANIMICA_AICF_PIPELINE_WORKER", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if self.pipeline_enabled and "pipeline" not in self.tiers:
+            self.tiers = [*self.tiers, "pipeline"]
         self.state = WorkerState(
             address=address,
             endpoint=endpoint,
@@ -196,9 +210,30 @@ class AICFWorker:
         # Lazy-load a runner per bundle; we keep a cache by tier.
         runners: dict[str, "LocalBundleRunner"] = {}     # noqa: F821
         while not self.state.stopping:
+            # When advertising the pipeline tier, prefer claiming a
+            # pending pipeline stage before falling back to a race-mode
+            # claim. Pipeline jobs are time-sensitive (stage k blocks
+            # stage k+1) so we don't want a pipeline-capable worker
+            # sitting on a race job while a stage is waiting.
+            stage_handled = False
+            if self.pipeline_enabled:
+                try:
+                    stage = self.client.pipeline_claim_stage(
+                        address=self.address
+                    )
+                except AgentRuntimeError as exc:
+                    _eprint(f"[aicf-worker] pipeline claim failed: {exc.message}")
+                    stage = None
+                if stage:
+                    self._process_pipeline_stage(stage, runners)
+                    stage_handled = True
+            if stage_handled:
+                self._write_state()
+                continue
             try:
                 job = self.client.claim_next_job(address=self.address,
-                                                  tiers=self.tiers)
+                                                  tiers=[t for t in self.tiers
+                                                         if t != "pipeline"])
             except AgentRuntimeError as exc:
                 _eprint(f"[aicf-worker] claim failed: {exc.message}")
                 time.sleep(idle_sleep_ms / 1000.0)
@@ -291,6 +326,144 @@ class AICFWorker:
         raise BundleError(
             f"no usable bundles found under {cache}",
         )
+
+    def _process_pipeline_stage(
+        self,
+        stage: dict,
+        runners: dict,
+    ) -> None:
+        """Run a single pipeline stage end-to-end.
+
+        Stage 0 gets the original prompt and emits the first activation.
+        Stage k > 0 pulls the upstream activation, applies a local
+        transform, and emits the result. The final stage's
+        ``output_text`` becomes the chat job's reply.
+
+        The reference transform here is intentionally minimal: each
+        stage appends a stage-marker to a text-encoded activation so
+        the protocol can be exercised and tested without a real
+        layer-sharded model bundle. A production runner replaces this
+        with `runner.run_layer_range(activation, start, end)` once the
+        sharded bundle format is in place. Until then, set
+        ANIMICA_AICF_PIPELINE_USE_RUNNER=1 to have stage k run a full
+        single-tier inference on the upstream text and pass it forward
+        (slower than racing; offered as a stop-gap for demos).
+        """
+        job_id = str(stage.get("job_id") or "")
+        stage_index = int(stage.get("stage_index") or 0)
+        total_stages = int(stage.get("total_stages") or 1)
+        prompt = str(stage.get("prompt") or "")
+        is_final = bool(stage.get("is_final_stage"))
+        if not job_id:
+            return
+        # 1. Pull upstream activation (if any).
+        upstream_text = ""
+        upstream_b64: Optional[str] = None
+        if stage_index > 0:
+            deadline = time.time() + 60.0
+            while time.time() < deadline:
+                try:
+                    up = self.client.pipeline_get_upstream_activation(
+                        job_id=job_id, stage_index=stage_index,
+                    )
+                except AgentRuntimeError as exc:
+                    _eprint(
+                        f"[aicf-worker] pipeline upstream fetch failed "
+                        f"job={job_id} stage={stage_index}: {exc.message}"
+                    )
+                    self.state.jobs_failed += 1
+                    return
+                if up.get("ready"):
+                    upstream_text = str(up.get("output_text") or "")
+                    upstream_b64 = up.get("output_b64")
+                    break
+                if up.get("note") == "job_terminal_before_upstream_ready":
+                    return
+                time.sleep(0.2)
+            else:
+                _eprint(
+                    f"[aicf-worker] pipeline upstream wait timed out "
+                    f"job={job_id} stage={stage_index}"
+                )
+                self.state.jobs_failed += 1
+                return
+
+        # 2. Apply the stage transform.
+        use_runner = (
+            os.environ.get("ANIMICA_AICF_PIPELINE_USE_RUNNER", "0")
+            .strip().lower() in {"1", "true", "yes", "on"}
+        )
+        t0 = time.time()
+        try:
+            if use_runner and is_final:
+                tier = str(stage.get("tier") or "small")
+                runner = runners.get(tier)
+                if runner is None:
+                    runner = self._load_runner(tier)
+                    runners[tier] = runner
+                composed = (upstream_text or "") + "\n\n" + prompt
+                text = runner.generate(
+                    prompt=composed, history=[],
+                    max_output_tokens=int(stage.get("spec", {})
+                                          .get("max_output_tokens", 512)),
+                    temperature=float(stage.get("spec", {})
+                                      .get("temperature", 0.2)),
+                    top_p=float(stage.get("spec", {})
+                                .get("top_p", 0.95)),
+                )
+                output_text = text
+                output_b64 = None
+            else:
+                # Reference protocol transform — identity on the
+                # upstream activation plus a stage marker. Encodes the
+                # activation as base64'd UTF-8 for symmetry with the
+                # future tensor-bytes case.
+                base = upstream_text or prompt
+                annotated = (
+                    f"{base}\n[stage {stage_index}/{total_stages - 1} @ "
+                    f"{self.address[:12]}…]"
+                )
+                import base64
+                output_text = annotated if is_final else None
+                output_b64 = base64.b64encode(annotated.encode("utf-8")).decode("ascii")
+        except BundleError as exc:
+            _eprint(f"[aicf-worker] pipeline stage bundle error: {exc.message}")
+            self.state.jobs_failed += 1
+            return
+        except Exception as exc:    # noqa: BLE001 — surface to operator
+            _eprint(
+                f"[aicf-worker] pipeline stage {stage_index} failed: {exc}"
+            )
+            self.state.jobs_failed += 1
+            return
+        latency_ms = int((time.time() - t0) * 1000)
+
+        # 3. Submit the stage result back to the node.
+        try:
+            ack = self.client.pipeline_submit_stage_result(
+                address=self.address,
+                job_id=job_id,
+                stage_index=stage_index,
+                output_b64=output_b64,
+                output_text=output_text,
+                meta={"latency_ms": latency_ms,
+                      "tier": stage.get("tier") or ""},
+            )
+        except AgentRuntimeError as exc:
+            _eprint(
+                f"[aicf-worker] pipeline submit failed job={job_id} "
+                f"stage={stage_index}: {exc.message}"
+            )
+            self.state.jobs_failed += 1
+            return
+        if isinstance(ack, dict) and ack.get("accepted"):
+            self.state.pipeline_stages_completed += 1
+            if ack.get("status") == "completed_job":
+                # Only the final-stage worker is credited under the
+                # current settlement rule (cross-stage split is a
+                # follow-up). Mirror to jobs_completed so existing
+                # dashboards see the work.
+                self.state.jobs_completed += 1
 
     def close(self) -> None:
         self.client.close()

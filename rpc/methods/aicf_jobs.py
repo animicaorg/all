@@ -141,6 +141,29 @@ _REPLICAS_DEFAULT = max(1, int(
     os.environ.get("ANIMICA_AICF_REPLICAS", "3") or "3"
 ))
 
+# Pipeline (model-parallel) defaults. When at least this many workers
+# advertise the "pipeline" tier, new jobs default to pipeline mode and
+# distribute layer ranges across stages. With fewer workers we fall
+# back to race replication so chat never hangs waiting for stages that
+# nobody can serve. ANIMICA_AICF_PIPELINE=0 disables the path entirely
+# (race-only); ANIMICA_AICF_PIPELINE_STAGES sets the default stage
+# count when pipeline mode is selected.
+_PIPELINE_ENABLED = (
+    os.environ.get("ANIMICA_AICF_PIPELINE", "1").strip().lower()
+    not in {"0", "false", "off", "no"}
+)
+_PIPELINE_STAGES_DEFAULT = max(2, int(
+    os.environ.get("ANIMICA_AICF_PIPELINE_STAGES", "2") or "2"
+))
+_PIPELINE_TIER_LABEL = "pipeline"
+# How long a single pipeline stage may sit in "claimed" before its lease
+# expires and another worker may reclaim it. Shorter than the regular
+# job lease because a stalled stage blocks the WHOLE pipeline, not just
+# one race competitor.
+_PIPELINE_STAGE_LEASE_S = float(
+    os.environ.get("ANIMICA_AICF_PIPELINE_STAGE_LEASE_S", "120.0")
+)
+
 
 # ---------------------------------------------------------------------------
 # In-memory state
@@ -179,6 +202,24 @@ class _JobRecord:
     replicas_wanted: int = 1
     claims: List[Dict[str, Any]] = field(default_factory=list)
     winner_address: Optional[str] = None
+    # Pipeline (model-parallel) mode. When mode == "pipeline", `stages`
+    # holds an ordered list of stage records that chain together to
+    # produce the final result. Each stage dict is:
+    #   {
+    #     "index": int,
+    #     "state": "pending" | "claimed" | "completed" | "failed",
+    #     "worker_address": Optional[str],
+    #     "claimed_at": Optional[float],
+    #     "expires_at": Optional[float],
+    #     "output_b64": Optional[str],   # downstream-visible payload
+    #     "output_text": Optional[str],  # final-stage rendered text
+    #     "meta": Dict[str, Any],         # shape/dtype hints
+    #   }
+    # The final stage's `output_text` becomes `_JobRecord.text` on
+    # completion so the existing aicf.streamJob / settleJob surface
+    # still works unchanged.
+    mode: str = "race"
+    stages: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -229,6 +270,10 @@ class _AicfJobStore:
                 if job.state in {"completed", "failed"}:
                     continue
                 if job.tier not in tiers:
+                    continue
+                # Pipeline jobs are claimed stage-by-stage via
+                # pipelineClaimStage, not as a single race winner.
+                if job.mode == "pipeline":
                     continue
                 # Drop expired claims so a slow worker doesn't lock out
                 # the slot indefinitely. Note this mutates the live job.
@@ -292,6 +337,112 @@ class _AicfJobStore:
             job.completed_at = time.time()
             return job
 
+    # ---------- pipeline-stage operations ----------
+
+    def claim_pipeline_stage(
+        self,
+        worker_addr: str,
+        *,
+        job_id_filter: Optional[str] = None,
+    ) -> Optional[tuple[_JobRecord, int]]:
+        """Atomically claim the lowest unfilled stage in some pipeline job.
+
+        Returns ``(job, stage_index)`` on success, or None when nothing is
+        claimable. Expired claims are reclaimed before pending stages are
+        considered. A worker cannot hold two stages of the same job
+        simultaneously — that would deadlock the pipeline (stage k+1
+        would wait on its own activation from stage k).
+        """
+        if not worker_addr:
+            return None
+        now = time.time()
+        with self._lock:
+            candidates = [
+                j for j in self._jobs.values()
+                if j.mode == "pipeline"
+                and j.state not in {"completed", "failed"}
+                and (job_id_filter is None or j.job_id == job_id_filter)
+            ]
+            candidates.sort(key=lambda j: j.created_at)
+            for job in candidates:
+                # Refuse to assign a second stage to the same worker.
+                if any(
+                    s.get("worker_address") == worker_addr
+                    and s.get("state") in {"claimed", "completed"}
+                    and float(s.get("expires_at") or 0.0) > now
+                    for s in job.stages
+                ):
+                    continue
+                stages_sorted = sorted(
+                    job.stages,
+                    key=lambda s: int(s.get("index", 0)),
+                )
+                for stage in stages_sorted:
+                    st = stage.get("state")
+                    if st == "claimed":
+                        exp = float(stage.get("expires_at") or 0.0)
+                        if exp > now:
+                            continue
+                    if st in {"pending", "claimed"}:
+                        stage["state"] = "claimed"
+                        stage["worker_address"] = worker_addr
+                        stage["claimed_at"] = now
+                        stage["expires_at"] = now + _PIPELINE_STAGE_LEASE_S
+                        job.state = "claimed"
+                        return job, int(stage["index"])
+        return None
+
+    def submit_pipeline_stage(
+        self,
+        job_id: str,
+        stage_index: int,
+        *,
+        worker_addr: str,
+        output_b64: Optional[str],
+        output_text: Optional[str],
+        meta: Dict[str, Any],
+    ) -> tuple[Optional[_JobRecord], str]:
+        """Record a stage's output. Returns ``(job, status)`` where status
+        is one of: "completed_stage" (recorded), "completed_job" (final
+        stage, job is now terminal), "lost_lease" (stage was reassigned),
+        "unknown_stage", "unknown_job", "already_terminal"."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None, "unknown_job"
+            if job.state in {"completed", "failed"}:
+                return job, "already_terminal"
+            stage = next(
+                (s for s in job.stages if int(s.get("index", -1)) == int(stage_index)),
+                None,
+            )
+            if stage is None:
+                return job, "unknown_stage"
+            if stage.get("state") == "completed":
+                return job, "already_terminal"
+            owner = stage.get("worker_address")
+            if owner and owner != worker_addr:
+                # Lease still belongs to someone else — refuse so we
+                # don't accept a result from a worker the scheduler
+                # already preempted.
+                return job, "lost_lease"
+            stage["state"] = "completed"
+            stage["worker_address"] = worker_addr
+            stage["completed_at"] = time.time()
+            stage["output_b64"] = output_b64
+            stage["output_text"] = output_text
+            stage["meta"] = dict(meta or {})
+            # Final stage closes the job.
+            highest = max(int(s.get("index", 0)) for s in job.stages)
+            if int(stage_index) == highest:
+                job.state = "completed"
+                job.completed_at = time.time()
+                job.text = output_text or job.text
+                job.provider_id = worker_addr
+                job.winner_address = worker_addr
+                return job, "completed_job"
+            return job, "completed_stage"
+
     # ---------- workers ----------
 
     def register_worker(self, info: _WorkerInfo) -> None:
@@ -348,7 +499,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     settled_chain_id INTEGER,
     replicas_wanted INTEGER NOT NULL DEFAULT 1,
     claims_json TEXT NOT NULL DEFAULT '[]',
-    winner_address TEXT
+    winner_address TEXT,
+    mode TEXT NOT NULL DEFAULT 'race',
+    stages_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
@@ -421,6 +574,10 @@ class _SqliteAicfJobStore:
              "ALTER TABLE jobs ADD COLUMN claims_json TEXT NOT NULL DEFAULT '[]'"),
             ("winner_address",
              "ALTER TABLE jobs ADD COLUMN winner_address TEXT"),
+            ("mode",
+             "ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'race'"),
+            ("stages_json",
+             "ALTER TABLE jobs ADD COLUMN stages_json TEXT NOT NULL DEFAULT '[]'"),
         ):
             try:
                 conn.execute(ddl)
@@ -458,6 +615,14 @@ class _SqliteAicfJobStore:
         except (ValueError, TypeError):
             claims = []
         winner = row["winner_address"] if "winner_address" in keys else None
+        mode = row["mode"] if "mode" in keys else "race"
+        try:
+            stages_raw = row["stages_json"] if "stages_json" in keys else "[]"
+            stages = _json.loads(stages_raw) if stages_raw else []
+            if not isinstance(stages, list):
+                stages = []
+        except (ValueError, TypeError):
+            stages = []
         return _JobRecord(
             job_id=row["job_id"],
             spec=_json.loads(row["spec_json"]),
@@ -480,6 +645,8 @@ class _SqliteAicfJobStore:
             replicas_wanted=replicas,
             claims=claims,
             winner_address=winner,
+            mode=mode or "race",
+            stages=stages,
         )
 
     @staticmethod
@@ -505,8 +672,8 @@ class _SqliteAicfJobStore:
             "  provider_id,created_at,claimed_at,completed_at,claim_owner,"
             "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
             "  payment_status,settled_chain_id,replicas_wanted,claims_json,"
-            "  winner_address"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  winner_address,mode,stages_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.job_id,
                 _json.dumps(job.spec),
@@ -529,6 +696,8 @@ class _SqliteAicfJobStore:
                 int(job.replicas_wanted or 1),
                 _json.dumps(job.claims or []),
                 job.winner_address,
+                job.mode or "race",
+                _json.dumps(job.stages or []),
             ),
         )
 
@@ -556,8 +725,13 @@ class _SqliteAicfJobStore:
             # pick the first one with an open replica slot. We can't
             # express "claims count below cap" as a pure SQL filter
             # without a join table, so do it in Python with a small N.
+            # Race-mode rows only — pipeline jobs are surfaced via the
+            # pipelineClaimStage path so the race claim_next must never
+            # see them, even if a misconfigured worker passed the same
+            # tier as a pipeline job.
             candidates = conn.execute(
                 "SELECT * FROM jobs WHERE state IN ('pending','claimed')"
+                " AND mode='race'"
                 + tier_filter
                 + " ORDER BY created_at ASC LIMIT 64",
                 tuple(tiers),
@@ -643,6 +817,154 @@ class _SqliteAicfJobStore:
                 (error, now, job_id),
             )
         return self.get(job_id)
+
+    # ---------- pipeline-stage operations ----------
+
+    def claim_pipeline_stage(
+        self,
+        worker_addr: str,
+        *,
+        job_id_filter: Optional[str] = None,
+    ) -> Optional[tuple[_JobRecord, int]]:
+        """Same semantics as _AicfJobStore.claim_pipeline_stage but
+        durable. Uses BEGIN IMMEDIATE so two concurrent workers can't
+        each be told they own the same stage."""
+        if not worker_addr:
+            return None
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            params: tuple[Any, ...] = ()
+            sql = (
+                "SELECT * FROM jobs WHERE mode='pipeline'"
+                " AND state NOT IN ('completed','failed')"
+            )
+            if job_id_filter:
+                sql += " AND job_id=?"
+                params = (job_id_filter,)
+            sql += " ORDER BY created_at ASC LIMIT 64"
+            candidates = conn.execute(sql, params).fetchall()
+            for row in candidates:
+                job = self._job_from_row(row)
+                # No double-staging the same worker.
+                if any(
+                    s.get("worker_address") == worker_addr
+                    and s.get("state") in {"claimed", "completed"}
+                    and float(s.get("expires_at") or 0.0) > now
+                    for s in job.stages
+                ):
+                    continue
+                stages = sorted(job.stages, key=lambda s: int(s.get("index", 0)))
+                target_idx: Optional[int] = None
+                for i, stage in enumerate(stages):
+                    st = stage.get("state")
+                    if st == "claimed":
+                        exp = float(stage.get("expires_at") or 0.0)
+                        if exp > now:
+                            continue
+                    if st in {"pending", "claimed"}:
+                        stages[i] = {
+                            **stage,
+                            "state": "claimed",
+                            "worker_address": worker_addr,
+                            "claimed_at": now,
+                            "expires_at": now + _PIPELINE_STAGE_LEASE_S,
+                        }
+                        target_idx = int(stage.get("index", i))
+                        break
+                if target_idx is None:
+                    continue
+                conn.execute(
+                    "UPDATE jobs SET state='claimed', stages_json=? WHERE job_id=?",
+                    (_json.dumps(stages), job.job_id),
+                )
+                conn.execute("COMMIT")
+                updated = self.get(job.job_id)
+                if updated is None:
+                    return None
+                return updated, target_idx
+            conn.execute("COMMIT")
+            return None
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def submit_pipeline_stage(
+        self,
+        job_id: str,
+        stage_index: int,
+        *,
+        worker_addr: str,
+        output_b64: Optional[str],
+        output_text: Optional[str],
+        meta: Dict[str, Any],
+    ) -> tuple[Optional[_JobRecord], str]:
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None, "unknown_job"
+            job = self._job_from_row(row)
+            if job.state in {"completed", "failed"}:
+                conn.execute("COMMIT")
+                return job, "already_terminal"
+            stages = list(job.stages)
+            target = None
+            for i, s in enumerate(stages):
+                if int(s.get("index", -1)) == int(stage_index):
+                    target = i
+                    break
+            if target is None:
+                conn.execute("COMMIT")
+                return job, "unknown_stage"
+            stage = stages[target]
+            if stage.get("state") == "completed":
+                conn.execute("COMMIT")
+                return job, "already_terminal"
+            owner = stage.get("worker_address")
+            if owner and owner != worker_addr:
+                conn.execute("COMMIT")
+                return job, "lost_lease"
+            stages[target] = {
+                **stage,
+                "state": "completed",
+                "worker_address": worker_addr,
+                "completed_at": now,
+                "output_b64": output_b64,
+                "output_text": output_text,
+                "meta": dict(meta or {}),
+            }
+            highest = max(int(s.get("index", 0)) for s in stages)
+            is_final = int(stage_index) == highest
+            if is_final:
+                conn.execute(
+                    "UPDATE jobs SET state='completed', text=?, provider_id=?,"
+                    " completed_at=?, winner_address=?, stages_json=? WHERE job_id=?",
+                    (
+                        output_text or job.text,
+                        worker_addr,
+                        now,
+                        worker_addr,
+                        _json.dumps(stages),
+                        job_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE jobs SET stages_json=? WHERE job_id=?",
+                    (_json.dumps(stages), job_id),
+                )
+            conn.execute("COMMIT")
+            return self.get(job_id), ("completed_job" if is_final else "completed_stage")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
     # ---------- workers ----------
 
@@ -940,6 +1262,20 @@ async def submit_inference_job(
     except (TypeError, ValueError):
         replicas = _REPLICAS_DEFAULT
     replicas = max(1, min(16, replicas))
+    # Pipeline mode selection. With "auto" (the default) we promote to
+    # pipeline only when there are enough pipeline-tier workers to fill
+    # every stage; otherwise we fall back to race so chat never hangs
+    # waiting for stage workers that aren't registered. "race" forces
+    # the legacy path, "pipeline" forces it regardless of worker count
+    # (callers that pass "pipeline" without enough workers get stub
+    # results from the fallback timer — same as the race-without-miners
+    # path).
+    requested_stages = spec.get("stages") if isinstance(spec, Mapping) else None
+    try:
+        stages_count = int(requested_stages) if requested_stages is not None else 0
+    except (TypeError, ValueError):
+        stages_count = 0
+    mode, resolved_stages = _resolve_pipeline_mode(dict(spec), stages_count)
     rec = _JobRecord(
         job_id=job_id,
         spec=dict(spec),
@@ -947,6 +1283,8 @@ async def submit_inference_job(
         estimated_cost=cost,
         tier=tier,
         replicas_wanted=replicas,
+        mode=mode,
+        stages=(_build_initial_stages(resolved_stages) if mode == "pipeline" else []),
     )
 
     # Real on-chain settlement: decode the SignedPayment envelope and
@@ -999,7 +1337,10 @@ async def submit_inference_job(
 
     _STORE.submit(rec)
     _schedule_fallback(job_id)
-    log.info("aicf_jobs: submitted job_id=%s tier=%s est_cost=%.9f", job_id, tier, cost)
+    log.info(
+        "aicf_jobs: submitted job_id=%s tier=%s mode=%s stages=%d est_cost=%.9f",
+        job_id, tier, rec.mode, len(rec.stages), cost,
+    )
     return {
         "job_id": job_id,
         "accepted_tier": tier,
@@ -1008,6 +1349,8 @@ async def submit_inference_job(
         "payment_tx_hash": rec.payment_tx_hash,
         "payment_accepted": rec.payment_accepted,
         "payment_status": rec.payment_status,
+        "mode": rec.mode,
+        "stages": len(rec.stages),
     }
 
 
@@ -1148,7 +1491,17 @@ async def worker_register(
     tiers_raw = p.get("tiers") or []
     if not isinstance(tiers_raw, list):
         raise InvalidParams("workerRegister: 'tiers' must be a list")
-    tiers = [_resolve_tier(t) for t in tiers_raw]
+    # Preserve the special "pipeline" capability label so pipeline-mode
+    # routing can find workers; pricing tiers get normalized through
+    # _resolve_tier so a misconfigured string doesn't show up as a
+    # zero-cost free tier.
+    tiers: List[str] = []
+    for t in tiers_raw:
+        label = str(t).lower().strip()
+        if label == _PIPELINE_TIER_LABEL:
+            tiers.append(_PIPELINE_TIER_LABEL)
+        else:
+            tiers.append(_resolve_tier(t))
     hardware = p.get("hardware") or {}
     if not isinstance(hardware, Mapping):
         raise InvalidParams("workerRegister: 'hardware' must be an object")
@@ -1242,7 +1595,13 @@ async def worker_claim_next_job(
     if not isinstance(tiers_raw, list):
         raise InvalidParams("workerClaimNextJob: 'tiers' must be a list")
     tiers = [_resolve_tier(t) for t in tiers_raw]
+    # claim_next walks every job in tier filter — pipeline jobs already
+    # have mode != "race" so they're skipped here naturally (their stages
+    # are surfaced via pipelineClaimStage). Belt-and-braces: refuse to
+    # hand a pipeline job to a race-mode worker.
     job = _STORE.claim_next(address, tiers)
+    if job is not None and getattr(job, "mode", "race") == "pipeline":
+        job = None
     if job is None:
         return None
     return {
@@ -1268,6 +1627,18 @@ async def worker_submit_result(
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")
+    if job.mode == "pipeline":
+        # Pipeline jobs are settled via aicf.pipelineSubmitStageResult.
+        # Accepting a race-style submit here would skip the stage
+        # chaining and silently produce a one-worker answer instead of
+        # the model-parallel composition.
+        return {
+            "accepted": False,
+            "state": job.state,
+            "reason": "use_pipeline_methods",
+            "job_id": job_id,
+            "hint": "call aicf.pipelineClaimStage + aicf.pipelineSubmitStageResult",
+        }
     if job.state not in {"claimed", "pending"}:
         # Already completed (e.g. local stub raced ahead, or another
         # worker won the race) — accept idempotently. With K-way race
@@ -1332,6 +1703,294 @@ async def worker_submit_result(
             "winner_address": address}
 
 
+# ---------------------------------------------------------------------------
+# Pipeline-parallel methods
+# ---------------------------------------------------------------------------
+#
+# The pipeline path chains N worker stages to produce one chat answer.
+# Each stage owns a transform (in the reference runner: identity + a
+# stage marker; in a real layer-sharded miner: a contiguous layer range
+# of the underlying model). Stage 0 reads the original prompt; stage k
+# pulls the upstream activation from stage k-1. The final stage's
+# `output_text` becomes the job's text and triggers settlement.
+#
+# Wire protocol summary:
+#   1. Submit creates a pipeline job with N pending stages.
+#   2. Workers (registered with tier=="pipeline") poll
+#      aicf.pipelineClaimStage. The store hands out the lowest pending
+#      stage and refuses to give the same worker a second stage of the
+#      same job (would deadlock self-dependency).
+#   3. Stage k worker calls aicf.pipelineGetUpstreamActivation with
+#      stage_index=k. The node long-polls (~1.5s) until stage k-1 has
+#      written its output, then returns it. Stage 0 gets no upstream
+#      payload, just the prompt from claimStage.
+#   4. Worker computes its transform on the upstream activation, then
+#      calls aicf.pipelineSubmitStageResult with the new activation
+#      (and `output_text` only on the final stage).
+#   5. When the final stage submits, the wrapping _JobRecord transitions
+#      to "completed" and aicf.streamJob/settleJob deliver the text to
+#      the chat client unchanged.
+#
+# What's intentionally NOT in scope here (and noted for the follow-up
+# work that turns this into "actually faster than running on one
+# worker"):
+#   - Sharded model bundles. Today's bundles are monolithic; layer-range
+#     loading is a separate bundle-format effort.
+#   - Direct worker-to-worker activation transport. Activations are
+#     currently proxied through the node, which adds a round-trip per
+#     stage. Fine for kbyte hidden states; bottleneck for MB ones.
+#   - Multi-party payment split. The current settlement credits the
+#     final-stage worker; cross-stage revenue share is a future TODO.
+#   - Mid-job stage worker replacement / partial re-execution.
+
+
+def _pipeline_capable_workers() -> int:
+    """Count of registered workers advertising the 'pipeline' tier."""
+    try:
+        workers = _STORE.all_workers()
+    except Exception:
+        return 0
+    return sum(1 for w in workers if _PIPELINE_TIER_LABEL in (w.tiers or []))
+
+
+def _build_initial_stages(stage_count: int) -> List[Dict[str, Any]]:
+    return [
+        {
+            "index": i,
+            "state": "pending",
+            "worker_address": None,
+            "claimed_at": None,
+            "expires_at": None,
+            "completed_at": None,
+            "output_b64": None,
+            "output_text": None,
+            "meta": {},
+        }
+        for i in range(int(stage_count))
+    ]
+
+
+def _resolve_pipeline_mode(
+    spec: Mapping[str, Any],
+    requested_stages: int,
+) -> tuple[str, int]:
+    """Decide whether a newly-submitted job runs as race or pipeline.
+
+    Returns ``(mode, stages)``. Mode is one of "race" | "pipeline".
+    Callers honour spec.mode == "race"/"pipeline" verbatim; with
+    spec.mode == "auto" (the default) we pick pipeline only when there
+    are enough pipeline-tier workers to fill every stage. Anything else
+    falls back to race so chat never hangs waiting for missing stages.
+    """
+    requested_mode = str(spec.get("mode") or "auto").lower().strip()
+    if not _PIPELINE_ENABLED:
+        return "race", 0
+    if requested_mode == "race":
+        return "race", 0
+    target_stages = max(2, int(requested_stages or _PIPELINE_STAGES_DEFAULT))
+    if requested_mode == "pipeline":
+        return "pipeline", target_stages
+    # "auto" — default. Promote to pipeline only when feasible.
+    if _pipeline_capable_workers() >= target_stages:
+        return "pipeline", target_stages
+    return "race", 0
+
+
+@method(
+    "aicf.pipelineClaimStage",
+    desc="Claim the next available pipeline stage for a worker",
+    aliases=("aicf_pipelineClaimStage",),
+)
+async def pipeline_claim_stage(
+    ctx: Any = None,
+    **params: Any,
+) -> Optional[Dict[str, Any]]:
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    if not address:
+        raise InvalidParams("pipelineClaimStage: 'address' is required")
+    job_id_filter = _coerce_str(p.get("job_id")).strip() or None
+    res = _STORE.claim_pipeline_stage(address, job_id_filter=job_id_filter)
+    if res is None:
+        return None
+    job, stage_index = res
+    prompt = str(job.spec.get("prompt", ""))
+    return {
+        "job_id": job.job_id,
+        "stage_index": stage_index,
+        "total_stages": len(job.stages),
+        "prompt": prompt,
+        "upstream_stage": (stage_index - 1) if stage_index > 0 else None,
+        "is_final_stage": stage_index == (len(job.stages) - 1),
+        "tier": job.tier,
+        "lease_expires_at": next(
+            (s.get("expires_at") for s in job.stages
+             if int(s.get("index", -1)) == stage_index),
+            None,
+        ),
+        "spec": dict(job.spec),
+    }
+
+
+@method(
+    "aicf.pipelineSubmitStageResult",
+    desc="Submit a worker's pipeline-stage output",
+    aliases=("aicf_pipelineSubmitStageResult",),
+)
+async def pipeline_submit_stage_result(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    job_id = _coerce_str(p.get("job_id")).strip()
+    stage_index = _coerce_int(p.get("stage_index"), -1)
+    if not address or not job_id or stage_index < 0:
+        raise InvalidParams(
+            "pipelineSubmitStageResult: 'address', 'job_id', 'stage_index' required"
+        )
+    output_b64 = p.get("output_b64")
+    output_text = p.get("output_text")
+    meta = p.get("meta") or {}
+    if not isinstance(meta, Mapping):
+        meta = {}
+    job, status = _STORE.submit_pipeline_stage(
+        job_id,
+        stage_index,
+        worker_addr=address,
+        output_b64=(str(output_b64) if output_b64 is not None else None),
+        output_text=(str(output_text) if output_text is not None else None),
+        meta=dict(meta),
+    )
+    accepted = status in {"completed_stage", "completed_job"}
+    # Credit the final-stage worker for the full job cost; intermediate
+    # stages get credited zero in this first version. The cross-stage
+    # revenue split is a future on-chain rule.
+    if status == "completed_job" and job is not None:
+        amount = float(job.estimated_cost or 0.0)
+        if hasattr(_STORE, "credit_worker_completion"):
+            try:
+                _STORE.credit_worker_completion(address, amount)
+            except Exception as exc:
+                log.warning(
+                    "aicf_jobs: pipeline credit_worker_completion failed: %s", exc
+                )
+        else:
+            w = _STORE.get_worker(address)
+            if w is not None:
+                w.jobs_completed += 1
+                try:
+                    w.earnings_pending_animica += amount
+                except (TypeError, ValueError):
+                    pass
+    return {
+        "accepted": accepted,
+        "status": status,
+        "job_id": job_id,
+        "stage_index": stage_index,
+        "job_state": job.state if job else None,
+        "completed_stages": (
+            [int(s.get("index", -1)) for s in (job.stages if job else [])
+             if s.get("state") == "completed"]
+        ),
+    }
+
+
+@method(
+    "aicf.pipelineGetUpstreamActivation",
+    desc="Long-poll for the upstream stage's activation",
+    aliases=("aicf_pipelineGetUpstreamActivation",),
+)
+async def pipeline_get_upstream_activation(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    stage_index = _coerce_int(p.get("stage_index"), -1)
+    if not job_id or stage_index < 0:
+        raise InvalidParams(
+            "pipelineGetUpstreamActivation: 'job_id' and 'stage_index' required"
+        )
+    if stage_index == 0:
+        return {"ready": True, "output_b64": None, "output_text": None,
+                "meta": {}, "stage_index": -1, "note": "stage_0_has_no_upstream"}
+    upstream = stage_index - 1
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        job = _STORE.get(job_id)
+        if job is None:
+            raise InvalidParams(f"pipelineGetUpstreamActivation: unknown job_id {job_id}")
+        if job.state in {"completed", "failed"} and not any(
+            int(s.get("index", -1)) == upstream and s.get("state") == "completed"
+            for s in job.stages
+        ):
+            # Job died with the upstream still pending — propagate.
+            return {
+                "ready": False,
+                "stage_index": upstream,
+                "job_state": job.state,
+                "note": "job_terminal_before_upstream_ready",
+            }
+        stage = next(
+            (s for s in job.stages
+             if int(s.get("index", -1)) == upstream),
+            None,
+        )
+        if stage and stage.get("state") == "completed":
+            return {
+                "ready": True,
+                "stage_index": upstream,
+                "output_b64": stage.get("output_b64"),
+                "output_text": stage.get("output_text"),
+                "meta": dict(stage.get("meta") or {}),
+                "completed_at": stage.get("completed_at"),
+            }
+        await asyncio.sleep(0.05)
+    return {"ready": False, "stage_index": upstream, "note": "timeout_keep_polling"}
+
+
+@method(
+    "aicf.pipelineJobStatus",
+    desc="Get full per-stage status for a pipeline job",
+    aliases=("aicf_pipelineJobStatus",),
+)
+async def pipeline_job_status(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    if not job_id:
+        raise InvalidParams("pipelineJobStatus: 'job_id' is required")
+    job = _STORE.get(job_id)
+    if job is None:
+        raise InvalidParams(f"pipelineJobStatus: unknown job_id {job_id}")
+    return {
+        "job_id": job.job_id,
+        "mode": job.mode,
+        "state": job.state,
+        "total_stages": len(job.stages),
+        "completed_stages": sum(
+            1 for s in job.stages if s.get("state") == "completed"
+        ),
+        "stages": [
+            {
+                "index": int(s.get("index", -1)),
+                "state": s.get("state"),
+                "worker_address": s.get("worker_address"),
+                "claimed_at": s.get("claimed_at"),
+                "expires_at": s.get("expires_at"),
+                "completed_at": s.get("completed_at"),
+                "has_output": bool(s.get("output_b64") or s.get("output_text")),
+            }
+            for s in sorted(job.stages, key=lambda s: int(s.get("index", 0)))
+        ],
+        "text": job.text,
+        "error": job.error,
+    }
+
+
 __all__ = [
     "estimate_job_cost",
     "submit_inference_job",
@@ -1342,4 +2001,8 @@ __all__ = [
     "worker_status",
     "worker_claim_next_job",
     "worker_submit_result",
+    "pipeline_claim_stage",
+    "pipeline_submit_stage_result",
+    "pipeline_get_upstream_activation",
+    "pipeline_job_status",
 ]

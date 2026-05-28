@@ -342,6 +342,49 @@ class AICFClient:
             "attestation": dict(attestation),
         })
 
+    # -------------------- pipeline -------------------- #
+
+    def pipeline_claim_stage(self, *, address: str,
+                             job_id: Optional[str] = None
+                             ) -> Optional[dict[str, Any]]:
+        """Claim the next available pipeline stage for this worker.
+
+        Returns the stage descriptor (job_id, stage_index, prompt,
+        upstream_stage, is_final_stage, lease_expires_at) or ``None`` if
+        nothing is waiting to be picked up.
+        """
+        params: dict[str, Any] = {"address": address}
+        if job_id:
+            params["job_id"] = job_id
+        raw = self._rpc("aicf.pipelineClaimStage", params)
+        if not raw:
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def pipeline_get_upstream_activation(self, *, job_id: str,
+                                         stage_index: int) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineGetUpstreamActivation", {
+            "job_id": job_id,
+            "stage_index": int(stage_index),
+        })
+
+    def pipeline_submit_stage_result(
+        self, *, address: str, job_id: str, stage_index: int,
+        output_b64: Optional[str], output_text: Optional[str],
+        meta: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineSubmitStageResult", {
+            "address": address,
+            "job_id": job_id,
+            "stage_index": int(stage_index),
+            "output_b64": output_b64,
+            "output_text": output_text,
+            "meta": dict(meta),
+        })
+
+    def pipeline_job_status(self, job_id: str) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineJobStatus", {"job_id": job_id})
+
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #

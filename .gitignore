@@ -83,6 +83,10 @@ native/target/
 apps/chat-animica/.venv-modal/
 apps/chat-animica/.modal-endpoint
 
+# chat-animica Prisma client (generated; custom output to avoid colliding
+# with the launchpad schema's @prisma/client install)
+apps/chat-animica/src/generated/
+
 # ENA service data
 ena_data/
 ena/**/*.db
@@ -127,3 +131,7 @@ ai/flagship_agent/data/raw/
 ai/flagship_agent/data/prepared/
 ai/flagship_agent/**/*.jsonl
 ai/flagship_agent/**/*.idx
+
+# Hatchling build hook stages sibling packages into python/_build_vendor/
+# at sdist/wheel time. Generated, not source.
+python/_build_vendor/
