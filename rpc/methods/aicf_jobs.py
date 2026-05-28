@@ -132,6 +132,14 @@ _WORKER_CLAIM_GRACE_S = float(
 _WORKER_LEASE_S = float(
     os.environ.get("ANIMICA_AICF_WORKER_LEASE_S", "600.0")
 )
+# Race replication factor: how many distinct workers can claim the same
+# job concurrently. First valid worker submit wins (and is paid); losers
+# get a clean "lost_race" reply. K=1 reverts to the pre-race assignment
+# behavior. Sensible defaults assume tiers have cheap per-token pricing
+# so K=3 fanout is affordable for chat latency wins.
+_REPLICAS_DEFAULT = max(1, int(
+    os.environ.get("ANIMICA_AICF_REPLICAS", "3") or "3"
+))
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +160,9 @@ class _JobRecord:
     created_at: float = field(default_factory=time.time)
     claimed_at: Optional[float] = None
     completed_at: Optional[float] = None
+    # `claim_owner` / `claim_expires_at` reflect the MOST RECENT claim and
+    # are kept for backward-compat logging. The authoritative list of
+    # active claims (for K-way race replication) lives in `claims`.
     claim_owner: Optional[str] = None
     claim_expires_at: Optional[float] = None
     error: Optional[str] = None
@@ -160,6 +171,14 @@ class _JobRecord:
     payment_accepted: bool = False
     payment_status: Optional[str] = None
     settled_chain_id: Optional[int] = None
+    # Race replication. `replicas_wanted` is the max number of workers
+    # that may claim this job in parallel; the first to submit a valid
+    # result wins (and is credited). `claims` is the canonical list of
+    # currently-active leases: each entry is
+    # `{"address": str, "claimed_at": float, "expires_at": float}`.
+    replicas_wanted: int = 1
+    claims: List[Dict[str, Any]] = field(default_factory=list)
+    winner_address: Optional[str] = None
 
 
 @dataclass
@@ -207,25 +226,36 @@ class _AicfJobStore:
         now = time.time()
         with self._lock:
             for job in self._jobs.values():
-                if job.state == "pending" and job.tier in tiers:
-                    job.state = "claimed"
-                    job.claim_owner = worker_addr
-                    job.claimed_at = now
-                    job.claim_expires_at = now + _WORKER_LEASE_S
-                    return job
-                # Reclaim expired leases — only for jobs whose tier this
-                # worker is eligible for.
-                if (
-                    job.state == "claimed"
-                    and job.tier in tiers
-                    and job.claim_expires_at is not None
-                    and job.claim_expires_at < now
-                ):
-                    job.state = "claimed"
-                    job.claim_owner = worker_addr
-                    job.claimed_at = now
-                    job.claim_expires_at = now + _WORKER_LEASE_S
-                    return job
+                if job.state in {"completed", "failed"}:
+                    continue
+                if job.tier not in tiers:
+                    continue
+                # Drop expired claims so a slow worker doesn't lock out
+                # the slot indefinitely. Note this mutates the live job.
+                live_claims = [
+                    c for c in job.claims
+                    if float(c.get("expires_at") or 0.0) > now
+                ]
+                job.claims = live_claims
+                # Don't let the same worker double-claim a job.
+                if any(c.get("address") == worker_addr for c in live_claims):
+                    continue
+                # Cap concurrent claims at replicas_wanted (K-way race).
+                cap = max(1, int(job.replicas_wanted or 1))
+                if len(live_claims) >= cap:
+                    continue
+                claim = {
+                    "address": worker_addr,
+                    "claimed_at": now,
+                    "expires_at": now + _WORKER_LEASE_S,
+                }
+                job.claims.append(claim)
+                job.state = "claimed"
+                # Mirror to legacy single-claim fields for logging compat.
+                job.claim_owner = worker_addr
+                job.claimed_at = now
+                job.claim_expires_at = now + _WORKER_LEASE_S
+                return job
         return None
 
     def complete(
@@ -235,14 +265,21 @@ class _AicfJobStore:
         text: str,
         provider_id: str,
     ) -> Optional[_JobRecord]:
+        """Atomic first-writer-wins. Returns the updated record on success
+        or None if the job was already terminal (someone else won the
+        race, or the stub fallback already answered). Callers must treat
+        None as "lost the race — do not credit this worker."""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
+                return None
+            if job.state in {"completed", "failed"}:
                 return None
             job.text = text
             job.provider_id = provider_id
             job.state = "completed"
             job.completed_at = time.time()
+            job.winner_address = provider_id
             return job
 
     def fail(self, job_id: str, error: str) -> Optional[_JobRecord]:
@@ -308,10 +345,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     payment_tx_hash TEXT,
     payment_accepted INTEGER NOT NULL DEFAULT 0,
     payment_status TEXT,
-    settled_chain_id INTEGER
+    settled_chain_id INTEGER,
+    replicas_wanted INTEGER NOT NULL DEFAULT 1,
+    claims_json TEXT NOT NULL DEFAULT '[]',
+    winner_address TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
+
+-- Migrations for jobs DBs that pre-date race-replication columns. ALTER
+-- TABLE ADD COLUMN with a default is constant-time in SQLite, so this is
+-- safe for large stores. Errors are swallowed at the call site when the
+-- column already exists.
 
 CREATE TABLE IF NOT EXISTS workers (
     address TEXT PRIMARY KEY,
@@ -358,6 +403,29 @@ class _SqliteAicfJobStore:
         conn = self._conn()
         with conn:
             conn.executescript(_SCHEMA_SQL)
+        self._migrate_race_columns(conn)
+
+    @staticmethod
+    def _migrate_race_columns(conn: _sqlite3.Connection) -> None:
+        """Add the race-replication columns to a pre-existing jobs table.
+
+        ALTER TABLE ... ADD COLUMN is idempotent only when wrapped in a
+        try/except — SQLite returns OperationalError if the column is
+        already present. The defaults match _JobRecord so pre-race rows
+        keep behaving like K=1 with no active replicas.
+        """
+        for col, ddl in (
+            ("replicas_wanted",
+             "ALTER TABLE jobs ADD COLUMN replicas_wanted INTEGER NOT NULL DEFAULT 1"),
+            ("claims_json",
+             "ALTER TABLE jobs ADD COLUMN claims_json TEXT NOT NULL DEFAULT '[]'"),
+            ("winner_address",
+             "ALTER TABLE jobs ADD COLUMN winner_address TEXT"),
+        ):
+            try:
+                conn.execute(ddl)
+            except _sqlite3.OperationalError:
+                pass
 
     def _conn(self) -> _sqlite3.Connection:
         conn = getattr(self._tls, "conn", None)
@@ -380,6 +448,16 @@ class _SqliteAicfJobStore:
 
     @staticmethod
     def _job_from_row(row: _sqlite3.Row) -> _JobRecord:
+        keys = row.keys()
+        replicas = int(row["replicas_wanted"]) if "replicas_wanted" in keys else 1
+        try:
+            claims_raw = row["claims_json"] if "claims_json" in keys else "[]"
+            claims = _json.loads(claims_raw) if claims_raw else []
+            if not isinstance(claims, list):
+                claims = []
+        except (ValueError, TypeError):
+            claims = []
+        winner = row["winner_address"] if "winner_address" in keys else None
         return _JobRecord(
             job_id=row["job_id"],
             spec=_json.loads(row["spec_json"]),
@@ -399,6 +477,9 @@ class _SqliteAicfJobStore:
             payment_accepted=bool(row["payment_accepted"]),
             payment_status=row["payment_status"],
             settled_chain_id=row["settled_chain_id"],
+            replicas_wanted=replicas,
+            claims=claims,
+            winner_address=winner,
         )
 
     @staticmethod
@@ -423,8 +504,9 @@ class _SqliteAicfJobStore:
             "  job_id,spec_json,payment_json,estimated_cost,tier,state,text,"
             "  provider_id,created_at,claimed_at,completed_at,claim_owner,"
             "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
-            "  payment_status,settled_chain_id"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  payment_status,settled_chain_id,replicas_wanted,claims_json,"
+            "  winner_address"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.job_id,
                 _json.dumps(job.spec),
@@ -444,6 +526,9 @@ class _SqliteAicfJobStore:
                 1 if job.payment_accepted else 0,
                 job.payment_status,
                 job.settled_chain_id,
+                int(job.replicas_wanted or 1),
+                _json.dumps(job.claims or []),
+                job.winner_address,
             ),
         )
 
@@ -467,30 +552,60 @@ class _SqliteAicfJobStore:
         try:
             placeholders = ",".join(["?"] * len(tiers))
             tier_filter = f" AND tier IN ({placeholders})"
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE state='pending'" + tier_filter
-                + " ORDER BY created_at ASC LIMIT 1",
+            # Scan candidate non-terminal jobs in this worker's tier and
+            # pick the first one with an open replica slot. We can't
+            # express "claims count below cap" as a pure SQL filter
+            # without a join table, so do it in Python with a small N.
+            candidates = conn.execute(
+                "SELECT * FROM jobs WHERE state IN ('pending','claimed')"
+                + tier_filter
+                + " ORDER BY created_at ASC LIMIT 64",
                 tuple(tiers),
-            ).fetchone()
-            if row is None:
-                # Try reclaiming an expired lease before giving up.
-                expired_q = (
-                    "SELECT * FROM jobs WHERE state='claimed'"
-                    " AND claim_expires_at IS NOT NULL AND claim_expires_at < ?"
-                    + f" AND tier IN ({placeholders})"
-                    + " ORDER BY claim_expires_at ASC LIMIT 1"
-                )
-                row = conn.execute(expired_q, (now, *tiers)).fetchone()
-            if row is None:
+            ).fetchall()
+            chosen_row = None
+            chosen_claims: List[Dict[str, Any]] = []
+            for row in candidates:
+                cap = int(row["replicas_wanted"]) if "replicas_wanted" in row.keys() else 1
+                cap = max(1, cap)
+                try:
+                    raw = row["claims_json"] if "claims_json" in row.keys() else "[]"
+                    claims = _json.loads(raw) if raw else []
+                    if not isinstance(claims, list):
+                        claims = []
+                except (ValueError, TypeError):
+                    claims = []
+                live = [
+                    c for c in claims
+                    if float(c.get("expires_at") or 0.0) > now
+                ]
+                if any(c.get("address") == worker_addr for c in live):
+                    continue
+                if len(live) >= cap:
+                    continue
+                chosen_row = row
+                chosen_claims = live
+                break
+            if chosen_row is None:
                 conn.execute("COMMIT")
                 return None
+            chosen_claims.append({
+                "address": worker_addr,
+                "claimed_at": now,
+                "expires_at": now + _WORKER_LEASE_S,
+            })
             conn.execute(
                 "UPDATE jobs SET state='claimed',claim_owner=?,claimed_at=?,"
-                "claim_expires_at=? WHERE job_id=?",
-                (worker_addr, now, now + _WORKER_LEASE_S, row["job_id"]),
+                "claim_expires_at=?,claims_json=? WHERE job_id=?",
+                (
+                    worker_addr,
+                    now,
+                    now + _WORKER_LEASE_S,
+                    _json.dumps(chosen_claims),
+                    chosen_row["job_id"],
+                ),
             )
             conn.execute("COMMIT")
-            updated = self.get(row["job_id"])
+            updated = self.get(chosen_row["job_id"])
             return updated
         except Exception:
             conn.execute("ROLLBACK")
@@ -503,14 +618,20 @@ class _SqliteAicfJobStore:
         text: str,
         provider_id: str,
     ) -> Optional[_JobRecord]:
+        """First-writer-wins via guarded UPDATE. Returns None when the
+        row was already terminal (lost the race) so callers know not to
+        credit the worker. SQLite's rowcount tells us how many rows the
+        WHERE clause matched after the update."""
         now = time.time()
         conn = self._conn()
-        with conn:
-            conn.execute(
-                "UPDATE jobs SET state='completed',text=?,provider_id=?,"
-                "completed_at=? WHERE job_id=?",
-                (text, provider_id, now, job_id),
-            )
+        cur = conn.execute(
+            "UPDATE jobs SET state='completed',text=?,provider_id=?,"
+            "completed_at=?,winner_address=? "
+            "WHERE job_id=? AND state IN ('pending','claimed')",
+            (text, provider_id, now, provider_id, job_id),
+        )
+        if (cur.rowcount or 0) <= 0:
+            return None
         return self.get(job_id)
 
     def fail(self, job_id: str, error: str) -> Optional[_JobRecord]:
@@ -809,12 +930,23 @@ async def submit_inference_job(
     cost = _price_job(prompt_tokens, max_out, tier)
 
     job_id = "0x" + uuid.uuid4().hex
+    # Per-job replicas override: caller can pass spec.replicas to ask
+    # for narrower or wider racing than the node default (e.g. elite
+    # tier might want 1, debugging might want a single replica). Bound
+    # to [1, 16] so a misconfig can't fan out forever.
+    requested_replicas = spec.get("replicas") if isinstance(spec, Mapping) else None
+    try:
+        replicas = int(requested_replicas) if requested_replicas is not None else _REPLICAS_DEFAULT
+    except (TypeError, ValueError):
+        replicas = _REPLICAS_DEFAULT
+    replicas = max(1, min(16, replicas))
     rec = _JobRecord(
         job_id=job_id,
         spec=dict(spec),
         payment=dict(payment),
         estimated_cost=cost,
         tier=tier,
+        replicas_wanted=replicas,
     )
 
     # Real on-chain settlement: decode the SignedPayment envelope and
@@ -1137,33 +1269,52 @@ async def worker_submit_result(
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")
     if job.state not in {"claimed", "pending"}:
-        # Already completed (e.g. local stub raced ahead, or another worker
-        # got there first) — accept idempotently.
-        return {"accepted": False, "state": job.state}
-    # Don't gate completion on claim_owner equality. A worker that took a
-    # while to download the model and run inference may legitimately submit
-    # AFTER its lease expired and the job was re-claimed by another worker.
-    # If we reject those, every slow worker's first job is wasted (the
-    # observed failure mode: a cold worker takes ~70min for the model
-    # download+inference, the lease expires at 10min, the job gets
-    # reassigned, and the original worker's result is thrown away with
-    # "not claimed by <addr>"). First valid result wins; credit goes to
-    # whoever actually returns the bytes.
-    if job.claim_owner and job.claim_owner != address:
+        # Already completed (e.g. local stub raced ahead, or another
+        # worker won the race) — accept idempotently. With K-way race
+        # replication this is the dominant non-winner outcome; surface
+        # it so the miner side can distinguish "I lost the race" from
+        # "I won and was credited."
+        winner = job.winner_address or job.provider_id or ""
+        return {
+            "accepted": False,
+            "state": job.state,
+            "reason": "lost_race" if winner and winner != address else "already_terminal",
+            "winner_address": winner,
+            "job_id": job_id,
+        }
+    # The legacy single-owner mismatch warning is now noisy under K-way
+    # replication where every replica's address differs from claim_owner.
+    # Keep the late-submit log only when the submitter isn't in the
+    # active claims list at all (truly unsolicited submit).
+    claim_addrs = {c.get("address") for c in (job.claims or [])}
+    if claim_addrs and address not in claim_addrs:
         log.info(
-            "aicf_jobs: accepting late submit for job %s from %s "
-            "(current claim_owner=%s)",
-            job_id, address, job.claim_owner,
+            "aicf_jobs: accepting unsolicited submit for job %s from %s "
+            "(active claimants: %s)",
+            job_id, address, sorted(a for a in claim_addrs if a),
         )
     completed = _STORE.complete(job_id, text=text, provider_id=address)
-    # Credit the worker for the full estimated cost of the job. With the
-    # SQLite store, in-memory dataclass mutation doesn't persist — use
-    # the atomic credit helper when available so the IOU survives a
-    # node restart. With the in-memory store, fall back to direct field
+    if completed is None:
+        # Lost the race between read-state and complete: someone else
+        # transitioned the job to terminal in between. Do NOT credit;
+        # surface the same lost_race reply as the early branch above.
+        latest = _STORE.get(job_id)
+        winner = (latest.winner_address or latest.provider_id) if latest else ""
+        return {
+            "accepted": False,
+            "state": latest.state if latest else "unknown",
+            "reason": "lost_race" if winner and winner != address else "already_terminal",
+            "winner_address": winner or "",
+            "job_id": job_id,
+        }
+    # Credit ONLY the winner for the full estimated cost of the job. With
+    # the SQLite store, in-memory dataclass mutation doesn't persist — use
+    # the atomic credit helper when available so the IOU survives a node
+    # restart. With the in-memory store, fall back to direct field
     # mutation. See aicf.workerEarnings for retrieval; once the
     # treasury→state-pool sweep activates (consensus rule), these IOUs
     # become claimable via aicf.claim.
-    amount = float(completed.estimated_cost or 0.0) if completed else 0.0
+    amount = float(completed.estimated_cost or 0.0)
     if hasattr(_STORE, "credit_worker_completion"):
         try:
             _STORE.credit_worker_completion(address, amount)
@@ -1177,7 +1328,8 @@ async def worker_submit_result(
                 w.earnings_pending_animica += amount
             except (TypeError, ValueError):
                 pass
-    return {"accepted": True, "state": "completed", "job_id": job_id}
+    return {"accepted": True, "state": "completed", "job_id": job_id,
+            "winner_address": address}
 
 
 __all__ = [

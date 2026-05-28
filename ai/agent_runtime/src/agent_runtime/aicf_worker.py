@@ -71,6 +71,7 @@ class WorkerState:
     started_at: float
     jobs_completed: int = 0
     jobs_failed: int = 0
+    jobs_raced_and_lost: int = 0
     earnings_animica: float = 0.0
     last_heartbeat_at: float = 0.0
     stopping: bool = False
@@ -83,6 +84,7 @@ class WorkerState:
             "started_at": self.started_at,
             "jobs_completed": self.jobs_completed,
             "jobs_failed": self.jobs_failed,
+            "jobs_raced_and_lost": self.jobs_raced_and_lost,
             "earnings_animica": self.earnings_animica,
             "last_heartbeat_at": self.last_heartbeat_at,
         }
@@ -233,16 +235,27 @@ class AICFWorker:
                     "tier": tier,
                     "hardware": self.profile.accelerator_preferred,
                 }
-                self.client.submit_worker_result(
+                ack = self.client.submit_worker_result(
                     address=self.address, job_id=job_id,
                     text=text, latency_ms=latency_ms,
                     attestation=attestation,
                 )
-                self.state.jobs_completed += 1
-                # The payout amount is reported back by the protocol; we
-                # don't try to derive it on the worker side.
-                self.state.earnings_animica += float(
-                    job.get("expected_payout", 0.0))
+                # With K-way race replication only the first valid
+                # submitter wins; losers get `accepted: false` with
+                # reason "lost_race". Don't bump local earnings counters
+                # for races the node didn't credit us for — otherwise the
+                # worker's UI overstates its IOU and disagrees with
+                # aicf.workerEarnings on the node.
+                if isinstance(ack, dict) and ack.get("accepted"):
+                    self.state.jobs_completed += 1
+                    self.state.earnings_animica += float(
+                        job.get("expected_payout", 0.0))
+                else:
+                    reason = (ack or {}).get("reason") if isinstance(ack, dict) else None
+                    if reason == "lost_race":
+                        self.state.jobs_raced_and_lost = (
+                            getattr(self.state, "jobs_raced_and_lost", 0) + 1
+                        )
             except BundleError as exc:
                 _eprint(f"[aicf-worker] bundle error: {exc.message}")
                 self.state.jobs_failed += 1

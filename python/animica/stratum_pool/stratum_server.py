@@ -132,9 +132,12 @@ class StratumPoolServer:
         self._aicf_dispatcher_task: Optional[asyncio.Task] = None
         self._aicf_dispatcher_stop = asyncio.Event()
         # AICF jobs the pool has pushed but not yet seen a result for.
-        # Maps job_id → (worker_address, expires_at). Used to time out
-        # claims back to the node's job store if a miner goes silent.
-        self._aicf_inflight: Dict[str, tuple[str, float]] = {}
+        # Maps (job_id, worker_address) → expires_at. The tuple key lets
+        # multiple workers race the same job (K-way replication, see
+        # rpc/methods/aicf_jobs.py::_REPLICAS_DEFAULT). The pool tracks
+        # each (job_id, addr) lease separately so timing out one slow
+        # worker doesn't drop bookkeeping for its fellow racers.
+        self._aicf_inflight: Dict[tuple[str, str], float] = {}
         self._aicf_poll_interval_s = 2.0
 
     async def _register_aicf_worker(self, session: object, features: dict) -> None:
@@ -336,13 +339,14 @@ class StratumPoolServer:
         now = time.time()
         # Drop expired in-flight bookkeeping so stale entries don't
         # gate future claims; the node's lease timeout reclaims them.
-        expired = [jid for jid, (_a, exp) in self._aicf_inflight.items() if exp < now]
-        for jid in expired:
-            self._aicf_inflight.pop(jid, None)
+        expired_keys = [k for k, exp in self._aicf_inflight.items() if exp < now]
+        for k in expired_keys:
+            self._aicf_inflight.pop(k, None)
         # Sessions whose address is already serving an in-flight job
         # are skipped — one job at a time per miner keeps things simple
-        # and prevents over-allocation.
-        busy = {addr for (addr, _exp) in self._aicf_inflight.values()}
+        # and prevents over-allocation. With race replication, multiple
+        # WORKERS may be racing a single job_id; busy is still per-addr.
+        busy = {addr for (_jid, addr) in self._aicf_inflight.keys()}
         for sess in sessions:
             addr = (sess.address or "").strip()
             if not addr or addr in busy:
@@ -383,7 +387,7 @@ class StratumPoolServer:
                 # server has moved on, which manifested as "no AICF worker
                 # picked up the job" 3 minutes after a stubbed completion.
                 local_expires = min(expires, now + 90.0)
-                self._aicf_inflight[job_id] = (addr, local_expires)
+                self._aicf_inflight[(job_id, addr)] = local_expires
                 busy.add(addr)
 
     async def _handle_aicf_result(self, session: object, params: dict) -> dict:
@@ -410,15 +414,24 @@ class StratumPoolServer:
                 "aicf.workerSubmitResult relay failed job=%s: %s", job_id, exc
             )
             return {"accepted": False, "reason": str(exc)}
-        # Clear the in-flight slot regardless of outcome — the node has
-        # the authoritative state now.
-        self._aicf_inflight.pop(job_id, None)
+        # Clear the in-flight slot for this (job_id, addr). On race
+        # replication a winner submit also implicitly releases other
+        # workers' lingering bookkeeping for the same job_id: the node
+        # has the authoritative terminal state, so we drop every key
+        # matching this job_id to free fellow racers for new dispatch.
+        if isinstance(r, dict) and (r.get("accepted") or r.get("state") in {"completed", "failed"}):
+            keys_for_job = [k for k in self._aicf_inflight if k[0] == job_id]
+            for k in keys_for_job:
+                self._aicf_inflight.pop(k, None)
+        else:
+            self._aicf_inflight.pop((job_id, address), None)
         if not isinstance(r, dict):
             return {"accepted": False, "reason": "unexpected_response"}
         return {
             "accepted": bool(r.get("accepted")),
             "state": r.get("state"),
             "reason": r.get("reason"),
+            "winner_address": r.get("winner_address"),
         }
 
     async def _on_new_job(self, job: MiningJob) -> None:
