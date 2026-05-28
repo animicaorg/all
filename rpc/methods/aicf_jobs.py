@@ -237,6 +237,12 @@ class _WorkerInfo:
     # of confirmed payouts; right now only ever populated manually.
     earnings_pending_animica: float = 0.0
     earnings_paid_animica: float = 0.0
+    # Optional reachable HTTP(S) endpoint for direct worker-to-worker
+    # activation transport in pipeline mode. When set, downstream
+    # stages fetch activations directly from this URL (saving a round
+    # trip through the node). Empty string means "node-proxy only" —
+    # see aicf.pipelineGetUpstreamActivation for that path.
+    direct_endpoint: str = ""
 
 
 class _AicfJobStore:
@@ -519,7 +525,8 @@ CREATE TABLE IF NOT EXISTS workers (
     last_seen REAL NOT NULL,
     jobs_completed INTEGER NOT NULL DEFAULT 0,
     earnings_pending_animica REAL NOT NULL DEFAULT 0,
-    earnings_paid_animica REAL NOT NULL DEFAULT 0
+    earnings_paid_animica REAL NOT NULL DEFAULT 0,
+    direct_endpoint TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -578,6 +585,14 @@ class _SqliteAicfJobStore:
              "ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'race'"),
             ("stages_json",
              "ALTER TABLE jobs ADD COLUMN stages_json TEXT NOT NULL DEFAULT '[]'"),
+        ):
+            try:
+                conn.execute(ddl)
+            except _sqlite3.OperationalError:
+                pass
+        # Workers table migrations.
+        for ddl in (
+            "ALTER TABLE workers ADD COLUMN direct_endpoint TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(ddl)
@@ -651,6 +666,8 @@ class _SqliteAicfJobStore:
 
     @staticmethod
     def _worker_from_row(row: _sqlite3.Row) -> _WorkerInfo:
+        keys = row.keys()
+        endpoint = row["direct_endpoint"] if "direct_endpoint" in keys else ""
         return _WorkerInfo(
             address=row["address"],
             tiers=_json.loads(row["tiers_json"]),
@@ -660,6 +677,7 @@ class _SqliteAicfJobStore:
             jobs_completed=int(row["jobs_completed"]),
             earnings_pending_animica=float(row["earnings_pending_animica"]),
             earnings_paid_animica=float(row["earnings_paid_animica"]),
+            direct_endpoint=endpoint or "",
         )
 
     # ---------- jobs ----------
@@ -972,12 +990,13 @@ class _SqliteAicfJobStore:
         self._conn().execute(
             "INSERT INTO workers (address,tiers_json,hardware_json,"
             "registered_at,last_seen,jobs_completed,"
-            "earnings_pending_animica,earnings_paid_animica) "
-            "VALUES (?,?,?,?,?,?,?,?) "
+            "earnings_pending_animica,earnings_paid_animica,direct_endpoint) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(address) DO UPDATE SET "
             "  tiers_json=excluded.tiers_json,"
             "  hardware_json=excluded.hardware_json,"
-            "  last_seen=excluded.last_seen",
+            "  last_seen=excluded.last_seen,"
+            "  direct_endpoint=excluded.direct_endpoint",
             (
                 info.address,
                 _json.dumps(info.tiers),
@@ -987,6 +1006,7 @@ class _SqliteAicfJobStore:
                 info.jobs_completed,
                 info.earnings_pending_animica,
                 info.earnings_paid_animica,
+                info.direct_endpoint or "",
             ),
         )
 
@@ -1173,12 +1193,24 @@ async def _local_fallback_after_grace(job_id: str) -> None:
     )
 
 
+_FALLBACK_TASKS: set = set()
+
+
 def _schedule_fallback(job_id: str) -> None:
     """Schedule the local fallback in whatever event loop is running.
-    Falls back to a thread if no loop is reachable from this thread."""
+    Falls back to a thread if no loop is reachable from this thread.
+
+    The created task is held in a module-level set until it completes,
+    so the asyncio gc doesn't emit "Task was destroyed but it is
+    pending" warnings when the loop tears down (which happens in
+    tests where _WORKER_CLAIM_GRACE_S is set high to disable the
+    stub). Production loops never tear down — the set stays small.
+    """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_local_fallback_after_grace(job_id))
+        task = loop.create_task(_local_fallback_after_grace(job_id))
+        _FALLBACK_TASKS.add(task)
+        task.add_done_callback(_FALLBACK_TASKS.discard)
         return
     except RuntimeError:
         pass
@@ -1505,10 +1537,33 @@ async def worker_register(
     hardware = p.get("hardware") or {}
     if not isinstance(hardware, Mapping):
         raise InvalidParams("workerRegister: 'hardware' must be an object")
-    info = _WorkerInfo(address=address, tiers=tiers, hardware=dict(hardware))
+    # Optional direct-transport endpoint. Only used by pipeline-mode
+    # downstream stages to fetch upstream activations without a node
+    # round-trip. Workers that don't expose a reachable port omit it
+    # and the node-proxy fallback path serves them.
+    direct_endpoint = _coerce_str(p.get("direct_endpoint")).strip()
+    if direct_endpoint and not (
+        direct_endpoint.startswith("http://")
+        or direct_endpoint.startswith("https://")
+    ):
+        raise InvalidParams(
+            "workerRegister: 'direct_endpoint' must be an http(s) URL"
+        )
+    info = _WorkerInfo(
+        address=address, tiers=tiers, hardware=dict(hardware),
+        direct_endpoint=direct_endpoint,
+    )
     _STORE.register_worker(info)
-    log.info("aicf_jobs: worker registered address=%s tiers=%s", address, tiers)
-    return {"registered": True, "address": address, "tiers": tiers}
+    log.info(
+        "aicf_jobs: worker registered address=%s tiers=%s direct=%s",
+        address, tiers, bool(direct_endpoint),
+    )
+    return {
+        "registered": True,
+        "address": address,
+        "tiers": tiers,
+        "direct_endpoint": direct_endpoint,
+    }
 
 
 @method("aicf.workerStatus", desc="Get status of a registered AICF worker", aliases=("aicf_workerStatus",))
@@ -1533,6 +1588,7 @@ async def worker_status(
         "jobs_completed": w.jobs_completed,
         "earnings_pending_animica": w.earnings_pending_animica,
         "earnings_paid_animica": w.earnings_paid_animica,
+        "direct_endpoint": w.direct_endpoint or "",
     }
 
 
@@ -1770,6 +1826,59 @@ def _build_initial_stages(stage_count: int) -> List[Dict[str, Any]]:
     ]
 
 
+def _credit_pipeline_stages(job: _JobRecord) -> None:
+    """Distribute the job's cost across every completed stage worker.
+
+    Default split rule: equal share. Each completed stage's worker
+    receives ``cost / num_completed_stages``. Duplicate stages (the same
+    worker held two stages of the same job — disallowed in the claim
+    path but defensive here too) get a single share per distinct
+    address. Any credit error is logged and skipped — the chat user
+    has already received the answer at this point, so we never want a
+    ledger hiccup to mark the job failed.
+    """
+    completed_stages = [
+        s for s in (job.stages or [])
+        if s.get("state") == "completed" and s.get("worker_address")
+    ]
+    if not completed_stages:
+        return
+    # Deduplicate by address while preserving order so any future split
+    # rule that weights by stage_index still sees a stable iteration.
+    distinct_workers: List[str] = []
+    seen: set[str] = set()
+    for s in completed_stages:
+        addr = str(s.get("worker_address") or "")
+        if addr and addr not in seen:
+            distinct_workers.append(addr)
+            seen.add(addr)
+    if not distinct_workers:
+        return
+    total = float(job.estimated_cost or 0.0)
+    if total <= 0.0:
+        return
+    share = round(total / len(distinct_workers), 9)
+    for addr in distinct_workers:
+        if hasattr(_STORE, "credit_worker_completion"):
+            try:
+                _STORE.credit_worker_completion(addr, share)
+                continue
+            except Exception as exc:
+                log.warning(
+                    "aicf_jobs: pipeline credit_worker_completion(%s, %.9f) "
+                    "failed: %s",
+                    addr, share, exc,
+                )
+        # Fallback for in-memory store / non-atomic path.
+        w = _STORE.get_worker(addr)
+        if w is not None:
+            w.jobs_completed += 1
+            try:
+                w.earnings_pending_animica += share
+            except (TypeError, ValueError):
+                pass
+
+
 def _resolve_pipeline_mode(
     spec: Mapping[str, Any],
     requested_stages: int,
@@ -1863,26 +1972,17 @@ async def pipeline_submit_stage_result(
         meta=dict(meta),
     )
     accepted = status in {"completed_stage", "completed_job"}
-    # Credit the final-stage worker for the full job cost; intermediate
-    # stages get credited zero in this first version. The cross-stage
-    # revenue split is a future on-chain rule.
+    # Multi-party revenue split on pipeline completion. When the final
+    # stage closes the job we walk every completed stage and credit its
+    # worker their share of the job cost. The default split is equal
+    # (cost / num_completed_stages); operators can plug a different
+    # split rule via ANIMICA_AICF_PIPELINE_SPLIT in a future iteration
+    # (e.g. weighted by latency, layer count, or compute cycles). The
+    # ledger entries here are still off-chain IOUs; the treasury sweep
+    # that turns them into on-chain payouts is the same future consensus
+    # upgrade that race-mode earnings depend on.
     if status == "completed_job" and job is not None:
-        amount = float(job.estimated_cost or 0.0)
-        if hasattr(_STORE, "credit_worker_completion"):
-            try:
-                _STORE.credit_worker_completion(address, amount)
-            except Exception as exc:
-                log.warning(
-                    "aicf_jobs: pipeline credit_worker_completion failed: %s", exc
-                )
-        else:
-            w = _STORE.get_worker(address)
-            if w is not None:
-                w.jobs_completed += 1
-                try:
-                    w.earnings_pending_animica += amount
-                except (TypeError, ValueError):
-                    pass
+        _credit_pipeline_stages(job)
     return {
         "accepted": accepted,
         "status": status,
@@ -1991,6 +2091,65 @@ async def pipeline_job_status(
     }
 
 
+@method(
+    "aicf.pipelineGetStageInfo",
+    desc="Resolve a pipeline stage's worker + direct endpoint for W2W transport",
+    aliases=("aicf_pipelineGetStageInfo",),
+)
+async def pipeline_get_stage_info(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Resolve who owns a given pipeline stage and how to reach them
+    directly. Downstream stages call this with the upstream stage's
+    index to learn the upstream worker's HTTP endpoint, then fetch the
+    activation bytes peer-to-peer. Falls back to the node-proxy path
+    (aicf.pipelineGetUpstreamActivation) when the upstream worker
+    didn't advertise a reachable endpoint at registration."""
+    p = dict(params or {})
+    job_id = _coerce_str(p.get("job_id")).strip()
+    stage_index = _coerce_int(p.get("stage_index"), -1)
+    if not job_id or stage_index < 0:
+        raise InvalidParams(
+            "pipelineGetStageInfo: 'job_id' and 'stage_index' required"
+        )
+    job = _STORE.get(job_id)
+    if job is None:
+        raise InvalidParams(f"pipelineGetStageInfo: unknown job_id {job_id}")
+    stage = next(
+        (s for s in job.stages if int(s.get("index", -1)) == stage_index),
+        None,
+    )
+    if stage is None:
+        return {
+            "found": False,
+            "stage_index": stage_index,
+            "reason": "unknown_stage",
+        }
+    worker = stage.get("worker_address") or ""
+    direct = ""
+    if worker:
+        info = _STORE.get_worker(worker)
+        if info is not None:
+            direct = info.direct_endpoint or ""
+    return {
+        "found": True,
+        "stage_index": stage_index,
+        "worker_address": worker,
+        "direct_endpoint": direct,
+        "state": stage.get("state"),
+        "completed_at": stage.get("completed_at"),
+        "expires_at": stage.get("expires_at"),
+        # Echo the chunk URL the upstream would expose for this job.
+        # Workers MAY use the convention {direct_endpoint}/aicf/pipeline/
+        # {job_id}/{stage_index} or whatever they advertise; we treat
+        # `direct_endpoint` as the authoritative base URL.
+        "chunk_path_hint": (
+            f"/aicf/pipeline/{job_id}/{stage_index}" if direct else ""
+        ),
+    }
+
+
 __all__ = [
     "estimate_job_cost",
     "submit_inference_job",
@@ -2005,4 +2164,5 @@ __all__ = [
     "pipeline_submit_stage_result",
     "pipeline_get_upstream_activation",
     "pipeline_job_status",
+    "pipeline_get_stage_info",
 ]

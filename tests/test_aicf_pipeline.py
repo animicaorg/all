@@ -166,7 +166,13 @@ def test_pipeline_upstream_blocks_then_completes():
     _run(go())
 
 
-def test_pipeline_final_stage_credits_only_one_worker():
+def test_pipeline_final_stage_settles_job_and_records_text():
+    """Final-stage submit closes the job, settleJob returns the
+    final-stage text, provider_id reflects the final-stage worker.
+
+    Earnings-credit semantics are covered separately in
+    test_pipeline_split_credits_all_stage_workers_equally — that test
+    asserts every completed stage worker is credited their share."""
     m = _import_module(force_memory=True)
 
     async def go():
@@ -188,11 +194,16 @@ def test_pipeline_final_stage_credits_only_one_worker():
             output_b64=None, output_text="composed answer", meta={},
         )
         assert final["status"] == "completed_job"
+
+        # Both workers were credited (multi-party split). Each gets
+        # cost / 2. Total credited matches the original job cost.
+        cost = float(sub["estimated_cost_animica"])
         e0 = await m.worker_earnings(address="pw0")
         e1 = await m.worker_earnings(address="pw1")
-        assert e0["jobs_completed"] == 0, e0
-        assert e1["jobs_completed"] == 1, e1
-        assert e1["earnings_pending_animica"] > 0
+        assert e0["jobs_completed"] == 1
+        assert e1["jobs_completed"] == 1
+        assert abs(e0["earnings_pending_animica"] - cost / 2) < 1e-8
+        assert abs(e1["earnings_pending_animica"] - cost / 2) < 1e-8
 
         settle = await m.settle_job(job_id=jid)
         assert settle["text"] == "composed answer"
@@ -308,6 +319,200 @@ def test_race_first_writer_wins_only_winner_credited():
         assert eB["jobs_completed"] == 1
 
     _run(go())
+
+
+# --------------------------------------------------------------------------- #
+# Multi-party revenue split                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_pipeline_split_credits_all_stage_workers_equally():
+    m = _import_module(force_memory=True)
+
+    async def go():
+        await m.worker_register(address="a", tiers=["pipeline"], hardware={})
+        await m.worker_register(address="b", tiers=["pipeline"], hardware={})
+        await m.worker_register(address="c", tiers=["pipeline"], hardware={})
+        sub = await m.submit_inference_job(
+            spec={"prompt": "q", "stages": 3},
+            payment={"txn_hex": ""},
+        )
+        jid = sub["job_id"]
+        cost = float(sub["estimated_cost_animica"])
+        assert cost > 0.0
+        s0 = await m.pipeline_claim_stage(address="a")
+        s1 = await m.pipeline_claim_stage(address="b")
+        s2 = await m.pipeline_claim_stage(address="c")
+        for sub_stage, addr in (
+            (s0, "a"), (s1, "b"),
+        ):
+            await m.pipeline_submit_stage_result(
+                address=addr, job_id=jid,
+                stage_index=sub_stage["stage_index"],
+                output_b64="AA==", output_text=None, meta={},
+            )
+        # Final stage; payouts settle here.
+        await m.pipeline_submit_stage_result(
+            address="c", job_id=jid, stage_index=s2["stage_index"],
+            output_b64=None, output_text="final", meta={},
+        )
+        ea = await m.worker_earnings(address="a")
+        eb = await m.worker_earnings(address="b")
+        ec = await m.worker_earnings(address="c")
+        # All three credited
+        assert ea["jobs_completed"] == 1
+        assert eb["jobs_completed"] == 1
+        assert ec["jobs_completed"] == 1
+        # Equal share, within rounding (round_9)
+        expected = cost / 3.0
+        assert abs(ea["earnings_pending_animica"] - expected) < 1e-8
+        assert abs(eb["earnings_pending_animica"] - expected) < 1e-8
+        assert abs(ec["earnings_pending_animica"] - expected) < 1e-8
+        # Total reflects the full cost (modulo 1e-8 rounding error)
+        total = (ea["earnings_pending_animica"]
+                 + eb["earnings_pending_animica"]
+                 + ec["earnings_pending_animica"])
+        assert abs(total - cost) < 1e-7, (total, cost)
+
+    _run(go())
+
+
+# --------------------------------------------------------------------------- #
+# Direct worker-to-worker activation transport                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_direct_transport_round_trip_with_signature():
+    import sys
+    sys.path.insert(0, "ai/agent_runtime/src")
+    from agent_runtime.pipeline_transport import (
+        PipelineTransportServer, compute_payload_tag, fetch_direct,
+        verify_payload_tag,
+    )
+
+    secret = b"shared-test-secret"
+    srv = PipelineTransportServer(
+        worker_address="wA", host="127.0.0.1", port=0,
+        shared_secret_provider=lambda peer: secret,
+    )
+    srv.start()
+    try:
+        payload = b"hidden-state" * 500
+        tag = compute_payload_tag(
+            job_id="0xabc", stage_index=0, sender_address="wA",
+            payload=payload, shared_secret=secret,
+        )
+        srv.stash_local(job_id="0xabc", stage_index=0,
+                        payload=payload, tag=tag)
+
+        # Successful direct fetch
+        got = fetch_direct(
+            base_url=srv.public_url(),
+            chunk_path_hint="/aicf/pipeline/0xabc/0",
+            job_id="0xabc", stage_index=0,
+        )
+        assert got is not None
+        fetched, sender, fetched_tag = got
+        assert fetched == payload
+        assert sender == "wA"
+        assert verify_payload_tag(
+            expected=fetched_tag, job_id="0xabc", stage_index=0,
+            sender_address=sender, payload=fetched, shared_secret=secret,
+        )
+        # Tampered payload fails verification
+        assert not verify_payload_tag(
+            expected=fetched_tag, job_id="0xabc", stage_index=0,
+            sender_address=sender, payload=payload + b"X",
+            shared_secret=secret,
+        )
+        # Wrong secret fails verification
+        assert not verify_payload_tag(
+            expected=fetched_tag, job_id="0xabc", stage_index=0,
+            sender_address=sender, payload=fetched, shared_secret=b"wrong",
+        )
+        # Unknown stage returns None
+        assert fetch_direct(
+            base_url=srv.public_url(),
+            chunk_path_hint="/aicf/pipeline/0xdef/9",
+            job_id="0xdef", stage_index=9,
+        ) is None
+    finally:
+        srv.stop()
+
+
+def test_direct_transport_fetch_returns_none_when_unreachable():
+    import sys
+    sys.path.insert(0, "ai/agent_runtime/src")
+    from agent_runtime.pipeline_transport import fetch_direct
+    # Port 1 is reserved and refuses TCP; the call must fail fast and
+    # return None so the worker falls back to node-proxy.
+    got = fetch_direct(
+        base_url="http://127.0.0.1:1",
+        chunk_path_hint="/aicf/pipeline/0xabc/0",
+        job_id="0xabc", stage_index=0,
+        timeout_sec=0.5,
+    )
+    assert got is None
+
+
+# --------------------------------------------------------------------------- #
+# Layer-range planning + locator                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_layer_range_planning_balances_chunks_and_covers_total():
+    import sys
+    sys.path.insert(0, "ai/flagship_agent/src")
+    from flagship_agent.layer_range_inference import plan_layer_ranges
+    # Standard 32-layer model across 4 stages = 8 each.
+    ranges = plan_layer_ranges(32, 4)
+    assert [r.start for r in ranges] == [0, 8, 16, 24]
+    assert [r.end for r in ranges] == [8, 16, 24, 32]
+    assert ranges[-1].end == 32  # last covers everything
+
+    # Uneven: 7 layers across 3 stages -> last stage absorbs remainder
+    ranges = plan_layer_ranges(7, 3)
+    assert ranges[-1].end == 7
+    total = sum(r.length for r in ranges)
+    assert total == 7
+
+    # More stages than layers — empty trailing ranges are OK.
+    ranges = plan_layer_ranges(2, 5)
+    assert len([r for r in ranges if r.length > 0]) == 2
+    assert sum(r.length for r in ranges) == 2
+
+
+def test_layer_locator_finds_layers_on_common_paths():
+    import sys
+    sys.path.insert(0, "ai/flagship_agent/src")
+    from flagship_agent.layer_range_inference import locate_decoder_layers
+
+    class _Bare:
+        layers = [object(), object()]
+    class _LlamaLike:
+        class model:
+            layers = [object()] * 3
+    class _GPT2Like:
+        class transformer:
+            h = [object()] * 4
+
+    assert len(locate_decoder_layers(_Bare())) == 2
+    assert len(locate_decoder_layers(_LlamaLike())) == 3
+    assert len(locate_decoder_layers(_GPT2Like())) == 4
+
+    class _Mystery:
+        pass
+    with pytest.raises(ValueError):
+        locate_decoder_layers(_Mystery())
+
+
+@pytest.mark.skipif(
+    True,
+    reason=("LayerRangeRunner end-to-end needs torch + a tokenizer; "
+            "covered in ai/flagship_agent/tests/ with a synthetic model"),
+)
+def test_layer_range_runner_end_to_end_synthetic():
+    """Placeholder — covered separately in flagship_agent tests."""
 
 
 if __name__ == "__main__":     # pragma: no cover — manual smoke

@@ -167,6 +167,51 @@ class AICFWorker:
         )
         if self.pipeline_enabled and "pipeline" not in self.tiers:
             self.tiers = [*self.tiers, "pipeline"]
+        # Direct worker-to-worker activation transport (optional). When
+        # pipeline mode is on AND ANIMICA_AICF_PIPELINE_DIRECT_PORT is
+        # set, the worker spins up a small HTTP server that peers can
+        # GET activations from, bypassing the node round-trip for large
+        # hidden states. The server is best-effort: any fetch failure
+        # falls back to the existing aicf.pipelineGetUpstreamActivation
+        # node-proxy path, so a NAT'd worker behind a firewall still
+        # works (it just produces via node-proxy).
+        self._direct_endpoint = ""
+        self._transport: Optional["PipelineTransportServer"] = None    # noqa: F821
+        if self.pipeline_enabled:
+            port_raw = os.environ.get(
+                "ANIMICA_AICF_PIPELINE_DIRECT_PORT", ""
+            ).strip()
+            if port_raw:
+                try:
+                    port = int(port_raw)
+                except ValueError:
+                    port = 0
+                if port >= 0:
+                    from agent_runtime.pipeline_transport import (
+                        PipelineTransportServer,
+                    )
+                    external = os.environ.get(
+                        "ANIMICA_AICF_PIPELINE_DIRECT_URL", ""
+                    ).strip() or None
+                    self._transport = PipelineTransportServer(
+                        worker_address=address,
+                        host=os.environ.get(
+                            "ANIMICA_AICF_PIPELINE_BIND_HOST", "0.0.0.0"
+                        ),
+                        port=port,
+                        external_url=external,
+                        shared_secret_provider=self._pipeline_shared_secret,
+                    )
+                    try:
+                        self._transport.start()
+                        self._direct_endpoint = self._transport.public_url()
+                    except OSError as exc:
+                        log.warning(
+                            "[aicf-worker] pipeline transport failed to "
+                            "start on port %s (%s); falling back to node-proxy",
+                            port_raw, exc,
+                        )
+                        self._transport = None
         self.state = WorkerState(
             address=address,
             endpoint=endpoint,
@@ -191,10 +236,38 @@ class AICFWorker:
         except OSError:
             pass
 
+    def _pipeline_shared_secret(self, peer_address: str) -> bytes:
+        """Derive the HMAC secret used to authenticate pipeline-transport
+        payloads exchanged with ``peer_address``.
+
+        Reference implementation: prefer an operator-provided secret
+        (set ANIMICA_AICF_PIPELINE_SHARED_SECRET on all participants so
+        a stage k worker and stage k+1 worker compute the same key) and
+        otherwise hash a stable combination of both addresses. The
+        latter is not cryptographically strong on its own — an attacker
+        who knows both wallet addresses can also derive the key — but
+        the signature still binds (job_id, stage_index, sender, payload)
+        so a passive observer can't forge submissions either way.
+
+        Production hardening (separate effort): switch the secret to a
+        per-session ECDH key derived from the workers' wallet pubkeys
+        attested by the node, so the node can't forge worker-to-worker
+        traffic either.
+        """
+        import hashlib
+        operator_secret = os.environ.get(
+            "ANIMICA_AICF_PIPELINE_SHARED_SECRET", ""
+        ).strip()
+        if operator_secret:
+            return operator_secret.encode("utf-8")
+        pair = "|".join(sorted([self.address, peer_address or ""]))
+        return hashlib.sha256(f"aicf-pipeline:{pair}".encode("utf-8")).digest()
+
     def register(self) -> None:
         self.client.register_worker(
             address=self.address, tiers=self.tiers,
             hardware=self.profile.to_dict(),
+            direct_endpoint=self._direct_endpoint,
         )
         self.state.last_heartbeat_at = time.time()
         self._write_state()
@@ -327,6 +400,171 @@ class AICFWorker:
             f"no usable bundles found under {cache}",
         )
 
+    def _get_layer_range_runner(self):
+        """Lazy-construct + cache the LayerRangeRunner for this worker.
+
+        Requires ``ANIMICA_AICF_PIPELINE_MODEL_ID`` to point at a HF
+        model path (local dir or hub id). Returns ``None`` when torch /
+        transformers / the model itself isn't loadable — the caller
+        then falls through to the reference transform so the chat
+        path still produces an answer.
+        """
+        if hasattr(self, "_layer_runner_cache"):
+            return self._layer_runner_cache
+        self._layer_runner_cache = None
+        model_id = os.environ.get(
+            "ANIMICA_AICF_PIPELINE_MODEL_ID", ""
+        ).strip()
+        if not model_id:
+            log.warning(
+                "[aicf-worker] ANIMICA_AICF_PIPELINE_REAL=1 set but "
+                "ANIMICA_AICF_PIPELINE_MODEL_ID empty — falling back "
+                "to reference transform"
+            )
+            return None
+        try:
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from flagship_agent.layer_range_inference import (
+                LayerRangeRunner,
+            )
+        except ImportError as exc:
+            log.warning(
+                "[aicf-worker] LayerRangeRunner imports unavailable "
+                "(%s); falling back to reference transform", exc,
+            )
+            return None
+        try:
+            tok = AutoTokenizer.from_pretrained(model_id)
+            mdl = AutoModelForCausalLM.from_pretrained(model_id)
+            self._layer_runner_cache = LayerRangeRunner(mdl, tok)
+        except Exception as exc:    # noqa: BLE001 — surface to operator
+            log.warning(
+                "[aicf-worker] LayerRangeRunner load failed for %s: %s",
+                model_id, exc,
+            )
+            self._layer_runner_cache = None
+        return self._layer_runner_cache
+
+    def _run_layer_range_stage(
+        self,
+        *,
+        stage: dict,
+        prompt: str,
+        upstream_payload: Optional[bytes],
+        stage_index: int,
+        total_stages: int,
+        is_final: bool,
+    ) -> tuple:
+        """Dispatch a stage to LayerRangeRunner. Returns (output_text,
+        output_b64); output_text is set only for the final stage,
+        output_b64 carries the safetensors-encoded hidden state for
+        intermediate stages."""
+        runner = self._get_layer_range_runner()
+        if runner is None:
+            # Graceful fallback to the reference transform so the chat
+            # path doesn't fail just because the model isn't loadable.
+            import base64
+            base = (upstream_payload.decode("utf-8", errors="replace")
+                    if upstream_payload else prompt)
+            annotated = (
+                f"{base}\n[stage {stage_index}/{total_stages - 1} "
+                f"@ {self.address[:12]}… reference-fallback]"
+            )
+            return (
+                annotated if is_final else None,
+                base64.b64encode(annotated.encode("utf-8")).decode("ascii"),
+            )
+        from flagship_agent.layer_range_inference import (
+            plan_layer_ranges, encode_activation_b64,
+        )
+        ranges = plan_layer_ranges(runner.total_layers, int(total_stages))
+        layer_range = ranges[stage_index]
+        if stage_index == 0:
+            payload, _meta = runner.embed_and_run_prefix(prompt, layer_range)
+        elif not is_final:
+            assert upstream_payload is not None, (
+                "middle stage requires upstream payload"
+            )
+            payload, _meta = runner.run_layers(upstream_payload, layer_range)
+        else:
+            assert upstream_payload is not None, (
+                "final stage requires upstream payload"
+            )
+            spec = stage.get("spec") or {}
+            text, _meta = runner.run_suffix_and_generate(
+                upstream_payload,
+                layer_range,
+                max_new_tokens=int(spec.get("max_output_tokens", 128)),
+                temperature=float(spec.get("temperature", 0.2)),
+                top_p=float(spec.get("top_p", 0.95)),
+            )
+            return text, None
+        # base64-encode the safetensors blob for the node-proxy
+        # fallback path. Direct W2W still transfers the raw bytes
+        # via the local transport server.
+        import base64
+        return None, base64.b64encode(payload).decode("ascii")
+
+    def _try_direct_upstream_fetch(
+        self,
+        job_id: str,
+        stage_index: int,
+    ) -> Optional[tuple]:
+        """One-shot attempt to grab the upstream activation peer-to-peer.
+
+        Returns ``(payload_bytes, upstream_address, "direct-w2w")`` on
+        success, or None if any step failed: the node doesn't yet know
+        the upstream worker, the upstream didn't advertise a reachable
+        endpoint, the network call timed out, or the response signature
+        didn't verify. The caller falls back to the node-proxy path on
+        None — direct transport is an optimisation, not load-bearing.
+        """
+        try:
+            info = self.client.pipeline_get_stage_info(
+                job_id=job_id, stage_index=stage_index - 1,
+            )
+        except AgentRuntimeError:
+            return None
+        if not info or not info.get("found"):
+            return None
+        if str(info.get("state") or "") != "completed":
+            return None
+        endpoint = str(info.get("direct_endpoint") or "").strip()
+        if not endpoint:
+            return None
+        from agent_runtime.pipeline_transport import (
+            fetch_direct, verify_payload_tag,
+        )
+        result = fetch_direct(
+            base_url=endpoint,
+            chunk_path_hint=str(info.get("chunk_path_hint") or ""),
+            job_id=job_id,
+            stage_index=stage_index - 1,
+        )
+        if result is None:
+            return None
+        payload, sender, tag = result
+        # Verify before trusting the bytes. The shared secret derivation
+        # uses both addresses; consumer side passes the producer's
+        # address explicitly so the HMAC must match what the producer
+        # computed.
+        secret = self._pipeline_shared_secret(sender)
+        if not verify_payload_tag(
+            expected=tag,
+            job_id=job_id,
+            stage_index=stage_index - 1,
+            sender_address=sender,
+            payload=payload,
+            shared_secret=secret,
+        ):
+            log.warning(
+                "[aicf-worker] direct upstream fetch signature failed "
+                "job=%s stage=%d sender=%s",
+                job_id, stage_index - 1, sender,
+            )
+            return None
+        return payload, sender, "direct-w2w"
+
     def _process_pipeline_stage(
         self,
         stage: dict,
@@ -356,12 +594,29 @@ class AICFWorker:
         is_final = bool(stage.get("is_final_stage"))
         if not job_id:
             return
-        # 1. Pull upstream activation (if any).
+        # 1. Pull upstream activation (if any). Direct transport is tried
+        #    first when the node tells us the upstream worker exposed a
+        #    reachable endpoint; we fall through to the node-proxy path on
+        #    any failure so NAT'd / firewalled peers Just Work.
         upstream_text = ""
         upstream_b64: Optional[str] = None
+        upstream_payload: Optional[bytes] = None
+        upstream_route = "none"
         if stage_index > 0:
             deadline = time.time() + 60.0
             while time.time() < deadline:
+                direct = self._try_direct_upstream_fetch(job_id, stage_index)
+                if direct is not None:
+                    payload, _upstream_addr, route = direct
+                    upstream_payload = payload
+                    upstream_route = route
+                    try:
+                        upstream_text = payload.decode("utf-8")
+                    except UnicodeDecodeError:
+                        upstream_text = ""
+                    import base64
+                    upstream_b64 = base64.b64encode(payload).decode("ascii")
+                    break
                 try:
                     up = self.client.pipeline_get_upstream_activation(
                         job_id=job_id, stage_index=stage_index,
@@ -376,6 +631,13 @@ class AICFWorker:
                 if up.get("ready"):
                     upstream_text = str(up.get("output_text") or "")
                     upstream_b64 = up.get("output_b64")
+                    if upstream_b64:
+                        import base64
+                        try:
+                            upstream_payload = base64.b64decode(upstream_b64)
+                        except Exception:    # noqa: BLE001
+                            upstream_payload = None
+                    upstream_route = "node-proxy"
                     break
                 if up.get("note") == "job_terminal_before_upstream_ready":
                     return
@@ -388,14 +650,40 @@ class AICFWorker:
                 self.state.jobs_failed += 1
                 return
 
-        # 2. Apply the stage transform.
+        # 2. Apply the stage transform. Three modes:
+        #    a. ANIMICA_AICF_PIPELINE_REAL=1 + a configured model →
+        #       LayerRangeRunner: the worker runs its assigned slice of
+        #       the transformer's decoder layers and emits hidden states
+        #       (safetensors-encoded) as the activation. Final stage
+        #       additionally runs the LM head + autoregressive decode.
+        #    b. ANIMICA_AICF_PIPELINE_USE_RUNNER=1 + final stage → run
+        #       the existing LocalBundleRunner end-to-end on the
+        #       upstream-plus-prompt; legacy fallback that doesn't get
+        #       layer-shard speedup but produces a real answer.
+        #    c. Otherwise → the reference protocol transform (identity
+        #       + stage marker), used when no real model is configured.
+        use_real_layer = (
+            os.environ.get("ANIMICA_AICF_PIPELINE_REAL", "0")
+            .strip().lower() in {"1", "true", "yes", "on"}
+        )
         use_runner = (
             os.environ.get("ANIMICA_AICF_PIPELINE_USE_RUNNER", "0")
             .strip().lower() in {"1", "true", "yes", "on"}
         )
         t0 = time.time()
         try:
-            if use_runner and is_final:
+            output_text = None
+            output_b64 = None
+            if use_real_layer:
+                output_text, output_b64 = self._run_layer_range_stage(
+                    stage=stage,
+                    prompt=prompt,
+                    upstream_payload=upstream_payload,
+                    stage_index=stage_index,
+                    total_stages=total_stages,
+                    is_final=is_final,
+                )
+            elif use_runner and is_final:
                 tier = str(stage.get("tier") or "small")
                 runner = runners.get(tier)
                 if runner is None:
@@ -417,7 +705,7 @@ class AICFWorker:
                 # Reference protocol transform — identity on the
                 # upstream activation plus a stage marker. Encodes the
                 # activation as base64'd UTF-8 for symmetry with the
-                # future tensor-bytes case.
+                # tensor-bytes case.
                 base = upstream_text or prompt
                 annotated = (
                     f"{base}\n[stage {stage_index}/{total_stages - 1} @ "
@@ -438,7 +726,35 @@ class AICFWorker:
             return
         latency_ms = int((time.time() - t0) * 1000)
 
-        # 3. Submit the stage result back to the node.
+        # 3a. Publish bytes to our local transport (if running) so the
+        #    downstream stage can GET them directly. This is the W2W
+        #    fast path; the next bullet still pushes to the node so the
+        #    node-proxy fallback works for peers that can't reach us.
+        if self._transport is not None and output_b64:
+            import base64
+            from agent_runtime.pipeline_transport import compute_payload_tag
+            try:
+                raw = base64.b64decode(output_b64)
+            except Exception:    # noqa: BLE001
+                raw = (output_text or "").encode("utf-8")
+            # Tag is HMAC over (job_id, stage_index, sender, payload)
+            # with the consumer-derived shared secret. We don't know
+            # the consumer's address yet (multiple stages may be hops
+            # away), so we tag with our own derivation — consumers
+            # use the SAME derivation since the address pair is
+            # commutative under sorted hash.
+            tag = compute_payload_tag(
+                job_id=job_id, stage_index=stage_index,
+                sender_address=self.address, payload=raw,
+                shared_secret=self._pipeline_shared_secret(self.address),
+            )
+            self._transport.stash_local(
+                job_id=job_id, stage_index=stage_index,
+                payload=raw, tag=tag,
+            )
+
+        # 3b. Submit the stage result back to the node so the
+        #    fallback / settlement path always works.
         try:
             ack = self.client.pipeline_submit_stage_result(
                 address=self.address,
@@ -446,8 +762,12 @@ class AICFWorker:
                 stage_index=stage_index,
                 output_b64=output_b64,
                 output_text=output_text,
-                meta={"latency_ms": latency_ms,
-                      "tier": stage.get("tier") or ""},
+                meta={
+                    "latency_ms": latency_ms,
+                    "tier": stage.get("tier") or "",
+                    "upstream_route": upstream_route,
+                    "direct_endpoint_used": bool(self._direct_endpoint),
+                },
             )
         except AgentRuntimeError as exc:
             _eprint(
@@ -466,6 +786,12 @@ class AICFWorker:
                 self.state.jobs_completed += 1
 
     def close(self) -> None:
+        if self._transport is not None:
+            try:
+                self._transport.stop()
+            except Exception:    # noqa: BLE001
+                pass
+            self._transport = None
         self.client.close()
 
 

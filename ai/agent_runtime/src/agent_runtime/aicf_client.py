@@ -311,12 +311,16 @@ class AICFClient:
     # -------------------- worker side -------------------- #
 
     def register_worker(self, *, address: str, tiers: list[str],
-                        hardware: Mapping[str, Any]) -> dict[str, Any]:
-        return self._rpc("aicf.workerRegister", {
+                        hardware: Mapping[str, Any],
+                        direct_endpoint: str = "") -> dict[str, Any]:
+        params: dict[str, Any] = {
             "address": address,
             "tiers": tiers,
             "hardware": dict(hardware),
-        })
+        }
+        if direct_endpoint:
+            params["direct_endpoint"] = direct_endpoint
+        return self._rpc("aicf.workerRegister", params)
 
     def worker_status(self, address: str) -> dict[str, Any]:
         return self._rpc("aicf.workerStatus", {"address": address})
@@ -384,6 +388,13 @@ class AICFClient:
 
     def pipeline_job_status(self, job_id: str) -> dict[str, Any]:
         return self._rpc("aicf.pipelineJobStatus", {"job_id": job_id})
+
+    def pipeline_get_stage_info(self, *, job_id: str,
+                                stage_index: int) -> dict[str, Any]:
+        return self._rpc("aicf.pipelineGetStageInfo", {
+            "job_id": job_id,
+            "stage_index": int(stage_index),
+        })
 
 
 # --------------------------------------------------------------------------- #
