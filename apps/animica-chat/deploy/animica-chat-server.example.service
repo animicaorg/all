@@ -1,0 +1,25 @@
+[Unit]
+Description=Animica Chat — Express API server
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/apps/animica-chat/server
+Environment=NODE_ENV=production
+# Load secrets from /etc/animica/chat.env so they live outside the repo.
+EnvironmentFile=-/etc/animica/chat.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

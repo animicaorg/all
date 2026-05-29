@@ -1,0 +1,26 @@
+{
+  "name": "animica-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Animica Chat — focused AI workspace. $10/month USD subscription, no ANM required.",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"pnpm -C server dev\" \"pnpm -C web dev\"",
+    "build": "pnpm -C server build && pnpm -C web build",
+    "start": "pnpm -C server start",
+    "prisma:generate": "pnpm -C server prisma generate",
+    "prisma:migrate": "pnpm -C server prisma migrate dev",
+    "prisma:deploy": "pnpm -C server prisma migrate deploy",
+    "prisma:seed": "pnpm -C server prisma db seed",
+    "typecheck": "pnpm -C server typecheck && pnpm -C web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "prisma": "5.22.0"
+  },
+  "pnpm": {
+    "//": "Pin a single Prisma so server + web share the generated client."
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0"
+  }
+}

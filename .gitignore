@@ -135,3 +135,24 @@ ai/flagship_agent/**/*.idx
 # Hatchling build hook stages sibling packages into python/_build_vendor/
 # at sdist/wheel time. Generated, not source.
 python/_build_vendor/
+
+# 2026-05-29: Standalone monorepos that happen to share /root/animica
+# as a working directory but are NOT part of animica-core. Each has its
+# own pnpm-workspace.yaml + node_modules; vendoring them here would
+# bloat the repo by gigabytes for no benefit.
+/bridge/
+/buy-sol/
+/buy.animica.org/
+/external/
+
+# Other apps that live alongside but track in separate repos.
+/apps/animica-xyz/
+
+# Archived old chat scaffolding kept on disk for reference only.
+/apps/chat-animica.archive-*/
+
+# Agent/skill scratch dirs and local-only helpers.
+/.agents/
+/.claude/
+/skills-lock.json
+/success.txt

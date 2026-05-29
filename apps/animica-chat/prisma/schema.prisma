@@ -1,0 +1,381 @@
+// Animica Chat — Prisma schema.
+//
+// MVP scope is deliberately small: identity + subscription + chat +
+// usage + admin audit. Wallet linking, badges, profile pages, teams,
+// and API keys are noted in the spec but intentionally deferred so the
+// first release can prove the AI subscription product.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Identity --------------------------------------------------------------
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  emailVerifiedAt DateTime?
+  // Optional display name shown in chat; falls back to email-localpart.
+  name            String?
+  // Admin role lifts middleware guards on /api/admin/*. Seeded from
+  // ADMIN_EMAILS at signup; mutable from the admin UI thereafter.
+  role            UserRole @default(USER)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sessions          Session[]
+  magicLinks        MagicLink[]
+  subscription      UserSubscription?
+  conversations     Conversation[]
+  usageRecords      UsageRecord[]
+  paymentEvents     PaymentEvent[]
+  adminAuditEntries AdminAuditLog[]    @relation("AdminActor")
+  githubLink        GitHubLink?
+  gitlabLink        GitLabLink?
+  apiKeys           ApiKey[]
+
+  @@index([role])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  BANNED
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  // Hashed (SHA-256) opaque token; the raw token only ever lives in
+  // the user's cookie so a DB leak can't be replayed.
+  tokenHash    String   @unique
+  userId       String
+  createdAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  expiresAt    DateTime
+  userAgent    String?
+  ipHash       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model MagicLink {
+  id          String   @id @default(cuid())
+  // Hashed token; the raw token lives only in the email link.
+  tokenHash   String   @unique
+  email       String
+  userId      String?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+// ---- Subscriptions ---------------------------------------------------------
+
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  // Stable lookup code used by the API ("pro", "founder", "team"). Pro
+  // is the only plan in MVP; others land later without a schema change.
+  code            String   @unique
+  name            String
+  // Cents to avoid float drift.
+  priceUsdCents   Int
+  // Hard cap on messages per quota window (default 7 days — see
+  // UserSubscription.currentWeekStart). The subscription itself still
+  // bills monthly via PayPal, but the chat quota rolls every week so
+  // a Pro user can rely on a fresh allowance well before their next
+  // billing date.
+  weeklyMessages  Int
+  description     String?
+  features        String[]
+  // PayPal plan id mirrored locally so we don't roundtrip every load.
+  paypalPlanId    String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+}
+
+model UserSubscription {
+  id                String              @id @default(cuid())
+  userId            String              @unique
+  planId            String
+  status            SubscriptionStatus  @default(PENDING)
+  // Anchor for monthly quota windows.
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAt          DateTime?
+  canceledAt        DateTime?
+  // Internal counters; reset on rollover by the chat middleware.
+  messagesUsedThisPeriod Int @default(0)
+  // Anchor for the rolling weekly quota. usage.reserveMessage advances
+  // it by exactly 7 days as soon as the current week elapses, then
+  // zeroes messagesUsedThisPeriod. This lets us bill monthly via PayPal
+  // while resetting the message allowance weekly. NULL = first use;
+  // the middleware initialises it on the first reserved message.
+  currentWeekStart DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan            SubscriptionPlan     @relation(fields: [planId], references: [id])
+  paypal          PayPalSubscription?
+
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  SUSPENDED
+  EXPIRED
+}
+
+model PayPalSubscription {
+  id                  String   @id @default(cuid())
+  userSubscriptionId  String   @unique
+  // PayPal's I- prefixed subscription id; the canonical handle on
+  // every webhook event.
+  paypalSubscriptionId String  @unique
+  payerId             String?
+  payerEmail          String?
+  startTime           DateTime?
+  nextBillingTime     DateTime?
+  // Mirror PayPal's state so admin views can reflect upstream truth.
+  paypalStatus        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  userSubscription UserSubscription @relation(fields: [userSubscriptionId], references: [id], onDelete: Cascade)
+}
+
+model PaymentEvent {
+  id            String   @id @default(cuid())
+  // PayPal event id (PAYPAL-...) deduplicated against this column so
+  // a webhook redelivery never double-applies state.
+  externalId    String   @unique
+  eventType     String
+  userId        String?
+  paypalSubscriptionId String?
+  // The raw event JSON for forensics.
+  rawPayload    Json
+  // Signature verification result at the moment we received it.
+  signatureOk   Boolean?
+  receivedAt    DateTime @default(now())
+  processedAt   DateTime?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([eventType])
+  @@index([paypalSubscriptionId])
+}
+
+// ---- Chat ------------------------------------------------------------------
+
+model Conversation {
+  id            String   @id @default(cuid())
+  userId        String
+  title         String   @default("New chat")
+  // Which assistant mode the user picked; controls the system prompt.
+  // See server/src/services/systemPrompts.ts for the catalog.
+  assistantMode String   @default("general")
+  // The model the user picked at conversation start; can change per
+  // turn but the conversation-level value seeds the UI selector.
+  model         String?
+  archived      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  conversationId  String
+  // "user" | "assistant" | "system" | "tool"
+  role            String
+  content         String
+  // Provider-level usage so admin can debug cost spikes per message.
+  promptTokens     Int?
+  completionTokens Int?
+  model            String?
+  // True once the assistant has finished streaming; false on aborts.
+  isComplete       Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolCalls    AgentToolCall[]
+
+  @@index([conversationId, createdAt])
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  userId         String?
+  // The day bucket the record belongs to (UTC midnight). The free-tier
+  // cap (10 msg/day) is enforced by counting these for unauth users
+  // via their session/IP hash; for Pro users we use it as a per-day
+  // breakdown alongside the subscription's monthly counter.
+  day            DateTime
+  messageCount   Int       @default(0)
+  promptTokens   Int       @default(0)
+  completionTokens Int     @default(0)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, day])
+  @@index([day])
+}
+
+// ---- System prompts (admin-editable) --------------------------------------
+
+model SystemPrompt {
+  id            String   @id @default(cuid())
+  // Stable code mapped from the UI's assistant-mode picker. Updating a
+  // prompt here flows out to every conversation using that mode on the
+  // next turn.
+  code          String   @unique
+  name          String
+  prompt        String
+  description   String?
+  enabled       Boolean  @default(true)
+  updatedById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ---- Integrations (GitHub / GitLab) ---------------------------------------
+
+model GitHubLink {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  // GitHub user identity at the time of link. Refreshed on every login.
+  githubLogin       String
+  githubUserId      Int
+  // Encrypted at rest using JWT_SECRET-derived KEK (see lib/secretBox.ts);
+  // never returned to the frontend.
+  accessTokenCipher String
+  refreshTokenCipher String?
+  tokenExpiresAt    DateTime?
+  // Scopes the user granted; gated by services/integrations/github.ts.
+  scopes            String[]
+  // Default repo (full "<owner>/<name>") the coding agent targets when
+  // the user doesn't specify one per-call. NULL = no default chosen
+  // yet; agent will ask. Set/cleared via POST /api/integrations/github/repo.
+  selectedRepoFullName String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GitLabLink {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  // GitLab.com or self-hosted host (so an enterprise instance works
+  // out of the box once the OAuth app is configured for it).
+  gitlabHost        String   @default("https://gitlab.com")
+  gitlabUsername    String
+  gitlabUserId      Int
+  accessTokenCipher String
+  refreshTokenCipher String?
+  tokenExpiresAt    DateTime?
+  scopes            String[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AgentToolCall {
+  id            String   @id @default(cuid())
+  messageId     String
+  // Tool name registered in services/toolRegistry.ts.
+  name          String
+  // Arguments the model passed. Validated against the tool's zod schema
+  // before execution; the raw blob is stored for forensics.
+  argumentsJson Json
+  // Output rendered back into the next turn. Truncated for storage if
+  // huge; the full output lives in tool-specific systems (e.g. PR URL).
+  outputJson    Json?
+  // Status of the call: pending | succeeded | failed | denied.
+  // "denied" means the user rejected an opt-in tool gate.
+  status        AgentToolStatus @default(PENDING)
+  durationMs    Int?
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+  // Optional reference to a deeper artifact (PR URL, commit SHA, etc.).
+  artifactUrl   String?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([status])
+}
+
+enum AgentToolStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  DENIED
+}
+
+// ---- API keys (CLI access) -------------------------------------------------
+
+model ApiKey {
+  id           String   @id @default(cuid())
+  userId       String
+  // Display label set by the user ("CLI on laptop", "CI runner").
+  label        String
+  // Public prefix shown in the UI ("anim_chat_xxxxx") + SHA-256 hash of
+  // the full key. Raw key returned ONCE at creation.
+  prefix       String
+  tokenHash    String   @unique
+  // Optional scopes restricting what the key can do. Empty = full.
+  scopes       String[]
+  lastUsedAt   DateTime?
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---- Admin audit trail ----------------------------------------------------
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  actorId     String
+  action      String
+  targetType  String?
+  targetId    String?
+  // Free-form metadata; admin UI renders as JSON.
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  actor User @relation("AdminActor", fields: [actorId], references: [id])
+
+  @@index([actorId, createdAt])
+  @@index([action])
+}

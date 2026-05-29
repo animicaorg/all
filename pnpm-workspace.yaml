@@ -39,3 +39,8 @@ packages:
   - apps/dapp-ide
   - apps/usdan-web
   - provider-daemon
+  - apps/animica-xyz
+  - apps/animica-chat/server
+  - apps/animica-chat/web
+  - apps/animica-chat/cli
+  - packages/launchpad/*
