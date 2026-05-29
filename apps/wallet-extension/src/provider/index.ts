@@ -14,6 +14,7 @@ interface AnimicaProvider {
   animica_chainId(): Promise<number>;
   animica_switchChain(chainId: number | string): Promise<void>;
   animica_signMessage(message: string): Promise<string>;
+  animica_getPublicKey(address?: string): Promise<AnimicaPublicKeyInfo>;
   animica_sendTransaction(tx: any): Promise<string>;
   animica_deployContract(args: AnimicaDeployArgs): Promise<AnimicaDeployResult>;
   animica_getBalance(address: string): Promise<string>;
@@ -48,6 +49,13 @@ export interface AnimicaDeployArgs {
 export interface AnimicaDeployResult {
   txid: string;
   contractAddress?: string;
+}
+
+export interface AnimicaPublicKeyInfo {
+  address: string;
+  algId: number;
+  algName: string;
+  publicKey: string; // 0x-prefixed hex
 }
 
 const METHOD_ALIASES: Record<string, string> = {
@@ -149,6 +157,13 @@ class AnimicaProviderImpl implements AnimicaProvider {
 
   async animica_signMessage(message: string): Promise<string> {
     return this.request({ method: 'provider_signMessage', params: [{ message }] });
+  }
+
+  async animica_getPublicKey(address?: string): Promise<AnimicaPublicKeyInfo> {
+    return this.request({
+      method: 'animica_getPublicKey',
+      params: address ? [{ address }] : [],
+    });
   }
 
   async animica_sendTransaction(tx: any): Promise<string> {

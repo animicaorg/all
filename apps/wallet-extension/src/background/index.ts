@@ -642,6 +642,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'wallet_getDebugState':
       return handleGetDebugState();
     
+    // Connect-approval popup messages (from popup → background).
+    case 'wallet_connectGetPending':
+      return handleConnectGetPending();
+    case 'wallet_connectRespond':
+      return handleConnectRespond(params);
+
     // Provider API
     case 'eth_requestAccounts':
     case 'animica_requestAccounts':
@@ -698,9 +704,67 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'animica_getNonce':
       return handleProviderGetNonce(params);
 
+    case 'animica_getPublicKey':
+    case 'provider_getPublicKey':
+      return handleProviderGetPublicKey(origin, params);
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }
+}
+
+/**
+ * Return the public key (and algorithm id) for an authorized account.
+ *
+ * Required by dapps that want to verify a signature returned from
+ * `animica_signMessage` server-side: the on-chain Dilithium3 verifier is a
+ * commitment over `pubkey[:32] || signBytes`, so the verifier needs the
+ * pubkey bytes. The address only commits to `sha3_256(pubkey)`, which is
+ * not invertible. Exposing the pubkey is safe — it's already published on
+ * every transaction the account has ever sent.
+ */
+async function handleProviderGetPublicKey(
+  origin: string,
+  params: unknown
+): Promise<{ address: string; algId: number; algName: string; publicKey: string }> {
+  if (origin === 'unknown') {
+    throw new Error('Unable to determine requesting origin');
+  }
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+  ensureVaultDefaults(vaultData);
+
+  const permissions = new PermissionManager(vaultData.permissions);
+  const authorized = permissions.getAuthorizedAccounts(origin);
+  if (authorized.length === 0) {
+    throw new Error('Not authorized');
+  }
+
+  const requestedAddress = normalizeAddressParam(params);
+  const targetAddress = requestedAddress
+    ? authorized.find((a) => a.toLowerCase() === requestedAddress.toLowerCase())
+    : authorized[0];
+  if (!targetAddress) {
+    throw new Error('Address is not authorized for this origin');
+  }
+
+  const account = vaultData.accounts.find((a) => a.address === targetAddress);
+  if (!account || !account.publicKey || account.publicKey.length === 0) {
+    throw new Error('Public key not available for this account');
+  }
+
+  let hex = '0x';
+  for (let i = 0; i < account.publicKey.length; i += 1) {
+    hex += account.publicKey[i].toString(16).padStart(2, '0');
+  }
+  return {
+    address: account.address,
+    algId: account.algId,
+    algName: account.algName || (account.algId === 0x1001 ? 'dilithium3' : 'unknown'),
+    publicKey: hex,
+  };
 }
 
 async function handleUnlock(password: string): Promise<{ success: boolean }> {
@@ -988,7 +1052,20 @@ async function handleGetBalance(address: string): Promise<{ confirmed: string; a
   }
 }
 
+// Double-spend guard: serialize sends per-from-address. A second send from
+// the same address while the first one is mid-broadcast is rejected so a
+// dapp can't accidentally (or maliciously) submit two competing transactions
+// for the same nonce.
+const sendsInFlight = new Set<string>();
+
 async function handleSendTransaction(params: any): Promise<{ txid: string; contractAddress?: string }> {
+  // Pull `from` up front so the guard can check before we do any heavy work.
+  const fromForGuard = typeof params?.from === 'string' ? params.from.trim() : '';
+  if (fromForGuard && sendsInFlight.has(fromForGuard)) {
+    throw new Error('A previous transaction from this account is still being submitted. Wait for it to settle.');
+  }
+  if (fromForGuard) sendsInFlight.add(fromForGuard);
+
   try {
     const vaultData = getUnlockedVault();
     if (!vaultData) {
@@ -1330,6 +1407,8 @@ async function handleSendTransaction(params: any): Promise<{ txid: string; contr
       stack: error instanceof Error ? error.stack : undefined,
     });
     throw error;
+  } finally {
+    if (fromForGuard) sendsInFlight.delete(fromForGuard);
   }
 }
 
@@ -1504,6 +1583,22 @@ async function handleWatchAsset(origin: string, params: unknown): Promise<boolea
   return true;
 }
 
+// Pending connect requests waiting for the popup's Accept/Deny decision.
+// Keyed by an opaque requestId we hand to the popup. The popup posts a
+// `connect_respond` message; that resolves the awaited promise here.
+interface PendingConnect {
+  requestId: string;
+  origin: string;
+  createdAt: number;
+  resolve: (accounts: string[]) => void;
+  reject: (err: Error) => void;
+}
+const pendingConnects = new Map<string, PendingConnect>();
+
+function nextConnectRequestId(): string {
+  return `connect_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 async function handleRequestAccounts(origin: string): Promise<string[]> {
   if (origin === 'unknown') {
     throw new Error('Unable to determine requesting origin');
@@ -1513,10 +1608,10 @@ async function handleRequestAccounts(origin: string): Promise<string[]> {
   if (!vaultData) {
     throw new Error('Wallet is locked');
   }
-  
+
   const permissions = new PermissionManager(vaultData.permissions);
-  
-  // Check if already has permission
+
+  // Already-authorized origin → return the cached list, no popup.
   const existing = permissions.getAuthorizedAccounts(origin);
   if (existing.length > 0) {
     permissions.updateLastUsed(origin);
@@ -1525,20 +1620,90 @@ async function handleRequestAccounts(origin: string): Promise<string[]> {
     return existing;
   }
 
+  // No prior permission — surface an explicit Accept/Deny popup. The dapp
+  // sees its `requestAccounts` Promise pend until the user clicks.
+  const requestId = nextConnectRequestId();
+  const accountList = Array.isArray(vaultData.accounts) ? vaultData.accounts : [];
+  const stored = {
+    requestId,
+    origin,
+    createdAt: Date.now(),
+    // Surface the user's accounts so the popup can show them as checkboxes.
+    accounts: accountList.map((a) => ({
+      address: a.address,
+      label: a.label || a.address.slice(0, 12),
+    })),
+  };
+  // Stored in session storage so the popup can read it even if it opens
+  // before the background is reachable.
+  await chrome.storage.session.set({ pendingConnect: stored });
   await maybeOpenWalletPopup('requestAccounts');
 
-  // Current flow still auto-approves active account once popup is shown.
-  const activeWallet = await resolveActiveWallet(vaultData);
-  const currentAccount = activeWallet.address;
-  if (!currentAccount) {
-    throw new Error('No accounts available');
+  return new Promise<string[]>((resolve, reject) => {
+    pendingConnects.set(requestId, {
+      requestId,
+      origin,
+      createdAt: Date.now(),
+      resolve,
+      reject,
+    });
+    // Auto-reject after 5 minutes of inactivity so the provider Promise
+    // doesn't hang forever if the user closes the popup.
+    setTimeout(() => {
+      const entry = pendingConnects.get(requestId);
+      if (!entry) return;
+      pendingConnects.delete(requestId);
+      chrome.storage.session.remove("pendingConnect").catch(() => {});
+      entry.reject(new Error("Connect request timed out"));
+    }, 5 * 60 * 1000);
+  });
+}
+
+async function handleConnectGetPending(): Promise<any> {
+  const data = await chrome.storage.session.get("pendingConnect");
+  return { pending: data.pendingConnect || null };
+}
+
+async function handleConnectRespond(params: {
+  requestId: string;
+  approved: boolean;
+  accounts?: string[];
+}): Promise<{ ok: boolean }> {
+  const entry = pendingConnects.get(params.requestId);
+  if (!entry) {
+    // Could already have timed out or been resolved.
+    await chrome.storage.session.remove("pendingConnect");
+    return { ok: false };
   }
-  
-  permissions.grantPermission(origin, [currentAccount]);
+  pendingConnects.delete(params.requestId);
+  await chrome.storage.session.remove("pendingConnect");
+
+  if (!params.approved) {
+    entry.reject(new Error("User rejected the connection"));
+    return { ok: true };
+  }
+
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    entry.reject(new Error("Wallet is locked"));
+    return { ok: false };
+  }
+
+  const accountList = Array.isArray(vaultData.accounts) ? vaultData.accounts : [];
+  const known = new Set(accountList.map((a) => a.address));
+  const accounts = (params.accounts || []).filter((a) => known.has(a));
+  if (accounts.length === 0) {
+    entry.reject(new Error("No valid accounts selected"));
+    return { ok: false };
+  }
+
+  const permissions = new PermissionManager(vaultData.permissions);
+  permissions.grantPermission(entry.origin, accounts);
   vaultData.permissions = permissions.toJSON();
   await saveVaultData(vaultData);
-  
-  return [currentAccount];
+
+  entry.resolve(accounts);
+  return { ok: true };
 }
 
 async function handleProviderGetAccounts(origin: string): Promise<string[]> {

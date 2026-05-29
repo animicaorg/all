@@ -27,6 +27,7 @@ export enum ProviderMethod {
   CHAIN_ID = 'animica_chainId',
   SWITCH_CHAIN = 'animica_switchChain',
   SIGN_MESSAGE = 'animica_signMessage',
+  GET_PUBLIC_KEY = 'animica_getPublicKey',
   SEND_TRANSACTION = 'animica_sendTransaction',
   GET_BALANCE = 'animica_getBalance',
   GET_NONCE = 'animica_getNonce',
